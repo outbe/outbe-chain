@@ -1,6 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
+};
 use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -10,22 +13,37 @@ use outbe_tribute::{TributeContract, TributeData};
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
 
+pub(crate) struct OfferTributeInput<'a> {
+    pub caller: Address,
+    pub cipher_text: &'a [u8],
+    pub nonce: &'a [u8],
+    pub ephemeral_pubkey: U256,
+    pub reference_currency: u16,
+    pub exclude_from_intex_issuance: bool,
+}
+
 impl TributeFactoryContract<'_> {
     /// Single live offer path: an encrypted offer arrives; the host reads the
     /// current USDC/COEN oracle rate at this block, hands the offer + rate to the
     /// enclave (`ProcessTributeOfferBatch`), and issues the Tribute from the returned
-    /// `TributeOfferResult` without recomputing economics or `token_id`.
+    /// `TributeOfferResult` without recomputing economics. The public canonical
+    /// identity is independently recomputed and checked before issuance.
     /// `worldwide_day`/`currency` are NOT ABI args — they live in the encrypted
     /// payload; the enclave reads them and they come back in the result.
-    pub fn offer_tribute(
+    pub(crate) fn offer_tribute(
         &mut self,
-        caller: Address,
-        cipher_text: &[u8],
-        nonce: &[u8],
-        ephemeral_pubkey: U256,
-        reference_currency: u16,
-        exclude_from_intex_issuance: bool,
-    ) -> Result<U256> {
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        input: OfferTributeInput<'_>,
+    ) -> Result<EntityId36> {
+        let OfferTributeInput {
+            caller,
+            cipher_text,
+            nonce,
+            ephemeral_pubkey,
+            reference_currency,
+            exclude_from_intex_issuance,
+        } = input;
         check_currency(reference_currency)?;
 
         // Current USDC/COEN rate at this block. There is a single active OFFERING
@@ -47,7 +65,8 @@ impl TributeFactoryContract<'_> {
 
         // Hand the encrypted offer + rate to the enclave. It decrypts, applies the
         // rate, computes economics (U256) + Poseidon token_id, and returns the
-        // public result. The host does NOT recompute economics or token_id.
+        // public result. The host does not recompute private economics, but it
+        // can and must verify the public owner/day identity recipe.
         let offer = EncryptedTributeOffer {
             owner: caller,
             cipher_text: cipher_text.to_vec(),
@@ -79,10 +98,14 @@ impl TributeFactoryContract<'_> {
             .into());
         }
 
-        let tribute_id = U256::from_be_bytes(result.token_id.0);
+        let tribute_id = derive_poseidon_entity_id(caller, result_day)
+            .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
+        if result.owner != caller || result.token_id.0 != tribute_id.digest() {
+            return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
+        }
 
         let tribute = TributeContract::new(self.storage.clone());
-        if tribute.get_tribute(tribute_id)?.is_some() {
+        if tribute.get_tribute(scope, parent, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
         }
 
@@ -92,17 +115,21 @@ impl TributeFactoryContract<'_> {
         validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
         let mut tribute = TributeContract::new(self.storage.clone());
-        tribute.issue(&TributeData {
-            token_id: tribute_id,
-            owner: caller,
-            worldwide_day: result_day,
-            issuance_amount_minor: result.issuance_amount_minor,
-            issuance_currency: result.issuance_currency,
-            nominal_amount_minor: result.nominal_amount_minor,
-            reference_currency: result.reference_currency,
-            exclude_from_intex_issuance: result.exclude_from_intex_issuance,
-            tribute_price_minor: result.tribute_price_minor,
-        })?;
+        tribute.issue(
+            scope,
+            parent,
+            &TributeData {
+                tribute_id,
+                owner: caller,
+                worldwide_day: result_day,
+                issuance_amount_minor: result.issuance_amount_minor,
+                issuance_currency: result.issuance_currency,
+                nominal_amount_minor: result.nominal_amount_minor,
+                reference_currency: result.reference_currency,
+                exclude_from_intex_issuance: result.exclude_from_intex_issuance,
+                tribute_price_minor: result.tribute_price_minor,
+            },
+        )?;
 
         if !result.wallet_addresses.is_empty() && !result.sra_addresses.is_empty() {
             let mut agent_reward = AgentRewardContract::new(self.storage.clone());

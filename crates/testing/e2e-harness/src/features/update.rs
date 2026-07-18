@@ -1,5 +1,5 @@
 //! Steps for `features/update_operator.feature` — a step-for-step port of
-//! `scripts/e2e/update_operator_flow.sh` (body 194-331). Each step drives the
+//! The update-operator feature. Each step drives the
 //! `World` handles only; no `cast`/`cli` strings appear here.
 
 use std::thread::sleep;

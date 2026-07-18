@@ -194,26 +194,47 @@ pub(crate) fn validate_system_tx_leader_binding(
         }
     }
 
-    for (ordinal, tx) in layout.begin.iter().chain(layout.end.iter()).enumerate() {
+    let mut canonical_inputs = Vec::with_capacity(layout.system_tx_count());
+    for tx in layout.begin.iter().chain(layout.end.iter()) {
         let tx = *tx;
         let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
             .map_err(|error| format!("decode system transaction input: {error}"))?;
+        let kind = input.kind();
+        let calldata = input.encode().map_err(|error| error.to_string())?;
+        canonical_inputs.push((kind, calldata));
+    }
+    let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
+        raw_block.header.gas_limit(),
+        &canonical_inputs,
+    )
+    .map_err(|error| format!("plan visible system tx gas: {error}"))?;
+
+    for (ordinal, (tx, (kind, calldata))) in layout
+        .begin
+        .iter()
+        .chain(layout.end.iter())
+        .zip(canonical_inputs)
+        .enumerate()
+    {
+        let tx = *tx;
         let ordinal: u8 = ordinal
             .try_into()
             .map_err(|_| format!("system tx ordinal {ordinal} exceeds u8 range"))?;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
-            input.kind(),
+        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
+            kind,
             ordinal,
             raw_block.header.number(),
             chain_id,
-            input.encode().map_err(|error| error.to_string())?,
+            calldata,
+            gas_plan
+                .gas_limit(usize::from(ordinal))
+                .ok_or_else(|| format!("visible gas plan missing system tx ordinal {ordinal}"))?,
         )
         .map_err(|error| format!("build unsigned system transaction: {error}"))?;
         if tx.signature_hash() != unsigned.signature_hash() {
             return Err(format!(
                 "system tx signature_hash mismatch for {:?} at ordinal {}",
-                input.kind(),
-                ordinal
+                kind, ordinal
             ));
         }
     }
@@ -344,6 +365,46 @@ mod tests {
             &committee_provider,
         )
         .expect("system tx signer matches consensus leader EVM address");
+    }
+
+    #[test]
+    fn system_tx_leader_binding_accepts_payload_builder_visible_gas_plan() {
+        let (keys, _) = participants();
+        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
+        let mut validator_set = validator_set_from_keys(&keys);
+        validator_set.addresses[0] = signer.address();
+        let (scheme_provider, committee_provider) =
+            leader_binding_providers(Epoch::new(0), &validator_set);
+        let parent_hash = B256::ZERO;
+        let block = block_with_gas_planned_system_inputs(
+            &signer,
+            2,
+            parent_hash,
+            Bytes::new(),
+            vec![
+                SystemTxInputV2::CertifiedParentAccounting {
+                    metadata: finalized_metadata(parent_hash),
+                },
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: Default::default(),
+                },
+                SystemTxInputV2::CycleTick,
+                SystemTxInputV2::OracleSlashWindow,
+                SystemTxInputV2::HookEvents,
+            ],
+            outbe_primitives::chain::CHAIN_ID,
+            30_000_000,
+        );
+
+        validate_system_tx_leader_binding(
+            &block,
+            Round::new(Epoch::new(0), View::new(1)),
+            &keys[0].public_key(),
+            outbe_primitives::chain::CHAIN_ID,
+            &scheme_provider,
+            &committee_provider,
+        )
+        .expect("validator must accept the payload builder's visible gas plan");
     }
 
     #[test]

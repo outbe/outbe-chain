@@ -139,8 +139,10 @@ contract, not ad-hoc per-module APIs:
   proposer, and validator-set state, then wraps it in a `BlockRuntimeContext`
   carrying the current scoped `StorageHandle` (`outbe_primitives::block`).
 - Each module's block-boundary entrypoints implement `BlockLifecycle` on a
-  zero-sized marker type (`XxxLifecycle`); the executor calls them as
-  `<XxxLifecycle as BlockLifecycle>::begin_block(&ctx)` / `end_block(&ctx)`.
+  zero-sized marker type (`XxxLifecycle`). Ordinary modules use
+  `BlockRuntimeContext` directly; modules needing an additional least-authority
+  capability define one typed lifecycle context that wraps it. The executor
+  always calls the marker through `BlockLifecycle::begin_block` / `end_block`.
 - Lifecycle ordering is explicit in the executor and hard-fork governed — there
   is no runtime plugin registration and no positional `(timestamp, block_number)`
   block-boundary API.
@@ -324,6 +326,10 @@ Prerequisites: [`mise`](https://mise.jdx.dev) (provisions the Rust toolchain, Fo
 # 4-validator localnet
 mise run build-release
 mise run localnet-bootstrap     # BLS keys + genesis.json
+docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec outbe-local-mongodb mongosh --quiet --eval \
+  'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 mise run localnet-start
 mise run localnet-status        # all 4 nodes should advance past block 0
 
@@ -336,6 +342,51 @@ mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
 
+### Managed localnet stack
+
+For a ready-to-use local environment with four validators, mock TEE enclaves,
+and a transaction-capable MongoDB replica set, run:
+
+```bash
+mise run localnet-stack-start
+```
+
+This is general localnet infrastructure, not a Tribute-specific scenario. The
+task builds the required binaries, recreates a fresh chain under
+`/tmp/outbe-localnet-stack`, starts a persistent Docker volume for MongoDB,
+boots four validator nodes, and succeeds only after:
+
+- MongoDB elects a primary and completes a real transaction;
+- all four validator processes remain alive;
+- all four projection databases are initialized;
+- the primary RPC reaches block 1.
+
+The task prints RPC URLs, the MongoDB URI, database prefix, and data directory
+for use by any manual flow. Stop services while retaining chain and projection
+data, or remove everything, with:
+
+```bash
+mise run localnet-stack-stop
+mise run localnet-stack-clean
+```
+
+The shortest manual Tribute demonstration on top of this general stack is:
+
+```bash
+mise run localnet-stack-start
+mise run tribute-offer
+mise run tribute-show-mongo
+```
+
+The last command prints the matching Tribute document and index counts from all
+four validator projection databases.
+
+`localnet-stack-start` is intentionally fresh/destructive for its dedicated
+`/tmp/outbe-*` directory. To run another isolated stack, override all of
+`LOCALNET_STACK_DIR`, `LOCALNET_STACK_MONGO_NAME`,
+`LOCALNET_STACK_MONGO_PORT`, `LOCALNET_STACK_PORT_OFFSET`, and
+`LOCALNET_STACK_DATABASE_PREFIX`, using non-overlapping ports.
+
 ## CLI Tools
 
 ```bash
@@ -346,7 +397,75 @@ outbe-cli staking stake|unstake|claim         # staking flow
 outbe-cli rewards emission|history            # emission params (validator emission is paid in gems)
 ```
 
-Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`.
+Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`. During the ADR-005 staged profile, a non-validator must use the certified-follower `--upstream` path. Plain EL-only sync is rejected because it has no exact finalized-parent projection barrier.
+
+### Required finalized offchain-data projection
+
+Every validator and full node materializes finalized Tribute and Nod bodies and indexes into
+MongoDB. In the ADR-005 pre-production profile, typed Mongo repositories are also the only runtime
+source for complete Tribute/Nod bodies; there is no EVM body fallback. This profile is hard-disabled
+outside the assigned Outbe devnet and testnet chain IDs and must not be activated on production or
+mainnet before ADR-006/ADR-007 are complete. Start the node with both MongoDB settings:
+
+```bash
+outbe-chain node \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --projection.mongodb-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+  --projection.mongodb-database outbe_projection \
+  --projection.start-block 1
+```
+
+`OUTBE_PROJECTION_MONGODB_URI` and `OUTBE_PROJECTION_MONGODB_DATABASE` are equivalent environment
+variables. The URI and database flags must be supplied together; omitting either stops node startup.
+The start block defaults to the first executable block, block 1. Each node projector exclusively owns
+one logical database; do not point multiple active nodes at the same database. MongoDB must be a
+transaction-capable replica set (including a single-node replica set) or sharded cluster.
+Execution uses `primary` read preference plus `majority` read and write concern; URI options that
+weaken this contract are rejected.
+The bundled Docker Compose uses a persistent MongoDB volume and fixed per-validator databases; run
+`docker compose down -v` before bootstrapping it with a different genesis.
+
+Before business execution becomes ready, startup validates the MongoDB connection, transaction
+capability, managed schema, chain/genesis/start-block identity, and the durable checkpoint against
+local Reth history. Mongo ahead of local Reth is rejected; Mongo behind remains non-ready until ExEx
+replays every retained finalized block. Proposal, verification, and certified-follower execution
+wait for the exact projected parent `(number, hash)` and never substitute a moving height or poll
+MongoDB on those hot paths.
+
+Mongo availability failures immediately close the local participation/business-readiness gate. The
+long-lived ExEx continues draining notifications, retries immediately and then once per second, and
+keeps both its durable checkpoint and Reth `FinishedHeight` unchanged. Recovery has one eight-second
+total deadline; expiry or deterministic corruption reports a structured terminal projection failure
+and requests graceful whole-node shutdown. A healthy but lagging projection only consumes the
+caller's existing proposal/verification budget and does not start the Mongo outage timer.
+
+`outbe_consensusStatus` includes the local projection state, exact checkpoint, local Reth finalized
+point, lag, readiness, outage duration, and structured failure class. Prometheus also exports
+`outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
+local operational signals, not consensus acknowledgements.
+
+### Required compressed-entity persistence barrier
+
+Compressed-entity execution uses the exact finalized parent root in EVM slot 1 and a separate CE
+MDBX materialization under `<datadir>/compressed_entities/smt`. Node startup requires
+`--engine.persistence-threshold 0`, `--engine.memory-block-buffer-target 0`, sequential Marshal
+delivery (`MAX_PENDING_ACKS=1`), and receipt/historical-state pruning disabled. These settings make
+every finalized block cross a real Reth persistence notification before the DB-only block/root
+check and atomic CE marker commit. Marshal is acknowledged only after that sequence succeeds;
+startup fails instead of weakening the barrier when the settings are incompatible.
+
+The CE environment is bound to chain ID, genesis hash, commitment scheme, fork-fixed shard count,
+CKB tree format, vendored revision, and local schema. A directory created for another shard count is
+rejected or rebuilt; it is never opened through a compatibility fallback. Speculative candidates
+remain in memory and never mutate MDBX. The EVM root is the consensus authority; the local marker and
+tree nodes are authenticated materialization and mismatches fail closed.
+
+Before validator or follower participation, startup compares the CE marker with the exact durable
+finalized checkpoint. An equal marker resumes, a behind marker replays every contiguous canonical
+receipt block, and ahead/conflict/gap states stop startup. At live finality, proposer candidates are
+accepted only after block assembly; validator imports without a candidate are reconstructed from
+durable canonical receipts after the same DB-only hash/root barrier.
 
 ## Documentation
 

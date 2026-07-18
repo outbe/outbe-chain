@@ -36,7 +36,7 @@ that share.
 
 > **Verified vs documented.** The validator path below — register → follow → stake →
 > confirm-ready → reshare → ACTIVE, restart-recovery, and exit — is exercised
-> end-to-end by `scripts/e2e/` on a gramine-**mock** localnet (no real SGX/MRENCLAVE
+> end-to-end by `crates/testing/e2e-harness` on a gramine-**mock** localnet (no real SGX/MRENCLAVE
 > attestation). The bare `--validator`-off full node is supported by the binary but
 > is not covered by those tests.
 
@@ -357,15 +357,14 @@ restart in that case.
 
 ## Localnet quickstart
 
-The validator path end-to-end (a 4-validator gramine-mock localnet) is in
-`scripts/e2e/`:
+The validator path end-to-end runs through the Rust/Cucumber harness on an
+isolated 4-validator gramine-mock localnet:
 
 ```sh
-cargo build -p outbe-chain --bin outbe-chain
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-sudo true   # the scripts use sudo for run-testnet.sh / docker
-scripts/e2e/s1_s2_s6_s3_lifecycle.sh   # follow → stake/confirm → ACTIVE → exit
+mise run e2e
 ```
 
-`scripts/e2e/lib.sh` holds the exact localnet command lines this guide generalizes;
-see `scripts/e2e/README.md`.
+The harness owns the node processes, enclave containers, port ranges, data
+directories, and a temporary MongoDB replica set. See
+`crates/testing/e2e-harness/README.md` for focused feature commands and debug
+options.

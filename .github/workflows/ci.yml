@@ -33,6 +33,8 @@ jobs:
           cache: true
       # mise installs the rust toolchain with the default profile (no rustfmt).
       - run: rustup component add rustfmt
+      - name: Verify vendored CKB SMT provenance and panic safety
+        run: bash scripts/check-vendored-smt.sh
       - run: mise run fmt-check
 
   clippy:
@@ -144,6 +146,7 @@ jobs:
     continue-on-error: true
     env:
       RUSTC_WRAPPER: "sccache"
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true
     steps:
       - uses: actions/checkout@v6
       - name: Install system dependencies
@@ -159,6 +162,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Start transaction-capable MongoDB
+        run: |
+          docker run --detach --name outbe-ci-mongodb --publish 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          until docker exec outbe-ci-mongodb mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1; do sleep 1; done
+          docker exec outbe-ci-mongodb mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          until docker exec outbe-ci-mongodb mongosh --quiet --eval 'rs.status().myState' | grep -q 1; do sleep 1; done
       - run: cargo build --release --bin outbe-chain
       - name: 4-validator consensus smoke (bootstrap -> lockstep -> restart -> recover)
         run: OUTBE_CHAIN_BINARY=./target/release/outbe-chain mise run localnet-smoke

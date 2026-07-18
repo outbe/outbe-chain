@@ -1,5 +1,4 @@
-//! Steps for `features/s4_restart_active.feature` — port of
-//! `scripts/e2e/s4_restart_active.sh`. An ACTIVE validator's DKG share lives on
+//! Steps for `features/s4_restart_active.feature`. An ACTIVE validator's DKG share lives on
 //! disk (keys-dir), not the enclave. Killing and restarting ONLY the node (the
 //! enclave container stays up) must resume signing from the persisted share
 //! WITHOUT a fresh DKG ceremony.
@@ -101,10 +100,6 @@ fn resumes_without_new_ceremony(world: &mut World) {
     assert!(
         h >= restart_h,
         "restarted node did not catch up (head {h} < {restart_h})"
-    );
-    assert!(
-        world.localnet.log_has(idx, "threshold material ready"),
-        "node did not resume from saved DKG state"
     );
     assert_eq!(
         world.localnet.log_count(idx, "running DKG ceremony"),

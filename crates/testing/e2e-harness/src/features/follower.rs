@@ -1,5 +1,5 @@
 //! Steps for `features/follower_upstream.feature` — port of
-//! `scripts/e2e/follower_upstream.sh`:
+//! The follower-upstream feature:
 //!   S1  a cold `--upstream` follower syncs a reshared chain to lockstep
 //!   S1b a follower-of-follower (`--upstream=follower1`) syncs off the first
 //!   S3  a validator killed mid-epoch is restarted and re-locksteps

@@ -12,9 +12,16 @@ use crate::schema::GemContract;
 pub struct GemLifecycle;
 
 impl BlockLifecycle for GemLifecycle {
+    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
+    type EndBlockResult = ();
+
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         // TODO refactor this. Oracle is called here for each block
         scan_and_qualify(ctx)?;
+        Ok(())
+    }
+
+    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
         Ok(())
     }
 }

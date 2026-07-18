@@ -5,33 +5,49 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
+use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
 use outbe_nod::api as nod_api;
+use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
 use crate::sol_ext::IERC20;
 
-/// Issue a new Nod at the originating owner's (worldwide_day) bucket.
-///
-/// Privileged: the only production caller is Lysis via the cross-module
-/// [`crate::api::issue_nod`]. Not exposed on the NodFactory ABI.
-pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result<U256> {
+/// Issues a Nod through the block-scoped compressed-body lifecycle.
+pub fn issue_nod(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    params: &NodIssueParams,
+) -> Result<EntityId36> {
     if params.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
 
-    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day);
-    if nod_api::get_item(storage, nod_id)?.is_some() {
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
+    if nod_api::get_item(storage, scope, parent, nod_id)?.is_some() {
         return Err(NodFactoryError::NodAlreadyExists.into());
     }
+
+    issue_nod_inner(storage, params, |item| {
+        nod_api::add_nod(storage, scope, parent, item, params.entry_price_minor)
+    })
+}
+
+fn issue_nod_inner(
+    storage: &StorageHandle<'_>,
+    params: &NodIssueParams,
+    add: impl FnOnce(&NodItemState) -> Result<()>,
+) -> Result<EntityId36> {
+    let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
     let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
 
@@ -50,13 +66,13 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
         reference_currency: params.reference_currency,
         issued_at,
     };
-    nod_api::add_nod(storage, &item, params.entry_price_minor)?;
+    add(&item)?;
 
     emit_event(
         storage,
         INodFactory::NodIssued {
             owner: params.owner,
-            nodId: nod_id,
+            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
             worldwideDay: U256::from(u32::from(params.worldwide_day)),
             leagueId: U256::from(params.league_id),
             floorPriceMinor: params.floor_price_minor,
@@ -87,28 +103,74 @@ pub fn issue_nod(storage: &StorageHandle<'_>, params: &NodIssueParams) -> Result
 /// When `cost_amount_minor == 0` the payment sequence is skipped entirely
 /// and `asset` is not validated, so callers mining zero-cost Nods can pass
 /// `Address::ZERO`.
+/// Mines a Nod through the block-scoped compressed-body lifecycle.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     caller: Address,
-    nod_id: U256,
+    nod_id: EntityId36,
     nonce: U256,
     asset: Address,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    let item = nod_api::get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    if caller != item.owner {
+    let item =
+        nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
+    let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
+        .ok_or(NodFactoryError::NodNotQualified)?;
+    storage.clone().with_checkpoint(|| {
+        mine_gratis_inner(
+            storage,
+            MineGratisInput {
+                caller,
+                nod_id,
+                nonce,
+                asset,
+                item,
+                bucket,
+                auth,
+            },
+            scope,
+        )
+    })
+}
+
+struct MineGratisInput {
+    caller: Address,
+    nod_id: EntityId36,
+    nonce: U256,
+    asset: Address,
+    item: LoadedNodItem,
+    bucket: LoadedNodBucket,
+    auth: outbe_gratisfactory::api::ModifyAuth,
+}
+
+fn mine_gratis_inner(
+    storage: &StorageHandle<'_>,
+    input: MineGratisInput,
+    scope: &ExecutionScope,
+) -> Result<U256> {
+    let MineGratisInput {
+        caller,
+        nod_id,
+        nonce,
+        asset,
+        item,
+        bucket,
+        auth,
+    } = input;
+    if caller != item.body().owner {
         return Err(NodFactoryError::NotOwner.into());
     }
 
     validate_pow(nod_id, nonce)?;
 
-    let bucket =
-        nod_api::get_bucket(storage, item.bucket_key)?.ok_or(NodFactoryError::NodNotQualified)?;
-    if !bucket.is_qualified {
+    if !bucket.body().is_qualified {
         return Err(NodFactoryError::NodNotQualified.into());
     }
 
-    let cost = item.cost_amount_minor;
+    let cost = item.body().cost_amount_minor;
     if !cost.is_zero() {
         // TODO check that asset aligns with reference_currency
         if asset.is_zero() {
@@ -138,31 +200,34 @@ pub fn mine_gratis(
         outbe_vaultprovider::api::deposit_liquidity(storage, asset, cost)?;
     }
 
-    nod_api::remove_nod(storage, &item)?;
+    let owner = item.body().owner;
+    let gratis_load_minor = item.body().gratis_load_minor;
+    nod_api::remove_nod(storage, scope, item, bucket)?;
 
     emit_event(
         storage,
         INodFactory::NodBurned {
             owner: caller,
-            nodId: nod_id,
-            gratisLoadMinor: item.gratis_load_minor,
+            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+            gratisLoadMinor: gratis_load_minor,
         },
     )?;
 
-    outbe_gratisfactory::api::mint(storage.clone(), caller, item.gratis_load_minor, auth)?;
+    outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
 
-    Ok(item.gratis_load_minor)
+    Ok(gratis_load_minor)
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
 /// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: U256, nonce: U256) -> Result<()> {
-    pow::validate_pow(nod_id, nonce).map_err(|e| NodFactoryError::from(e).into())
+pub fn validate_pow(nod_id: EntityId36, nonce: U256) -> Result<()> {
+    pow::validate_pow_bytes(nod_id.as_bytes(), nonce).map_err(|e| NodFactoryError::from(e).into())
 }
 
 /// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes::<8>()`.
-pub fn compute_pow_hash(nod_id: U256, nonce: U256) -> Result<[u8; 32]> {
-    pow::compute_pow_hash(nod_id, nonce).map_err(|e| NodFactoryError::from(e).into())
+pub fn compute_pow_hash(nod_id: EntityId36, nonce: U256) -> Result<[u8; 32]> {
+    pow::compute_pow_hash_bytes(nod_id.as_bytes(), nonce)
+        .map_err(|e| NodFactoryError::from(e).into())
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

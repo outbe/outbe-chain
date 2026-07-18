@@ -17,6 +17,7 @@ pub mod hook_events;
 pub mod math;
 pub mod participation;
 pub mod payload;
+pub mod projection;
 pub mod protocol_schedule;
 pub mod reshare_artifact;
 pub mod signer;

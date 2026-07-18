@@ -117,6 +117,11 @@ pub struct EnvCli {
     /// `<repo>/scripts/seed-testnet-lowstake.json`.
     #[arg(long)]
     pub seed: Option<PathBuf>,
+
+    /// Transaction-capable MongoDB URI shared by the harness. When omitted, the
+    /// harness owns a temporary `mongo:7.0` single-node replica-set container.
+    #[arg(long, default_value = "auto")]
+    pub projection_mongodb_uri: String,
 }
 
 /// The resolved environment: every knob and path the harness needs, sourced
@@ -143,6 +148,7 @@ pub struct Environment {
     pub keygen_bin: PathBuf,
     pub mock_bin: PathBuf,
     pub seed: PathBuf,
+    pub projection_mongodb_uri: String,
 }
 
 impl Environment {
@@ -158,10 +164,9 @@ impl Environment {
             sudo: !cli.no_sudo,
             all: cli.all,
             debug: cli.debug,
-            data_dir: cli
-                .data_dir
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("/tmp/outbe-e2e-harness")),
+            data_dir: cli.data_dir.clone().unwrap_or_else(|| {
+                std::env::temp_dir().join(format!("outbe-e2e-harness-{}", std::process::id()))
+            }),
             chain_bin: cli
                 .chain_bin
                 .clone()
@@ -182,6 +187,7 @@ impl Environment {
                 .seed
                 .clone()
                 .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
+            projection_mongodb_uri: cli.projection_mongodb_uri.clone(),
             repo,
         }
     }
@@ -207,6 +213,7 @@ impl Default for Environment {
             keygen_bin: None,
             mock_bin: None,
             seed: None,
+            projection_mongodb_uri: "auto".to_owned(),
         })
     }
 }

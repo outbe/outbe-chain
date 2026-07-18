@@ -10,6 +10,7 @@
 //! every block — the daily trigger only does work on the first block
 //! whose timestamp crosses the next UTC midnight.
 
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -18,15 +19,40 @@ use outbe_primitives::{
 /// Zero-sized marker registered in `outbe_evm::executor` begin-block ordering.
 pub struct CycleLifecycle;
 
-impl BlockLifecycle for CycleLifecycle {
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // Block 1 genesis bootstrap: create the first metadosis worldwide day.
-        // The daily Cycle trigger only anchors (does not fire) on its first
-        // encounter, so it never invokes `start_metadosis` at block 1 — the
-        // genesis day must be created here, before user transactions. Idempotent.
-        if ctx.block.block_number == 1 {
-            outbe_metadosis::runtime::init_genesis_day(ctx)?;
+/// Explicit body authorities required by the Cycle block boundary.
+pub struct CycleLifecycleContext<'a, 'storage> {
+    pub runtime: BlockRuntimeContext<'storage>,
+    pub scope: &'a ExecutionScope,
+    parent: ParentBodySourceRef<'a>,
+}
+
+impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
+    #[must_use]
+    pub fn new(
+        runtime: BlockRuntimeContext<'storage>,
+        scope: &'a ExecutionScope,
+        parent: &'a dyn ParentBodySource,
+    ) -> Self {
+        Self {
+            runtime,
+            scope,
+            parent: ParentBodySourceRef::new(parent),
         }
-        crate::runtime::dispatch_triggers(ctx)
+    }
+}
+
+impl BlockLifecycle for CycleLifecycle {
+    type Context<'a, 'storage> = CycleLifecycleContext<'a, 'storage>;
+    type EndBlockResult = ();
+
+    fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
+        if ctx.runtime.block.block_number == 1 {
+            outbe_metadosis::runtime::init_genesis_day(&ctx.runtime)?;
+        }
+        crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
+    }
+
+    fn end_block(_ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {
+        Ok(())
     }
 }

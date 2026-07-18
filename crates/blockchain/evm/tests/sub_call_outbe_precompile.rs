@@ -12,10 +12,27 @@
 //! `Success` with empty returndata; here we assert the returndata equals the
 //! Poseidon hash of the input.
 
-use alloy_primitives::{Address, Bytes, U256};
+use std::sync::Arc;
+
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    begin_block, body_commitment, encode_nod_item_v1, AuthenticatedParentTree, CeWorkConfig,
+    Commitment, EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
+    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+};
 use outbe_evm::sub_call;
-use outbe_primitives::addresses::ZKPROOF_POSEIDON_ADDRESS;
-use outbe_primitives::storage::{SubCallInput, SubCallStatus};
+use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWriter};
+use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
+use outbe_primitives::addresses::{
+    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+};
+use outbe_primitives::{
+    block::BlockContext,
+    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
+};
 use revm::{
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
@@ -24,6 +41,52 @@ use revm::{
 };
 
 const CALLER: Address = Address::new([0xC0; 20]);
+
+#[derive(Debug)]
+struct StaticAuthenticatedParent {
+    entity: EntityRef,
+    commitment: Commitment,
+}
+
+impl AuthenticatedParentTree for StaticAuthenticatedParent {
+    fn parent_block_hash(&self) -> B256 {
+        B256::ZERO
+    }
+
+    fn parent_root(&self) -> B256 {
+        outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+    }
+
+    fn read_leaf_verified(
+        &self,
+        entity: EntityRef,
+        expected_parent_root: B256,
+    ) -> outbe_primitives::error::Result<Option<Commitment>> {
+        assert_eq!(
+            expected_parent_root,
+            outbe_compressed_entities::sealed_root(B256::ZERO).unwrap()
+        );
+        Ok((entity == self.entity).then_some(self.commitment))
+    }
+
+    fn partition_present_verified(
+        &self,
+        _partition: PartitionRef,
+        _expected_parent_root: B256,
+    ) -> outbe_primitives::error::Result<bool> {
+        Ok(false)
+    }
+
+    fn prepare_seal(
+        &self,
+        block_number: u64,
+        _mutations: &[FinalLeafMutation],
+        _retirements: &[PartitionRef],
+    ) -> outbe_primitives::error::Result<ProvisionalTreeBatch> {
+        ProvisionalTreeBatch::new_identity(block_number, B256::ZERO, B256::ZERO)
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+    }
+}
 
 #[test]
 fn subcall_reaches_outbe_poseidon_precompile() {
@@ -41,6 +104,8 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
+        Arc::new(ExecutionScope::new()),
         SubCallInput {
             target: ZKPROOF_POSEIDON_ADDRESS,
             value: U256::ZERO,
@@ -72,5 +137,107 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         result.gas_used > 0 && result.gas_used < 1_000_000,
         "gas_used must be within the requested budget, got {}",
         result.gas_used,
+    );
+}
+
+#[test]
+fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
+    let adapter = Arc::new(MemoryStorage::new());
+    let reader: StorageReaderHandle = adapter.clone();
+    let writer: StorageWriterHandle = adapter;
+    let readers = RuntimeBodyReaders::new(reader.clone());
+    let owner = Address::repeat_byte(0x11);
+    let day = WorldwideDay::new(20_260_715);
+    let nod_id = outbe_nod::NodContract::generate_nod_id(owner, day).unwrap();
+    let bucket_key = B256::repeat_byte(0x42);
+    let repository = NodRepositoryWriter::new(reader, writer);
+    repository
+        .put_bucket(&NodBucketState {
+            bucket_key,
+            worldwide_day: day,
+            floor_price_minor: U256::from(10),
+            is_qualified: true,
+            total_nods: 1,
+            entry_price_minor: U256::from(9),
+        })
+        .unwrap();
+    let item = NodItemState {
+        nod_id,
+        owner,
+        gratis_load_minor: U256::from(11),
+        worldwide_day: day,
+        league_id: 3,
+        floor_price_minor: U256::from(10),
+        bucket_key,
+        cost_amount_minor: U256::from(12),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 1_700_000_000,
+    };
+    repository.put_nod(&item).unwrap();
+    let payload = encode_nod_item_v1(&outbe_nod::canonical_item(&item)).unwrap();
+    let commitment =
+        body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
+    let mut database = CacheDB::new(EmptyDB::default());
+    let scope = Arc::new(ExecutionScope::with_parent_tree(
+        Arc::new(StaticAuthenticatedParent {
+            entity: EntityRef::NodItem(nod_id),
+            commitment,
+        }),
+        CeWorkConfig::new(0, 0, u64::MAX),
+    ));
+    let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
+    let mut provider = DirectStorageProvider::new(&mut database, block);
+    StorageHandle::enter(&mut provider, |storage| {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3_u64))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1_u64),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
+        begin_block(storage, scope.as_ref()).unwrap();
+    });
+    provider.flush().unwrap();
+
+    let calldata = INod::ownerOfCall {
+        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+    }
+    .abi_encode();
+    let mut ctx = Context::mainnet().with_db(database);
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        Some(readers),
+        scope,
+        SubCallInput {
+            target: NOD_ADDRESS,
+            value: U256::ZERO,
+            calldata: Bytes::from(calldata),
+            gas_limit: 1_000_000,
+            is_static: true,
+        },
+    )
+    .expect("repository-backed Nod sub-call must execute");
+
+    assert!(
+        matches!(result.status, SubCallStatus::Success),
+        "expected Success, got {:?} with returndata 0x{}",
+        result.status,
+        hex::encode(&result.returndata),
+    );
+    assert_eq!(
+        INod::ownerOfCall::abi_decode_returns(&result.returndata).unwrap(),
+        owner
     );
 }

@@ -19,6 +19,8 @@
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
+use outbe_compressed_entities::ExecutionScope;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::Evm,
@@ -34,8 +36,9 @@ use revm::{
     state::Bytecode,
     Database,
 };
+use std::sync::Arc;
 
-/// Run a single sub-call to completion and return its result.
+/// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
 ///
 /// `outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
@@ -44,6 +47,8 @@ pub fn run<DB>(
     self_address: Address,
     outer_is_static: bool,
     spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
@@ -94,7 +99,11 @@ where
     // on the trait.
     let instructions =
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
-    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(spec);
+    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
+        spec,
+        runtime_body_readers,
+        execution_scope,
+    );
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,

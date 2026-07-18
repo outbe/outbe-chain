@@ -9,6 +9,7 @@ members = [
     "crates/blockchain/rpc",
     "crates/blockchain/txpool",
     "crates/blockchain/node",
+    "crates/blockchain/offchain-storage",
     # system
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -24,6 +25,8 @@ members = [
     "crates/system/teeregistry",
     "crates/system/update",
     "crates/system/vote",
+    "crates/system/offchain-data",
+    "crates/core/compressed-entities",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -90,6 +93,7 @@ outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
+outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
 # Internal — system
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }
@@ -106,6 +110,8 @@ outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
+outbe-offchain-data = { path = "crates/system/offchain-data" }
+outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
@@ -165,6 +171,7 @@ reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2
 reth-node-core = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
+reth-chain-state = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-cli = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
 reth-db = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.2.0" }
@@ -239,6 +246,7 @@ postcard = { version = "1", features = ["use-std"] }
 # CLI / IO
 clap = { version = "4", features = ["derive"] }
 jsonrpsee = { version = "0.26", features = ["server", "macros"] }
+mongodb = { version = "3.6.0", features = ["sync"] }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Runtime

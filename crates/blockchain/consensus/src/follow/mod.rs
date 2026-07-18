@@ -179,7 +179,7 @@ impl CommitteeChain {
                 let epoch = Epoch::new(boundary.epoch);
                 if self
                     .highest_registered
-                    .map_or(true, |h| epoch.get() > h.get())
+                    .is_none_or(|h| epoch.get() > h.get())
                 {
                     self.register_epoch_from_outcome(epoch, &boundary.outcome)?;
                     Ok(Some(epoch))

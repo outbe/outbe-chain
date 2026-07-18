@@ -8,12 +8,16 @@ publish.workspace = true
 [dependencies]
 # Internal
 outbe-evm.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
+outbe-offchain-data.workspace = true
+outbe-offchain-storage.workspace = true
 
 # Reth
-reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
+reth-chain-state.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-consensus-common.workspace = true
 reth-node-builder.workspace = true
@@ -42,10 +46,16 @@ either.workspace = true
 eyre.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+futures.workspace = true
+metrics.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+alloy-eips.workspace = true
 alloy-provider.workspace = true
+mongodb.workspace = true
 outbe-validatorset.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true
 reth-node-api.workspace = true
 reth-node-core.workspace = true

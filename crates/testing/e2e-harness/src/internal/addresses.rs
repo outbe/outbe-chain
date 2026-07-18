@@ -1,6 +1,6 @@
 //! Protocol precompile addresses used by the harness.
 //!
-//! Mirrors `scripts/e2e/lib.sh:37-40` and `bin/outbe-cli/src/abi.rs`. Typed
+//! Mirrors `bin/outbe-cli/src/abi.rs`. Typed
 //! `Address` consts (the `eth` layer calls contracts by `Address`, not string).
 
 use alloy_primitives::{address, Address};
@@ -19,6 +19,12 @@ pub(crate) const WWD_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");
 /// Vote precompile (generic proposal/voting).
 pub(crate) const VOTE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0C");
+/// EIP-7702 ZeroFee delegation target and view precompile.
+pub(crate) const ZEROFEE_ADDR: Address = address!("0x000000000000000000000000000000000000EE09");
+/// AgentReward target used by the canonical ZeroFee sponsored call.
+pub(crate) const AGENT_REWARD_ADDR: Address =
+    address!("0x000000000000000000000000000000000000100B");
+/// Protocol log emitter for `OutbeFailure` soft failures.
+pub(crate) const ZEROFEE_LOG_ADDR: Address = address!("0x000000000000000000000000000000000000EE06");
 /// Governance precompile (canon / OIP / GIP).
-pub(crate) const GOVERNANCE_ADDR: Address =
-    address!("0x0000000000000000000000000000000000001018");
+pub(crate) const GOVERNANCE_ADDR: Address = address!("0x0000000000000000000000000000000000001018");

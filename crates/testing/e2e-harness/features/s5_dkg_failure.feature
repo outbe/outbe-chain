@@ -1,10 +1,11 @@
 @tee @min-validators-4
 Feature: DKG reshare failure keeps the old committee live
-  # Port of scripts/e2e/s5_dkg_failure.sh. A frozen 4->5 reshare is starved below
+  # A frozen 4->5 reshare is starved below
   # player_threshold (joiner + one committee validator offline); the existing
   # committee keeps finalizing on its 3-of-4 quorum with no hard-halt. Restoring
   # the downed validator lets a later retry complete and the set reaches 5.
 
+  @pfs-006-04
   Scenario: Stalled reshare does not halt the chain, and recovers when restored
     Given a fresh localnet with a wide DKG activation grace
     When a staked joiner freezes a 4-to-5 reshare target

@@ -16,7 +16,7 @@
 //! Oracle slash-window penalties run after begin-zone system phases and before user txs.
 //!
 //! User-triggered `mineGratis` goes through the NodFactory precompile
-//! (`outbe_nodfactory::precompile::dispatch`) so the atomic burn-of-Nod +
+//! (`outbe_nodfactory::precompile::dispatch_with_reader`) so the atomic burn-of-Nod +
 //! `Gratis::mine` wiring inside the dispatcher is exercised, not duplicated.
 //! The Nod precompile (0x1006) is read-only after the Nod/NodFactory split.
 //!
@@ -41,9 +41,16 @@
 //!   - Reth payload building, state-root computation, and txpool admission
 //!     (we drive only the pre-execution hook phase, not the full executor).
 
-use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
+use std::{collections::HashMap, sync::Arc};
+
+use alloy_primitives::{address, keccak256, Address, Bytes, FixedBytes, Log, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    begin_block, derive_poseidon_entity_id, end_block, CandidateCacheLimits, CeMdbx, CeWorkConfig,
+    CompressedTreeService, EntityId36, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
+    FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
+};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_metadosis::{
@@ -55,11 +62,16 @@ use outbe_metadosis::{
     runtime::date_key_to_timestamp,
     schema::{day_type, status, MetadosisContract},
 };
-use outbe_nod::NodContract;
+use outbe_nod::api as nod_api;
 use outbe_nodfactory::{
     precompile::{dispatch as nodfactory_dispatch, INodFactory},
     runtime as nodfactory_runtime,
 };
+use outbe_offchain_data::{
+    FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
+    RuntimeBodyReaders,
+};
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_oracle::{
     contract::OracleContract,
     logic::{init_from_genesis, OracleGenesisConfig},
@@ -91,6 +103,110 @@ struct WwdPhases {
     offering_entry: u64,
     offering_end: u64,
     scheduled: u64,
+}
+
+struct BodyProjectionHarness {
+    storage: Arc<MemoryStorage>,
+    projector: OffchainDataProjection,
+    projected_events: usize,
+    next_block: u64,
+    _tree_directory: tempfile::TempDir,
+    tree_service: Arc<CompressedTreeService>,
+}
+
+impl BodyProjectionHarness {
+    fn new() -> Self {
+        let storage = Arc::new(MemoryStorage::new());
+        let genesis_hash = B256::repeat_byte(0x11);
+        let reader: StorageReaderHandle = storage.clone();
+        let writer: StorageWriterHandle = storage.clone();
+        let projector = OffchainDataProjection::open(
+            ProjectionConfig {
+                chain_id: CHAIN_ID,
+                genesis_hash,
+                start_block: 1,
+            },
+            reader,
+            writer,
+        )
+        .unwrap();
+        let tree_directory = tempfile::tempdir().unwrap();
+        let tree_db = CeMdbx::open(
+            tree_directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: CHAIN_ID,
+                genesis_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: genesis_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        let tree_service = Arc::new(
+            CompressedTreeService::new(
+                tree_db,
+                CandidateCacheLimits {
+                    max_candidates: 4,
+                    max_encoded_bytes: 10_000_000,
+                },
+            )
+            .unwrap(),
+        );
+        Self {
+            storage,
+            projector,
+            projected_events: 0,
+            next_block: 1,
+            _tree_directory: tree_directory,
+            tree_service,
+        }
+    }
+
+    fn runtime_readers(&self) -> RuntimeBodyReaders {
+        RuntimeBodyReaders::new(self.storage.clone())
+    }
+
+    fn project_completed_block(&mut self, provider: &HashMapStorageProvider) {
+        let events = provider.get_ordered_events();
+        if events.len() == self.projected_events {
+            return;
+        }
+        let logs = events[self.projected_events..]
+            .iter()
+            .enumerate()
+            .map(|(index, log)| FinalizedLog {
+                log_index: u64::try_from(index).unwrap(),
+                emitter: log.address,
+                data: log.data.clone(),
+            })
+            .collect();
+        let number = self.next_block;
+        let hash = keccak256(number.to_be_bytes());
+        self.projector
+            .project_block(&FinalizedBlock {
+                number,
+                hash,
+                receipts: vec![FinalizedReceipt {
+                    tx_hash: keccak256([number.to_be_bytes(), 1_u64.to_be_bytes()].concat()),
+                    transaction_index: 0,
+                    success: true,
+                    logs,
+                }],
+            })
+            .unwrap();
+        self.projected_events = events.len();
+        self.next_block += 1;
+    }
 }
 
 fn phases_for(wwd: WorldwideDay) -> WwdPhases {
@@ -125,6 +241,68 @@ fn build_ctx<'s>(
     )
 }
 
+fn with_storage<R>(
+    provider: &mut HashMapStorageProvider,
+    operation: impl FnOnce(StorageHandle<'_>) -> R,
+) -> R {
+    StorageHandle::enter(provider, operation)
+}
+
+fn with_body_lifecycle<R>(
+    provider: &mut HashMapStorageProvider,
+    bodies: &mut BodyProjectionHarness,
+    operation: impl FnOnce(StorageHandle<'_>, &ExecutionScope, &RuntimeBodyReaders) -> R,
+) -> R {
+    let parent = bodies.runtime_readers();
+    let marker = bodies.tree_service.finalized_marker().unwrap();
+    let block_number = marker.height + 1;
+    provider.set_block_number(block_number);
+    if marker.height == 0 {
+        StorageHandle::enter(provider, |storage| {
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::ZERO,
+                    U256::from(2_u64),
+                )
+                .unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1_u64),
+                    U256::from_be_bytes(marker.new_root.0),
+                )
+                .unwrap();
+        });
+    }
+    let parent_tree = bodies
+        .tree_service
+        .open_parent(ExactParentIdentity {
+            commitment_scheme_version: marker.commitment_scheme_version,
+            block_number: marker.height,
+            block_hash: marker.block_hash,
+            root: marker.new_root,
+        })
+        .unwrap();
+    let scope = ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+    let (result, seal) = StorageHandle::enter(provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        let result = operation(storage.clone(), &scope, &parent);
+        let seal = end_block(storage, &scope).unwrap();
+        (result, seal)
+    });
+    let block_hash = keccak256([b"ce-test-block".as_slice(), &block_number.to_be_bytes()].concat());
+    bodies
+        .tree_service
+        .publish_candidate(block_hash, seal.staged_tree_batch)
+        .unwrap();
+    bodies
+        .tree_service
+        .apply_finalized(block_number, block_hash, seal.new_root)
+        .unwrap();
+    result
+}
+
 /// One begin-block tick running the full Outbe pre-execution hook chain, in
 /// the same order as `OutbeBlockExecutor::apply_pre_execution_changes`
 /// (executor.rs), followed by an explicit `start_metadosis` call.
@@ -140,23 +318,27 @@ fn build_ctx<'s>(
 /// the day has a deterministic budget; this keeps the test's processing
 /// outcome stable without depending on the daily Cycle handler's exact
 /// allocation math.
-fn tick(storage: StorageHandle, block_number: u64, timestamp: u64, emission: Option<U256>) {
-    // Mirror the block timestamp into the HashMap provider so precompiles that
-    // read `self.storage.timestamp()` see the simulated block time advance with each tick.
-    storage.set_block_timestamp(U256::from(timestamp)).unwrap();
-    let ctx = build_ctx(storage, block_number, timestamp);
-    if let Some(amount) = emission {
-        emission_sink::apply(&ctx, amount).unwrap();
-    }
-    // drive Metadosis directly before the pre-execution hook
-    // chain so subsequent NOD/Oracle hooks observe the same WWD state
-    // they used to see when `MetadosisLifecycle::begin_block` was wired
-    // between Rewards and Staking. Production now drives Metadosis from
-    // the daily Cycle handler (post-execution); this keeps the test's
-    // sub-day state-machine driving working without re-introducing the
-    // legacy lifecycle.
-    outbe_metadosis::runtime::start_metadosis(&ctx).unwrap();
-    outbe_evm::executor::run_outbe_pre_execution_hooks(&ctx, None).unwrap();
+fn tick(
+    provider: &mut HashMapStorageProvider,
+    bodies: &mut BodyProjectionHarness,
+    block_number: u64,
+    timestamp: u64,
+    emission: Option<U256>,
+) {
+    with_body_lifecycle(provider, bodies, |storage, scope, parent| {
+        // Mirror the block timestamp into the HashMap provider so precompiles that
+        // read `self.storage.timestamp()` see the simulated block time advance with each tick.
+        storage.set_block_timestamp(U256::from(timestamp)).unwrap();
+        let ctx = build_ctx(storage.clone(), block_number, timestamp);
+        if let Some(amount) = emission {
+            emission_sink::apply(&ctx, amount).unwrap();
+        }
+        outbe_evm::executor::run_outbe_pre_execution_hooks_with_readers(&ctx, None, parent, scope)
+            .unwrap();
+        outbe_nod::hooks::qualify_nods(&ctx, scope, parent).unwrap();
+        outbe_metadosis::runtime::start_metadosis(&ctx, scope, parent).unwrap();
+    });
+    bodies.project_completed_block(provider);
 }
 
 fn init_oracle(storage: StorageHandle) -> u32 {
@@ -238,7 +420,7 @@ fn pre_create_wwd(storage: StorageHandle, wwd: WorldwideDay) {
     tribute.seal_day(wwd).unwrap();
 }
 
-fn find_valid_nonce(nod_id: U256) -> U256 {
+fn find_valid_nonce(nod_id: EntityId36) -> U256 {
     for n in 0u64..100_000 {
         let nonce = U256::from(n);
         if nodfactory_runtime::validate_pow(nod_id, nonce).is_ok() {
@@ -255,89 +437,106 @@ fn find_valid_nonce(nod_id: U256) -> U256 {
 /// responsible for first seeding an exchange rate high enough that
 /// `NodLifecycle::begin_block` qualified the bucket; `mine_gratis` itself does
 /// not query oracle.
-/// Decrypt `owner`'s confidential gratis balance with its view key.
-fn view_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), owner).unwrap();
-    let blob = outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_balance(&vk, owner, &blob).unwrap()
-}
+fn mine_via_precompile(
+    provider: &mut HashMapStorageProvider,
+    bodies: &mut BodyProjectionHarness,
+    owner: Address,
+) -> U256 {
+    let mined = with_body_lifecycle(provider, bodies, |storage, scope, parent| {
+        let nods = nod_api::list_by_owner(&storage, scope, parent, owner).unwrap();
+        assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
+        let item = nods.into_iter().next().unwrap();
 
-fn mine_via_precompile(storage: StorageHandle, owner: Address) -> U256 {
-    let nod = NodContract::new(storage.clone());
-    let nods = nod.get_nods_by_owner(owner).unwrap();
-    assert_eq!(nods.len(), 1, "expected exactly one NOD for {owner}");
-    let item = nod.get_item(nods[0]).unwrap().unwrap();
-
-    let nonce = find_valid_nonce(item.nod_id);
-    let balance_before = view_balance(&storage, owner);
-
-    // Owner-authorized mint: the Nod owner (== gratis recipient) signs the mint
-    // with its modify key, binding the exact gratis load + its current op-nonce.
-    let op_nonce = outbe_gratis::api::op_nonce(storage.clone(), owner).unwrap();
-    let modify_key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
-    let chain = B256::from(U256::from(CHAIN_ID));
-    let auth = ModifyAuth {
-        mac: modify_mac(
-            &modify_key,
-            owner,
-            GratisOp::Mint,
-            item.gratis_load_minor,
+        let nonce = find_valid_nonce(item.nod_id);
+        let balance_before = view_balance(&storage, owner);
+        let op_nonce = outbe_gratis::api::op_nonce(storage.clone(), owner).unwrap();
+        let modify_key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+        let auth = ModifyAuth {
+            mac: modify_mac(
+                &modify_key,
+                owner,
+                GratisOp::Mint,
+                item.gratis_load_minor,
+                op_nonce,
+                B256::from(U256::from(CHAIN_ID)),
+            ),
             op_nonce,
-            chain,
-        ),
-        op_nonce,
-    };
+        };
 
-    let call = INodFactory::mineGratisCall {
-        nodId: item.nod_id,
-        nonce,
-        asset: MINE_GRATIS_ASSET,
-        mac: FixedBytes(auth.mac),
-        opNonce: auth.op_nonce,
-    };
-    let output =
-        nodfactory_dispatch(storage.clone(), &call.abi_encode(), owner, U256::ZERO).unwrap();
-    let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
-    assert_eq!(mined, item.gratis_load_minor);
+        let call = INodFactory::mineGratisCall {
+            nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
+            nonce,
+            asset: MINE_GRATIS_ASSET,
+            mac: FixedBytes(auth.mac),
+            opNonce: auth.op_nonce,
+        };
+        let output = nodfactory_dispatch(
+            storage.clone(),
+            scope,
+            parent,
+            &call.abi_encode(),
+            owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        let mined = INodFactory::mineGratisCall::abi_decode_returns(&output).unwrap();
+        assert_eq!(mined, item.gratis_load_minor);
 
-    // Single precompile call must have burned the NOD and credited GRATIS atomically.
-    assert!(NodContract::new(storage.clone())
-        .get_item(item.nod_id)
-        .unwrap()
-        .is_none());
-    let balance_after = view_balance(&storage, owner);
-    assert_eq!(balance_after, balance_before + mined);
+        assert!(nod_api::get_item(&storage, scope, parent, item.nod_id)
+            .unwrap()
+            .is_none());
+        let balance_after = view_balance(&storage, owner);
+        assert_eq!(balance_after, balance_before + mined);
+        mined
+    });
+    bodies.project_completed_block(provider);
     mined
 }
 
-#[test]
-fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
-    // The confidential GRATIS mint routes through the in-process enclave engine.
+fn view_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    let view_key = derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    let ciphertext = outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap();
+    if ciphertext.is_empty() {
+        U256::ZERO
+    } else {
+        decrypt_balance(&view_key, owner, &ciphertext).unwrap()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ScenarioOutcome {
+    consensus_storage: HashMap<(Address, U256), U256>,
+    events: Vec<Log>,
+    native_balances: [U256; 3],
+    gratis_balances: [U256; 3],
+    projected_carol_nod: (EntityId36, U256, B256),
+    projected_carol_bucket: (bool, u64),
+}
+
+fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let mut bodies = BodyProjectionHarness::new();
     // The NOD-cost payment branch deposits into the vault provider via an EVM
     // sub-call to VAULT_PROVIDER_ADDRESS. enable_sub_call_stub covers the ERC-20
     // legs; the provider is stubbed to return a decodable uint256 (shares).
     provider.enable_sub_call_stub();
     provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
-    StorageHandle::enter(&mut provider, |storage| {
-        // Pick non-adjacent WWDs so each day's full ~24-day lifecycle does not
-        // accidentally interleave with the other's.
-        let green_wwd = WorldwideDay::new(20241221);
-        let red_wwd = WorldwideDay::new(20241222);
+    // Pick non-adjacent WWDs so each day's full ~24-day lifecycle does not
+    // accidentally interleave with the other's.
+    let green_wwd = WorldwideDay::new(20241221);
+    let red_wwd = WorldwideDay::new(20241222);
 
-        let green = phases_for(green_wwd);
-        let red = phases_for(red_wwd);
+    let green = phases_for(green_wwd);
+    let red = phases_for(red_wwd);
 
-        let alice = address!("0x1111111111111111111111111111111111111111");
-        let bob = address!("0x2222222222222222222222222222222222222222");
-        let carol = address!("0x3333333333333333333333333333333333333333");
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let bob = address!("0x2222222222222222222222222222222222222222");
+    let carol = address!("0x3333333333333333333333333333333333333333");
 
-        let pair_id = init_oracle(storage.clone());
+    let pair_id = with_storage(&mut provider, init_oracle);
 
+    with_storage(&mut provider, |storage| {
         // GREEN: current VWAP > previous -> GREEN day_type.
         seed_previous_wwd_vwap(
             storage.clone(),
@@ -358,49 +557,54 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
 
         pre_create_wwd(storage.clone(), green_wwd);
         pre_create_wwd(storage.clone(), red_wwd);
+    });
 
-        let green_day_limit = U256::in_units(500_000u64);
-        let red_day_limit = U256::in_units(5_000u64);
+    let green_day_limit = U256::in_units(500_000u64);
+    let red_day_limit = U256::in_units(5_000u64);
 
-        // Ticks are ordered by ascending timestamp; both days progress in parallel.
-        tick(
-            storage.clone(),
-            1,
-            emission_timestamp(green_wwd),
-            Some(green_day_limit),
-        );
-        tick(
-            storage.clone(),
-            2,
-            emission_timestamp(red_wwd),
-            Some(red_day_limit),
-        );
+    // Ticks are ordered by ascending timestamp; both days progress in parallel.
+    tick(
+        &mut provider,
+        &mut bodies,
+        1,
+        emission_timestamp(green_wwd),
+        Some(green_day_limit),
+    );
+    tick(
+        &mut provider,
+        &mut bodies,
+        2,
+        emission_timestamp(red_wwd),
+        Some(red_day_limit),
+    );
 
-        // GREEN FORMING -> LOOKBACK: VWAPs captured, day_type inferred.
-        tick(storage.clone(), 3, green.forming_end, None);
-        {
-            let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_wwd_status(green_wwd).unwrap(), status::LOOKBACK_DELAY);
-            assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
-        }
+    // GREEN FORMING -> LOOKBACK: VWAPs captured, day_type inferred.
+    tick(&mut provider, &mut bodies, 3, green.forming_end, None);
+    with_storage(&mut provider, |storage| {
+        let m = MetadosisContract::new(storage);
+        assert_eq!(m.get_wwd_status(green_wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
+    });
 
-        // RED FORMING -> LOOKBACK.
-        tick(storage.clone(), 4, red.forming_end, None);
-        {
-            let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::LOOKBACK_DELAY);
-            assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
-        }
+    // RED FORMING -> LOOKBACK.
+    tick(&mut provider, &mut bodies, 4, red.forming_end, None);
+    with_storage(&mut provider, |storage| {
+        let m = MetadosisContract::new(storage);
+        assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::LOOKBACK_DELAY);
+        assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
+    });
 
-        // GREEN -> OFFERING: tribute unsealed by status machine; issue alice's tribute.
-        tick(storage.clone(), 5, green.offering_entry, None);
-        let green_token_id = U256::from_be_bytes(B256::left_padding_from(&[0xAA, 0x01]).0);
-        let green_nominal = U256::in_units(1_000_000u64);
-        {
-            let mut tribute = TributeContract::new(storage.clone());
-            tribute
-                .issue(&TributeData {
-                    token_id: green_token_id,
+    // GREEN -> OFFERING: tribute unsealed by status machine; issue alice's tribute.
+    tick(&mut provider, &mut bodies, 5, green.offering_entry, None);
+    let green_tribute_id = derive_poseidon_entity_id(alice, green_wwd).unwrap();
+    let green_nominal = U256::in_units(1_000_000u64);
+    with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+        TributeContract::new(storage)
+            .issue(
+                scope,
+                parent,
+                &TributeData {
+                    tribute_id: green_tribute_id,
                     owner: alice,
                     worldwide_day: green_wwd,
                     issuance_amount_minor: green_nominal,
@@ -409,21 +613,26 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     reference_currency: 840,
                     exclude_from_intex_issuance: false,
                     tribute_price_minor: U256::ZERO,
-                })
-                .unwrap();
-        }
+                },
+            )
+            .unwrap();
+    });
+    bodies.project_completed_block(&provider);
 
-        // RED -> OFFERING; issue bob's small and carol's large tribute.
-        tick(storage.clone(), 6, red.offering_entry, None);
-        let red_small_token = U256::from_be_bytes(B256::left_padding_from(&[0xBB, 0x01]).0);
-        let red_large_token = U256::from_be_bytes(B256::left_padding_from(&[0xBB, 0x02]).0);
-        let red_small_nominal = U256::in_units(20u64);
-        let red_large_nominal = U256::in_units(1_000u64);
-        {
-            let mut tribute = TributeContract::new(storage.clone());
-            tribute
-                .issue(&TributeData {
-                    token_id: red_small_token,
+    // RED -> OFFERING; issue bob's small and carol's large tribute.
+    tick(&mut provider, &mut bodies, 6, red.offering_entry, None);
+    let red_small_tribute_id = derive_poseidon_entity_id(bob, red_wwd).unwrap();
+    let red_large_tribute_id = derive_poseidon_entity_id(carol, red_wwd).unwrap();
+    let red_small_nominal = U256::in_units(20u64);
+    let red_large_nominal = U256::in_units(1_000u64);
+    with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+        let mut tribute = TributeContract::new(storage);
+        tribute
+            .issue(
+                scope,
+                parent,
+                &TributeData {
+                    tribute_id: red_small_tribute_id,
                     owner: bob,
                     worldwide_day: red_wwd,
                     issuance_amount_minor: red_small_nominal,
@@ -432,11 +641,15 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     reference_currency: 840,
                     exclude_from_intex_issuance: false,
                     tribute_price_minor: U256::ZERO,
-                })
-                .unwrap();
-            tribute
-                .issue(&TributeData {
-                    token_id: red_large_token,
+                },
+            )
+            .unwrap();
+        tribute
+            .issue(
+                scope,
+                parent,
+                &TributeData {
+                    tribute_id: red_large_tribute_id,
                     owner: carol,
                     worldwide_day: red_wwd,
                     issuance_amount_minor: red_large_nominal,
@@ -444,129 +657,196 @@ fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
                     nominal_amount_minor: red_large_nominal,
                     reference_currency: 840,
                     exclude_from_intex_issuance: false,
-                    tribute_price_minor: U256::ZERO,
-                })
-                .unwrap();
-        }
-
-        // GREEN OFFERING -> WAITING; RED stays OFFERING.
-        tick(storage.clone(), 7, green.offering_end, None);
-
-        // block_time reaches red.offering_end: GREEN jumps OFFERING->WAITING->READY
-        // (WAITING is crossed; process_metadosis runs), RED -> WAITING.
-        tick(storage.clone(), 8, red.offering_end, None);
-
-        // Tick at green.scheduled+1h is redundant here because block 8 already
-        // pushed green past its scheduled time; assert COMPLETED.
-        {
-            let m = MetadosisContract::new(storage.clone());
-            assert_eq!(
-                m.get_wwd_status(green_wwd).unwrap(),
-                status::COMPLETED,
-                "GREEN should be COMPLETED after process_metadosis"
-            );
-            assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
-        }
-
-        // The contributor map is keyed by the wwd even though processing runs weeks later.
-        assert_eq!(
-            outbe_intex::api::read_contributors(&storage, u32::from(green_wwd)).unwrap(),
-            vec![(alice, green_nominal)]
-        );
-
-        // Alice got one NOD and her tribute is cleared, but the bucket is NOT
-        // yet qualified — lysis only mints NODs, the oracle rate has to reach
-        // floor_price for mining to unlock.
-        let alice_bucket;
-        let alice_floor_price;
-        {
-            let tribute = TributeContract::new(storage.clone());
-            assert!(tribute.get_tributes_by_owner(alice).unwrap().is_empty());
-            let nod = NodContract::new(storage.clone());
-            let alice_nods = nod.get_nods_by_owner(alice).unwrap();
-            assert_eq!(alice_nods.len(), 1);
-            let alice_item = nod.get_item(alice_nods[0]).unwrap().unwrap();
-            assert_eq!(alice_item.worldwide_day, green_wwd);
-
-            alice_floor_price = alice_item.floor_price_minor;
-            alice_bucket = NodContract::bucket_key(alice_item.worldwide_day, alice_floor_price);
-            assert!(
-                !nod.get_bucket(alice_bucket)
-                    .unwrap()
-                    .map(|b| b.is_qualified)
-                    .unwrap_or(false),
-                "lysis must NOT qualify the bucket — qualification is oracle-driven"
-            );
-        }
-
-        // Mining is blocked until the COEN/0xUSD exchange rate reaches the
-        // bucket's floor_price. Seed rate above both GREEN and RED floors and
-        // advance one more tick so NodLifecycle promotes both buckets.
-        seed_exchange_rate(storage.clone(), U256::from(500u64));
-        tick(
-            storage.clone(),
-            9,
-            red.offering_end + SECONDS_PER_HOUR,
-            None,
-        );
-        {
-            let nod = NodContract::new(storage.clone());
-            assert!(
-                nod.get_bucket(alice_bucket)
-                    .unwrap()
-                    .map(|b| b.is_qualified)
-                    .unwrap_or(false),
-                "NodLifecycle must qualify the bucket once oracle rate > floor_price"
-            );
-            assert!(alice_floor_price < U256::from(500u64));
-        }
-
-        // GREEN unused demand + day_metadosis_limit_remainder landed in PromisLimit.
-        let promis_after_green = PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
+                    // Keep the two RED tributes in distinct NOD buckets so the
+                    // qualification assertions below exercise both outcomes.
+                    tribute_price_minor: U256::from(10_000u64),
+                },
+            )
             .unwrap();
-        assert!(
-            promis_after_green > U256::ZERO,
-            "GREEN remainder must accumulate in PromisLimit"
-        );
-
-        let green_mined = mine_via_precompile(storage.clone(), alice);
-        assert!(green_mined > U256::ZERO);
-
-        // RED WAITING -> READY -> process_metadosis.
-        tick(storage.clone(), 10, red.scheduled + SECONDS_PER_HOUR, None);
-
-        {
-            let m = MetadosisContract::new(storage.clone());
-            assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::COMPLETED);
-            assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
-        }
-
-        // RED allocation is distributed proportionally across all tributes of
-        // the day (lysis mints a NOD for each owner against a partial
-        // gratis_load and consumes the tribute). Both bob's small and carol's
-        // large tribute receive a NOD and are cleared — the allocation funds a
-        // fraction of each, not whole tributes in size order.
-        {
-            let nod = NodContract::new(storage.clone());
-            assert_eq!(nod.get_nods_by_owner(bob).unwrap().len(), 1);
-            assert_eq!(nod.get_nods_by_owner(carol).unwrap().len(), 1);
-
-            let tribute = TributeContract::new(storage.clone());
-            assert!(tribute.get_tributes_by_owner(bob).unwrap().is_empty());
-            assert!(tribute.get_tributes_by_owner(carol).unwrap().is_empty());
-        }
-
-        // RED remainder added on top of GREEN's.
-        let promis_after_red = PromisLimitContract::new(storage.clone())
-            .get_total_unallocated()
-            .unwrap();
-        assert!(
-            promis_after_red > promis_after_green,
-            "RED processing must add to PromisLimit total"
-        );
-
-        let bob_mined = mine_via_precompile(storage.clone(), bob);
-        assert!(bob_mined > U256::ZERO);
     });
+    bodies.project_completed_block(&provider);
+
+    // GREEN OFFERING -> WAITING; RED stays OFFERING.
+    tick(&mut provider, &mut bodies, 7, green.offering_end, None);
+
+    // GREEN crosses WAITING -> READY and is processed; RED enters WAITING.
+    tick(&mut provider, &mut bodies, 8, red.offering_end, None);
+    with_storage(&mut provider, |storage| {
+        let m = MetadosisContract::new(storage);
+        assert_eq!(m.get_wwd_status(green_wwd).unwrap(), status::COMPLETED);
+        assert_eq!(m.get_wwd_day_type(green_wwd).unwrap(), day_type::GREEN);
+    });
+
+    // The canonical bodies are now available only through the projected repository.
+    assert!(
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+            TributeContract::new(storage)
+                .get_tribute_ids_by_owner(scope, parent, alice)
+                .unwrap()
+        })
+        .is_empty()
+    );
+    let alice_nods = with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+        nod_api::list_by_owner(&storage, scope, parent, alice).unwrap()
+    });
+    assert_eq!(alice_nods.len(), 1);
+    let alice_item = &alice_nods[0];
+    assert_eq!(alice_item.worldwide_day, green_wwd);
+    let alice_floor_price = alice_item.floor_price_minor;
+    let alice_bucket_id = EntityId36::new(alice_item.worldwide_day, alice_item.bucket_key.0);
+    assert!(
+        !with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+            nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
+        })
+        .map(|bucket| bucket.is_qualified)
+        .unwrap_or(false),
+        "lysis must not qualify the bucket before the oracle rate rises"
+    );
+
+    // Advance once with a rate above both floors so NodLifecycle emits qualification events.
+    with_storage(&mut provider, |storage| {
+        seed_exchange_rate(storage, U256::from(500u64));
+    });
+    tick(
+        &mut provider,
+        &mut bodies,
+        9,
+        red.offering_end + SECONDS_PER_HOUR,
+        None,
+    );
+    assert!(
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+            nod_api::get_bucket(&storage, scope, parent, alice_bucket_id).unwrap()
+        })
+        .map(|bucket| bucket.is_qualified)
+        .unwrap_or(false),
+        "NodLifecycle must qualify the projected bucket once rate exceeds its floor"
+    );
+    assert!(alice_floor_price < U256::from(500u64));
+
+    let promis_after_green = with_storage(&mut provider, |storage| {
+        PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap()
+    });
+    assert!(promis_after_green > U256::ZERO);
+    assert!(mine_via_precompile(&mut provider, &mut bodies, alice) > U256::ZERO);
+
+    // RED WAITING -> READY -> process_metadosis.
+    tick(
+        &mut provider,
+        &mut bodies,
+        10,
+        red.scheduled + SECONDS_PER_HOUR,
+        None,
+    );
+    with_storage(&mut provider, |storage| {
+        let m = MetadosisContract::new(storage);
+        assert_eq!(m.get_wwd_status(red_wwd).unwrap(), status::COMPLETED);
+        assert_eq!(m.get_wwd_day_type(red_wwd).unwrap(), day_type::RED);
+    });
+
+    // Production Cycle ordering qualifies existing buckets before it runs
+    // Metadosis/Lysis. Red-day Nods were minted in block 10, so they become
+    // eligible for qualification only in the following block.
+    tick(
+        &mut provider,
+        &mut bodies,
+        11,
+        red.scheduled + 2 * SECONDS_PER_HOUR,
+        None,
+    );
+
+    for (owner, expected_qualified) in [(bob, true), (carol, false)] {
+        let owner_nods =
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+                nod_api::list_by_owner(&storage, scope, parent, owner).unwrap()
+            });
+        assert_eq!(owner_nods.len(), 1);
+        let owner_bucket_id =
+            EntityId36::new(owner_nods[0].worldwide_day, owner_nods[0].bucket_key.0);
+        assert_eq!(
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+                nod_api::get_bucket(&storage, scope, parent, owner_bucket_id).unwrap()
+            })
+            .map(|bucket| bucket.is_qualified),
+            Some(expected_qualified)
+        );
+        assert!(
+            with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+                TributeContract::new(storage)
+                    .get_tribute_ids_by_owner(scope, parent, owner)
+                    .unwrap()
+            })
+            .is_empty()
+        );
+    }
+
+    let promis_after_red = with_storage(&mut provider, |storage| {
+        PromisLimitContract::new(storage)
+            .get_total_unallocated()
+            .unwrap()
+    });
+    assert!(promis_after_red > promis_after_green);
+    assert!(mine_via_precompile(&mut provider, &mut bodies, bob) > U256::ZERO);
+
+    // This read opens a fresh block scope immediately after the final mining
+    // block. It therefore also proves that end_block removed every temporary
+    // body/index overlay entry left by the dependent burn + Gratis mint.
+    let (projected_carol_nod, projected_carol_bucket) =
+        with_body_lifecycle(&mut provider, &mut bodies, |storage, scope, parent| {
+            assert!(nod_api::list_by_owner(&storage, scope, parent, bob)
+                .unwrap()
+                .is_empty());
+            let carol_nods = nod_api::list_by_owner(&storage, scope, parent, carol).unwrap();
+            assert_eq!(carol_nods.len(), 1);
+            let carol_nod = &carol_nods[0];
+            let carol_bucket = nod_api::get_bucket(
+                &storage,
+                scope,
+                parent,
+                EntityId36::new(carol_nod.worldwide_day, carol_nod.bucket_key.0),
+            )
+            .unwrap()
+            .expect("Carol's unqualified bucket remains projected");
+            (
+                (
+                    carol_nod.nod_id,
+                    carol_nod.gratis_load_minor,
+                    carol_nod.bucket_key,
+                ),
+                (carol_bucket.is_qualified, carol_bucket.total_nods),
+            )
+        });
+
+    let gratis_balances = with_storage(&mut provider, |storage| {
+        [
+            view_balance(&storage, alice),
+            view_balance(&storage, bob),
+            view_balance(&storage, carol),
+        ]
+    });
+    ScenarioOutcome {
+        consensus_storage: provider.storage.clone(),
+        events: provider.get_ordered_events().to_vec(),
+        native_balances: [
+            provider.get_balance(alice),
+            provider.get_balance(bob),
+            provider.get_balance(carol),
+        ],
+        gratis_balances,
+        projected_carol_nod,
+        projected_carol_bucket,
+    }
+}
+
+#[test]
+fn test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis() {
+    // The two executions use distinct consensus providers and distinct parent
+    // projection stores. Equal results prove that the dependent Tribute ->
+    // Lysis -> Nod qualification/mining -> Gratis flow is deterministic across
+    // proposer/validator-style replay, including logs and projected survivors.
+    let proposer = run_green_then_red_wwd_lysis_nod_mine_gratis();
+    let validator = run_green_then_red_wwd_lysis_nod_mine_gratis();
+    assert_eq!(proposer, validator);
 }

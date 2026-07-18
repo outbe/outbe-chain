@@ -20,9 +20,16 @@ use crate::sol_ext::{IIntexNFT1155, IOriginRouter};
 pub struct IntexLifecycle;
 
 impl BlockLifecycle for IntexLifecycle {
+    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
+    type EndBlockResult = ();
+
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         scan_and_qualify(ctx)?;
         crate::runtime::drain_distributions(&ctx.storage)?;
+        Ok(())
+    }
+
+    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
         Ok(())
     }
 }
