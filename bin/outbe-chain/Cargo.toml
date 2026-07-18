@@ -30,6 +30,7 @@ reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-node-builder.workspace = true
+reth-node-core.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true

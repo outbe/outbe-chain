@@ -7252,6 +7252,7 @@ dependencies = [
  "reth-cli",
  "reth-ethereum",
  "reth-node-builder",
+ "reth-node-core",
  "reth-rpc-server-types",
  "serde_json",
  "tempfile",
