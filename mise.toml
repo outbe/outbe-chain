@@ -110,6 +110,10 @@ run = [
   "cargo nextest run --workspace",
 ]
 
+[tasks.audit-consensus-deps]
+description = "Ensure consensus has no transitive dependency on the EVM"
+run = "bash scripts/check-consensus-deps.sh"
+
 [tasks.audit-full]
 description = "Full cycle: machete + deny + rustsec + udeps"
 depends = ["audit-machete", "audit-deny", "audit-rustsec", "audit-udeps"]
