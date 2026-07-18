@@ -225,7 +225,7 @@ fn parse_dkg_key_backend(cli: &DkgCli) -> eyre::Result<outbe_consensus::bls::Key
             Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
         }
         "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-        other => eyre::bail!("unknown BLS key backend: {other}"),
+        other => Err(eyre::eyre!("unknown BLS key backend: {other}")),
     }
 }
 
