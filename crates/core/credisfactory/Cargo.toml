@@ -10,7 +10,6 @@ outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-credis.workspace = true
 outbe-gratis.workspace = true
-outbe-gratispool.workspace = true
 outbe-vaultprovider.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
@@ -20,11 +19,11 @@ thiserror.workspace = true
 [dev-dependencies]
 outbe-gratisfactory.workspace = true
 outbe-fidelity.workspace = true
-# Enable the test-helpers feature on outbe-gratispool so e2e tests can drive
-# the verifier outcome without a real Barretenberg-prover proof. Cargo
-# unions features across `[dependencies]` and `[dev-dependencies]` for test
-# builds.
-outbe-gratispool = { workspace = true, features = ["test-helpers"] }
+# Drive the confidential Gratis path in the e2e tests via the in-process enclave
+# engine; `test-enclave` is unioned into the gratis dep for test builds.
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
+outbe-tee.workspace = true
+outbe-tee-enclave.workspace = true
 
 [lints]
 workspace = true

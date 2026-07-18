@@ -17,7 +17,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
  * @title OriginRouterTest
  * @notice Foundry tests for OriginRouter
  * @dev Tests message encoding/decoding and access control.
- *      All auction/series messages are keyed by `seriesId` (uint32).
+ *      Auction messages are keyed by `worldwideDay`; series (issuance/mark) by `seriesId`.
  */
 contract OriginRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
@@ -40,7 +40,8 @@ contract OriginRouterTest is CrossChainTest {
     address private admin = address(this);
     address private user = address(0x1);
 
-    uint32 private constant SERIES_ID = 20250115; // yyyymmdd format
+    uint32 private constant WORLDWIDE_DAY = 20250115; // yyyymmdd — the auction day (root)
+    uint32 private constant SERIES_ID = WORLDWIDE_DAY; // derived (identity while one series per day)
 
     function setUp() public {
         _setUpBridge();
@@ -81,10 +82,10 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     // --- Helpers ---
-    /// @dev Build a baseline AuctionStageStartParams payload keyed by SERIES_ID.
+    /// @dev Build a baseline AuctionStageStartParams payload keyed by WORLDWIDE_DAY.
     function _baseStageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory) {
         return IOriginRouter.AuctionStageStartParams({
-            seriesId: SERIES_ID,
+            worldwideDay: WORLDWIDE_DAY,
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
@@ -110,6 +111,7 @@ contract OriginRouterTest is CrossChainTest {
     {
         return IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
+            worldwideDay: WORLDWIDE_DAY,
             issuedIntexCount: 10_000,
             promisLoadMinor: 1000,
             entryPriceMinor: 100e6,
@@ -153,7 +155,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionStageReveal_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageReveal{value: 0.1 ether}(SERIES_ID, true);
+        originRouter.sendAuctionStageReveal{value: 0.1 ether}(WORLDWIDE_DAY, true);
     }
 
     function test_sendMarkCalled_revert_unauthorized() public {
@@ -165,13 +167,13 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionStageClearing_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageClearing{value: 0.1 ether}(SERIES_ID);
+        originRouter.sendAuctionStageClearing{value: 0.1 ether}(WORLDWIDE_DAY);
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionResult{value: 0.1 ether}(SERIES_ID, 10_000, 100e6, 50);
+        originRouter.sendAuctionResult{value: 0.1 ether}(WORLDWIDE_DAY, 10_000, 100e6, 50);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
@@ -195,7 +197,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendMarkQualified_revert_unauthorized() public {
@@ -234,7 +236,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
     }
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
@@ -250,7 +252,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        originRouter.sendRefundInstructions{value: 0.1 ether}(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
     }
 
     // --- Role Constants Tests ---
@@ -266,20 +268,20 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendAuctionStageReveal() public view {
-        uint256 fee = originRouter.quoteSendAuctionStageReveal(SERIES_ID, true);
+        uint256 fee = originRouter.quoteSendAuctionStageReveal(WORLDWIDE_DAY, true);
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionStageClearing() public view {
-        uint256 fee = originRouter.quoteSendAuctionStageClearing(SERIES_ID);
+        uint256 fee = originRouter.quoteSendAuctionStageClearing(WORLDWIDE_DAY);
 
         assertEq(fee, 0.001 ether);
     }
 
     function test_quoteSendAuctionResult() public view {
         // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount)
-        uint256 fee = originRouter.quoteSendAuctionResult(SERIES_ID, 500, 75e6, 42);
+        uint256 fee = originRouter.quoteSendAuctionResult(WORLDWIDE_DAY, 500, 75e6, 42);
 
         assertEq(fee, 0.001 ether);
     }
@@ -310,7 +312,7 @@ contract OriginRouterTest is CrossChainTest {
         paidAmounts[0] = 50e6;
         paidAmounts[1] = 75e6;
 
-        uint256 fee = originRouter.quoteSendRefundInstructions(SERIES_ID, bidders, refundedAmounts, paidAmounts);
+        uint256 fee = originRouter.quoteSendRefundInstructions(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
 
         assertEq(fee, 0.001 ether);
     }

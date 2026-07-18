@@ -23,6 +23,11 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     ///         The refund itself still completes — slash is best-effort to preserve user-side liveness.
     event SlashSkipped(bytes32 indexed orderId);
 
+    /// @notice Thrown when a settle/refund batch mixes orders from different origin domains.
+    ///         The batch is dispatched to a single domain (order [0]'s), so a mixed batch would
+    ///         silently mis-route every order whose origin differs and strand its input tokens.
+    error MixedOriginDomain(uint32 expected, uint32 got);
+
     // ========== CLAIM ==========
 
     /// @notice Claim an order after quoting ends — locks collateral of the winning solver.
@@ -46,9 +51,14 @@ abstract contract DestinationSettler is DestinationSettlerBase {
             }
         }
 
-        destinationOrderStatus[_orderId] = CLAIMED;
+        // Collateral is locked before the order is marked CLAIMED: a winner whose collateral cannot
+        // be taken into custody forfeits the auction instead of blocking the order.
+        if (!_onClaimed(_orderId, winner, _originData)) {
+            _auction().resetAuction(_orderId, winner);
+            return;
+        }
 
-        _onClaimed(_orderId, winner, _originData);
+        destinationOrderStatus[_orderId] = CLAIMED;
 
         emit OrderClaimed(_orderId, winner, outputAmount);
     }
@@ -95,14 +105,29 @@ abstract contract DestinationSettler is DestinationSettlerBase {
         bytes[] memory _ordersOriginData,
         bytes[] memory _ordersFillerData
     ) internal override {
-        _dispatchSettle(OrderEncoder.decode(_ordersOriginData[0]).originDomain, _orderIds, _ordersFillerData);
+        _dispatchSettle(_requireSameOriginDomain(_ordersOriginData), _orderIds, _ordersFillerData);
     }
 
     // ========== REFUND ==========
 
     /// @dev Refunds multiple OnchainCrossChain orders by dispatching refund instructions.
     function _refundOrders(OnchainCrossChainOrder[] calldata _orders, bytes32[] memory _orderIds) internal override {
-        _dispatchRefund(OrderEncoder.decode(_orders[0].orderData).originDomain, _orderIds);
+        bytes[] memory ordersData = new bytes[](_orders.length);
+        for (uint256 i = 0; i < _orders.length; i++) {
+            ordersData[i] = _orders[i].orderData;
+        }
+        _dispatchRefund(_requireSameOriginDomain(ordersData), _orderIds);
+    }
+
+    /// @dev Returns the shared origin domain of a batch, reverting if any order's differs from the
+    ///      first. The whole batch dispatches to this one domain, so a mixed batch would silently
+    ///      mis-route the divergent orders and strand their input tokens.
+    function _requireSameOriginDomain(bytes[] memory _ordersData) private pure returns (uint32 originDomain) {
+        originDomain = OrderEncoder.decode(_ordersData[0]).originDomain;
+        for (uint256 i = 1; i < _ordersData.length; i++) {
+            uint32 got = OrderEncoder.decode(_ordersData[i]).originDomain;
+            if (got != originDomain) revert MixedOriginDomain(originDomain, got);
+        }
     }
 
     /// @notice Get order ID for onchain order
@@ -112,17 +137,26 @@ abstract contract DestinationSettler is DestinationSettlerBase {
 
     // ========== COLLATERAL HOOKS ==========
 
-    /// @dev Locks collateral when an order is claimed
-    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData) internal override {
+    /// @dev Locks collateral when an order is claimed. The lock takes custody of the winner's
+    ///      ERC-6909, which requires a live operator grant; a winner without one cannot be claimed.
+    function _onClaimed(bytes32 _orderId, address _solver, bytes calldata _originData)
+        internal
+        override
+        returns (bool)
+    {
         ISolverEscrow escrow = _solverEscrow();
-        if (address(escrow) == address(0)) return;
+        if (address(escrow) == address(0)) return true;
 
         OrderData memory orderData = OrderEncoder.decode(_originData);
         address outputToken = TypeCasts.bytes32ToAddress(orderData.outputToken);
         (, uint256 outputAmount) = _auction().getWinner(_orderId);
         uint256 collateralAmount = escrow.getCollateralAmount(outputAmount);
 
-        escrow.lockCollateral(_orderId, _solver, outputToken, collateralAmount);
+        try escrow.lockCollateral(_orderId, _solver, outputToken, collateralAmount) {
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     /// @dev Unlocks collateral when an order is successfully filled
@@ -133,9 +167,8 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     }
 
     /// @dev Slashes collateral when a claimed order expires without being filled.
-    ///      Best-effort: if the solver revoked the ERC-6909 operator grant the seizure transfer reverts;
-    ///      we swallow the revert so the user's refund still proceeds. The lock state is preserved by the
-    ///      atomic revert inside slashCollateral, and the missed slash is surfaced via SlashSkipped.
+    ///      Best-effort: a revert is swallowed so the user's refund still proceeds, and the missed
+    ///      slash is surfaced via SlashSkipped.
     function _onSlashed(bytes32 _orderId) internal override {
         ISolverEscrow escrow = _solverEscrow();
         if (address(escrow) == address(0)) return;

@@ -295,9 +295,8 @@ fn update_wwd_status_machine(
     let new_status = metadosis.update_wwd_status(wwd, timestamp)?;
 
     if current_status == status::OFFERING && new_status == status::OFFERING {
-        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
         let is_green_day = metadosis.get_wwd_day_type(wwd)? == day_type::GREEN;
-        outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), auction_ts, is_green_day)?;
+        outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), u32::from(wwd), is_green_day)?;
         return Ok(());
     }
 
@@ -316,7 +315,12 @@ fn update_wwd_status_machine(
         tribute.unseal_day(wwd)?;
         let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
         let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-        outbe_desis::api::dispatch_stage_start(ctx.storage.clone(), auction_ts, coen_price)?;
+        outbe_desis::api::dispatch_stage_start(
+            ctx.storage.clone(),
+            u32::from(wwd),
+            auction_ts,
+            coen_price,
+        )?;
     }
     if current_status == status::OFFERING {
         tribute.seal_day(wwd)?;
@@ -419,12 +423,7 @@ fn process_metadosis(
     let wwd_type = metadosis.get_wwd_day_type(wwd)?;
 
     if limit_amount.is_zero() {
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        dispatch_auction_clearing(ctx, wwd_type, auction_ts, U256::ZERO)?;
+        dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), U256::ZERO)?;
         metadosis.mark_wwd_failed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
             worldwideDay: wwd.into(),
@@ -451,12 +450,7 @@ fn process_metadosis(
         // FORMING->OFFERING (see `update_wwd_status_machine`). Close it so no
         // started auction is left dangling on a terminal day; whatever the
         // clearing does not deliver is routed to PROMIS as unallocated.
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        let to_promis = dispatch_auction_clearing(ctx, wwd_type, auction_ts, limit_amount)?;
+        let to_promis = dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
         tribute.retire_completed_partition(scope, wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -499,14 +493,8 @@ fn process_metadosis(
 
             let promis_total_unallocated = promis_limit.get_total_unallocated()?;
 
-            let auction_ts = metadosis
-                .worldwide_days
-                .entry(wwd)
-                .scheduled_process_time()
-                .read()?;
-
             let clearing_reminder =
-                dispatch_auction_clearing(ctx, wwd_type, auction_ts, promis_total_unallocated)?;
+                dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), promis_total_unallocated)?;
 
             //TODO: ADD GUARD
             // if (clearing_reminder > promis_total_unallocated) {
@@ -553,7 +541,7 @@ fn process_metadosis(
 fn dispatch_auction_clearing(
     ctx: &BlockRuntimeContext,
     dtype: u8,
-    auction_ts: u64,
+    worldwide_day: u32,
     supply: U256,
 ) -> Result<U256> {
     if dtype != day_type::GREEN {
@@ -562,7 +550,7 @@ fn dispatch_auction_clearing(
     // Returns the PROMIS remainder the auction could not consume: the rounding
     // remainder on a delivered clearing, or the whole `supply` on a best-effort
     // Desis failure. The caller writes this back into the PromisLimit accumulator.
-    outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), auction_ts, supply)
+    outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), worldwide_day, supply)
 }
 
 fn emit_failed_execution(

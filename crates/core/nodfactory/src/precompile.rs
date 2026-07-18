@@ -26,6 +26,10 @@ pub fn dispatch(
         use INodFactory::INodFactoryCalls::*;
         match call {
             mineGratis(c) => mutate(c, caller, |sender, c| {
+                let auth = outbe_gratisfactory::api::ModifyAuth {
+                    mac: c.mac.0,
+                    op_nonce: c.opNonce,
+                };
                 runtime::mine_gratis(
                     &storage,
                     scope,
@@ -34,6 +38,7 @@ pub fn dispatch(
                     parse_entity_id(&c.nodId)?,
                     c.nonce,
                     c.asset,
+                    auth,
                 )
             }),
         }

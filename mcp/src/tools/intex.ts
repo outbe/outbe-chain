@@ -56,11 +56,12 @@ const PROMIS_MINED_EVENT = parseAbiItem(
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
 );
 
-// Auction series ids are WorldwideDay dates (yyyymmdd), one per day. Active
-// auctions are discovered by probing getAuctionStage across a date window — a few
-// cheap point reads — rather than scanning logs, which public RPCs range-limit.
-const DEFAULT_DAYS_BACK = 2;
-const DEFAULT_DAYS_AHEAD = 10;
+// Auction ids are worldwide days (yyyymmdd), one per day; the auction runs weeks
+// after its day, so active ids sit up to ~26 days in the past. Discovery probes
+// getAuctionStage across a date window — a few cheap point reads — rather than
+// scanning logs, which public RPCs range-limit.
+const DEFAULT_DAYS_BACK = 30;
+const DEFAULT_DAYS_AHEAD = 2;
 const DAY_MS = 86_400_000;
 
 function ymdToDate(ymd: number): Date {
@@ -171,6 +172,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
   const accountArg = z.string().optional().describe("0x address to query (default: the configured signer)");
   const seriesArg = z.number().int().describe("series id");
+  const worldwideDayArg = z.number().int().describe("auction worldwide day (yyyymmdd)");
   const quantityArg = z.number().int().describe("bid quantity (uint16)");
   const rateArg = z
     .string()
@@ -300,38 +302,38 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- Auctions (BSC IntexAuction) -------------------------------------------
-  const auctionStageOf = (n: Network, series: number) =>
+  const auctionStageOf = (n: Network, worldwideDay: number) =>
     n.client.readContract({
       address: addr(n, "auction"),
       abi: AUCTION_ABI,
       functionName: "getAuctionStage",
-      args: [series],
+      args: [worldwideDay],
     }) as Promise<number>;
 
   /** Probe getAuctionStage across a yyyymmdd date window; drop dates with no auction. */
-  async function discoverByDate(n: Network, fromDate: number, toDate: number): Promise<{ series: number; stage: number }[]> {
+  async function discoverByDate(n: Network, fromDate: number, toDate: number): Promise<{ worldwideDay: number; stage: number }[]> {
     const probed = await Promise.all(
-      ymdRange(fromDate, toDate).map(async (series) => {
+      ymdRange(fromDate, toDate).map(async (worldwideDay) => {
         try {
-          return { series, stage: await auctionStageOf(n, series) };
+          return { worldwideDay, stage: await auctionStageOf(n, worldwideDay) };
         } catch {
           return null; // getAuctionStage reverts AuctionNotFound for empty dates
         }
       }),
     );
-    return probed.filter((x): x is { series: number; stage: number } => x !== null);
+    return probed.filter((x): x is { worldwideDay: number; stage: number } => x !== null);
   }
 
   server.tool(
     "auctions_active",
-    "Active Intex auctions and their stage. Series ids are dates (yyyymmdd); probes a date window " +
-      "(default today-2..+10, override via from_date/to_date). Active = CommittingBids or RevealingBids; " +
+    "Active Intex auctions and their stage. Auction ids are worldwide days (yyyymmdd); probes a date window " +
+      "(default today-30..+2, override via from_date/to_date). Active = CommittingBids or RevealingBids; " +
       "pass include_all for every stage.",
     {
       network: networkArg.optional(),
       include_all: z.boolean().optional(),
-      from_date: z.number().int().optional().describe("window start yyyymmdd (default today-2)"),
-      to_date: z.number().int().optional().describe("window end yyyymmdd (default today+10)"),
+      from_date: z.number().int().optional().describe("window start yyyymmdd (default today-30)"),
+      to_date: z.number().int().optional().describe("window end yyyymmdd (default today+2)"),
     },
     handler(async ({ network, include_all, from_date, to_date }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -339,7 +341,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const from = from_date ?? ymdShift(today, -DEFAULT_DAYS_BACK);
       const to = to_date ?? ymdShift(today, DEFAULT_DAYS_AHEAD);
       const probed = await discoverByDate(n, from, to);
-      const auctions = probed.map((p) => ({ series: p.series, stage: auctionStage(p.stage) }));
+      const auctions = probed.map((p) => ({ worldwideDay: p.worldwideDay, stage: auctionStage(p.stage) }));
       const filtered = include_all ? auctions : auctions.filter((au) => isActiveStage(au.stage.code));
       return ok({ network: n.name, window: { from, to }, count: filtered.length, auctions: filtered });
     }),
@@ -350,12 +352,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (promis-load strike, " +
       "min bid rate/quantity, entry/floor/call). Bids are sealed: the bid counts and clearing result stay 0 " +
       "until clearing runs after reveal, so 0 here does NOT mean there are no participants.",
-    { series: seriesArg, network: networkArg.optional() },
-    handler(async ({ series, network }) => {
+    { worldwideDay: worldwideDayArg, network: networkArg.optional() },
+    handler(async ({ worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const [stage, info, meta] = await Promise.all([
-        auctionStageOf(n, series),
-        n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "getAuctionInfo", args: [series] }),
+        auctionStageOf(n, worldwideDay),
+        n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "getAuctionInfo", args: [worldwideDay] }),
         paymentMeta(n),
       ]);
       const dec = meta.decimals;
@@ -378,7 +380,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       };
       return ok({
         network: n.name,
-        series,
+        worldwideDay,
         stage: auctionStage(stage),
         worldwideDayState: d.worldwideDayState,
         schedule: {
@@ -420,41 +422,41 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_bids_by_owner",
-    "Your commit/reveal status across active auctions: for each active series, whether you have a " +
-      "committed bid and whether it has been revealed. Pass series to check just one.",
-    { account: accountArg, series: seriesArg.optional(), network: networkArg.optional() },
-    handler(async ({ account, series, network }) => {
+    "Your commit/reveal status across active auctions: for each active auction, whether you have a " +
+      "committed bid and whether it has been revealed. Pass worldwideDay to check just one.",
+    { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkArg.optional() },
+    handler(async ({ account, worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const who = whoever(account);
       let targets: number[];
-      if (series !== undefined) {
-        targets = [series];
+      if (worldwideDay !== undefined) {
+        targets = [worldwideDay];
       } else {
         const today = todayYmd();
         const probed = await discoverByDate(n, ymdShift(today, -DEFAULT_DAYS_BACK), ymdShift(today, DEFAULT_DAYS_AHEAD));
-        targets = probed.filter((x) => isActiveStage(x.stage)).map((x) => x.series).sort((x, y) => x - y);
+        targets = probed.filter((x) => isActiveStage(x.stage)).map((x) => x.worldwideDay).sort((x, y) => x - y);
       }
       const bids = await Promise.all(
-        targets.map(async (s) => {
+        targets.map(async (wwd) => {
           const [commitHash, revealed] = (await Promise.all([
-            n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "committedBidsByHash", args: [s, who] }),
-            n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "revealedBidsByBidder", args: [s, who] }),
+            n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "committedBidsByHash", args: [wwd, who] }),
+            n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "revealedBidsByBidder", args: [wwd, who] }),
           ])) as [Hex, boolean];
           const committed = commitHash !== "0x" && /[1-9a-f]/i.test(commitHash.slice(2));
-          return { series: s, committed, revealed, stage: auctionStage(await auctionStageOf(n, s)) };
+          return { worldwideDay: wwd, committed, revealed, stage: auctionStage(await auctionStageOf(n, wwd)) };
         }),
       );
       const mine = bids.filter((b) => b.committed || b.revealed);
-      return ok({ network: n.name, bidder: who, count: mine.length, bids: series !== undefined ? bids : mine });
+      return ok({ network: n.name, bidder: who, count: mine.length, bids: worldwideDay !== undefined ? bids : mine });
     }),
   );
 
   // --- Bid commit / reveal (BSC IntexAuction, signed) ------------------------
-  async function signReveal(n: Network, account: Account, series: number, quantity: number, bidRate: bigint): Promise<Hex> {
+  async function signReveal(n: Network, account: Account, worldwideDay: number, quantity: number, bidRate: bigint): Promise<Hex> {
     const typedData = revealBidTypedData({
       chainId: n.chainId,
       verifyingContract: addr(n, "auction"),
-      seriesId: series,
+      worldwideDay,
       bidder: account.address,
       quantity,
       bidRate: Number(bidRate),
@@ -466,13 +468,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_commit",
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
-      "hash (no separate salt). When the series carries an entry bond (commitBondMinor > 0), commitBid pulls " +
+      "hash (no separate salt). When the auction carries an entry bond (commitBondMinor > 0), commitBid pulls " +
       "it into escrow in the same transaction — the tool auto-approves the escrow if the allowance is short. " +
       "The bond returns at reveal/cancel; a green-day no-reveal locks it for 21 days past revealEnd " +
-      "(intex_claim_commit_bond). IMPORTANT: save your (series, quantity, rate); you must repeat them to " +
+      "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate); you must repeat them to " +
       "reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, quantity, rate, network, wait }) => {
+    { worldwideDay: worldwideDayArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ worldwideDay, quantity, rate, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const bidRate = toBidRate(rate);
@@ -482,11 +484,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
         functionName: "getAuctionInfo",
-        args: [series],
+        args: [worldwideDay],
       })) as { params: { commitBondMinor: bigint } };
       const bond = info.params.commitBondMinor;
       let autoApprove: { txHash: Hex; amount: string } | null = null;
-      let note = "No entry bond on this series; nothing is locked at commit.";
+      let note = "No entry bond on this worldwideDay; nothing is locked at commit.";
       if (bond > 0n) {
         const { decimals: dec, symbol } = await paymentMeta(n);
         const bondHuman = formatUnits(bond, dec);
@@ -508,13 +510,13 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           `A green-day no-reveal keeps it locked until 21 days past revealEnd (intex_claim_commit_bond).`;
       }
 
-      const signature = await signReveal(n, account, series, quantity, bidRate);
+      const signature = await signReveal(n, account, worldwideDay, quantity, bidRate);
       const hash = commitHash(signature);
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [series, hash] });
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [worldwideDay, hash] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({
         network: n.name,
-        series,
+        worldwideDay,
         quantity,
         rate,
         bidRate: bidRate.toString(),
@@ -524,7 +526,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         note,
         ...receipt,
         reminder:
-          `Record series=${series}, quantity=${quantity}, rate=${rate} — required to reveal, ` +
+          `Record worldwideDay=${worldwideDay}, quantity=${quantity}, rate=${rate} — required to reveal, ` +
           `not recoverable on-chain, remembered only this session.`,
       });
     }),
@@ -532,11 +534,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_bid_reveal",
-    "Reveal a committed Intex bid: re-derives the same signature from (series, quantity, rate) and submits " +
+    "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate) and submits " +
       "revealBid; the escrow then locks quantity * strike * rate / RATE_SCALE in wCOEN, where strike is the " +
-      "series promis_load. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, quantity, rate, network, wait }) => {
+      "auction's promis_load. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
+    { worldwideDay: worldwideDayArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ worldwideDay, quantity, rate, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const { decimals: dec, symbol } = await paymentMeta(n);
@@ -548,7 +550,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
         functionName: "getAuctionInfo",
-        args: [series],
+        args: [worldwideDay],
       })) as { params: { promisLoadMinor: bigint; commitBondMinor: bigint } };
       const strike = info.params.promisLoadMinor;
       const lockAmount = (BigInt(quantity) * strike * bidRate) / RATE_SCALE;
@@ -575,27 +577,27 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         note += ` The ${formatUnits(info.params.commitBondMinor, dec)} ${symbol} entry bond returns within the same transaction (released before the bid lock, so it can fund the bid).`;
       }
 
-      const signature = await signReveal(n, account, series, quantity, bidRate);
+      const signature = await signReveal(n, account, worldwideDay, quantity, bidRate);
       const data = encodeFunctionData({
         abi: AUCTION_ABI,
         functionName: "revealBid",
-        args: [series, quantity, bidRate, BigInt(n.chainId), signature],
+        args: [worldwideDay, quantity, bidRate, BigInt(n.chainId), signature],
       });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, series, quantity, rate, bidRate: bidRate.toString(), locked: lockHuman, autoApprove, note, ...receipt });
+      return ok({ network: n.name, worldwideDay, quantity, rate, bidRate: bidRate.toString(), locked: lockHuman, autoApprove, note, ...receipt });
     }),
   );
 
   server.tool(
     "auction_bid_cancel",
-    "Cancel a committed bid for a series before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, network, wait }) => {
+    "Cancel a committed bid for a worldwide day before the reveal stage. Requires OUTBE_PRIVATE_KEY.",
+    { worldwideDay: worldwideDayArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ worldwideDay, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       requireAccount();
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [series] });
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "cancelCommit", args: [worldwideDay] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, series, ...receipt });
+      return ok({ network: n.name, worldwideDay, ...receipt });
     }),
   );
 
@@ -604,14 +606,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Reclaim an entry bond left behind by a no-reveal commit. Permissionless and always pays the stored " +
       "bidder: a cancelled (red-day) auction releases immediately, otherwise the bond is claimable only " +
       "21 days past revealEnd. Requires OUTBE_PRIVATE_KEY.",
-    { series: seriesArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ series, bidder, network, wait }) => {
+    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ worldwideDay, bidder, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const who = bidder ? getAddress(bidder) : account.address;
-      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [series, who] });
+      const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [worldwideDay, who] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
-      return ok({ network: n.name, series, bidder: who, ...receipt });
+      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
     }),
   );
 

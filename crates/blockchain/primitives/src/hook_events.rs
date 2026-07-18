@@ -2,12 +2,17 @@
 
 use alloy_primitives::{Address, Log};
 
-use crate::addresses::{NOD_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS};
+use crate::addresses::{GOVERNANCE_ADDRESS, NOD_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS};
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
 /// [`SystemTxKind::HookEvents`](crate::system_tx::SystemTxKind::HookEvents)
 /// begin-zone system transaction receipt.
-pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[VOTE_ADDRESS, UPDATE_ADDRESS, NOD_ADDRESS];
+pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
+    VOTE_ADDRESS,
+    UPDATE_ADDRESS,
+    NOD_ADDRESS,
+    GOVERNANCE_ADDRESS,
+];
 
 /// Returns `true` when `address` is whitelisted for hook-event receipt publication.
 pub fn is_hook_event_receipt_address(address: Address) -> bool {
@@ -50,11 +55,13 @@ mod tests {
             log_at(VOTE_ADDRESS),
             log_at(UPDATE_ADDRESS),
             log_at(NOD_ADDRESS),
+            log_at(GOVERNANCE_ADDRESS),
         ]);
-        assert_eq!(whitelisted.len(), 3);
+        assert_eq!(whitelisted.len(), 4);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
         assert_eq!(whitelisted[2].address, NOD_ADDRESS);
+        assert_eq!(whitelisted[3].address, GOVERNANCE_ADDRESS);
         assert_eq!(tracing_only.len(), 1);
         assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
     }

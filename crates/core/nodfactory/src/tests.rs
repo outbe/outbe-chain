@@ -1,20 +1,64 @@
 use std::sync::Arc;
 
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
+use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
     api as nod_api, precompile::INod, NodContract, NodIssueParams, NodRepositoryReader,
 };
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
-    addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+use outbe_tee::protocol::GratisOp;
+use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
 use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime};
+
+fn dummy_auth() -> ModifyAuth {
+    ModifyAuth {
+        mac: [0; 32],
+        op_nonce: 0,
+    }
+}
+
+fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
+    test_enclave::install();
+    let modify_key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+    ModifyAuth {
+        mac: modify_mac(
+            &modify_key,
+            owner,
+            GratisOp::Mint,
+            amount,
+            0,
+            B256::from(U256::from(1)),
+        ),
+        op_nonce: 0,
+    }
+}
+
+fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
+}
 
 fn params(owner: Address) -> NodIssueParams {
     NodIssueParams {
@@ -49,6 +93,7 @@ impl World {
         provider.set_timestamp(U256::from(1_700_000_000));
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
+            seed_compressed_entities_genesis(&storage);
             begin_block(storage, &scope).unwrap();
         });
         Self {
@@ -187,6 +232,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
                 nod_id,
                 nonce,
                 Address::ZERO,
+                dummy_auth(),
             )
         })
         .unwrap_err();
@@ -194,6 +240,34 @@ fn failed_authorization_preserves_the_loaded_nod() {
         error,
         PrecompileError::Revert(ref reason) if reason == &NodFactoryError::NotOwner.to_string()
     ));
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn invalid_gratis_mac_rolls_back_the_nod_burn() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x45));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    let nonce = find_valid_nonce(nod_id);
+
+    world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                Address::ZERO,
+                dummy_auth(),
+            )
+        })
+        .unwrap_err();
     assert!(world
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
@@ -219,6 +293,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
                 nod_id,
                 nonce,
                 Address::ZERO,
+                mine_auth(input.owner, input.gratis_load_minor),
             )
         })
         .unwrap();

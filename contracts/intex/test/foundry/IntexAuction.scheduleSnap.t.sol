@@ -30,7 +30,7 @@ contract IntexAuctionScheduleSnapTest is Test {
         vm.stopPrank();
     }
 
-    function _start(uint32 seriesId) internal {
+    function _start(uint32 worldwideDay) internal {
         IIntexAuction.AuctionSchedule memory s = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp + COMMIT_OFFSET),
             revealEnd: uint32(block.timestamp + REVEAL_OFFSET),
@@ -49,85 +49,85 @@ contract IntexAuctionScheduleSnapTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(seriesId, s, p);
+        auction.auctionStart(worldwideDay, s, p);
     }
 
     function test_RevealSignal_Early_SnapsCommitEnd() public {
-        uint32 seriesId = 20250130;
-        _start(seriesId);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(seriesId);
+        uint32 worldwideDay = 20250130;
+        _start(worldwideDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
         uint32 signalTs = b.schedule.commitEnd - 10;
         vm.warp(signalTs);
 
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.schedule.commitEnd, signalTs);
         assertLt(a.schedule.commitEnd, b.schedule.commitEnd);
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
     }
 
     function test_RevealSignal_Late_LeavesCommitEnd() public {
-        uint32 seriesId = 20250131;
-        _start(seriesId);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(seriesId);
+        uint32 worldwideDay = 20250131;
+        _start(worldwideDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
         vm.warp(b.schedule.commitEnd + 5);
 
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.schedule.commitEnd, b.schedule.commitEnd);
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
     }
 
     function test_ClearingSignal_Early_SnapsRevealEnd() public {
-        uint32 seriesId = 20250201;
-        _start(seriesId);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(seriesId);
+        uint32 worldwideDay = 20250201;
+        _start(worldwideDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
         vm.warp(b.schedule.commitEnd + 1);
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
         uint32 signalTs = b.schedule.commitEnd + 20;
         vm.warp(signalTs);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.schedule.revealEnd, signalTs);
         assertLt(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
     }
 
     function test_ClearingSignal_Late_LeavesRevealEnd() public {
-        uint32 seriesId = 20250202;
-        _start(seriesId);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(seriesId);
+        uint32 worldwideDay = 20250202;
+        _start(worldwideDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
         vm.warp(b.schedule.commitEnd + 1);
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
         vm.warp(b.schedule.revealEnd + 5);
         vm.prank(bridger);
-        auction.startClearingStage(seriesId);
+        auction.startClearingStage(worldwideDay);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(seriesId);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(seriesId)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
     }
 
     function test_RevealSignal_Early_BlocksLateCommitBid() public {
-        uint32 seriesId = 20250203;
-        _start(seriesId);
+        uint32 worldwideDay = 20250203;
+        _start(worldwideDay);
 
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
 
         // commitEnd snapped to now → stage = RevealingBids → commitBid reverts on stage gate.
         vm.expectRevert(
@@ -138,6 +138,6 @@ contract IntexAuctionScheduleSnapTest is Test {
             )
         );
         vm.prank(bidder);
-        auction.commitBid(seriesId, keccak256("late"));
+        auction.commitBid(worldwideDay, keccak256("late"));
     }
 }

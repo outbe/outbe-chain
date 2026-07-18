@@ -480,6 +480,160 @@ contract SolverEscrowTest is Test {
         assertEq(token.balanceOf(receiver), 150, "receiver got reward");
     }
 
+    // ============ custody ============
+
+    function test_lockCollateral_movesCustodyToEscrow() public {
+        uint256 id = escrow.lockId(address(token));
+
+        vm.startPrank(solver);
+        token.approve(address(escrow), 500);
+        escrow.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(keccak256("order1"), solver, address(token), 100);
+
+        // Collateral has left the solver's balance: nothing left there to revoke or force-withdraw.
+        assertEq(compact.balanceOf(solver, id), 400, "solver keeps only the unlocked remainder");
+        assertEq(compact.balanceOf(address(escrow), id), 100, "escrow custodies the locked collateral");
+    }
+
+    function test_unlockCollateral_returnsCustodyToSolver() public {
+        uint256 id = escrow.lockId(address(token));
+        bytes32 orderId = keccak256("order1");
+
+        vm.startPrank(solver);
+        token.approve(address(escrow), 500);
+        escrow.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.startPrank(authorizedCaller);
+        escrow.lockCollateral(orderId, solver, address(token), 100);
+        escrow.unlockCollateral(orderId);
+        vm.stopPrank();
+
+        assertEq(compact.balanceOf(solver, id), 500, "solver balance restored in full");
+        assertEq(compact.balanceOf(address(escrow), id), 0, "escrow holds nothing after unlock");
+        assertEq(escrow.slashedPool(id), 0, "unlock does not credit the slashed pool");
+    }
+
+    /// @dev A slash must not depend on a grant the solver can revoke: the collateral is already
+    ///      in escrow custody, so revoking the operator after the claim changes nothing.
+    function test_slashCollateral_afterOperatorRevoked_succeeds() public {
+        uint256 id = escrow.lockId(address(token));
+        bytes32 orderId = keccak256("order1");
+
+        vm.startPrank(solver);
+        token.approve(address(escrow), 500);
+        escrow.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(orderId, solver, address(token), 100);
+
+        vm.prank(solver);
+        compact.setOperator(address(escrow), false);
+
+        vm.prank(authorizedCaller);
+        vm.expectEmit(true, true, false, true);
+        emit CollateralSlashed(orderId, solver, address(token), 100);
+        escrow.slashCollateral(orderId);
+
+        assertEq(escrow.slashedPool(id), 100, "slashed pool credited despite the revoked grant");
+        assertEq(escrow.totalLocked(solver, id), 0, "lock consumed");
+    }
+
+    /// @dev The escrow's balance holds live locks and slashed funds on the same id. A reward must
+    ///      only ever spend the slashed part, or a later unlock could not be honored.
+    function test_distributeReward_doesNotConsumeLiveLock() public {
+        uint256 id = escrow.lockId(address(token));
+        bytes32 liveOrder = keccak256("liveOrder");
+
+        // 150 slashed (exactly the reward for a 10_000 order) + 1000 still locked for a live order.
+        _slashSolver(5000, 150);
+
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(liveOrder, solver, address(token), 1000);
+
+        assertEq(compact.balanceOf(address(escrow), id), 1150, "escrow holds slashed + live lock");
+
+        deal(address(token), address(compact), 10_000);
+        address receiver = makeAddr("receiver");
+
+        vm.prank(authorizedCaller);
+        uint256 reward = escrow.distributeReward(address(token), 10_000, receiver);
+
+        assertEq(reward, 150, "reward paid from the slashed pool");
+        assertEq(escrow.slashedPool(id), 0, "slashed pool drained");
+
+        // The live lock survived and can still be returned in full.
+        vm.prank(authorizedCaller);
+        escrow.unlockCollateral(liveOrder);
+        assertEq(compact.balanceOf(solver, id), 5000 - 150, "solver got the live lock back untouched");
+        assertEq(compact.balanceOf(address(escrow), id), 0, "escrow drained");
+    }
+
+    /// @dev A second reward exceeding the slashed pool must pay nothing rather than dip into a lock.
+    function test_distributeReward_insufficientPool_paysNothing() public {
+        uint256 id = escrow.lockId(address(token));
+
+        _slashSolver(5000, 100);
+
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(keccak256("liveOrder"), solver, address(token), 1000);
+
+        deal(address(token), address(compact), 10_000);
+
+        vm.prank(authorizedCaller);
+        uint256 reward = escrow.distributeReward(address(token), 10_000, makeAddr("receiver"));
+
+        assertEq(reward, 0, "reward of 150 exceeds the 100 slashed pool");
+        assertEq(escrow.slashedPool(id), 100, "slashed pool untouched");
+        assertEq(compact.balanceOf(address(escrow), id), 1100, "escrow balance untouched");
+    }
+
+    /// @dev Forced withdrawal is allocator-independent, but it can only burn the solver's own free
+    ///      balance. Locked collateral already sits in escrow custody, so the slash still seizes it.
+    function test_slashCollateral_afterForcedWithdrawal_succeeds() public {
+        uint256 id = escrow.lockId(address(token));
+        bytes32 orderId = keccak256("order1");
+
+        vm.startPrank(solver);
+        token.approve(address(escrow), 500);
+        escrow.deposit(address(token), 500);
+        vm.stopPrank();
+
+        vm.prank(authorizedCaller);
+        escrow.lockCollateral(orderId, solver, address(token), 100);
+
+        // Solver drains everything reachable via the forced-withdrawal escape (only the free 400).
+        deal(address(token), address(compact), 500);
+        vm.startPrank(solver);
+        compact.enableForcedWithdrawal(id);
+        compact.forcedWithdrawal(id, solver, 400);
+        vm.stopPrank();
+
+        assertEq(compact.balanceOf(solver, id), 0, "solver's free balance force-withdrawn");
+        assertEq(compact.balanceOf(address(escrow), id), 100, "locked collateral untouched by the escape");
+
+        vm.prank(authorizedCaller);
+        escrow.slashCollateral(orderId);
+
+        assertEq(escrow.slashedPool(id), 100, "slash still seizes the custodied collateral");
+    }
+
+    function test_lockCollateral_zeroAmount_reverts() public {
+        vm.prank(authorizedCaller);
+        vm.expectRevert(SolverEscrow.InvalidAmount.selector);
+        escrow.lockCollateral(keccak256("order1"), solver, address(token), 0);
+    }
+
+    function test_lockCollateral_zeroSolver_reverts() public {
+        vm.prank(authorizedCaller);
+        vm.expectRevert(SolverEscrow.ZeroAddress.selector);
+        escrow.lockCollateral(keccak256("order1"), address(0), address(token), 100);
+    }
+
     // ============ lockId ============
 
     function test_lockId_encoding() public view {

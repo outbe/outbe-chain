@@ -43,6 +43,10 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
     /// @notice Thrown when the resource lock tag is zero
     error InvalidLockTag();
 
+    /// @notice Thrown when native value is attached to a same-chain settle/refund, which forwards no
+    ///         bridge fee and would otherwise trap the ETH in the router.
+    error UnexpectedNativeValue();
+
     // ============ Constructor ============
 
     /**
@@ -87,6 +91,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
         override
     {
         if (_originDomain == _localDomain()) {
+            if (msg.value != 0) revert UnexpectedNativeValue();
             bytes32 self = bytes32(uint256(uint160(address(this))));
             for (uint256 i = 0; i < _orderIds.length; i++) {
                 bytes32 receiver = abi.decode(_ordersFillerData[i], (bytes32));

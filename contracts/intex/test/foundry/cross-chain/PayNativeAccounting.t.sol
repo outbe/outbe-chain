@@ -95,7 +95,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         ts[0] = uint32(block.timestamp);
 
         params = ITargetRouter.BidsBatchParams({
-            seriesId: SERIES_ID, bidderAddresses: bidders, intexQuantities: qty, intexBidRates: rate, timestamps: ts
+            worldwideDay: SERIES_ID, bidderAddresses: bidders, intexQuantities: qty, intexBidRates: rate, timestamps: ts
         });
     }
 

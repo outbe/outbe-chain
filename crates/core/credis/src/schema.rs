@@ -117,9 +117,9 @@ pub struct CredisContract {
 
 impl CredisContract<'_> {
     /// position_id derivation: `keccak256(commitment || bundle_account)`.
-    pub fn position_id(commitment: U256, bundle_account: Address) -> U256 {
+    pub fn position_id(handle_id: U256, bundle_account: Address) -> U256 {
         let mut buf = [0u8; 52];
-        buf[0..32].copy_from_slice(&commitment.to_be_bytes::<32>());
+        buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
         buf[32..52].copy_from_slice(bundle_account.as_slice());
         U256::from_be_bytes(keccak256(buf).0)
     }

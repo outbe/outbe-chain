@@ -155,6 +155,11 @@ run = "cargo bench --workspace"
 [tasks.localnet-bootstrap]
 description = "Clean OUT_DIR and bootstrap a local validator set"
 run = """
+# Stop any localnet still running from a previous bootstrap FIRST. Bootstrap
+# wipes OUT_DIR (including pids/), so skipping this orphans the old node +
+# enclave processes — they keep holding the RPC/metrics/consensus ports and the
+# next `start` dies with "Address already in use". No-op when nothing is running.
+./scripts/run-testnet.sh stop "$OUT_DIR" 2>/dev/null || true
 if [ -z "${SEED_FILE:-}" ]; then
   ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
 else
@@ -181,6 +186,20 @@ run = './scripts/run-testnet.sh status "$OUT_DIR"'
 description = "Build release + bootstrap + start localnet"
 run = """
 mise run build-release
+mise run localnet-bootstrap
+mise run localnet-start
+"""
+
+[tasks.localnet-tee]
+description = "Build + bootstrap + start localnet with a per-validator mock TEE enclave (bare, no SGX/Docker)"
+run = """
+# Local TEE run: mock enclave (no SGX) as a bare host process (no Gramine/Docker).
+# Bare is required on Apple Silicon — the amd64 Gramine image dies under QEMU.
+export OUTBE_TEE_ENCLAVE=1
+export OUTBE_TEE_ENCLAVE_MOCK=1
+export OUTBE_TEE_ENCLAVE_BARE=1
+mise run build-release
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 mise run localnet-bootstrap
 mise run localnet-start
 """

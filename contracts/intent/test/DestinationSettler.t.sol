@@ -226,6 +226,33 @@ contract DestinationSettlerTest is BaseTest {
         assertEq(destinationSettler.dispatchedOrderIds(1), _orderIds[1]);
     }
 
+    // ========== mixed origin domain ==========
+
+    /// @dev The whole batch dispatches to order [0]'s domain, so a batch mixing origins would
+    ///      silently mis-route the divergent orders — it must revert. settle/refund share the same
+    ///      _requireSameOriginDomain check, so the settle path covers both.
+    function test_settleOrders_RevertWhen_MixedOriginDomain() public {
+        uint32 otherDomain = origin + 1;
+
+        OrderData memory orderData1 = _prepareOrderData();
+        OrderData memory orderData2 = _prepareOrderData();
+        orderData2.senderNonce = 2;
+        orderData2.originDomain = otherDomain;
+
+        bytes32[] memory _orderIds = new bytes32[](2);
+        _orderIds[0] = bytes32("order1");
+        _orderIds[1] = bytes32("order2");
+        bytes[] memory ordersOriginData = new bytes[](2);
+        ordersOriginData[0] = OrderEncoder.encode(orderData1);
+        ordersOriginData[1] = OrderEncoder.encode(orderData2);
+        bytes[] memory ordersFillerData = new bytes[](2);
+        ordersFillerData[0] = abi.encode("f1");
+        ordersFillerData[1] = abi.encode("f2");
+
+        vm.expectRevert(abi.encodeWithSelector(DestinationSettler.MixedOriginDomain.selector, origin, otherDomain));
+        destinationSettler.settleOrders(_orderIds, ordersOriginData, ordersFillerData);
+    }
+
     // ========== fillOrder (with auction) ==========
 
     function test_fillOrder_ERC20_works() public {

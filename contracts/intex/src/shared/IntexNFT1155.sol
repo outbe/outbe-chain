@@ -30,6 +30,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     /// @notice Promis facade role; allowed to call `burnSettled`.
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
+    /// @notice Gem factory role; allowed to call `parkForGems`.
+    bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
     /// @notice System relayer role; allowed to drive the system bridge during the `Called` window.
     /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
     ///      can only `crosschainBurn` while the series is `Qualified`.
@@ -69,6 +71,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         mapping(uint256 tokenId => mapping(address holder => uint256 index)) seriesHolderIndex;
         /// @dev Whether address is in seriesHolders[tokenId].
         mapping(uint256 tokenId => mapping(address holder => bool isHolder)) isSeriesHolder;
+        /// @dev Series ids issued per worldwide day.
+        mapping(uint32 worldwideDay => uint32[] seriesIds) seriesOfDay;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -155,6 +159,16 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function worldwideDayOf(uint32 seriesId) external view returns (uint32) {
+        return _s().seriesData[uint256(seriesId)].worldwideDay;
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory) {
+        return _s().seriesOfDay[worldwideDay];
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = uint256(params.seriesId);
@@ -184,7 +198,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             calledAt: 0,
             totalSupply: 0,
             status: IIntexNFT1155.IntexStatus.Issued,
-            state: IIntexNFT1155.IntexState.Issued
+            state: IIntexNFT1155.IntexState.Issued,
+            worldwideDay: params.worldwideDay
         });
 
         // Register the Settled token id so reverse lookups and status checks work for either class.
@@ -195,6 +210,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
         // enumerated; clients derive the Settled id via `settledTokenId(seriesId)`.
         $.allSeries.push(iTok);
+        $.seriesOfDay[params.worldwideDay].push(params.seriesId);
 
         emit MetadataUpdate(iTok);
     }
@@ -498,6 +514,27 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         emit IntexCompleted(seriesId, holder, amount);
         emit MetadataUpdate(sTok);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function parkForGems(address holder, uint32 seriesId, uint256 amount) external onlyRole(GEM_ROLE) {
+        if (holder == address(0)) revert ZeroAddress("holder", holder);
+        if (amount == 0) revert ZeroAmount();
+
+        uint256 iTok = uint256(seriesId);
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
+        if (data.issuedAt == 0) revert NonexistentToken(iTok);
+
+        if (data.state != IIntexNFT1155.IntexState.Issued && data.state != IIntexNFT1155.IntexState.Qualified) {
+            revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
+        }
+
+        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= issued balance <= totalSupply (uint32); _burn reverts otherwise
+        data.totalSupply -= uint32(amount);
+        _burn(holder, iTok, amount);
+
+        emit IntexParked(seriesId, holder, amount);
+        emit MetadataUpdate(iTok);
     }
 
     /// @inheritdoc IIntexNFT1155

@@ -19,6 +19,16 @@ pub struct LysisResult {
     pub remaining_gratis: U256,
 }
 
+/// Executes lysis for a given worldwide day with the specified gratis allocation.
+///
+/// All arithmetic uses integer fixed-point math (no f32/f64).
+///
+/// 1. Loads all tributes for the day
+/// 2. Groups by fidelity index
+/// 3. Runs the distribution algorithm (fixed-point)
+/// 4. Creates NODs for each tribute
+/// 5. Leaves gratis unminted until a later NOD mine step
+/// 6. Deletes processed tributes and clears the day index
 pub fn lysis(
     storage: StorageHandle,
     scope: &ExecutionScope,

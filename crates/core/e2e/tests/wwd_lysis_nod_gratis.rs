@@ -43,7 +43,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use alloy_primitives::{address, keccak256, Address, Bytes, Log, B256, U256};
+use alloy_primitives::{address, keccak256, Address, Bytes, FixedBytes, Log, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -51,7 +51,8 @@ use outbe_compressed_entities::{
     CompressedTreeService, EntityId36, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
     FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
-use outbe_gratis::Gratis;
+use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratisfactory::api::ModifyAuth;
 use outbe_metadosis::{
     constants::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
@@ -82,6 +83,8 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
+use outbe_tee::protocol::GratisOp;
+use outbe_tee_enclave::gratis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 use outbe_tribute::{TributeContract, TributeData};
 
 // Mainnet-style id — effective_hours() returns DEFAULT_LOOKBACK / DEFAULT_OFFERING
@@ -445,12 +448,27 @@ fn mine_via_precompile(
         let item = nods.into_iter().next().unwrap();
 
         let nonce = find_valid_nonce(item.nod_id);
-        let balance_before = Gratis::new(storage.clone()).balance_of(owner).unwrap();
+        let balance_before = view_balance(&storage, owner);
+        let op_nonce = outbe_gratis::api::op_nonce(storage.clone(), owner).unwrap();
+        let modify_key = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
+        let auth = ModifyAuth {
+            mac: modify_mac(
+                &modify_key,
+                owner,
+                GratisOp::Mint,
+                item.gratis_load_minor,
+                op_nonce,
+                B256::from(U256::from(CHAIN_ID)),
+            ),
+            op_nonce,
+        };
 
         let call = INodFactory::mineGratisCall {
             nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
             nonce,
             asset: MINE_GRATIS_ASSET,
+            mac: FixedBytes(auth.mac),
+            opNonce: auth.op_nonce,
         };
         let output = nodfactory_dispatch(
             storage.clone(),
@@ -467,12 +485,22 @@ fn mine_via_precompile(
         assert!(nod_api::get_item(&storage, scope, parent, item.nod_id)
             .unwrap()
             .is_none());
-        let balance_after = Gratis::new(storage).balance_of(owner).unwrap();
+        let balance_after = view_balance(&storage, owner);
         assert_eq!(balance_after, balance_before + mined);
         mined
     });
     bodies.project_completed_block(provider);
     mined
+}
+
+fn view_balance(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    let view_key = derive_view_key(&test_enclave::state_key(), owner).unwrap();
+    let ciphertext = outbe_gratis::api::balance_ct(storage.clone(), owner).unwrap();
+    if ciphertext.is_empty() {
+        U256::ZERO
+    } else {
+        decrypt_balance(&view_key, owner, &ciphertext).unwrap()
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -486,6 +514,7 @@ struct ScenarioOutcome {
 }
 
 fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
+    test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
     // The NOD-cost payment branch deposits into the vault provider via an EVM
@@ -791,11 +820,10 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
         });
 
     let gratis_balances = with_storage(&mut provider, |storage| {
-        let gratis = Gratis::new(storage);
         [
-            gratis.balance_of(alice).unwrap(),
-            gratis.balance_of(bob).unwrap(),
-            gratis.balance_of(carol).unwrap(),
+            view_balance(&storage, alice),
+            view_balance(&storage, bob),
+            view_balance(&storage, carol),
         ]
     });
     ScenarioOutcome {

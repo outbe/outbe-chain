@@ -12,10 +12,6 @@ pub enum CredisFactoryError {
     InvalidAmount,
     #[error("caller is not the position bundleAccount")]
     UnauthorizedCaller,
-    #[error("reclaim commitment must be non-zero")]
-    InvalidReclaimCommitment,
-    #[error("denomination is not eligible for credis")]
-    DenomNotCredisEligible,
     #[error("position is already fully paid")]
     PositionCompleted,
     #[error("address has overdue anadosis")]

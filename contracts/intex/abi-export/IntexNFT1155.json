@@ -1006,6 +1006,11 @@
               "name": "state",
               "type": "uint8",
               "internalType": "enum IIntexNFT1155.IntexState"
+            },
+            {
+              "name": "worldwideDay",
+              "type": "uint32",
+              "internalType": "uint32"
             }
           ]
         }
@@ -1225,6 +1230,25 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "seriesIdsByWorldwideDay",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32[]",
+          "internalType": "uint32[]"
         }
       ],
       "stateMutability": "view"
@@ -1453,6 +1477,25 @@
           "name": "",
           "type": "string",
           "internalType": "string"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "worldwideDayOf",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"

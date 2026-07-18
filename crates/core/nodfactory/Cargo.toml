@@ -22,7 +22,11 @@ hex.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils"] }
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-gratis.workspace = true
+# `test-enclave` drives the confidential Gratis path in `mine_gratis` tests via
+# the in-process enclave engine; unioned into the gratis dep for test builds.
+outbe-gratis = { workspace = true, features = ["test-enclave"] }
+outbe-tee.workspace = true
+outbe-tee-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 
 [features]

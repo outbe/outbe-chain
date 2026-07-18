@@ -23,7 +23,7 @@ contract AuctionSignatureTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -62,21 +62,21 @@ contract AuctionSignatureTest is Test {
         );
     }
 
-    function _structHash(uint32 seriesId, address bidder, uint16 qty, uint32 rate) internal pure returns (bytes32) {
-        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, bidder, qty, rate));
+    function _structHash(uint32 worldwideDay, address bidder, uint16 qty, uint32 rate) internal pure returns (bytes32) {
+        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate));
     }
 
     function _digest(
         address verifyingContract,
         uint256 chainid,
-        uint32 seriesId,
+        uint32 worldwideDay,
         address bidder,
         uint16 qty,
         uint32 rate
     ) internal pure returns (bytes32) {
         return keccak256(
             abi.encodePacked(
-                "\x19\x01", _domainSeparator(verifyingContract, chainid), _structHash(seriesId, bidder, qty, rate)
+                "\x19\x01", _domainSeparator(verifyingContract, chainid), _structHash(worldwideDay, bidder, qty, rate)
             )
         );
     }
@@ -85,16 +85,17 @@ contract AuctionSignatureTest is Test {
         uint256 pk,
         address verifyingContract,
         uint256 chainid,
-        uint32 seriesId,
+        uint32 worldwideDay,
         address bidder,
         uint16 qty,
         uint32 rate
     ) internal pure returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, _digest(verifyingContract, chainid, seriesId, bidder, qty, rate));
+        (uint8 v, bytes32 r, bytes32 s) =
+            vm.sign(pk, _digest(verifyingContract, chainid, worldwideDay, bidder, qty, rate));
         return abi.encodePacked(r, s, v);
     }
 
-    function _start(uint32 seriesId) internal {
+    function _start(uint32 worldwideDay) internal {
         IIntexAuction.AuctionSchedule memory schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp + COMMIT_OFFSET),
             revealEnd: uint32(block.timestamp + REVEAL_OFFSET),
@@ -113,56 +114,56 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(seriesId, schedule, params);
+        auction.auctionStart(worldwideDay, schedule, params);
     }
 
-    function _enterReveal(uint32 seriesId) internal {
+    function _enterReveal(uint32 worldwideDay) internal {
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
+        auction.startRevealingBidsStage(worldwideDay, true);
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
     }
 
-    function _commit(IntexAuction target, uint32 seriesId, address bidder, bytes memory sig) internal {
+    function _commit(IntexAuction target, uint32 worldwideDay, address bidder, bytes memory sig) internal {
         vm.prank(bidder);
-        target.commitBid(seriesId, keccak256(sig));
+        target.commitBid(worldwideDay, keccak256(sig));
     }
 
     // --- commitBid: zero-hash guard (B1.3) ---
 
     function test_commitBid_revertsOnZeroHash() public {
-        uint32 seriesId = 20260101;
-        _start(seriesId);
+        uint32 worldwideDay = 20260101;
+        _start(worldwideDay);
 
         vm.expectRevert(IIntexAuction.InvalidCommitHash.selector);
         vm.prank(iba1);
-        auction.commitBid(seriesId, bytes32(0));
+        auction.commitBid(worldwideDay, bytes32(0));
     }
 
     // --- revealBid: WrongChain guard (B1.4) ---
 
     function test_revealBid_revertsOnWrongChain_paramMismatch() public {
-        uint32 seriesId = 20260102;
-        _start(seriesId);
+        uint32 worldwideDay = 20260102;
+        _start(worldwideDay);
 
-        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, sig);
-        _enterReveal(seriesId);
+        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, sig);
+        _enterReveal(worldwideDay);
 
         uint64 wrongChain = uint64(block.chainid + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChain)));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, wrongChain, sig);
+        auction.revealBid(worldwideDay, 5, 50, wrongChain, sig);
     }
 
     function test_revealBid_revertsAfterChainidFlip() public {
-        uint32 seriesId = 20260103;
-        _start(seriesId);
+        uint32 worldwideDay = 20260103;
+        _start(worldwideDay);
 
         // Sign for the chain we deployed on.
         uint256 origChain = block.chainid;
-        bytes memory sig = _signFor(iba1Pk, address(auction), origChain, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, sig);
-        _enterReveal(seriesId);
+        bytes memory sig = _signFor(iba1Pk, address(auction), origChain, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, sig);
+        _enterReveal(worldwideDay);
 
         // Simulate the EVM moving to a different chain (e.g. fork). Caller passes the new chainid
         // — guard is fine — but the EIP-712 domain rebuilds with the new chainid, so the signature
@@ -171,33 +172,33 @@ contract AuctionSignatureTest is Test {
         vm.chainId(newChain);
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(newChain), sig);
+        auction.revealBid(worldwideDay, 5, 50, uint64(newChain), sig);
     }
 
     // --- Cross-chain replay (B1.5) ---
 
     function test_replay_revertsAcrossChains() public {
-        uint32 seriesId = 20260104;
-        _start(seriesId);
+        uint32 worldwideDay = 20260104;
+        _start(worldwideDay);
 
         // Bidder A signs for chain X (some other chain that is NOT the current one) — replay attacker
         // captures it and tries to use against the contract running on the current chain.
         uint256 attackChain = block.chainid + 17;
-        bytes memory crossChainSig = _signFor(iba1Pk, address(auction), attackChain, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, crossChainSig);
-        _enterReveal(seriesId);
+        bytes memory crossChainSig = _signFor(iba1Pk, address(auction), attackChain, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, crossChainSig);
+        _enterReveal(worldwideDay);
 
         // Caller passes block.chainid in the param so the WrongChain guard is silent, but the domain
         // separator on this chain differs from the one used to sign — recovery fails.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(block.chainid), crossChainSig);
+        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), crossChainSig);
     }
 
     // --- Cross-instance replay (B1.5) ---
 
     function test_replay_revertsAcrossInstances() public {
-        uint32 seriesId = 20260105;
+        uint32 worldwideDay = 20260105;
 
         // Deploy a second IntexAuction on the same chain.
         IntexAuction other = DeployProxy.intexAuction(admin, bridger);
@@ -226,38 +227,38 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.startPrank(bridger);
-        auction.auctionStart(seriesId, schedule, params);
-        other.auctionStart(seriesId, schedule, params);
+        auction.auctionStart(worldwideDay, schedule, params);
+        other.auctionStart(worldwideDay, schedule, params);
         vm.stopPrank();
 
         // Bidder signs for `auction` (verifyingContract=auction). Attacker tries to replay on `other`.
-        bytes memory sigForAuction = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(other, seriesId, iba1, sigForAuction);
+        bytes memory sigForAuction = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(other, worldwideDay, iba1, sigForAuction);
 
         // Move to reveal stage on `other`.
         vm.prank(bridger);
-        other.startRevealingBidsStage(seriesId, true);
+        other.startRevealingBidsStage(worldwideDay, true);
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
 
         // Reveal on `other` — domain separator binds verifyingContract=other; recovery yields a
         // wrong signer.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        other.revealBid(seriesId, 5, 50, uint64(block.chainid), sigForAuction);
+        other.revealBid(worldwideDay, 5, 50, uint64(block.chainid), sigForAuction);
     }
 
     // --- Signature malleability (B1.5) ---
 
     function test_revealBid_revertsOnMalleableSignature() public {
-        uint32 seriesId = 20260106;
-        _start(seriesId);
+        uint32 worldwideDay = 20260106;
+        _start(worldwideDay);
 
         // Build a canonical signature.
-        bytes32 digest = _digest(address(auction), block.chainid, seriesId, iba1, 5, 50);
+        bytes32 digest = _digest(address(auction), block.chainid, worldwideDay, iba1, 5, 50);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(iba1Pk, digest);
         bytes memory canonical = abi.encodePacked(r, s, v);
-        _commit(auction, seriesId, iba1, canonical);
-        _enterReveal(seriesId);
+        _commit(auction, worldwideDay, iba1, canonical);
+        _enterReveal(worldwideDay);
 
         // Construct the malleable counterpart: s' = n - s, v' = v ^ 1.
         bytes32 mallS = bytes32(uint256(SECP256K1_N) - uint256(s));
@@ -269,35 +270,35 @@ contract AuctionSignatureTest is Test {
         bytes4 invalidS = bytes4(keccak256("ECDSAInvalidSignatureS(bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(invalidS, mallS));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(block.chainid), malleable);
+        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), malleable);
     }
 
     // --- Garbage signature (zero-address recovery) (B1.5) ---
 
     function test_revealBid_revertsOnWrongLengthSignature() public {
-        uint32 seriesId = 20260107;
-        _start(seriesId);
+        uint32 worldwideDay = 20260107;
+        _start(worldwideDay);
 
         // Commit with a real signature first so the bid is bookable.
-        bytes memory realSig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, realSig);
-        _enterReveal(seriesId);
+        bytes memory realSig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, realSig);
+        _enterReveal(worldwideDay);
 
         // Submit a 64-byte signature (truncated). OZ ECDSA reverts ECDSAInvalidSignatureLength.
         bytes memory truncated = new bytes(64);
         bytes4 invalidLen = bytes4(keccak256("ECDSAInvalidSignatureLength(uint256)"));
         vm.expectRevert(abi.encodeWithSelector(invalidLen, uint256(64)));
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(block.chainid), truncated);
+        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), truncated);
     }
 
     function test_revealBid_revertsOnAllZeroSignature() public {
-        uint32 seriesId = 20260108;
-        _start(seriesId);
+        uint32 worldwideDay = 20260108;
+        _start(worldwideDay);
 
-        bytes memory realSig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, realSig);
-        _enterReveal(seriesId);
+        bytes memory realSig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, realSig);
+        _enterReveal(worldwideDay);
 
         // 65 zero bytes — recovers to a zero/garbage address, fails malleability or signer check.
         bytes memory zeroes = new bytes(65);
@@ -306,7 +307,7 @@ contract AuctionSignatureTest is Test {
         // call must revert; we only assert it does.
         vm.expectRevert();
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(block.chainid), zeroes);
+        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), zeroes);
     }
 
     // --- Golden digest snapshot (B1.5) ---
@@ -316,14 +317,14 @@ contract AuctionSignatureTest is Test {
     ///      Inputs:
     ///        chainid           = 56          (BSC mainnet)
     ///        verifyingContract = 0x..00cafe
-    ///        seriesId          = 20260108
+    ///        worldwideDay          = 20260108
     ///        bidder            = 0x..00abcd
     ///        quantity          = 5
     ///        bidRate           = 1100
     function test_eip712_goldenDigest() public pure {
         address vc = 0x000000000000000000000000000000000000cafE;
         address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0x70716e6ae3662c444c19b813699627b7859e3333edfe1fded1ee2a3863bb710d;
+        bytes32 expected = 0xe1855751c617ab5e006fbbca06a1d811196fd8a457fe20f788d6af02c632faa6;
 
         bytes32 domain = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)
@@ -337,42 +338,42 @@ contract AuctionSignatureTest is Test {
     // --- Indexer events ---
 
     function test_emit_BidCommitted() public {
-        uint32 seriesId = 20260109;
-        _start(seriesId);
+        uint32 worldwideDay = 20260109;
+        _start(worldwideDay);
 
-        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
+        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
         bytes32 commitHash = keccak256(sig);
 
         vm.expectEmit(true, true, false, true);
-        emit IIntexAuction.BidCommitted(seriesId, iba1, commitHash);
+        emit IIntexAuction.BidCommitted(worldwideDay, iba1, commitHash);
         vm.prank(iba1);
-        auction.commitBid(seriesId, commitHash);
+        auction.commitBid(worldwideDay, commitHash);
     }
 
     function test_emit_CommitCancelled() public {
-        uint32 seriesId = 20260110;
-        _start(seriesId);
+        uint32 worldwideDay = 20260110;
+        _start(worldwideDay);
 
-        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, sig);
+        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, sig);
 
         vm.expectEmit(true, true, false, false);
-        emit IIntexAuction.CommitCancelled(seriesId, iba1);
+        emit IIntexAuction.CommitCancelled(worldwideDay, iba1);
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
     }
 
     function test_emit_BidRevealed() public {
-        uint32 seriesId = 20260111;
-        _start(seriesId);
+        uint32 worldwideDay = 20260111;
+        _start(worldwideDay);
 
-        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, seriesId, iba1, 5, 50);
-        _commit(auction, seriesId, iba1, sig);
-        _enterReveal(seriesId);
+        bytes memory sig = _signFor(iba1Pk, address(auction), block.chainid, worldwideDay, iba1, 5, 50);
+        _commit(auction, worldwideDay, iba1, sig);
+        _enterReveal(worldwideDay);
 
         vm.expectEmit(true, true, false, true);
-        emit IIntexAuction.BidRevealed(seriesId, iba1, 5, 50);
+        emit IIntexAuction.BidRevealed(worldwideDay, iba1, 5, 50);
         vm.prank(iba1);
-        auction.revealBid(seriesId, 5, 50, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), sig);
     }
 }

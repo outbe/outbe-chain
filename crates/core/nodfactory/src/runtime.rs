@@ -112,24 +112,28 @@ pub fn mine_gratis(
     nod_id: EntityId36,
     nonce: U256,
     asset: Address,
+    auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
     let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
         .ok_or(NodFactoryError::NodNotQualified)?;
-    mine_gratis_inner(
-        storage,
-        MineGratisInput {
-            caller,
-            nod_id,
-            nonce,
-            asset,
-            item,
-            bucket,
-        },
-        scope,
-    )
+    storage.clone().with_checkpoint(|| {
+        mine_gratis_inner(
+            storage,
+            MineGratisInput {
+                caller,
+                nod_id,
+                nonce,
+                asset,
+                item,
+                bucket,
+                auth,
+            },
+            scope,
+        )
+    })
 }
 
 struct MineGratisInput {
@@ -139,6 +143,7 @@ struct MineGratisInput {
     asset: Address,
     item: LoadedNodItem,
     bucket: LoadedNodBucket,
+    auth: outbe_gratisfactory::api::ModifyAuth,
 }
 
 fn mine_gratis_inner(
@@ -153,6 +158,7 @@ fn mine_gratis_inner(
         asset,
         item,
         bucket,
+        auth,
     } = input;
     if caller != item.body().owner {
         return Err(NodFactoryError::NotOwner.into());
@@ -207,7 +213,7 @@ fn mine_gratis_inner(
         },
     )?;
 
-    outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor)?;
+    outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
 
     Ok(gratis_load_minor)
 }

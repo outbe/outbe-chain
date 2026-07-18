@@ -5,7 +5,7 @@ pragma solidity 0.8.30;
  * @title IntexAuction Contract Interfaces
  * @author Outbe
  * @notice Public API, events, errors, and data types for `IntexAuction`.
- * @dev All auctions are keyed by `seriesId` (uint32, yyyymmdd).
+ * @dev All auctions are keyed by `worldwideDay` (uint32, yyyymmdd).
  */
 interface IIntexAuction {
     // --- Types ---
@@ -106,7 +106,7 @@ interface IIntexAuction {
         uint32 revealedBidsCount;
     }
 
-    /// @notice Auction parameters and state, keyed by `seriesId`.
+    /// @notice Auction parameters and state, keyed by `worldwideDay`.
     struct AuctionData {
         WorldwideDayState worldwideDayState;
         AuctionSchedule schedule;
@@ -117,37 +117,37 @@ interface IIntexAuction {
     // --- Events ---
 
     /// @notice Emitted when the auction stage is updated.
-    /// @param seriesId Auction series id (yyyymmdd as uint32).
+    /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param auctionStage Target stage.
     /// @param timestamp New stage timestamp (UNIX seconds).
     /// @param reason Optional reason (e.g. "Red day - auction cancelled"); empty if not applicable.
-    event AuctionStageUpdated(uint32 indexed seriesId, AuctionStage auctionStage, uint32 timestamp, string reason);
+    event AuctionStageUpdated(uint32 indexed worldwideDay, AuctionStage auctionStage, uint32 timestamp, string reason);
 
     /// @notice Emitted when an auction is cleared.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param auctionClearingRate Uniform auction clearing rate (`1e6` fixed-point).
     /// @param issuedIntexCount Total number of issued Intex units.
-    event AuctionClearingExecuted(uint32 indexed seriesId, uint64 auctionClearingRate, uint32 issuedIntexCount);
+    event AuctionClearingExecuted(uint32 indexed worldwideDay, uint64 auctionClearingRate, uint32 issuedIntexCount);
 
     /// @notice Emitted on `commitBid` with the sealed commit hash.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address (commit owner).
     /// @param commitHash The committed `keccak256(signature)`.
-    event BidCommitted(uint32 indexed seriesId, address indexed bidder, bytes32 commitHash);
+    event BidCommitted(uint32 indexed worldwideDay, address indexed bidder, bytes32 commitHash);
 
     /// @notice Emitted on `revealBid` after a successful reveal.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param quantity Revealed Intex quantity.
     /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
-    event BidRevealed(uint32 indexed seriesId, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
+    event BidRevealed(uint32 indexed worldwideDay, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
 
     /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
-    event CommitCancelled(uint32 indexed seriesId, address indexed bidder);
+    event CommitCancelled(uint32 indexed worldwideDay, address indexed bidder);
     /// @notice A terminal auction's stored revealed-bid records were reclaimed; `remaining` still to reap.
-    event AuctionReaped(uint32 indexed seriesId, uint256 remaining);
+    event AuctionReaped(uint32 indexed worldwideDay, uint256 remaining);
 
     /// @notice Emitted on `wire` after the escrow contract address is set.
     /// @param previous Escrow contract address before the update.
@@ -216,33 +216,34 @@ interface IIntexAuction {
 
     // --- Lifecycle ---
 
-    /// @notice Create and start a new auction for `seriesId`.
+    /// @notice Create and start a new auction for `worldwideDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
     ///      Outbe side (Desis) and passed in.
-    /// @param seriesId Auction series id (yyyymmdd as uint32).
+    /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
-    function auctionStart(uint32 seriesId, AuctionSchedule calldata schedule, AuctionParams calldata params) external;
+    function auctionStart(uint32 worldwideDay, AuctionSchedule calldata schedule, AuctionParams calldata params)
+        external;
 
     /// @notice Start the reveal stage (bridge-driven; green day proceeds, red day cancels).
     /// @dev Early green-day signal snaps `commitEnd` forward; `revealEnd` is unchanged.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param isGreenDay True = green day (proceed to reveal), false = red day (cancel auction).
-    function startRevealingBidsStage(uint32 seriesId, bool isGreenDay) external;
+    function startRevealingBidsStage(uint32 worldwideDay, bool isGreenDay) external;
 
     /// @notice Advance the auction to the issuance stage (bridge-driven clearing signal from Outbe).
     /// @dev Early signal snaps `revealEnd` forward; `issuanceEnd` is unchanged.
-    /// @param seriesId Auction series id.
-    function startClearingStage(uint32 seriesId) external;
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    function startClearingStage(uint32 worldwideDay) external;
 
     /// @notice Execute auction clearing with final data from Outbe.
     /// @dev `issuedIntexLoadedPromis` is derived on-chain (`issuedIntexCount * promisLoadMinor`).
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Final number of issued Intex units.
     /// @param auctionClearingRate Uniform clearing rate (`1e6` fixed-point) calculated by Outbe.
     /// @param wonBidsCount Number of winning bids (from Outbe).
     function executeAuctionClearing(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
@@ -255,34 +256,34 @@ interface IIntexAuction {
     ///      caller into escrow in the same transaction (requires prior payment-token approval on
     ///      the escrow adapter). Reveal/cancel return it immediately; a green-day no-reveal locks
     ///      it until `revealEnd + COMMIT_BOND_LOCK_PERIOD` (see `claimCommitBond`).
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
-    ///                   signature over `RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)`
+    ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)`
     ///                   under the `IntexAuction` v1 domain (`chainId`, `verifyingContract = address(this)`).
-    function commitBid(uint32 seriesId, bytes32 commitHash) external;
+    function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
 
     /// @notice Cancel an existing commit during the commit stage.
     /// @dev Only callable before `commitEnd`. Once the commit window closes a commit can no longer
     ///      be cancelled or revealed — an unrevealed commit is permanently forfeited (its bond
     ///      stays claimable via `claimCommitBond`). Cancelling returns the bond immediately.
-    /// @param seriesId Auction series id.
-    function cancelCommit(uint32 seriesId) external;
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    function cancelCommit(uint32 worldwideDay) external;
 
     /// @notice Reclaim a terminal, past-issuance auction's stored revealed-bid records.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param limit Maximum records to delete this call; paginate large sets across calls.
-    function reapAuction(uint32 seriesId, uint256 limit) external;
+    function reapAuction(uint32 worldwideDay, uint256 limit) external;
 
     /// @notice Reveal a bid.
     /// @dev Returns the commit bond (if any) before locking the bid escrow, so the bond can fund
     ///      the bid in the same transaction.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(uint32 seriesId, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
+    function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
         external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
@@ -290,28 +291,28 @@ interface IIntexAuction {
     ///         only after `revealEnd + COMMIT_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
     ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) backs this up
     ///         if the auction contract itself is rotated away.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function claimCommitBond(uint32 seriesId, address bidder) external;
+    function claimCommitBond(uint32 worldwideDay, address bidder) external;
 
     // --- Views ---
 
     /// @notice Get auction information by series id.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return auctionData Auction information including schedule, params and result.
-    function getAuctionInfo(uint32 seriesId) external view returns (AuctionData memory auctionData);
+    function getAuctionInfo(uint32 worldwideDay) external view returns (AuctionData memory auctionData);
 
     /// @notice Get auction information plus the revealed bids by series id.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return auctionData Auction information.
     /// @return bidsData Array of revealed bids.
-    function getAuctionDetails(uint32 seriesId)
+    function getAuctionDetails(uint32 worldwideDay)
         external
         view
         returns (AuctionData memory auctionData, SubmittedBidData[] memory bidsData);
 
     /// @notice Get the current auction stage by series id.
-    /// @param seriesId Auction series id.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return Current auction stage.
-    function getAuctionStage(uint32 seriesId) external view returns (AuctionStage);
+    function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
 }

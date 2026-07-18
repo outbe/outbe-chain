@@ -588,6 +588,64 @@ const promisWire = task(
   .setAction(lazy(promisWireAction));
 
 // ============================================================================
+// Gem-parking Wire (grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile)
+// GemFactory.setup_factory calls intex.parkForGems, which is gated by GEM_ROLE.
+// ============================================================================
+
+interface GemWireArgs {
+  gemFactory: string;
+  intexContract: string;
+}
+
+const gemWireAction = async (args: GemWireArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+
+  console.log(`Granting GEM_ROLE on IntexNFT1155...`);
+  console.log(`  GemFactory: ${args.gemFactory}`);
+  console.log(`  IntexNFT1155: ${args.intexContract}`);
+
+  const intex = (await viem.getContractAt(
+    "IntexNFT1155",
+    args.intexContract as `0x${string}`
+  )) as {
+    read: {
+      GEM_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const role = await intex.read.GEM_ROLE();
+  const hasGemRole = await intex.read.hasRole([role, args.gemFactory as `0x${string}`]);
+  if (hasGemRole) {
+    console.log(`✅ IntexNFT1155: GemFactory already has GEM_ROLE`);
+  } else {
+    const tx = await sendAndWait(viem, () =>
+      intex.write.grantRole([role, args.gemFactory as `0x${string}`]),
+    );
+    console.log(`✅ IntexNFT1155: GEM_ROLE granted to GemFactory. Tx: ${tx}`);
+  }
+};
+
+const gemWire = task(
+  "gem-wire",
+  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables parkForGems burn path)"
+)
+  .addOption({
+    name: "gemFactory",
+    description: "GemFactory precompile address on Outbe",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "intexContract",
+    description: "IntexNFT1155 contract address on Outbe",
+    defaultValue: "",
+  })
+  .setAction(lazy(gemWireAction));
+
+// ============================================================================
 // Precompile-caller Wire — grant roles to the EVM frames that initiate the
 // gated calls: the begin-block system caller (auction stage sends + qualify/call
 // mark sends) and the Desis precompile (inbound clearAuction issuance, where
@@ -877,6 +935,7 @@ export const wireTasks = [
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
+  gemWire.build(),
   grantRelayerRole.build(),
   grantSystemRelayerRole.build(),
 ];

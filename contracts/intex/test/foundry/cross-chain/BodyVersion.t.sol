@@ -65,10 +65,13 @@ contract BodyVersionTest is Test {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
             42, 100, 200, 300, 9, 10, 1e18, 5e6, 7e6, 11e6, 13e6, 5, 6, 7, 3, 17e18
         );
-        (uint32 seriesId, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
-            BridgeMsgCodec.decodeAuctionParams(packet);
+        (
+            uint32 worldwideDay,
+            IIntexAuction.AuctionSchedule memory schedule,
+            IIntexAuction.AuctionParams memory params
+        ) = BridgeMsgCodec.decodeAuctionParams(packet);
 
-        assertEq(seriesId, 42);
+        assertEq(worldwideDay, 42);
         assertEq(schedule.commitEnd, 100);
         assertEq(schedule.revealEnd, 200);
         assertEq(schedule.issuanceEnd, 300);
@@ -88,16 +91,16 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionStageReveal_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageReveal(42, true);
-        (uint32 seriesId, bool isGreenDay) = this.exposedDecodeAuctionStageReveal(packet);
-        assertEq(seriesId, 42);
+        (uint32 worldwideDay, bool isGreenDay) = this.exposedDecodeAuctionStageReveal(packet);
+        assertEq(worldwideDay, 42);
         assertTrue(isGreenDay);
     }
 
     function test_BridgeCodec_AuctionResult_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionResult(42, 7, 13e6, 5);
-        (uint32 seriesId, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
+        (uint32 worldwideDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
             this.exposedDecodeAuctionResult(packet);
-        assertEq(seriesId, 42);
+        assertEq(worldwideDay, 42);
         assertEq(issuedCount, 7);
         assertEq(clearingPrice, 13e6);
         assertEq(wonCount, 5);

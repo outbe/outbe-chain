@@ -47,6 +47,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
+        worldwide_day: params.worldwide_day,
         issued_intex_count: params.issued_intex_count,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
@@ -71,6 +72,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         IIntexNFT1155::createSeriesCall {
             params: CreateSeriesParams {
                 seriesId: params.series_id,
+                worldwideDay: params.worldwide_day,
                 issuanceCurrency: params.issuance_currency,
                 referenceCurrency: params.reference_currency,
                 issuedIntexCount: params.issued_intex_count,
@@ -96,6 +98,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let router_params = IOriginRouter::IssuanceInstructionsParams {
         seriesId: params.series_id,
+        worldwideDay: params.worldwide_day,
         issuedIntexCount: params.issued_intex_count,
         promisLoadMinor: params.promis_load_minor,
         entryPriceMinor: entry_price_minor_u64,
@@ -180,7 +183,7 @@ pub fn set_authorized_settler(
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
-    series_id: u32,
+    worldwide_day: u32,
     amount: U256,
 ) -> Result<()> {
     if caller != ORIGIN_ROUTER_ADDRESS {
@@ -189,11 +192,11 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
     if total.is_zero() {
-        return Err(IntexFactoryError::NoContributors(series_id).into());
+        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
     }
-    outbe_intex::api::start_distribution(storage, series_id, amount, total)
+    outbe_intex::api::start_distribution(storage, worldwide_day, amount, total)
 }
 
 /// Pay up to `limit` contributors of an in-flight distribution, advancing the

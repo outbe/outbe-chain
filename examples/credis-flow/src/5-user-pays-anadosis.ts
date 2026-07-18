@@ -6,7 +6,6 @@ import {
   IERC20__factory,
   IVaultProvider__factory,
   IGratis__factory,
-  IGratisPool__factory,
   IEntryPoint__factory,
 } from "./contracts/index.js";
 import {
@@ -20,26 +19,31 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatToken,
-  anadosisDenomByAmount,
   ownerPermissionId,
   permissionNonceKey,
   encodePermissionSignature,
 } from "./utils.js";
-import { commitmentHash, fieldToHex32, toField } from "./shielded.js";
-import { writeTicket } from "./ticket.js";
+import { deriveGratisKeys, decryptBalance } from "./confidential.js";
+import { findLatestTicket } from "./ticket.js";
 
 const SALT = 0n;
 
-// Parse CLI args: <positionId> [envName]
-if (!process.argv[2]) {
-  console.error("Usage: npx tsx src/5-user-pays-anadosis.ts <positionId> [envName]");
-  console.error("  positionId  - credis position ID");
-  console.error("  envName     - environment name (default: local-dev)");
+// Parse CLI args: [positionId] [envName]. When positionId is omitted it is read
+// from the latest pledge ticket (written by request-credis).
+let positionIdArg: string | undefined;
+let envName = DEFAULT_ENV;
+for (const a of process.argv.slice(2)) {
+  if (/^\d+$/.test(a) || a.startsWith("0x")) positionIdArg = a;
+  else envName = a;
+}
+const ticketPositionId = findLatestTicket()?.ticket.positionId;
+if (!positionIdArg && !ticketPositionId) {
+  console.error(
+    "No positionId given and no ticket with one found. Run `npm run request-credis` first, or pass a positionId.",
+  );
   process.exit(1);
 }
-
-const positionId = BigInt(process.argv[2]);
-const envName = process.argv[3] || DEFAULT_ENV;
+const positionId = BigInt(positionIdArg ?? ticketPositionId!);
 
 // Load env files
 const { envPath, deploymentEnvPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
@@ -51,6 +55,7 @@ const userAddress = requireEnv("USER_ADDRESS", envContext);
 const ccaAddress = requireEnv("CCA_ADDRESS", envContext);
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
+const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
@@ -200,19 +205,17 @@ async function main() {
     process.exit(1);
   }
 
-  // Derive the anadosis (one-decade-down) denomination for this installment's
-  // reclaim note. Its amount == nextAnadosis.gratisAmount == pledge / 10. The
-  // reclaim commitment MUST be computed with this denom id — the chain stores
-  // it opaquely and cannot detect a wrong-denom note (it would be unspendable).
-  const anadosisDenom = anadosisDenomByAmount(nextAnadosis.gratisAmount);
-  const reclaimSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const reclaimNullifierSecret = toField(ethers.getBytes(ethers.hexlify(ethers.randomBytes(32))));
-  const reclaimCommitment = await commitmentHash(reclaimSecret, reclaimNullifierSecret, anadosisDenom.id);
-  console.log(`\nReclaim note for this installment:`);
-  console.log(`  Anadosis denom:   ${anadosisDenom.id} = ${formatToken(anadosisDenom.amount, 18, "GRATIS")}`);
-  console.log(`  Reclaim secret:   ${fieldToHex32(reclaimSecret)}`);
-  console.log(`  Reclaim nullSecr: ${fieldToHex32(reclaimNullifierSecret)}`);
-  console.log(`  Reclaim commit:   ${fieldToHex32(reclaimCommitment)}`);
+  // On payment the chain automatically releases this installment's share of the
+  // pledged collateral (== nextAnadosis.gratisAmount == pledge / N) back to the
+  // ORIGINAL pledger's confidential Gratis balance — no reclaim note, no second
+  // transaction. The user reads their own (encrypted) balance with their view key.
+  const gratis = IGratis__factory.connect(gratisAddress, provider);
+  const userKeys = await deriveGratisKeys(userWallet);
+  const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  console.log(
+    `\nThis installment unlocks ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")} of collateral back to ${userAddress}.`,
+  );
+  console.log(`  User Gratis balance before: ${formatToken(gratisBalBefore, 18, "GRATIS")} (decrypted)`);
 
   // State before
   const before = await getState(token, credis, smartAccountAddr, underlyingVaultAddr);
@@ -242,12 +245,12 @@ async function main() {
     console.log("  Deposited 0.05 COEN into EntryPoint");
   }
 
-  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, reclaimCommitment)]
-  // anadosis now carries this installment's reclaim commitment; the runtime
-  // inserts it into the anadosis-denom pool so the note can be unpledged for
-  // one tenth of the pledge immediately after this payment.
+  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, eoaAccount)].
+  // The runtime pulls the stablecoin, advances the schedule, and releases this
+  // installment's collateral share from the escrow to the pledger's (userAddress)
+  // encrypted balance — the enclave checks the EOA against the pledge record.
   const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, anadosisAmount]);
-  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, reclaimCommitment]);
+  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, userAddress]);
 
   // Batch execution: execMode byte[0] = 0x01 (CALLTYPE_BATCH)
   const execModeBatch = "0x01" + "00".repeat(31);
@@ -323,16 +326,11 @@ async function main() {
     { name: "ICredis", iface: ICredis__factory.createInterface() },
     { name: "VaultProvider", iface: IVaultProvider__factory.createInterface() },
     { name: "IGratis", iface: IGratis__factory.createInterface() },
-    { name: "IGratisPool", iface: IGratisPool__factory.createInterface() },
     { name: "ERC20", iface: IERC20__factory.createInterface() },
   ];
 
   let userOpSuccess: boolean | null = null;
   let userOpRevertReason: string | null = null;
-  // The anadosis inserts this installment's reclaim commitment into the pool;
-  // capture (commitment, leafIndex, root) so we can write the local reclaim
-  // ticket for a later unpledge.
-  let poolInsertion: { commitment: bigint; leafIndex: number; root: bigint } | null = null;
 
   console.log("\n=== Transaction Events ===");
   for (const log of receipt?.logs ?? []) {
@@ -351,13 +349,6 @@ async function main() {
           if (contractName === "EntryPoint" && event.args.userOpHash === userOpHash) {
             if (event.name === "UserOperationEvent") userOpSuccess = event.args.success;
             if (event.name === "UserOperationRevertReason") userOpRevertReason = event.args.revertReason;
-          }
-          if (contractName === "IGratisPool" && event.name === "CommitmentInserted") {
-            poolInsertion = {
-              commitment: BigInt(event.args.commitment),
-              leafIndex: Number(event.args.leafIndex),
-              root: BigInt(event.args.newRoot),
-            };
           }
           parsed = true;
           break;
@@ -392,35 +383,16 @@ async function main() {
   console.log(`  SA ERC20:        ${formatTokenDiff(saErc20Diff, erc20Meta.decimals, erc20Meta.symbol)}`);
   console.log(`  Vault ERC20:     ${formatTokenDiff(vaultErc20Diff, erc20Meta.decimals, erc20Meta.symbol)}`);
 
-  // The runtime appended this installment's reclaim commitment to the pool.
-  // Write a ticket so `unpledge-gratis-fast` can prove membership and unlock
-  // one tenth of the pledge immediately — no need to wait for the loan to
-  // finish.
-  if (poolInsertion) {
-    if (poolInsertion.commitment !== reclaimCommitment) {
-      throw new Error(
-        `Poseidon parity mismatch: sent reclaim commitment ${fieldToHex32(reclaimCommitment)} but the on-chain CommitmentInserted recorded ${fieldToHex32(poolInsertion.commitment)}.`,
-      );
-    }
-    const network = await provider.getNetwork();
-    const reclaimTicketPath = writeTicket({
-      denomId: anadosisDenom.id,
-      secret: fieldToHex32(reclaimSecret),
-      nullifierSecret: fieldToHex32(reclaimNullifierSecret),
-      commitment: fieldToHex32(reclaimCommitment),
-      leafIndex: poolInsertion.leafIndex,
-      root: fieldToHex32(poolInsertion.root),
-      blockNumber: receipt!.blockNumber,
-      txHash: receipt!.hash,
-      chainId: network.chainId.toString(),
-      createdAt: new Date().toISOString(),
-    });
-    console.log(`\nReclaim ticket written: ${reclaimTicketPath}`);
-    console.log(`  denom ${anadosisDenom.id} = ${formatToken(anadosisDenom.amount, 18, "GRATIS")} (one installment's share)`);
-    console.log(`  leafIndex: ${poolInsertion.leafIndex}`);
-    console.log("  Run `npm run unpledge-gratis-fast` to unlock this installment's gratis now.");
-  } else {
-    console.log("\nWARNING: no CommitmentInserted event observed — reclaim note not recorded.");
+  // The collateral share unlocked automatically to the pledger's confidential
+  // balance — verify it by decrypting with the user's view key. No reclaim note
+  // or follow-up unpledge is needed.
+  const gratisBalAfter = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
+  const unlocked = gratisBalAfter - gratisBalBefore;
+  console.log(`  User Gratis:     ${formatTokenDiff(unlocked, 18, "GRATIS")} (collateral released to the pledger)`);
+  if (unlocked !== nextAnadosis.gratisAmount) {
+    console.warn(
+      `  WARNING: unlocked ${formatToken(unlocked, 18, "GRATIS")} != expected ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")}`,
+    );
   }
 }
 

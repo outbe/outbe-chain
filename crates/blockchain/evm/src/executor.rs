@@ -141,10 +141,9 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
-        GRATIS_POOL_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,

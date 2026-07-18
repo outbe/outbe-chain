@@ -9,7 +9,7 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IOriginRouter {
         struct AuctionStageStartParams {
-            uint32 seriesId;
+            uint32 worldwideDay;
             uint32 commitEnd;
             uint32 revealEnd;
             uint32 issuanceEnd;
@@ -30,20 +30,20 @@ sol! {
         function sendAuctionStageStart(AuctionStageStartParams calldata params)
             external payable returns (bytes32 sendId);
 
-        function sendAuctionStageReveal(uint32 seriesId, bool isGreenDay)
+        function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay)
             external payable returns (bytes32 sendId);
 
-        function sendAuctionStageClearing(uint32 seriesId) external payable returns (bytes32 sendId);
+        function sendAuctionStageClearing(uint32 worldwideDay) external payable returns (bytes32 sendId);
 
         function sendAuctionResult(
-            uint32 seriesId,
+            uint32 worldwideDay,
             uint32 issuedIntexCount,
             uint64 auctionClearingRate,
             uint32 wonBidsCount
         ) external payable returns (bytes32 sendId);
 
         function sendRefundInstructions(
-            uint32 seriesId,
+            uint32 worldwideDay,
             address[] calldata bidders,
             uint128[] calldata refundedAmounts,
             uint128[] calldata paidAmounts

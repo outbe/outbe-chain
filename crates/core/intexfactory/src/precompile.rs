@@ -57,7 +57,7 @@ pub fn dispatch(
                 // The only payable selector: receives auction proceeds as
                 // msg.value and pays them to the series contributors.
                 distribute(c) => mutate_void_payable(c, caller, value, |sender, c, val| {
-                    runtime::distribute(&storage, sender, c.seriesId, val)
+                    runtime::distribute(&storage, sender, c.worldwideDay, val)
                 }),
             }
         },

@@ -89,6 +89,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         IntexStatus status;
         /// @notice Current series lifecycle state.
         IntexState state;
+        /// @notice Worldwide day whose tributes fed this series (== seriesId until multi-currency allocation).
+        uint32 worldwideDay;
     }
 
     // --- Events ---
@@ -150,6 +152,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens burned.
     event IntexCompleted(uint32 indexed seriesId, address indexed holder, uint256 amount);
 
+    /// @notice Emitted when Issued Intex are burned on parking in the Gem Factory.
+    /// @param seriesId Series identifier.
+    /// @param holder Holder whose Issued tokens were burned.
+    /// @param amount Amount of Issued tokens burned.
+    event IntexParked(uint32 indexed seriesId, address indexed holder, uint256 amount);
+
     // --- Errors ---
 
     /// @notice Zero address provided.
@@ -197,8 +205,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Writes ---
 
     /// @notice Identity inputs for a new series, set once at `createSeries`.
+    /// @dev `worldwideDay` is the day the series was derived from; it is the provenance key
+    ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
     struct CreateSeriesParams {
         uint32 seriesId;
+        uint32 worldwideDay;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 issuedIntexCount;
@@ -258,6 +269,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param amount Amount of Settled tokens to burn.
     function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
 
+    /// @notice Burn `amount` Issued Intex from `holder` when the tokens are parked in the Gem Factory.
+    /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
+    ///      (Issued or Qualified — no Call Event yet). The parked capacity record lives in the
+    ///      Gem Factory; the burned Intex is thereby non-tradable, call-exempt and Outbe-only.
+    /// @param holder Holder whose Issued tokens are burned.
+    /// @param seriesId Series identifier.
+    /// @param amount Amount of Issued tokens to burn.
+    function parkForGems(address holder, uint32 seriesId, uint256 amount) external;
+
     // --- Reads ---
 
     /// @notice Issued token id for a series (= `uint256(seriesId)`). Pure helper.
@@ -269,6 +289,16 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @return The Settled token id.
     function settledTokenId(uint32 seriesId) external pure returns (uint256);
+
+    /// @notice Worldwide day whose tributes fed the series (0 if the series does not exist).
+    /// @param seriesId Series identifier.
+    /// @return The worldwide day (yyyymmdd).
+    function worldwideDayOf(uint32 seriesId) external view returns (uint32);
+
+    /// @notice Series ids issued for a worldwide day.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @return The series ids of that day.
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory);
 
     /// @notice Both token ids for a series in one call.
     /// @param seriesId Series identifier.

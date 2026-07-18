@@ -24,7 +24,7 @@ contract EscrowAdapterProceedsTest is Test {
     address bidder1 = address(5);
     address outsider = address(7);
 
-    uint32 seriesId1 = 1;
+    uint32 worldwideDay1 = 1;
     uint128 constant LOCK_AMOUNT = 1000 * 10 ** 6;
     bytes32 constant GUID = bytes32(uint256(0xDEADBEEF));
 
@@ -48,7 +48,7 @@ contract EscrowAdapterProceedsTest is Test {
 
     function test_RevertWhen_FinalizeWithProceedsAndNoRecipient() public {
         vm.prank(auction);
-        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] =
@@ -56,7 +56,7 @@ contract EscrowAdapterProceedsTest is Test {
 
         vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(seriesId1, GUID, instructions);
+        escrow.finalizeAuction(worldwideDay1, GUID, instructions);
     }
 
     function test_SetProceedsRecipient_OnlyAdmin() public {

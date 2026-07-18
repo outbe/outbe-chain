@@ -180,6 +180,20 @@ pub struct FinalizationProof {
 ///
 /// Provides read-only access to validator infrastructure state.
 /// Enable with `--http.api outbe`.
+/// Sealed Gratis view + modify keys returned by `outbe_deriveGratisKeys`.
+///
+/// The enclave derives the account's keys and seals them to the requester's
+/// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
+/// view_key ‖ modify_key)`. The client recovers `view_key || modify_key` with its
+/// ephemeral secret + `enclaveEphemeralPubkey`. Opaque to the node.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GratisKeysSealed {
+    pub sealed: alloy_primitives::Bytes,
+    pub nonce: alloy_primitives::Bytes,
+    pub enclave_ephemeral_pubkey: B256,
+}
+
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
     /// Returns one independently verifiable latest-finalized compressed-entity
@@ -193,6 +207,23 @@ pub trait OutbeApi {
     /// Returns information about all active validators.
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
+
+    /// Derive the account's confidential Gratis view + modify keys inside the
+    /// enclave and return them sealed to `ephemeralPubkey` (a client X25519 public
+    /// key). Off-chain key delivery — it never touches consensus state.
+    ///
+    /// The caller MUST prove control of `account`: `signature` is an EIP-191
+    /// `personal_sign` over `"outbe/gratis/derive-keys/v1" ‖ account ‖
+    /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
+    /// matching signature the enclave is never asked — otherwise anyone could
+    /// obtain any account's modify key.
+    #[method(name = "deriveGratisKeys")]
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
 
     /// Returns detailed information about a single validator by address.
     #[method(name = "getValidator")]

@@ -32,6 +32,9 @@ pub enum TransportError {
     #[error("offer attestation signature invalid: {0}")]
     TributeOfferAttestation(String),
 
+    #[error("gratis-op attestation signature invalid: {0}")]
+    GratisOpAttestation(String),
+
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
 

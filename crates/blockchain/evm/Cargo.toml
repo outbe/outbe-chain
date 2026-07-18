@@ -12,7 +12,6 @@ outbe-compressed-entities.workspace = true
 outbe-offchain-data.workspace = true
 outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
-outbe-gratispool.workspace = true
 outbe-promis.workspace = true
 outbe-promisfactory.workspace = true
 outbe-tribute.workspace = true
