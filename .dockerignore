@@ -1,5 +1,7 @@
 .codegraph
 .bb-crs
+.dockerignore
+Dockerfile
 target
 data
 contracts/*
