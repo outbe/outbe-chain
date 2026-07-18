@@ -13,6 +13,8 @@ FROM rust:1.96-bookworm AS builder
 RUN apt-get update && apt-get install -y \
     cmake \
     clang \
+    libc++-dev \
+    libc++abi-dev \
     libssl-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
