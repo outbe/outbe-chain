@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
 };
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -13,7 +13,7 @@ use outbe_compressed_entities::{
 use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::{
-    addresses::NOD_ADDRESS,
+    addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
@@ -41,6 +41,20 @@ fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReade
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
         begin_block(storage, &scope).unwrap();
     });
     (provider, scope, NodRepositoryReader::new(reader))

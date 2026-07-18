@@ -13,11 +13,12 @@
 //! this, every chain would fire its daily trigger on block 1 because
 //! `block_ts >> 86_400` is always true on a real chain.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
     CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, ExecutionScope,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_tribute::TributeRepositoryReader;
@@ -55,6 +56,17 @@ fn with_execution_scope(
     ctx: &BlockRuntimeContext,
     f: impl FnOnce(&ExecutionScope, &TributeRepositoryReader) -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<()> {
+    ctx.storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))?;
+    ctx.storage.sstore(
+        COMPRESSED_ENTITIES_ADDRESS,
+        U256::from(1),
+        U256::from_be_slice(
+            outbe_compressed_entities::sealed_root(B256::ZERO)
+                .unwrap()
+                .as_slice(),
+        ),
+    )?;
     let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let parent = TributeRepositoryReader::new(storage);
     let scope = ExecutionScope::new();

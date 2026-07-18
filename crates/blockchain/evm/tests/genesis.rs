@@ -183,7 +183,7 @@ fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
         .expect("EE0D entry has storage");
     let slot0 = format!("0x{:064x}", 0);
     let slot1 = format!("0x{:064x}", 1);
-    assert_eq!(storage[&slot0], format!("0x{:064x}", 2));
+    assert_eq!(storage[&slot0], format!("0x{:064x}", 3));
     assert_eq!(
         storage[&slot1],
         format!(

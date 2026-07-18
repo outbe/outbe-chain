@@ -6,9 +6,27 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
+    addresses::COMPRESSED_ENTITIES_ADDRESS,
     error::{PrecompileError, Result},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
+
+fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
+}
 
 use crate::{api, NodContract, NodItemState, NodRepositoryReader};
 
@@ -36,6 +54,7 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
     let mut provider = HashMapStorageProvider::new(1);
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let outcome: Result<()> = storage.with_checkpoint(|| {
             api::add_nod(&storage, &scope, &parent, &body, U256::from(5))?;
@@ -65,6 +84,7 @@ fn nod_identity_and_abi_boundary_preserve_exact_36_bytes() {
     }
     .abi_encode();
     StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
         let error =
             crate::precompile::dispatch(storage, &scope, &parent, &call, Address::ZERO, U256::ZERO)

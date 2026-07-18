@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use alloy_evm::{block::BlockExecutor, eth::EthBlockExecutionCtx};
-use alloy_primitives::{Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmConfig};
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::{addresses::COMPRESSED_ENTITIES_ADDRESS, OutbeHeader};
 use reth_ethereum::{
     chainspec::{ChainSpec, EthChainSpec, MAINNET},
@@ -23,6 +24,69 @@ use revm::{
 
 fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+}
+
+fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<ProviderError>> {
+    let mut seeded = HashMapStorageProvider::new(MAINNET.chain().id());
+    StorageHandle::enter(&mut seeded, |storage| {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_bytes(parent_root.0),
+            )
+            .unwrap();
+
+        let owner = Address::repeat_byte(0x11);
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        validators.config_owner.write(owner).unwrap();
+        validators.config_max_validators.write(128).unwrap();
+        validators.config_epoch_length_blocks.write(60).unwrap();
+        validators.config_is_initialized.write(true).unwrap();
+        let mut public_key = [0_u8; 48];
+        public_key[0] = 0xa2;
+        validators
+            .register_validator(owner, proposer, &public_key)
+            .unwrap();
+        validators
+            .activate_reshared_set(&[proposer], B256::ZERO)
+            .unwrap();
+
+        let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+        oracle.register_pair("COEN", "0xUSD").unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                "COEN",
+                "0xUSD",
+                U256::from(1_000_000_000_000_000_000_u128),
+                0,
+                0,
+            )
+            .unwrap();
+    });
+
+    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let entries: Vec<_> = seeded.storage.into_iter().collect();
+    let mut addresses: Vec<_> = entries.iter().map(|((address, _), _)| *address).collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    for address in addresses {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+        );
+    }
+    for ((address, slot), value) in entries {
+        db.insert_account_storage(address, slot, value).unwrap();
+    }
+    db
 }
 
 #[test]
@@ -63,22 +127,8 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
     );
     let config = OutbeEvmConfig::new(test_chain_spec()).with_compressed_tree_service(service);
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    db.insert_account_info(
-        COMPRESSED_ENTITIES_ADDRESS,
-        AccountInfo {
-            nonce: 1,
-            ..Default::default()
-        },
-    );
-    db.insert_account_storage(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(2_u64))
-        .unwrap();
-    db.insert_account_storage(
-        COMPRESSED_ENTITIES_ADDRESS,
-        U256::from(1_u64),
-        U256::from_be_bytes(parent_root.0),
-    )
-    .unwrap();
+    let proposer = Address::repeat_byte(0x22);
+    let db = execution_db(proposer, parent_root);
     let mut state = State::builder()
         .with_database(db)
         .with_bundle_update()
@@ -112,8 +162,8 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
         expected_end_system_txs: Vec::new(),
         system_layout_error: None,
         parent_consensus_metadata: None,
-        proposer_evm_address: None,
-        execute_outbe_block_hooks: false,
+        proposer_evm_address: Some(proposer),
+        execute_outbe_block_hooks: true,
         prebuilt_phase1_tx: None,
         parent_artifact_hint: None,
         pending_tee_bootstrap: None,
