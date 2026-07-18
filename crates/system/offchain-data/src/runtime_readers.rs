@@ -30,7 +30,7 @@ struct ExecutionReadPermit;
 impl ExecutionReadPermit {
     fn acquire() -> Result<Self, StorageError> {
         ACTIVE_EXECUTION_READS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < MAX_CONCURRENT_EXECUTION_READS).then_some(active + 1)
             })
             .map(|_| Self)
