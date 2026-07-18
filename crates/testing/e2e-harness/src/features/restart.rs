@@ -35,7 +35,10 @@ fn joiner_active_persisted_share(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("wwd");
 
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
-    world.rpc.offer_until_supply(&v0, &wwd, primary, "1", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v0, &wwd, primary, "1", 5),
+        "pre-restart offer did not land (supply != 1)"
+    );
 
     world
         .localnet
@@ -136,7 +139,10 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("wwd");
     let key = world.validators.get(0).evm_key().expect("validator-0 key");
     let primary = world.validators.primary_port();
-    world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5);
+    assert!(
+        world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
+        "post-committee-restart offer did not land (supply != 1)"
+    );
 }
 
 /// The restarted node catches up and resumes signing WITHOUT a fresh ceremony
@@ -185,7 +191,10 @@ fn resumes_without_new_ceremony(world: &mut World) {
         .expect("v1")
         .evm_key()
         .expect("v1 key");
-    world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 5),
+        "post-node-restart offer did not land (supply != 2)"
+    );
     sleep(Duration::from_secs(6));
     assert_eq!(
         world.rpc.supply(primary),
