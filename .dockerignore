@@ -2,6 +2,8 @@
 .bb-crs
 target
 data
-contracts
+contracts/*
+!contracts/precompiles
+!contracts/precompiles/**
 .serena
 docs
