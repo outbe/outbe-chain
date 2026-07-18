@@ -267,8 +267,13 @@ where
 
         if let Err(err) = builder.apply_pre_execution_changes() {
             if ce_local_readiness_error(&err) {
-                debug!(target: "payload_builder", %err, "cancelling payload because exact-parent data is not locally ready");
-                return Ok(BuildOutcome::Cancelled);
+                // This attempt raced finalization and cannot use the in-place
+                // materialization for its old parent. Report a retryable build
+                // failure: Reth reserves `BuildOutcome::Cancelled` for futures
+                // whose supplied cancel signal actually fired and treats any
+                // other use as an unreachable invariant violation.
+                debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
+                return Err(PayloadBuilderError::Internal(err.into()));
             }
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
             return Err(PayloadBuilderError::Internal(err.into()));
@@ -694,7 +699,7 @@ mod ce_work_tests {
     }
 
     #[test]
-    fn exact_parent_readiness_is_a_cancelled_payload_not_an_internal_failure() {
+    fn exact_parent_readiness_remains_typed_for_retry_without_an_alarm() {
         let readiness = BlockExecutionError::other(PrecompileError::TreeUnavailable(
             "finalized marker advanced past the payload parent".to_owned(),
         ));
