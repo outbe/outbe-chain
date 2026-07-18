@@ -58,8 +58,8 @@ impl core::fmt::Debug for MdbxAuthenticatedTree {
 impl MdbxAuthenticatedTree {
     pub fn open(db: Arc<CeMdbx>, identity: ExactParentIdentity) -> Result<Self> {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
-        let view = AuthenticatedCatalogView::open(snapshot, identity)
-            .map_err(classify_staging_error)?;
+        let view =
+            AuthenticatedCatalogView::open(snapshot, identity).map_err(classify_staging_error)?;
         let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
             .map_err(|error| tree_corruption(error.to_string()))?;
         let catalog_store =

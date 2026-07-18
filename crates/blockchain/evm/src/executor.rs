@@ -7980,11 +7980,9 @@ mod tests {
         .expect_err("tree readiness must abort this payload execution");
 
         assert!(matches!(
-            error
-                .as_internal()
-                .and_then(|inner| inner.downcast_other::<
-                    outbe_primitives::error::PrecompileError,
-                >()),
+            error.as_internal().and_then(
+                |inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>()
+            ),
             Some(outbe_primitives::error::PrecompileError::TreeUnavailable(_))
         ));
     }
