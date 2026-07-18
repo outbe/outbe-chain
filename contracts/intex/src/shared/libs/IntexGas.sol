@@ -30,8 +30,10 @@ library IntexGas {
 
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    uint256 internal constant ISSUANCE_BASE = 300_000;
-    uint256 internal constant ISSUANCE_PER_ITEM = 200_000;
+    /// @dev Covers createSeries plus the handler overhead; measured on the canonical NFT via the
+    ///      loopback walk (LocalLoopback.t.sol), where the old 300k base ran out of gas.
+    uint256 internal constant ISSUANCE_BASE = 600_000;
+    uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
     /// @dev ERC-1155 crosschainMint loop (mint + enumerable holder bookkeeping + supply-cap check) per item.
