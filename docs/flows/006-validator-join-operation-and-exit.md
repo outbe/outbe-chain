@@ -123,7 +123,7 @@ committed state. A partial cross-module result is never accepted.
 | PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash and next committee exclusion while chain remains live | `@pfs-006-06` covers liveness only; slash disabled |
 | PFS-006-07 | duplicate evidence | one authenticated offense already processed | resubmit same canonical evidence | no second punishment/reporter reward | documentation-only: evidence construction/submission absent |
 | PFS-006-08 | unjail and rejoin | jailed validator topped up and cooldown elapsed | unjail, confirm and reshare | PENDING then ACTIVE with fresh share; no stale share reuse | documentation-only: slashing/time control absent |
-| PFS-006-09 | crash boundaries | operation poised at each registration/DKG/reward/exit checkpoint | crash and restart | semantic pre-state or complete outcome at every boundary | `@pfs-006-09` covers active-share restart only |
+| PFS-006-09 | crash boundaries | operation poised at each registration/DKG/reward/exit checkpoint | crash and restart | semantic pre-state or complete outcome at every boundary | `@pfs-006-09` covers active-share restart and full-committee sealed TEE recovery; other checkpoints remain gaps |
 | PFS-006-10 | cleanup and re-registration | inactive validator with no bonded/live claims | clean indexes then register identity again | no stale pubkey/cooldown/index; exactly one live record | documentation-only: maturity/cleanup fixture absent |
 
 ## Open questions and technical debt
