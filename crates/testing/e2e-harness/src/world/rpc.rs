@@ -581,11 +581,28 @@ impl Rpc {
         want: &str,
         tries: u32,
     ) -> bool {
+        let mut pending_tx = None;
         for _ in 0..tries {
-            let _ = self.tribute_offer(key, wwd);
+            if pending_tx.is_none() {
+                pending_tx = self.tribute_offer(key, wwd);
+            }
             sleep(Duration::from_secs(6));
             if self.supply(primary).as_deref() == Some(want) {
                 return true;
+            }
+            // Do not blindly submit a replacement while the first offer is still
+            // pending. The CLI intentionally uses the account's pending nonce, so
+            // an identical-fee retry is rejected as `replacement transaction
+            // underpriced` and only adds noise to an otherwise healthy lifecycle
+            // run. A failed receipt is terminal for that attempt and permits a
+            // fresh logical offer; a pending or successful receipt is given the
+            // remainder of the polling budget to become visible in state.
+            if pending_tx
+                .as_deref()
+                .and_then(|hash| eth::receipt_success(&self.cfg.rpc0, hash))
+                == Some(false)
+            {
+                pending_tx = None;
             }
         }
         self.supply(primary).as_deref() == Some(want)
