@@ -1141,6 +1141,17 @@ fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
+/// A verifier may discover a rotation only after catching up to its activation
+/// block. In that case there will be no old-epoch finalized-height event after
+/// `current_height` to drive the deferred epoch transition, so the current
+/// height must be replayed through the local scheduler.
+const fn verifier_activation_needs_immediate_replay(
+    current_height: u64,
+    activation_height: u64,
+) -> bool {
+    current_height >= activation_height
+}
+
 fn build_force_dkg_recovery_boundary(
     validator_set: &validators::ValidatorSet,
     output: &Output<MinSig, bls12381::PublicKey>,
@@ -4855,6 +4866,17 @@ where
                                             "verifier-follower: DKG rotation noted; will advance epoch at the activation height"
                                         );
                                         pending_verifier_activation = Some(planned_activation_height);
+                                        if verifier_activation_needs_immediate_replay(
+                                            current_height,
+                                            planned_activation_height,
+                                        ) {
+                                            // Re-enter this height-event path immediately. The
+                                            // pending-activation branch above will advance the
+                                            // epoch before the verifier waits for a new-epoch
+                                            // block that its old verifier cannot accept.
+                                            let _ = execution_finalized_height_tx
+                                                .send(current_height);
+                                        }
                                         continue;
                                     }
                                     return Err(eyre::eyre!(
