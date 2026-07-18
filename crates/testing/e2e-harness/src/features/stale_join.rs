@@ -114,4 +114,20 @@ fn confirmed_joiner_activates(world: &mut World) {
         Some(5),
         "active set should grow to 5"
     );
+    let joiner = world.validators.joiner_index();
+    assert_eq!(
+        world
+            .localnet
+            .log_count(joiner, "attributable invalid VRF seed partial"),
+        0,
+        "joiner rejected the active committee's VRF partials"
+    );
+    assert_eq!(
+        world.localnet.log_count(
+            joiner,
+            "finalized certificate carries an unverifiable VRF proof"
+        ),
+        0,
+        "joiner could not verify the active committee's finalized VRF proof"
+    );
 }
