@@ -202,7 +202,9 @@ impl Localnet {
                 return Ok(p);
             }
         }
-        bail!("real enclave binary `outbe-tee-enclave` not found under target/{{debug,release}}")
+        Err(eyre::eyre!(
+            "real enclave binary `outbe-tee-enclave` not found under target/{{debug,release}}"
+        ))
     }
 
     /// Last `n` lines of validator `i`'s `node.log`.
