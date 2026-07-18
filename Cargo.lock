@@ -7094,6 +7094,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-primitives",

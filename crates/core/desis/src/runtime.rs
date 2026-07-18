@@ -588,24 +588,22 @@ fn clear_inner(
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
     }
 
-    // Hand issuance to IntexFactory; an empty clearing issues nothing and
-    // creates no series.
-    if result.issued_intex_count > 0 {
-        let params = outbe_intexfactory::schema::IssuanceParams {
-            series_id: derive_series_id(worldwide_day),
-            worldwide_day,
-            issued_intex_count: result.issued_intex_count,
-            promis_load_minor: config.promis_load_minor,
-            entry_price_minor: config.entry_price_minor,
-            issuance_currency: QUALIFIER_ISSUANCE_ISO,
-            reference_currency: QUALIFIER_REFERENCE_ISO,
-            recipients: result.winners.clone(),
-            quantities: result.winner_quantities.clone(),
-            recipient_chains: result.winner_chains.clone(),
-            snapshot_chains: snapshot.to_vec(),
-        };
-        outbe_intexfactory::api::issue(&storage, params)?;
-    }
+    // Hand issuance to IntexFactory. A zero-winner clearing creates no series;
+    // issue() then only discards the day's never-to-distribute creator rewards.
+    let params = outbe_intexfactory::schema::IssuanceParams {
+        series_id: derive_series_id(worldwide_day),
+        worldwide_day,
+        issued_intex_count: result.issued_intex_count,
+        promis_load_minor: config.promis_load_minor,
+        entry_price_minor: config.entry_price_minor,
+        issuance_currency: QUALIFIER_ISSUANCE_ISO,
+        reference_currency: QUALIFIER_REFERENCE_ISO,
+        recipients: result.winners.clone(),
+        quantities: result.winner_quantities.clone(),
+        recipient_chains: result.winner_chains.clone(),
+        snapshot_chains: snapshot.to_vec(),
+    };
+    outbe_intexfactory::api::issue(&storage, params)?;
 
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.

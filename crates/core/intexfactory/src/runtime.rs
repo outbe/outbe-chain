@@ -30,6 +30,12 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// broadcast (including a loopback leg on the origin), so there is no in-process
 /// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
+    if params.issued_intex_count == 0 {
+        // Zero-winner clearing: no series is created anywhere, so the day's
+        // lysis-recorded contributor map would never distribute — discard it.
+        return outbe_intex::api::finalize_proceeds(storage, params.worldwide_day);
+    }
+
     // u32 timestamp; bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;

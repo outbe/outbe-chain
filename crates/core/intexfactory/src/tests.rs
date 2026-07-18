@@ -109,6 +109,21 @@ fn issue_rejects_duplicate_series() {
 }
 
 #[test]
+fn issue_zero_winners_discards_contributor_map() {
+    with_factory(|s| {
+        // Lysis recorded contributors for the day, but the clearing had no winners.
+        outbe_intex::api::record_contributors(&s, 7, &[(holder(), U256::from(100u64))]).unwrap();
+        let mut p = sample(7);
+        p.issued_intex_count = 0;
+        runtime::issue(&s, p).unwrap();
+
+        // No series exists and the never-to-distribute map is discarded.
+        assert!(!outbe_intex::api::series_exists(&s, 7).unwrap());
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+    });
+}
+
+#[test]
 fn issue_broadcasts_one_issuance_per_snapshot_chain() {
     use crate::sol_ext::IOriginRouter;
 

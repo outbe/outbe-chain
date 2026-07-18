@@ -558,6 +558,13 @@ fn no_bids_clears_as_no_sale() {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
         runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 10 * PROMIS_LOAD_MINOR, NOW).unwrap();
+        // Lysis recorded creator rewards for the day before the auction concluded.
+        outbe_intex::api::record_contributors(
+            &s,
+            WORLDWIDE_DAY,
+            &[(bidder(9), U256::from(100u64))],
+        )
+        .unwrap();
         // A single empty batch (batch 0 of 1) plus a zero-bid marker finalizes the chain.
         runtime::process_bids_batch(
             s.clone(),
@@ -583,6 +590,11 @@ fn no_bids_clears_as_no_sale() {
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
             AuctionStage::Cleared
+        );
+        // No series will ever exist for the day, so the contributor map is discarded.
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
+            0
         );
     });
 }
