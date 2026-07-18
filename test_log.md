@@ -152,9 +152,17 @@ end-to-end coverage. Commands are run from the repository root unless noted.
 - Targeted timeout parsing and SGX manifest resource-budget tests: PASS.
 - `cargo test -p outbe-e2e-harness --no-run`, `cargo fmt --all -- --check` and
   `git diff --check`: PASS.
-- Hardware SGX execution cannot be verified on this host because neither
-  `/dev/sgx_enclave` nor `/dev/sgx_provision` exists. The corrected nightly
-  hardware lane is the authoritative remaining verification.
+- Hardware SGX is available on this host. `mise run sgx-smoke` executes under
+  `gramine-sgx` and derives both MRSIGNER and MRENCLAVE EGETKEY sealing keys.
+  The DCAP probe correctly reports AESM error 12 because this machine's PCK/PCCS
+  is not provisioned; quote provisioning is independent of local SGX execution.
+- Four consecutive focused `mise run e2e-sgx` ZeroFee runs passed on four real
+  SGX validators: 1 scenario and 12/12 steps each. Across 16 enclave starts no
+  DKG timeout or `EAGAIN` occurred, and every run cleaned up its network.
+- The real-SGX stale-join run started the four-validator committee and a fifth
+  hardware enclave successfully, then stalled on a separate consensus invariant:
+  the joiner received a finalized certificate with unverifiable VRF material
+  version 0. This is not an SGX resource/startup failure and needs its own fix.
 - Reclassified Linux `EAGAIN` correctly at the transport boundary: with
   `SO_RCVTIMEO`, an enclave response exceeding the configured timeout is exposed
   as `WouldBlock`/OS error 11. The client now reports the exact quote, Noise or
