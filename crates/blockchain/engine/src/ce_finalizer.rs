@@ -571,11 +571,11 @@ impl RethCeFinalizer {
                 notification.hash
             );
         }
-        eyre::bail!(
+        Err(eyre::eyre!(
             "Reth persistence stream ended before finalized CE block {}/{}",
             block.height,
             block.block_hash
-        )
+        ))
     }
 }
 

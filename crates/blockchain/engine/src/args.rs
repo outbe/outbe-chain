@@ -291,9 +291,9 @@ impl ConsensusArgs {
             self.projection_mongodb_uri.as_ref(),
             self.projection_mongodb_database.as_ref(),
         ) {
-            (None, None) => eyre::bail!(
+            (None, None) => Err(eyre::eyre!(
                 "MongoDB projection is required; provide --projection.mongodb-uri and --projection.mongodb-database"
-            ),
+            )),
             (Some(uri), Some(database)) => {
                 if uri.trim().is_empty() {
                     eyre::bail!("--projection.mongodb-uri must not be empty");
@@ -307,9 +307,9 @@ impl ConsensusArgs {
                     start_block: self.projection_start_block,
                 })
             }
-            _ => eyre::bail!(
+            _ => Err(eyre::eyre!(
                 "--projection.mongodb-uri and --projection.mongodb-database must be provided together"
-            ),
+            )),
         }
     }
 
@@ -326,7 +326,9 @@ impl ConsensusArgs {
             return Ok(Some(path.clone()));
         }
         let Some(signing_key) = &self.signing_key else {
-            eyre::bail!("--validator requires --consensus.signing-key before deriving default --validator.evm-key")
+            return Err(eyre::eyre!(
+                "--validator requires --consensus.signing-key before deriving default --validator.evm-key"
+            ));
         };
         Ok(Some(
             signing_key
@@ -348,9 +350,9 @@ impl ConsensusArgs {
                 Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
             }
             "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-            other => eyre::bail!(
+            other => Err(eyre::eyre!(
                 "unknown BLS key backend: {other} (expected: plaintext, encrypted, os-level)"
-            ),
+            )),
         }
     }
 }
