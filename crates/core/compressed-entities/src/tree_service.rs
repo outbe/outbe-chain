@@ -15,7 +15,7 @@ use crate::{
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeRoot},
     staging::{
         AuthenticatedCatalogView, CollectionBatch, ProvisionalCatalogBatch,
-        ProvisionalShardSetBatch, ShardIndex, StagingCkbStore,
+        ProvisionalShardSetBatch, ShardIndex, StagingCkbStore, StagingError,
     },
     CeDomain, CollectionKey, Commitment, ProvisionalTreeBatch,
 };
@@ -59,7 +59,7 @@ impl MdbxAuthenticatedTree {
     pub fn open(db: Arc<CeMdbx>, identity: ExactParentIdentity) -> Result<Self> {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
         let view = AuthenticatedCatalogView::open(snapshot, identity)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+            .map_err(classify_staging_error)?;
         let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
             .map_err(|error| tree_corruption(error.to_string()))?;
         let catalog_store =
@@ -592,6 +592,13 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
     }
 }
 
+fn classify_staging_error(error: StagingError) -> PrecompileError {
+    match error {
+        StagingError::Persistence(error) => classify_snapshot_error(error),
+        corruption => tree_corruption(corruption.to_string()),
+    }
+}
+
 fn tree_corruption(message: impl Into<String>) -> PrecompileError {
     PrecompileError::Fatal(format!(
         "compressed-entity tree corruption: {}",
@@ -647,6 +654,15 @@ mod classification_tests {
                 required,
                 actual: finalized_ahead,
             }),
+            PrecompileError::TreeUnavailable(_)
+        ));
+        assert!(matches!(
+            classify_staging_error(StagingError::Persistence(
+                PersistenceError::ExactParentMismatch {
+                    required,
+                    actual: finalized_ahead,
+                },
+            )),
             PrecompileError::TreeUnavailable(_)
         ));
 
