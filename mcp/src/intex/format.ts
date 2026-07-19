@@ -3,11 +3,14 @@
  * helpers for tool output. Enum orderings are verbatim from the contracts:
  *  - AuctionStage ... contracts/intex/contracts/bnb/interfaces/IIntexAuction.sol
  *  - IntexState / IntexStatus ... contracts/intex/contracts/shared/interfaces/IIntexNFT1155.sol
+ *  - Desis AuctionStage / escrow LockStatus ... IDesis.sol / IEscrowAdapter.sol
  */
 
 const AUCTION_STAGE = ["CommittingBids", "RevealingBids", "Issuance", "Completed", "Cancelled"];
 const INTEX_STATE = ["Issued", "Qualified", "Called"];
 const INTEX_STATUS = ["Issued", "Settled"];
+const DESIS_STAGE = ["None", "Started", "Revealing", "BidsReceived", "Cleared", "Cancelled"];
+const LOCK_STATUS = ["None", "Locked", "Finalized", "RefundClaimed"];
 
 function label(table: string[], code: number | bigint): { code: number; name: string } {
   const c = Number(code);
@@ -27,6 +30,8 @@ export const auctionStage = (code: number | bigint) => {
 };
 export const intexState = (code: number | bigint) => label(INTEX_STATE, code);
 export const intexStatus = (code: number | bigint) => label(INTEX_STATUS, code);
+export const desisStage = (code: number | bigint) => label(DESIS_STAGE, code);
+export const lockStatus = (code: number | bigint) => label(LOCK_STATUS, code);
 
 /** Auction stages a participant can still act in (commit or reveal). */
 export function isActiveStage(code: number | bigint): boolean {

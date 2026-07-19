@@ -36,6 +36,8 @@ export interface IntexAddresses {
   intex?: Address;
   factory?: Address;
   promis?: Address;
+  desis?: Address;
+  originRouter?: Address;
 }
 
 const a = (s: string): Address => getAddress(s);
@@ -58,6 +60,9 @@ export const INTEX: Record<string, IntexAddresses> = {
     intex: a("0x0000000000000000000000000000000000001014"),
     factory: a("0x0000000000000000000000000000000000001015"),
     promis: a("0x0000000000000000000000000000000000001337"),
+    desis: a("0x0000000000000000000000000000000000001016"),
+    // Fan-out router (CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0").
+    originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
   },
 };
 
@@ -133,6 +138,29 @@ export const FACTORY_ABI: Abi = parseAbi([
   "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) returns (uint256 promisAmount)",
   "function setAuthorizedSettler(uint32 seriesId, address settler)",
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+]);
+
+/** Desis (outbe precompile): auction stage + per-chain bid fan-in views. */
+export const DESIS_ABI: Abi = parseAbi([
+  "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
+  "function getBidsCount(uint32 worldwideDay) view returns (uint256)",
+  "function getChainBidsCount(uint32 worldwideDay, uint32 srcChainId) view returns (uint256)",
+  "function isChainDone(uint32 worldwideDay, uint32 srcChainId) view returns (bool)",
+]);
+
+/** OriginRouter (outbe): the auction's target-chain registry + per-day snapshot. */
+export const ORIGIN_ROUTER_ABI: Abi = parseAbi([
+  "function targets() view returns (uint32[])",
+  "function targetsOf(uint32 worldwideDay) view returns (uint32[])",
+]);
+
+/** EscrowAdapter (target chains): bid locks, commit bonds and refunds. */
+export const ESCROW_ABI: Abi = parseAbi([
+  "function getBidLock(uint32 worldwideDay, address bidder) view returns ((uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded) lock)",
+  "function getCommitBond(uint32 worldwideDay, address bidder) view returns ((uint128 amount, uint32 lockedAt) bond)",
+  "function auctionEscrowState(uint32 worldwideDay) view returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)",
+  "function REFUND_DELAY() view returns (uint32)",
+  "function claimRefund(uint32 worldwideDay, address bidder)",
 ]);
 
 /** Minimal ERC20 (BSC payment token; outbe Promis balance). */
