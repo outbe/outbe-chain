@@ -594,6 +594,45 @@ fn genesis_formation_gate_proves_peers_are_at_genesis() {
 }
 
 #[test]
+fn genesis_formation_gate_accepts_quorum_connected_non_mesh_topology() {
+    let genesis = B256::with_last_byte(1);
+    let context = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: false,
+    };
+    let peer = RethGenesisPeerStatus {
+        genesis,
+        blockhash: genesis,
+        latest_block: Some(0),
+    };
+    let evidence = RethGenesisPeerEvidence {
+        connected_peers: 2,
+        is_syncing: true,
+        is_initially_syncing: true,
+        peer_query_failed: false,
+        peers: vec![peer; 2],
+    };
+
+    // Four validators need a 3-of-4 BFT quorum, hence two matching remote
+    // witnesses per node. Requiring all three remote validators creates a split
+    // startup gate on a healthy non-fully-meshed gossip topology: nodes seeing
+    // 3/3 start all-member DKG while nodes seeing 2/3 never enter it.
+    assert_eq!(
+        genesis_formation_gate_decision(
+            context,
+            genesis,
+            genesis_formation_required_remote_peers(4),
+            &evidence,
+        ),
+        GenesisFormationGate::Proven
+    );
+}
+
+#[test]
 fn genesis_formation_gate_rejects_remote_chain_progress() {
     let genesis = B256::with_last_byte(1);
     let context = StartupDkgContext {

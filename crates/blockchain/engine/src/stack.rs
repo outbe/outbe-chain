@@ -697,6 +697,8 @@ where
         .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
     let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
     let expected_remote_peers = validator_set.public_keys.len().saturating_sub(1);
+    let required_remote_peers =
+        genesis_formation_required_remote_peers(validator_set.public_keys.len());
     let gate_required = !startup_threshold_material_candidate_available(args);
     let started_at = ctx.current();
 
@@ -713,7 +715,7 @@ where
         let gate = genesis_formation_gate_decision(
             snapshot.context,
             genesis_hash,
-            expected_remote_peers,
+            required_remote_peers,
             &evidence,
         );
 
@@ -744,8 +746,9 @@ where
         let elapsed = elapsed_since(ctx.current(), started_at);
         if elapsed >= config::STARTUP_GENESIS_FORMATION_PROBE_TIMEOUT {
             return Err(eyre::eyre!(
-                "could not prove genesis formation before DKG round 0: connected_reth_peers={} expected_remote_peers={} reth_syncing={} reth_initial_syncing={} peer_query_failed={}",
+                "could not prove genesis formation before DKG round 0: connected_reth_peers={} required_remote_peers={} configured_remote_peers={} reth_syncing={} reth_initial_syncing={} peer_query_failed={}",
                 evidence.connected_peers,
+                required_remote_peers,
                 expected_remote_peers,
                 evidence.is_syncing,
                 evidence.is_initially_syncing,
@@ -755,6 +758,7 @@ where
 
         info!(
             connected_reth_peers = evidence.connected_peers,
+            required_remote_peers,
             expected_remote_peers,
             reth_syncing = evidence.is_syncing,
             reth_initial_syncing = evidence.is_initially_syncing,
@@ -900,7 +904,7 @@ fn startup_dkg_mode(
 fn genesis_formation_gate_decision(
     context: StartupDkgContext,
     genesis_hash: B256,
-    expected_remote_peers: usize,
+    required_remote_peers: usize,
     evidence: &RethGenesisPeerEvidence,
 ) -> GenesisFormationGate {
     if context.last_execution_height > 0
@@ -914,11 +918,11 @@ fn genesis_formation_gate_decision(
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.connected_peers < expected_remote_peers {
+    if evidence.connected_peers < required_remote_peers {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.peers.len() < expected_remote_peers {
+    if evidence.peers.len() < required_remote_peers {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
@@ -932,6 +936,19 @@ fn genesis_formation_gate_decision(
     }
 
     GenesisFormationGate::Proven
+}
+
+/// Direct Reth connections needed to prove a fresh genesis formation before
+/// entering the all-member DKG. The execution P2P graph need not be a complete
+/// mesh: one local validator plus a `N-f` BFT quorum of matching genesis peers
+/// is sufficient evidence. DKG itself still requires every configured genesis
+/// dealer log, so lowering this transport gate cannot let a partial committee
+/// complete network formation.
+fn genesis_formation_required_remote_peers(validator_count: usize) -> usize {
+    let max_byzantine = validator_count.saturating_sub(1) / 3;
+    validator_count
+        .saturating_sub(max_byzantine)
+        .saturating_sub(1)
 }
 
 fn vrf_material_matches_recovered_boundary(
