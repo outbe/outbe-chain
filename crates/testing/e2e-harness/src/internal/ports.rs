@@ -308,8 +308,11 @@ mod tests {
 
     #[test]
     fn port_is_memoized() {
-        let p = Ports::new(true);
-        p.start_scenario(1).expect("scan");
+        // Memoization is independent of OS socket probing. Keep this unit test
+        // deterministic in restricted sandboxes where loopback bind is denied;
+        // `scan_shifts_whole_block_past_a_held_port` owns scan behavior.
+        let p = Ports::new(false);
+        p.start_scenario(1).expect("static allocation");
         assert_eq!(p.port(Http, 9), p.port(Http, 9));
     }
 
