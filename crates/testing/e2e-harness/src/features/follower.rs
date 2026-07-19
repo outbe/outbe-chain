@@ -314,11 +314,34 @@ fn warm_promotion(world: &mut World) {
 
 #[when("readiness is resubmitted before the warm promotion restart")]
 fn resubmit_promotion_readiness(world: &mut World) {
+    let primary = world.validators.primary_port();
     let key = world.validators.joiner().evm_key().expect("joiner key");
+    let addr = world.state.joiner_addr.clone().expect("joiner addr");
+    let planned = world
+        .state
+        .activation_height
+        .expect("captured promotion activation height");
     world
         .rpc
         .confirm_ready(&key)
         .expect("duplicate confirm-ready must be idempotent");
+    assert_eq!(
+        world
+            .rpc
+            .consensus_status_field(primary, "nextPlannedActivationHeight")
+            .and_then(|value| value.parse::<u64>().ok()),
+        Some(planned),
+        "duplicate readiness changed the planned promotion boundary"
+    );
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(1),
+        "duplicate readiness changed the joiner from PENDING before activation"
+    );
+    assert!(
+        !world.rpc.is_participant(primary, &addr),
+        "duplicate readiness made the joiner participate before activation"
+    );
 }
 
 #[when("the warm-promoted node and an active validator restart around the activation boundary")]
@@ -351,7 +374,9 @@ fn restart_promotion_participants(world: &mut World) {
     );
 }
 
-#[then("promotion activates only at its planned boundary with sealed state and committee parity")]
+#[then(
+    "promotion activates only at its planned boundary with sealed state and exact network parity"
+)]
 fn promotion_boundary_and_recovery(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
@@ -390,7 +415,41 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         wait_finalized_checkpoint_match(&world.rpc, primary, restarted_validator, 60),
         "restarted active validator did not recover canonical finalized state"
     );
-    for port in world.validators.committee_ports() {
+    let expected_epoch = world.rpc.epoch_on(primary).expect("primary epoch");
+    let expected_active = world
+        .rpc
+        .active_count(primary)
+        .expect("primary active count");
+    let expected_consensus = world
+        .rpc
+        .consensus_count(primary)
+        .expect("primary consensus count");
+    let mut parity_ports = world.validators.committee_ports();
+    parity_ports.push(joiner_port);
+    for port in parity_ports {
+        assert!(
+            wait_lockstep(&world.rpc, primary, port, 20),
+            "RPC port {port} did not remain in head lockstep"
+        );
+        assert!(
+            wait_finalized_checkpoint_match(&world.rpc, primary, port, 30),
+            "RPC port {port} disagrees on finalized hash or state root"
+        );
+        assert_eq!(
+            world.rpc.epoch_on(port),
+            Some(expected_epoch),
+            "epoch differs on RPC port {port}"
+        );
+        assert_eq!(
+            world.rpc.active_count(port),
+            Some(expected_active),
+            "active committee size differs on RPC port {port}"
+        );
+        assert_eq!(
+            world.rpc.consensus_count(port),
+            Some(expected_consensus),
+            "consensus committee size differs on RPC port {port}"
+        );
         assert_eq!(
             world.rpc.validator_status(port, &addr),
             Some(2),

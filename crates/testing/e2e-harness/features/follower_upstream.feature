@@ -38,4 +38,4 @@ Feature: Upstream followers, validator catch-up, and warm promotion
     When the first follower is promoted to a validator with its warm datadir
     And readiness is resubmitted before the warm promotion restart
     And the warm-promoted node and an active validator restart around the activation boundary
-    Then promotion activates only at its planned boundary with sealed state and committee parity
+    Then promotion activates only at its planned boundary with sealed state and exact network parity
