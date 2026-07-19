@@ -519,6 +519,16 @@ impl Rpc {
         .map(|v| v as u64)
     }
 
+    /// Current ValidatorSet epoch on a specific node.
+    pub fn epoch_on(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getEpochNumberCall {},
+        )
+        .and_then(|value| u64::try_from(value).ok())
+    }
+
     /// Consensus set size (ACTIVE + EXITING-with-share).
     pub fn consensus_count(&self, port: u16) -> Option<u64> {
         eth::read_call(

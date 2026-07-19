@@ -45,6 +45,7 @@ sol! {
         function isConsensusParticipant(address v) external view returns (bool);
         function activeValidatorCount() external view returns (uint32);
         function activeConsensusCount() external view returns (uint32);
+        function getEpochNumber() external view returns (uint256);
         function deactivateValidator(address v) external;
         function registerValidator(address v, bytes pubkey, bytes sig) external;
         function setP2pAddress(address v, uint8 kind, bytes addr) external;

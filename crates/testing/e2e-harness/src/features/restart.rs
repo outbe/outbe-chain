@@ -202,3 +202,136 @@ fn resumes_without_new_ceremony(world: &mut World) {
         "enclave offer parity post-restart"
     );
 }
+
+/// Complete a 4→5 DKG while the joiner is still PENDING, leaving a durable
+/// recovery checkpoint and a real block interval before activation.
+#[when("a joiner completes DKG and waits below the activation boundary")]
+fn joiner_completes_dkg_before_activation(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
+    let keys = world.localnet.keys_dir(idx);
+    world
+        .localnet
+        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .expect("launch joiner");
+    assert!(
+        world.rpc.wait_block(joiner_port, 20, 40).is_some(),
+        "joiner never cold-synced"
+    );
+
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let addr = world.rpc.address_of(&key).expect("joiner address");
+    world.state.joiner_addr = Some(addr.clone());
+    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.confirm_ready(&key).expect("confirm joiner ready");
+
+    let mut observed = false;
+    for _ in 0..90 {
+        if world
+            .localnet
+            .log_has(idx, "persisted completed DKG state before activation")
+        {
+            observed = true;
+            break;
+        }
+        sleep(Duration::from_secs(2));
+    }
+    assert!(observed, "joiner never reached durable pending DKG state");
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(1),
+        "joiner must remain PENDING before activation"
+    );
+    assert!(
+        !world.rpc.is_participant(primary, &addr),
+        "joiner participated before the activation boundary"
+    );
+    assert!(
+        world.localnet.has_share_file(idx),
+        "completed DKG material was not persisted before restart"
+    );
+    world.state.marker_height = world.rpc.head(primary);
+    world.state.marker_count = world
+        .rpc
+        .epoch_on(primary)
+        .and_then(|epoch| usize::try_from(epoch).ok());
+}
+
+/// Restart both halves of the joining validator while the finalized DKG result
+/// is durable but has not yet become the active committee.
+#[when("the joining node and enclave restart before activation")]
+fn restart_joiner_before_activation(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
+    assert!(!world.rpc.is_participant(primary, &addr));
+
+    world.localnet.stop_joiner(idx).expect("stop joiner");
+    world
+        .localnet
+        .restart_joiner_enclave(idx)
+        .expect("restart joiner enclave");
+    let keys = world.localnet.keys_dir(idx);
+    world
+        .localnet
+        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .expect("restart joiner node");
+}
+
+/// Startup must restore the pending boundary/material, activate at the planned
+/// epoch exactly once, and leave every validator on one live committee state.
+#[then("the recovered pending DKG activates once and consensus continues")]
+fn pending_dkg_recovers_and_activates(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+    let old_epoch = world.state.marker_count.expect("pre-restart epoch");
+
+    assert!(
+        world.rpc.wait_participant(primary, &addr, 60),
+        "restarted joiner never activated from pending DKG"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
+    assert_eq!(world.rpc.active_count(primary), Some(5));
+    let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
+    assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
+    assert!(
+        world.localnet.log_has(
+            idx,
+            "threshold material ready from durable pending DKG state and boundary snapshot",
+        ) || world.localnet.log_has(
+            idx,
+            "threshold material ready from promoted pending DKG state",
+        ),
+        "restart did not use durable pending DKG recovery"
+    );
+    assert!(
+        world
+            .localnet
+            .enclave_log_has(idx, "unsealed offer key + group signature"),
+        "joiner enclave did not recover sealed state"
+    );
+
+    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    for port in ports {
+        assert!(
+            world.rpc.wait_block(port, target, 60).is_some(),
+            "RPC {port} did not continue after pending-DKG recovery"
+        );
+        assert_eq!(world.rpc.active_count(port), Some(5));
+        assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
+    }
+    assert!(
+        lockstep_ok(&world.rpc, primary, joiner_port),
+        "recovered joiner did not sign in lockstep"
+    );
+}
