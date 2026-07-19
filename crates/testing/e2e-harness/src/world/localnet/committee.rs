@@ -76,6 +76,15 @@ impl Localnet {
         self.start(&opts)
     }
 
+    /// Stop and relaunch one committee validator together with its enclave,
+    /// preserving the node datadir and enclave seal while leaving every other
+    /// committee member running.
+    pub fn restart_validator_and_enclave(&mut self, i: usize) -> Result<()> {
+        self.kill_validator(i)?;
+        self.enclaves.remove(&i);
+        self.restart()
+    }
+
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {

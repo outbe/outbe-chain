@@ -548,3 +548,120 @@ fn registered_restart_then_join_activates(world: &mut World) {
         assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
     }
 }
+
+/// Interrupt one existing committee member only after the scheduled 4→5
+/// reshare has actually frozen and entered DKG. The restart must not create a
+/// second target or permit a partial activation.
+#[when("an active validator and enclave restart during a joining reshare")]
+fn restart_active_validator_during_reshare(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("launch joiner");
+    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
+
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let addr = world.rpc.address_of(&key).expect("joiner address");
+    world.state.joiner_addr = Some(addr.clone());
+    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.confirm_ready(&key).expect("confirm joiner ready");
+
+    let mut ceremony_started = false;
+    for _ in 0..1_800 {
+        if world
+            .localnet
+            .log_has(0, "freezing validator set and starting DKG rotation")
+        {
+            ceremony_started = true;
+            break;
+        }
+        sleep(Duration::from_millis(100));
+    }
+    assert!(ceremony_started, "joining reshare never entered DKG");
+    assert!(
+        !world
+            .localnet
+            .log_has(0, "persisted completed DKG state before activation"),
+        "reshare completed before the intended active-validator restart"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
+    assert!(!world.rpc.is_participant(primary, &addr));
+    assert_eq!(world.rpc.active_count(primary), Some(4));
+    world.state.marker_height = world.rpc.head(primary);
+    world.state.marker_count = world
+        .rpc
+        .epoch_on(primary)
+        .and_then(|epoch| usize::try_from(epoch).ok());
+
+    world
+        .localnet
+        .restart_validator_and_enclave(3)
+        .expect("restart active validator and enclave during reshare");
+}
+
+/// The interrupted scheduled target may retry, but activation remains atomic:
+/// the joiner enters once, the restarted incumbent remains active, and every
+/// node converges on the same epoch and committee.
+#[then("the frozen reshare activates once with the restarted validator in lockstep")]
+fn active_restart_reshare_converges(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let restarted = world.validators.http_port(3);
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+    let marker = world.state.marker_height.expect("restart height");
+    let old_epoch = world.state.marker_count.expect("restart epoch");
+
+    assert!(
+        world.rpc.wait_block(primary, marker + 3, 40).is_some(),
+        "old committee stopped finalizing during active-validator restart"
+    );
+    assert!(
+        world.rpc.wait_block(restarted, marker + 3, 60).is_some(),
+        "restarted active validator did not catch up"
+    );
+    if !world.rpc.is_participant(primary, &addr) {
+        assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
+        assert_eq!(world.rpc.active_count(primary), Some(4));
+    }
+
+    assert!(
+        world.rpc.wait_participant(primary, &addr, 90),
+        "frozen reshare did not activate after active-validator recovery"
+    );
+    let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
+    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    for port in ports {
+        assert!(world.rpc.wait_block(port, target, 60).is_some());
+        let status = world.rpc.validator_status(port, &addr);
+        let active_count = world.rpc.active_count(port);
+        let epoch = world.rpc.epoch_on(port);
+        let head = world.rpc.head(port);
+        assert_eq!(
+            status,
+            Some(2),
+            "joiner status differs on RPC {port}: active_count={active_count:?} epoch={epoch:?} head={head:?}"
+        );
+        assert_eq!(active_count, Some(5), "active count differs on RPC {port}");
+        assert_eq!(epoch, Some(expected_epoch), "epoch differs on RPC {port}");
+    }
+    assert!(
+        world
+            .localnet
+            .enclave_log_has(3, "unsealed offer key + group signature"),
+        "restarted active validator did not recover sealed enclave state"
+    );
+    assert!(
+        lockstep_ok(&world.rpc, primary, restarted),
+        "restarted active validator did not return to finalized lockstep"
+    );
+}

@@ -36,3 +36,9 @@ Feature: Active validator restarts without a new DKG ceremony
     Given a fresh localnet with a 6-block voting window
     When a registered joining node and enclave restart before staking
     Then registration survives and the join can activate once
+
+  @pfs-006-09
+  Scenario: An active validator and enclave restart during reshare
+    Given a fresh localnet with a 6-block voting window
+    When an active validator and enclave restart during a joining reshare
+    Then the frozen reshare activates once with the restarted validator in lockstep
