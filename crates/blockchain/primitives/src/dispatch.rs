@@ -33,6 +33,74 @@ pub fn dispatch_call<T, E: core::fmt::Display>(
     handler(call)
 }
 
+/// Rejects a selected ABI call when one dynamic `bytes` argument does not have
+/// the protocol-required fixed length.
+///
+/// This inspects only the ABI head and length word. It is intended for fixed
+/// protocol identities that must be rejected before the general ABI decoder
+/// allocates their dynamic payload.
+pub fn preflight_dynamic_bytes_len(
+    calldata: &[u8],
+    selector: [u8; 4],
+    argument_index: usize,
+    head_words: usize,
+    expected_len: usize,
+) -> Result<()> {
+    if calldata.get(..4) != Some(selector.as_slice()) {
+        return Ok(());
+    }
+
+    let args = calldata
+        .get(4..)
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    let head_len = head_words
+        .checked_mul(32)
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    let offset_start = argument_index
+        .checked_mul(32)
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    let offset_word = args
+        .get(offset_start..offset_start.saturating_add(32))
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    let offset = abi_usize(offset_word)
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    if offset < head_len || offset % 32 != 0 {
+        return Err(PrecompileError::Revert("invalid ABI bytes argument".into()));
+    }
+
+    let length_word = args
+        .get(offset..offset.saturating_add(32))
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    if abi_usize(length_word) != Some(expected_len) {
+        return Err(PrecompileError::Revert(format!(
+            "invalid bytes length: expected {expected_len}"
+        )));
+    }
+
+    let padded_len = expected_len
+        .checked_add(31)
+        .map(|len| len / 32 * 32)
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    let end = offset
+        .checked_add(32)
+        .and_then(|start| start.checked_add(padded_len))
+        .ok_or_else(|| PrecompileError::Revert("invalid ABI bytes argument".into()))?;
+    if end > args.len() {
+        return Err(PrecompileError::Revert("invalid ABI bytes argument".into()));
+    }
+    Ok(())
+}
+
+fn abi_usize(word: &[u8]) -> Option<usize> {
+    let width = core::mem::size_of::<usize>();
+    if word.len() != 32 || word[..32 - width].iter().any(|byte| *byte != 0) {
+        return None;
+    }
+    let mut value = [0_u8; core::mem::size_of::<usize>()];
+    value.copy_from_slice(&word[32 - width..]);
+    Some(usize::from_be_bytes(value))
+}
+
 /// View helper: calls a read-only function and ABI-encodes the return value.
 ///
 /// Usage: `view(decoded_call, |c| contract.balance_of(c.account))`
@@ -101,4 +169,40 @@ pub fn reject_value(value: &U256) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preflight_dynamic_bytes_len;
+
+    const SELECTOR: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
+
+    fn one_bytes_arg(length: usize) -> Vec<u8> {
+        let padded = length.div_ceil(32) * 32;
+        let mut calldata = vec![0_u8; 4 + 32 + 32 + padded];
+        calldata[..4].copy_from_slice(&SELECTOR);
+        calldata[4 + 31] = 32;
+        calldata[4 + 32 + 31] = u8::try_from(length).unwrap();
+        calldata
+    }
+
+    #[test]
+    fn fixed_dynamic_bytes_preflight_accepts_only_the_required_length() {
+        assert!(preflight_dynamic_bytes_len(&one_bytes_arg(36), SELECTOR, 0, 1, 36).is_ok());
+        assert!(preflight_dynamic_bytes_len(&one_bytes_arg(35), SELECTOR, 0, 1, 36).is_err());
+        assert!(preflight_dynamic_bytes_len(&one_bytes_arg(37), SELECTOR, 0, 1, 36).is_err());
+    }
+
+    #[test]
+    fn fixed_dynamic_bytes_preflight_rejects_malformed_head_without_decoding_payload() {
+        let mut points_into_head = one_bytes_arg(36);
+        points_into_head[4 + 31] = 0;
+        assert!(preflight_dynamic_bytes_len(&points_into_head, SELECTOR, 0, 1, 36).is_err());
+
+        let truncated = &one_bytes_arg(36)[..4 + 32 + 32 + 35];
+        assert!(preflight_dynamic_bytes_len(truncated, SELECTOR, 0, 1, 36).is_err());
+
+        let unrelated = one_bytes_arg(35);
+        assert!(preflight_dynamic_bytes_len(&unrelated, [0, 0, 0, 0], 0, 1, 36).is_ok());
+    }
 }

@@ -7,6 +7,7 @@
 //! work to `crate::internal`.
 
 pub mod localnet;
+pub mod mongodb;
 pub mod rpc;
 pub mod state;
 pub mod validators;
@@ -14,6 +15,7 @@ pub mod validators;
 use crate::env::environment;
 use crate::internal::config::Config;
 use localnet::Localnet;
+use mongodb::MongoDb;
 use rpc::Rpc;
 use state::FixtureState;
 use validators::Validators;
@@ -27,6 +29,8 @@ pub struct World {
     /// The localnet and every owned node: bootstrap/start/stop the committee,
     /// provision/launch the joiner + followers, kill/restart validators.
     pub localnet: Localnet,
+    /// Projection database, either supplied by the caller or owned by this scenario.
+    pub mongodb: MongoDb,
     /// Chain reads/sends/waits.
     pub rpc: Rpc,
     /// Validator/operator identities and committee size.
@@ -43,9 +47,11 @@ impl Default for World {
         env.ports
             .start_scenario(env.validators)
             .expect("allocate this scenario's port blocks");
-        let cfg = Config::for_scenario(&env, id);
+        let mut cfg = Config::for_scenario(&env, id);
+        let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
         Self {
             localnet: Localnet::new(cfg.clone()),
+            mongodb,
             rpc: Rpc::new(cfg.clone()),
             validators: Validators::new(cfg, env.validators),
             state: FixtureState::default(),

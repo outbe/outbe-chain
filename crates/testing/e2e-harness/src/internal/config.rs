@@ -1,11 +1,15 @@
 //! CLI-derived configuration for the harness.
 //!
-//! Paths/toggles ported from `scripts/e2e/lib.sh` (lines 11-14, 17-41) and
+//! Paths and toggles for isolated localnet scenarios and
 //! `update_operator_flow.sh`. Every value comes from the CLI [`Environment`] — the
 //! harness reads no configuration from the process environment. (`PATH`/`HOME`
 //! are only read to build the child's `PATH` so `cast` resolves.)
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
 
 use crate::env::{Environment, TeeMode};
 use crate::internal::ports::{Ports, Service};
@@ -26,6 +30,10 @@ pub(crate) struct Config {
     pub bin_mock: PathBuf,
     /// Genesis seed file (`--seed`).
     pub seed: PathBuf,
+    /// Transaction-capable MongoDB URI (`--projection-mongodb-uri`).
+    pub projection_mongodb_uri: String,
+    /// Stable unique logical-database prefix for this harness run.
+    pub projection_database_prefix: String,
     /// Primary RPC url (validator-0).
     pub rpc0: String,
     /// `PATH` with `~/.foundry/bin` appended so `cast` resolves (lib.sh:20).
@@ -57,6 +65,8 @@ impl Config {
     /// Run-level config: `dir` is the run dir itself. Used by the SIGINT teardown
     /// sweep and the end-of-run wipe, both of which act on the whole run.
     pub fn resolve(env: &Environment) -> Self {
+        let run_tag = dir_tag(&env.data_dir);
+        let projection_database_prefix = format!("outbe_e2e_{:016x}", stable_hash(&run_tag));
         Self {
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
@@ -65,11 +75,13 @@ impl Config {
             bin_keygen: env.keygen_bin.clone(),
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),
+            projection_mongodb_uri: env.projection_mongodb_uri.clone(),
+            projection_database_prefix,
             rpc0: format!("http://localhost:{}", env.ports.port(Service::Http, 0)),
             path: path_with_foundry(),
             validators: env.validators,
             ports: env.ports.clone(),
-            run_tag: dir_tag(&env.data_dir),
+            run_tag,
             scenario: 0,
             tee_mode: env.tee_mode,
             sudo: env.sudo,
@@ -157,6 +169,12 @@ impl Config {
     pub fn validator_dir(&self, i: usize) -> PathBuf {
         self.dir.join(format!("validator-{i}"))
     }
+}
+
+fn stable_hash(value: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A stable, docker-name-safe slug derived from the data dir, used to scope this

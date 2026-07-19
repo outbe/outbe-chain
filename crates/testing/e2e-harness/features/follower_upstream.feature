@@ -1,10 +1,11 @@
 @tee @min-validators-4
 Feature: Upstream followers, validator catch-up, and warm promotion
-  # Port of scripts/e2e/follower_upstream.sh. A cold --upstream follower syncs a
+  # A cold --upstream follower syncs a
   # reshared chain to lockstep; a second follower chains off the first; a
   # validator killed mid-epoch restarts and re-locksteps; finally follower1's
   # synced datadir is warm-promoted into an ACTIVE validator.
 
+  @pfs-008-01 @pfs-008-02 @pfs-008-03 @pfs-008-04
   Scenario: Followers sync, a validator recovers, and a follower is warm-promoted
     Given a fresh localnet with a short epoch
     When the committee drives past a reshare

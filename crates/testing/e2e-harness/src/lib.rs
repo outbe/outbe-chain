@@ -29,6 +29,7 @@ use futures::FutureExt as _;
 use crate::env::{decide, unmet, Decision, EnvCli, Environment};
 use crate::internal::config::Config;
 use crate::world::localnet::Localnet;
+use crate::world::mongodb::MongoDb;
 use crate::world::World;
 
 /// Tear the localnet down and exit when the process is interrupted
@@ -72,6 +73,7 @@ fn shutdown_and_exit(env: &Environment) -> ! {
     // nodes / missing containers), so a partially-started run is safe to tear
     // down too.
     Localnet::new(Config::resolve(env)).teardown();
+    MongoDb::teardown_managed_for_run(env);
     std::process::exit(130);
 }
 

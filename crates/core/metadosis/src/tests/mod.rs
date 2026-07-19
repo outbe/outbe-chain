@@ -1,11 +1,19 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_compressed_entities::{
+    begin_block, end_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
+    ParentBodySourceError, QueryRef, StoredBody,
+};
+use outbe_nod::NodRepositoryReader;
+use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::dsl::StorageRecord;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
-use outbe_tribute::{TributeContract, TributeData};
+use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+use std::sync::Arc;
 
 use crate::constants::*;
 use crate::precompile::{dispatch as metadosis_dispatch, IMetadosis};
@@ -27,6 +35,79 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
+struct TestParent {
+    tribute: TributeRepositoryReader,
+    nod: NodRepositoryReader,
+}
+
+impl TestParent {
+    fn empty() -> Self {
+        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        Self {
+            tribute: TributeRepositoryReader::new(storage.clone()),
+            nod: NodRepositoryReader::new(storage),
+        }
+    }
+}
+
+impl ParentBodySource for TestParent {
+    fn get(&self, entity: EntityRef) -> Result<Option<StoredBody>, ParentBodySourceError> {
+        match entity {
+            EntityRef::Tribute(_) => ParentBodySource::get(&self.tribute, entity),
+            EntityRef::NodItem(_) | EntityRef::NodBucket(_) => {
+                ParentBodySource::get(&self.nod, entity)
+            }
+        }
+    }
+
+    fn list(
+        &self,
+        query: QueryRef,
+        request: IdPageRequest,
+    ) -> Result<IdPage, ParentBodySourceError> {
+        match query {
+            QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => {
+                ParentBodySource::list(&self.tribute, query, request)
+            }
+            QueryRef::NodByOwner(_) | QueryRef::NodAll => {
+                ParentBodySource::list(&self.nod, query, request)
+            }
+        }
+    }
+}
+
+fn with_active_scope<R>(
+    storage: StorageHandle,
+    f: impl FnOnce(&ExecutionScope, &TestParent) -> R,
+) -> R {
+    let parent = TestParent::empty();
+    let scope = ExecutionScope::new();
+    if storage
+        .sload(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)
+        .unwrap()
+        .is_zero()
+    {
+        storage
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .unwrap();
+        storage
+            .sstore(
+                COMPRESSED_ENTITIES_ADDRESS,
+                U256::from(1),
+                U256::from_be_slice(
+                    outbe_compressed_entities::sealed_root(B256::ZERO)
+                        .unwrap()
+                        .as_slice(),
+                ),
+            )
+            .unwrap();
+    }
+    begin_block(storage.clone(), &scope).unwrap();
+    let result = f(&scope, &parent);
+    end_block(storage, &scope).unwrap();
+    result
+}
+
 /// Drive the WWD lifecycle the way the daily Cycle handler does:
 /// invoke `start_metadosis` on a synthetic context. Production no
 /// longer drives Metadosis through a per-block lifecycle hook (see
@@ -42,7 +123,10 @@ fn run_begin_block_with_chain_id(
         BlockContext::empty_for_tests(block_number, timestamp, chain_id),
         storage,
     );
-    crate::runtime::start_metadosis(&ctx).unwrap();
+    with_active_scope(ctx.storage.clone(), |scope, parent| {
+        crate::runtime::start_metadosis(&ctx, scope, parent)
+    })
+    .unwrap();
 }
 
 fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
@@ -52,21 +136,6 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
         timestamp,
         outbe_primitives::chain::CHAIN_ID,
     );
-}
-
-/// Like `run_begin_block`, but returns the result instead of unwrapping, so
-/// tests can assert that a terminal failure propagates out of the begin-zone
-/// system transaction instead of being silently retired.
-fn try_run_begin_block(
-    storage: StorageHandle,
-    block_number: u64,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<()> {
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(block_number, timestamp, outbe_primitives::chain::CHAIN_ID),
-        storage,
-    );
-    crate::runtime::start_metadosis(&ctx)
 }
 
 mod lifecycle;

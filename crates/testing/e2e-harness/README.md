@@ -2,13 +2,10 @@
 
 A Rust [cucumber](https://crates.io/crates/cucumber) harness for the outbe-chain
 e2e suite. Scenarios are Gherkin fixtures under [`features/`](./features); the
-step code behind them (`src/flows/`) drives typed handles (`src/world/`) that
-shell out — via `xshell` — to the **same** orchestration the bash suite uses.
+step code behind them (`src/features/`) drives typed handles (`src/world/`).
 
-This crate **replaces only the glue and assertions** that lived in
-`scripts/e2e/lib.sh` and the scenario scripts. It does **not** reimplement node
-launch, the docker/Gramine TEE enclave, or the DKG bootstrap — those stay in
-`scripts/bootstrap-testnet.sh` and `scripts/run-testnet.sh`, invoked as
+The harness owns validator processes, docker/Gramine TEE enclaves, and optional
+MongoDB containers. DKG bootstrap and genesis seeding remain one-shot
 subprocesses.
 
 ## Model: environment (CLI) vs. requirements (tags)
@@ -24,15 +21,32 @@ Gherkin tags. The runner matches the two:
 Requirement tags (`@`-less in code): `tee`, `min-validators-N`, `sudo`,
 and `todo` (an unimplemented stub — always skipped).
 
+Traceability tags use stable scenario ids from `docs/flows`, for example
+`@pfs-001-05`. They do not alter environment selection and can be passed directly
+to Cucumber's `--tags` filter. Current live-node mappings are:
+
+| PFS examples | Feature coverage |
+|---|---|
+| `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
+| `PFS-005-01`, `-09` | Vote approval/Update activation and unsupported-version fatal boundary |
+| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness, active-share restart and full-committee sealed TEE recovery; consult the PFS matrix for deliberately partial assertions |
+| `PFS-007-01` through `-06` | Pectra/ZeroFee readiness, native EIP-7702 delegation, sponsored quota, soft failure and paid fallback |
+| `PFS-008-01` through `-04` | Cold/chained follower sync, validator recovery and warm promotion in one composite live scenario |
+
+Run one mapped example with `--tags '@pfs-001-05'`. A tag means that the
+scenario supplies the evidence stated in its PFS matrix row; it does not imply
+coverage of assertions that the row explicitly marks as a gap.
+
 ## Layout
 
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
-  the `s*` features are `@todo` stubs.
+  `tribute_projection.feature` covers encrypted-offer projection plus compressed
+  entity presence and absence proofs.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
   requirement/skip logic.
 - `src/world/` — encapsulated handles with verb APIs: `localnet.start(opts)`,
   `rpc.send_propose(...)`, `rpc.wait_block(...)`, `validators.operator(...)`.
-- `src/flows/` — step definitions (the code behind the fixtures).
+- `src/features/` — step definitions (the code behind the fixtures).
 - `src/internal/` — private plumbing: `Config`, the `xshell` wrapper, precompile
   addresses, output parsers.
 
@@ -47,6 +61,9 @@ the harness reads no configuration from the environment.** Flags:
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
   off by default (that output is captured and shown only if a step fails).
+- `--projection-mongodb-uri <URI>` — optional transaction-capable MongoDB replica set or sharded
+  cluster. When omitted, the harness starts and owns a temporary `mongo:7.0`
+  single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
 - plus cucumber's own `--tags`, `--name`, `--input`.
@@ -63,13 +80,35 @@ cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-encla
 Then, e.g.:
 
 ```sh
+# Omit --projection-mongodb-uri to use the harness-owned replica set.
 # tee-less run of the update flow
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee none --validators 4
 # through the mock enclave
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 5 --all
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock --validators 4 --all
 ```
+
+The same full run is available as `mise run e2e`. The harness owns an isolated
+MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
+On an SGX runner, `mise run e2e-sgx` builds the real enclave and runs the same
+features with four `gramine-sgx` containers. That lane raises the per-request
+TEE timeout to 120 seconds for EPC paging while retaining the normal 30-second
+default elsewhere.
+
+Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee none --validators 4 --all \
+  --input crates/testing/e2e-harness/features/zerofee.feature
+```
+
+It is also part of the canonical `mise run e2e` suite. The Rust World owns its
+network, transaction signing, receipts and cleanup; Foundry `cast` is not used.
 
 The skip/fail *logic* is verifiable anywhere (no localnet needed): e.g.
 `--validators 2` prints `SKIPPED: … needs >=4 validators, have 2` and exits 0,
@@ -78,11 +117,65 @@ while `--validators 2 --all` exits non-zero.
 `--debug` streams the localnet setup output live; without it, that output is
 captured and only printed if a setup step fails.
 
+## Focused Tribute compressed-entity checks
+
+Run the complete Tribute compressed-entity feature (happy path and edge cases):
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock \
+  --validators 4 \
+  --input 'crates/testing/e2e-harness/features/tribute_projection.feature'
+```
+
+Run only the creation happy path:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock \
+  --validators 4 \
+  --name "A successful tribute is persisted by every validator"
+```
+
+The scenario performs the complete product flow:
+
+1. Starts an isolated four-validator localnet and mock TEE enclaves.
+2. Starts a temporary `mongo:7.0` single-node replica set. Pass
+   `--projection-mongodb-uri <URI>` to use an existing transaction-capable
+   deployment instead.
+3. Submits one encrypted `offerTribute` transaction through `outbe-cli`.
+4. Requires a successful receipt and `totalSupply == 1`.
+5. Waits for exactly one document in `tributes`, `tributes_by_owner`, and
+   `tributes_by_day` in every validator database.
+6. Requires `_projection.tx_hash` to match the successful transaction and the
+   complete BSON documents to be identical across all four validators.
+7. Calls `outbe_getCompressedEntity` on every validator, fetches the exact
+   selected block header, and verifies each proof package independently.
+8. Requires every validator's authenticated `Present` body bytes to equal the
+   canonical bytes stored in MongoDB. Proof packages may select different
+   finalized headers while validators converge, so each package is verified
+   independently rather than compared byte-for-byte.
+
+The edge-case scenarios independently verify both authenticated absence forms:
+
+- `EntityAbsentInCollection` for an unknown Tribute identity in a day whose
+  collection already exists;
+- `CollectionAbsent` for an unknown Tribute day, while also asserting that no
+  primary or secondary MongoDB projection was created.
+
+On normal completion or failure, the harness stops the nodes and removes its
+MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container
+cleanup backstop. Add `--no-cleanup` when a successful run's chain data should
+remain available for inspection; failed runs keep their data directory by
+default.
+
 ## Status
 
-Ported: `update_operator` (from `scripts/e2e/update_operator_flow.sh`).
-Stubbed (`@todo`, see `src/flows/{lifecycle,dkg}.rs`): `s1_s2_s6_s3`, `s4`, `s5`,
-`s7a`, `s7b`. Wiring this into `mise run e2e` is a follow-up once more flows land.
+The focused `tribute_projection` scenarios own MongoDB and verify the full
+encrypted offer → successful receipt → four-validator projection → independently
+verified compressed-entity proof path, including both absence-proof edge cases. The
+validator lifecycle, update, DKG, downtime, restart, stale-join, and follower
+flows are also wired under `features/`.
 
 ## Ide support
 

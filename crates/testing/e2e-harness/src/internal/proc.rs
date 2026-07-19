@@ -371,4 +371,21 @@ mod tests {
             vec!["node", "--http.port", "8545", "--datadir", "/tmp/x/data"]
         );
     }
+
+    #[test]
+    fn real_sgx_manifest_bounds_threads_for_four_validator_e2e() {
+        let manifest = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../bin/outbe-tee-enclave/gramine/outbe-tee-enclave.manifest.template"
+        ));
+        let max_threads = manifest
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("sgx.max_threads = "))
+            .and_then(|value| value.parse::<u32>().ok())
+            .expect("manifest declares numeric sgx.max_threads");
+        assert!(
+            max_threads <= 16,
+            "four real enclaves must not reserve more than 64 SGX thread slots"
+        );
+    }
 }

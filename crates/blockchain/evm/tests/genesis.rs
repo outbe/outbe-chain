@@ -30,6 +30,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const ACCOUNTING_PROGRESS_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee04";
+const COMPRESSED_ENTITIES_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee0d";
 const VALIDATOR_SET_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee00";
 
 /// `0xef` marker bytecode, mirroring `MARKER_CODE` in `scripts/seed_genesis.py`
@@ -165,6 +166,34 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
     assert_eq!(
         slot0, ZERO_WORD_HEX,
         "EE04 slot 0 (last_accounted_block_number) must be zero at genesis"
+    );
+}
+
+#[test]
+fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
+    let (_tmp, genesis, _raw) = run_seed_genesis(
+        FIXTURE_GENESIS,
+        FIXTURE_SEED,
+        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
+    );
+    let entry = alloc_entry(&genesis, COMPRESSED_ENTITIES_ADDRESS_HEX);
+    let storage = entry
+        .get("storage")
+        .and_then(Value::as_object)
+        .expect("EE0D entry has storage");
+    let slot0 = format!("0x{:064x}", 0);
+    let slot1 = format!("0x{:064x}", 1);
+    assert_eq!(storage[&slot0], format!("0x{:064x}", 3));
+    assert_eq!(
+        storage[&slot1],
+        format!(
+            "{:#066x}",
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(alloy_primitives::B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            )
+        )
     );
 }
 

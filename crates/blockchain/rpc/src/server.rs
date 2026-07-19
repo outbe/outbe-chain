@@ -7,9 +7,14 @@
 
 use alloy_primitives::{Address, B256, U256};
 use jsonrpsee::core::RpcResult;
+use outbe_compressed_entities::{
+    CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
+};
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
+    projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -19,12 +24,14 @@ use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
     BlockNumReader, HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
 };
+use reth_provider::BlockIdReader;
 use std::sync::Arc;
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
-    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo,
-    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, ProjectionHealth,
+    ProjectionStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo,
+    ValidatorInfo,
 };
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -44,7 +51,7 @@ impl StorageReader for RethStateReader<'_> {
 }
 
 /// RPC handler for the `outbe_*` namespace.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     bridge: Option<ConsensusExecutionBridge>,
@@ -53,44 +60,159 @@ pub struct OutbeApiHandler<P> {
     /// followers) but must report itself as a non-validator / TrustedFinality
     /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
     is_validator: bool,
+    projection_readiness: ProjectionReadinessHandle,
+    point_reads: Option<PointReadRuntime>,
+}
+
+#[derive(Clone)]
+struct PointReadRuntime {
+    tree: Arc<CompressedTreeService>,
+    bodies: RuntimeBodyReaders,
+    chain_id: u64,
+}
+
+impl std::fmt::Debug for PointReadRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PointReadRuntime")
+            .field("chain_id", &self.chain_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P> std::fmt::Debug for OutbeApiHandler<P> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutbeApiHandler")
+            .field("is_validator", &self.is_validator)
+            .field("point_reads", &self.point_reads)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge; plain EL full node).
-    pub fn new(provider: Arc<P>) -> Self {
+    pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
             bridge: None,
             is_validator: false,
+            projection_readiness,
+            point_reads: None,
         }
     }
 
     /// Create a validator handler with full access to the consensus bridge.
-    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: true,
+            projection_readiness,
+            point_reads: None,
         }
     }
 
     /// Create a `--upstream` follower handler: it holds the bridge so it can
     /// serve `outbe_getFinalization` (chaining followers), but reports itself as
     /// a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_follower_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: false,
+            projection_readiness,
+            point_reads: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_point_reads(
+        mut self,
+        tree: Arc<CompressedTreeService>,
+        bodies: RuntimeBodyReaders,
+        chain_id: u64,
+    ) -> Self {
+        self.point_reads = Some(PointReadRuntime {
+            tree,
+            bodies,
+            chain_id,
+        });
+        self
     }
 }
 
 impl<P> OutbeApiHandler<P>
 where
-    P: StateProviderFactory + 'static,
+    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync + 'static,
 {
+    async fn serve_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        let Some(runtime) = self.point_reads.clone() else {
+            return Ok(PointReadResultV1::Unavailable);
+        };
+        let provider = Arc::clone(&self.provider);
+        tokio::task::spawn_blocking(move || {
+            runtime.tree.serve_point_read_v1(
+                runtime.chain_id,
+                request,
+                |height, expected_hash| {
+                    let finalized = provider.finalized_block_num_hash().ok().flatten()?;
+                    if finalized.number < height {
+                        return None;
+                    }
+                    provider
+                        .sealed_header(height)
+                        .ok()
+                        .flatten()
+                        .filter(|header| header.hash() == expected_hash)
+                        .map(|header| SelectedHeaderV1 {
+                            block_number: height,
+                            block_hash: expected_hash,
+                            extra_data: header.header().inner.extra_data.to_vec(),
+                        })
+                },
+                |domain, raw_id| match domain {
+                    CeDomain::Tribute => match runtime.bodies.tribute().get_stored_body(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodItem => match runtime.bodies.nod().get_stored_item(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodBucket => match runtime.bodies.nod().get_stored_bucket(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                },
+            )
+        })
+        .await
+        .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
+        .map_err(|error| invalid_params(error.to_string()))
+    }
+
     /// Read precompile state at the latest block using a closure.
     fn with_latest_state<R>(
         &self,
@@ -115,10 +237,18 @@ where
     P: StateProviderFactory
         + HeaderProvider<Header = OutbeHeader>
         + BlockNumReader
+        + BlockIdReader
         + Send
         + Sync
         + 'static,
 {
+    async fn get_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        self.serve_compressed_entity(request).await
+    }
+
     async fn derive_gratis_keys(
         &self,
         account: Address,
@@ -267,6 +397,14 @@ where
             .as_ref()
             .map(|b| b.consensus_status())
             .unwrap_or_default();
+        let projection = projection_status_info(
+            self.projection_readiness.current(),
+            self.provider
+                .finalized_block_num_hash()
+                .ok()
+                .flatten()
+                .map(|block| (block.number, block.hash)),
+        );
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -286,6 +424,7 @@ where
             } else {
                 Phase1VerificationMode::TrustedFinality
             },
+            projection,
         })
     }
 
@@ -390,6 +529,55 @@ where
     }
 }
 
+fn projection_status_info(
+    status: ProjectionStatus,
+    reth_finalized: Option<(u64, B256)>,
+) -> ProjectionStatusInfo {
+    let (state, checkpoint, ready, unavailable_for_millis, last_failure_class) = match status {
+        ProjectionStatus::Starting => (ProjectionHealth::Starting, None, false, None, None),
+        ProjectionStatus::CatchingUp { checkpoint } => {
+            (ProjectionHealth::CatchingUp, checkpoint, false, None, None)
+        }
+        ProjectionStatus::Ready { checkpoint } => {
+            (ProjectionHealth::Ready, Some(checkpoint), true, None, None)
+        }
+        ProjectionStatus::MongoUnavailable { checkpoint, since } => (
+            ProjectionHealth::MongoUnavailable,
+            checkpoint,
+            false,
+            Some(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            Some("Unavailable".to_owned()),
+        ),
+        ProjectionStatus::Fatal { checkpoint, error } => (
+            ProjectionHealth::Fatal,
+            checkpoint,
+            false,
+            None,
+            Some(format!("{:?}", error.class)),
+        ),
+    };
+    let checkpoint_number = checkpoint.map(|value| value.block_number);
+    let checkpoint_hash = checkpoint.map(|value| value.block_hash);
+    let reth_finalized_number = reth_finalized.map(|value| value.0);
+    let reth_finalized_hash = reth_finalized.map(|value| value.1);
+    let lag_blocks = checkpoint_number.zip(reth_finalized_number).map(
+        |(checkpoint_number, reth_finalized_number)| {
+            reth_finalized_number.saturating_sub(checkpoint_number)
+        },
+    );
+    ProjectionStatusInfo {
+        state,
+        checkpoint_number,
+        checkpoint_hash,
+        reth_finalized_number,
+        reth_finalized_hash,
+        lag_blocks,
+        ready,
+        unavailable_for_millis,
+        last_failure_class,
+    }
+}
+
 /// Create an internal JSON-RPC error.
 fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
@@ -399,13 +587,16 @@ fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     )
 }
 
-/// Create an invalid-params JSON-RPC error (a client-side fault).
-fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+fn invalid_params(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INVALID_PARAMS_CODE,
         msg,
         None::<()>,
     )
+}
+
+fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+    invalid_params(msg)
 }
 
 /// Domain-tagged message a caller personal-signs to prove control of `account`

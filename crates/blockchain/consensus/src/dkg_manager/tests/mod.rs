@@ -8,7 +8,7 @@
 mod boundary;
 
 use alloy_primitives::{address, B256, U256};
-use commonware_codec::{Encode as _, Read as _};
+use commonware_codec::Encode as _;
 use commonware_cryptography::{
     bls12381::{
         dkg::feldman_desmedt::{observe, Dealer, DealerLog, Info, Logs, Player, SignedDealerLog},
@@ -815,6 +815,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
             consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(dealer_log)),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            compressed_entities_root: None,
         },
     )
     .unwrap();

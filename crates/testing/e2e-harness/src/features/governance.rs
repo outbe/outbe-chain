@@ -37,9 +37,7 @@ fn propose_gip(world: &mut World, name: String, text: String) {
     propose_kind(world, &name, "gip", &text);
 }
 
-#[then(
-    expr = "proposal {int} is pending and targets the governance module with kind {string}"
-)]
+#[then(expr = "proposal {int} is pending and targets the governance module with kind {string}")]
 fn proposal_pending_governance(world: &mut World, id: u64, kind: String) {
     let mut vs = world.rpc.vote_status(id);
     for _ in 0..10 {
@@ -99,22 +97,13 @@ fn proposal_approved(world: &mut World, id: u64) {
     );
 }
 
-fn assert_approved_record(
-    world: &mut World,
-    kind: &str,
-    id: u64,
-    text: &str,
-    author_name: &str,
-) {
+fn assert_approved_record(world: &mut World, kind: &str, id: u64, text: &str, author_name: &str) {
     let validator = world
         .validators
         .by_name(author_name)
         .expect("resolve author validator");
     let key = validator.evm_key().expect("author evm key");
-    let want_author = world
-        .rpc
-        .address_of(&key)
-        .expect("derive author address");
+    let want_author = world.rpc.address_of(&key).expect("derive author address");
 
     let (status, author, body) = match kind {
         "oip" => world.rpc.get_oip(id).expect("getOip"),

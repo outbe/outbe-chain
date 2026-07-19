@@ -3,11 +3,13 @@
 //! `e2e_provision_joiner` / `e2e_launch_joiner`.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use alloy_primitives::{hex, Bytes};
 use eyre::{eyre, Result};
 
+use crate::env::TeeMode;
 use crate::internal::{
     addresses,
     eth::{self, IValidatorSet},
@@ -18,6 +20,14 @@ use crate::internal::{
 };
 
 use super::Localnet;
+
+fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
+    let active_keys = run_dir.join("validator-0/data/keys");
+    (
+        active_keys.join("dkg_polynomial.hex"),
+        active_keys.join("dkg_output.hex"),
+    )
+}
 
 impl Localnet {
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
@@ -76,13 +86,19 @@ impl Localnet {
         // socket is up.
         let port = self.cfg.tee_port(index);
         proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo)?;
+        let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
+        let enclave_bin = if mock {
+            self.cfg.bin_mock.clone()
+        } else {
+            self.real_enclave_bin()?
+        };
         let guard = proc::spawn_enclave(proc::EnclaveSpec {
             name: self.cfg.tee_container(index),
             tee_port: port,
-            enclave_bin: self.cfg.bin_mock.clone(),
+            enclave_bin,
             sudo: self.cfg.sudo,
-            mock: true,
-            dkg_seed: Some((index + 1).to_string()),
+            mock,
+            dkg_seed: mock.then(|| format!("{:064x}", index + 1)),
             seal: None,
             log_path: vd.join("enclave.log"),
             debug: self.cfg.debug,
@@ -115,6 +131,7 @@ impl Localnet {
         fs::create_dir_all(vd.join("logs"))?;
         let secret = read_trimmed(&vd.join("reth-p2p-secret.hex"))?;
 
+        let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
         a.extend(args![
             "--validator",
@@ -136,9 +153,9 @@ impl Localnet {
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--consensus.public-polynomial",
-            self.data_path("polynomial.hex"),
+            public_polynomial.display(),
             "--consensus.dkg-output",
-            self.data_path("dkg-output.hex"),
+            dkg_output.display(),
         ]);
         a.extend(extra.iter().map(|s| s.to_string()));
 
@@ -178,5 +195,22 @@ impl Localnet {
     /// Run `outbe-keygen <args>` and return stdout.
     fn keygen(&self, args: &[&str]) -> Result<String> {
         proc::run_capture(&self.cfg.bin_keygen, args)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifier_join_uses_active_committee_material_not_bootstrap_fixture() {
+        let root = Path::new("/run/scenario-1");
+        let (polynomial, output) = verifier_material_paths(root);
+
+        assert_eq!(
+            polynomial,
+            root.join("validator-0/data/keys/dkg_polynomial.hex")
+        );
+        assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
     }
 }

@@ -36,6 +36,7 @@ allow = [
     "Zlib",
     "Unlicense",
     "MPL-2.0",
+    "BlueOak-1.0.0",
 ]
 confidence-threshold = 0.95
 

@@ -11,7 +11,7 @@ publish.workspace = true
 # their enclave containers are Rust-owned processes (no `run-testnet.sh`/`nohup`).
 # Bootstrap keeps two one-shot subprocesses (`outbe-chain dkg bootstrap` +
 # `python3 seed_genesis.py`); governance/tribute sends go through `outbe-cli` (the
-# product CLI under test). It replaces the glue that lived in `scripts/e2e/lib.sh`.
+# product CLI under test). It is the canonical owner of localnet e2e orchestration.
 
 [dependencies]
 # The World type and step definitions live in `src/` (so `run()` can register
@@ -23,6 +23,9 @@ futures.workspace = true
 tokio.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
+mongodb.workspace = true
+hex.workspace = true
+outbe-compressed-entities.workspace = true
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting"] }
 

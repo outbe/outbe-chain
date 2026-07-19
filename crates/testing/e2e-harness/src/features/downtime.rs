@@ -1,5 +1,5 @@
 //! Steps for `features/s7a_downtime_slash.feature` — port of
-//! `scripts/e2e/s7a_downtime_slash.sh`. Kill one committee validator and prove
+//! The downtime-slashing feature. Kill one committee validator and prove
 //! the chain keeps finalizing on the surviving 3-of-4 BFT quorum; also assert the
 //! slashing-config read surface is present. (The downtime felony itself is
 //! fee-settlement-gated and inactive on the ZeroFee localnet — see the script.)

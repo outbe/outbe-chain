@@ -1,5 +1,6 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     chain,
@@ -111,7 +112,11 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// Cycle handler at UTC midnight. The `MetadosisLifecycle` wrapper
 /// was deleted altogether in the follow-up cleanup; tests that drive
 /// the WWD state machine sub-day call this function directly.
-pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn start_metadosis(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
 
@@ -127,7 +132,7 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
 
     for wwd in &active {
         if metadosis.get_wwd_status(*wwd)? == status::READY {
-            process_metadosis(&mut metadosis, ctx, *wwd)?;
+            process_metadosis(&mut metadosis, ctx, scope, parent, *wwd)?;
             break;
         }
     }
@@ -403,6 +408,8 @@ fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Res
 fn process_metadosis(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     wwd: WorldwideDay,
 ) -> Result<()> {
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
@@ -435,7 +442,7 @@ fn process_metadosis(
         return Ok(());
     }
 
-    let tribute = TributeContract::new(metadosis.storage.clone());
+    let mut tribute = TributeContract::new(metadosis.storage.clone());
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
@@ -445,6 +452,7 @@ fn process_metadosis(
         // clearing does not deliver is routed to PROMIS as unallocated.
         let to_promis = dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
+        tribute.retire_completed_partition(scope, wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
             worldwideDay: wwd.into(),
             dayMetadosisLimit: limit_amount,
@@ -461,9 +469,20 @@ fn process_metadosis(
     let metadosis_parameters =
         metadosis.calculate_metadosis(wwd, tribute_nominal_total, limit_amount)?;
 
+    // Same timestamp the auction stages dispatch with: lysis keys the
+    // contributor map by its date key, i.e. the auction series id.
+    let auction_ts = metadosis
+        .worldwide_days
+        .entry(wwd)
+        .scheduled_process_time()
+        .read()?;
+
     match outbe_lysis::runtime::lysis(
         metadosis.storage.clone(),
+        scope,
+        parent,
         wwd,
+        auction_ts,
         metadosis_parameters.gratis_allocation,
     ) {
         Ok(lysis_result) => {
@@ -485,6 +504,7 @@ fn process_metadosis(
             promis_limit.set_total_unallocated(clearing_reminder)?;
 
             metadosis.mark_wwd_completed(wwd)?;
+            tribute.retire_completed_partition(scope, wwd)?;
 
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),

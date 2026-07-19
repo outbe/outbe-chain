@@ -57,23 +57,25 @@ gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null \
     | grep -iE "mr_enclave|mr_signer|isv_prod|isv_svn" | sed 's/^/  /'
 
 echo "== probing real DCAP quote (remote_attestation = dcap) =="
-DCAP_OUT="$("${SGX_RUN[@]}" timeout 90 gramine-sgx outbe-tee-enclave --probe-attestation 2>&1 || true)"
+sed 's/^sgx.remote_attestation = "none"/sgx.remote_attestation = "dcap"/' \
+    outbe-tee-enclave.manifest.template > dcap.manifest.template
+render_sign dcap.manifest.template dcap
+DCAP_OUT="$("${SGX_RUN[@]}" timeout 90 gramine-sgx dcap --probe-attestation 2>&1 || true)"
 if echo "$DCAP_OUT" | grep -q "dcap_quote: .*bytes"; then
     echo "  PASS: real DCAP quote generated ($(echo "$DCAP_OUT" | grep -oE 'dcap_quote: [0-9]+ bytes'))"
     echo "$DCAP_OUT" | grep -iE "mrenclave|mrsigner|attestation_type" | sed 's/^/  /'
     ATTESTED=1
 else
     echo "  NOTE: DCAP quote unavailable on this box (PCK not provisioned — needs PCCS/Intel PCS)."
-    echo "$DCAP_OUT" | grep -iE "AESM service returned error|missing on this machine" | sed 's/^/    /' | head -2
+    echo "$DCAP_OUT" | grep -iE "AESM service returned error|missing on this machine" | sed 's/^/    /' | head -2 || true
     ATTESTED=0
 fi
 
 # Functional smoke: enclave executes under real SGX + EGETKEY sealing keys derive.
-# Use a no-remote-attestation manifest so it loads even without a provisioned PCK.
+# The repository manifest already uses no remote attestation, so it loads even
+# without a provisioned PCK while still exercising real SGX + EGETKEY.
 echo "== functional smoke: SGX execution + EGETKEY sealing (no attestation needed) =="
-sed 's/^sgx.remote_attestation = "dcap"/# smoke: remote_attestation disabled/' \
-    outbe-tee-enclave.manifest.template > smoke.manifest.template
-render_sign smoke.manifest.template smoke
+render_sign outbe-tee-enclave.manifest.template smoke
 PROBE="$("${SGX_RUN[@]}" timeout 90 gramine-sgx smoke --probe-attestation 2>&1 || true)"
 echo "$PROBE" | grep -iE "/dev/attestation|sealing_key|attestation_type" | sed 's/^/  /'
 

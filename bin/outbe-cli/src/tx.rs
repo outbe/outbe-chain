@@ -32,8 +32,13 @@ impl TxSigner {
         let hex_str = private_key_hex
             .strip_prefix("0x")
             .unwrap_or(private_key_hex);
-        let key_bytes = hex::decode(hex_str)?;
-        let key = SigningKey::from_bytes((&key_bytes[..]).into())
+        let key_bytes: [u8; 32] = hex::decode(hex_str)?.try_into().map_err(|bytes: Vec<u8>| {
+            eyre::eyre!(
+                "invalid private key length: expected 32 bytes, got {}",
+                bytes.len()
+            )
+        })?;
+        let key = SigningKey::from_bytes((&key_bytes).into())
             .map_err(|e| eyre::eyre!("invalid private key: {e}"))?;
 
         // Derive Ethereum address: keccak256(uncompressed_pubkey[1..])[-20..]
@@ -845,6 +850,18 @@ mod tests {
     #[test]
     fn test_tx_signer_invalid_hex() {
         assert!(TxSigner::new("not-hex-at-all").is_err());
+    }
+
+    #[test]
+    fn test_tx_signer_rejects_wrong_length_without_panicking() {
+        for key in ["", "01", &"11".repeat(33)] {
+            let result = std::panic::catch_unwind(|| TxSigner::new(key));
+            assert!(
+                result.is_ok(),
+                "wrong-length key must return an error, not panic"
+            );
+            assert!(result.unwrap().is_err());
+        }
     }
 
     #[test]

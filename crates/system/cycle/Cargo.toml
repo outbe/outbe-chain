@@ -8,11 +8,14 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-compressed-entities.workspace = true
 outbe-accounting.workspace = true
 outbe-emissionlimit.workspace = true
 outbe-rewards.workspace = true
 outbe-agentreward.workspace = true
 outbe-metadosis.workspace = true
+outbe-tribute.workspace = true
+outbe-nod.workspace = true
 outbe-intexfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
@@ -21,6 +24,7 @@ tracing.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 outbe-common.workspace = true
+outbe-offchain-storage.workspace = true
 
 [lints]
 workspace = true

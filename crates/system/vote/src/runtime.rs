@@ -73,7 +73,7 @@ impl Vote<'_> {
         let chain_id = self.storage.chain_id()?;
         ensure_active_validator(self.storage.clone(), proposer)?;
 
-        let pending_len = self.pending_proposal_ids.len()? as u32;
+        let pending_len = self.pending_proposal_ids.len()?;
         if pending_len >= MAX_PENDING_PROPOSALS {
             return Err(VoteError::TooManyPending.into());
         }

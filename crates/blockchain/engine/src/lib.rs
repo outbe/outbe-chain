@@ -12,6 +12,8 @@
 
 pub mod args;
 pub mod bridge;
+pub mod ce_finalizer;
+pub mod ce_recovery;
 pub(crate) mod follow_transport;
 pub(crate) mod marshal_update_reporter;
 pub(crate) mod peer_manager;

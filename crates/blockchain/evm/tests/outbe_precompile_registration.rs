@@ -21,7 +21,12 @@ use revm::{database_interface::EmptyDB, primitives::hardfork::SpecId};
 fn build_extended_precompiles() -> PrecompilesMap {
     let spec = SpecId::default();
     let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::new(spec).precompiles);
-    extend_outbe_precompiles::<EmptyDB>(&mut precompiles, spec);
+    extend_outbe_precompiles::<EmptyDB>(
+        &mut precompiles,
+        spec,
+        None,
+        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+    );
     precompiles
 }
 
