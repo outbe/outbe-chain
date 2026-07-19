@@ -42,16 +42,15 @@ fn unix_now_millis() -> eyre::Result<u64> {
         .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))?;
 
     #[cfg(debug_assertions)]
-    {
-        return apply_debug_unix_time_offset_millis(
+    let now = {
+        apply_debug_unix_time_offset_millis(
             now,
             std::env::var("OUTBE_TEST_UNIX_TIME_OFFSET_SECS")
                 .ok()
                 .as_deref(),
-        );
-    }
+        )?
+    };
 
-    #[cfg(not(debug_assertions))]
     Ok(now)
 }
 
