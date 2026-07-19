@@ -151,7 +151,7 @@ fn projected_tribute(uri: &str, name: &str, tx_hash: &str) -> Result<ProjectedTr
         .wrap_err("projected Tribute _id is not EntityId36")?;
     let stored_body = match document.get("value") {
         Some(Bson::Binary(value)) => value.bytes.clone(),
-        other => bail!("{name}.tributes has invalid value field: {other:?}"),
+        other => return Err(eyre!("{name}.tributes has invalid value field: {other:?}")),
     };
     Ok(ProjectedTribute {
         raw_id,

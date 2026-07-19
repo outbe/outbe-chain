@@ -64,7 +64,7 @@ impl Update<'_> {
             return Err(UpdateError::ActivationConflict.into());
         }
 
-        let waiting_len = self.waiting_for_activation_proposal_ids.len()? as u32;
+        let waiting_len = self.waiting_for_activation_proposal_ids.len()?;
         if waiting_len >= MAX_WAITING_FOR_ACTIVATION_UPDATES {
             return Err(UpdateError::TooManyWaitingForActivation.into());
         }

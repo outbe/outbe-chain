@@ -15,7 +15,7 @@ use crate::{
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeRoot},
     staging::{
         AuthenticatedCatalogView, CollectionBatch, ProvisionalCatalogBatch,
-        ProvisionalShardSetBatch, ShardIndex, StagingCkbStore,
+        ProvisionalShardSetBatch, ShardIndex, StagingCkbStore, StagingError,
     },
     CeDomain, CollectionKey, Commitment, ProvisionalTreeBatch,
 };
@@ -58,8 +58,8 @@ impl core::fmt::Debug for MdbxAuthenticatedTree {
 impl MdbxAuthenticatedTree {
     pub fn open(db: Arc<CeMdbx>, identity: ExactParentIdentity) -> Result<Self> {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
-        let view = AuthenticatedCatalogView::open(snapshot, identity)
-            .map_err(|error| tree_corruption(error.to_string()))?;
+        let view =
+            AuthenticatedCatalogView::open(snapshot, identity).map_err(classify_staging_error)?;
         let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
             .map_err(|error| tree_corruption(error.to_string()))?;
         let catalog_store =
@@ -577,6 +577,24 @@ fn classify_snapshot_error(error: PersistenceError) -> PrecompileError {
         PersistenceError::Io { .. } | PersistenceError::Database { .. } => {
             tree_unavailable(error.to_string())
         }
+        PersistenceError::ExactParentMismatch { required, actual }
+            if required.commitment_scheme_version == actual.commitment_scheme_version
+                && required.block_number != actual.height =>
+        {
+            // Payload jobs are asynchronous: an old job can legitimately run
+            // after finalization advanced the in-place materialization, while a
+            // catching-up node can request a parent ahead of its marker. Neither
+            // height skew proves corruption. Same-height hash/root mismatches and
+            // scheme mismatches remain fatal below.
+            tree_unavailable(PersistenceError::ExactParentMismatch { required, actual }.to_string())
+        }
+        corruption => tree_corruption(corruption.to_string()),
+    }
+}
+
+fn classify_staging_error(error: StagingError) -> PrecompileError {
+    match error {
+        StagingError::Persistence(error) => classify_snapshot_error(error),
         corruption => tree_corruption(corruption.to_string()),
     }
 }
@@ -593,6 +611,7 @@ mod classification_tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::{FinalizedMarker, ACTIVE_COMMITMENT_SCHEME};
 
     #[test]
     fn only_technical_snapshot_failures_are_retryable_readiness() {
@@ -613,6 +632,49 @@ mod classification_tests {
         ));
         assert!(matches!(
             classify_snapshot_error(PersistenceError::HashPoison),
+            PrecompileError::Fatal(_)
+        ));
+
+        let required = ExactParentIdentity {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            block_number: 120,
+            block_hash: B256::repeat_byte(0x12),
+            root: B256::repeat_byte(0x34),
+        };
+        let finalized_ahead = FinalizedMarker {
+            commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+            height: 121,
+            block_hash: B256::repeat_byte(0x56),
+            parent_block_hash: required.block_hash,
+            parent_root: required.root,
+            new_root: required.root,
+        };
+        assert!(matches!(
+            classify_snapshot_error(PersistenceError::ExactParentMismatch {
+                required,
+                actual: finalized_ahead,
+            }),
+            PrecompileError::TreeUnavailable(_)
+        ));
+        assert!(matches!(
+            classify_staging_error(StagingError::Persistence(
+                PersistenceError::ExactParentMismatch {
+                    required,
+                    actual: finalized_ahead,
+                },
+            )),
+            PrecompileError::TreeUnavailable(_)
+        ));
+
+        let wrong_same_height = FinalizedMarker {
+            height: required.block_number,
+            ..finalized_ahead
+        };
+        assert!(matches!(
+            classify_snapshot_error(PersistenceError::ExactParentMismatch {
+                required,
+                actual: wrong_same_height,
+            }),
             PrecompileError::Fatal(_)
         ));
     }

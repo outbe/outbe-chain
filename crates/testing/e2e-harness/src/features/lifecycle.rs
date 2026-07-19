@@ -267,7 +267,10 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2")
         .evm_key()
         .expect("v2 key");
-    world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5),
+        "post-exit offer did not land (supply != 3)"
+    );
     sleep(Duration::from_secs(6));
     assert_eq!(
         world.rpc.supply(primary),

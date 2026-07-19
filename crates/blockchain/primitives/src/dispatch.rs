@@ -178,7 +178,7 @@ mod tests {
     const SELECTOR: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
 
     fn one_bytes_arg(length: usize) -> Vec<u8> {
-        let padded = (length + 31) / 32 * 32;
+        let padded = length.div_ceil(32) * 32;
         let mut calldata = vec![0_u8; 4 + 32 + 32 + padded];
         calldata[..4].copy_from_slice(&SELECTOR);
         calldata[4 + 31] = 32;

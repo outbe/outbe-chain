@@ -265,10 +265,19 @@ where
                 .set_state_hook(Some(Box::new(handle.state_hook())));
         }
 
-        builder.apply_pre_execution_changes().map_err(|err| {
+        if let Err(err) = builder.apply_pre_execution_changes() {
+            if ce_local_readiness_error(&err) {
+                // This attempt raced finalization and cannot use the in-place
+                // materialization for its old parent. Report a retryable build
+                // failure: Reth reserves `BuildOutcome::Cancelled` for futures
+                // whose supplied cancel signal actually fired and treats any
+                // other use as an unreachable invariant violation.
+                debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
+                return Err(PayloadBuilderError::Internal(err.into()));
+            }
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
-            PayloadBuilderError::Internal(err.into())
-        })?;
+            return Err(PayloadBuilderError::Internal(err.into()));
+        }
 
         let mut blob_sidecars = BlobSidecars::Empty;
         let mut block_blob_count = 0u64;
@@ -622,6 +631,13 @@ fn ce_work_admission_error(error: &BlockExecutionError) -> Option<&PrecompileErr
     error.as_internal()?.downcast_other::<PrecompileError>()
 }
 
+fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
+    matches!(
+        ce_work_admission_error(error),
+        Some(PrecompileError::TreeUnavailable(_))
+    )
+}
+
 #[cfg(test)]
 mod ce_work_tests {
     use super::*;
@@ -680,6 +696,17 @@ mod ce_work_tests {
             );
         }
         assert!(ce_work_admission_error(&BlockExecutionError::msg("other")).is_none());
+    }
+
+    #[test]
+    fn exact_parent_readiness_remains_typed_for_retry_without_an_alarm() {
+        let readiness = BlockExecutionError::other(PrecompileError::TreeUnavailable(
+            "finalized marker advanced past the payload parent".to_owned(),
+        ));
+        assert!(ce_local_readiness_error(&readiness));
+        assert!(!ce_local_readiness_error(&BlockExecutionError::other(
+            PrecompileError::Fatal("same-height parent hash mismatch".to_owned()),
+        )));
     }
 
     #[test]

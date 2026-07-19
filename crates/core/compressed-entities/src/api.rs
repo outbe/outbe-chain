@@ -992,7 +992,7 @@ impl ExecutionScope {
         }
         storage.deduct_gas(gas)?;
         self.explicit_gas_charged
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |charged| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |charged| {
                 charged.checked_add(gas)
             })
             .map(|_| ())

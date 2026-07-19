@@ -295,17 +295,17 @@ where
             .wrap_err("read canonical Reth hash for offchain-data checkpoint validation")?
         {
             Some(canonical_hash) if canonical_hash == checkpoint.block_hash => {}
-            Some(canonical_hash) => bail!(
+            Some(canonical_hash) => return Err(eyre::eyre!(
                 "offchain-data MongoDB checkpoint identity mismatch at block {}: stored {}, canonical {}",
                 checkpoint.block_number,
                 checkpoint.block_hash,
                 canonical_hash
-            ),
-            None => bail!(
+            )),
+            None => return Err(eyre::eyre!(
                 "canonical block {} for Mongo checkpoint {} is unavailable locally",
                 checkpoint.block_number,
                 checkpoint.block_hash
-            ),
+            )),
         }
         if checkpoint.block_number == local_finalized.number {
             publish_status(
@@ -1057,20 +1057,20 @@ fn record_finalized_target(
     incoming: FinalizedTarget,
 ) -> eyre::Result<bool> {
     match *latest {
-        Some(current) if incoming.number < current.number => bail!(
+        Some(current) if incoming.number < current.number => Err(eyre::eyre!(
             "finalized target regressed from {} ({}) to {} ({})",
             current.number,
             current.hash,
             incoming.number,
             incoming.hash
-        ),
+        )),
         Some(current) if incoming.number == current.number && incoming.hash != current.hash => {
-            bail!(
+            Err(eyre::eyre!(
                 "finalized target hash changed at height {}: {} -> {}",
                 current.number,
                 current.hash,
                 incoming.hash
-            )
+            ))
         }
         Some(current) if incoming == current => {
             *pending = Some(incoming);
@@ -1191,22 +1191,24 @@ where
         .map_err(|_| eyre::eyre!("projection recovery acknowledgement receiver is closed"))?;
 
     let first_block = match checkpoint {
-        Some(checkpoint) if checkpoint.block_number > target.number => bail!(
-            "projection checkpoint {} ({}) is ahead of finalized target {} ({})",
-            checkpoint.block_number,
-            checkpoint.block_hash,
-            target.number,
-            target.hash
-        ),
+        Some(checkpoint) if checkpoint.block_number > target.number => {
+            return Err(eyre::eyre!(
+                "projection checkpoint {} ({}) is ahead of finalized target {} ({})",
+                checkpoint.block_number,
+                checkpoint.block_hash,
+                target.number,
+                target.hash
+            ))
+        }
         Some(checkpoint)
             if checkpoint.block_number == target.number && checkpoint.block_hash != target.hash =>
         {
-            bail!(
+            return Err(eyre::eyre!(
                 "projection checkpoint hash {} conflicts with finalized hash {} at height {}",
                 checkpoint.block_hash,
                 target.hash,
                 target.number
-            )
+            ));
         }
         Some(checkpoint) if checkpoint.block_number == target.number => {
             let checkpoint = FinalizedTarget::new(checkpoint.block_number, checkpoint.block_hash);

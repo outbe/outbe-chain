@@ -13,12 +13,12 @@ Feature: Committee OIP/GIP via vote
     And the committee has reached a usable height
     When operator "validator-0" proposes an OIP with text "e2e oip body"
     Then proposal 1 is pending and targets the governance module with kind "oip"
+    When validators "validator-0,validator-1,validator-2" cast yes votes on proposal 1
+    Then proposal 1 is still pending with 3 yes votes
     When operator "validator-1" proposes a GIP with text "e2e gip body"
     Then proposal 2 is pending and targets the governance module with kind "gip"
-    When validators "validator-0,validator-1,validator-2" cast yes votes on proposal 1
-    And validators "validator-0,validator-1,validator-2" cast yes votes on proposal 2
-    Then proposal 1 is still pending with 3 yes votes
-    And proposal 2 is still pending with 3 yes votes
+    When validators "validator-0,validator-1,validator-2" cast yes votes on proposal 2
+    Then proposal 2 is still pending with 3 yes votes
     When the committee passes the vote deadline
     Then proposal 1 is approved
     And proposal 2 is approved

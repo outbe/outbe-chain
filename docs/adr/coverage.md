@@ -3,7 +3,7 @@
 - **Status:** Living inventory; coverage is not acceptance or implementation proof
 - **Generated from:** `cargo metadata --no-deps --format-version 1`, repository manifests,
   deployable source trees and registered entrypoints
-- **Last reconciled:** 2026-07-17
+- **Last reconciled:** 2026-07-18
 
 ## Purpose
 
@@ -19,7 +19,7 @@ not create a second authority.
 
 ## Rust workspace packages
 
-The current workspace contains 58 Cargo packages.
+The current workspace contains 57 Cargo packages.
 
 | Cargo package | Physical scope | Primary ADR(s) | Coverage role |
 |---|---|---|---|
@@ -47,7 +47,6 @@ The current workspace contains 58 Cargo packages.
 | `outbe-nodfactory` | `crates/core/nodfactory` | ADR-C-NOD-002, PFS-002 | Nod issuance/mining orchestration |
 | `outbe-gratis` | `crates/core/gratis` | ADR-C-GRT-001 | Gratis ledger |
 | `outbe-gratisfactory` | `crates/core/gratisfactory` | ADR-C-GRT-002, PFS-003 | Gratis workflow authority |
-| `outbe-gratispool` | `crates/core/gratispool` | ADR-C-GRT-003 | Shielded note pool |
 | `outbe-metadosis` | `crates/core/metadosis` | ADR-C-MET-001, PFS-002 and PFS-004 | WorldwideDay orchestration |
 | `outbe-agentreward` | `crates/core/agentreward` | ADR-C-AGR-001 | Agent reward ledger |
 | `outbe-lysis` | `crates/core/lysis` | ADR-C-LYS-001, PFS-002 | Tribute-to-Nod transformation |
@@ -157,7 +156,7 @@ rules; this table names the state/business owner.
 |---|---|
 | `tribute`, `tributefactory` | ADR-C-TRB-001 and ADR-C-TRB-002 |
 | `nod`, `nodfactory` | ADR-C-NOD-001 and ADR-C-NOD-002 |
-| `gratis`, `gratisfactory`, `gratispool` | ADR-C-GRT-001 through ADR-C-GRT-003 |
+| `gratis`, `gratisfactory` | ADR-C-GRT-001 and ADR-C-GRT-002 |
 | `metadosis`, `agentreward` | ADR-C-MET-001 and ADR-C-AGR-001 |
 | `fidelity` | ADR-C-FID-001 |
 | `promis`, `promisfactory`, `promislimit` | ADR-C-PRM-001 through ADR-C-PRM-003 |

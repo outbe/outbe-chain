@@ -11,3 +11,9 @@ Feature: Active validator restarts without a new DKG ceremony
     When a joiner reaches active with a persisted share
     And the node is killed and restarted with the same keys
     Then it resumes signing from the persisted share without a new ceremony
+
+  @pfs-006-09
+  Scenario: Entire committee recovers after all enclaves restart
+    Given a fresh localnet with a 6-block voting window
+    When the entire committee and its enclaves are stopped and restarted
+    Then all validators recover sealed TEE state and resume finalization

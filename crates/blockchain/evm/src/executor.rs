@@ -635,11 +635,11 @@ where
 
     let result = storage.with_checkpoint(|| hooks(&runtime_ctx));
 
-    let output = result.map_err(|e| {
-        BlockExecutionError::Internal(InternalBlockExecutionError::Other(
-            format!("outbe hook: {e}").into(),
-        ))
-    })?;
+    // Preserve the concrete hook error across the executor boundary. Payload
+    // construction must distinguish node-local readiness (for example a stale
+    // compressed-tree parent) from deterministic corruption; stringifying here
+    // destroys that distinction and turns a cancellable job into an alarm.
+    let output = result.map_err(BlockExecutionError::other)?;
 
     provider.flush().map_err(|e| {
         BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -7961,6 +7961,30 @@ mod tests {
             .expect("successful batch must report changed slot");
         assert_eq!(changed_slot.present_value(), value);
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
+        let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .build();
+        let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
+
+        let error = super::run_atomic_storage_hooks(&mut state, ctx, |_hook_ctx| {
+            Err(outbe_primitives::error::PrecompileError::TreeUnavailable(
+                "finalized marker advanced past payload parent".into(),
+            ))
+        })
+        .expect_err("tree readiness must abort this payload execution");
+
+        assert!(matches!(
+            error.as_internal().and_then(
+                |inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>()
+            ),
+            Some(outbe_primitives::error::PrecompileError::TreeUnavailable(_))
+        ));
     }
 
     #[test]

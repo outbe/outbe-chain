@@ -2082,6 +2082,13 @@ fn test_dkg_activation_always_advances_consensus_epoch() {
 }
 
 #[test]
+fn verifier_rotation_discovered_at_or_after_activation_replays_current_height() {
+    assert!(!verifier_activation_needs_immediate_replay(119, 120));
+    assert!(verifier_activation_needs_immediate_replay(120, 120));
+    assert!(verifier_activation_needs_immediate_replay(121, 120));
+}
+
+#[test]
 fn test_missing_freeze_block_hash_retries_only_before_planned_activation() {
     assert_eq!(
         pending_freeze_block_hash_decision(119, 120),

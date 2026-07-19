@@ -27,7 +27,6 @@ contract USDT0Deploy is Script {
         bytes bridgeCreationCode;
     }
 
-    uint256 private constant BSC_TESTNET_CHAIN_ID = 97;
     uint256 private constant ANVIL_CHAIN_ID = 31_337;
 
     error MissingCode(address target);
@@ -62,6 +61,12 @@ contract USDT0Deploy is Script {
 
     function _requireOwner(address signer, address expectedOwner) internal pure {
         if (signer != expectedOwner) revert UnauthorizedSigner(signer, expectedOwner);
+    }
+
+    function _requireMockUSDTDeploymentAllowed() internal view {
+        if (block.chainid != BSC_TESTNET_CHAIN_ID && block.chainid != ANVIL_CHAIN_ID) {
+            revert MockUSDTDeploymentNotAllowed(block.chainid);
+        }
     }
 
     function _isGuardedChain() internal view returns (bool) {

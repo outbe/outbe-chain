@@ -225,7 +225,7 @@ fn parse_dkg_key_backend(cli: &DkgCli) -> eyre::Result<outbe_consensus::bls::Key
             Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
         }
         "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-        other => eyre::bail!("unknown BLS key backend: {other}"),
+        other => Err(eyre::eyre!("unknown BLS key backend: {other}")),
     }
 }
 
@@ -579,6 +579,7 @@ fn run_node() -> eyre::Result<()> {
                 ))
             })
             .apply(|mut builder| {
+                configure_outbe_engine_args(&mut builder.config_mut().engine);
                 let discovery = &mut builder.config_mut().network.discovery;
                 discovery.enable_discv5_discovery = true;
                 // SSA-1: disable reth DNS discovery so the `hickory-proto` code
@@ -731,8 +732,36 @@ fn run_node() -> eyre::Result<()> {
     Ok(())
 }
 
+/// Configure Reth's engine tree for Outbe's pre-finalization parent switches.
+///
+/// Ethereum's Engine API permits an execution client to skip payload building when
+/// an FCU selects an already-canonical ancestor. Outbe leaders intentionally build
+/// on certified, not-yet-finalized parents, so a later view may select such an
+/// ancestor and still require a payload. Reth exposes both parts of that behavior
+/// explicitly: process the attributes and unwind the canonical header to the
+/// selected parent before starting the payload job.
+fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
+    engine.always_process_payload_attributes_on_canonical_head = true;
+    engine.allow_unwind_canonical_header = true;
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn engine_builds_payloads_after_prefinalization_parent_switches() {
+        let mut engine = reth_node_core::args::EngineArgs::default();
+        assert!(!engine.always_process_payload_attributes_on_canonical_head);
+        assert!(!engine.allow_unwind_canonical_header);
+
+        super::configure_outbe_engine_args(&mut engine);
+
+        assert!(engine.always_process_payload_attributes_on_canonical_head);
+        assert!(engine.allow_unwind_canonical_header);
+        let tree = engine.tree_config();
+        assert!(tree.always_process_payload_attributes_on_canonical_head());
+        assert!(tree.unwind_canonical_header());
+    }
+
     #[test]
     fn adr005_accepts_validators_and_certified_followers_only() {
         super::validate_adr005_node_mode(true, false).expect("validator path is parent-gated");

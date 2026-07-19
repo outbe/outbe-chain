@@ -29,7 +29,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
 | `PFS-005-01`, `-09` | Vote approval/Update activation and unsupported-version fatal boundary |
-| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness and active-share restart; consult the PFS matrix for deliberately partial assertions |
+| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness, active-share restart and full-committee sealed TEE recovery; consult the PFS matrix for deliberately partial assertions |
 | `PFS-007-01` through `-06` | Pectra/ZeroFee readiness, native EIP-7702 delegation, sponsored quota, soft failure and paid fallback |
 | `PFS-008-01` through `-04` | Cold/chained follower sync, validator recovery and warm promotion in one composite live scenario |
 

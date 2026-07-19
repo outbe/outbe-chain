@@ -35,7 +35,10 @@ fn joiner_active_persisted_share(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("wwd");
 
     let v0 = world.validators.get(0).evm_key().expect("v0 key");
-    world.rpc.offer_until_supply(&v0, &wwd, primary, "1", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v0, &wwd, primary, "1", 5),
+        "pre-restart offer did not land (supply != 1)"
+    );
 
     world
         .localnet
@@ -80,6 +83,66 @@ fn node_killed_and_restarted(world: &mut World) {
         .localnet
         .launch_joiner(idx, &["--consensus.keys-dir", &keys])
         .expect("relaunch joiner");
+}
+
+/// Stop every committee node and enclave, then relaunch them from the same
+/// datadirs. Unlike the single-node restart above, no live enclave remains to
+/// answer a key-handoff request: recovery therefore depends on sealed state.
+#[when("the entire committee and its enclaves are stopped and restarted")]
+fn committee_and_enclaves_restarted(world: &mut World) {
+    let primary = world.validators.primary_port();
+    world.state.marker_height = world.rpc.head(primary);
+    world.state.marker_count = Some(world.localnet.log_count(0, "running DKG ceremony"));
+    world
+        .localnet
+        .restart_committee_and_enclaves()
+        .expect("restart committee and enclaves");
+}
+
+/// Every enclave must use its restart fast-path, every validator must advance,
+/// and an enclave-backed Tribute offer must remain executable.
+#[then("all validators recover sealed TEE state and resume finalization")]
+fn committee_recovers_sealed_tee_state(world: &mut World) {
+    let before = world.state.marker_height.expect("pre-restart height");
+    let target = before + 2;
+    let mut ports = vec![world.validators.primary_port()];
+    ports.extend(world.validators.peer_ports());
+    for port in ports {
+        let height = world.rpc.wait_block(port, target, 60).unwrap_or(0);
+        assert!(
+            height >= target,
+            "validator RPC {port} did not advance after full restart ({height} < {target})"
+        );
+    }
+
+    for index in 0..world.validators.size() {
+        assert!(
+            world.localnet.enclave_log_has(
+                index,
+                "unsealed offer key + group signature <- /tee/sealed_root.bin (restart fast-path)"
+            ),
+            "validator-{index} enclave did not recover its sealed offer key"
+        );
+        assert!(
+            !world
+                .localnet
+                .log_has(index, "TEE key-handoff did not complete"),
+            "validator-{index} fell back to a timed-out TEE handoff"
+        );
+    }
+    assert_eq!(
+        world.localnet.log_count(0, "running DKG ceremony"),
+        world.state.marker_count.expect("pre-restart DKG count"),
+        "full restart unexpectedly triggered a new DKG ceremony"
+    );
+
+    let wwd = world.state.wwd.clone().expect("wwd");
+    let key = world.validators.get(0).evm_key().expect("validator-0 key");
+    let primary = world.validators.primary_port();
+    assert!(
+        world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
+        "post-committee-restart offer did not land (supply != 1)"
+    );
 }
 
 /// The restarted node catches up and resumes signing WITHOUT a fresh ceremony
@@ -128,7 +191,10 @@ fn resumes_without_new_ceremony(world: &mut World) {
         .expect("v1")
         .evm_key()
         .expect("v1 key");
-    world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 5),
+        "post-node-restart offer did not land (supply != 2)"
+    );
     sleep(Duration::from_secs(6));
     assert_eq!(
         world.rpc.supply(primary),

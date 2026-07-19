@@ -8,7 +8,7 @@
 mod boundary;
 
 use alloy_primitives::{address, B256, U256};
-use commonware_codec::{Encode as _, Read as _};
+use commonware_codec::Encode as _;
 use commonware_cryptography::{
     bls12381::{
         dkg::feldman_desmedt::{observe, Dealer, DealerLog, Info, Logs, Player, SignedDealerLog},
