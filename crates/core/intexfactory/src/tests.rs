@@ -124,45 +124,20 @@ fn issue_zero_winners_discards_contributor_map() {
 }
 
 #[test]
-fn issue_broadcasts_one_issuance_per_snapshot_chain() {
-    use crate::sol_ext::IOriginRouter;
+fn issuance_legs_route_winners_to_their_own_chain() {
+    // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
+    let other = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+    let mut p = sample(7);
+    p.recipients = vec![holder(), other];
+    p.quantities = vec![U256::from(1), U256::from(2)];
+    p.recipient_chains = vec![10, 20];
+    p.snapshot_chains = vec![10, 20, 30];
 
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    storage.stub_sub_call_at(
-        crate::constants::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    storage.stub_sub_call_at(
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-
-    StorageHandle::enter(&mut storage, |s| {
-        // One winner on chain 10, one on chain 20; chain 30 in the snapshot has none.
-        let mut p = sample(7);
-        p.recipients = vec![
-            holder(),
-            address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
-        ];
-        p.quantities = vec![U256::from(1), U256::from(2)];
-        p.recipient_chains = vec![10, 20];
-        p.snapshot_chains = vec![10, 20, 30];
-        runtime::issue(&s, p).unwrap();
-    });
-
-    // Every snapshot chain got an addressed ISSUANCE carrying only its own winners.
-    let issuances: Vec<_> = storage
-        .recorded_sub_calls(crate::constants::ORIGIN_ROUTER_ADDRESS)
-        .iter()
-        .filter_map(|d| IOriginRouter::sendIssuanceInstructionsCall::abi_decode(d).ok())
-        .map(|c| c.params)
-        .collect();
-    assert_eq!(issuances.len(), 3);
-    let by_chain = |dst: u32| issuances.iter().find(|p| p.dstChainId == dst).unwrap();
-    assert_eq!(by_chain(10).recipients.len(), 1);
-    assert_eq!(by_chain(20).recipients.len(), 1);
-    assert_eq!(by_chain(30).recipients.len(), 0); // create-only leg
+    let legs = runtime::issuance_legs(&p);
+    assert_eq!(legs.len(), 3);
+    assert_eq!(legs[0], (10, vec![holder()], vec![U256::from(1)]));
+    assert_eq!(legs[1], (20, vec![other], vec![U256::from(2)]));
+    assert_eq!(legs[2], (30, vec![], vec![])); // create-only leg
 }
 
 #[test]

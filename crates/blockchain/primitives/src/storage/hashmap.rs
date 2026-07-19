@@ -37,9 +37,6 @@ pub struct HashMapStorageProvider {
     /// Per-address return data stubs. Entries registered via
     /// [`Self::stub_sub_call_at`] take priority over `sub_call_stub`.
     sub_call_stubs: HashMap<Address, Bytes>,
-    /// Calldata of every dispatched sub-call, in order, for tests that assert the
-    /// outbound calls a runtime path makes (e.g. a per-chain message fan-out).
-    sub_call_log: Vec<(Address, Bytes)>,
 }
 
 struct Snapshot {
@@ -65,7 +62,6 @@ impl HashMapStorageProvider {
             snapshots: Vec::new(),
             sub_call_stub: false,
             sub_call_stubs: HashMap::new(),
-            sub_call_log: Vec::new(),
         }
     }
 
@@ -100,15 +96,6 @@ impl HashMapStorageProvider {
     pub fn get_events(&self, address: Address) -> &Vec<LogData> {
         static EMPTY: Vec<LogData> = Vec::new();
         self.events.get(&address).unwrap_or(&EMPTY)
-    }
-
-    /// Calldata of every sub-call dispatched to `address`, in dispatch order.
-    pub fn recorded_sub_calls(&self, address: Address) -> Vec<Bytes> {
-        self.sub_call_log
-            .iter()
-            .filter(|(target, _)| *target == address)
-            .map(|(_, data)| data.clone())
-            .collect()
     }
 
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
@@ -301,8 +288,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        self.sub_call_log
-            .push((input.target, input.calldata.clone()));
         if let Some(returndata) = self.sub_call_stubs.get(&input.target).cloned() {
             return Ok(SubCallOutput {
                 status: SubCallStatus::Success,

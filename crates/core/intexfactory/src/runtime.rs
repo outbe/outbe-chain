@@ -72,18 +72,9 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // One ISSUANCE per snapshot chain: winners routed to their own chain, every other snapshot
-    // chain gets an empty-recipient instruction so the series is created there too (needed for
-    // user NFT bridging). Relay-float-funded: value 0, the router pays the bridge fee from its float.
-    for &chain_id in &params.snapshot_chains {
-        let mut recipients = Vec::new();
-        let mut quantities = Vec::new();
-        for (i, &c) in params.recipient_chains.iter().enumerate() {
-            if c == chain_id {
-                recipients.push(params.recipients[i]);
-                quantities.push(params.quantities[i]);
-            }
-        }
+    // One ISSUANCE per snapshot chain. Relay-float-funded: value 0, the router pays the bridge
+    // fee from its float.
+    for (chain_id, recipients, quantities) in issuance_legs(&params) {
         let router_params = IOriginRouter::IssuanceInstructionsParams {
             dstChainId: chain_id,
             seriesId: params.series_id,
@@ -136,6 +127,27 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             entryPrice: params.entry_price_minor,
         },
     )
+}
+
+/// One `(chain, recipients, quantities)` issuance leg per snapshot chain: winners land on their
+/// own chain and every other chain gets an empty leg, so the series is created there too (needed
+/// for user NFT bridging).
+pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, Vec<U256>)> {
+    params
+        .snapshot_chains
+        .iter()
+        .map(|&chain_id| {
+            let mut recipients = Vec::new();
+            let mut quantities = Vec::new();
+            for (i, &c) in params.recipient_chains.iter().enumerate() {
+                if c == chain_id {
+                    recipients.push(params.recipients[i]);
+                    quantities.push(params.quantities[i]);
+                }
+            }
+            (chain_id, recipients, quantities)
+        })
+        .collect()
 }
 
 pub(crate) fn derived_floor(entry_price: U256, floor_price_num: u64) -> Result<U256> {
