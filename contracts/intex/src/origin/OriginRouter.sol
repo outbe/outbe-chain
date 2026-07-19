@@ -58,6 +58,8 @@ contract OriginRouter is
         /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.
         mapping(uint32 chainId => uint256 indexPlus1) targetIndexPlus1;
         /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
+        ///      Keyed by `worldwideDay`. The issuance/mark sends index it by `seriesId`, which lands on the same slot
+        ///      only while `seriesId == worldwideDay`; a multi-currency series allocator must map seriesId → worldwideDay here.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
         mapping(uint256 idx => ParkedSend) parkedSends;
