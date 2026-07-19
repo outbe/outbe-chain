@@ -117,13 +117,13 @@ committed state. A partial cross-module result is never accepted.
 |---|---|---|---|---|---|
 | PFS-006-01 | join and activate | 4 validators plus registered/staked/synced joiner | confirm readiness and complete reshare | ACTIVE with canonical share/set hash; committee agrees | `@pfs-006-01` live-node |
 | PFS-006-02 | stale join guard | staked joiner not readiness-confirmed | reshare boundary passes, then confirm and retry | stays PENDING/no share first; activates only on later reshare | `@pfs-006-02` live-node |
-| PFS-006-03 | voluntary exit and claim | active validator with bonded stake | deactivate, reshare, mature and claim | excluded, UNBONDING→INACTIVE; exact value claimed once | `@pfs-006-03` covers exclusion only; claim/value gap |
+| PFS-006-03 | voluntary exit and claim | active validator with bonded stake | deactivate, reshare, mature and claim | excluded, UNBONDING→INACTIVE; exact value claimed once; unauthorized exit/claim rejected | `@pfs-006-03` live-node with exact claim/value accounting and caller isolation |
 | PFS-006-04 | DKG failure/recovery | frozen 4→5 target with ceremony quorum removed | stall then restore validator | old committee remains live; no partial activation; retry reaches 5 | `@pfs-006-04` live-node |
 | PFS-006-05 | fee and late-voter settlement | finalized participation/escrow with delayed vote evidence | close settlement window | payouts plus burned residue equal escrow exactly once | documentation-only: fee-enabled genesis/metadata control absent |
-| PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash and next committee exclusion while chain remains live | `@pfs-006-06` covers liveness only; slash disabled |
+| PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash with exact bonded/burn/supply deltas; continued downtime cannot punish twice; chain remains live | `@pfs-006-06` live-node |
 | PFS-006-07 | duplicate evidence | one authenticated offense already processed | resubmit same canonical evidence | no second punishment/reporter reward | documentation-only: evidence construction/submission absent |
 | PFS-006-08 | unjail and rejoin | jailed validator topped up and cooldown elapsed | unjail, confirm and reshare | PENDING then ACTIVE with fresh share; no stale share reuse | documentation-only: slashing/time control absent |
-| PFS-006-09 | crash boundaries | operation poised at each registration/DKG/reward/exit checkpoint | crash and restart | semantic pre-state or complete outcome at every boundary | `@pfs-006-09` covers active-share restart and full-committee sealed TEE recovery; other checkpoints remain gaps |
+| PFS-006-09 | crash boundaries | operation poised at registration, in-flight DKG, completed-DKG/pre-activation, active-share and reshare checkpoints | crash node/enclave or full committee and restart | committed state is recovered; no premature/duplicate activation; sealed state and finalization survive | six `@pfs-006-09` live-node scenarios |
 | PFS-006-10 | cleanup and re-registration | inactive validator with no bonded/live claims | clean indexes then register identity again | no stale pubkey/cooldown/index; exactly one live record | documentation-only: maturity/cleanup fixture absent |
 
 ## Open questions and technical debt
@@ -132,9 +132,7 @@ committed state. A partial cross-module result is never accepted.
   treating this flow as Accepted.
 - Define one durable intent identity for DKG activation and every punishment.
 - Define exact restart ownership for in-flight DKG and overdue Rewards/unbonding work.
-- Add narrower scenarios for the claim, slash, committee-exclusion and crash-boundary
-  assertions that existing tagged composite features cover only partially.
-- Implement the missing voluntary exit/value conservation, Rewards settlement,
-  duplicate evidence, unjail, fault-injection and re-registration scenarios.
+- Implement the remaining Rewards settlement, externally submitted duplicate
+  evidence, unjail and re-registration scenarios.
 - Add a mixed-version topology proving storage/evidence/committee-format activation.
 - Reconcile external diagnostic journal entries with committed on-chain receipts.

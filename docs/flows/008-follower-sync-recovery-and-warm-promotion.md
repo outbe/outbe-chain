@@ -66,8 +66,10 @@ failure retains the old committee as specified by PFS-006.
 | PFS-008-02 | chained follower sync | first follower in lockstep | launch second with first as upstream | second reaches committee lockstep | same live composite scenario |
 | PFS-008-03 | validator restart catch-up | active validator mid-epoch | kill, wait and restart | validator returns to lockstep without committee rewind | same live composite scenario |
 | PFS-008-04 | warm promotion | stopped synchronized follower and fresh joiner identity | reuse datadir, stake, launch, confirm | joiner activates through DKG and stays in lockstep | same live composite scenario |
-| PFS-008-05 | unavailable upstream | empty follower and unreachable endpoint | launch follower | no activation/corrupt progress; retry can catch up | documentation-only pending launch-failure step |
-| PFS-008-06 | stale datadir promotion | follower data behind retention/compatibility floor | attempt warm promotion | explicit refusal or full verified catch-up before readiness | documentation-only pending compatibility policy |
+| PFS-008-05 | upstream loss and switch | synchronized follower with one upstream | disconnect upstream while committee advances, then restart against a healthy upstream | no unverified finalized progress while isolated; durable catch-up restores exact hash/root parity | `@pfs-008-05` live-node |
+| PFS-008-06 | restart during warm promotion | synchronized follower promoted from its durable datadir | restart promoted node and enclave around the planned activation boundary | no premature participation; activation occurs only at the planned boundary with sealed-state recovery | `@pfs-008-06` live-node |
+| PFS-008-07 | active-validator restart during promotion | promotion/DKG in progress | restart one active validator around the same boundary | old committee remains authoritative until activation; final network state converges | `@pfs-008-07` live-node |
+| PFS-008-08 | duplicate readiness/promotion intent | warm candidate already submitted readiness | resubmit readiness before restart/activation | command is idempotent; exactly one activation and canonical committee result | `@pfs-008-08` live-node |
 
 ## Open questions and technical debt
 

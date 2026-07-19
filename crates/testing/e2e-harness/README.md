@@ -28,10 +28,10 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-005-01`, `-09` | Vote approval/Update activation and unsupported-version fatal boundary |
-| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness, active-share restart and full-committee sealed TEE recovery; consult the PFS matrix for deliberately partial assertions |
-| `PFS-007-01` through `-06` | Pectra/ZeroFee readiness, native EIP-7702 delegation, sponsored quota, soft failure and paid fallback |
-| `PFS-008-01` through `-04` | Cold/chained follower sync, validator recovery and warm promotion in one composite live scenario |
+| `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
+| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
+| `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
+| `PFS-008-01` through `-08` | Cold/chained sync, upstream loss/switch, validator recovery, boundary restarts and idempotent warm promotion |
 
 Run one mapped example with `--tags '@pfs-001-05'`. A tag means that the
 scenario supplies the evidence stated in its PFS matrix row; it does not imply
