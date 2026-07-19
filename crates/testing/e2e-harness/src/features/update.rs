@@ -106,20 +106,181 @@ fn proposal_pending(world: &mut World, id: u64) {
 /// Cast yes votes from a comma-separated list of validators
 /// (update_operator_flow.sh:268-285).
 ///
-/// The ballots are fired without waiting on each receipt, so the whole set is
-/// submitted within a few blocks and the voting window isn't burned by RPC
-/// round-trips. A vote may revert (e.g. the proposer already counts as a yes, so
-/// its explicit vote is a double-vote); the authoritative check is the yes tally
-/// polled by the next step.
+/// Every ballot must be mined successfully. Merely getting a transaction hash
+/// is not evidence that the vote was accepted.
 #[when(expr = "validators {string} cast yes votes")]
 fn cast_yes_votes(world: &mut World, names: String) {
     let id = world.state.proposal_id;
     for name in names.split(',') {
-        let validator = world
-            .validators
-            .by_name(name.trim())
-            .expect("resolve validator");
-        let _ = world.rpc.cast_vote(&validator, id, true);
+        let name = name.trim();
+        let validator = world.validators.by_name(name).expect("resolve validator");
+        let tx = world
+            .rpc
+            .cast_vote(&validator, id, true)
+            .expect("send vote");
+        assert!(
+            world.rpc.wait_successful_receipt(&tx, 40),
+            "vote receipt for {name} was not successful ({tx})",
+        );
+    }
+}
+
+#[when(expr = "validator {string} restarts during the voting window")]
+fn restart_during_voting(world: &mut World, name: String) {
+    let validator = world.validators.by_name(&name).expect("resolve validator");
+    let index = validator.index;
+    let before = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .expect("finalized height before validator restart");
+    world
+        .localnet
+        .kill_validator(index)
+        .expect("kill validator");
+    world.localnet.restart().expect("restart validator");
+    assert!(
+        world
+            .rpc
+            .wait_block(world.validators.http_port(index), before, 60)
+            .is_some(),
+        "{name} did not recover its chain state"
+    );
+}
+
+fn validator_ports(world: &World) -> Vec<u16> {
+    let mut ports = vec![world.validators.primary_port()];
+    ports.extend(world.validators.peer_ports());
+    ports
+}
+
+#[then(expr = "proposal {int} and its votes are identical on every validator")]
+fn proposal_parity(world: &mut World, id: u64) {
+    let expected = world.rpc.vote_status(id);
+    assert!(
+        expected.visible,
+        "proposal #{id} must be visible on primary"
+    );
+    for port in validator_ports(world) {
+        let actual = world.rpc.vote_status_on(port, id);
+        assert_eq!(
+            actual.status, expected.status,
+            "proposal status on RPC {port}"
+        );
+        assert_eq!(actual.yes, expected.yes, "yes tally on RPC {port}");
+        assert_eq!(actual.no, expected.no, "no tally on RPC {port}");
+        assert_eq!(actual.deadline, expected.deadline, "deadline on RPC {port}");
+        assert_eq!(actual.target, expected.target, "target on RPC {port}");
+        assert_eq!(actual.payload, expected.payload, "payload on RPC {port}");
+    }
+}
+
+fn restart_entire_committee(world: &mut World, context: &str) {
+    let before = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .expect("finalized height before committee restart");
+    world
+        .localnet
+        .restart_committee_and_enclaves()
+        .expect(context);
+    for port in validator_ports(world) {
+        let recovered = world.rpc.wait_block(port, before, 90);
+        assert!(
+            recovered.is_some_and(|height| height >= before),
+            "RPC {port} did not recover to finalized height {before} after {context}: {recovered:?}"
+        );
+    }
+}
+
+#[when("the entire committee restarts after update scheduling")]
+fn restart_after_scheduling(world: &mut World) {
+    restart_entire_committee(world, "restart after update scheduling");
+}
+
+#[when("the entire committee restarts at the activation boundary")]
+fn restart_at_activation_boundary(world: &mut World) {
+    restart_entire_committee(world, "restart at activation boundary");
+}
+
+#[then("the approved proposal and waiting schedule are identical on every validator")]
+fn approved_schedule_parity(world: &mut World) {
+    proposal_parity(world, world.state.proposal_id);
+    let expected = world
+        .rpc
+        .scheduled_update(world.state.proposal_id)
+        .expect("scheduled update on primary");
+    assert_eq!(expected.status, 0, "schedule must still be waiting");
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.scheduled_update_on(port, world.state.proposal_id),
+            Some(expected.clone()),
+            "scheduled update on RPC {port}"
+        );
+    }
+}
+
+#[then("the activated update state is identical on every validator")]
+fn activated_update_parity(world: &mut World) {
+    let want = world.state.proposed_version.expect("proposed version");
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.active_version_on(port),
+            Some(want),
+            "active version on RPC {port}"
+        );
+        let scheduled = world
+            .rpc
+            .scheduled_update_on(port, world.state.proposal_id)
+            .unwrap_or_else(|| panic!("scheduled update missing on RPC {port}"));
+        assert_eq!(scheduled.status, 1, "schedule status on RPC {port}");
+    }
+}
+
+#[then("the update activation converges on every validator after the boundary restart")]
+fn activation_converges_after_boundary_restart(world: &mut World) {
+    let want = world.state.proposed_version.expect("proposed version");
+    let id = world.state.proposal_id;
+    let ports = validator_ports(world);
+    let mut converged = false;
+    for _ in 0..60 {
+        converged = ports.iter().all(|port| {
+            world.rpc.active_version_on(*port) == Some(want)
+                && world
+                    .rpc
+                    .scheduled_update_on(*port, id)
+                    .is_some_and(|scheduled| scheduled.status == 1)
+        });
+        if converged {
+            break;
+        }
+        sleep(Duration::from_secs(3));
+    }
+    assert!(
+        converged,
+        "committee did not converge to activated version {want} after boundary restart"
+    );
+    activated_update_parity(world);
+    proposal_parity(world, id);
+}
+
+#[then("the committee continues producing finalized blocks")]
+fn committee_continues_finalizing(world: &mut World) {
+    let ports = validator_ports(world);
+    let before = world
+        .rpc
+        .finalized(ports[0])
+        .expect("finalized height before liveness check");
+    for port in ports {
+        let head = world
+            .rpc
+            .wait_block(port, before.saturating_add(2), 60)
+            .unwrap_or_else(|| panic!("RPC {port} did not advance"));
+        let finalized = world
+            .rpc
+            .finalized(port)
+            .unwrap_or_else(|| panic!("RPC {port} finalized height unavailable"));
+        assert!(head >= before + 2, "RPC {port} head did not advance");
+        assert!(finalized >= before, "RPC {port} finalized height regressed");
     }
 }
 

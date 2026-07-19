@@ -154,8 +154,17 @@ impl Rpc {
 
     /// Active protocol version (`IUpdate.getActiveVersion`).
     pub fn active_version(&self) -> Option<u64> {
+        self.active_version_on_url(&self.cfg.rpc0)
+    }
+
+    /// Active protocol version on the node at `port`.
+    pub fn active_version_on(&self, port: u16) -> Option<u64> {
+        self.active_version_on_url(&self.url(port))
+    }
+
+    fn active_version_on_url(&self, rpc_url: &str) -> Option<u64> {
         eth::read_call(
-            &self.cfg.rpc0,
+            rpc_url,
             addresses::UPDATE_ADDR,
             &IUpdate::getActiveVersionCall {},
         )
@@ -164,8 +173,17 @@ impl Rpc {
 
     /// Scheduled update tuple for `id` (`IUpdate.getScheduledUpdate`).
     pub fn scheduled_update(&self, id: u64) -> Option<ScheduledUpdate> {
+        self.scheduled_update_on_url(&self.cfg.rpc0, id)
+    }
+
+    /// Scheduled update tuple for `id` on the node at `port`.
+    pub fn scheduled_update_on(&self, port: u16, id: u64) -> Option<ScheduledUpdate> {
+        self.scheduled_update_on_url(&self.url(port), id)
+    }
+
+    fn scheduled_update_on_url(&self, rpc_url: &str, id: u64) -> Option<ScheduledUpdate> {
         let r = eth::read_call(
-            &self.cfg.rpc0,
+            rpc_url,
             addresses::UPDATE_ADDR,
             &IUpdate::getScheduledUpdateCall { id: U256::from(id) },
         )?;
@@ -226,12 +244,21 @@ impl Rpc {
 
     /// Parsed `outbe-cli vote status` for proposal `id`.
     pub fn vote_status(&self, id: u64) -> VoteStatus {
+        self.vote_status_on_url(&self.cfg.rpc0, id)
+    }
+
+    /// Parsed `outbe-cli vote status` from the node at `port`.
+    pub fn vote_status_on(&self, port: u16, id: u64) -> VoteStatus {
+        self.vote_status_on_url(&self.url(port), id)
+    }
+
+    fn vote_status_on_url(&self, rpc_url: &str, id: u64) -> VoteStatus {
         let ids = id.to_string();
         let out = self
             .sh()
             .cli([
                 "--rpc-url",
-                self.cfg.rpc0.as_str(),
+                rpc_url,
                 "vote",
                 "status",
                 "--proposal-id",

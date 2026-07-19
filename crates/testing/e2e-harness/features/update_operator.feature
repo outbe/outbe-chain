@@ -26,6 +26,28 @@ Feature: Operator protocol-version update via governance vote
     And the scheduled update is marked activated
     And the committee nodes agree on the state root
 
+  @pfs-005-restart-recovery
+  Scenario: Governance and update state survive voting and activation-boundary restarts
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validator "validator-3" restarts during the voting window
+    Then proposal 1 and its votes are identical on every validator
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    And proposal 1 and its votes are identical on every validator
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    When the entire committee restarts after update scheduling
+    Then the approved proposal and waiting schedule are identical on every validator
+    When the committee approaches the activation height
+    And the entire committee restarts at the activation boundary
+    Then the update activation converges on every validator after the boundary restart
+    When the committee passes the activation height
+    Then the activated update state is identical on every validator
+    And the committee continues producing finalized blocks
+
   # Oversized U256 pagination args used to panic inside Vote::clamp_page via
   # U256::to::<u64>() and could take down the RPC node. After the saturating
   # conversion fix the call must stay non-fatal.
