@@ -518,19 +518,21 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
               functionName: "auctionEscrowState",
               args: [wwd],
             })) as [bigint, number, number, boolean];
-            out.escrow = {
+            const escrow: Record<string, unknown> = {
               lockedAmount: lock.lockedAmount.toString(),
               status: lockStatus(lock.status),
               finalized,
-              refundClaimableAt: epochIso(lock.lockedAt + refundDelay),
             };
             // Locked + never finalized = no refund instructions reached this chain; the bidder
-            // self-serves the full principal once the delay passes.
+            // self-serves the full principal once the delay passes. Only then is the claim time
+            // meaningful — a finalized lock refunds through the normal path, not this one.
             if (lock.status === 1 && !finalized) {
+              escrow.refundClaimableAt = epochIso(lock.lockedAt + refundDelay);
               hints.push(
                 "escrow not finalized on this chain; if no refund arrives, claim the full lock via auction_claim_refund from refundClaimableAt",
               );
             }
+            out.escrow = escrow;
           }
           if (hints.length > 0) out.hints = hints;
           return out as { worldwideDay: number; committed: boolean; revealed: boolean };

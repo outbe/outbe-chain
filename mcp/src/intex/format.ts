@@ -1,8 +1,8 @@
 /**
  * Decoders for Intex enum codes into human-readable names, plus small shaping
  * helpers for tool output. Enum orderings are verbatim from the contracts:
- *  - AuctionStage ... contracts/intex/contracts/bnb/interfaces/IIntexAuction.sol
- *  - IntexState / IntexStatus ... contracts/intex/contracts/shared/interfaces/IIntexNFT1155.sol
+ *  - AuctionStage ... contracts/intex/src/target/interfaces/IIntexAuction.sol
+ *  - IntexState / IntexStatus ... contracts/intex/src/shared/interfaces/IIntexNFT1155.sol
  *  - Desis AuctionStage / escrow LockStatus ... IDesis.sol / IEscrowAdapter.sol
  */
 

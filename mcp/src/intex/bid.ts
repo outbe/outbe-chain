@@ -9,7 +9,7 @@ import { type Address, type Hex, keccak256 } from "viem";
  * reveal reproduces the identical signature — nothing is stored between commit
  * and reveal, and it works across sessions and machines.
  *
- * Scheme (verbatim from contracts/intex/contracts/bnb/IntexAuction.sol):
+ * Scheme (verbatim from contracts/intex/src/target/IntexAuction.sol):
  *  - domain  EIP712("IntexAuction", "1"), chainId = target chain, verifyingContract = auction
  *  - type    RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)
  *  - commit  commitHash = keccak256(signature)
