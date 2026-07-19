@@ -17,7 +17,7 @@ use std::future::Future;
 use std::sync::mpsc::sync_channel;
 use std::sync::OnceLock;
 
-use alloy_eips::{eip7702::Authorization, BlockNumberOrTag};
+use alloy_eips::{eip7702::Authorization, BlockId, BlockNumberOrTag};
 use alloy_network::{EthereumWallet, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -166,7 +166,10 @@ where
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into());
-        let out = provider.call(tx).await.ok()?;
+        // Pin state and block context to the canonical head. Omitting the block
+        // tag lets some RPC implementations execute against `pending`, whose
+        // timestamp can cross a UTC boundary before a block is canonical.
+        let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
         C::abi_decode_returns(&out).ok()
     })
 }
