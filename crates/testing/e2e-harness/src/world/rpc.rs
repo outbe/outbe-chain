@@ -809,6 +809,13 @@ impl Rpc {
         );
     }
 
+    /// Canonical block number carried by a mined public receipt.
+    pub fn receipt_block_number(&self, tx_hash: &str, port: u16) -> Option<u64> {
+        let receipt = eth::receipt_json(&self.url(port), tx_hash)?;
+        let encoded = receipt.get("blockNumber")?.as_str()?;
+        u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+    }
+
     /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).
     pub fn stake(&self, key: &str, amount: u64) -> Result<String> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;

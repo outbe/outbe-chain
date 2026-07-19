@@ -406,11 +406,35 @@ fn exits_and_demotes(world: &mut World) {
         world.state.tribute_tx_hash.is_some(),
         "post-exit offer did not land (supply != 3)"
     );
-    sleep(Duration::from_secs(6));
-    assert_eq!(
+    let post_exit_tx = world
+        .state
+        .tribute_tx_hash
+        .as_deref()
+        .expect("post-exit tribute tx");
+    let receipt_block = world
+        .rpc
+        .receipt_block_number(post_exit_tx, primary)
+        .expect("post-exit Tribute receipt block");
+    let mut follower_caught_up = false;
+    for _ in 0..240 {
+        let primary_supply = world.rpc.supply(primary);
+        let follower_supply = world.rpc.supply(joiner_port);
+        let follower_finalized = world.rpc.finalized(joiner_port).unwrap_or(0);
+        if primary_supply.as_deref() == Some("3")
+            && follower_supply == primary_supply
+            && follower_finalized >= receipt_block
+        {
+            follower_caught_up = true;
+            break;
+        }
+        sleep(Duration::from_millis(500));
+    }
+    assert!(
+        follower_caught_up,
+        "demoted follower did not finalize post-exit Tribute block {receipt_block} with supply parity; primary={:?} follower={:?} follower_finalized={:?}",
         world.rpc.supply(primary),
         world.rpc.supply(joiner_port),
-        "demoted follower supply parity"
+        world.rpc.finalized(joiner_port),
     );
     world
         .mongodb
