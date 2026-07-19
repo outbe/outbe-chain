@@ -30,3 +30,9 @@ Feature: Active validator restarts without a new DKG ceremony
     Given a fresh localnet with a 6-block voting window
     When a joining validator is restarted during its DKG ceremony
     Then the old committee stays live and a later DKG activates the joiner once
+
+  @pfs-006-09
+  Scenario: Registration survives a joining node and enclave restart
+    Given a fresh localnet with a 6-block voting window
+    When a registered joining node and enclave restart before staking
+    Then registration survives and the join can activate once

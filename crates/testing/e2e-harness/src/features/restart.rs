@@ -446,3 +446,105 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
     }
 }
+
+/// Restart at the earliest durable join checkpoint: registration, P2P identity
+/// and enclave join are committed, but no stake/readiness or DKG side effect is.
+#[when("a registered joining node and enclave restart before staking")]
+fn restart_registered_joiner_before_staking(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    world
+        .localnet
+        .provision_joiner(idx)
+        .expect("provision joiner");
+    let keys = world.localnet.keys_dir(idx);
+    world
+        .localnet
+        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .expect("launch joiner");
+    assert!(world.rpc.wait_block(joiner_port, 20, 40).is_some());
+
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let addr = world.rpc.address_of(&key).expect("joiner address");
+    world.state.joiner_addr = Some(addr.clone());
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(0));
+    assert_eq!(
+        world.rpc.stake_on(primary, &addr),
+        Some(alloy_primitives::U256::ZERO)
+    );
+    assert!(!world.rpc.is_participant(primary, &addr));
+    assert_eq!(world.rpc.active_count(primary), Some(4));
+    world.state.marker_height = world.rpc.head(primary);
+    world.state.marker_count = world
+        .rpc
+        .epoch_on(primary)
+        .and_then(|epoch| usize::try_from(epoch).ok());
+
+    world.localnet.stop_joiner(idx).expect("stop joiner");
+    world
+        .localnet
+        .restart_joiner_enclave(idx)
+        .expect("restart joiner enclave");
+    let keys = world.localnet.keys_dir(idx);
+    world
+        .localnet
+        .launch_joiner(idx, &["--consensus.keys-dir", &keys])
+        .expect("restart joiner node");
+}
+
+/// The restart must preserve exactly the registered pre-state; only subsequent
+/// stake/readiness may create one pending target and one activation.
+#[then("registration survives and the join can activate once")]
+fn registered_restart_then_join_activates(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+    let old_epoch = world.state.marker_count.expect("pre-restart epoch");
+    let marker = world.state.marker_height.expect("pre-restart height");
+
+    assert!(world.rpc.wait_block(joiner_port, marker, 40).is_some());
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(0));
+    assert_eq!(
+        world.rpc.stake_on(primary, &addr),
+        Some(alloy_primitives::U256::ZERO)
+    );
+    assert!(!world.rpc.is_participant(primary, &addr));
+    assert_eq!(world.rpc.active_count(primary), Some(4));
+    assert_eq!(
+        world.rpc.epoch_on(primary),
+        Some(u64::try_from(old_epoch).expect("epoch fits u64"))
+    );
+    assert!(
+        world
+            .localnet
+            .enclave_log_has(idx, "unsealed offer key + group signature"),
+        "registered joiner's enclave did not recover sealed state"
+    );
+
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    world.rpc.stake(&key, 1000).expect("stake after restart");
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
+    world
+        .rpc
+        .confirm_ready(&key)
+        .expect("confirm after restart");
+    assert!(
+        world.rpc.wait_participant(primary, &addr, 90),
+        "registered joiner did not activate after restart"
+    );
+    let expected_epoch = u64::try_from(old_epoch + 1).expect("epoch fits u64");
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
+    assert_eq!(world.rpc.active_count(primary), Some(5));
+    assert_eq!(world.rpc.epoch_on(primary), Some(expected_epoch));
+
+    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    for port in ports {
+        assert!(world.rpc.wait_block(port, target, 60).is_some());
+        assert_eq!(world.rpc.active_count(port), Some(5));
+        assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
+    }
+}
