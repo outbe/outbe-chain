@@ -516,14 +516,22 @@ impl Rpc {
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
     pub fn confirm_ready(&self, key: &str) -> Result<String> {
-        self.sh().cli([
+        let out = self.sh().cli([
             "--private-key",
             key,
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "validator",
             "confirm-ready",
-        ])
+        ])?;
+        let tx_hash = parse::extract_tx_hash(&out)
+            .ok_or_else(|| eyre!("no tx hash in confirm-ready output:\n{out}"))?;
+        if !self.wait_successful_receipt(&tx_hash, 60) {
+            return Err(eyre!(
+                "confirm-ready transaction was not successfully included: {tx_hash}"
+            ));
+        }
+        Ok(tx_hash)
     }
 
     /// Self-deactivate the validator owning `key` (ACTIVE -> EXITING).
