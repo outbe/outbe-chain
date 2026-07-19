@@ -153,8 +153,7 @@ pub struct DesisContract {
     pub auction_stage: outbe_primitives::storage::dsl::Map<u32, u8>,
 
     // --- Bid-batch metadata ---
-    // orders 6/7/8 retired: single-chain intake metadata, replaced by the
-    // per-(day, chain) maps at orders 24+.
+    // orders 6/7/8 retired: bid intake lives in the per-(day, chain) maps at orders 24+.
     /// keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32) -> bidder address.
     #[attribute(order = 9)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
@@ -197,8 +196,7 @@ pub struct DesisContract {
     #[attribute(order = 19)]
     pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    // orders 20/21 retired: single-chain batch completeness, replaced by the
-    // per-(day, chain) maps at orders 24+.
+    // orders 20/21 retired: batch completeness lives in the per-(day, chain) maps at orders 24+.
     /// worldwide_day -> commit-entry bond (payment-token minor units).
     #[attribute(order = 22)]
     pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
