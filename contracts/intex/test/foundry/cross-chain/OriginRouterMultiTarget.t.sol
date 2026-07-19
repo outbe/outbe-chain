@@ -156,9 +156,24 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     // --- Inbound BIDS_DONE ---
     function test_inbound_bidsDone_dispatches() public {
+        _fireStart(DAY); // freeze the day's snapshot so TARGET_A is an accepted source
         bytes memory pkt = BridgeMsgCodec.encodeBidsDone(DAY, TARGET_A, 1, 2, 7);
         vm.expectEmit(true, true, false, true, address(origin));
         emit IOriginRouter.BidsDoneReceived(TARGET_A, DAY, 2, 7);
         _deliver(TARGET_A, peerA, address(origin), pkt);
+    }
+
+    function test_inbound_bids_rejectNonSnapshotSource() public {
+        _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
+        origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(
+            DAY, 9, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
+        );
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
+        _deliver(9, address(0x9999), address(origin), batch);
+
+        bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 1, 0);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
+        _deliver(9, address(0x9999), address(origin), done);
     }
 }

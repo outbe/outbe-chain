@@ -9,6 +9,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -147,6 +148,13 @@ contract RouterReentrancyTest is CrossChainTest {
         ReentrancyProbeDesis probeDesis =
             new ReentrancyProbeDesis(address(bridge), BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter));
         outbeRouter.wire(address(probeDesis), makeAddr("factory"));
+
+        // Freeze day 42's snapshot with BNB so its bids pass the inbound membership check.
+        outbeRouter.addTarget(BNB_CHAIN_ID);
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = 42;
+        vm.prank(address(probeDesis));
+        outbeRouter.sendAuctionStageStart(p);
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
             42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)

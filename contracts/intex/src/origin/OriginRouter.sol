@@ -500,6 +500,9 @@ contract OriginRouter is
         ) = BridgeMsgCodec.decodeBidsBatch(payload);
 
         if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
+        // Only a chain in the day's frozen snapshot may feed bids; a rogue/late-registered source
+        // would otherwise leave storage residue Desis never clears (it resets only snapshot chains).
+        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
 
         IDesis(_os().desis)
             .processBidsBatch(
@@ -523,6 +526,7 @@ contract OriginRouter is
             BridgeMsgCodec.decodeBidsDone(payload);
 
         if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
+        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
 
         IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
 
