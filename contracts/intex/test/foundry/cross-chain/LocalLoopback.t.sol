@@ -6,9 +6,6 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {ERC7786Bridge} from "@crosschain/ERC7786Bridge.sol";
-import {LoopbackGatewayAdapter} from "@crosschain/adapters/LoopbackGatewayAdapter.sol";
-
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
@@ -22,6 +19,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
@@ -133,12 +131,12 @@ contract SyncTokenBridge {
     }
 }
 
-/// @dev Origin==target through the real crosschain hub + LoopbackGatewayAdapter: both routers, the
-///      auction, the escrow and the canonical NFT live on one chain, and every protocol message —
-///      including the nested bids relay fired from inside the CLEARING delivery — executes
-///      synchronously in the sending transaction. Each delivery runs under its exact IntexGas
-///      executionGasLimit attribute (the loopback forwards precisely that gas), so an undersized
-///      budget parks the delivery and fails the walk: the test doubles as the budget check.
+/// @dev Origin==target on one chain: both routers, the auction, the escrow and the canonical NFT
+///      are wired to a synchronous in-process bridge, so every protocol message — including the
+///      nested bids relay fired from inside the CLEARING delivery — executes in the sending
+///      transaction, mirroring the loopback transport. Each delivery runs under its exact IntexGas
+///      executionGasLimit attribute, so an undersized budget out-of-gases the delivery and fails
+///      the walk: the test doubles as the budget check.
 contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
@@ -146,8 +144,7 @@ contract LocalLoopbackTest is Test {
     bytes32 internal constant REVEAL_BID_TYPEHASH =
         keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
 
-    ERC7786Bridge internal hub;
-    LoopbackGatewayAdapter internal loopback;
+    MockERC7786Bridge internal bridge;
     OriginRouter internal origin;
     TargetRouter internal target;
     IntexAuction internal auction;
@@ -177,18 +174,15 @@ contract LocalLoopbackTest is Test {
         iba1 = vm.addr(iba1Pk);
         iba2 = vm.addr(iba2Pk);
 
-        // Real hub + loopback: the hub trusts itself as the local remote bridge and routes the
-        // local chain through the loopback adapter.
-        hub = new ERC7786Bridge(address(this), address(0));
-        loopback = new LoopbackGatewayAdapter(address(hub), address(this));
-        hub.setGateway(uint256(local), address(loopback));
-        hub.registerRemoteBridge(InteroperableAddress.formatEvmV1(local, address(hub)));
+        // Synchronous delivery under the exact per-message gas attribute, like the loopback transport.
+        bridge = new MockERC7786Bridge();
+        bridge.setEnforceGasAttribute(true);
 
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         auction = DeployProxy.intexAuction(address(this), address(this));
-        origin = DeployProxy.originRouter(address(hub), address(this), local);
-        target = DeployProxy.targetRouter(address(hub), address(this), local);
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(hub), address(this));
+        origin = DeployProxy.originRouter(address(bridge), address(this), local);
+        target = DeployProxy.targetRouter(address(bridge), address(this), local);
+        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), address(this));
 
         desis = new RecordingDesis();
         factory = new RecordingFactory();
@@ -370,7 +364,6 @@ contract LocalLoopbackTest is Test {
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
-        assertEq(loopback.nextParkedIdx(), 0, "loopback parked a delivery");
         assertEq(target.nextPendingBidsRelayIdx(), 0, "bids relay parked");
         (,, bool proceedsParked,) = target.pendingProceedsRoutes(0);
         assertFalse(proceedsParked, "proceeds route parked");

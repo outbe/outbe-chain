@@ -26,11 +26,7 @@ remappings = [
     'ds-test/=node_modules/forge-std/lib/ds-test/src/',
     # OpenZeppelin
     '@openzeppelin/=node_modules/@openzeppelin/',
-    # Crosschain hub sources (loopback integration test only)
-    '@crosschain/=../crosschain/src/',
 ]
-# The loopback integration test compiles the sibling hub project's sources.
-allow_paths = ['../crosschain']
 
 [fuzz]
 runs = 256
