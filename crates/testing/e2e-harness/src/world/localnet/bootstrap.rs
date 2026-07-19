@@ -224,8 +224,9 @@ impl Localnet {
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
         let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
-        if DEV_FELONY_THRESHOLD >= epoch {
-            bail!("dev felony threshold {DEV_FELONY_THRESHOLD} must be < epoch length {epoch}");
+        let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
+        if felony_threshold >= epoch {
+            bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
         }
         let path = self.cfg.dir.join("genesis.json");
         let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
@@ -251,7 +252,7 @@ impl Localnet {
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| eyre!("felony storage is not an object"))?;
-        patch_felony_storage(storage);
+        patch_felony_storage(storage, felony_threshold);
 
         fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
         Ok(())
@@ -274,8 +275,11 @@ impl Localnet {
     }
 }
 
-fn patch_felony_storage(storage: &mut serde_json::Map<String, serde_json::Value>) {
-    let threshold = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
+fn patch_felony_storage(
+    storage: &mut serde_json::Map<String, serde_json::Value>,
+    felony_threshold: u64,
+) {
+    let threshold = json!(format!("0x{felony_threshold:064x}"));
     storage.insert(format!("0x{PROPOSER_FELONY_SLOT:064x}"), threshold.clone());
     storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
@@ -383,7 +387,7 @@ mod tests {
     #[test]
     fn felony_patch_uses_current_slashindicator_config_slots() {
         let mut storage = serde_json::Map::new();
-        patch_felony_storage(&mut storage);
+        patch_felony_storage(&mut storage, DEV_FELONY_THRESHOLD);
         let expected = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
         assert_eq!(
             storage.get(&format!("0x{PROPOSER_FELONY_SLOT:064x}")),
@@ -394,5 +398,20 @@ mod tests {
             Some(&expected)
         );
         assert!(storage.get(&format!("0x{:064x}", 13u64)).is_none());
+    }
+
+    #[test]
+    fn felony_patch_accepts_a_scenario_specific_threshold() {
+        let mut storage = serde_json::Map::new();
+        patch_felony_storage(&mut storage, 119);
+        let expected = json!(format!("0x{:064x}", 119u64));
+        assert_eq!(
+            storage.get(&format!("0x{PROPOSER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert_eq!(
+            storage.get(&format!("0x{VOTER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
     }
 }
