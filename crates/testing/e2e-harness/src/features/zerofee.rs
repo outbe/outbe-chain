@@ -147,3 +147,45 @@ fn quota_persisted(world: &mut World) {
         .rpc
         .assert_zerofee_persisted_on_ports(&world.state, &ports);
 }
+
+#[when("a funded account submits an EIP-7702 authorization for the wrong chain")]
+fn invalid_authorization(world: &mut World) {
+    let funder = world.validators.get(0);
+    world
+        .rpc
+        .submit_zerofee_invalid_authorization(&funder, &mut world.state)
+        .expect("submit wrong-chain EIP-7702 authorization");
+}
+
+#[then("the invalid authorization leaves delegation and ZeroFee quota unset")]
+fn invalid_authorization_preserves_state(world: &mut World) {
+    world.rpc.assert_zerofee_invalid_authorization(&world.state);
+}
+
+#[when("the account delegates to a non-ZeroFee target and submits a sponsored-shaped call")]
+fn wrong_target_delegation(world: &mut World) {
+    world
+        .rpc
+        .submit_zerofee_wrong_target(&mut world.state)
+        .expect("submit wrong-target delegation and call");
+}
+
+#[then("the wrong-target call receives no sponsorship and leaves ZeroFee quota unchanged")]
+fn wrong_target_not_sponsored(world: &mut World) {
+    world.rpc.assert_zerofee_wrong_target(&world.state);
+}
+
+#[when("a stale conflicting authorization attempts to replace the wrong target")]
+fn conflicting_authorization(world: &mut World) {
+    world
+        .rpc
+        .submit_zerofee_conflicting_authorization(&mut world.state)
+        .expect("submit stale conflicting authorization");
+}
+
+#[then("the conflicting authorization leaves the prior delegation and ZeroFee quota unchanged")]
+fn conflicting_authorization_preserves_state(world: &mut World) {
+    world
+        .rpc
+        .assert_zerofee_conflicting_authorization(&world.state);
+}

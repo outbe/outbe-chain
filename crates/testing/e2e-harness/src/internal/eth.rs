@@ -382,6 +382,19 @@ pub(crate) fn install_delegation(
     key: &str,
     target: Address,
 ) -> Result<serde_json::Value> {
+    install_delegation_with_overrides(url, key, target, None, None)
+}
+
+/// Submit an EIP-7702 authorization with optional chain-id and authorization-
+/// nonce overrides. Negative live tests use this to prove that invalid or stale
+/// authorizations cannot mutate an account's delegation.
+pub(crate) fn install_delegation_with_overrides(
+    url: &str,
+    key: &str,
+    target: Address,
+    authorization_chain_id: Option<U256>,
+    authorization_nonce: Option<u64>,
+) -> Result<serde_json::Value> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let authority = signer.address();
     let chain_id = raw_json(url, "eth_chainId")
@@ -392,9 +405,9 @@ pub(crate) fn install_delegation(
         .ok_or_else(|| eyre!("read chain id"))?;
     let tx_nonce = nonce(url, authority).ok_or_else(|| eyre!("read authority nonce"))?;
     let authorization = Authorization {
-        chain_id: U256::from(chain_id),
+        chain_id: authorization_chain_id.unwrap_or_else(|| U256::from(chain_id)),
         address: target,
-        nonce: tx_nonce + 1,
+        nonce: authorization_nonce.unwrap_or(tx_nonce + 1),
     };
     let signature = signer.sign_hash_sync(&authorization.signature_hash())?;
     let signed = authorization.into_signed(signature);

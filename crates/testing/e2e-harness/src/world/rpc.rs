@@ -1153,6 +1153,123 @@ impl Rpc {
         assert_eq!(cli_chain, Some(chain));
     }
 
+    pub fn submit_zerofee_invalid_authorization(
+        &self,
+        funder: &Validator,
+        state: &mut FixtureState,
+    ) -> Result<()> {
+        let key = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let address = eth::address_of(key).ok_or_else(|| eyre!("derive negative signer"))?;
+        let funding = self.fund_key(funder, key, 1)?;
+        if !self.wait_successful_receipt(&funding, 20) {
+            return Err(eyre!("negative signer COEN funding failed: {funding}"));
+        }
+        let chain_id = self
+            .chain_id(self.cfg.primary_port())
+            .ok_or_else(|| eyre!("chain id"))?;
+        state.zerofee_invalid_authorization_receipt = Some(eth::install_delegation_with_overrides(
+            &self.cfg.rpc0,
+            key,
+            addresses::ZEROFEE_ADDR,
+            Some(U256::from(chain_id.saturating_add(1))),
+            None,
+        )?);
+        state.zerofee_negative_key = Some(key.to_string());
+        state.zerofee_negative_address = Some(format!("{address:#x}"));
+        Ok(())
+    }
+
+    pub fn assert_zerofee_invalid_authorization(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let receipt = state
+            .zerofee_invalid_authorization_receipt
+            .as_ref()
+            .expect("invalid authorization receipt");
+        assert!(
+            receipt_status(receipt),
+            "outer transaction carrying an invalid authorization must still be a valid included transaction"
+        );
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(Vec::new()),
+            "wrong-chain authorization installed delegation code"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn submit_zerofee_wrong_target(&self, state: &mut FixtureState) -> Result<()> {
+        let key = zerofee_negative_key(state).to_string();
+        let address = zerofee_negative_address(state);
+        // Authorization-list processing installs the designator before the
+        // outer call executes. Calling the newly delegated Update target with
+        // empty calldata may revert; that receipt status is not the delegation
+        // postcondition, so the live account code below is authoritative.
+        let _delegation = eth::install_delegation(&self.cfg.rpc0, &key, addresses::UPDATE_ADDR)?;
+        state.zerofee_wrong_target_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_wrong_target_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            &key,
+            addresses::AGENT_REWARD_ADDR,
+            0,
+        )?);
+        state.zerofee_wrong_target_balance_after = eth::balance(&self.cfg.rpc0, address);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_wrong_target(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let expected = [&[0xef, 0x01, 0x00][..], addresses::UPDATE_ADDR.as_slice()].concat();
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(expected),
+            "wrong-target delegation designator changed unexpectedly"
+        );
+        let receipt = state
+            .zerofee_wrong_target_receipt
+            .as_ref()
+            .expect("wrong-target call receipt");
+        assert!(
+            !receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "wrong-target delegation received ZeroFee sponsorship"
+        );
+        assert!(
+            state.zerofee_wrong_target_balance_after < state.zerofee_wrong_target_balance_before,
+            "wrong-target call did not pay its own COEN gas charge"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn submit_zerofee_conflicting_authorization(&self, state: &mut FixtureState) -> Result<()> {
+        state.zerofee_conflicting_authorization_receipt =
+            Some(eth::install_delegation_with_overrides(
+                &self.cfg.rpc0,
+                zerofee_negative_key(state),
+                addresses::ZEROFEE_ADDR,
+                None,
+                Some(0),
+            )?);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_conflicting_authorization(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let receipt = state
+            .zerofee_conflicting_authorization_receipt
+            .as_ref()
+            .expect("conflicting authorization receipt");
+        assert!(
+            !receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "conflicting authorization unexpectedly emitted sponsorship"
+        );
+        let expected = [&[0xef, 0x01, 0x00][..], addresses::UPDATE_ADDR.as_slice()].concat();
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(expected),
+            "stale authorization replaced the existing delegation"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
     fn zerofee_counter(&self, signer: Address) -> Option<(u32, u32)> {
         let value = eth::read_call(
             &self.cfg.rpc0,
@@ -1177,6 +1294,22 @@ fn zerofee_address(state: &FixtureState) -> Address {
         .expect("ZeroFee fixture address")
         .parse()
         .expect("valid ZeroFee fixture address")
+}
+
+fn zerofee_negative_key(state: &FixtureState) -> &str {
+    state
+        .zerofee_negative_key
+        .as_deref()
+        .expect("negative ZeroFee fixture key")
+}
+
+fn zerofee_negative_address(state: &FixtureState) -> Address {
+    state
+        .zerofee_negative_address
+        .as_deref()
+        .expect("negative ZeroFee fixture address")
+        .parse()
+        .expect("valid negative ZeroFee fixture address")
 }
 
 fn receipt_status(receipt: &serde_json::Value) -> bool {

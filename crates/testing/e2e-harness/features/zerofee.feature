@@ -39,3 +39,14 @@ Feature: EIP-7702 ZeroFee sponsorship and paid fallback
     And the exhausted ZeroFee state is identical on every validator
     When the quota-exhausted account submits the same call with a priority fee
     Then the paid call succeeds, charges a fee, and does not change the quota
+
+  @pfs-007-09 @pfs-007-10 @pfs-007-11
+  Scenario: Invalid, wrong-target, and conflicting EIP-7702 authorizations cannot obtain sponsorship
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When a funded account submits an EIP-7702 authorization for the wrong chain
+    Then the invalid authorization leaves delegation and ZeroFee quota unset
+    When the account delegates to a non-ZeroFee target and submits a sponsored-shaped call
+    Then the wrong-target call receives no sponsorship and leaves ZeroFee quota unchanged
+    When a stale conflicting authorization attempts to replace the wrong target
+    Then the conflicting authorization leaves the prior delegation and ZeroFee quota unchanged

@@ -60,6 +60,13 @@ pub struct FixtureState {
     pub zerofee_delegation_raw: Option<String>,
     /// RPC rejection observed when the exact signed transaction is replayed.
     pub zerofee_replay_error: Option<String>,
+    pub zerofee_negative_key: Option<String>,
+    pub zerofee_negative_address: Option<String>,
+    pub zerofee_invalid_authorization_receipt: Option<serde_json::Value>,
+    pub zerofee_wrong_target_receipt: Option<serde_json::Value>,
+    pub zerofee_wrong_target_balance_before: Option<alloy_primitives::U256>,
+    pub zerofee_wrong_target_balance_after: Option<alloy_primitives::U256>,
+    pub zerofee_conflicting_authorization_receipt: Option<serde_json::Value>,
 }
 
 impl Default for FixtureState {
@@ -97,6 +104,13 @@ impl Default for FixtureState {
             zerofee_balance_after_paid: None,
             zerofee_delegation_raw: None,
             zerofee_replay_error: None,
+            zerofee_negative_key: None,
+            zerofee_negative_address: None,
+            zerofee_invalid_authorization_receipt: None,
+            zerofee_wrong_target_receipt: None,
+            zerofee_wrong_target_balance_before: None,
+            zerofee_wrong_target_balance_after: None,
+            zerofee_conflicting_authorization_receipt: None,
         }
     }
 }
