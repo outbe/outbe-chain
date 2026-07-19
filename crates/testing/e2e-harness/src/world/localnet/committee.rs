@@ -76,6 +76,96 @@ impl Localnet {
         self.start(&opts)
     }
 
+    /// Replace the node executable and relaunch the whole committee with the
+    /// same datadirs, keys, ports, and enclave seals. This models the normal
+    /// operator recovery after an old binary stops at a protocol activation.
+    pub fn restart_committee_with_upgraded_binary(&mut self, version: &str) -> Result<()> {
+        let upgraded = match self.cfg.bin_chain_upgraded.clone() {
+            Some(path) => path,
+            None => self.build_upgraded_binary(version)?,
+        };
+        if !upgraded.is_file() {
+            bail!(
+                "upgraded chain binary does not exist: {}",
+                upgraded.display()
+            );
+        }
+        self.cfg.bin_chain = upgraded;
+        self.restart_committee_and_enclaves()
+    }
+
+    /// Build the replacement executable from the exact source revision under
+    /// test, without modifying the developer's checkout. The temporary detached
+    /// worktree receives only the workspace package-version bump; Cargo writes to
+    /// a stable version-specific target so repeated update scenarios reuse heavy
+    /// third-party artifacts.
+    fn build_upgraded_binary(&self, version: &str) -> Result<PathBuf> {
+        let cargo_version = cargo_package_version(version)?;
+        let worktree = self.cfg.dir.join("upgrade-worktree");
+        let target = self
+            .cfg
+            .repo
+            .join("target/e2e-upgrades")
+            .join(version.replace('.', "-"));
+        let binary = target.join("debug/outbe-chain");
+
+        if worktree.exists() {
+            let _ = Command::new("git")
+                .current_dir(&self.cfg.repo)
+                .args(["worktree", "remove", "--force"])
+                .arg(&worktree)
+                .output();
+        }
+        self.run_setup(
+            Command::new("git")
+                .current_dir(&self.cfg.repo)
+                .args(["worktree", "add", "--detach"])
+                .arg(&worktree)
+                .arg("HEAD"),
+            "create protocol-upgrade worktree",
+        )?;
+
+        let build_result = (|| -> Result<()> {
+            let manifest = worktree.join("Cargo.toml");
+            let source = fs::read_to_string(&manifest)?;
+            fs::write(
+                &manifest,
+                rewrite_workspace_version(&source, &cargo_version)?,
+            )?;
+
+            self.run_setup(
+                Command::new("cargo")
+                    .current_dir(&worktree)
+                    .args([
+                        "build",
+                        "--offline",
+                        "-p",
+                        "outbe-chain",
+                        "--bin",
+                        "outbe-chain",
+                    ])
+                    .arg("--target-dir")
+                    .arg(&target),
+                &format!("build replacement outbe-chain v{version}"),
+            )
+        })();
+
+        let cleanup = Command::new("git")
+            .current_dir(&self.cfg.repo)
+            .args(["worktree", "remove", "--force"])
+            .arg(&worktree)
+            .output();
+        build_result?;
+        let cleanup = cleanup?;
+        if !cleanup.status.success() {
+            bail!(
+                "remove protocol-upgrade worktree failed: {}",
+                String::from_utf8_lossy(&cleanup.stderr)
+            );
+        }
+        Ok(binary)
+    }
+
     /// Stop and relaunch one committee validator together with its enclave,
     /// preserving the node datadir and enclave seal while leaving every other
     /// committee member running.
@@ -224,5 +314,66 @@ impl Localnet {
         let s = fs::read_to_string(self.cfg.validator_dir(i).join("node.log")).unwrap_or_default();
         let lines: Vec<&str> = s.lines().collect();
         lines[lines.len().saturating_sub(n)..].join("\n")
+    }
+}
+
+fn rewrite_workspace_version(manifest: &str, version: &str) -> Result<String> {
+    let section = manifest
+        .find("[workspace.package]")
+        .ok_or_else(|| eyre::eyre!("root Cargo.toml has no [workspace.package] section"))?;
+    let section_end = manifest[section + 1..]
+        .find("\n[")
+        .map_or(manifest.len(), |offset| section + 1 + offset);
+    let version_start = manifest[section..section_end]
+        .find("\nversion = \"")
+        .map(|offset| section + offset + "\nversion = \"".len())
+        .ok_or_else(|| eyre::eyre!("[workspace.package] has no version field"))?;
+    let version_end = manifest[version_start..]
+        .find('"')
+        .map(|offset| version_start + offset)
+        .ok_or_else(|| eyre::eyre!("workspace package version is not quoted"))?;
+
+    let mut rewritten = manifest.to_owned();
+    rewritten.replace_range(version_start..version_end, version);
+    Ok(rewritten)
+}
+
+fn cargo_package_version(protocol_version: &str) -> Result<String> {
+    let mut components = protocol_version.split('.');
+    let major = components.next().unwrap_or_default();
+    let minor = components.next().unwrap_or_default();
+    if major.is_empty() || minor.is_empty() || components.next().is_some() {
+        bail!("protocol version must have major.minor form, got {protocol_version}");
+    }
+    Ok(format!("{major}.{minor}.0"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cargo_package_version, rewrite_workspace_version};
+
+    #[test]
+    fn expands_protocol_version_to_cargo_semver() {
+        assert_eq!(cargo_package_version("3.0").unwrap(), "3.0.0");
+        assert!(cargo_package_version("3").is_err());
+        assert!(cargo_package_version("3.0.1").is_err());
+    }
+
+    #[test]
+    fn rewrites_only_the_workspace_package_version() {
+        let manifest = r#"[workspace]
+members = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+example = { version = "9.9.9" }
+"#;
+
+        let rewritten = rewrite_workspace_version(manifest, "3.0.0").unwrap();
+        assert!(rewritten.contains("[workspace.package]\nversion = \"3.0.0\""));
+        assert!(rewritten.contains("example = { version = \"9.9.9\" }"));
     }
 }

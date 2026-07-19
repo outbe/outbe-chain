@@ -500,15 +500,20 @@ impl Rpc {
 
     /// Wait until the active protocol version equals `want`.
     pub fn wait_active_version(&self, want: u64, tries: u32) -> Option<u64> {
+        self.wait_active_version_on(self.cfg.primary_port(), want, tries)
+    }
+
+    /// Wait until one validator reports the requested active protocol version.
+    pub fn wait_active_version_on(&self, port: u16, want: u64, tries: u32) -> Option<u64> {
         for _ in 0..tries {
-            if let Some(v) = self.active_version() {
+            if let Some(v) = self.active_version_on(port) {
                 if v == want {
                     return Some(v);
                 }
             }
             sleep(Duration::from_secs(3));
         }
-        self.active_version()
+        self.active_version_on(port)
     }
 
     // ---- validator lifecycle reads (ValidatorSet / tribute / metadosis) ------

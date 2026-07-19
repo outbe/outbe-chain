@@ -128,3 +128,5 @@ Feature: Operator protocol-version update via governance vote
     And the unsupported proposal and waiting schedule are identical on every validator
     And the committee remains stalled below the unsupported activation height
     And validator "validator-0" logs report the unsupported activation as fatal
+    When the operator replaces the committee binary with the supported version
+    Then the replacement binary activates the scheduled version and resumes the committee

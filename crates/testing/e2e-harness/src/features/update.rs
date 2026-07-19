@@ -687,6 +687,57 @@ fn unsupported_still_stalled(world: &mut World) {
     does_not_pass_activation(world);
 }
 
+#[when("the operator replaces the committee binary with the supported version")]
+fn replace_committee_binary(world: &mut World) {
+    let version = world.state.proposed_version.expect("proposed version");
+    let version = format!("{}.{}", version >> 24, version & 0x00FF_FFFF);
+    world
+        .localnet
+        .restart_committee_with_upgraded_binary(&version)
+        .expect("restart committee with upgraded binary");
+}
+
+#[then("the replacement binary activates the scheduled version and resumes the committee")]
+fn upgraded_binary_resumes_committee(world: &mut World) {
+    let activation = world.state.activation_height.expect("activation height");
+    let proposed = world.state.proposed_version.expect("proposed version");
+    let primary = world.validators.primary_port();
+    let resumed = world.rpc.wait_block_gt(primary, activation, 120);
+    assert!(
+        resumed.is_some_and(|height| height > activation),
+        "replacement binary did not resume beyond activation {activation}: {resumed:?}"
+    );
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.wait_active_version_on(port, proposed, 60),
+            Some(proposed),
+            "replacement binary did not activate version {proposed} on RPC {port}"
+        );
+        let scheduled = world
+            .rpc
+            .scheduled_update_on(port, world.state.proposal_id)
+            .unwrap_or_else(|| panic!("scheduled update missing on RPC {port}"));
+        assert_eq!(scheduled.status, 1, "schedule not activated on RPC {port}");
+    }
+    proposal_parity(world, world.state.proposal_id);
+    let common_height = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized height after binary replacement");
+    let expected_root = world
+        .rpc
+        .state_root(primary, common_height)
+        .expect("primary state root after binary replacement");
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.state_root(port, common_height),
+            Some(expected_root.clone()),
+            "state-root mismatch after binary replacement on RPC {port}"
+        );
+    }
+    committee_continues_finalizing(world);
+}
+
 /// Active protocol version updated to the proposed version
 /// (update_operator_flow.sh:316-317).
 #[then("the active protocol version equals the proposed version")]
