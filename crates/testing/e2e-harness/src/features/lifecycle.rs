@@ -178,6 +178,17 @@ fn promoted_with_inflight_offer(world: &mut World) {
         world.state.tribute_tx_hash.is_some(),
         "in-flight offer did not land (supply != 2)"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("in-flight tribute tx"),
+            120,
+        )
+        .expect("in-flight Tribute must be projected by the original committee");
     assert!(
         world.rpc.wait_participant(primary, &addr, 70),
         "joiner never became a consensus participant"

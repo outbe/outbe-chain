@@ -82,7 +82,12 @@ impl MongoDb {
     /// Wait for all three tribute namespaces in every validator database, then
     /// assert the complete BSON documents are identical across the committee.
     pub fn wait_for_tribute_projection(&self, tx_hash: &str, tries: u32) -> Result<()> {
-        self.wait_for_tribute_projection_on_nodes(tx_hash, tries, self.validators)
+        self.wait_for_tribute_projection_on_nodes_with_stage(
+            tx_hash,
+            tries,
+            self.validators,
+            "mongo-visible",
+        )
     }
 
     /// Verify the primary Tribute and both secondary indexes across an explicit
@@ -92,6 +97,21 @@ impl MongoDb {
         tx_hash: &str,
         tries: u32,
         validators: usize,
+    ) -> Result<()> {
+        let stage = if validators > self.validators {
+            "mongo-expanded-node-parity"
+        } else {
+            "mongo-visible"
+        };
+        self.wait_for_tribute_projection_on_nodes_with_stage(tx_hash, tries, validators, stage)
+    }
+
+    fn wait_for_tribute_projection_on_nodes_with_stage(
+        &self,
+        tx_hash: &str,
+        tries: u32,
+        validators: usize,
+        stage: &'static str,
     ) -> Result<()> {
         let uri = self.uri.clone();
         let database_prefix = self.database_prefix.clone();
@@ -105,6 +125,7 @@ impl MongoDb {
                 validators,
                 &tx_hash,
                 tries,
+                stage,
             )
         })
         .join()
@@ -200,6 +221,7 @@ fn wait_for_projection(
     validators: usize,
     tx_hash: &str,
     tries: u32,
+    stage: &'static str,
 ) -> Result<()> {
     let started = Instant::now();
     let mut last = None;
@@ -207,7 +229,7 @@ fn wait_for_projection(
         match tribute_projection(uri, database_prefix, scenario, validators, tx_hash) {
             Ok(()) => {
                 eprintln!(
-                    "E2E_TRIBUTE_TIMELINE stage=mongo-visible wall_ms={} wait_elapsed_ms={} tx={tx_hash} nodes={validators}",
+                    "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} wait_elapsed_ms={} tx={tx_hash} nodes={validators}",
                     unix_time_millis(),
                     started.elapsed().as_millis(),
                 );
