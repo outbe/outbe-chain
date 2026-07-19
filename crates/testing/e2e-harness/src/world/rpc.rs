@@ -9,7 +9,7 @@
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use eyre::{eyre, Result, WrapErr as _};
@@ -652,6 +652,26 @@ impl Rpc {
         .map(|v| v.to_string())
     }
 
+    /// Canonical Tribute identities indexed by one owner.
+    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getTributesByOwnerCall { owner },
+        )
+    }
+
+    /// Canonical Tribute identities indexed by one Worldwide Day.
+    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<Bytes>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getTributesByDayCall {
+                worldwideDay: worldwide_day,
+            },
+        )
+    }
+
     /// Metadosis worldwide-day status byte (field 2 of `getWorldwideDay`).
     pub fn wwd_status(&self, port: u16, wwd: &str) -> Option<String> {
         let day: u32 = wwd.parse().ok()?;
@@ -681,23 +701,46 @@ impl Rpc {
 
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
-        let out = self
-            .sh()
-            .cli([
-                "--private-key",
-                key,
-                "--rpc-url",
-                self.cfg.rpc0.as_str(),
-                "tribute",
-                "offer",
-                wwd,
-                "--amount",
-                "100",
-                "--currency",
-                "840",
-            ])
-            .ok()?;
-        parse::extract_tx_hash(&out)
+        self.tribute_offer_with_params(key, wwd, "100", 840, false)
+    }
+
+    /// Submit a Tribute offer with explicit business fields. This is used by
+    /// duplicate-identity tests to prove that `(owner, worldwide_day)`, rather
+    /// than the rest of the encrypted payload, is the uniqueness boundary.
+    pub fn tribute_offer_with_params(
+        &self,
+        key: &str,
+        wwd: &str,
+        amount: &str,
+        currency: u16,
+        exclude_from_intex_issuance: bool,
+    ) -> Option<String> {
+        let started = Instant::now();
+        let mut args = vec![
+            "--private-key".to_owned(),
+            key.to_owned(),
+            "--rpc-url".to_owned(),
+            self.cfg.rpc0.clone(),
+            "tribute".to_owned(),
+            "offer".to_owned(),
+            wwd.to_owned(),
+            "--amount".to_owned(),
+            amount.to_owned(),
+            "--currency".to_owned(),
+            currency.to_string(),
+        ];
+        if exclude_from_intex_issuance {
+            args.push("--exclude-from-intex-issuance".to_owned());
+        }
+        let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
+        let tx_hash = parse::extract_tx_hash(&out)?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount={amount} currency={currency} exclude={exclude_from_intex_issuance}",
+            unix_time_millis(),
+            started.elapsed().as_millis(),
+            self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
+        );
+        Some(tx_hash)
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.
@@ -707,13 +750,63 @@ impl Rpc {
 
     /// Wait until a transaction receipt exists with the expected success bit.
     pub fn wait_receipt_status(&self, tx_hash: &str, expected: bool, tries: u32) -> bool {
+        let started = Instant::now();
         for _ in 0..tries {
             match eth::receipt_success(&self.cfg.rpc0, tx_hash) {
-                Some(status) => return status == expected,
+                Some(status) => {
+                    let receipt = eth::receipt_json(&self.cfg.rpc0, tx_hash);
+                    let block = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("blockNumber"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let block_hash = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("blockHash"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let events = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("logs"))
+                        .and_then(serde_json::Value::as_array)
+                        .map_or(0, Vec::len);
+                    eprintln!(
+                        "E2E_TRIBUTE_TIMELINE stage=receipt wall_ms={} wait_elapsed_ms={} tx={tx_hash} status={status} block={block} block_hash={block_hash} events={events} head={:?} finalized={:?}",
+                        unix_time_millis(),
+                        started.elapsed().as_millis(),
+                        self.head(self.cfg.primary_port()),
+                        self.finalized(self.cfg.primary_port()),
+                    );
+                    return status == expected;
+                }
                 None => sleep(Duration::from_millis(500)),
             }
         }
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=receipt-timeout wall_ms={} wait_elapsed_ms={} tx={tx_hash} expected_status={expected} head={:?} finalized={:?}",
+            unix_time_millis(),
+            started.elapsed().as_millis(),
+            self.head(self.cfg.primary_port()),
+            self.finalized(self.cfg.primary_port()),
+        );
         false
+    }
+
+    /// Emit a state/finality observation correlated with one Tribute receipt.
+    pub fn trace_tribute_state(&self, tx_hash: &str, stage: &str, port: u16) {
+        let receipt = eth::receipt_json(&self.url(port), tx_hash);
+        let receipt_block = receipt
+            .as_ref()
+            .and_then(|value| value.get("blockNumber"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} tx={tx_hash} receipt_block={receipt_block} supply={:?} head={:?} finalized={:?}",
+            unix_time_millis(),
+            self.supply(port),
+            self.head(port),
+            self.finalized(port),
+        );
     }
 
     /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).
@@ -890,6 +983,9 @@ impl Rpc {
             }
             sleep(Duration::from_secs(6));
             if self.supply(primary).as_deref() == Some(want) {
+                if let Some(tx_hash) = pending_tx.as_deref() {
+                    self.trace_tribute_state(tx_hash, "state-visible", primary);
+                }
                 return pending_tx;
             }
             // Do not blindly submit a replacement while the first offer is still
@@ -1406,6 +1502,13 @@ impl Rpc {
         )?;
         Some((value.day, value.count))
     }
+}
+
+fn unix_time_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 const SPONSORSHIP_TOPIC: &str =

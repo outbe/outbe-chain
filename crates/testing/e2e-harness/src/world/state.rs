@@ -47,6 +47,9 @@ pub struct FixtureState {
     pub tribute_tx_hash: Option<String>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
+    /// Exact primary/owner/day Mongo documents before a duplicate offer.
+    pub tribute_projection_before_duplicate:
+        Option<crate::world::mongodb::TributeProjectionSnapshot>,
 
     // ---- ZeroFee live scenario ----
     pub zerofee_key: Option<String>,
@@ -102,6 +105,7 @@ impl Default for FixtureState {
             slash_stake_after: None,
             tribute_tx_hash: None,
             duplicate_tribute_tx_hash: None,
+            tribute_projection_before_duplicate: None,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

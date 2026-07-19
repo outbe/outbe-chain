@@ -102,6 +102,8 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITribute {
         function totalSupply() external view returns (uint256);
+        function getTributesByOwner(address owner) external view returns (bytes[] memory);
+        function getTributesByDay(uint32 worldwideDay) external view returns (bytes[] memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IStaking {

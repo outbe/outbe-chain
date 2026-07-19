@@ -161,7 +161,7 @@ impl Localnet {
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
 
-        let genesis = json!({
+        let mut genesis = json!({
             "config": {
                 "chainId": 54_322_345,
                 "homesteadBlock": 0,
@@ -194,6 +194,13 @@ impl Localnet {
             "coinbase": "0x0000000000000000000000000000000000000000",
             "alloc": alloc,
         });
+        // Four real enclaves intentionally share one SGX host in this lane.
+        // EPC scheduling can make one validator's otherwise ~100-200 ms offer
+        // re-execution take just over five seconds. The production defaults
+        // assume one enclave per validator host; widen only this co-located
+        // hardware test network so a local resource stall does not cancel the
+        // execution-read budget before the deterministic retry completes.
+        apply_co_located_sgx_timing(&mut genesis, self.cfg.tee_mode)?;
         fs::write(
             self.cfg.dir.join("genesis.json"),
             serde_json::to_string_pretty(&genesis)? + "\n",
@@ -273,6 +280,21 @@ impl Localnet {
         fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
         Ok(())
     }
+}
+
+fn apply_co_located_sgx_timing(
+    genesis: &mut serde_json::Value,
+    tee_mode: crate::env::TeeMode,
+) -> Result<()> {
+    if !matches!(tee_mode, crate::env::TeeMode::Real) {
+        return Ok(());
+    }
+    let config = genesis["config"]
+        .as_object_mut()
+        .ok_or_else(|| eyre!("generated genesis config is not an object"))?;
+    config.insert("leaderTimeoutMs".to_owned(), json!(15_000));
+    config.insert("certificationTimeoutMs".to_owned(), json!(30_000));
+    Ok(())
 }
 
 fn patch_felony_storage(
@@ -413,5 +435,17 @@ mod tests {
             storage.get(&format!("0x{VOTER_FELONY_SLOT:064x}")),
             Some(&expected)
         );
+    }
+
+    #[test]
+    fn co_located_real_sgx_gets_wider_consensus_windows_only_in_hardware_lane() {
+        let mut real = json!({ "config": {} });
+        apply_co_located_sgx_timing(&mut real, crate::env::TeeMode::Real).unwrap();
+        assert_eq!(real["config"]["leaderTimeoutMs"], json!(15_000));
+        assert_eq!(real["config"]["certificationTimeoutMs"], json!(30_000));
+
+        let mut mock = json!({ "config": {} });
+        apply_co_located_sgx_timing(&mut mock, crate::env::TeeMode::Mock).unwrap();
+        assert!(mock["config"].as_object().unwrap().is_empty());
     }
 }

@@ -150,10 +150,12 @@ The scenario performs the complete product flow:
    deployment instead.
 3. Submits one encrypted `offerTribute` transaction through `outbe-cli`.
 4. Requires a successful receipt and `totalSupply == 1`.
-5. Waits for exactly one document in `tributes`, `tributes_by_owner`, and
-   `tributes_by_day` in every validator database.
-6. Requires `_projection.tx_hash` to match the successful transaction and the
-   complete BSON documents to be identical across all four validators.
+5. Finds the primary document by `_projection.tx_hash`, derives its exact owner
+   and Worldwide-Day index keys from the canonical body, and requires all three
+   documents on every validator. The check does not assume the database contains
+   only one Tribute, so lifecycle scenarios can validate later offers too.
+6. Requires the exact primary/owner/day BSON documents to be identical across
+   all four validators.
 7. Calls `outbe_getCompressedEntity` on every validator, fetches the exact
    selected block header, and verifies each proof package independently.
 8. Requires every validator's authenticated `Present` body bytes to equal the
@@ -167,6 +169,16 @@ The edge-case scenarios independently verify both authenticated absence forms:
   collection already exists;
 - `CollectionAbsent` for an unknown Tribute day, while also asserting that no
   primary or secondary MongoDB projection was created.
+
+The duplicate-identity scenario submits a second encrypted offer from the same
+owner in the same Worldwide Day with a different amount and opposite Intex
+exclusion flag. It requires a reverted receipt, unchanged supply, byte-identical
+primary/owner/day Mongo documents, and exactly the original Tribute ID in both
+on-chain indexes on every validator. Structured `E2E_TRIBUTE_TIMELINE` records
+correlate submission, receipt block/events, canonical state, finality, and Mongo
+visibility. Real-SGX runs widen only their scenario genesis consensus windows
+because four enclaves share one host; production/testnet timing defaults remain
+unchanged and must be calibrated on the deployment topology separately.
 
 On normal completion or failure, the harness stops the nodes and removes its
 MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container

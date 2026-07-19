@@ -44,7 +44,10 @@ fn submit_offer(world: &mut World, name: String) {
     world.state.wwd_status_before = world.rpc.wwd_status(primary, &wwd);
     world.state.tribute_tx_hash = world
         .rpc
-        .offer_until_supply_hash(&key, &wwd, primary, "1", 5);
+        // The focused hardware run observed 9-12 seconds between canonical
+        // blocks. Keep the same state assertion, but allow the submitted offer
+        // enough canonicalization windows to reach `supply == 1`.
+        .offer_until_supply_hash(&key, &wwd, primary, "1", 20);
     assert!(
         world.state.tribute_tx_hash.is_some(),
         "committee did not process the offer (supply != 1)"
