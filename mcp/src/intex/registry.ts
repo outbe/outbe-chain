@@ -42,33 +42,55 @@ export interface IntexAddresses {
 
 const a = (s: string): Address => getAddress(s);
 
-// CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so app contracts share an
-// address across chains.
-export const INTEX: Record<string, IntexAddresses> = {
-  "bsc-testnet": {
-    auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
-    escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
-    // wCOEN — auction escrow pays wrapped COEN (18 decimals).
-    paymentToken: a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
-    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
-    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
-  },
-  "outbe-testnet": {
-    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
-    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
-    // outbe runtime precompiles (addresses.rs):
-    intex: a("0x0000000000000000000000000000000000001014"),
-    factory: a("0x0000000000000000000000000000000000001015"),
-    promis: a("0x0000000000000000000000000000000000001337"),
-    desis: a("0x0000000000000000000000000000000000001016"),
-    // Fan-out router (CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0").
-    originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
-  },
+const OUTBE = "outbe-testnet";
+
+// The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so
+// each one shares a single address on every chain; only the wCOEN payment token
+// is a per-chain deployment. Networks gate availability, addresses do not.
+const APP = {
+  auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
+  escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
+  nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
+  nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
+};
+
+/** outbe runtime precompiles (addresses.rs) + the fan-out router. */
+const OUTBE_ONLY = {
+  intex: a("0x0000000000000000000000000000000000001014"),
+  factory: a("0x0000000000000000000000000000000000001015"),
+  promis: a("0x0000000000000000000000000000000000001337"),
+  desis: a("0x0000000000000000000000000000000000001016"),
+  // CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
+  originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
+};
+
+/** Networks where the auction/escrow pair is live. The NFT pair runs on the origin
+ *  and every target; enabling a new target = adding it here + its wCOEN below. */
+const AUCTION_LIVE = new Set(["bsc-testnet"]);
+
+/** wCOEN — the auction's payment token (18 decimals), per chain. */
+const PAYMENT_TOKEN: Record<string, Address> = {
+  "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };
 
 /** Resolve a contract address for a network, or throw a clear error. */
 export function intexAddress(network: string, key: keyof IntexAddresses): Address {
-  const addr = INTEX[network]?.[key];
+  let addr: Address | undefined;
+  switch (key) {
+    case "auction":
+    case "escrow":
+      addr = AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      break;
+    case "nft":
+    case "nftBridge":
+      addr = network === OUTBE || AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      break;
+    case "paymentToken":
+      addr = PAYMENT_TOKEN[network];
+      break;
+    default:
+      addr = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+  }
   if (!addr) {
     throw new Error(`Intex "${key}" is not configured on "${network}"`);
   }
