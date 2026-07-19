@@ -342,7 +342,17 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
             },
         )?;
         if outbe_intex::api::proceeds_finalize_on_done(storage, series_id)? {
-            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+            // A straggler (or a chain sending its proceeds in parts) can top the
+            // pot up while this final round drains. finalize clears the map, so
+            // pay any such top-up over it first and finalize only once the pot is
+            // empty — otherwise the top-up is later swept to the reserve.
+            let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+            if pot.is_zero() {
+                outbe_intex::api::finalize_proceeds(storage, series_id)?;
+            } else {
+                let total = outbe_intex::api::contributor_total(storage, series_id)?;
+                outbe_intex::api::start_distribution(storage, series_id, pot, total)?;
+            }
         }
     } else {
         progress.cursor = end;

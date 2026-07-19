@@ -1306,6 +1306,72 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
 }
 
 #[test]
+fn late_top_up_during_final_round_reaches_creators() {
+    use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+    with_factory(|s| {
+        let owners = [contrib(1), contrib(2)];
+        outbe_intex::api::record_contributors(
+            &s,
+            7,
+            &[
+                (owners[0], U256::from(100u64)),
+                (owners[1], U256::from(100u64)),
+            ],
+        )
+        .unwrap();
+        // A single winning chain: the first arrival completes the fan-in, so the
+        // round runs finalize-on-done (its end clears the contributor map).
+        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(200u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            10,
+            U256::from(200u64),
+        )
+        .unwrap();
+        assert!(outbe_intex::api::proceeds_finalize_on_done(&s, 7).unwrap());
+
+        // Pay only the first contributor: the round is mid-drain, still active.
+        runtime::pay_chunk(&s, 7, 1).unwrap();
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        // Chain 10 sends the rest of its proceeds while the round still drains: it
+        // only tops the pot up (an in-flight round is never overlapped).
+        s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(400u64))
+            .unwrap();
+        runtime::distribute(
+            &s,
+            crate::constants::ORIGIN_ROUTER_ADDRESS,
+            7,
+            10,
+            U256::from(400u64),
+        )
+        .unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        // Finishing the round finds the topped-up pot and opens a supplementary
+        // round over the same map instead of finalizing (which would strand it).
+        runtime::pay_chunk(&s, 7, 1).unwrap();
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(100u64));
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 2); // retained
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
+
+        // The supplementary round pays the top-up to the creators, then finalizes.
+        runtime::drain_distributions(&s).unwrap();
+        assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
+        assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
+        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
+        // The money reached creators, never the reserve vault.
+        assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
 fn distribute_paginates_across_chunks() {
     with_factory(|s| {
         let owners = [contrib(1), contrib(2), contrib(3)];
