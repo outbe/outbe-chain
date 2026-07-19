@@ -38,6 +38,9 @@ contract TargetRouter is
     /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
+    /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
+    uint16 internal constant MAX_BIDS_BATCHES = 256;
+
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
 
@@ -445,6 +448,10 @@ contract TargetRouter is
 
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
         uint16 totalBatches = SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
+        // The receiver tracks batch arrival in a 256-bit mask, so it rejects any generation with more
+        // than 256 batches. Fail loudly here (the caller parks the relay) instead of sending a doomed
+        // generation that the receiver drops batch-by-batch, silently excluding the whole chain-day.
+        if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
         uint16 batchIndex = 0;
         for (uint256 start = 0; start < bidsCount; start += maxChunk) {
             uint256 end = start + maxChunk;

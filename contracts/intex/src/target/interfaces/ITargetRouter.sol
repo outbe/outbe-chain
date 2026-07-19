@@ -123,6 +123,10 @@ interface ITargetRouter {
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
     error EmptyArray();
+    /// @notice A day's revealed bids need more than 256 batches, which the receiver's arrival mask cannot track.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose relay was rejected.
+    /// @param totalBatches Batch count the relay would have needed.
+    error TooManyBidsBatches(uint32 worldwideDay, uint16 totalBatches);
     /// @notice Native-token sweep transfer failed.
     error NativeSweepFailed();
     /// @notice Native-token balance is insufficient for the requested sweep.
