@@ -1350,6 +1350,58 @@ fn test_save_load_and_clear_pending_dkg_boundary_snapshot() {
 }
 
 #[test]
+fn test_completed_dkg_is_durable_before_activation_boundary() {
+    let (keys, participants, output, share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let target = FrozenDkgTarget {
+        dkg_cycle: 4,
+        freeze_height: 90,
+        planned_activation_height: 120,
+        validator_set,
+        participants: participants.clone(),
+        is_validator_set_change: false,
+    };
+    let complete = dkg_actor::DkgComplete {
+        output: output.clone(),
+        share: Some(share),
+        participants: participants.clone(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let backend = bls::KeyBackend::Plaintext;
+
+    persist_completed_dkg_before_activation(
+        dir.path(),
+        &backend,
+        Epoch::new(3),
+        3,
+        &participants,
+        &target,
+        &complete,
+        104,
+    )
+    .unwrap();
+
+    let (_, _, recovered_output) = load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .expect("completed DKG material must survive a pre-activation crash");
+    assert_eq!(recovered_output, output);
+    let snapshot = load_pending_dkg_boundary(dir.path())
+        .unwrap()
+        .expect("completed DKG boundary must survive a pre-activation crash");
+    assert_eq!(snapshot.activated_at_height, 120);
+    assert_eq!(snapshot.artifact.epoch, 4);
+    assert_eq!(snapshot.artifact.dkg_cycle, 4);
+}
+
+#[test]
 fn test_pending_dkg_material_alone_does_not_restore_boundary() {
     let (_keys, _participants, output, share, polynomial) = run_test_dkg_complete();
     let dir = tempfile::tempdir().unwrap();

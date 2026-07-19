@@ -3734,6 +3734,19 @@ where
                                 | PendingDkgActivationDecision::Activate => {}
                             }
 
+                            if let Some(ref keys_dir) = args.keys_dir {
+                                persist_completed_dkg_before_activation(
+                                    keys_dir,
+                                    &key_backend,
+                                    current_epoch,
+                                    vrf_material_version,
+                                    &participants,
+                                    &target,
+                                    &dkg_complete,
+                                    current_height,
+                                )?;
+                            }
+
                             info!(
                                 epoch = %current_epoch,
                                 dkg_cycle = target.dkg_cycle,
@@ -5452,6 +5465,71 @@ fn decode_pending_dkg_boundary_snapshot(bytes: &[u8]) -> Result<PendingDkgBounda
 
 fn pending_dkg_boundary_path(storage_dir: &std::path::Path) -> std::path::PathBuf {
     storage_dir.join(DKG_PENDING_BOUNDARY_FILE)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_completed_dkg_before_activation(
+    keys_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+    current_epoch: Epoch,
+    vrf_material_version: u64,
+    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    target: &FrozenDkgTarget,
+    complete: &dkg_actor::DkgComplete,
+    completed_at_height: u64,
+) -> Result<()> {
+    let activated_validator_set =
+        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
+    let activated_participants = participants_from_validator_set(&activated_validator_set)?;
+    ensure!(
+        complete.participants == activated_participants,
+        "completed DKG participant set does not match reconstructed output players"
+    );
+    let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
+    let next_vrf_material_version =
+        outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
+    let boundary_artifact =
+        dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+            epoch: next_epoch,
+            validator_set: &activated_validator_set,
+            output: &complete.output,
+            is_full_dkg: false,
+            dkg_cycle: target.dkg_cycle,
+            freeze_height: target.freeze_height,
+            planned_activation_height: target.planned_activation_height,
+            vrf_material_version: next_vrf_material_version,
+            is_validator_set_change: activated_participants != *current_participants,
+            tee_reshare_registrations: Vec::new(),
+        })?;
+
+    if let Some(share) = complete.share.as_ref() {
+        save_pending_dkg_state(
+            keys_dir,
+            share,
+            complete.output.public(),
+            &complete.output,
+            key_backend,
+        )
+        .wrap_err("failed to durably save completed DKG state before activation")?;
+    }
+    let activated_at_height = completed_at_height.max(target.planned_activation_height);
+    save_pending_dkg_boundary(
+        keys_dir,
+        &PendingDkgBoundarySnapshot {
+            artifact: boundary_artifact,
+            activated_at_height,
+        },
+    )
+    .wrap_err("failed to durably save completed DKG boundary before activation")?;
+    info!(
+        keys_dir = %keys_dir.display(),
+        dkg_cycle = target.dkg_cycle,
+        epoch = %next_epoch,
+        activated_at_height,
+        dkg_output_hash = %dkg_manager::dkg_output_hash(&complete.output),
+        "persisted completed DKG state before activation"
+    );
+    Ok(())
 }
 
 fn save_pending_dkg_boundary(
