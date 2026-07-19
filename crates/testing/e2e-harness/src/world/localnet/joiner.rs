@@ -15,6 +15,7 @@ use crate::internal::{
     eth::{self, IValidatorSet},
     proc::{
         self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed, wait_tcp,
+        SealSpec,
     },
     shell::Sh,
 };
@@ -84,6 +85,34 @@ impl Localnet {
 
         // Enclave container (owned foreground, no `-d`), then `tee join` once its
         // socket is up.
+        self.start_joiner_enclave(index)?;
+        let port = self.cfg.tee_port(index);
+        let sock = format!("127.0.0.1:{port}");
+        let _ = Sh::new(&self.cfg).cli([
+            "tee",
+            "join",
+            "--enclave-socket",
+            &sock,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            &key,
+            "--timeout-secs",
+            "60",
+        ]);
+        Ok(())
+    }
+
+    /// Restart a joiner's enclave from its existing writable TEE directory.
+    /// On hardware SGX this exercises EGETKEY unsealing rather than provisioning
+    /// fresh join material.
+    pub fn restart_joiner_enclave(&mut self, index: usize) -> Result<()> {
+        self.enclaves.remove(&index);
+        self.start_joiner_enclave(index)
+    }
+
+    fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
         proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo)?;
         let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
@@ -99,27 +128,18 @@ impl Localnet {
             sudo: self.cfg.sudo,
             mock,
             dkg_seed: mock.then(|| format!("{:064x}", index + 1)),
-            seal: None,
+            seal: Some(SealSpec {
+                tee_dir: vd.join("tee"),
+                chain_id_hex: self.chain_id_hex()?,
+            }),
             log_path: vd.join("enclave.log"),
             debug: self.cfg.debug,
         })?;
         self.enclaves.insert(index, guard);
         if !wait_tcp(port, 100) {
+            self.enclaves.remove(&index);
             return Err(eyre!("enclave socket 127.0.0.1:{port} never came up"));
         }
-        let sock = format!("127.0.0.1:{port}");
-        let _ = Sh::new(&self.cfg).cli([
-            "tee",
-            "join",
-            "--enclave-socket",
-            &sock,
-            "--rpc-url",
-            self.cfg.rpc0.as_str(),
-            "--private-key",
-            &key,
-            "--timeout-secs",
-            "60",
-        ]);
         Ok(())
     }
 

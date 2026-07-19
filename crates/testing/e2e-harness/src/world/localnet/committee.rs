@@ -180,7 +180,7 @@ impl Localnet {
     }
 
     /// The genesis chain id as `0x`-padded 64-hex (enclave seal `--chain-id`).
-    fn chain_id_hex(&self) -> Result<String> {
+    pub(super) fn chain_id_hex(&self) -> Result<String> {
         let g: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("genesis.json"))?)?;
         let id = g

@@ -280,7 +280,7 @@ fn warm_promotion(world: &mut World) {
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
-    world.state.joiner_addr = Some(addr);
+    world.state.joiner_addr = Some(addr.clone());
     world.rpc.stake(&key, 1000).expect("stake");
     world
         .localnet
@@ -294,7 +294,134 @@ fn warm_promotion(world: &mut World) {
         wait_for_post_freeze_readiness_window(&world.rpc, primary),
         "no post-freeze readiness window observed for late warm promotion"
     );
+    let activation = world
+        .rpc
+        .consensus_status_field(primary, "nextPlannedActivationHeight")
+        .and_then(|value| value.parse::<u64>().ok())
+        .expect("planned activation height before readiness");
+    let head = world.rpc.head(primary).expect("head before readiness");
+    assert!(
+        head < activation,
+        "promotion readiness reached too late: head {head}, activation {activation}"
+    );
+    assert!(
+        !world.rpc.is_participant(primary, &addr),
+        "warm joiner participated before readiness and activation boundary"
+    );
+    world.state.activation_height = Some(activation);
     world.rpc.confirm_ready(&key).expect("confirm ready");
+}
+
+#[when("readiness is resubmitted before the warm promotion restart")]
+fn resubmit_promotion_readiness(world: &mut World) {
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    world
+        .rpc
+        .confirm_ready(&key)
+        .expect("duplicate confirm-ready must be idempotent");
+}
+
+#[when("the warm-promoted node and an active validator restart around the activation boundary")]
+fn restart_promotion_participants(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+
+    world
+        .localnet
+        .stop_joiner(idx)
+        .expect("stop warm-promoted node");
+    world
+        .localnet
+        .restart_joiner_enclave(idx)
+        .expect("restart warm-promoted enclave from sealed state");
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("restart warm-promoted node");
+    world
+        .localnet
+        .kill_validator(3)
+        .expect("stop active validator during promotion");
+    world.localnet.restart().expect("restart active validator");
+
+    assert!(
+        wait_lockstep(&world.rpc, primary, joiner_port, 30),
+        "warm-promoted node did not recover its durable datadir"
+    );
+}
+
+#[then("promotion activates only at its planned boundary with sealed state and committee parity")]
+fn promotion_boundary_and_recovery(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    let addr = world.state.joiner_addr.clone().expect("joiner addr");
+    let activation = world
+        .state
+        .activation_height
+        .expect("captured promotion activation height");
+
+    for _ in 0..120 {
+        let head = world.rpc.head(primary).expect("committee head");
+        let participant = world.rpc.is_participant(primary, &addr);
+        if head < activation {
+            assert!(
+                !participant,
+                "warm joiner participated at {head} before activation {activation}"
+            );
+        } else if participant {
+            break;
+        }
+        sleep(Duration::from_secs(2));
+    }
+
+    let activated_at_or_after = world.rpc.head(primary).expect("post-activation head");
+    assert!(
+        activated_at_or_after >= activation,
+        "joiner activated before planned boundary {activation}"
+    );
+    assert!(
+        world.rpc.is_participant(primary, &addr),
+        "warm joiner was not a participant after activation boundary"
+    );
+    let restarted_validator = world.validators.http_port(3);
+    assert!(
+        wait_finalized_checkpoint_match(&world.rpc, primary, restarted_validator, 60),
+        "restarted active validator did not recover canonical finalized state"
+    );
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world.rpc.validator_status(port, &addr),
+            Some(2),
+            "validator status differs on RPC port {port}"
+        );
+        assert_eq!(
+            world.rpc.has_share(port, &addr),
+            Some(true),
+            "DKG share state differs on RPC port {port}"
+        );
+        assert!(
+            world.rpc.is_participant(port, &addr),
+            "participant state differs on RPC port {port}"
+        );
+    }
+    assert!(
+        world.localnet.enclave_log_has(
+            idx,
+            "unsealed offer key + group signature <- /tee/sealed_root.bin"
+        ),
+        "warm-promoted enclave did not restore its EGETKEY-sealed state"
+    );
+    assert!(
+        wait_finalized_checkpoint_match(&world.rpc, primary, joiner_port, 60),
+        "warm-promoted validator did not recover canonical finalized state"
+    );
+    let before = world.rpc.head(primary).expect("head before liveness check");
+    assert!(
+        world.rpc.wait_block_gt(primary, before, 30).is_some(),
+        "committee stopped producing blocks after promotion recovery"
+    );
 }
 
 /// S2 — the promoted validator activates and stays in lockstep.
