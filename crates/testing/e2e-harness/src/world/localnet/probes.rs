@@ -31,14 +31,10 @@ impl Localnet {
             let content = fs::read_to_string(&path)
                 .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
             for (index, line) in content.lines().enumerate() {
-                if expected_fragment
-                    .as_deref()
-                    .is_some_and(|fragment| exact_expected_update_fatal(line, fragment))
-                {
-                    if let Some(validator) = validator_node_log_index(&path, self.cfg.validators) {
-                        expected_by_validator[validator] += 1;
-                        continue;
-                    }
+                if expected_fragment.as_deref().is_some_and(|fragment| {
+                    accept_expected_update_fatal(&path, line, fragment, &mut expected_by_validator)
+                }) {
+                    continue;
                 }
                 if unexpected_log_line(line) {
                     findings.push(format!("{}:{}: {}", path.display(), index + 1, line));
@@ -177,6 +173,21 @@ fn validator_node_log_index(path: &Path, validators: usize) -> Option<usize> {
     (index < validators).then_some(index)
 }
 
+fn accept_expected_update_fatal(
+    path: &Path,
+    line: &str,
+    expected_fragment: &str,
+    expected_by_validator: &mut [usize],
+) -> bool {
+    if !exact_expected_update_fatal(line, expected_fragment) {
+        return false;
+    }
+    if let Some(validator) = validator_node_log_index(path, expected_by_validator.len()) {
+        expected_by_validator[validator] += 1;
+    }
+    true
+}
+
 fn exact_expected_update_fatal(line: &str, expected_fragment: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.matches("fatal").count() == 1
@@ -205,7 +216,10 @@ fn unexpected_log_line(line: &str) -> bool {
 mod tests {
     use std::path::Path;
 
-    use super::{exact_expected_update_fatal, is_runtime_log, unexpected_log_line};
+    use super::{
+        accept_expected_update_fatal, exact_expected_update_fatal, is_runtime_log,
+        unexpected_log_line,
+    };
 
     #[test]
     fn audits_runtime_logs_without_reading_binary_database_logs() {
@@ -252,5 +266,28 @@ mod tests {
             fragment
         ));
         assert!(unexpected_log_line("fatal: projection exited"));
+    }
+
+    #[test]
+    fn allows_expected_update_fatal_in_reth_log_but_counts_node_log_evidence() {
+        let fragment =
+            "cannot activate protocol version v3.0 (50331648): binary supports at most v";
+        let fatal = "payload builder error=fatal: cannot activate protocol version v3.0 (50331648): binary supports at most v0.1 (1)";
+        let mut counts = [0, 0];
+
+        assert!(accept_expected_update_fatal(
+            Path::new("validator-1/logs/54322345/reth.log"),
+            fatal,
+            fragment,
+            &mut counts,
+        ));
+        assert_eq!(counts, [0, 0]);
+        assert!(accept_expected_update_fatal(
+            Path::new("validator-1/node.log"),
+            fatal,
+            fragment,
+            &mut counts,
+        ));
+        assert_eq!(counts, [0, 1]);
     }
 }
