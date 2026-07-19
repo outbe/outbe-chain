@@ -14,7 +14,8 @@ interface IDesis {
         Revealing,
         BidsReceived,
         Cleared,
-        Cancelled
+        Cancelled,
+        Briefed
     }
 
     // --- Bid ingestion (from OriginRouter) ---

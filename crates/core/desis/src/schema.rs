@@ -21,6 +21,7 @@ pub enum AuctionStage {
     BidsReceived = 3,
     Cleared = 4,
     Cancelled = 5,
+    Briefed = 6,
 }
 
 impl AuctionStage {
@@ -32,6 +33,7 @@ impl AuctionStage {
             3 => Ok(Self::BidsReceived),
             4 => Ok(Self::Cleared),
             5 => Ok(Self::Cancelled),
+            6 => Ok(Self::Briefed),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
@@ -244,6 +246,23 @@ pub struct DesisContract {
     /// worldwide_day -> (active index + 1); 0 = not active.
     #[attribute(order = 29)]
     pub gate_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Auction brief ---
+    /// worldwide_day -> auction supply in raw PROMIS minor units.
+    #[attribute(order = 30)]
+    pub pending_supply_promis: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// worldwide_day -> 1 for a green day.
+    #[attribute(order = 31)]
+    pub brief_green: outbe_primitives::storage::dsl::Map<u32, u8>,
+    /// Days with a scheduled auction (dense active set for the begin-block tick).
+    #[attribute(order = 32)]
+    pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,
+    /// dense index -> worldwide_day.
+    #[attribute(order = 33)]
+    pub sched_active_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// worldwide_day -> (active index + 1); 0 = not active.
+    #[attribute(order = 34)]
+    pub sched_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {

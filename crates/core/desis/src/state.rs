@@ -185,6 +185,19 @@ impl DesisContract<'_> {
         Ok(())
     }
 
+    /// Append a day to the schedule-active set (idempotent).
+    pub(crate) fn push_sched_active(&mut self, worldwide_day: u32) -> Result<()> {
+        if self.sched_active_slot.read(&worldwide_day)? != 0 {
+            return Ok(());
+        }
+        let count = self.sched_active_count.read()?;
+        self.sched_active_at.write(&count, worldwide_day)?;
+        // store index + 1 so that 0 unambiguously means "absent".
+        self.sched_active_slot.write(&worldwide_day, count + 1)?;
+        self.sched_active_count.write(count + 1)?;
+        Ok(())
+    }
+
     // --- last cleared series ---
 
     pub(crate) fn read_last_cleared_worldwide_day(&self) -> Result<u32> {

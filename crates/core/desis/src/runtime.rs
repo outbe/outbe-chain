@@ -24,6 +24,42 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
+/// Record the day's auction brief: supply (raw PROMIS), entry price and day
+/// type. The schedule anchor is the midnight of `now`.
+pub fn record_brief(
+    storage: StorageHandle<'_>,
+    worldwide_day: u32,
+    supply_promis: u128,
+    entry_price: U256,
+    is_green: bool,
+    now: u64,
+) -> Result<()> {
+    if worldwide_day == 0 {
+        return Err(DesisError::InvalidWorldwideDay(0).into());
+    }
+    let mut contract = storage.contract::<DesisContract>();
+    if contract.read_stage(worldwide_day)? != AuctionStage::None {
+        return Err(DesisError::InvalidStageTransition.into());
+    }
+    let anchor = u32::try_from(date_key_to_utc_timestamp(timestamp_to_date_key(now)))
+        .map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))?;
+
+    contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;
+    contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
+    contract
+        .pending_supply_promis
+        .write(&worldwide_day, U256::from(supply_promis))?;
+    contract
+        .brief_green
+        .write(&worldwide_day, u8::from(is_green))?;
+    contract.auction_at.write(&worldwide_day, anchor)?;
+    contract.push_sched_active(worldwide_day)?;
+    contract.emit(IDesis::AuctionCreated {
+        worldwideDay: worldwide_day,
+    })?;
+    Ok(())
+}
+
 /// Create a new auction for `worldwide_day` and transition to `Started`.
 ///
 /// Derives minBidQty from the prior clearing (4% of issued count) and

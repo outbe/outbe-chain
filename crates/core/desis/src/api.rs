@@ -74,6 +74,33 @@ pub fn dispatch_stage_clearing(
     }
 }
 
+/// Best-effort: record the day's auction brief (supply in raw PROMIS, entry
+/// price, day type). Returns `true` if Desis accepted it; on failure nothing
+/// is recorded.
+pub fn dispatch_auction_brief(
+    storage: StorageHandle<'_>,
+    worldwide_day: u32,
+    supply_promis: U256,
+    entry_price: U256,
+    is_green: bool,
+    now: u64,
+) -> Result<bool> {
+    let Ok(supply_u128) = u128::try_from(supply_promis) else {
+        let mut contract = storage.contract::<DesisContract>();
+        contract.emit(IDesis::AuctionDispatchFailed {
+            worldwideDay: worldwide_day,
+            stage: "auction_brief".into(),
+            reason: "supply exceeds u128".into(),
+        })?;
+        return Ok(false);
+    };
+    best_effort(storage, worldwide_day, "auction_brief", |s| {
+        s.clone().with_checkpoint(|| {
+            runtime::record_brief(s, worldwide_day, supply_u128, entry_price, is_green, now)
+        })
+    })
+}
+
 /// Emit `AuctionDispatchFailed` for a clearing dispatch and return the whole
 /// supply so the caller keeps the full budget (nothing cleared).
 fn clearing_failed(
