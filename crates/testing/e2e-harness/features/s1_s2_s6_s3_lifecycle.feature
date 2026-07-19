@@ -5,7 +5,8 @@ Feature: Validator lifecycle — cold sync, promote, in-flight offer, exit
   # S2 it stakes + confirms and is promoted to ACTIVE via a reshare;
   # S6 a tribute offer submitted during the reshare window lands exactly once;
   # S3 it deactivates, the committee reshares down, and the node demotes to a
-  # verifier-follower that keeps following finality.
+  # verifier-follower that keeps following finality. Registration, exit and
+  # claim also prove caller isolation before their authorized success paths.
 
   @pfs-006-01 @pfs-006-03
   Scenario: A full node syncs, is promoted, survives an in-flight offer, then exits

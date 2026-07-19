@@ -106,6 +106,11 @@ fn full_node_parity(world: &mut World) {
         Some(4),
         "active set unchanged by a full node"
     );
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(0),
+        "authorized self-registration must leave the joiner REGISTERED after the rejected third-party attempt"
+    );
 
     let pn = world.rpc.finalized(joiner_port).unwrap_or(20);
     let sr_c = world.rpc.state_root(primary, pn);
@@ -303,6 +308,20 @@ fn exits_and_demotes(world: &mut World) {
         .state
         .lifecycle_total_before_exit
         .expect("total before exit");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, exit_h.saturating_add(1), 30),
+        "committee did not finalize the post-boundary block that drains UNBONDING stake"
+    );
+    for _ in 0..20 {
+        if world.rpc.stake_on(primary, &addr) == Some(alloy_primitives::U256::ZERO)
+            && world.rpc.total_staked_on(primary) == Some(total_before - exited_stake)
+        {
+            break;
+        }
+        sleep(Duration::from_secs(1));
+    }
     assert_eq!(
         world.rpc.stake_on(primary, &addr),
         Some(alloy_primitives::U256::ZERO),

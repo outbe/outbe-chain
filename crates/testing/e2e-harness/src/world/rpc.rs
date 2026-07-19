@@ -613,16 +613,19 @@ impl Rpc {
         false
     }
 
-    /// Stake `amount` ether from `key` (REGISTERED/PENDING joiner).
+    /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).
     pub fn stake(&self, key: &str, amount: u64) -> Result<String> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;
-        let wei = eth::ether(amount);
+        let base_units = eth::coen(amount);
         let tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::STK_ADDR,
             key,
-            &IStaking::stakeCall { v, amount: wei },
-            Some(wei),
+            &IStaking::stakeCall {
+                v,
+                amount: base_units,
+            },
+            Some(base_units),
         )?;
         if !self.wait_successful_receipt(&tx, 20) {
             return Err(eyre!("stake receipt was not successful: {tx}"));
@@ -813,7 +816,7 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::ether(1))?;
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(1))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,

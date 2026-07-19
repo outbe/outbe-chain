@@ -467,8 +467,8 @@ pub(crate) fn address_of(key: &str) -> Option<Address> {
     Some(signer.address())
 }
 
-/// `amount` whole ether as wei.
-pub(crate) fn ether(amount: u64) -> U256 {
+/// `amount` whole COEN in the chain's 18-decimal native base units.
+pub(crate) fn coen(amount: u64) -> U256 {
     U256::from(amount) * U256::from(1_000_000_000_000_000_000u128)
 }
 
@@ -489,8 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn ether_scales() {
-        assert_eq!(ether(1), U256::from(1_000_000_000_000_000_000u128));
-        assert_eq!(ether(0), U256::ZERO);
+    fn coen_scales_to_base_units() {
+        assert_eq!(coen(1), U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(coen(0), U256::ZERO);
     }
 }

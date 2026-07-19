@@ -57,21 +57,50 @@ impl Localnet {
         .ok_or_else(|| eyre!("no registration signature from keygen"))?;
         fs::write(vd.join("reth-p2p-secret.hex"), random_hex_32()?)?;
 
-        // Fund from validator-0, register, and publish the p2p address.
+        // Fund from validator-0, prove that an unrelated EOA cannot register
+        // this validator identity, then self-register and publish the P2P
+        // address. The rejected call uses the joiner's otherwise-valid BLS
+        // binding, isolating caller authorization from proof validation.
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::ether(2000))?;
-        eth::send_call(
+        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
+        let registration = IValidatorSet::registerValidatorCall {
+            v: addr,
+            pubkey: Bytes::from(hex::decode(&bls)?),
+            sig: Bytes::from(hex::decode(&sig)?),
+        };
+        let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
+        let unauthorized = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            &unrelated,
+            &registration,
+            None,
+        );
+        match unauthorized {
+            Err(error) if error.to_string().contains("unauthorized") => {}
+            Ok(tx) if eth::receipt_success(&self.cfg.rpc0, &tx) == Some(false) => {}
+            Err(error) => {
+                return Err(eyre!(
+                    "unexpected unrelated-EOA registration error for {addr:#x}: {error}"
+                ));
+            }
+            Ok(tx) => {
+                return Err(eyre!(
+                    "unrelated EOA unexpectedly registered joiner {addr:#x}: {tx}"
+                ));
+            }
+        }
+        let register_tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             &key,
-            &IValidatorSet::registerValidatorCall {
-                v: addr,
-                pubkey: Bytes::from(hex::decode(&bls)?),
-                sig: Bytes::from(hex::decode(&sig)?),
-            },
+            &registration,
             None,
         )?;
-        eth::send_call(
+        if eth::receipt_success(&self.cfg.rpc0, &register_tx) != Some(true) {
+            return Err(eyre!("joiner registration failed: {register_tx}"));
+        }
+        let p2p_tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             &key,
@@ -82,6 +111,9 @@ impl Localnet {
             },
             None,
         )?;
+        if eth::receipt_success(&self.cfg.rpc0, &p2p_tx) != Some(true) {
+            return Err(eyre!("joiner P2P registration failed: {p2p_tx}"));
+        }
 
         // Enclave container (owned foreground, no `-d`), then `tee join` once its
         // socket is up.
