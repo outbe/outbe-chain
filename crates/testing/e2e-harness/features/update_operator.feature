@@ -48,6 +48,32 @@ Feature: Operator protocol-version update via governance vote
     Then the activated update state is identical on every validator
     And the committee continues producing finalized blocks
 
+  @pfs-005-duplicate-vote
+  Scenario: A duplicate ballot reverts without changing the approved update
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    When validator "validator-0" repeats the yes vote on proposal 1
+    Then the duplicate vote reverts and proposal 1 still has 3 yes votes on every validator
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+
+  @pfs-005-expired
+  Scenario: A below-quorum update expires without scheduling or version mutation
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1" cast yes votes
+    Then proposal 1 is still pending with 2 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is expired without an update schedule on every validator
+    And the active protocol version remains baseline on every validator
+    And the committee continues producing finalized blocks
+
   # Oversized U256 pagination args used to panic inside Vote::clamp_page via
   # U256::to::<u64>() and could take down the RPC node. After the saturating
   # conversion fix the call must stay non-fatal.

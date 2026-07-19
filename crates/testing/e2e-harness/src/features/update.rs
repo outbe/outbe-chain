@@ -125,6 +125,33 @@ fn cast_yes_votes(world: &mut World, names: String) {
     }
 }
 
+#[when(expr = "validator {string} repeats the yes vote on proposal {int}")]
+fn repeat_yes_vote(world: &mut World, name: String, id: u64) {
+    let validator = world.validators.by_name(&name).expect("resolve validator");
+    let error = world
+        .rpc
+        .cast_vote_rejection(&validator, id, true)
+        .expect("duplicate vote must be rejected during RPC preflight");
+    assert!(
+        error.contains("validator has already voted on proposal"),
+        "unexpected duplicate-vote rejection: {error}"
+    );
+}
+
+#[then(
+    expr = "the duplicate vote reverts and proposal {int} still has {int} yes votes on every validator"
+)]
+fn duplicate_vote_preserves_tally(world: &mut World, id: u64, yes: u64) {
+    let status = world.rpc.vote_status(id);
+    assert_eq!(
+        status.status, "pending",
+        "duplicate changed proposal status"
+    );
+    assert_eq!(status.yes, yes, "duplicate changed yes tally");
+    assert_eq!(status.no, 0, "duplicate changed no tally");
+    proposal_parity(world, id);
+}
+
 #[when(expr = "validator {string} restarts during the voting window")]
 fn restart_during_voting(world: &mut World, name: String) {
     let validator = world.validators.by_name(&name).expect("resolve validator");
@@ -261,6 +288,37 @@ fn activation_converges_after_boundary_restart(world: &mut World) {
     );
     activated_update_parity(world);
     proposal_parity(world, id);
+}
+
+#[then(expr = "proposal {int} is expired without an update schedule on every validator")]
+fn expired_without_schedule(world: &mut World, id: u64) {
+    assert!(
+        world.rpc.wait_vote_status(id, "expired", 60),
+        "proposal #{id} did not expire"
+    );
+    proposal_parity(world, id);
+    for port in validator_ports(world) {
+        assert!(world.rpc.head(port).is_some(), "RPC {port} is unavailable");
+        assert!(
+            world.rpc.active_version_on(port).is_some(),
+            "update read API is unavailable on RPC {port}"
+        );
+        assert!(
+            world.rpc.scheduled_update_on(port, id).is_none(),
+            "expired proposal unexpectedly created a schedule on RPC {port}"
+        );
+    }
+}
+
+#[then("the active protocol version remains baseline on every validator")]
+fn baseline_version_on_all_validators(world: &mut World) {
+    for port in validator_ports(world) {
+        assert_eq!(
+            world.rpc.active_version_on(port),
+            Some(0),
+            "expired proposal mutated active version on RPC {port}"
+        );
+    }
 }
 
 #[then("the committee continues producing finalized blocks")]

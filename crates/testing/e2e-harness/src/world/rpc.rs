@@ -313,6 +313,30 @@ impl Rpc {
         parse::extract_tx_hash(&out).ok_or_else(|| eyre!("no tx hash in vote output:\n{out}"))
     }
 
+    /// Submit a ballot that must be rejected during RPC preflight, returning
+    /// the product CLI/RPC error text for a precise assertion.
+    pub fn cast_vote_rejection(
+        &self,
+        validator: &Validator,
+        id: u64,
+        approve: bool,
+    ) -> Result<String> {
+        let key = validator.evm_key()?;
+        let ids = id.to_string();
+        let flag = if approve { "--yes" } else { "--no" };
+        self.sh().cli_expected_failure([
+            "--private-key",
+            key.as_str(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "vote",
+            "cast",
+            "--proposal-id",
+            ids.as_str(),
+            flag,
+        ])
+    }
+
     // ---- waits (poll loops) --------------------------------------------
 
     /// Wait until head on `port` reaches at least `min`; returns the last head seen.
