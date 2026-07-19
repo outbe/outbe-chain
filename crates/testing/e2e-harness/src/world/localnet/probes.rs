@@ -15,19 +15,45 @@ impl Localnet {
     /// unsupported-update flow may emit only its exact compatibility fatal;
     /// unrelated fatals and all panic/DKG-share/VRF/SGX/projection alarms fail
     /// the scenario even when its functional steps passed.
-    pub fn audit_unexpected_logs(&self, allow_unsupported_update_fatal: bool) -> Result<()> {
+    pub fn audit_unexpected_logs(&self, unsupported_version: Option<u64>) -> Result<()> {
         let mut logs = Vec::new();
         collect_logs(&self.cfg.dir, &mut logs)?;
         let mut findings = Vec::new();
+        let expected_fragment = unsupported_version.map(|version| {
+            format!(
+                "cannot activate protocol version v{}.{} ({version}): binary supports at most v",
+                version >> 24,
+                version & 0x00ff_ffff
+            )
+        });
+        let mut expected_by_validator = vec![0_usize; self.cfg.validators];
         for path in logs {
             let content = fs::read_to_string(&path)
                 .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
             for (index, line) in content.lines().enumerate() {
-                if unexpected_log_line(line, allow_unsupported_update_fatal) {
+                if expected_fragment
+                    .as_deref()
+                    .is_some_and(|fragment| exact_expected_update_fatal(line, fragment))
+                {
+                    if let Some(validator) = validator_node_log_index(&path, self.cfg.validators) {
+                        expected_by_validator[validator] += 1;
+                        continue;
+                    }
+                }
+                if unexpected_log_line(line) {
                     findings.push(format!("{}:{}: {}", path.display(), index + 1, line));
                     if findings.len() == 20 {
                         break;
                     }
+                }
+            }
+        }
+        if expected_fragment.is_some() {
+            for (validator, count) in expected_by_validator.into_iter().enumerate() {
+                if count == 0 {
+                    findings.push(format!(
+                        "validator-{validator}/node.log: expected unsupported-version fatal is absent"
+                    ));
                 }
             }
         }
@@ -135,13 +161,25 @@ fn collect_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn unexpected_log_line(line: &str, allow_unsupported_update_fatal: bool) -> bool {
-    let line = line.to_ascii_lowercase();
-    if allow_unsupported_update_fatal && line.contains("cannot activate protocol version") {
-        return false;
+fn validator_node_log_index(path: &Path, validators: usize) -> Option<usize> {
+    if path.file_name()?.to_str()? != "node.log" {
+        return None;
     }
-    line.contains("fatal")
-        || line.contains("panic")
+    let validator = path.parent()?.file_name()?.to_str()?;
+    let index = validator.strip_prefix("validator-")?.parse().ok()?;
+    (index < validators).then_some(index)
+}
+
+fn exact_expected_update_fatal(line: &str, expected_fragment: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    line.matches("fatal").count() == 1
+        && line.matches("cannot activate protocol version").count() == 1
+        && line.contains(expected_fragment)
+        && !contains_nonfatal_alarm(&line)
+}
+
+fn contains_nonfatal_alarm(line: &str) -> bool {
+    line.contains("panic")
         || (line.contains("dkg")
             && line.contains("share")
             && (line.contains("reveal") || line.contains("disclos")))
@@ -151,9 +189,14 @@ fn unexpected_log_line(line: &str, allow_unsupported_update_fatal: bool) -> bool
         || (line.contains("projection") && line.contains("fatal"))
 }
 
+fn unexpected_log_line(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    line.contains("fatal") || contains_nonfatal_alarm(&line)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::unexpected_log_line;
+    use super::{exact_expected_update_fatal, unexpected_log_line};
 
     #[test]
     fn classifies_forbidden_operational_records() {
@@ -166,16 +209,25 @@ mod tests {
             "Resource temporarily unavailable",
             "projection-fatal checkpoint error",
         ] {
-            assert!(unexpected_log_line(line, false), "missed {line}");
+            assert!(unexpected_log_line(line), "missed {line}");
         }
-        assert!(!unexpected_log_line("committee finalized height=10", false));
+        assert!(!unexpected_log_line("committee finalized height=10"));
     }
 
     #[test]
     fn allows_only_the_expected_binary_compatibility_fatal() {
-        let expected = "fatal: cannot activate protocol version v3.0: binary supports v2.2";
-        assert!(unexpected_log_line(expected, false));
-        assert!(!unexpected_log_line(expected, true));
-        assert!(unexpected_log_line("fatal: projection exited", true));
+        let fragment =
+            "cannot activate protocol version v3.0 (50331648): binary supports at most v";
+        let expected = "fatal: cannot activate protocol version v3.0 (50331648): binary supports at most v2.3 (33554435)";
+        assert!(exact_expected_update_fatal(expected, fragment));
+        assert!(!exact_expected_update_fatal(
+            &format!("{expected}; fatal: projection exited"),
+            fragment
+        ));
+        assert!(!exact_expected_update_fatal(
+            "fatal: cannot activate protocol version v4.0 (67108864): binary supports at most v2.3 (33554435)",
+            fragment
+        ));
+        assert!(unexpected_log_line("fatal: projection exited"));
     }
 }
