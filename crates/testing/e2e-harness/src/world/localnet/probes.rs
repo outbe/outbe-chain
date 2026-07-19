@@ -154,11 +154,18 @@ fn collect_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
         let path = entry.path();
         if path.is_dir() {
             collect_logs(&path, logs)?;
-        } else if path.extension().is_some_and(|extension| extension == "log") {
+        } else if is_runtime_log(&path) {
             logs.push(path);
         }
     }
     Ok(())
+}
+
+fn is_runtime_log(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("node.log" | "enclave.log" | "reth.log")
+    )
 }
 
 fn validator_node_log_index(path: &Path, validators: usize) -> Option<usize> {
@@ -196,7 +203,23 @@ fn unexpected_log_line(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{exact_expected_update_fatal, unexpected_log_line};
+    use std::path::Path;
+
+    use super::{exact_expected_update_fatal, is_runtime_log, unexpected_log_line};
+
+    #[test]
+    fn audits_runtime_logs_without_reading_binary_database_logs() {
+        for path in [
+            "validator-0/node.log",
+            "validator-0/enclave.log",
+            "validator-0/logs/54322345/reth.log",
+        ] {
+            assert!(is_runtime_log(Path::new(path)), "missed {path}");
+        }
+        assert!(!is_runtime_log(Path::new(
+            "validator-0/data/rocksdb/000011.log"
+        )));
+    }
 
     #[test]
     fn classifies_forbidden_operational_records() {
