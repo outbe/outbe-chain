@@ -17,3 +17,14 @@ Feature: Upstream followers, validator catch-up, and warm promotion
     Then the restarted validator catches up to lockstep
     When the first follower is promoted to a validator with its warm datadir
     Then the promoted validator activates and stays in lockstep
+
+  @pfs-008-05 @tee
+  Scenario: A follower stalls safely without its upstream and catches up after switching upstream
+    Given a fresh localnet with a short epoch
+    When the committee drives past a reshare
+    And a cold follower syncs from the committee
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root
+    When the follower loses its only upstream while the committee advances
+    Then the disconnected follower makes no unverified finalized progress
+    When the follower switches to a healthy upstream and restarts from its durable datadir
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root

@@ -201,6 +201,19 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
     })
 }
 
+/// Canonical block hash at `height`.
+pub(crate) fn block_hash(url: &str, height: u64) -> Option<String> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(height))
+            .await
+            .ok()??;
+        Some(format!("{:#x}", block.header.hash))
+    })
+}
+
 /// A custom JSON-RPC method returning an arbitrary JSON value (e.g.
 /// `outbe_consensusStatus`).
 pub(crate) fn raw_json(url: &str, method: &'static str) -> Option<serde_json::Value> {

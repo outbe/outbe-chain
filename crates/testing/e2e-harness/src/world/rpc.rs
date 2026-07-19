@@ -76,6 +76,11 @@ impl Rpc {
         eth::state_root(&self.url(port), height)
     }
 
+    /// Canonical block hash at `height` on the node at `port`.
+    pub fn block_hash(&self, port: u16, height: u64) -> Option<String> {
+        eth::block_hash(&self.url(port), height)
+    }
+
     /// Fetch one latest-finalized compressed-entity package and its exact header.
     pub fn compressed_entity(
         &self,
