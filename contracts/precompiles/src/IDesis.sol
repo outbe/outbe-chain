@@ -3,8 +3,9 @@ pragma solidity ^0.8.30;
 
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
-///         Auction lifecycle (Start/Reveal/Clearing) is called by the Metadosis
-///         runtime module; bid ingestion and clearing are called by OriginMessenger.
+///         Auction lifecycle (Start/Reveal) is driven by the Metadosis runtime
+///         module; bid ingestion is called by OriginRouter and clearing runs
+///         from the Desis begin-block gate.
 interface IDesis {
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {
@@ -16,8 +17,8 @@ interface IDesis {
         Cancelled
     }
 
-    // --- Bid ingestion / clearing (from OriginMessenger) ---
-    /// @notice Accept a relayed bid batch from BNB. Batches of one `relayGeneration` may arrive in any order over
+    // --- Bid ingestion (from OriginRouter) ---
+    /// @notice Accept a relayed bid batch from a target chain. Batches of one `relayGeneration` may arrive in any order over
     ///         the unordered bridge; the receiver collects all `totalBatches` (by `batchIndex`) before finalizing.
     function processBidsBatch(
         uint32 worldwideDay,

@@ -5,7 +5,7 @@ import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
-/// @notice Library for encoding and decoding bridge messages between BNB and Outbe chains.
+/// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
 /// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
 ///      (issuance, mark) are keyed by `seriesId` (both uint32, equal in value while one series per day).
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
@@ -14,11 +14,11 @@ library BridgeMsgCodec {
     /// @notice Active body version emitted by every `encode*` and required by every `decode*`.
     uint8 internal constant BODY_VERSION_V1 = 1;
 
-    // Message types: BNB -> Outbe
+    // Message types: target chain -> Outbe
     uint8 internal constant MSG_BIDS_BATCH = 1;
     uint8 internal constant MSG_BIDS_DONE = 12;
 
-    // Message types: Outbe -> BNB
+    // Message types: Outbe -> target chain
     uint8 internal constant MSG_AUCTION_STAGE_START = 4;
     uint8 internal constant MSG_AUCTION_STAGE_REVEAL = 5;
     uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 6;

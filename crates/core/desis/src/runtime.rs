@@ -85,7 +85,7 @@ pub fn start_auction(
         worldwideDay: worldwide_day,
     })?;
 
-    // Send AUCTION_STAGE_START to BNB.
+    // Broadcast AUCTION_STAGE_START to the target chains.
     // revealEnd = noon of the auction day; commitEnd/issuanceEnd are protocol offsets.
     let noon = auction_noon(auction_timestamp)?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);

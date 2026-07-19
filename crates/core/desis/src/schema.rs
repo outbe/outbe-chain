@@ -99,7 +99,7 @@ impl AuctionConfig {
     }
 }
 
-/// One bid relayed from BNB.
+/// One bid relayed from a target chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidData {
     pub bidder_address: Address,

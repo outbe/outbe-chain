@@ -41,13 +41,13 @@ interface IOriginRouter {
     /// @notice Emitted when a parked outbound leg is flushed successfully.
     event PendingSendFlushed(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
 
-    /// @notice Emitted when an auction stage message is sent to BNB.
+    /// @notice Emitted when an auction stage message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param stageType Codec message type (start/reveal/clearing).
     event AuctionStageSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint8 stageType);
 
-    /// @notice Emitted when an auction result is sent to BNB.
+    /// @notice Emitted when an auction result is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Number of Intex units issued.
@@ -56,24 +56,24 @@ interface IOriginRouter {
         bytes32 indexed sendId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
     );
 
-    /// @notice Emitted when issuance instructions are sent to BNB.
+    /// @notice Emitted when issuance instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     /// @param recipientsCount Number of recipients.
     event IssuanceInstructionsSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 recipientsCount);
 
-    /// @notice Emitted when refund instructions are sent to BNB.
+    /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param instructionsCount Number of finalization instructions.
     event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
-    /// @notice Emitted when a mark-called message is sent to BNB.
+    /// @notice Emitted when a mark-called message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, uint32 indexed seriesId);
 
-    /// @notice Emitted when a mark-qualified message is sent to BNB.
+    /// @notice Emitted when a mark-qualified message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);

@@ -1,6 +1,6 @@
 //! Desis: Intex auction/clearing engine on Outbe (demand side).
 //!
-//! Receives bid batches from BNB via OriginRouter, runs the three-stage
+//! Receives bid batches from the target chains via OriginRouter, runs the three-stage
 //! auction lifecycle (Start → Reveal → Clearing), clears the auction, and
 //! hands issuance to IntexFactory.
 
