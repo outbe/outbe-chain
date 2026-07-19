@@ -34,5 +34,8 @@ Feature: EIP-7702 ZeroFee sponsorship and paid fallback
     Then the exhausted ZeroFee state is identical on every validator
     When the entire committee restarts after quota exhaustion
     Then the exhausted ZeroFee state is identical on every validator
+    When the exact included ZeroFee delegation transaction is replayed
+    Then the replay is rejected without changing delegation or quota
+    And the exhausted ZeroFee state is identical on every validator
     When the quota-exhausted account submits the same call with a priority fee
     Then the paid call succeeds, charges a fee, and does not change the quota

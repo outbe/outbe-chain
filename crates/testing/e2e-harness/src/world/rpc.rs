@@ -990,6 +990,12 @@ impl Rpc {
     pub fn assert_zerofee_persisted_on_ports(&self, state: &FixtureState, ports: &[u16]) {
         let address = zerofee_address(state);
         let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        let expected_counter = self
+            .zerofee_counter(address)
+            .expect("primary ZeroFee counter");
+        let expected_balance =
+            eth::balance(&self.cfg.rpc0, address).expect("primary delegated-account COEN balance");
+        assert_eq!(expected_counter.1, 8, "primary quota must remain exhausted");
         for &port in ports {
             let url = self.url(port);
             assert_eq!(
@@ -1004,9 +1010,14 @@ impl Rpc {
             )
             .map(|value| (value.day, value.count));
             assert_eq!(
-                counter.map(|value| value.1),
-                Some(8),
-                "quota changed on RPC port {port}"
+                counter,
+                Some(expected_counter),
+                "quota/day changed on RPC port {port}"
+            );
+            assert_eq!(
+                eth::balance(&url, address),
+                Some(expected_balance),
+                "delegated-account COEN balance changed on RPC port {port}"
             );
         }
     }
