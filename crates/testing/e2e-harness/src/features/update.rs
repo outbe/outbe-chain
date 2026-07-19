@@ -512,6 +512,44 @@ fn log_reports_unsupported_fatal(world: &mut World, name: String) {
     );
 }
 
+#[when("the entire committee restarts after the unsupported activation failure")]
+fn restart_after_unsupported_activation(world: &mut World) {
+    restart_entire_committee(world, "restart after unsupported activation failure");
+}
+
+#[then("every validator RPC recovers below the unsupported activation height")]
+fn unsupported_rpc_recovery(world: &mut World) {
+    let activation = world.state.activation_height.expect("activation height");
+    for port in validator_ports(world) {
+        let head = world
+            .rpc
+            .head(port)
+            .unwrap_or_else(|| panic!("RPC {port} did not recover"));
+        assert!(
+            head < activation,
+            "RPC {port} advanced to {head} at/past unsupported activation {activation}"
+        );
+    }
+}
+
+#[then("the unsupported proposal and waiting schedule are identical on every validator")]
+fn unsupported_state_parity(world: &mut World) {
+    approved_schedule_parity(world);
+    let proposed = world.state.proposed_version.expect("unsupported version");
+    for port in validator_ports(world) {
+        assert_ne!(
+            world.rpc.active_version_on(port),
+            Some(proposed),
+            "unsupported version became active on RPC {port}"
+        );
+    }
+}
+
+#[then("the committee remains stalled below the unsupported activation height")]
+fn unsupported_still_stalled(world: &mut World) {
+    does_not_pass_activation(world);
+}
+
 /// Active protocol version updated to the proposed version
 /// (update_operator_flow.sh:316-317).
 #[then("the active protocol version equals the proposed version")]

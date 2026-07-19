@@ -103,3 +103,8 @@ Feature: Operator protocol-version update via governance vote
     And the active protocol version is unchanged
     And the scheduled update is still waiting for activation
     And validator "validator-0" logs report the unsupported activation as fatal
+    When the entire committee restarts after the unsupported activation failure
+    Then every validator RPC recovers below the unsupported activation height
+    And the unsupported proposal and waiting schedule are identical on every validator
+    And the committee remains stalled below the unsupported activation height
+    And validator "validator-0" logs report the unsupported activation as fatal
