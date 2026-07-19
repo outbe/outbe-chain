@@ -112,20 +112,6 @@ contract BridgeMsgCodecHelpersTest is Test {
         harness.assertMinLength(packet, BridgeMsgCodec.MSG_MARK_CALLED);
     }
 
-    function test_assertMinLength_shortStageReveal_reverts() public {
-        uint16 floor = BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_REVEAL;
-        bytes memory packet = new bytes(uint256(floor) - 1);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL,
-                uint256(floor) - 1,
-                uint256(floor)
-            )
-        );
-        harness.assertMinLength(packet, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
-    }
-
     // --- minLengthFor: unknown msgType returns 0 (caller raises UnknownMsgType) ---
     function test_minLengthFor_unknownMsgType_returnsZero() public view {
         assertEq(harness.minLengthFor(0xFE), 0, "unknown msgType -> 0 (caller decides)");

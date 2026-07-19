@@ -93,26 +93,11 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         paymentToken.approve(address(escrow), type(uint256).max);
     }
 
-    // --- _handleAuctionStageReveal: green-day signal -> auction stage flips to Revealing ---
-    function test_handleAuctionStageReveal_advancesAuctionToRevealing() public {
-        _seedAuction();
-
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageReveal(WORLDWIDE_DAY, true);
-        _deliver(packet);
-
-        assertEq(
-            uint8(auction.getAuctionStage(WORLDWIDE_DAY)),
-            uint8(IIntexAuction.AuctionStage.RevealingBids),
-            "auction advanced to RevealingBids"
-        );
-    }
-
     // --- _handleAuctionResult: clearing data is persisted on the auction ---
     function test_handleAuctionResult_persistsClearingOnAuction() public {
         _seedAuction();
         // Push the auction into Issuance stage so executeAuctionClearing is accepted.
-        vm.prank(address(bnbRouter));
-        auction.startRevealingBidsStage(WORLDWIDE_DAY, true);
+        vm.warp(block.timestamp + 1 days);
         vm.prank(address(bnbRouter));
         auction.startClearingStage(WORLDWIDE_DAY);
 
@@ -128,8 +113,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     // --- _handleAuctionStageClearing: relays a BIDS_DONE marker, exactly once ---
     function test_handleAuctionStageClearing_emitsBidsDone() public {
         _seedAuction();
-        vm.prank(address(bnbRouter));
-        auction.startRevealingBidsStage(SERIES_ID, true);
+        vm.warp(block.timestamp + 1 days);
 
         // No revealed bids: one empty BIDS_BATCH plus a BIDS_DONE(totalBatches=1, totalBids=0).
         vm.expectEmit(false, true, false, true, address(bnbRouter));
@@ -139,8 +123,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     function test_handleAuctionStageClearing_idempotentOnRedelivery() public {
         _seedAuction();
-        vm.prank(address(bnbRouter));
-        auction.startRevealingBidsStage(SERIES_ID, true);
+        vm.warp(block.timestamp + 1 days);
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
         _deliver(packet); // first CLEARING relays
 
@@ -342,7 +325,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
-        auction.auctionStart(WORLDWIDE_DAY, schedule, params);
+        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Green, schedule, params);
     }
 
     function _seedSeriesOnIntex() internal {

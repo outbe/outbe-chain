@@ -41,7 +41,7 @@ contract IntexAuctionUupsTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
     }
 
     function test_Initialize_GrantsRoles() public view {

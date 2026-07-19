@@ -90,18 +90,6 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
-    function test_TM_ShortStageReveal_RevertsInvalidPayloadLength() public {
-        // STAGE_REVEAL min length = 7. Send 6-byte packet (missing isGreenDay tail byte).
-        bytes memory packet =
-            abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL, uint32(1));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL, 6, 7
-            )
-        );
-        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
-    }
-
     function test_TM_ShortRefundInstructions_RevertsInvalidPayloadLength() public {
         // REFUND_INSTRUCTIONS carries three ABI-encoded arrays; its minimum (HEADER_LEN + 224)
         // pins the empty-arrays floor. Send one byte under it to trip the per-type length check.
@@ -175,7 +163,7 @@ contract InboundValidationTest is CrossChainTest {
     ///         `minLengthFor(MARK_CALLED)` returns 6, and our 2-byte packet trips `InvalidPayloadLength` before
     ///         the else-branch is reached. This pins the order: length is asserted before the msgType-set check.
     function test_OM_CodecKnownButHandlerUnknown_RevertsInvalidPayloadLength() public {
-        bytes memory packet = hex"010A"; // bodyVersion + MARK_CALLED (10): codec-known, OM doesn't accept
+        bytes memory packet = hex"0108"; // bodyVersion + MARK_CALLED (8): codec-known, OM doesn't accept
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 2, 6)
         );
