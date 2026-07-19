@@ -71,6 +71,18 @@ impl Rpc {
         eth::finalized_number(&self.url(port))
     }
 
+    /// Timestamp of the latest block, in EVM seconds.
+    pub fn latest_block_timestamp(&self, port: u16) -> Option<u64> {
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getBlockByNumber",
+            serde_json::json!(["latest", false]),
+        )
+        .and_then(|block| block.get("timestamp").cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+    }
+
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
@@ -1268,6 +1280,89 @@ impl Rpc {
             "stale authorization replaced the existing delegation"
         );
         assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn wait_zerofee_day_rollover_and_submit(&self, state: &mut FixtureState) -> Result<()> {
+        let address = zerofee_address(state);
+        let before = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read exhausted counter before day rollover"))?;
+        if before.1 != 8 {
+            return Err(eyre!(
+                "day rollover requires exhausted quota, got {before:?}"
+            ));
+        }
+        state.zerofee_day_before_rollover = Some(before.0);
+
+        let mut reset = None;
+        for _ in 0..150 {
+            let latest_timestamp = self.latest_block_timestamp(self.cfg.primary_port());
+            let current = self.zerofee_counter(address);
+            if latest_timestamp.is_some_and(|timestamp| timestamp % 86_400 < 200)
+                && current.is_some_and(|value| value.0 != before.0 && value.1 == 0)
+            {
+                reset = current;
+                break;
+            }
+            sleep(Duration::from_secs(1));
+        }
+        let _reset = reset.ok_or_else(|| eyre!("ZeroFee counter did not lazily reset"))?;
+        state.zerofee_new_day_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_new_day_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            zerofee_key(state),
+            addresses::AGENT_REWARD_ADDR,
+            0,
+        )?);
+        state.zerofee_new_day_balance_after = eth::balance(&self.cfg.rpc0, address);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_day_rollover(&self, state: &FixtureState, ports: &[u16]) {
+        let address = zerofee_address(state);
+        let old_day = state
+            .zerofee_day_before_rollover
+            .expect("day before rollover");
+        let receipt = state
+            .zerofee_new_day_receipt
+            .as_ref()
+            .expect("new-day receipt");
+        assert!(
+            receipt_status(receipt),
+            "first new-day sponsored call failed: receipt={receipt}"
+        );
+        assert!(
+            receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "first new-day call has no sponsorship event"
+        );
+        assert_eq!(
+            state.zerofee_new_day_balance_after, state.zerofee_new_day_balance_before,
+            "first new-day sponsored call charged the signer COEN"
+        );
+        let expected = self
+            .zerofee_counter(address)
+            .expect("primary new-day counter");
+        assert_ne!(expected.0, old_day, "worldwide day did not change");
+        assert_eq!(expected.1, 1, "new-day quota must restart at one use");
+        let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        for &port in ports {
+            let url = self.url(port);
+            assert_eq!(
+                eth::read_call(
+                    &url,
+                    addresses::ZEROFEE_ADDR,
+                    &IZeroFee::getCounterCall { signer: address },
+                )
+                .map(|value| (value.day, value.count)),
+                Some(expected),
+                "new-day quota differs on RPC port {port}"
+            );
+            assert_eq!(
+                eth::code(&url, address).map(|code| code.to_vec()),
+                Some(expected_code.clone()),
+                "delegation changed across day rollover on RPC port {port}"
+            );
+        }
     }
 
     fn zerofee_counter(&self, signer: Address) -> Option<(u32, u32)> {

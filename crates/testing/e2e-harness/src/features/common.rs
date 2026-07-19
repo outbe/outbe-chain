@@ -38,6 +38,15 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
 /// chain is up (TEE bootstrapped, or RPC reachable tee-less). Also captures the
 /// chain's worldwide-day so tribute-offer steps target the OFFERING day.
 pub(crate) fn boot_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
+    boot_localnet_with_opts(world, window, tuning, StartOpts::with_voting_window(window));
+}
+
+pub(crate) fn boot_localnet_with_opts(
+    world: &mut World,
+    window: u64,
+    tuning: &[(&str, String)],
+    opts: StartOpts,
+) {
     let committee_size = world.validators.size();
     world.state.voting_window = window;
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
@@ -47,10 +56,13 @@ pub(crate) fn boot_localnet(world: &mut World, window: u64, tuning: &[(&str, Str
         .localnet
         .bootstrap(committee_size, tuning)
         .expect("bootstrap localnet");
-    world
-        .localnet
-        .start(&StartOpts::with_voting_window(window))
-        .expect("start localnet");
+    if let Some(offset) = opts.unix_time_offset_secs {
+        world
+            .localnet
+            .shift_genesis_timestamp(offset)
+            .expect("shift debug genesis timestamp with node clock");
+    }
+    world.localnet.start(&opts).expect("start localnet");
 
     if world.localnet.tee_enabled() {
         assert!(

@@ -25,6 +25,27 @@ const VOTER_FELONY_SLOT: u64 = 12;
 const STAKING_SUFFIX: &str = "ee02";
 
 impl Localnet {
+    /// Keep a debug-only logical-clock E2E internally consistent by shifting the
+    /// genesis header by the same signed number of seconds passed to every node.
+    /// Without this, block 1 is correctly rejected by the production max-drift
+    /// validator before a day-boundary scenario can exercise ZeroFee.
+    pub(crate) fn shift_genesis_timestamp(&self, offset_secs: i64) -> Result<()> {
+        let path = self.cfg.dir.join("genesis.json");
+        let bytes = fs::read(&path)?;
+        let mut genesis: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let raw = genesis
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre::eyre!("genesis timestamp is not a string"))?;
+        let seconds = u64::from_str_radix(raw.trim_start_matches("0x"), 16)?;
+        let shifted = i128::from(seconds) + i128::from(offset_secs);
+        let shifted = u64::try_from(shifted)
+            .map_err(|_| eyre::eyre!("genesis timestamp offset leaves u64 range"))?;
+        genesis["timestamp"] = serde_json::Value::String(format!("0x{shifted:x}"));
+        fs::write(path, serde_json::to_vec_pretty(&genesis)?)?;
+        Ok(())
+    }
+
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
     /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
     /// subprocesses; the genesis skeleton, port rewrite, and felony patch are

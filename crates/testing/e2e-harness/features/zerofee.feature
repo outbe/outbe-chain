@@ -50,3 +50,14 @@ Feature: EIP-7702 ZeroFee sponsorship and paid fallback
     Then the wrong-target call receives no sponsorship and leaves ZeroFee quota unchanged
     When a stale conflicting authorization attempts to replace the wrong target
     Then the conflicting authorization leaves the prior delegation and ZeroFee quota unchanged
+
+  @pfs-007-12
+  Scenario: Exhausted quota resets lazily across the worldwide-day boundary
+    Given a fresh localnet near the next UTC worldwide-day boundary
+    And the committee has reached a usable height
+    When a funded fresh account delegates to ZeroFee with EIP-7702
+    Then the exact ZeroFee delegation designator is installed
+    When the account submits eight eligible sponsored reward calls
+    Then all eight calls succeed without fees and consume the full quota
+    When the chain crosses into the next worldwide day
+    Then ZeroFee quota resets lazily and the first new-day sponsored call succeeds on every validator

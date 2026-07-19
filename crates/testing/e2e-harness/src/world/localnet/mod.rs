@@ -41,6 +41,8 @@ pub struct StartOpts {
     /// Shorten the governance voting window to N blocks (test hook,
     /// `OUTBE_TEST_VOTING_WINDOW_BLOCKS`).
     pub voting_window: Option<u64>,
+    /// Signed wall-clock offset used only by debug-node day-boundary E2E.
+    pub unix_time_offset_secs: Option<i64>,
 }
 
 impl StartOpts {
@@ -48,6 +50,18 @@ impl StartOpts {
     pub fn with_voting_window(window: u64) -> Self {
         Self {
             voting_window: Some(window),
+            unix_time_offset_secs: None,
+        }
+    }
+
+    pub fn near_next_utc_day(window: u64, now_secs: u64) -> Self {
+        const SECONDS_PER_DAY: u64 = 86_400;
+        const BOUNDARY_LEAD_SECS: u64 = 120;
+        let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
+        let target = next_day.saturating_sub(BOUNDARY_LEAD_SECS);
+        Self {
+            voting_window: Some(window),
+            unix_time_offset_secs: Some(target as i64 - now_secs as i64),
         }
     }
 }

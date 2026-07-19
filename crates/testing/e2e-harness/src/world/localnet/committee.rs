@@ -142,6 +142,9 @@ impl Localnet {
         if let Some(w) = opts.voting_window {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
+        if let Some(offset) = opts.unix_time_offset_secs {
+            cmd.env("OUTBE_TEST_UNIX_TIME_OFFSET_SECS", offset.to_string());
+        }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;

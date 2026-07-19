@@ -1,8 +1,29 @@
 //! Steps for the live EIP-7702 ZeroFee sponsorship vertical slice.
 
-use cucumber::{then, when};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use cucumber::{given, then, when};
+
+use crate::features::common::boot_localnet_with_opts;
+use crate::world::localnet::StartOpts;
 use crate::world::World;
+
+#[given("a fresh localnet near the next UTC worldwide-day boundary")]
+fn near_day_boundary(world: &mut World) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time after epoch")
+        .as_secs();
+    boot_localnet_with_opts(world, 20, &[], StartOpts::near_next_utc_day(20, now));
+    let timestamp = world
+        .rpc
+        .latest_block_timestamp(world.validators.primary_port())
+        .expect("latest block timestamp in boundary setup");
+    assert!(
+        timestamp % 86_400 >= 86_200,
+        "debug-node clock did not enter the worldwide-day boundary window: {timestamp}"
+    );
+}
 
 #[then("Pectra and the ZeroFee views are ready")]
 fn readiness(world: &mut World) {
@@ -188,4 +209,20 @@ fn conflicting_authorization_preserves_state(world: &mut World) {
     world
         .rpc
         .assert_zerofee_conflicting_authorization(&world.state);
+}
+
+#[when("the chain crosses into the next worldwide day")]
+fn cross_worldwide_day(world: &mut World) {
+    world
+        .rpc
+        .wait_zerofee_day_rollover_and_submit(&mut world.state)
+        .expect("wait for ZeroFee worldwide-day rollover");
+}
+
+#[then(
+    "ZeroFee quota resets lazily and the first new-day sponsored call succeeds on every validator"
+)]
+fn quota_resets_on_new_day(world: &mut World) {
+    let ports = world.validators.committee_ports();
+    world.rpc.assert_zerofee_day_rollover(&world.state, &ports);
 }

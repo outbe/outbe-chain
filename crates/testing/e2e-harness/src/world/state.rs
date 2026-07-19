@@ -67,6 +67,10 @@ pub struct FixtureState {
     pub zerofee_wrong_target_balance_before: Option<alloy_primitives::U256>,
     pub zerofee_wrong_target_balance_after: Option<alloy_primitives::U256>,
     pub zerofee_conflicting_authorization_receipt: Option<serde_json::Value>,
+    pub zerofee_day_before_rollover: Option<u32>,
+    pub zerofee_new_day_receipt: Option<serde_json::Value>,
+    pub zerofee_new_day_balance_before: Option<alloy_primitives::U256>,
+    pub zerofee_new_day_balance_after: Option<alloy_primitives::U256>,
 }
 
 impl Default for FixtureState {
@@ -111,6 +115,10 @@ impl Default for FixtureState {
             zerofee_wrong_target_balance_before: None,
             zerofee_wrong_target_balance_after: None,
             zerofee_conflicting_authorization_receipt: None,
+            zerofee_day_before_rollover: None,
+            zerofee_new_day_receipt: None,
+            zerofee_new_day_balance_before: None,
+            zerofee_new_day_balance_after: None,
         }
     }
 }
