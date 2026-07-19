@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, mutate_void_payable, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate_void, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -15,8 +15,8 @@ use crate::schema::BidData;
 
 /// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
 /// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
-/// (XOR of its 5 function selectors).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xde, 0xc7, 0x95, 0xe6];
+/// (XOR of its 4 function selectors).
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xce, 0xe6, 0x92, 0x32];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -27,7 +27,7 @@ pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
     caller: Address,
-    value: U256,
+    _value: U256,
 ) -> Result<Bytes> {
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
@@ -60,9 +60,6 @@ pub fn dispatch(
                     c.totalBatches,
                     c.totalBids,
                 )
-            }),
-            clearAuction(c) => mutate_void_payable(c, caller, value, |sender, c, _val| {
-                runtime::clear_auction(storage.clone(), sender, c.worldwideDay).map(|_| ())
             }),
             getAuctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;

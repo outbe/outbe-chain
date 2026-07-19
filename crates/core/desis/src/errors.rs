@@ -15,9 +15,6 @@ pub enum DesisError {
     #[error("pending clearing data missing for series {0}")]
     PendingClearingDataMissing(u32),
 
-    #[error("clearing gate not ready for day {0}")]
-    ClearingGateNotReady(u32),
-
     #[error("unauthorized origin: {0}")]
     UnauthorizedOrigin(Address),
 }

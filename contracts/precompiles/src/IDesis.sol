@@ -41,9 +41,6 @@ interface IDesis {
         uint32 totalBids
     ) external;
 
-    /// @notice Run clearing and hand issuance to IntexFactory.
-    function clearAuction(uint32 worldwideDay) external payable;
-
     // --- Views ---
     function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
     function getBidsCount(uint32 worldwideDay) external view returns (uint256);

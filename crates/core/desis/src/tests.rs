@@ -60,6 +60,13 @@ fn mark_done(s: &StorageHandle, chain: u32, gen: u32, total_batches: u16, total_
     .unwrap();
 }
 
+/// Run the begin-block gate clearing for the day (every snapshot chain finalized).
+fn clear(s: &StorageHandle) -> crate::schema::ClearingResult {
+    runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
+        .unwrap()
+        .unwrap()
+}
+
 fn default_config() -> AuctionConfig {
     AuctionConfig {
         issuance_currency: 840,
@@ -197,7 +204,7 @@ fn start_auction_derives_min_bid_qty_from_prior_clearing() {
         )
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 100);
-        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        clear(&s);
 
         // Second auction for a different worldwide_day: min_bid_qty must be 4% of 100 = 4.
         runtime::start_auction(
@@ -257,33 +264,6 @@ fn process_bids_rejects_non_origin_caller() {
         .is_err());
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
-    });
-}
-
-#[test]
-fn clear_auction_rejects_non_origin_caller() {
-    with_storage(|s| {
-        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            bids(3, 200),
-        )
-        .unwrap();
-        // The caller check runs before the gate, so a stranger is rejected regardless of readiness.
-        let attacker = bidder(99);
-        assert!(runtime::clear_auction(s.clone(), attacker, WORLDWIDE_DAY).is_err());
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Revealing
-        );
     });
 }
 
@@ -582,7 +562,7 @@ fn no_bids_clears_as_no_sale() {
         // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners (the
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling).
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
         assert_eq!(
@@ -602,7 +582,7 @@ fn no_bids_clears_as_no_sale() {
 // --- Clearing algorithm ---
 
 #[test]
-fn clear_auction_allocates_up_to_supply() {
+fn clearing_allocates_up_to_supply() {
     with_storage(|s| {
         let supply = 3u32;
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
@@ -628,14 +608,14 @@ fn clear_auction_allocates_up_to_supply() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 5);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         assert_eq!(result.issued_intex_count, supply);
         assert_eq!(result.winners.len(), supply as usize);
     });
 }
 
 #[test]
-fn clear_auction_transitions_to_cleared() {
+fn clearing_transitions_to_cleared() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
@@ -652,7 +632,7 @@ fn clear_auction_transitions_to_cleared() {
         )
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 1);
-        runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+        clear(&s);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
@@ -680,7 +660,7 @@ fn begin_clearing_accepts_zero_supply() {
 }
 
 #[test]
-fn clear_auction_empty_supply_refunds_all_bidders() {
+fn clearing_empty_supply_refunds_all_bidders() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
@@ -698,7 +678,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
 
         assert_eq!(result.issued_intex_count, 0);
         assert!(result.winners.is_empty());
@@ -715,7 +695,7 @@ fn clear_auction_empty_supply_refunds_all_bidders() {
 }
 
 #[test]
-fn clear_auction_uniform_price_is_last_allocated_bid() {
+fn clearing_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
         runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
         runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
@@ -761,7 +741,7 @@ fn clear_auction_uniform_price_is_last_allocated_bid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         // Supply 2 → top 2 bids win (300 and 200); clearing rate = 200.
         assert_eq!(result.clearing_rate, 200);
         assert_eq!(result.issued_intex_count, 2);
@@ -801,7 +781,7 @@ fn clear_bids_below_min_price_skipped() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         // Only bid at 200 clears; bid at 50 < min_bid_price=100 is skipped.
         assert_eq!(result.issued_intex_count, 1);
     });
@@ -842,7 +822,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
@@ -925,7 +905,7 @@ fn clear_rate_escrow_scales_by_basis() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 3);
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
 
         assert_eq!(result.clearing_rate, 600_000);
         // lock/pay = qty * promis_load * rate / 1e6; clearing rate 60%.
@@ -1001,7 +981,7 @@ fn two_chain_bids_merge_and_carry_source_chain() {
         mark_done(&s, chain_b, 1, 1, 1);
 
         let result =
-            runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).unwrap();
+            clear(&s);
         assert_eq!(result.issued_intex_count, 2);
         // Both bidders win; each is tagged with its own chain.
         let a = result.winners.iter().position(|&w| w == bidder(1)).unwrap();
@@ -1013,38 +993,6 @@ fn two_chain_bids_merge_and_carry_source_chain() {
 }
 
 /// Manual clearing must wait until every snapshot chain has finalized.
-#[test]
-fn clear_auction_requires_all_chains_done() {
-    let chain_a = 10u32;
-    let chain_b = 20u32;
-    with_targets(&[chain_a, chain_b], |s| {
-        runtime::start_auction(s.clone(), WORLDWIDE_DAY, AUCTION_TS, default_config()).unwrap();
-        runtime::reveal_auction(s.clone(), WORLDWIDE_DAY, true).unwrap();
-        runtime::begin_clearing(s.clone(), WORLDWIDE_DAY, 2 * PROMIS_LOAD_MINOR, NOW).unwrap();
-        // Only chain A reports.
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            chain_a,
-            1,
-            0,
-            1,
-            bids(1, 200),
-        )
-        .unwrap();
-        mark_done(&s, chain_a, 1, 1, 1);
-        // Chain B is still missing → manual clear is rejected.
-        assert!(runtime::clear_auction(s.clone(), ORIGIN_ROUTER_ADDRESS, WORLDWIDE_DAY).is_err());
-        assert_eq!(
-            s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
-                .unwrap(),
-            AuctionStage::Revealing
-        );
-    });
-}
-
 /// The tick clears only once the gate is satisfied; before then `force_clear` yields `None`.
 #[test]
 fn force_clear_waits_then_fires_when_all_done() {
@@ -1070,6 +1018,12 @@ fn force_clear_waits_then_fires_when_all_done() {
         assert!(runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
             .unwrap()
             .is_none());
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Revealing
+        );
 
         // Chain B reports → the gate opens and the tick clears.
         runtime::process_bids_batch(
@@ -1202,13 +1156,12 @@ fn test_iface_id_matches_selector_xor() {
     use alloy_sol_types::SolCall;
 
     // `IDESIS_INTERFACE_ID` is what OriginRouter probes: `type(IDesis).interfaceId` of the
-    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) — the five
+    // router-facing interface (contracts/intex/src/origin/interfaces/IDesis.sol) — the four
     // functions it declares. The precompile's extra diagnostic views (getChainBidsCount,
     // isChainDone) are not part of that interface, so they are excluded from the XOR.
     let xor: [u8; 4] = [
         IDesis::processBidsBatchCall::SELECTOR,
         IDesis::processBidsDoneCall::SELECTOR,
-        IDesis::clearAuctionCall::SELECTOR,
         IDesis::getAuctionStageCall::SELECTOR,
         IDesis::getBidsCountCall::SELECTOR,
     ]

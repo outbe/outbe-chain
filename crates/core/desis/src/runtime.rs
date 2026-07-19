@@ -402,27 +402,6 @@ fn try_finalize_chain(
 // Clearing
 // ---------------------------------------------------------------------------
 
-/// Manual/ops clearing entry (precompile, gated to OriginRouter). Requires every
-/// snapshot chain to have finalized its intake; the deadline-skip path belongs to
-/// the begin-block tick, which has the block clock.
-pub fn clear_auction(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    worldwide_day: u32,
-) -> Result<ClearingResult> {
-    require_origin_router(caller)?;
-    require_nonzero_worldwide_day(worldwide_day)?;
-    let snapshot = fetch_targets(&storage, worldwide_day)?;
-    let (included, skipped) = {
-        let contract = storage.contract::<DesisContract>();
-        partition_chains(&contract, worldwide_day, &snapshot)?
-    };
-    if !skipped.is_empty() {
-        return Err(DesisError::ClearingGateNotReady(worldwide_day).into());
-    }
-    clear_inner(storage, worldwide_day, &snapshot, &included, &skipped)
-}
-
 /// Tick entry for the fan-in gate: clear once every snapshot chain has finalized,
 /// or once the deadline passes (missing chains are excluded and reported via
 /// `ChainSkipped`). Returns `None` while the gate is not ready.

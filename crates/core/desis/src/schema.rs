@@ -175,7 +175,7 @@ pub struct DesisContract {
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// worldwide_day -> 1 once `begin_clearing` has run; lets `clear_auction` tell a
+    /// worldwide_day -> 1 once `begin_clearing` has run; lets `force_clear` tell a
     /// genuine zero supply from a clearing that was never initiated.
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,

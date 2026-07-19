@@ -49,12 +49,6 @@ contract MockDesis {
         return IDesis.AuctionStage.None;
     }
 
-    function clearAuction(
-        uint32 /* seriesId */
-    )
-        external
-        payable {}
-
     function getBidsCount(
         uint32 /* seriesId */
     )
