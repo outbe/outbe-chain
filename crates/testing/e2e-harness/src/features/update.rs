@@ -19,6 +19,11 @@ const MIN_ACTIVATION_BUFFER: u64 = 0;
 /// ceiling is `v2.3`; this is strictly greater and must Fatal at activation.
 const UNSUPPORTED_PROTOCOL_VERSION: u64 = 3u64 << 24;
 
+/// Valid secp256k1 key for a funded EOA that is deliberately outside the
+/// genesis validator set.
+const NON_VALIDATOR_KEY: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000001";
+
 /// Propose a bump to the next protocol version from an operator
 /// (update_operator_flow.sh:234-251).
 #[when(expr = "operator {string} proposes an update to the next protocol version")]
@@ -41,6 +46,84 @@ fn propose_unsupported_update(world: &mut World, name: String) {
         &name,
         UNSUPPORTED_PROTOCOL_VERSION,
         "e2e unsupported protocol version",
+    );
+}
+
+#[when("a funded non-validator attempts to propose an update")]
+fn unauthorized_proposal(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let funder = world.validators.get(0);
+    let funding = world
+        .rpc
+        .fund_key(&funder, NON_VALIDATOR_KEY, 1)
+        .expect("fund non-validator with COEN for RPC preflight");
+    assert!(
+        world.rpc.wait_successful_receipt(&funding, 20),
+        "non-validator funding receipt failed: {funding}"
+    );
+
+    let head = world.rpc.head(primary).expect("read head");
+    let activation = head + world.state.voting_window + 30;
+    let payload = serde_json::json!({
+        "version": "0.1",
+        "activationHeight": activation,
+        "info": "unauthorized e2e proposal",
+    })
+    .to_string();
+    let error = world
+        .rpc
+        .send_propose_rejection(NON_VALIDATOR_KEY, &format!("{UPDATE_ADDR:#x}"), &payload)
+        .expect("non-validator proposal must fail during RPC preflight");
+    assert!(
+        error.contains("caller is not an active validator"),
+        "unexpected unauthorized-proposal rejection: {error}"
+    );
+}
+
+#[then(expr = "the unauthorized proposal is rejected without creating proposal {int}")]
+fn unauthorized_proposal_preserves_state(world: &mut World, id: u64) {
+    for port in validator_ports(world) {
+        assert!(
+            !world.rpc.vote_status_on(port, id).visible,
+            "unauthorized proposal #{id} became visible on RPC {port}"
+        );
+        assert!(
+            world.rpc.scheduled_update_on(port, id).is_none(),
+            "unauthorized proposal #{id} created a schedule on RPC {port}"
+        );
+    }
+}
+
+#[when(expr = "operator {string} proposes a conflicting update at the same activation height")]
+fn propose_conflicting_update(world: &mut World, name: String) {
+    let operator = world.validators.operator(&name).expect("resolve operator");
+    let activation = world
+        .state
+        .activation_height
+        .expect("first proposal activation height");
+    let first_version = world
+        .state
+        .proposed_version
+        .expect("first proposal version");
+    let conflicting_version = first_version + 1;
+    let version = format!(
+        "{}.{}",
+        conflicting_version >> 24,
+        conflicting_version & 0x00FF_FFFF
+    );
+    let payload = serde_json::json!({
+        "version": version,
+        "activationHeight": activation,
+        "info": "conflicting e2e update",
+    })
+    .to_string();
+    let tx = world
+        .rpc
+        .send_propose(&operator, &format!("{UPDATE_ADDR:#x}"), &payload)
+        .expect("send conflicting proposal");
+    assert!(
+        world.rpc.wait_successful_receipt(&tx, 40),
+        "conflicting proposal transaction failed before tally: {tx}"
     );
 }
 
@@ -111,6 +194,15 @@ fn proposal_pending(world: &mut World, id: u64) {
 #[when(expr = "validators {string} cast yes votes")]
 fn cast_yes_votes(world: &mut World, names: String) {
     let id = world.state.proposal_id;
+    cast_yes_votes_for(world, &names, id);
+}
+
+#[when(expr = "validators {string} cast confirmed yes votes on proposal {int}")]
+fn cast_yes_votes_on(world: &mut World, names: String, id: u64) {
+    cast_yes_votes_for(world, &names, id);
+}
+
+fn cast_yes_votes_for(world: &mut World, names: &str, id: u64) {
     for name in names.split(',') {
         let name = name.trim();
         let validator = world.validators.by_name(name).expect("resolve validator");
@@ -242,6 +334,51 @@ fn approved_schedule_parity(world: &mut World) {
             world.rpc.scheduled_update_on(port, world.state.proposal_id),
             Some(expected.clone()),
             "scheduled update on RPC {port}"
+        );
+    }
+}
+
+#[then(expr = "proposal {int} is rejected without a schedule on every validator")]
+fn rejected_without_schedule(world: &mut World, id: u64) {
+    assert!(
+        world.rpc.wait_vote_status(id, "rejected", 60),
+        "conflicting proposal #{id} did not become rejected"
+    );
+    proposal_parity(world, id);
+    for port in validator_ports(world) {
+        assert!(
+            world.rpc.scheduled_update_on(port, id).is_none(),
+            "rejected proposal #{id} created a schedule on RPC {port}"
+        );
+    }
+}
+
+#[then(expr = "approval and scheduling for proposal {int} are committed atomically exactly once")]
+fn approval_and_schedule_are_atomic(world: &mut World, id: u64) {
+    for port in validator_ports(world) {
+        let mut approved = Vec::new();
+        let mut scheduled = Vec::new();
+        for _ in 0..20 {
+            approved = world.rpc.proposal_approved_event_blocks(port, id);
+            scheduled = world.rpc.scheduled_update_created_event_blocks(port, id);
+            if approved.len() == 1 && scheduled.len() == 1 {
+                break;
+            }
+            sleep(Duration::from_secs(1));
+        }
+        assert_eq!(
+            approved.len(),
+            1,
+            "proposal #{id} must emit exactly one approval event on RPC {port}: {approved:?}"
+        );
+        assert_eq!(
+            scheduled.len(),
+            1,
+            "proposal #{id} must emit exactly one schedule event on RPC {port}: {scheduled:?}"
+        );
+        assert_eq!(
+            approved, scheduled,
+            "approval and schedule for proposal #{id} were not committed in the same block on RPC {port}"
         );
     }
 }

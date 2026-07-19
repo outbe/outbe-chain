@@ -307,7 +307,7 @@ pub(crate) fn send_call<C: SolCall>(
     })
 }
 
-/// Plain-ether value transfer from `key` to `to` (funds a new joiner account).
+/// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);

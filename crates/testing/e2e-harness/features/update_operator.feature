@@ -60,6 +60,26 @@ Feature: Operator protocol-version update via governance vote
     Then the duplicate vote reverts and proposal 1 still has 3 yes votes on every validator
     When the committee passes the vote deadline
     Then proposal 1 is approved and the scheduled update matches the proposal
+    And approval and scheduling for proposal 1 are committed atomically exactly once
+
+  @pfs-005-authorization-conflict
+  Scenario: Unauthorized and conflicting updates are rejected without partial scheduling
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When a funded non-validator attempts to propose an update
+    Then the unauthorized proposal is rejected without creating proposal 1
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When operator "validator-1" proposes a conflicting update at the same activation height
+    Then proposal 2 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 1
+    And validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 2
+    Then proposal 2 is still pending with 3 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    And proposal 2 is rejected without a schedule on every validator
+    And approval and scheduling for proposal 1 are committed atomically exactly once
+    And the committee continues producing finalized blocks
 
   @pfs-005-expired
   Scenario: A below-quorum update expires without scheduling or version mutation

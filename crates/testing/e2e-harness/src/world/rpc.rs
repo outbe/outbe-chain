@@ -294,6 +294,92 @@ impl Rpc {
         parse::extract_tx_hash(&out).ok_or_else(|| eyre!("no tx hash in propose output:\n{out}"))
     }
 
+    /// Fund the EOA derived from `recipient_key` with whole COEN from `funder`.
+    pub fn fund_key(
+        &self,
+        funder: &Validator,
+        recipient_key: &str,
+        amount_coen: u64,
+    ) -> Result<String> {
+        let recipient = eth::address_of(recipient_key)
+            .ok_or_else(|| eyre!("cannot derive funded recipient address"))?;
+        eth::send_value(
+            &self.cfg.rpc0,
+            recipient,
+            &funder.evm_key()?,
+            eth::coen(amount_coen),
+        )
+    }
+
+    /// Submit a proposal that must fail during CLI/RPC preflight.
+    pub fn send_propose_rejection(
+        &self,
+        key: &str,
+        target_module: &str,
+        payload: &str,
+    ) -> Result<String> {
+        self.sh().cli_expected_failure([
+            "--private-key",
+            key,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "vote",
+            "propose",
+            "--target-module",
+            target_module,
+            "--payload",
+            payload,
+        ])
+    }
+
+    fn proposal_event_blocks(
+        &self,
+        port: u16,
+        address: Address,
+        signature: &str,
+        proposal_id: u64,
+    ) -> Vec<u64> {
+        let signature = keccak256(signature.as_bytes());
+        let indexed_id = format!("0x{proposal_id:064x}");
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{address:#x}"),
+                "fromBlock": "0x0",
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_id],
+            }]),
+        )
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|log| {
+            log.get("blockNumber")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        })
+        .collect()
+    }
+
+    pub fn proposal_approved_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+        self.proposal_event_blocks(
+            port,
+            addresses::VOTE_ADDR,
+            "ProposalApproved(uint256,(uint64,uint64))",
+            proposal_id,
+        )
+    }
+
+    pub fn scheduled_update_created_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+        self.proposal_event_blocks(
+            port,
+            addresses::UPDATE_ADDR,
+            "ScheduledUpdateCreated(uint256,uint32,uint64,bytes)",
+            proposal_id,
+        )
+    }
+
     /// `outbe-cli vote cast --proposal-id <id> --yes|--no`; returns the tx hash.
     pub fn cast_vote(&self, validator: &Validator, id: u64, approve: bool) -> Result<String> {
         let key = validator.evm_key()?;
