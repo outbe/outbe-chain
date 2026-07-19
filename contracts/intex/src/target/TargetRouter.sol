@@ -35,9 +35,6 @@ contract TargetRouter is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
-    bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
-
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
@@ -239,14 +236,10 @@ contract TargetRouter is
         if (_nftBridge == address(0)) revert ZeroAddress("nftBridge");
 
         TargetRouterStorage storage $ = _ts();
-        if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
-
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
         $.nftBridge = IIntexNFT1155Bridge(_nftBridge);
-
-        _grantRole(AUCTION_ROLE, _auction);
     }
 
     /// @inheritdoc ITargetRouter
@@ -262,59 +255,6 @@ contract TargetRouter is
         $.tokenBridge = IERC7786TokenBridge(_tokenBridge);
         $.originRouter = _originRouter;
         emit ProceedsRouteSet(_tokenBridge, _originRouter);
-    }
-
-    // --- Quote ---
-    /// @inheritdoc ITargetRouter
-    function quoteSendBidsBatch(BidsBatchParams calldata params) external view returns (uint256) {
-        // Mirror `sendBidsBatch`'s single-batch encoding so the quoted fee matches the send.
-        return _quoteFee(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.encodeBidsBatch(
-                params.worldwideDay,
-                uint32(block.chainid),
-                _ts().bidsRelayGeneration[params.worldwideDay],
-                0,
-                1,
-                params.bidderAddresses,
-                params.intexQuantities,
-                params.intexBidRates,
-                params.timestamps
-            ),
-            IntexGas.bidsBatch(params.bidderAddresses.length)
-        );
-    }
-
-    // --- Send ---
-    /// @inheritdoc ITargetRouter
-    function sendBidsBatch(BidsBatchParams calldata params)
-        external
-        payable
-        onlyRole(AUCTION_ROLE)
-        returns (bytes32 sendId)
-    {
-        uint256 len = params.bidderAddresses.length;
-        if (len == 0) revert EmptyArray();
-        if (
-            len != params.intexQuantities.length || len != params.intexBidRates.length
-                || len != params.timestamps.length
-        ) {
-            revert ArrayLengthMismatch();
-        }
-
-        // One generation per send so a re-send replaces rather than double-counts on the receiver. A caller-supplied
-        // set is a single-batch flush (index 0 of 1); the codec caps its size at `MAX_PAYLOAD_ARRAY_LEN`.
-        uint32 gen = ++_ts().bidsRelayGeneration[params.worldwideDay];
-        sendId = _sendOneBidsBatch(
-            params.worldwideDay,
-            gen,
-            0,
-            1,
-            params.bidderAddresses,
-            params.intexQuantities,
-            params.intexBidRates,
-            params.timestamps
-        );
     }
 
     // --- Receive ---
@@ -495,8 +435,7 @@ contract TargetRouter is
     }
 
     /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId as its source
-    ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float on the
-    ///      relay path (`msg.value == 0`) or from `msg.value` on the direct `sendBidsBatch` entry.
+    ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float.
     function _sendOneBidsBatch(
         uint32 worldwideDay,
         uint32 relayGeneration,

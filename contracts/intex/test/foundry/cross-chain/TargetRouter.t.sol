@@ -87,30 +87,6 @@ contract TargetRouterTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
     }
 
-    // --- Helpers ---
-    /// @dev Build a single-bid BidsBatchParams payload keyed by SERIES_ID.
-    function _bidsBatchParams(uint256 count) internal view returns (ITargetRouter.BidsBatchParams memory) {
-        address[] memory bidderAddresses = new address[](count);
-        uint16[] memory intexQuantities = new uint16[](count);
-        uint32[] memory intexBidRates = new uint32[](count);
-        uint32[] memory timestamps = new uint32[](count);
-
-        for (uint256 i = 0; i < count; i++) {
-            bidderAddresses[i] = address(uint160(0x1000 + i));
-            intexQuantities[i] = uint16(10 + i);
-            intexBidRates[i] = uint32(100e6 + i);
-            timestamps[i] = uint32(block.timestamp);
-        }
-
-        return ITargetRouter.BidsBatchParams({
-            worldwideDay: SERIES_ID,
-            bidderAddresses: bidderAddresses,
-            intexQuantities: intexQuantities,
-            intexBidRates: intexBidRates,
-            timestamps: timestamps
-        });
-    }
-
     // --- Constructor Tests ---
     function test_constructor() public view {
         assertTrue(targetRouter.hasRole(targetRouter.DEFAULT_ADMIN_ROLE(), admin));
@@ -119,7 +95,6 @@ contract TargetRouterTest is CrossChainTest {
     function test_wire() public view {
         assertEq(address(targetRouter.auction()), address(auction));
         assertEq(address(targetRouter.intex()), address(intex));
-        assertTrue(targetRouter.hasRole(targetRouter.AUCTION_ROLE(), address(auction)));
     }
 
     function test_wire_revert_zero_address() public {
@@ -148,30 +123,6 @@ contract TargetRouterTest is CrossChainTest {
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "nftBridge"));
         newRouter.wire(address(auction), address(intex), admin, address(0));
-    }
-
-    // --- Access Control Tests ---
-    function test_sendBidsBatch_revert_unauthorized() public {
-        ITargetRouter.BidsBatchParams memory params = _bidsBatchParams(1);
-
-        vm.prank(user);
-        vm.expectRevert();
-        targetRouter.sendBidsBatch{value: 0.1 ether}(params);
-    }
-
-    // --- Role Constants Tests ---
-    function test_role_constants() public view {
-        assertEq(targetRouter.AUCTION_ROLE(), keccak256("AUCTION_ROLE"));
-    }
-
-    // --- Quote Tests ---
-    function test_quoteSendBidsBatch() public view {
-        ITargetRouter.BidsBatchParams memory params = _bidsBatchParams(2);
-
-        uint256 fee = targetRouter.quoteSendBidsBatch(params);
-
-        // Fee should be non-zero
-        assertEq(fee, 0.001 ether);
     }
 
     // --- ERC165 Tests ---
