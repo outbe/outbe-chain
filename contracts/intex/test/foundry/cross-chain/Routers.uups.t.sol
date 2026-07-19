@@ -23,7 +23,7 @@ contract RoutersUupsTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        origin = DeployProxy.originRouter(address(bridge), address(this), BNB_CHAIN_ID);
+        origin = DeployProxy.originRouter(address(bridge), address(this));
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
     }
 

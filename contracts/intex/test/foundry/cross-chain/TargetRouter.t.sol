@@ -61,7 +61,7 @@ contract TargetRouterTest is CrossChainTest {
         targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy Outbe adapter (for cross-chain testing)
-        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin);
 
         // Deploy batch adapter on BNB
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);

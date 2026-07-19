@@ -27,7 +27,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        origin = DeployProxy.originRouter(address(bridge), admin, TARGET_A);
+        origin = DeployProxy.originRouter(address(bridge), admin);
         desis = address(new MockDesis());
         origin.wire(desis, factory);
         origin.setRemoteMessenger(TARGET_A, _interop(TARGET_A, peerA));

@@ -80,7 +80,7 @@ contract IntexCallFlowTest is CrossChainTest {
 
         // ---- Deploy Outbe contracts ----
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // ---- Register remote messengers ----

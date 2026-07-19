@@ -45,10 +45,9 @@ library DeployProxy {
         return escrow;
     }
 
-    /// @dev `bnbChainId` is retained for call-site compatibility; the router is no longer chain-pinned (targets are a
-    ///      runtime registry). Callers register targets via `addTarget` after wiring the peer.
-    function originRouter(address bridge, address delegate, uint32 bnbChainId) internal returns (OriginRouter) {
-        bnbChainId; // silence unused-parameter
+    /// @dev The router is not chain-pinned; targets are a runtime registry. Callers register
+    ///      targets via `addTarget` after wiring the peer.
+    function originRouter(address bridge, address delegate) internal returns (OriginRouter) {
         OriginRouter impl = new OriginRouter(bridge);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginRouter.initialize, (delegate)));
         return OriginRouter(payable(address(proxy)));

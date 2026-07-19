@@ -180,7 +180,7 @@ contract LocalLoopbackTest is Test {
 
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         auction = DeployProxy.intexAuction(address(this), address(this));
-        origin = DeployProxy.originRouter(address(bridge), address(this), local);
+        origin = DeployProxy.originRouter(address(bridge), address(this));
         target = DeployProxy.targetRouter(address(bridge), address(this), local);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), address(this));
 

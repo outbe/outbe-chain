@@ -56,7 +56,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Register remote messengers so `_send` has a destination and inbound delivery authenticates.

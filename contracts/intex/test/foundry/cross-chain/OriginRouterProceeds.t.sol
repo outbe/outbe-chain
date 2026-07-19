@@ -57,7 +57,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        origin = DeployProxy.originRouter(address(bridge), address(this), BNB_CHAIN_ID);
+        origin = DeployProxy.originRouter(address(bridge), address(this));
 
         desis = new MockDesis();
         factory = new MockIntexFactory();
