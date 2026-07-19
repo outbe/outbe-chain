@@ -604,7 +604,16 @@ pub async fn run_initial_dkg(
             }
         }
 
-        if dealer.is_none() && finalized_logs.len() as u32 >= log_threshold {
+        // Once the finalized chain carries a reconstructable threshold, an
+        // interrupted local dealer must not hold recovery hostage waiting for
+        // ACKs from peers that have already completed this ceremony. The
+        // canonical logs are the decision; player finalization below either
+        // recovers this node's share from them or safely yields a verifier-only
+        // outcome until the next scheduled rotation. Bootstrap still requires
+        // the local dealer to finish because it has no chain-finalized carrier.
+        if (chain_finalized_mode || dealer.is_none())
+            && finalized_logs.len() as u32 >= log_threshold
+        {
             if chain_finalized_mode {
                 // C1: do NOT complete on a RAW 2f+1 count. A byzantine dealer can
                 // chain-finalize a signed-but-content-garbage log (passes the

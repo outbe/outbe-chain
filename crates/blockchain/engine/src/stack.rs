@@ -4105,25 +4105,31 @@ where
                                     ));
                                 }
                                 if let Some(ref keys_dir) = args.keys_dir {
-                                    save_dkg_state(
-                                        keys_dir,
-                                        signing_share.as_ref().ok_or_else(|| {
-                                            eyre::eyre!(
-                                                "cannot promote finalized DKG state without a share"
-                                            )
-                                        })?,
-                                        &polynomial,
-                                        &boundary_output,
-                                        &key_backend,
-                                    )
-                                    .wrap_err("failed to promote finalized DKG state to disk")?;
+                                    if let Some(share) = signing_share.as_ref() {
+                                        save_dkg_state(
+                                            keys_dir,
+                                            share,
+                                            &polynomial,
+                                            &boundary_output,
+                                            &key_backend,
+                                        )
+                                        .wrap_err(
+                                            "failed to promote finalized DKG state to disk",
+                                        )?;
+                                        info!(
+                                            keys_dir = %keys_dir.display(),
+                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
+                                            "promoted finalized DKG state to durable storage"
+                                        );
+                                    } else {
+                                        info!(
+                                            keys_dir = %keys_dir.display(),
+                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
+                                            "finalized DKG boundary adopted in verifier mode; no private share to promote"
+                                        );
+                                    }
                                     remove_pending_dkg_state(keys_dir);
                                     clear_pending_dkg_boundary(keys_dir);
-                                    info!(
-                                        keys_dir = %keys_dir.display(),
-                                        dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
-                                        "promoted finalized DKG state to durable storage"
-                                    );
                                 }
                             }
                         }
@@ -4735,10 +4741,30 @@ where
                                         round,
                                         prev_output.clone(),
                                         target.participants.clone(),
-                                        Some(finalized_log_tx),
+                                        Some(finalized_log_tx.clone()),
                                     ) {
                                         warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for frozen-target retry");
                                         reshare_in_progress = false;
+                                        outbe_consensus::metrics::record_dkg_status(0);
+                                        continue;
+                                    }
+                                    let mut replay_height = target.freeze_height;
+                                    if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                        &node.provider,
+                                        &mut replay_height,
+                                        current_height,
+                                        &dkg_manager,
+                                    ) {
+                                        warn!(
+                                            %error,
+                                            epoch = %current_epoch,
+                                            round,
+                                            from_height = target.freeze_height,
+                                            to_height = current_height,
+                                            "failed to replay finalized dealer logs for frozen-target retry"
+                                        );
+                                        reshare_in_progress = false;
+                                        retry_frozen_dkg = true;
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
@@ -5004,11 +5030,31 @@ where
                                     round,
                                     prev_output.clone(),
                                     target_participants.clone(),
-                                    Some(finalized_log_tx),
+                                    Some(finalized_log_tx.clone()),
                                 ) {
                                     warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for live reshare");
                                     reshare_in_progress = false;
                                     frozen_dkg_target = None;
+                                    outbe_consensus::metrics::record_dkg_status(0);
+                                    continue;
+                                }
+                                let mut replay_height = freeze_height;
+                                if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                    &node.provider,
+                                    &mut replay_height,
+                                    current_height,
+                                    &dkg_manager,
+                                ) {
+                                    warn!(
+                                        %error,
+                                        epoch = %current_epoch,
+                                        round,
+                                        from_height = freeze_height,
+                                        to_height = current_height,
+                                        "failed to replay finalized dealer logs for live reshare"
+                                    );
+                                    reshare_in_progress = false;
+                                    retry_frozen_dkg = true;
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
@@ -5702,6 +5748,40 @@ fn feed_finalized_dealer_logs_from_headers(
                 artifacts.consensus_header_artifact
             {
                 let _ = finalized_log_tx.send(bytes);
+            }
+        }
+        *next_scan_height = next_scan_height.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn replay_finalized_dealer_logs_into_manager(
+    provider: &impl HeaderProvider<Header = OutbeHeader>,
+    next_scan_height: &mut u64,
+    latest_height: u64,
+    dkg_manager: &DkgManagerMailbox,
+) -> Result<()> {
+    while *next_scan_height <= latest_height {
+        if let Some(header) = provider
+            .sealed_header(*next_scan_height)
+            .map_err(|error| eyre::eyre!("failed to read header {}: {error}", *next_scan_height))?
+        {
+            let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+                .map_err(|error| {
+                    eyre::eyre!(
+                        "failed to decode header artifacts at {}: {error}",
+                        *next_scan_height
+                    )
+                })?;
+            if matches!(
+                artifacts.consensus_header_artifact.as_ref(),
+                Some(ConsensusHeaderArtifact::DealerLog(_))
+            ) {
+                dkg_manager.note_finalized_header_artifact_at(
+                    *next_scan_height,
+                    header.hash(),
+                    artifacts.consensus_header_artifact.as_ref(),
+                );
             }
         }
         *next_scan_height = next_scan_height.saturating_add(1);
