@@ -62,10 +62,12 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::num::{NonZeroU16, NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, info, warn};
 
 use crate::args::ConsensusArgs;
+use crate::ce_recovery::CeStartupRecovery;
 use crate::validators;
 use outbe_consensus::{
     ancestry_readiness::AncestryReadiness,
@@ -80,7 +82,7 @@ use outbe_consensus::{
     digest::Digest,
     dkg_actor,
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
-    executor::actor::ExecutorActor,
+    executor::actor::{ExecutorActor, FinalizedCeCommitter},
     finalization::{
         actor::{FinalizationActor, FinalizationActorDeps},
         block_cache::BlockCache,
@@ -97,6 +99,7 @@ use outbe_consensus::{
 use outbe_node::OutbeFullNode;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
+    projection::ProjectionReadinessHandle,
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
@@ -1138,6 +1141,17 @@ fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
+/// A verifier may discover a rotation only after catching up to its activation
+/// block. In that case there will be no old-epoch finalized-height event after
+/// `current_height` to drive the deferred epoch transition, so the current
+/// height must be replayed through the local scheduler.
+const fn verifier_activation_needs_immediate_replay(
+    current_height: u64,
+    activation_height: u64,
+) -> bool {
+    current_height >= activation_height
+}
+
 fn build_force_dkg_recovery_boundary(
     validator_set: &validators::ValidatorSet,
     output: &Output<MinSig, bls12381::PublicKey>,
@@ -1627,12 +1641,16 @@ fn validate_validator_evm_signer(
 /// against the trusted network identity (committee-chaining — see the `follow`
 /// module), and drive the EL via the existing executor, WITHOUT running the
 /// consensus engine. Selected by `--upstream`.
+#[allow(clippy::too_many_arguments)]
 async fn run_follow_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
     upstream: String,
+    projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1713,6 +1731,9 @@ where
         bridge,
         upstream,
         epoch_length,
+        projection_readiness,
+        finalized_ce_committer,
+        ce_startup_recovery,
     )
     .await
 }
@@ -1721,6 +1742,7 @@ where
 /// consensus P2P). Builds the same marshal + executor as the validator path,
 /// feeds the marshal finalized blocks fetched from the upstream, and verifies
 /// each against the per-epoch committee derived from the trusted anchor.
+#[allow(clippy::too_many_arguments)]
 async fn run_certified_follow_stack<E>(
     ctx: &E,
     anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
@@ -1728,6 +1750,9 @@ async fn run_certified_follow_stack<E>(
     bridge: ConsensusExecutionBridge,
     upstream: String,
     epoch_length_blocks: u32,
+    projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1910,9 +1935,14 @@ where
         )
         .await;
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
+    let recovered_ce_marker = ce_startup_recovery
+        .recover_before_participation(last_consensus_finalized.get())
+        .wrap_err("compressed-tree startup recovery failed before follower participation")?;
     info!(
         last_consensus_finalized = last_consensus_finalized.get(),
-        last_execution_height, "follower marshal initialized"
+        ce_marker_height = recovered_ce_marker.height,
+        last_execution_height,
+        "follower marshal initialized"
     );
 
     // ── 3. Transports ────────────────────────────────────────────────────
@@ -1932,9 +1962,12 @@ where
         genesis_hash,
         last_execution_height,
         last_execution_hash,
+        projection_readiness,
         Some(execution_finalized_height_tx),
     );
-    let _executor_handle = executor_actor.start(marshal_mailbox.clone(), last_consensus_finalized);
+    let _executor_handle = executor_actor
+        .with_finalized_ce_committer(finalized_ce_committer)
+        .start(marshal_mailbox.clone(), last_consensus_finalized);
 
     // ── 4b. Serve `outbe_getFinalization` + publish this follower's finalized
     //        height into the bridge (`outbe_consensusStatus.lastFinalizedBlock`),
@@ -1974,6 +2007,9 @@ pub async fn run_consensus_stack<E>(
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
+    projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -1992,7 +2028,17 @@ where
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before any validator material is loaded.
     if let Some(upstream) = args.upstream.clone() {
-        return run_follow_stack(ctx, args, node, bridge, upstream).await;
+        return run_follow_stack(
+            ctx,
+            args,
+            node,
+            bridge,
+            upstream,
+            projection_readiness,
+            finalized_ce_committer,
+            ce_startup_recovery,
+        )
+        .await;
     }
 
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
@@ -2398,8 +2444,13 @@ where
     // genesis-formation proof, crash-recovery detection, and executor start.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt);
 
+    let recovered_ce_marker = ce_startup_recovery
+        .recover_before_participation(last_consensus_finalized.get())
+        .wrap_err("compressed-tree startup recovery failed before validator participation")?;
+
     info!(
         last_consensus_finalized = last_consensus_finalized.get(),
+        ce_marker_height = recovered_ce_marker.height,
         "marshal actor initialized"
     );
 
@@ -3033,6 +3084,7 @@ where
         genesis_hash,
         last_execution_height,
         last_execution_hash,
+        projection_readiness.clone(),
         Some(execution_finalized_height_tx.clone()),
     );
 
@@ -3316,13 +3368,13 @@ where
         vrf_safety: vrf_safety.clone(),
         epoch_fence: application_epoch_fence.clone(),
         ancestry_readiness: ancestry_readiness.clone(),
+        projection_readiness,
         finalization_view: finalization_view.clone(),
         block_cache: finalization_block_cache.clone(),
         finalization_selector: outbe_consensus::finalization::selection::ParentProofSelector::new(
             finalized_parent_cert_store.clone(),
         ),
         payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
-        payload_return_time: std::time::Duration::from_millis(args.payload_return_time_ms),
         min_block_time: bt.min_block_time,
         proposer_evm_address,
         trust_el_head: args.trust_el_head,
@@ -3383,6 +3435,7 @@ where
 
     let mut executor_handle_task = executor_actor
         .with_ancestry_readiness(ancestry_readiness.clone())
+        .with_finalized_ce_committer(finalized_ce_committer)
         .start(marshal_mailbox.clone(), last_consensus_finalized);
     let mut handler_handle = ctx
         .child("application")
@@ -4813,6 +4866,17 @@ where
                                             "verifier-follower: DKG rotation noted; will advance epoch at the activation height"
                                         );
                                         pending_verifier_activation = Some(planned_activation_height);
+                                        if verifier_activation_needs_immediate_replay(
+                                            current_height,
+                                            planned_activation_height,
+                                        ) {
+                                            // Re-enter this height-event path immediately. The
+                                            // pending-activation branch above will advance the
+                                            // epoch before the verifier waits for a new-epoch
+                                            // block that its old verifier cannot accept.
+                                            let _ = execution_finalized_height_tx
+                                                .send(current_height);
+                                        }
                                         continue;
                                     }
                                     return Err(eyre::eyre!(

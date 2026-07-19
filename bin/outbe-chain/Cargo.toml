@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 outbe-evm.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-rpc.workspace = true
 outbe-node.workspace = true
 outbe-consensus.workspace = true
@@ -25,10 +26,11 @@ outbe-update.workspace = true
 outbe-tributefactory.workspace = true
 outbe-zkproof.workspace = true
 
-reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
 reth-chainspec.workspace = true
 reth-cli.workspace = true
 reth-node-builder.workspace = true
+reth-node-core.workspace = true
 reth-rpc-server-types.workspace = true
 
 commonware-runtime.workspace = true

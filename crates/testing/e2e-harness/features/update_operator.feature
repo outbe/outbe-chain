@@ -1,6 +1,6 @@
 @min-validators-4
 Feature: Operator protocol-version update via governance vote
-  # Port of scripts/e2e/update_operator_flow.sh: an operator proposes a protocol
+  # An operator proposes a protocol
   # update, three validators approve it, and after the voting window + activation
   # height the new version goes live with state-root parity across the committee.
   # Needs a >=4-validator committee; runs with or without TEE (--tee any).
@@ -11,6 +11,7 @@ Feature: Operator protocol-version update via governance vote
   # The vote step fires the ballots without blocking and the tally is polled, so a
   # 20-block (~20s) window leaves room.
 
+  @pfs-005-01
   Scenario: An update is proposed, approved, scheduled, and activated
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height
@@ -39,6 +40,7 @@ Feature: Operator protocol-version update via governance vote
   # A scheduled version above the binary PROTOCOL_VERSION is allowed through
   # propose/vote/schedule, but activation returns PrecompileError::Fatal and
   # aborts the activation-height block — the committee stalls below that height.
+  @pfs-005-09
   Scenario: Activating a version above the binary fatally stalls the chain
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height

@@ -105,7 +105,7 @@ pub fn active_validator_addresses(storage: StorageHandle<'_>) -> Result<Vec<Addr
 }
 
 fn is_active_validator(voter: Address, active_validators: &[Address]) -> bool {
-    active_validators.iter().any(|active| *active == voter)
+    active_validators.contains(&voter)
 }
 
 fn clamp_page(index: U256, count: U256) -> (usize, usize) {

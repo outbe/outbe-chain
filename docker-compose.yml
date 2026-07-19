@@ -5,19 +5,45 @@
 #   2. Bootstrap keys/genesis: OUTBE_CONSENSUS_HOST_PATTERN='validator-{i}' ./scripts/bootstrap-testnet.sh 4 ./testnet
 #   3. Build the image: docker build -t outbe-chain .
 #   4. Start: docker compose up
+# Before bootstrapping a different genesis, run `docker compose down -v` so the fixed per-validator
+# projection databases cannot be reused across chain identities.
 #
 # Each validator gets unique P2P, RPC, and metrics ports.
 
 x-validator-defaults: &validator-defaults
   image: outbe-chain
   restart: unless-stopped
+  depends_on:
+    mongodb:
+      condition: service_healthy
   networks:
     - outbe-net
 
 services:
+  mongodb:
+    image: mongo:7
+    container_name: outbe-mongodb
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    networks:
+      - outbe-net
+    volumes:
+      - outbe-mongodb:/data/db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --eval 'try { rs.status().ok } catch (error) { rs.initiate({_id:"rs0",members:[{_id:0,host:"mongodb:27017"}]}).ok }' | grep 1
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   validator-0:
     <<: *validator-defaults
     container_name: outbe-validator-0
+    environment:
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_0
     volumes:
       - ./testnet/validator-0:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -49,6 +75,9 @@ services:
   validator-1:
     <<: *validator-defaults
     container_name: outbe-validator-1
+    environment:
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_1
     volumes:
       - ./testnet/validator-1:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -80,6 +109,9 @@ services:
   validator-2:
     <<: *validator-defaults
     container_name: outbe-validator-2
+    environment:
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_2
     volumes:
       - ./testnet/validator-2:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -111,6 +143,9 @@ services:
   validator-3:
     <<: *validator-defaults
     container_name: outbe-validator-3
+    environment:
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://mongodb:27017/?replicaSet=rs0
+      OUTBE_PROJECTION_MONGODB_DATABASE: outbe_validator_3
     volumes:
       - ./testnet/validator-3:/data
       - ./testnet/genesis.json:/genesis.json:ro
@@ -176,3 +211,6 @@ services:
 networks:
   outbe-net:
     driver: bridge
+
+volumes:
+  outbe-mongodb:

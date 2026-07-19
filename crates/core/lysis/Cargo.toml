@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-compressed-entities.workspace = true
 outbe-common.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
@@ -17,6 +18,8 @@ outbe-intex.workspace = true
 alloy-primitives.workspace = true
 
 [dev-dependencies]
+outbe-offchain-storage.workspace = true
+alloy-sol-types.workspace = true
 
 [lints]
 workspace = true

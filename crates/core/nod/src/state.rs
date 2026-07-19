@@ -1,5 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
-use base64::Engine;
+use outbe_compressed_entities::{
+    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityId36, EntityRef,
+    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
     constants::MAX_BIN_ID,
@@ -8,7 +11,8 @@ use outbe_primitives::math::{
 };
 
 use crate::{
-    constants::{BIN_STEP_BP, TOKEN_DESCRIPTION, TOKEN_IMAGE_BASE},
+    api::{LoadedNodBucket, LoadedNodItem},
+    constants::BIN_STEP_BP,
     errors::NodError,
     schema::{NodBucketState, NodContract, NodItemState},
 };
@@ -16,18 +20,19 @@ use crate::{
 impl NodContract<'_> {
     // --- ID helpers ---
 
-    pub fn format_nod_id(nod_id: U256) -> String {
-        hex::encode(nod_id.to_be_bytes::<32>())
+    pub fn format_nod_id(nod_id: EntityId36) -> String {
+        nod_id.to_string()
     }
 
-    pub fn parse_nod_id(nod_id: &str) -> Result<U256> {
+    pub fn parse_nod_id(nod_id: &str) -> Result<EntityId36> {
         let trimmed = nod_id.strip_prefix("0x").unwrap_or(nod_id);
-        if trimmed.len() != 64 {
+        if trimmed.len() != EntityId36::LEN * 2 {
             return Err(NodError::InvalidNodIdLength.into());
         }
-        let mut buf = [0u8; 32];
+        let mut buf = [0u8; EntityId36::LEN];
         hex::decode_to_slice(trimmed, &mut buf).map_err(|_| NodError::InvalidNodIdHex)?;
-        Ok(U256::from_be_bytes(buf))
+        EntityId36::try_from(buf.as_slice())
+            .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
     }
 
     // --- View functions ---
@@ -36,222 +41,194 @@ impl NodContract<'_> {
         self.total_supply.read()
     }
 
-    pub fn owner_of(&self, nod_id: U256) -> Result<Address> {
-        let item = self.get_item(nod_id)?.ok_or(NodError::NodNotFound)?;
-        Ok(item.owner)
+    pub(crate) fn get_item_verified(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        nod_id: EntityId36,
+    ) -> Result<Option<VerifiedBody>> {
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::NodItem(nod_id),
+        )
     }
 
-    pub fn get_item(&self, nod_id: U256) -> Result<Option<NodItemState>> {
-        self.nod_items.get(nod_id)
+    pub(crate) fn get_bucket_verified(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        bucket_id: EntityId36,
+    ) -> Result<Option<VerifiedBody>> {
+        read(
+            self.storage_handle(),
+            scope,
+            parent,
+            EntityRef::NodBucket(bucket_id),
+        )
     }
 
-    pub fn get_bucket(&self, bucket_key: B256) -> Result<Option<NodBucketState>> {
-        self.nod_buckets.get(bucket_key)
-    }
-
-    pub fn token_uri(&self, nod_id: U256) -> Result<String> {
-        let item = self.get_item(nod_id)?.ok_or(NodError::NodNotFound)?;
-        let bucket_key = self
-            .nod_items
-            .get(nod_id)?
-            .ok_or(NodError::NodNotFound)?
-            .bucket_key;
-        let bucket = self
-            .get_bucket(bucket_key)?
-            .ok_or(NodError::BucketNotFound)?;
-        let cost_amount_minor = item.cost_amount_minor;
-        let nod_id_str = Self::format_nod_id(nod_id);
-        let token_id_decimal = nod_id.to_string();
-        let json = format!(
-            "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
-            &nod_id_str[..8],
-            TOKEN_DESCRIPTION,
-            TOKEN_IMAGE_BASE,
-            nod_id_str,
-            token_id_decimal,
-            item.worldwide_day,
-            item.league_id,
-            item.floor_price_minor,
-            item.gratis_load_minor,
-            bucket.entry_price_minor,
-            cost_amount_minor,
-            if bucket.is_qualified { "true" } else { "false" },
-            item.issued_at,
-            item.reference_currency,
-            item.issuance_currency,
-        );
-        let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        Ok(format!("data:application/json;base64,{}", encoded))
-    }
-
-    // --- Enumeration index helpers ---
-
-    pub(crate) fn owner_index_key(owner: Address, index: u32) -> B256 {
-        let mut buf = [0u8; 24];
-        buf[0..20].copy_from_slice(owner.as_slice());
-        buf[20..24].copy_from_slice(&index.to_be_bytes());
-        alloy_primitives::keccak256(buf)
-    }
-
-    pub fn get_nods_by_owner(&self, owner: Address) -> Result<Vec<U256>> {
-        let count = self.owner_nod_counts.read(&owner)?;
-        (0..count)
-            .map(|i| Self::owner_index_key(owner, i))
-            .map(|key| self.owner_nod_ids.read(&key))
-            .collect::<Result<Vec<_>>>()
-    }
-
-    pub fn get_nod_by_owner_idx(&self, owner: Address, index: u32) -> Result<U256> {
-        let count = self.owner_nod_counts.read(&owner)?;
-        if index >= count {
-            return Err(NodError::IndexOutOfBounds.into());
+    pub(crate) fn read_all(
+        &self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        owner: Option<Address>,
+    ) -> Result<Vec<NodItemState>> {
+        let query = owner.map_or(QueryRef::NodAll, QueryRef::NodByOwner);
+        let mut records = Vec::new();
+        let mut after = None;
+        loop {
+            let page = list(
+                self.storage_handle(),
+                scope,
+                parent,
+                query,
+                IdPageRequest {
+                    after,
+                    limit: MAX_ID_PAGE_LIMIT,
+                },
+            )?;
+            let next_after = page.next_after();
+            let bodies = page.into_bodies();
+            records.extend(
+                bodies
+                    .iter()
+                    .map(nod_item_from_verified)
+                    .collect::<Result<Vec<_>>>()?,
+            );
+            let Some(next) = next_after else {
+                return Ok(records);
+            };
+            after = Some(next);
         }
-        let key = Self::owner_index_key(owner, index);
-        self.owner_nod_ids.read(&key)
     }
 
-    pub fn get_nods_count_by_owner(&self, owner: Address) -> Result<u32> {
-        self.owner_nod_counts.read(&owner)
-    }
-
-    /// Swap-and-pop the per-owner index for `nod_id`, keeping the array dense.
-    /// The owner's index has no reverse lookup, so finds the slot via linear
-    /// scan over the current count (bounded by the owner's balance).
-    pub(crate) fn compact_owner_index(&mut self, owner: Address, nod_id: U256) -> Result<()> {
-        let count = self.owner_nod_counts.read(&owner)?;
-        let last = count.checked_sub(1).ok_or(NodError::NodNotFound)?;
-        let mut found: Option<u32> = None;
-        for i in 0..count {
-            let key = Self::owner_index_key(owner, i);
-            if self.owner_nod_ids.read(&key)? == nod_id {
-                found = Some(i);
-                break;
-            }
+    /// Records compact issuance state and delegates both bodies to the generic lifecycle.
+    pub(crate) fn record_nod_issued(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        item: &NodItemState,
+        entry_price_minor: U256,
+    ) -> Result<()> {
+        let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        if item.nod_id != canonical_id {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod item canonical identity mismatch: expected {canonical_id}, found {}",
+                item.nod_id
+            )));
         }
-        let idx = found.ok_or(NodError::NodNotFound)?;
-        let last_key = Self::owner_index_key(owner, last);
-        if idx != last {
-            let last_id = self.owner_nod_ids.read(&last_key)?;
-            self.owner_nod_ids
-                .write(&Self::owner_index_key(owner, idx), last_id)?;
+        if self
+            .get_item_verified(scope, parent, item.nod_id)?
+            .is_some()
+        {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "nod already exists".into(),
+            ));
         }
-        self.owner_nod_ids.clear(&last_key)?;
-        self.owner_nod_counts.write(&owner, last)?;
-        Ok(())
-    }
 
-    /// Flip `is_qualified` on a bucket state, without emitting an event.
-    /// Reserved for tests and migration paths; the production qualifier path is
-    /// `NodContract::qualify_bucket` called from `NodLifecycle::begin_block`.
-    pub fn set_qualified(&mut self, bucket_key: B256, is_qualified: bool) -> Result<()> {
-        if let Some(mut state) = self.nod_buckets.get(bucket_key)? {
-            state.is_qualified = is_qualified;
-            self.nod_buckets.update(&state)?;
-        }
-        Ok(())
-    }
-
-    // --- Collection-wide Nod CRUD ------------------------------------------
-    //
-    // `add_nod` / `remove_nod` are the single point of contact for every slot
-    // collection that mirrors a Nod's existence: the primary `nod_items` map,
-    // the per-bucket aggregate (with the unqualified bin-tree for newly-created
-    // buckets), the per-owner enumerable index, the global enumerable list and
-    // its reverse lookup, and `total_supply`. Callers in `runtime.rs` keep only
-    // the business rules (validation, PoW, qualification, event emission) and
-    // delegate slot bookkeeping here.
-
-    /// Insert `item` into every Nod slot collection and bump bucket + supply.
-    ///
-    /// `entry_price_minor` is only consumed when the bucket is created on
-    /// this call; it is not stored on `NodItemState` so the caller passes it
-    /// explicitly. Caller is responsible for asserting non-existence of
-    /// `item.nod_id` and validating inputs before calling.
-    pub(crate) fn add_nod(&mut self, item: &NodItemState, entry_price_minor: U256) -> Result<()> {
-        self.nod_items.create(item)?;
-
-        match self.nod_buckets.get(item.bucket_key)? {
-            Some(mut bucket) => {
-                bucket.total_nods = bucket.total_nods.saturating_add(1);
-                self.nod_buckets.update(&bucket)?;
+        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
+        let final_bucket = match current_bucket.as_ref() {
+            Some(current) => {
+                let mut bucket = nod_bucket_from_verified(current)?;
+                bucket.total_nods = bucket.total_nods.checked_add(1).ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                        "Nod bucket {bucket_id} member count overflow"
+                    ))
+                })?;
+                bucket
             }
             None => {
-                self.nod_buckets.create(&NodBucketState {
+                let bucket = NodBucketState {
                     bucket_key: item.bucket_key,
                     worldwide_day: item.worldwide_day,
                     floor_price_minor: item.floor_price_minor,
                     is_qualified: false,
                     total_nods: 1,
                     entry_price_minor,
-                })?;
-                // Park the new bucket in the LB-style bin-tree, indexed by
-                // its floor_price_minor. The qualifier hook drains bins
-                // ascending until it crosses the oracle rate.
+                };
+                self.bucket_worldwide_day
+                    .write(&item.bucket_key, item.worldwide_day)?;
                 self.insert_unqualified(item.bucket_key, item.floor_price_minor)?;
+                bucket
             }
+        };
+
+        let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                "Nod total supply overflow during issuance".into(),
+            )
+        })?;
+        self.total_supply.write(supply)?;
+        let canonical_item = crate::repository::canonical_item(item);
+        mint(
+            self.storage_handle(),
+            scope,
+            BodyInput::NodItem(&canonical_item),
+        )?;
+        let canonical_bucket = crate::repository::canonical_bucket(&final_bucket);
+        if let Some(current) = current_bucket {
+            update(
+                self.storage_handle(),
+                scope,
+                current,
+                BodyInput::NodBucket(&canonical_bucket),
+            )
+        } else {
+            mint(
+                self.storage_handle(),
+                scope,
+                BodyInput::NodBucket(&canonical_bucket),
+            )
         }
-
-        let oc = self.owner_nod_counts.read(&item.owner)?;
-        self.owner_nod_ids
-            .write(&Self::owner_index_key(item.owner, oc), item.nod_id)?;
-        self.owner_nod_counts.write(&item.owner, oc + 1)?;
-
-        let idx = self.global_nod_ids.len()?;
-        self.global_nod_ids.push(item.nod_id)?;
-        self.global_nod_index.write(&item.nod_id, idx)?;
-
-        let supply = self.total_supply.read()?;
-        self.total_supply.write(supply + 1)?;
-
-        Ok(())
     }
 
-    /// Remove `item` from every Nod slot collection and decrement bucket + supply.
-    ///
-    /// Caller has already loaded `item` (from `nod_items.get`) and verified
-    /// authorization plus any business preconditions (e.g. bucket qualified).
-    /// Does not touch the unqualified bin-tree: qualified buckets are no
-    /// longer parked there.
-    pub(crate) fn remove_nod(&mut self, item: &NodItemState) -> Result<()> {
-        self.nod_items.delete(item.nod_id)?;
-
-        let idx = self.global_nod_index.read(&item.nod_id)?;
-        let last = self
-            .global_nod_ids
-            .len()?
-            .checked_sub(1)
-            .ok_or(NodError::NodNotFound)?;
-        if idx != last {
-            let last_id = self
-                .global_nod_ids
-                .get(last)?
-                .ok_or(NodError::NodNotFound)?;
-            self.global_nod_ids.set(idx, last_id)?;
-            self.global_nod_index.write(&last_id, idx)?;
+    /// Records compact removal state using capabilities retained by the caller's checks.
+    pub(crate) fn record_nod_removed(
+        &mut self,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+        bucket: LoadedNodBucket,
+    ) -> Result<()> {
+        let (item, current_item) = item.into_parts();
+        let (mut bucket, current_bucket) = bucket.into_parts();
+        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        if current_bucket.entity_id() != bucket_id {
+            return Err(
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "loaded Nod bucket {} does not match item bucket {bucket_id}",
+                    current_bucket.entity_id()
+                )),
+            );
         }
-        self.global_nod_ids.pop()?;
-        self.global_nod_index.clear(&item.nod_id)?;
+        bucket.total_nods = bucket.total_nods.checked_sub(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                "Nod bucket {bucket_id} has zero members during removal"
+            ))
+        })?;
 
-        self.compact_owner_index(item.owner, item.nod_id)?;
-
-        match self.nod_buckets.get(item.bucket_key)? {
-            Some(mut bucket) => {
-                bucket.total_nods = bucket.total_nods.saturating_sub(1);
-                if bucket.total_nods == 0 {
-                    self.nod_buckets.delete(item.bucket_key)?;
-                } else {
-                    self.nod_buckets.update(&bucket)?;
-                }
-            }
-            None => return Err(NodError::BucketNotFound.into()),
+        let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                "Nod total supply underflow during removal".into(),
+            )
+        })?;
+        self.total_supply.write(supply)?;
+        delete(self.storage_handle(), scope, current_item)?;
+        if bucket.total_nods == 0 {
+            self.bucket_worldwide_day.clear(&item.bucket_key)?;
+            delete(self.storage_handle(), scope, current_bucket)
+        } else {
+            let canonical = crate::repository::canonical_bucket(&bucket);
+            update(
+                self.storage_handle(),
+                scope,
+                current_bucket,
+                BodyInput::NodBucket(&canonical),
+            )
         }
-
-        let supply = self.total_supply.read()?;
-        if supply > 0 {
-            self.total_supply.write(supply - 1)?;
-        }
-
-        Ok(())
     }
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
@@ -314,10 +291,33 @@ impl NodContract<'_> {
         let count = self.unqualified_bin_count.read(&bin_id)?;
         self.unqualified_bin_buckets
             .write(&Self::bin_index_key(bin_id, count), bucket_key)?;
-        self.unqualified_bin_count.write(&bin_id, count + 1)?;
+        let next_count = count.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod unqualified bin {bin_id} member count overflow"
+            ))
+        })?;
+        self.unqualified_bin_count.write(&bin_id, next_count)?;
         tree_math::add(self, bin_id)?;
         Ok(())
     }
+}
+
+pub(crate) fn nod_item_from_verified(body: &VerifiedBody) -> Result<NodItemState> {
+    let payload = body.payload().as_nod_item().ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Fatal(
+            "compressed-entity read returned a non-Nod-item payload".into(),
+        )
+    })?;
+    Ok(crate::repository::from_canonical_item(payload.clone()))
+}
+
+pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketState> {
+    let payload = body.payload().as_nod_bucket().ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Fatal(
+            "compressed-entity read returned a non-Nod-bucket payload".into(),
+        )
+    })?;
+    Ok(crate::repository::from_canonical_bucket(payload.clone()))
 }
 
 // --- BinTreeStorage impl ---------------------------------------------------

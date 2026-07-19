@@ -103,6 +103,17 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Once a dealer has the Byzantine-liveness quorum, briefly keep accepting ACKs
+/// from the remaining online players before sealing its log. Feldman-Desmedt
+/// deliberately publishes the evaluations of non-acking players; finalizing at
+/// the first `2f+1` therefore turns ordinary message skew into a permanent share
+/// disclosure. The grace preserves offline-player liveness while avoiding that
+/// disclosure on a healthy network.
+#[cfg(not(test))]
+const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(5);
+#[cfg(test)]
+const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(100);
+
 /// Initial bootstrap has no chain carrier yet, so nodes that already collected
 /// all genesis logs keep gossiping them briefly before returning threshold
 /// material. This prevents fast nodes from leaving the DKG channel while slower
@@ -298,6 +309,7 @@ pub async fn run_initial_dkg(
     let now = clock.current();
     let deadline = now + DKG_TIMEOUT;
     let mut next_retry_tick = now + RETRY_INTERVAL;
+    let mut ack_collection_deadline = None;
     // C1 (chain-finalized completion gate): only probe `observe` when a NEW dealer
     // log has arrived, so the actor breaks at the same first-reconstructable log
     // prefix that `DkgManager` freezes `canonical_output` at (→ matching output).
@@ -473,6 +485,8 @@ pub async fn run_initial_dkg(
                 }
             },
 
+            _ = sleep_until_optional(clock, ack_collection_deadline) => {},
+
             _ = clock.sleep_until(deadline) => {
                 let log_target = if chain_finalized_mode { log_threshold } else { n };
                 return Err(eyre::eyre!(
@@ -486,11 +500,33 @@ pub async fn run_initial_dkg(
             },
         }
 
-        // Try to finalize dealer if we have enough acks and haven't finalized yet.
-        if dealer.is_some() && acked_players.len() >= player_threshold as usize {
+        // A threshold is enough for liveness, but not enough to avoid publicly
+        // revealing a healthy player's evaluation. Give the remaining players a
+        // bounded ACK grace; finalize immediately if everybody already ACKed.
+        if dealer.is_some()
+            && acked_players.len() >= player_threshold as usize
+            && ack_collection_deadline.is_none()
+        {
+            ack_collection_deadline = Some(clock.current() + ACK_COLLECTION_GRACE);
+            debug!(
+                acks = acked_players.len(),
+                validators = n,
+                grace_ms = ACK_COLLECTION_GRACE.as_millis(),
+                "dealer quorum reached; collecting remaining ACKs before finalization"
+            );
+        }
+        let ack_grace_elapsed =
+            ack_collection_deadline.is_some_and(|at| clock.current().duration_since(at).is_ok());
+        if dealer.is_some()
+            && acked_players.len() >= player_threshold as usize
+            && (acked_players.len() == n as usize || ack_grace_elapsed)
+        {
             let Some(d) = dealer.take() else {
                 continue;
             };
+            // Do not leave an elapsed timer permanently ready in the biased
+            // select: after sealing, the actor must keep receiving dealer logs.
+            ack_collection_deadline = None;
             let signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey> = d.finalize::<N3f1>();
 
             info!(
@@ -567,7 +603,7 @@ pub async fn run_initial_dkg(
             }
         }
 
-        if finalized_logs.len() as u32 >= log_threshold {
+        if dealer.is_none() && finalized_logs.len() as u32 >= log_threshold {
             if chain_finalized_mode {
                 // C1: do NOT complete on a RAW 2f+1 count. A byzantine dealer can
                 // chain-finalize a signed-but-content-garbage log (passes the
@@ -790,6 +826,7 @@ pub async fn run_reshare_dealer_only(
     let now = clock.current();
     let deadline = now + DKG_TIMEOUT;
     let mut next_retry_tick = now + RETRY_INTERVAL;
+    let mut ack_collection_deadline = None;
 
     let signed_log = loop {
         // Biased select (top-to-bottom), matching the prior
@@ -858,6 +895,8 @@ pub async fn run_reshare_dealer_only(
                 }
             },
 
+            _ = sleep_until_optional(clock, ack_collection_deadline) => {},
+
             _ = clock.sleep_until(deadline) => {
                 return Err(eyre::eyre!(
                     "dealer-only DKG timed out after {:?} (acks: {}/{})",
@@ -868,7 +907,18 @@ pub async fn run_reshare_dealer_only(
             },
         }
 
-        if acked_players.len() >= player_threshold as usize {
+        if acked_players.len() >= player_threshold as usize && ack_collection_deadline.is_none() {
+            ack_collection_deadline = Some(clock.current() + ACK_COLLECTION_GRACE);
+            debug!(
+                acks = acked_players.len(),
+                validators = participants.len(),
+                grace_ms = ACK_COLLECTION_GRACE.as_millis(),
+                "dealer-only quorum reached; collecting remaining ACKs before finalization"
+            );
+        }
+        let ack_grace_elapsed =
+            ack_collection_deadline.is_some_and(|at| clock.current().duration_since(at).is_ok());
+        if acked_players.len() == participants.len() || ack_grace_elapsed {
             break dealer.finalize::<N3f1>();
         }
     };
@@ -1008,6 +1058,13 @@ async fn recv_chain_finalized_log(
 ) -> Option<Bytes> {
     match rx {
         Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn sleep_until_optional(clock: &impl Clock, deadline: Option<std::time::SystemTime>) {
+    match deadline {
+        Some(deadline) => clock.sleep_until(deadline).await,
         None => std::future::pending().await,
     }
 }
@@ -1721,6 +1778,10 @@ mod tests {
                 for result in &results {
                     assert_eq!(result.output.public().encode(), expected_public);
                     assert_eq!(result.participants, target_participants);
+                    assert!(
+                        result.output.revealed().is_empty(),
+                        "an all-online reshare must not publicly reveal any player's share"
+                    );
                 }
                 assert!(
                     results

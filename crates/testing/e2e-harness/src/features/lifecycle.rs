@@ -1,5 +1,5 @@
 //! Steps for `features/s1_s2_s6_s3_lifecycle.feature` — port of
-//! `scripts/e2e/s1_s2_s6_s3_lifecycle.sh`, one chain through four e2e.md stages:
+//! The validator lifecycle feature, one chain through four e2e.md stages:
 //!   S1 cold full-node sync + tribute offer (state/supply parity)
 //!   S2 promote full-node -> validator via reshare (stake -> confirm -> ACTIVE)
 //!   S6 in-flight tribute offer that lands exactly once across the committee change
@@ -267,7 +267,10 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2")
         .evm_key()
         .expect("v2 key");
-    world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5);
+    assert!(
+        world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5),
+        "post-exit offer did not land (supply != 3)"
+    );
     sleep(Duration::from_secs(6));
     assert_eq!(
         world.rpc.supply(primary),

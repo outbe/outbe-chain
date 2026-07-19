@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use alloy_consensus::Transaction as _;
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use alloy_rlp::Encodable as _;
 use either::Either;
 use outbe_evm::{AccountedParentArtifact, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
 use outbe_primitives::{
-    consensus::OUTBE_MAX_BLOCK_SIZE, reshare_artifact::decode_outbe_block_artifacts,
+    consensus::OUTBE_MAX_BLOCK_SIZE,
+    error::PrecompileError,
+    reshare_artifact::{decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts},
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
@@ -140,6 +142,8 @@ where
         let chain_spec = self.provider.chain_spec();
         let inner = attributes.inner();
         let block_number = parent_header.number().saturating_add(1);
+        let prefinal_extra_data = sanitize_prefinal_outbe_block_artifacts(attributes.extra_data())
+            .map_err(PayloadBuilderError::other)?;
 
         // / / prebuild and sign the Phase 1
         // (CertifiedParentAccounting) body[0] tx BEFORE the executor enters
@@ -213,7 +217,7 @@ where
                         gas_limit: self.builder_config.gas_limit(parent_header.gas_limit()),
                         parent_beacon_block_root: inner.parent_beacon_block_root,
                         withdrawals: inner.withdrawals.clone().map(Into::into),
-                        extra_data: attributes.extra_data().clone(),
+                        extra_data: prefinal_extra_data.clone(),
                         slot_number: inner.slot_number,
                     },
                     timestamp_millis_part: attributes.timestamp_millis_part(),
@@ -226,9 +230,11 @@ where
                     // `block_has_tee_bootstrap`) needs the same payload the body
                     // builder injects below, so both deterministic paths agree.
                     pending_tee_bootstrap: pending_tee_bootstrap.clone(),
+                    execution_read_budget: attributes.execution_read_budget().cloned(),
                 },
             )
             .map_err(PayloadBuilderError::other)?;
+        let compressed_tree_service = self.evm_config.compressed_tree_service();
 
         debug!(
             target: "payload_builder",
@@ -259,10 +265,19 @@ where
                 .set_state_hook(Some(Box::new(handle.state_hook())));
         }
 
-        builder.apply_pre_execution_changes().map_err(|err| {
+        if let Err(err) = builder.apply_pre_execution_changes() {
+            if ce_local_readiness_error(&err) {
+                // This attempt raced finalization and cannot use the in-place
+                // materialization for its old parent. Report a retryable build
+                // failure: Reth reserves `BuildOutcome::Cancelled` for futures
+                // whose supplied cancel signal actually fired and treats any
+                // other use as an unreachable invariant violation.
+                debug!(target: "payload_builder", %err, "payload exact-parent data is no longer locally available; retrying on the next build tick");
+                return Err(PayloadBuilderError::Internal(err.into()));
+            }
             warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
-            PayloadBuilderError::Internal(err.into())
-        })?;
+            return Err(PayloadBuilderError::Internal(err.into()));
+        }
 
         let mut blob_sidecars = BlobSidecars::Empty;
         let mut block_blob_count = 0u64;
@@ -289,8 +304,9 @@ where
             .build_begin_system_txs(
                 block_number,
                 chain_spec.chain().id(),
+                block_gas_limit,
                 parent_header.hash(),
-                attributes.extra_data(),
+                &prefinal_extra_data,
                 attributes.parent_consensus_metadata().cloned(),
                 attributes.proposer_evm_address(),
                 // reuse the prebuilt body[0] tx
@@ -433,6 +449,24 @@ where
             let tx_hash = *tx.tx_hash();
             let gas_used = match builder.execute_transaction(tx) {
                 Ok(gas_used) => gas_used.tx_gas_used(),
+                Err(err)
+                    if matches!(
+                        ce_work_admission_error(&err),
+                        Some(PrecompileError::BlockCeWorkCapacityExhausted)
+                    ) =>
+                {
+                    trace!(target: "payload_builder", ?tx_hash, "deferring transaction because the payload CE work budget is exhausted");
+                    continue;
+                }
+                Err(err)
+                    if matches!(
+                        ce_work_admission_error(&err),
+                        Some(PrecompileError::TransactionCeWorkLimitExceeded)
+                    ) =>
+                {
+                    trace!(target: "payload_builder", ?tx_hash, "skipping transaction that cannot fit the full CE work limit");
+                    continue;
+                }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -477,6 +511,17 @@ where
         }
 
         let outcome = if let Some(mut handle) = trie_handle {
+            // CE end-block cleanup is consensus state. Deliver its zeroing
+            // changes to the parallel trie task before detaching the hook and
+            // freezing the precomputed root.
+            builder
+                .executor_mut()
+                .finalize_compressed_entities()
+                .map_err(PayloadBuilderError::evm)?;
+            builder
+                .executor_mut()
+                .prepare_final_header_artifacts(attributes.timestamp_millis_part())
+                .map_err(PayloadBuilderError::evm)?;
             builder.executor_mut().set_state_hook(None);
             match handle.state_root() {
                 Ok(outcome) => builder.finish(
@@ -531,6 +576,11 @@ where
         let sealed_block = Arc::new(recovered_block.sealed_block().clone());
 
         if is_osaka && sealed_block.rlp_length() > MAX_RLP_BLOCK_SIZE {
+            discard_failed_payload_candidate(
+                compressed_tree_service.as_ref(),
+                recovered_block.header().inner.number,
+                recovered_block.hash(),
+            )?;
             return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
                 rlp_length: sealed_block.rlp_length(),
                 max_rlp_length: MAX_RLP_BLOCK_SIZE,
@@ -541,6 +591,11 @@ where
         // consensus P2P message. Final guard in case the per-tx estimate
         // undershot (e.g. system txs / extra_data added after selection).
         if sealed_block.rlp_length() > OUTBE_MAX_BLOCK_SIZE {
+            discard_failed_payload_candidate(
+                compressed_tree_service.as_ref(),
+                recovered_block.header().inner.number,
+                recovered_block.hash(),
+            )?;
             return Err(PayloadBuilderError::other(ConsensusError::BlockTooLarge {
                 rlp_length: sealed_block.rlp_length(),
                 max_rlp_length: OUTBE_MAX_BLOCK_SIZE,
@@ -556,5 +611,125 @@ where
             payload,
             cached_reads,
         })
+    }
+}
+
+fn discard_failed_payload_candidate(
+    service: Option<&Arc<outbe_compressed_entities::CompressedTreeService>>,
+    block_number: u64,
+    block_hash: B256,
+) -> Result<(), PayloadBuilderError> {
+    if let Some(service) = service {
+        service
+            .discard_candidate(block_number, block_hash)
+            .map_err(PayloadBuilderError::other)?;
+    }
+    Ok(())
+}
+
+fn ce_work_admission_error(error: &BlockExecutionError) -> Option<&PrecompileError> {
+    error.as_internal()?.downcast_other::<PrecompileError>()
+}
+
+fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
+    matches!(
+        ce_work_admission_error(error),
+        Some(PrecompileError::TreeUnavailable(_))
+    )
+}
+
+#[cfg(test)]
+mod ce_work_tests {
+    use super::*;
+    use outbe_compressed_entities::{
+        CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity,
+        ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
+        LOCAL_STORAGE_SCHEMA_VERSION,
+    };
+
+    fn tree_service() -> (tempfile::TempDir, Arc<CompressedTreeService>) {
+        let directory = tempfile::tempdir().unwrap();
+        let genesis_hash = B256::repeat_byte(0x11);
+        let db = CeMdbx::open(
+            directory.path(),
+            EnvironmentIdentity {
+                local_storage_schema_version: LOCAL_STORAGE_SCHEMA_VERSION,
+                chain_id: 1,
+                genesis_hash,
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                topology: outbe_compressed_entities::CeTopologyV1.encode(),
+                tree_format: "ckb-smt-v0.6.1-poseidon-catalog-v3".to_owned(),
+                vendor_revision: "ad555350c866b2265d87d2d7fbd146fbc918bfe5".to_owned(),
+            },
+            FinalizedMarker {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                height: 0,
+                block_hash: genesis_hash,
+                parent_block_hash: B256::ZERO,
+                parent_root: B256::ZERO,
+                new_root: outbe_compressed_entities::sealed_root(B256::ZERO).unwrap(),
+            },
+        )
+        .unwrap();
+        let service = CompressedTreeService::new(
+            db,
+            CandidateCacheLimits {
+                max_candidates: 4,
+                max_encoded_bytes: 1_000_000,
+            },
+        )
+        .unwrap();
+        (directory, Arc::new(service))
+    }
+
+    #[test]
+    fn typed_ce_capacity_errors_survive_the_executor_boundary() {
+        for expected in [
+            PrecompileError::BlockCeWorkCapacityExhausted,
+            PrecompileError::TransactionCeWorkLimitExceeded,
+        ] {
+            let expected_message = expected.to_string();
+            let error = BlockExecutionError::other(expected);
+            assert_eq!(
+                ce_work_admission_error(&error).map(ToString::to_string),
+                Some(expected_message)
+            );
+        }
+        assert!(ce_work_admission_error(&BlockExecutionError::msg("other")).is_none());
+    }
+
+    #[test]
+    fn exact_parent_readiness_remains_typed_for_retry_without_an_alarm() {
+        let readiness = BlockExecutionError::other(PrecompileError::TreeUnavailable(
+            "finalized marker advanced past the payload parent".to_owned(),
+        ));
+        assert!(ce_local_readiness_error(&readiness));
+        assert!(!ce_local_readiness_error(&BlockExecutionError::other(
+            PrecompileError::Fatal("same-height parent hash mismatch".to_owned()),
+        )));
+    }
+
+    #[test]
+    fn late_payload_rejection_removes_its_published_candidate() {
+        let (_directory, service) = tree_service();
+        let genesis_hash = B256::repeat_byte(0x11);
+        let block_hash = B256::repeat_byte(0x22);
+        let genesis_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+        let provisional = service
+            .open_parent(ExactParentIdentity {
+                commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                block_number: 0,
+                block_hash: genesis_hash,
+                root: genesis_root,
+            })
+            .unwrap()
+            .prepare_seal(1, &[], &[])
+            .unwrap();
+        service.publish_candidate(block_hash, provisional).unwrap();
+
+        discard_failed_payload_candidate(Some(&service), 1, block_hash).unwrap();
+
+        assert!(service.candidate(1, block_hash).unwrap().is_none());
+        assert_eq!(service.finalized_marker().unwrap().height, 0);
     }
 }

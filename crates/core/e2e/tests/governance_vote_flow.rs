@@ -96,10 +96,7 @@ fn cast_quorum_yes(vote: &mut Vote<'_>, proposal_id: U256, current: u64) {
     }
 }
 
-fn get_proposal(
-    storage: StorageHandle,
-    kind: ProposalKind,
-) -> (u8, Address, String) {
+fn get_proposal(storage: StorageHandle, kind: ProposalKind) -> (u8, Address, String) {
     match kind {
         ProposalKind::Oip => {
             let out = gov_dispatch(

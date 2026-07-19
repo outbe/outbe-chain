@@ -1,5 +1,5 @@
 //! Steps for `features/update_operator.feature` — a step-for-step port of
-//! `scripts/e2e/update_operator_flow.sh` (body 194-331). Each step drives the
+//! The update-operator feature. Each step drives the
 //! `World` handles only; no `cast`/`cli` strings appear here.
 
 use std::thread::sleep;
@@ -141,6 +141,18 @@ fn still_pending_with_votes(world: &mut World, id: u64, yes: u64) {
     assert_eq!(vs.status, "pending", "proposal should still be pending");
     assert_eq!(vs.yes, yes, "yes tally");
     assert_eq!(vs.no, 0, "no tally");
+    let deadline = vs
+        .deadline
+        .expect("pending proposal should expose deadline");
+    let port = world.validators.primary_port();
+    let head = world
+        .rpc
+        .head(port)
+        .expect("primary head should be readable");
+    assert!(
+        head <= deadline,
+        "proposal #{id} reported pending after its voting window: head={head}, deadline={deadline}"
+    );
     world.state.vote_deadline = vs.deadline;
 }
 

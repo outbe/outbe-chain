@@ -57,6 +57,14 @@ impl Localnet {
             .count()
     }
 
+    /// Whether validator `index`'s enclave log contains `needle`.
+    pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
+        let path = self.cfg.validator_dir(index).join("enclave.log");
+        fs::read_to_string(path)
+            .unwrap_or_default()
+            .contains(needle)
+    }
+
     /// The `--consensus.keys-dir` for validator `index` (persisted-share restart).
     pub fn keys_dir(&self, index: usize) -> String {
         self.cfg

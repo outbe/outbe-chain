@@ -17,5 +17,5 @@ interface ITributeFactory {
         bytes calldata zkVerificationKey,
         bytes calldata zkPublicKey,
         bytes calldata zkMerkleRoot
-    ) external returns (uint256 tributeId);
+    ) external returns (bytes memory tributeId);
 }

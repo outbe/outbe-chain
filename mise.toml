@@ -110,6 +110,10 @@ run = [
   "cargo nextest run --workspace",
 ]
 
+[tasks.audit-consensus-deps]
+description = "Ensure consensus has no transitive dependency on the EVM"
+run = "bash scripts/check-consensus-deps.sh"
+
 [tasks.audit-full]
 description = "Full cycle: machete + deny + rustsec + udeps"
 depends = ["audit-machete", "audit-deny", "audit-rustsec", "audit-udeps"]
@@ -219,35 +223,55 @@ run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
 description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
 run = './scripts/localnet-smoke.sh'
 
-# Full S1-S7 gramine-mock TEE e2e scenario suite plus update operator smoke.
-# Builds the node, CLI, and mock enclave, then runs all scenario scripts.
+[tasks.localnet-stack-start]
+description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
+run = "bash ./scripts/localnet-stack.sh start"
+
+[tasks.localnet-stack-stop]
+description = "Stop the managed localnet and MongoDB (keep chain data)"
+run = "bash ./scripts/localnet-stack.sh stop"
+
+[tasks.localnet-stack-clean]
+description = "Stop the managed localnet and MongoDB, then remove chain data"
+run = "bash ./scripts/localnet-stack.sh clean"
+
+[tasks.tribute-offer]
+description = "Create one encrypted Tribute on the running managed localnet"
+run = "bash ./scripts/tribute-demo-actions.sh offer"
+
+[tasks.tribute-show-mongo]
+description = "Show the Tribute from the most recent tribute-offer in every validator MongoDB projection"
+run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
+
+# Full Rust/Cucumber gramine-mock TEE e2e suite.
+# Builds the node, CLI, keygen, and mock enclave, then runs every feature.
 # Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner
 # enclave). Runnable on any box with gramine-direct (no SGX hardware required for
 # the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
-description = "Run the gramine-mock TEE e2e scenario suite (S1-S7 + update operator flow)"
+description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
 cargo build -p outbe-chain --bin outbe-chain
-cargo build --bin outbe-cli
+cargo build --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-for s in s1_s2_s6_s3_lifecycle s4_restart_active s5_dkg_failure s7a_downtime_slash s7b_stale_join update_operator_flow; do
-  echo "=== e2e $s ==="
-  ./scripts/e2e/$s.sh || exit 1
-done
-echo "e2e: ALL SCENARIOS PASS"
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
 """
 
-# The same suite driven by the Rust cucumber harness (`crates/testing/e2e-harness`)
-# instead of the shell scripts: it owns the localnet processes and enclave
-# containers itself, giving every scenario its own data dir and port block.
-# Extra flags pass straight through, e.g.
-#   mise run e2e-rust -- --tee none --validators 6 --no-cleanup --debug
+# Backward-compatible task name; `e2e` is now the canonical Rust harness task.
 [tasks.e2e-rust]
-description = "Run the Rust cucumber e2e harness (gramine-mock TEE, all features)"
+description = "Alias for the Rust/Cucumber e2e suite"
+depends = ["e2e"]
+
+# The hardware lane must be distinct from `e2e`: the default suite intentionally
+# uses gramine-direct/mock so it runs on developer machines. This task builds the
+# real enclave binary and makes the harness request gramine-sgx containers.
+[tasks.e2e-sgx]
+description = "Run all Rust/Cucumber e2e features on real SGX hardware"
 run = """
-cargo build --bin outbe-chain --bin outbe-cli --bin outbe-keygen
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock
+cargo build -p outbe-chain --bin outbe-chain
+cargo build --bin outbe-cli --bin outbe-keygen
+cargo build --release --bin outbe-tee-enclave
+OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
 """
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #

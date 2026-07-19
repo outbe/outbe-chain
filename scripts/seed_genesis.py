@@ -191,6 +191,13 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
+# Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
+# Catalog, so slot 1 is non-zero even though no collection exists at genesis.
+COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 3
+COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
+    "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
+)
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config; the rest of the
 # registry is written by the block-1 `TeeBootstrap` system tx. The account is
@@ -221,7 +228,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     GOVERNANCE_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
-    ZEROFEE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
 ]
 
 # Protocol-owned balance accumulators without precompile dispatch. They are
@@ -687,18 +694,18 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     `initialized == true && !is_sealed`, and a directly-seeded OFFERING worldwide
     day never ran the metadosis `unseal_day` that normally initializes it.
 
-    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 8
+    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 1
     (storage_schema cumulative offsets: `total_supply`@0 = 1 slot, then
-    `tributes: Map<_, TributeData>` reserves `TributeData::SLOTS` = 7 slots
-    (1..7), so `day_totals` lands at slot 8). Within the `DayTotals` record the
+    `day_totals` lands at slot 1; Tribute bodies no longer occupy EVM storage).
+    Within the `DayTotals` record the
     field offset is the cumulative slot index by `#[attribute(order)]`:
     `initialized`@0, `tribute_count`@1, `tribute_nominal_amount`@2,
     `is_sealed`@3 (its `order = 4` only sorts; the gap at 3 is not reserved).
-    So `day_totals[wwd].initialized` is `Mapping(base_slot=8).get(wwd)`; writing
+    So `day_totals[wwd].initialized` is `Mapping(base_slot=1).get(wwd)`; writing
     1 makes the record exist + initialized, with `is_sealed` left at its `false`
-    default (slot 11)."""
+    default."""
     for wwd in days:
-        storage.set_mapping(8, u32_bytes(wwd), 1)
+        storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
 def nod_id_gen(owner: str, worldwide_day: int, index: int) -> bytes:
@@ -1104,6 +1111,12 @@ def seed_accounting_progress(storage: StorageBuilder):
     `outbe_accounting::schema::Accounting::last_accounted_block_number`.
     """
     storage.set_slot(0, 0)
+
+
+def seed_compressed_entities(storage: StorageBuilder):
+    """Seed EVM schema V2 and ADR-010's authoritative empty sealed root."""
+    storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
+    storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 
 
 def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
@@ -1589,6 +1602,16 @@ def main():
     print(
         f"  AccountingProgress: slot 0 = 0, "
         f"{len(accounting_storage.entries)} storage entries"
+    )
+
+    compressed_entities_storage = StorageBuilder()
+    seed_compressed_entities(compressed_entities_storage)
+    alloc[COMPRESSED_ENTITIES_ADDRESS].setdefault("storage", {}).update(
+        compressed_entities_storage.entries
+    )
+    print(
+        "  CompressedEntities: slot 0 = 3, "
+        "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README

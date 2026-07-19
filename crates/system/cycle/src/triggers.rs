@@ -6,6 +6,7 @@
 //! [`crate::runtime`] iterates this slice on every block and fires any
 //! trigger whose next slot has been reached.
 
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 /// Stable on-chain identifier for each trigger. The numeric values
@@ -28,7 +29,7 @@ impl TriggerId {
 }
 
 /// One trigger's static configuration plus its handler function
-/// pointer. Handler signature is `fn(&BlockRuntimeContext) -> Result<()>`.
+/// pointer. Handlers receive only typed, read-only body capabilities.
 #[derive(Clone, Copy)]
 pub struct TriggerSpec {
     pub id: u32,
@@ -51,7 +52,31 @@ pub struct TriggerSpec {
     pub requires_accounting_window: bool,
     /// Handler invoked when a slot fires. Failure rolls back the
     /// trigger's checkpoint and leaves `last_executed_at` unchanged.
-    pub handler: fn(&BlockRuntimeContext) -> Result<()>,
+    pub handler: TriggerHandler,
+}
+
+#[derive(Clone, Copy)]
+pub enum TriggerHandler {
+    EmissionLimitDaily,
+    IntexDaily,
+    WwdAdvanceNoon,
+}
+
+impl TriggerHandler {
+    pub(crate) fn run(
+        self,
+        ctx: &BlockRuntimeContext,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+    ) -> Result<()> {
+        match self {
+            Self::EmissionLimitDaily => {
+                crate::handler::run_emission_limit_daily(ctx, scope, parent)
+            }
+            Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
+            Self::WwdAdvanceNoon => outbe_metadosis::runtime::advance_active_worldwide_days(ctx),
+        }
+    }
 }
 
 /// Active trigger table. Order is informational only — the dispatcher
@@ -67,7 +92,7 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // firing, otherwise validator-pool top-ups and daily-fee reads would
         // race the parent-finalization tx.
         requires_accounting_window: true,
-        handler: crate::handler::run_emission_limit_daily,
+        handler: TriggerHandler::EmissionLimitDaily,
     },
     TriggerSpec {
         id: TriggerId::IntexCallDaily.as_u32(),
@@ -77,7 +102,7 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // Reads finalized oracle VWAP history and marks series Called; no
         // dependency on the parent block's settlement accounting.
         requires_accounting_window: false,
-        handler: outbe_intexfactory::called::run_daily,
+        handler: TriggerHandler::IntexDaily,
     },
     TriggerSpec {
         id: TriggerId::WwdAdvanceNoon.as_u32(),
@@ -92,7 +117,7 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // settlement accounting. Day creation and READY settlement stay
         // on the midnight `emission_limit_1` trigger.
         requires_accounting_window: false,
-        handler: outbe_metadosis::runtime::advance_active_worldwide_days,
+        handler: TriggerHandler::WwdAdvanceNoon,
     },
 ];
 

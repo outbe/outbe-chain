@@ -163,6 +163,7 @@ mod tests {
 
         OutbeExecutionData {
             block: Arc::new(block.seal_slow()),
+            execution_read_budget: None,
         }
     }
 

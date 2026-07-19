@@ -1,0 +1,11 @@
+.codegraph
+.bb-crs
+.dockerignore
+Dockerfile
+target
+data
+contracts/*
+!contracts/precompiles
+!contracts/precompiles/**
+.serena
+docs

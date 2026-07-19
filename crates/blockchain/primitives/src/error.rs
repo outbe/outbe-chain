@@ -17,6 +17,31 @@ pub enum PrecompileError {
     #[error("storage error: {0}")]
     Storage(String),
 
+    /// The node-local off-chain body backend could not serve this execution read.
+    #[error("body read unavailable: {0}")]
+    BodyReadUnavailable(String),
+
+    /// The local consensus request expired while waiting for an off-chain read.
+    #[error("body read request deadline exceeded")]
+    BodyReadRequestDeadline,
+
+    /// A body or body index violated its deterministic repository invariants.
+    #[error("body read corruption: {0}")]
+    BodyReadCorruption(String),
+
+    /// Exact finalized compressed-entity tree materialization is unavailable
+    /// to this node. This is local readiness, not evidence of block invalidity.
+    #[error("compressed-entity tree unavailable: {0}")]
+    TreeUnavailable(String),
+
+    /// One transaction can never fit inside the configured CE work budget.
+    #[error("transaction exceeds the compressed-entity work limit")]
+    TransactionCeWorkLimitExceeded,
+
+    /// This payload has exhausted its deterministic CE work budget.
+    #[error("block compressed-entity work capacity exhausted")]
+    BlockCeWorkCapacityExhausted,
+
     /// Write attempted during static call.
     #[error("write protection: cannot modify state during static call")]
     WriteProtection,

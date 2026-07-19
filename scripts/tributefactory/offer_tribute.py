@@ -55,10 +55,12 @@ HKDF_INFO = b"tribute-factory-encryption"
 def run_cast(*args: str, expect_json: bool = False) -> str | dict:
     proc = subprocess.run(
         ["cast", *args],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if proc.returncode != 0:
+        raise SystemExit(proc.stderr.strip() or "cast command failed")
     output = proc.stdout.strip()
     if expect_json:
         return json.loads(output)
@@ -138,15 +140,13 @@ def encrypt_payload(tee_pubkey: bytes, tee_salt: bytes, payload: dict) -> tuple[
     )
 
 
-def current_owner_ids(rpc_url: str, owner: str) -> str:
-    return run_cast(
-        "call",
-        TRIBUTE,
-        "getTributesByOwner(address)(uint256[])",
-        owner,
-        "--rpc-url",
-        rpc_url,
-    )
+def receipt_status(rpc_url: str, tx_hash: str) -> str:
+    receipt = run_cast("receipt", tx_hash, "--rpc-url", rpc_url, "--json", expect_json=True)
+    return receipt["status"]
+
+
+def total_supply(rpc_url: str) -> str:
+    return run_cast("call", TRIBUTE, "totalSupply()(uint256)", "--rpc-url", rpc_url)
 
 
 def main() -> None:
@@ -161,6 +161,17 @@ def main() -> None:
     )
     parser.add_argument("--amount-atto", default="0", help="Settlement atto amount")
     parser.add_argument("--currency", default="840", help="ISO currency code")
+    parser.add_argument(
+        "--gas-limit",
+        default=8_000_000,
+        type=int,
+        help="Explicit gas limit; estimateGas cannot simulate enclave decryption",
+    )
+    parser.add_argument(
+        "--exclude-from-intex-issuance",
+        action="store_true",
+        help="Exclude the issued Tribute from Intex issuance",
+    )
     parser.add_argument(
         "--no-send",
         action="store_true",
@@ -220,17 +231,19 @@ def main() -> None:
         print(f"NONCE={nonce}")
         print(f"EPHEMERAL={ephemeral_pubkey}")
         print(f"REFERENCE_CURRENCY={int(args.currency)}")
+        print(f"EXCLUDE_FROM_INTEX_ISSUANCE={str(args.exclude_from_intex_issuance).lower()}")
         print(f"SENDER={sender}")
         return
 
     result = run_cast(
         "send",
         FACTORY,
-        "offerTribute(bytes,bytes,uint256,uint16,bytes,bytes,bytes,bytes)(uint256)",
+        "offerTribute(bytes,bytes,uint256,uint16,bool,bytes,bytes,bytes,bytes)(uint256)",
         cipher_text,
         nonce,
         ephemeral_pubkey,
         str(args.currency),
+        str(args.exclude_from_intex_issuance).lower(),
         "0x",
         "0x",
         "0x",
@@ -239,16 +252,20 @@ def main() -> None:
         args.rpc_url,
         "--private-key",
         args.private_key,
+        "--gas-limit",
+        str(args.gas_limit),
         "--json",
         expect_json=True,
     )
 
     tx_hash = result["transactionHash"]
+    status = receipt_status(args.rpc_url, tx_hash)
+    if status not in ("0x1", "1"):
+        raise SystemExit(f"Tribute offer transaction failed: {tx_hash} (status={status})")
     print("=== Submitted ===")
     print(f"TX hash:       {tx_hash}")
-    print()
-    print("Owner tribute ids:")
-    print(current_owner_ids(args.rpc_url, sender))
+    print(f"Receipt status:{status}")
+    print(f"Total supply:  {total_supply(args.rpc_url)}")
 
 
 if __name__ == "__main__":

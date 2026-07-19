@@ -6,7 +6,7 @@ use alloy_consensus::Transaction as _;
 use alloy_evm::{
     block::{BlockExecutorFactory, StateDB},
     eth::{EthBlockExecutionCtx, NextEvmEnvAttributes},
-    EvmEnv, RecoveredTx,
+    Evm, EvmEnv, RecoveredTx,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use reth_ethereum::evm::revm::inspector::Inspector;
@@ -34,12 +34,15 @@ use reth_provider::HeaderProvider;
 use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
+use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     consensus_metadata::CertifiedParentAccountingMetadata,
+    projection::ExecutionReadBudget,
     reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
-        OutbeBlockArtifacts,
+        decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts,
+        ConsensusHeaderArtifact,
     },
     OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives,
 };
@@ -50,8 +53,8 @@ use crate::{
     factory::OutbeEvmFactory,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, split_system_layout, validate_active_system_tx_set,
-        SystemTxInputV2, SystemTxKind,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, split_system_layout,
+        validate_active_system_tx_set, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 
@@ -264,6 +267,8 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// `expected_begin_system_txs`). Flows into the executor and into
     /// `build_begin_system_txs` so both proposer paths inject it identically.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 /// Attributes needed to construct the next Outbe block.
@@ -286,6 +291,8 @@ pub struct OutbeNextBlockEnvAttributes {
     /// tribute-DKG bootstrap producer. Flows into
     /// [`OutbeBlockExecutionCtx::pending_tee_bootstrap`].
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
@@ -301,6 +308,7 @@ impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 }
@@ -380,6 +388,8 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    compressed_tree_service: Option<Arc<CompressedTreeService>>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -395,6 +405,11 @@ impl std::fmt::Debug for OutbeEvmConfig {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
+            )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .field(
+                "compressed_tree_service",
+                &self.compressed_tree_service.is_some(),
             )
             .finish()
     }
@@ -439,6 +454,29 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
+        }
+    }
+
+    /// Creates a config whose EVM factory installs typed, read-only Tribute and
+    /// Nod body readers into the precompile dispatch seam.
+    pub fn new_with_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: None,
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
         }
     }
 
@@ -457,6 +495,8 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
         }
     }
 
@@ -464,14 +504,20 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
         }
     }
 
@@ -493,12 +539,80 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
         }
+    }
+
+    fn new_with_provider_and_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
+        }
+    }
+
+    /// Returns the typed runtime body readers installed for block execution.
+    #[must_use]
+    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+        self.runtime_body_readers.as_ref()
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
         self
+    }
+
+    /// Installs the explicitly owned CE tree service used by every block scope
+    /// and by candidate publication. ADR-008's unsharded stage is not activated
+    /// before ADR-009/010 benchmarking, so work accounting stays in the named
+    /// prebenchmark mode below rather than inventing network limits here.
+    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_compressed_tree_service(service.clone());
+        self.compressed_tree_service = Some(service);
+        self
+    }
+
+    /// Returns the CE tree service shared by execution and payload cleanup.
+    #[must_use]
+    pub fn compressed_tree_service(&self) -> Option<Arc<CompressedTreeService>> {
+        self.compressed_tree_service.clone()
+    }
+
+    fn configure_compressed_entities_scope(
+        &self,
+        scope: &Arc<ExecutionScope>,
+        block_number: u64,
+        parent_hash: B256,
+    ) -> Result<(), String> {
+        if let Some(service) = &self.compressed_tree_service {
+            if block_number > 0 {
+                scope
+                    .configure_parent_tree_factory(
+                        service.clone(),
+                        ACTIVE_COMMITMENT_SCHEME,
+                        block_number - 1,
+                        parent_hash,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     pub fn evm_signer(&self) -> Option<&SharedOutbeEvmSigner> {
@@ -510,6 +624,7 @@ impl OutbeEvmConfig {
         &self,
         block_number: u64,
         chain_id: u64,
+        block_gas_limit: u64,
         parent_hash: B256,
         extra_data: &Bytes,
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
@@ -593,15 +708,35 @@ impl OutbeEvmConfig {
             inputs.push(SystemTxInputV2::HookEvents);
         }
 
-        inputs
+        let encoded_inputs = inputs
             .into_iter()
-            .enumerate()
-            .map(|(ordinal, input)| {
+            .map(|input| {
                 let kind = input.kind();
                 let calldata = input.encode().map_err(|error| {
                     BlockExecutionError::Internal(
                         alloy_evm::block::InternalBlockExecutionError::Other(
                             format!("encode system tx input: {error}").into(),
+                        ),
+                    )
+                })?;
+                Ok((kind, calldata))
+            })
+            .collect::<Result<Vec<_>, BlockExecutionError>>()?;
+        let gas_plan =
+            SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs).map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("plan visible system tx gas: {error}").into(),
+                ))
+            })?;
+
+        encoded_inputs
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (kind, calldata))| {
+                let gas_limit = gas_plan.gas_limit(ordinal).ok_or_else(|| {
+                    BlockExecutionError::Internal(
+                        alloy_evm::block::InternalBlockExecutionError::Other(
+                            format!("visible gas plan missing system tx ordinal {ordinal}").into(),
                         ),
                     )
                 })?;
@@ -639,7 +774,7 @@ impl OutbeEvmConfig {
                     }
                 }
 
-                let unsigned = build_unsigned_system_tx(
+                let unsigned = build_unsigned_system_tx_with_gas_limit(
                     kind,
                     ordinal.try_into().map_err(|_| {
                         BlockExecutionError::Internal(
@@ -651,6 +786,7 @@ impl OutbeEvmConfig {
                     block_number,
                     chain_id,
                     calldata,
+                    gas_limit,
                 )
                 .map_err(|error| {
                     BlockExecutionError::Internal(
@@ -755,30 +891,7 @@ impl OutbeEvmConfig {
     }
 
     fn sanitize_next_block_extra_data(extra_data: Bytes) -> Bytes {
-        if extra_data.is_empty() {
-            return extra_data;
-        }
-
-        match decode_outbe_block_artifacts(extra_data.as_ref()) {
-            // `execution_summary` is recomputed by the executor
-            // on the next block and must be `None` here. Exact-parent
-            // finalization metadata now travels through payload attributes
-            // into the CertifiedParentAccounting system tx body, so header
-            // attestation tags are dropped. `timestamp_millis_part` is
-            // overwritten downstream by `context_for_next_block` from the
-            // next-block attributes, so we drop it here (default = 0).
-            Ok(artifacts) => encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                execution_summary: None,
-                consensus_header_artifact: artifacts.consensus_header_artifact,
-                timestamp_millis_part: 0,
-                // Preserve the proposer's gathered late-finalize credits across
-                // the next-block seed sanitize (like consensus_header_artifact);
-                // dropping them here would lose them on re-proposal/validation.
-                late_finalize_credits: artifacts.late_finalize_credits,
-            })
-            .unwrap_or_default(),
-            Err(_) => Bytes::new(),
-        }
+        sanitize_prefinal_outbe_block_artifacts(extra_data.as_ref()).unwrap_or_default()
     }
 }
 
@@ -904,13 +1017,26 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let parent_hash = ctx.inner.parent_hash;
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
         let expected_end_system_txs = ctx.expected_end_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
+        let mut system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let block_number = evm.block().number.saturating_to::<u64>();
+        let compressed_entities_scope = evm.execution_scope().clone();
+        if let Err(error) = self.configure_compressed_entities_scope(
+            &compressed_entities_scope,
+            block_number,
+            parent_hash,
+        ) {
+            system_layout_error.get_or_insert_with(|| {
+                format!("compressed-entity exact-parent scope configuration failed: {error}")
+            });
+        }
+        let execution_read_budget = ctx.execution_read_budget.clone();
 
         OutbeBlockExecutor::new(
             EthBlockExecutor::new(
@@ -935,6 +1061,9 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             prebuilt_phase1_tx,
             parent_artifact_hint,
         )
+        .with_compressed_entities_scope(compressed_entities_scope)
+        .with_compressed_tree_service(self.compressed_tree_service.clone())
+        .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
         .with_pending_tee_bootstrap(pending_tee_bootstrap)
     }
 }
@@ -1043,6 +1172,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             // Validator path: a `TeeBootstrap` in the body is read via
             // `expected_begin_system_txs`, not injected here.
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         })
     }
 
@@ -1075,6 +1205,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             prebuilt_phase1_tx: attributes.prebuilt_phase1_tx,
             parent_artifact_hint: attributes.parent_artifact_hint,
             pending_tee_bootstrap: attributes.pending_tee_bootstrap,
+            execution_read_budget: attributes.execution_read_budget,
         })
     }
 
@@ -1096,7 +1227,7 @@ impl ConfigureEvm for OutbeEvmConfig {
 
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
         let expected_end_system_txs = ctx.expected_end_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
+        let mut system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
@@ -1104,6 +1235,18 @@ impl ConfigureEvm for OutbeEvmConfig {
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let block_number = evm.block().number.saturating_to::<u64>();
+        let compressed_entities_scope = evm.execution_scope().clone();
+        if let Err(error) = self.configure_compressed_entities_scope(
+            &compressed_entities_scope,
+            block_number,
+            parent_hash,
+        ) {
+            system_layout_error.get_or_insert_with(|| {
+                format!("compressed-entity exact-parent scope configuration failed: {error}")
+            });
+        }
 
         OutbeBlockBuilder::new(
             OutbeBlockExecutor::new(
@@ -1129,6 +1272,9 @@ impl ConfigureEvm for OutbeEvmConfig {
                 prebuilt_phase1_tx,
                 parent_artifact_hint,
             )
+            .with_compressed_entities_scope(compressed_entities_scope)
+            .with_compressed_tree_service(self.compressed_tree_service.clone())
+            .with_runtime_body_readers(runtime_body_readers, ctx.execution_read_budget.clone())
             .with_pending_tee_bootstrap(pending_tee_bootstrap),
             ctx,
             self.bridge.clone(),
@@ -1154,7 +1300,9 @@ impl ConfigureEngineEvm<OutbeExecutionData> for OutbeEvmConfig {
         &self,
         payload: &'a OutbeExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
-        self.context_for_block(&payload.block)
+        let mut ctx = self.context_for_block(&payload.block)?;
+        ctx.execution_read_budget = payload.execution_read_budget.clone();
+        Ok(ctx)
     }
 
     fn tx_iterator_for_payload(
@@ -1184,6 +1332,10 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Required read-only Tribute and Nod body authority for live execution.
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    /// Explicit CE tree owner; mandatory for live execution.
+    pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1193,6 +1345,11 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
+            )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .field(
+                "compressed_tree_service",
+                &self.compressed_tree_service.is_some(),
             )
             .finish()
     }
@@ -1204,11 +1361,24 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
         }
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
+        self
+    }
+
+    /// Installs the mandatory read-only Tribute and Nod body bundle.
+    pub fn with_runtime_body_readers(mut self, readers: RuntimeBodyReaders) -> Self {
+        self.runtime_body_readers = Some(readers);
+        self
+    }
+
+    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
+        self.compressed_tree_service = Some(service);
         self
     }
 }
@@ -1223,6 +1393,12 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        let runtime_body_readers = self.runtime_body_readers.ok_or_else(|| {
+            eyre::eyre!("live Outbe EVM construction requires RuntimeBodyReaders")
+        })?;
+        let compressed_tree_service = self.compressed_tree_service.ok_or_else(|| {
+            eyre::eyre!("live Outbe EVM construction requires CompressedTreeService")
+        })?;
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -1237,17 +1413,20 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
+                    runtime_body_readers,
                 )
             }
-            None => OutbeEvmConfig::new_with_provider_only(
+            None => OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
                 ctx.chain_spec(),
                 Arc::new(RethAccountedParentArtifactProvider::new(
                     ctx.provider().clone(),
                     None,
                 )),
+                runtime_body_readers,
             ),
         };
 
+        let config = config.with_compressed_tree_service(compressed_tree_service);
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,
@@ -1398,6 +1577,7 @@ mod tests {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 
@@ -1534,6 +1714,7 @@ mod tests {
             consensus_header_artifact: None,
             timestamp_millis_part: 777,
             late_finalize_credits: Some(credits.clone()),
+            compressed_entities_root: None,
         })
         .expect("encode");
 

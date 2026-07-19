@@ -197,6 +197,13 @@ pub const UPDATE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// at `VOTE_ADDRESS`.
 pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
 
+/// System-owned compressed-entity state account.
+///
+/// This address has no public mutating precompile. Trusted Tribute/Nod runtime
+/// paths use it through the internal compressed-entities module.
+pub const COMPRESSED_ENTITIES_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE0D");
+
 /// System address used for system-only calls (block hooks).
 pub const SYSTEM_ADDRESS: Address = Address::ZERO;
 

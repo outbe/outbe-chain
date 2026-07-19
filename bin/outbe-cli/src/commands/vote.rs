@@ -54,8 +54,10 @@ impl VoteCmd {
                 let approve = match (yes, no) {
                     (true, false) => true,
                     (false, true) => false,
-                    (true, true) => eyre::bail!("specify either --yes or --no, not both"),
-                    (false, false) => eyre::bail!("specify --yes or --no"),
+                    (true, true) => {
+                        return Err(eyre::eyre!("specify either --yes or --no, not both"));
+                    }
+                    (false, false) => return Err(eyre::eyre!("specify --yes or --no")),
                 };
                 cast_vote(client, private_key, proposal_id, approve).await
             }

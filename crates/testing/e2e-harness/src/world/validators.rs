@@ -1,7 +1,7 @@
 //! Validator / operator handles: key material and identity for committee nodes.
 //!
 //! Replaces the `e2e_vkey`/`e2e_v0key` key readers and the address helpers in
-//! `scripts/e2e/lib.sh:141-142` (and `95-101` for on-chain status, wired as the
+//! the legacy localnet contract (and on-chain status, wired as the
 //! lifecycle flows land). A validator is addressed by index (`validator-<i>`);
 //! an `Operator` is just an active validator acting as proposer/voter.
 

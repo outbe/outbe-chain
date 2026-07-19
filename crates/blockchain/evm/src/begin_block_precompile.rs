@@ -86,6 +86,31 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, None)
+}
+
+/// Dispatches begin-block work with explicit read-only body authority.
+pub fn dispatch_with_readers(
+    storage: StorageHandle,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, Some((scope, parent)))
+}
+
+fn dispatch_inner(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+    body_readers: Option<(
+        &outbe_compressed_entities::ExecutionScope,
+        &outbe_offchain_data::RuntimeBodyReaders,
+    )>,
+) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
             "system precompile can only be called by SYSTEM_ADDRESS".into(),
@@ -111,7 +136,12 @@ pub fn dispatch(
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick(&ctx)?;
+            match body_readers {
+                Some((scope, parent)) => {
+                    run_cycle_tick_with_readers(&ctx, scope, parent)?;
+                }
+                None => run_cycle_tick(&ctx)?,
+            }
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -500,6 +530,54 @@ pub(crate) fn run_finalization_and_slashing(
 
 /// CycleTick system tx: record the proposer identity and run the Cycle begin-block tick.
 pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+
+    #[cfg(test)]
+    {
+        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+        use std::sync::Arc;
+
+        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        let parent = outbe_offchain_data::RuntimeBodyReaders::new(storage);
+        let scope = outbe_compressed_entities::ExecutionScope::new();
+        let compressed =
+            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+            &compressed,
+        )?;
+        let lifecycle =
+            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent);
+        <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+            &compressed,
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(not(test))]
+    Err(PrecompileError::Fatal(
+        "Cycle execution body read authority was not supplied".into(),
+    ))
+}
+
+/// Production CycleTick path with explicit read-only body authority.
+pub(crate) fn run_cycle_tick_with_readers(
+    ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+    // This body mutation must consume system-transaction gas and appear in its
+    // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
+    // buckets are not qualified until the following block.
+    let nod_lifecycle = outbe_nod::hooks::NodLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(&nod_lifecycle)?;
+    let cycle_lifecycle =
+        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
+}
+
+fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
     let allow_boundary_proposer = current_preloaded_system_tx_context()
         .map(|context| context.allow_boundary_proposer)
         .unwrap_or(false);
@@ -517,7 +595,7 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
             ctx.block.proposer
         )));
     }
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(ctx)
+    Ok(())
 }
 
 /// BoundaryOutcome system tx: activate a DKG/reshare boundary before user transactions.
@@ -1018,6 +1096,21 @@ mod tests {
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
         provider.enter(|storage| {
+            let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::ZERO,
+                    U256::from(3),
+                )
+                .unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1),
+                    U256::from_be_slice(root.as_slice()),
+                )
+                .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(128).unwrap();

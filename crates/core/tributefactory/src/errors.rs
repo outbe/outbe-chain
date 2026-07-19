@@ -20,6 +20,9 @@ pub enum TributeFactoryError {
     #[error("tribute already exists for this combination of parameters")]
     TributeAlreadyExists,
 
+    #[error("enclave tribute identity does not match Poseidon(owner, worldwide_day)")]
+    InvalidCanonicalIdentity,
+
     #[error("SU hash already used")]
     SuHashAlreadyUsed,
 

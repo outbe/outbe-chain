@@ -9,12 +9,17 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-common.workspace = true
-alloy-primitives.workspace = true
+outbe-compressed-entities.workspace = true
+alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+outbe-offchain-storage.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 alloy-primitives = { workspace = true, features = ["rand"] }
+mongodb.workspace = true
+tempfile.workspace = true
 
 [features]
 default = []

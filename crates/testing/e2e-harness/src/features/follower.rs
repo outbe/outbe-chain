@@ -1,5 +1,5 @@
 //! Steps for `features/follower_upstream.feature` — port of
-//! `scripts/e2e/follower_upstream.sh`:
+//! The follower-upstream feature:
 //!   S1  a cold `--upstream` follower syncs a reshared chain to lockstep
 //!   S1b a follower-of-follower (`--upstream=follower1`) syncs off the first
 //!   S3  a validator killed mid-epoch is restarted and re-locksteps
@@ -20,6 +20,26 @@ use crate::world::World;
 
 const FOLLOWER1_SLOT: usize = 14;
 const FOLLOWER2_SLOT: usize = 15;
+
+/// Hold readiness until the current DKG target has already been frozen, while
+/// leaving enough blocks for the readiness transaction to finalize before the
+/// activation boundary. This makes warm promotion exercise the share-less
+/// verifier's boundary transition instead of racing into the current ceremony.
+fn wait_for_post_freeze_readiness_window(rpc: &Rpc, port: u16) -> bool {
+    for _ in 0..120 {
+        let activation = rpc
+            .consensus_status_field(port, "nextPlannedActivationHeight")
+            .and_then(|value| value.parse::<u64>().ok());
+        if let (Some(head), Some(activation)) = (rpc.head(port), activation) {
+            let readiness_floor = activation.saturating_sub(12);
+            if head >= readiness_floor && head.saturating_add(2) < activation {
+                return true;
+            }
+        }
+        sleep(Duration::from_secs(2));
+    }
+    false
+}
 
 /// Follower within 4 blocks of the committee (script's `lockstep`).
 fn lockstep(rpc: &Rpc, committee: u16, node: u16) -> bool {
@@ -172,6 +192,10 @@ fn warm_promotion(world: &mut World) {
     assert!(
         wait_lockstep(&world.rpc, primary, joiner_port, 30),
         "warm-restarted joiner did not sync"
+    );
+    assert!(
+        wait_for_post_freeze_readiness_window(&world.rpc, primary),
+        "no post-freeze readiness window observed for late warm promotion"
     );
     world.rpc.confirm_ready(&key).expect("confirm ready");
 }

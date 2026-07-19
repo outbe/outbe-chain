@@ -1,5 +1,5 @@
 //! Steps for `features/s7b_stale_join.feature` — port of
-//! `scripts/e2e/s7b_stale_join.sh`. A staked-but-unconfirmed joiner must stay
+//! The stale-join feature. A staked-but-unconfirmed joiner must stay
 //! PENDING across a full reshare cycle (the stale-join guard keeps it out of the
 //! frozen reshare target); only `confirm-ready` lets the next reshare activate it.
 
@@ -113,5 +113,21 @@ fn confirmed_joiner_activates(world: &mut World) {
         world.rpc.active_count(primary),
         Some(5),
         "active set should grow to 5"
+    );
+    let joiner = world.validators.joiner_index();
+    assert_eq!(
+        world
+            .localnet
+            .log_count(joiner, "attributable invalid VRF seed partial"),
+        0,
+        "joiner rejected the active committee's VRF partials"
+    );
+    assert_eq!(
+        world.localnet.log_count(
+            joiner,
+            "finalized certificate carries an unverifiable VRF proof"
+        ),
+        0,
+        "joiner could not verify the active committee's finalized VRF proof"
     );
 }

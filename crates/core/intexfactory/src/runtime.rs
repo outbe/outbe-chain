@@ -300,7 +300,7 @@ fn sweep_to_reserve(storage: &StorageHandle<'_>, series_id: u32, amount: U256) -
 /// the begin-block drain.
 pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32) -> Result<()> {
     let mut progress = outbe_intex::api::get_progress(storage, series_id)?
-        .ok_or_else(|| IntexFactoryError::NoDistribution(series_id))?;
+        .ok_or(IntexFactoryError::NoDistribution(series_id))?;
     let count = outbe_intex::api::contributor_count(storage, series_id)?;
     let end = progress.cursor.saturating_add(limit).min(count);
 

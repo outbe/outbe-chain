@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-common.workspace = true
+outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultprovider.workspace = true
@@ -18,6 +19,8 @@ ring.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+outbe-nod = { workspace = true, features = ["test-utils"] }
+outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # `test-enclave` drives the confidential Gratis path in `mine_gratis` tests via
 # the in-process enclave engine; unioned into the gratis dep for test builds.

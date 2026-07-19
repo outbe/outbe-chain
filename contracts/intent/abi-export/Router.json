@@ -102,6 +102,19 @@
   },
   {
     "type": "function",
+    "name": "MAX_BATCH",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MIN_ORDER_DURATION",
     "inputs": [],
     "outputs": [
@@ -1052,8 +1065,30 @@
   },
   {
     "type": "error",
+    "name": "BatchTooLarge",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BelowMinimumOutput",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "Bytes32ToAddressOverflow",
+    "inputs": [
+      {
+        "name": "value",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1166,6 +1201,22 @@
   },
   {
     "type": "error",
+    "name": "MixedOriginDomain",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "got",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotAWinner",
     "inputs": []
   },
@@ -1238,5 +1289,10 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedNativeValue",
+    "inputs": []
   }
 ]
