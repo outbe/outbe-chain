@@ -66,6 +66,11 @@ the harness reads no configuration from the environment.** Flags:
   single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
+- `--upgraded-chain-bin <PATH>` — optional prebuilt replacement node binary for
+  the protocol-update recovery scenario. When omitted, that scenario creates a
+  temporary detached worktree at the revision under test, changes only its
+  workspace package version, builds the requested binary offline, and removes
+  the worktree after the build.
 - plus cucumber's own `--tags`, `--name`, `--input`.
 
 Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramine`
