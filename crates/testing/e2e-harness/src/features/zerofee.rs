@@ -91,12 +91,12 @@ fn cli_authorization(world: &mut World) {
     world.rpc.assert_zerofee_cli_authorization(&world.state);
 }
 
-#[when("the exact included ZeroFee delegation transaction is replayed")]
-fn replay_delegation(world: &mut World) {
+#[when("the exact included sponsored ZeroFee transaction is replayed")]
+fn replay_sponsored_transaction(world: &mut World) {
     world
         .rpc
-        .replay_zerofee_delegation(&mut world.state)
-        .expect("replay exact EIP-7702 transaction");
+        .replay_zerofee_sponsored_transaction(&mut world.state)
+        .expect("replay exact included sponsored transaction");
 }
 
 #[then("the replay is rejected without changing delegation or quota")]

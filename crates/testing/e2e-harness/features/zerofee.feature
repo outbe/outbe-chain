@@ -28,13 +28,13 @@ Feature: EIP-7702 ZeroFee sponsorship and paid fallback
     Then the exact ZeroFee delegation designator is installed
     When the account submits eight eligible sponsored reward calls
     Then all eight calls succeed without fees and consume the full quota
-    When the exact included ZeroFee delegation transaction is replayed
+    When the exact included sponsored ZeroFee transaction is replayed
     Then the replay is rejected without changing delegation or quota
     When validator "validator-3" restarts after quota exhaustion
     Then the exhausted ZeroFee state is identical on every validator
     When the entire committee restarts after quota exhaustion
     Then the exhausted ZeroFee state is identical on every validator
-    When the exact included ZeroFee delegation transaction is replayed
+    When the exact included sponsored ZeroFee transaction is replayed
     Then the replay is rejected without changing delegation or quota
     And the exhausted ZeroFee state is identical on every validator
     When the quota-exhausted account submits the same call with a priority fee

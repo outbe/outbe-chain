@@ -992,11 +992,11 @@ impl Rpc {
         assert_eq!(code.as_ref(), expected, "wrong EIP-7702 designator");
     }
 
-    pub fn replay_zerofee_delegation(&self, state: &mut FixtureState) -> Result<()> {
+    pub fn replay_zerofee_sponsored_transaction(&self, state: &mut FixtureState) -> Result<()> {
         let raw = state
-            .zerofee_delegation_raw
+            .zerofee_sponsored_raw
             .as_deref()
-            .ok_or_else(|| eyre!("missing exact EIP-7702 transaction"))?;
+            .ok_or_else(|| eyre!("missing exact included sponsored transaction"))?;
         let before_balance = eth::balance(&self.cfg.rpc0, zerofee_address(state));
         let before_counter = self.zerofee_counter(zerofee_address(state));
         let error = eth::raw_json_result(
@@ -1058,12 +1058,24 @@ impl Rpc {
     pub fn submit_zerofee_quota(&self, state: &mut FixtureState) -> Result<()> {
         let key = zerofee_key(state).to_string();
         for _ in 0..8 {
-            state.zerofee_sponsored_receipts.push(eth::send_reward_call(
-                &self.cfg.rpc0,
-                &key,
-                addresses::AGENT_REWARD_ADDR,
-                0,
-            )?);
+            let receipt =
+                eth::send_reward_call(&self.cfg.rpc0, &key, addresses::AGENT_REWARD_ADDR, 0)?;
+            if state.zerofee_sponsored_raw.is_none() {
+                let tx_hash = receipt
+                    .get("transactionHash")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| eyre!("sponsored receipt has no transactionHash: {receipt}"))?;
+                state.zerofee_sponsored_raw = Some(
+                    eth::raw_json_with_params(
+                        &self.cfg.rpc0,
+                        "eth_getRawTransactionByHash",
+                        serde_json::json!([tx_hash]),
+                    )
+                    .and_then(|raw| raw.as_str().map(str::to_owned))
+                    .ok_or_else(|| eyre!("included sponsored transaction has no raw encoding"))?,
+                );
+            }
+            state.zerofee_sponsored_receipts.push(receipt);
         }
         state.zerofee_balance_after_quota = eth::balance(&self.cfg.rpc0, zerofee_address(state));
         Ok(())

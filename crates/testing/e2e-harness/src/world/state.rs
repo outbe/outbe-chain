@@ -53,6 +53,8 @@ pub struct FixtureState {
     pub zerofee_address: Option<String>,
     pub zerofee_delegation_receipt: Option<serde_json::Value>,
     pub zerofee_sponsored_receipts: Vec<serde_json::Value>,
+    /// Exact signed raw transaction for one already included sponsored call.
+    pub zerofee_sponsored_raw: Option<String>,
     pub zerofee_balance_before: Option<alloy_primitives::U256>,
     pub zerofee_balance_after_quota: Option<alloy_primitives::U256>,
     pub zerofee_ninth_receipt: Option<serde_json::Value>,
@@ -104,6 +106,7 @@ impl Default for FixtureState {
             zerofee_address: None,
             zerofee_delegation_receipt: None,
             zerofee_sponsored_receipts: Vec::new(),
+            zerofee_sponsored_raw: None,
             zerofee_balance_before: None,
             zerofee_balance_after_quota: None,
             zerofee_ninth_receipt: None,
