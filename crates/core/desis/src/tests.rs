@@ -850,6 +850,89 @@ fn dispatch_stage_start_failure_returns_false_and_emits_event() {
 }
 
 #[test]
+fn dispatch_stage_start_router_failure_leaves_no_state() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    let accepted = StorageHandle::enter(&mut storage, |s| {
+        let accepted = crate::api::dispatch_stage_start(
+            s.clone(),
+            WORLDWIDE_DAY,
+            AUCTION_TS,
+            U256::from(ENTRY_PRICE),
+        )
+        .unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::None,
+            "stage write must be rolled back"
+        );
+        assert_eq!(
+            contract.auction_at.read(&WORLDWIDE_DAY).unwrap(),
+            0,
+            "auction timestamp write must be rolled back"
+        );
+        accepted
+    });
+    assert!(!accepted, "router failure must surface as false");
+
+    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
+    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
+    let found = storage
+        .get_events(desis_addr)
+        .iter()
+        .any(|log| log.topics().first() == Some(&fail_sig));
+    assert!(found, "failure event must survive the rollback");
+}
+
+#[test]
+fn dispatch_stage_clearing_router_failure_reverts_pending_supply() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(1_700_000_000u64));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    let supply_promis = U256::from(10 * PROMIS_LOAD_MINOR);
+    let returned = StorageHandle::enter(&mut storage, |s| {
+        let contract = s.contract::<DesisContract>();
+        contract
+            .write_auction_config(WORLDWIDE_DAY, &default_config())
+            .unwrap();
+        contract
+            .write_stage(WORLDWIDE_DAY, AuctionStage::Revealing)
+            .unwrap();
+
+        let returned =
+            crate::api::dispatch_stage_clearing(s.clone(), WORLDWIDE_DAY, supply_promis).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            0,
+            "pending supply must be rolled back"
+        );
+        assert_eq!(
+            contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(),
+            0,
+            "initiated flag must be rolled back"
+        );
+        returned
+    });
+    assert_eq!(
+        returned, supply_promis,
+        "the whole budget returns to the caller"
+    );
+}
+
+#[test]
 fn dispatch_stage_clearing_returns_rounding_remainder_and_does_not_touch_promis() {
     use outbe_promislimit::PromisLimitContract;
 

@@ -50,8 +50,8 @@ pub fn dispatch_stage_reveal(
 /// caller (Metadosis) routes back into the PromisLimit accumulator:
 /// - on a delivered clearing, the rounding remainder `supply_promis %
 ///   promis_load_minor` (only whole `promis_load_minor` units can be auctioned);
-/// - on a best-effort Desis failure, the **whole** `supply_promis`, so no budget
-///   is lost.
+/// - on a best-effort Desis failure, the **whole** `supply_promis` with every
+///   Desis write reverted.
 ///
 /// The clearing **dispatch** does not write PromisLimit — returning the
 /// remainder lets the caller own the accumulator write and avoids colliding with
@@ -67,7 +67,9 @@ pub fn dispatch_stage_clearing(
         return clearing_failed(storage, worldwide_day, "supply exceeds u128", supply_promis);
     };
 
-    match runtime::begin_clearing(storage.clone(), worldwide_day, supply_u128) {
+    match storage
+        .with_checkpoint(|| runtime::begin_clearing(storage.clone(), worldwide_day, supply_u128))
+    {
         Ok(rounding_remainder) => Ok(U256::from(rounding_remainder)),
         Err(err) => clearing_failed(storage, worldwide_day, &format!("{err:?}"), supply_promis),
     }
@@ -90,16 +92,15 @@ fn clearing_failed(
     Ok(supply_promis)
 }
 
-/// Run `f` against the storage handle; on error emit `AuctionDispatchFailed` and
-/// return `Ok(false)` instead of propagating, so a Desis fault never halts the
-/// caller's block hook.
+/// Run `f` under a storage checkpoint; on error revert its writes, emit
+/// `AuctionDispatchFailed` (outside the checkpoint) and return `Ok(false)`.
 fn best_effort(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     stage: &'static str,
     f: impl FnOnce(StorageHandle<'_>) -> Result<()>,
 ) -> Result<bool> {
-    match f(storage.clone()) {
+    match storage.with_checkpoint(|| f(storage.clone())) {
         Ok(()) => Ok(true),
         Err(err) => {
             let mut contract = storage.contract::<DesisContract>();
