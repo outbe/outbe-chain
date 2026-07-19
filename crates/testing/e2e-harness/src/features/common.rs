@@ -22,6 +22,17 @@ fn fresh_localnet(world: &mut World, window: u64) {
     boot_localnet(world, window, &[]);
 }
 
+/// Lifecycle accounting needs a claim to mature during the live scenario. This
+/// changes only the generated E2E genesis, never the production seed defaults.
+#[given(expr = "a fresh lifecycle localnet with a {int}-block voting window")]
+fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
+    boot_localnet(
+        world,
+        window,
+        &[("TESTNET_UNBONDING_PERIOD_SECS", "8".to_string())],
+    );
+}
+
 /// Shared localnet setup used by every flow: cleanup, bootstrap N (with optional
 /// `TESTNET_*` tuning), start with the environment's TEE mode, and prove the
 /// chain is up (TEE bootstrapped, or RPC reachable tee-less). Also captures the

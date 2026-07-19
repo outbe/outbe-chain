@@ -29,6 +29,10 @@ pub struct FixtureState {
     pub marker_count: Option<usize>,
     /// Worldwide-day status byte captured before a tribute offer (invariant check).
     pub wwd_status_before: Option<String>,
+    /// Exact lifecycle accounting snapshot captured immediately before exit.
+    pub lifecycle_stake_before_exit: Option<alloy_primitives::U256>,
+    pub lifecycle_total_before_exit: Option<alloy_primitives::U256>,
+    pub lifecycle_staking_balance_before_exit: Option<alloy_primitives::U256>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
@@ -64,6 +68,9 @@ impl Default for FixtureState {
             marker_height: None,
             marker_count: None,
             wwd_status_before: None,
+            lifecycle_stake_before_exit: None,
+            lifecycle_total_before_exit: None,
+            lifecycle_staking_balance_before_exit: None,
             tribute_tx_hash: None,
             duplicate_tribute_tx_hash: None,
             zerofee_key: None,

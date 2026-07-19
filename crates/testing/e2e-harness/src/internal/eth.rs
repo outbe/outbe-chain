@@ -36,6 +36,7 @@ const GAS_PRICE_WEI: u128 = 1_000_000_000;
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IValidatorSet {
+        event ValidatorDeactivated(address indexed validator, uint64 atHeight);
         function validatorByAddress(address v) external view returns (
             address addr, bytes pubkey, uint256 stake, uint8 status,
             uint64 slashCount, uint64 missedBlocks, uint64 missedVotes,
@@ -104,6 +105,9 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IStaking {
         function stake(address v, uint256 amount) external payable;
+        function claimUnbonded() external;
+        function getStake(address validator) external view returns (uint256);
+        function getTotalStaked() external view returns (uint256);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IWorldwideDay {
@@ -263,6 +267,12 @@ pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
         let receipt = provider.get_transaction_receipt(hash).await.ok()??;
         Some(receipt.status())
     })
+}
+
+/// Public JSON-RPC representation of a mined receipt. Lifecycle accounting uses
+/// this to prove the exact gas charge paid by a claimant.
+pub(crate) fn receipt_json(url: &str, tx: &str) -> Option<serde_json::Value> {
+    raw_json_with_params(url, "eth_getTransactionReceipt", serde_json::json!([tx]))
 }
 
 /// Sign and send a contract call from `key`, waiting for its receipt; returns the

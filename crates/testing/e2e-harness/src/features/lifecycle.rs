@@ -197,6 +197,46 @@ fn promoted_deactivates(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
 
+    let stake = world
+        .rpc
+        .stake_on(primary, &addr)
+        .expect("joiner stake before exit");
+    let total = world
+        .rpc
+        .total_staked_on(primary)
+        .expect("total stake before exit");
+    let staking_balance = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("Staking balance before exit");
+    assert!(!stake.is_zero(), "active joiner must have bonded stake");
+    world.state.lifecycle_stake_before_exit = Some(stake);
+    world.state.lifecycle_total_before_exit = Some(total);
+    world.state.lifecycle_staking_balance_before_exit = Some(staking_balance);
+
+    // A different validator cannot remove the joiner. The failed preflight or
+    // reverted receipt must leave every lifecycle/accounting value unchanged.
+    let other_key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    let target = addr.parse().expect("joiner address");
+    let unauthorized = world
+        .rpc
+        .deactivate_as(&other_key, target)
+        .expect_err("third party deactivation must fail")
+        .to_string();
+    assert!(
+        unauthorized.contains("unauthorized")
+            || unauthorized.contains("receipt was not successful"),
+        "unexpected unauthorized deactivate error: {unauthorized}"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
+    assert_eq!(world.rpc.stake_on(primary, &addr), Some(stake));
+    assert_eq!(world.rpc.total_staked_on(primary), Some(total));
+
     world.rpc.deactivate(&key).expect("deactivate");
     sleep(Duration::from_secs(6));
     assert_eq!(
@@ -213,6 +253,20 @@ fn promoted_deactivates(world: &mut World) {
         Some(5),
         "consensus set still 5"
     );
+
+    let repeated = world
+        .rpc
+        .deactivate(&key)
+        .expect_err("repeated voluntary exit must fail")
+        .to_string();
+    assert!(
+        repeated.contains("can only deactivate an active validator")
+            || repeated.contains("receipt was not successful"),
+        "unexpected repeated deactivate error: {repeated}"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(3));
+    assert_eq!(world.rpc.stake_on(primary, &addr), Some(stake));
+    assert_eq!(world.rpc.total_staked_on(primary), Some(total));
 }
 
 /// S3 — the exclusion reshare shrinks the set to 4, the exited validator becomes
@@ -243,6 +297,26 @@ fn exits_and_demotes(world: &mut World) {
         world.rpc.consensus_count(primary),
         Some(4),
         "consensus set shrank to 4"
+    );
+    let exited_stake = world.state.lifecycle_stake_before_exit.expect("exit stake");
+    let total_before = world
+        .state
+        .lifecycle_total_before_exit
+        .expect("total before exit");
+    assert_eq!(
+        world.rpc.stake_on(primary, &addr),
+        Some(alloy_primitives::U256::ZERO),
+        "UNBONDING validator must have zero bonded stake"
+    );
+    assert_eq!(
+        world.rpc.total_staked_on(primary),
+        Some(total_before - exited_stake),
+        "total_staked must decrease by exactly the exited stake"
+    );
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        world.state.lifecycle_staking_balance_before_exit,
+        "moving stake to the unbonding queue must not move native value"
     );
     assert!(
         world.localnet.log_has(
@@ -276,5 +350,106 @@ fn exits_and_demotes(world: &mut World) {
         world.rpc.supply(primary),
         world.rpc.supply(joiner_port),
         "demoted follower supply parity"
+    );
+}
+
+/// Mature the short E2E unbonding entry and prove exact value conservation,
+/// caller isolation, idempotency, per-node parity, and continued finalization.
+#[then("its unbonded stake can be claimed with exact accounting")]
+fn claim_with_exact_accounting(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let addr = world.state.joiner_addr.clone().expect("joiner addr");
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let amount = world.state.lifecycle_stake_before_exit.expect("exit stake");
+
+    // The configured period is eight seconds; wait for a block timestamp beyond
+    // it so claimability is an observed chain condition, not a wall-clock guess.
+    sleep(Duration::from_secs(10));
+    let before_height = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized before claim");
+    let user_before = world
+        .rpc
+        .balance_on(primary, &addr)
+        .expect("claimant balance");
+    let staking_before = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("Staking balance before claim");
+
+    // claimUnbonded has no target argument: another EOA can only inspect/claim
+    // its own queue. An empty successful claim must not touch the joiner's value.
+    let other_key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    world
+        .rpc
+        .claim_unbonded(&other_key)
+        .expect("unrelated caller's empty claim receipt");
+    assert_eq!(world.rpc.balance_on(primary, &addr), Some(user_before));
+    assert_eq!(world.rpc.staking_balance_on(primary), Some(staking_before));
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(4));
+
+    let receipt = world.rpc.claim_unbonded(&key).expect("claim unbonded");
+    let fee = Rpc::receipt_gas_cost(&receipt).expect("claim receipt gas accounting");
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        Some(staking_before - amount),
+        "claim must transfer exactly the queued amount out of Staking"
+    );
+    assert_eq!(
+        world.rpc.balance_on(primary, &addr),
+        Some(user_before + amount - fee),
+        "claimant balance must increase by claim minus exact transaction fee"
+    );
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(5),
+        "mature claimed validator must become INACTIVE"
+    );
+
+    // A repeated claim succeeds as an empty idempotent operation and cannot pay
+    // the queue twice; only its own transaction fee may reduce the caller.
+    let repeat_user_before = world
+        .rpc
+        .balance_on(primary, &addr)
+        .expect("repeat balance");
+    let repeat_staking_before = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("repeat Staking balance");
+    let repeat = world.rpc.claim_unbonded(&key).expect("repeat empty claim");
+    let repeat_fee = Rpc::receipt_gas_cost(&repeat).expect("repeat claim gas");
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        Some(repeat_staking_before),
+        "repeated claim must not transfer value twice"
+    );
+    assert_eq!(
+        world.rpc.balance_on(primary, &addr),
+        Some(repeat_user_before - repeat_fee),
+        "empty repeated claim may charge only its exact gas fee"
+    );
+
+    let expected_total = world.state.lifecycle_total_before_exit.expect("total") - amount;
+    let expected_staking = repeat_staking_before;
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world.rpc.stake_on(port, &addr),
+            Some(alloy_primitives::U256::ZERO)
+        );
+        assert_eq!(world.rpc.total_staked_on(port), Some(expected_total));
+        assert_eq!(world.rpc.staking_balance_on(port), Some(expected_staking));
+        assert_eq!(world.rpc.validator_status(port, &addr), Some(5));
+    }
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, before_height + 3, 30),
+        "committee did not continue finalizing after exit and claim"
     );
 }

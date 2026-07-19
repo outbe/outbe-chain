@@ -439,6 +439,34 @@ impl Rpc {
         self.validator_record(port, addr).map(|r| r.slashCount)
     }
 
+    /// Bonded stake recorded by the Staking precompile on a specific node.
+    pub fn stake_on(&self, port: u16, addr: &str) -> Option<U256> {
+        let validator = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::STK_ADDR,
+            &IStaking::getStakeCall { validator },
+        )
+    }
+
+    /// Network-wide bonded total recorded by the Staking precompile.
+    pub fn total_staked_on(&self, port: u16) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::STK_ADDR,
+            &IStaking::getTotalStakedCall {},
+        )
+    }
+
+    /// Native balance on a specific node, including precompile balances.
+    pub fn balance_on(&self, port: u16, addr: &str) -> Option<U256> {
+        eth::balance(&self.url(port), addr.parse().ok()?)
+    }
+
+    pub fn staking_balance_on(&self, port: u16) -> Option<U256> {
+        eth::balance(&self.url(port), addresses::STK_ADDR)
+    }
+
     /// Whether the validator holds a live DKG share.
     pub fn has_share(&self, port: u16, addr: &str) -> Option<bool> {
         self.validator_record(port, addr).map(|r| r.hasShare)
@@ -552,17 +580,20 @@ impl Rpc {
     }
 
     /// Stake `amount` ether from `key` (REGISTERED/PENDING joiner).
-    pub fn stake(&self, key: &str, amount: u64) -> Result<()> {
+    pub fn stake(&self, key: &str, amount: u64) -> Result<String> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;
         let wei = eth::ether(amount);
-        eth::send_call(
+        let tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::STK_ADDR,
             key,
             &IStaking::stakeCall { v, amount: wei },
             Some(wei),
         )?;
-        Ok(())
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("stake receipt was not successful: {tx}"));
+        }
+        Ok(tx)
     }
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
@@ -586,17 +617,61 @@ impl Rpc {
     }
 
     /// Self-deactivate the validator owning `key` (ACTIVE -> EXITING).
-    pub fn deactivate(&self, key: &str) -> Result<()> {
+    pub fn deactivate(&self, key: &str) -> Result<String> {
         let v =
             eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for deactivate"))?;
-        eth::send_call(
+        let tx = self.deactivate_as(key, v)?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx)
+            .ok_or_else(|| eyre!("deactivate receipt unavailable: {tx}"))?;
+        let topic = format!(
+            "{:#x}",
+            alloy_primitives::keccak256("ValidatorDeactivated(address,uint64)")
+        );
+        if !receipt_has_log(&receipt, addresses::VS_ADDR, Some(&topic)) {
+            return Err(eyre!(
+                "deactivate receipt has no ValidatorDeactivated event: {tx}"
+            ));
+        }
+        Ok(tx)
+    }
+
+    /// Attempt to deactivate `validator` using the EOA in `caller_key`.
+    pub fn deactivate_as(&self, caller_key: &str, validator: Address) -> Result<String> {
+        let tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
-            key,
-            &IValidatorSet::deactivateValidatorCall { v },
+            caller_key,
+            &IValidatorSet::deactivateValidatorCall { v: validator },
             None,
         )?;
-        Ok(())
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("deactivate receipt was not successful: {tx}"));
+        }
+        Ok(tx)
+    }
+
+    /// Claim the caller's matured queue and return the public receipt JSON.
+    pub fn claim_unbonded(&self, key: &str) -> Result<serde_json::Value> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            key,
+            &IStaking::claimUnbondedCall {},
+            None,
+        )?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx)
+            .ok_or_else(|| eyre!("claim receipt unavailable: {tx}"))?;
+        if !receipt_status(&receipt) {
+            return Err(eyre!("claim receipt was not successful: {tx}"));
+        }
+        Ok(receipt)
+    }
+
+    /// Exact native fee charged for a public receipt.
+    pub fn receipt_gas_cost(receipt: &serde_json::Value) -> Option<U256> {
+        let gas_used = receipt.get("gasUsed")?.as_str()?;
+        let gas_price = receipt.get("effectiveGasPrice")?.as_str()?;
+        Some(parse_rpc_u256(gas_used)? * parse_rpc_u256(gas_price)?)
     }
 
     /// Felony slash percent from `outbe-cli slash config`, if readable.
@@ -634,6 +709,17 @@ impl Rpc {
             sleep(Duration::from_secs(10));
         }
         false
+    }
+
+    /// Poll until finalized height reaches `want` on `port`.
+    pub fn wait_finalized_at_least(&self, port: u16, want: u64, tries: u32) -> bool {
+        for _ in 0..tries {
+            if self.finalized(port).is_some_and(|height| height >= want) {
+                return true;
+            }
+            sleep(Duration::from_secs(2));
+        }
+        self.finalized(port).is_some_and(|height| height >= want)
     }
 
     /// Retry a tribute offer until `supply(primary)` reaches `want` (6s polls).
@@ -964,6 +1050,10 @@ fn zerofee_address(state: &FixtureState) -> Address {
 fn receipt_status(receipt: &serde_json::Value) -> bool {
     matches!(receipt.get("status"), Some(serde_json::Value::Bool(true)))
         || receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x1")
+}
+
+fn parse_rpc_u256(value: &str) -> Option<U256> {
+    U256::from_str_radix(value.trim_start_matches("0x"), 16).ok()
 }
 
 fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {
