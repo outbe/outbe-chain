@@ -103,16 +103,17 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Once a dealer has the Byzantine-liveness quorum, briefly keep accepting ACKs
-/// from the remaining online players before sealing its log. Feldman-Desmedt
-/// deliberately publishes the evaluations of non-acking players; finalizing at
-/// the first `2f+1` therefore turns ordinary message skew into a permanent share
-/// disclosure. The grace preserves offline-player liveness while avoiding that
-/// disclosure on a healthy network.
+/// Once a dealer has the Byzantine-liveness quorum, keep accepting ACKs through
+/// two complete share retries plus a response window before sealing its log.
+/// Feldman-Desmedt deliberately publishes the evaluations of non-acking players;
+/// ending grace on a retry boundary can therefore turn ordinary message skew into
+/// a permanent share disclosure before the retry's ACK is processed. The bounded
+/// grace preserves offline-player liveness while avoiding that disclosure on a
+/// healthy network.
 #[cfg(not(test))]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(5);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(12);
 #[cfg(test)]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(100);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(250);
 
 /// Initial bootstrap has no chain carrier yet, so nodes that already collected
 /// all genesis logs keep gossiping them briefly before returning threshold
@@ -1217,13 +1218,15 @@ mod tests {
         drop_rule: Option<DropRule>,
     }
 
-    type DropRule = Arc<Mutex<DropFinalizedLogOnce>>;
+    type DropRule = Arc<Mutex<DropMessages>>;
 
     #[derive(Debug)]
-    struct DropFinalizedLogOnce {
-        from: bls12381::PublicKey,
+    struct DropMessages {
+        from: Option<bls12381::PublicKey>,
         to: bls12381::PublicKey,
-        dropped: bool,
+        tag: u8,
+        remaining: usize,
+        dropped: usize,
     }
 
     /// Checked sender returned by MockSender::check().
@@ -1256,7 +1259,7 @@ mod tests {
         ) -> commonware_actor::Unreliable<commonware_actor::Feedback> {
             let data: IoBuf = message.into().coalesce();
             for target in self.recipients() {
-                if should_drop_finalized_log_once(
+                if should_drop_message_once(
                     &self.sender.drop_rule,
                     &self.sender.my_pk,
                     &target,
@@ -1435,7 +1438,7 @@ mod tests {
         (participants, output.unwrap(), shares)
     }
 
-    fn should_drop_finalized_log_once(
+    fn should_drop_message_once(
         drop_rule: &Option<DropRule>,
         from: &bls12381::PublicKey,
         to: &bls12381::PublicKey,
@@ -1447,16 +1450,18 @@ mod tests {
         let Some(tag) = payload.get(1 + std::mem::size_of::<u64>() + B256::len_bytes()) else {
             return false;
         };
-        if *tag != 0x02 {
-            return false;
-        }
         let Ok(mut rule) = drop_rule.lock() else {
             return false;
         };
-        if rule.dropped || &rule.from != from || &rule.to != to {
+        if rule.remaining == 0
+            || rule.tag != *tag
+            || rule.from.as_ref().is_some_and(|expected| expected != from)
+            || &rule.to != to
+        {
             return false;
         }
-        rule.dropped = true;
+        rule.remaining -= 1;
+        rule.dropped += 1;
         true
     }
 
@@ -1620,10 +1625,12 @@ mod tests {
                     .try_collect::<Set<bls12381::PublicKey>>()
                     .unwrap();
 
-                let drop_rule = Arc::new(Mutex::new(DropFinalizedLogOnce {
-                    from: keys[0].public_key(),
+                let drop_rule = Arc::new(Mutex::new(DropMessages {
+                    from: Some(keys[0].public_key()),
                     to: keys[1].public_key(),
-                    dropped: false,
+                    tag: 0x02,
+                    remaining: 1,
+                    dropped: 0,
                 }));
                 let (senders, receivers) =
                     build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
@@ -1655,7 +1662,7 @@ mod tests {
                 }
 
                 assert!(
-                    drop_rule.lock().expect("drop rule lock").dropped,
+                    drop_rule.lock().expect("drop rule lock").dropped == 1,
                     "test must drop the first finalized log to exercise retry gossip"
                 );
 
@@ -1789,6 +1796,112 @@ mod tests {
                         .any(|result| result.participants.position(&new_pk).is_some()),
                     "new player must be part of the reshared participant set"
                 );
+            });
+    }
+
+    #[test]
+    fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut keys: Vec<bls12381::PrivateKey> =
+                    (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+                keys.sort_by_key(|key| key.public_key().encode());
+                let (participants, previous_output, previous_shares) =
+                    run_direct_initial_round(&keys);
+                let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+                    &crate::config::outbe_app_namespace(),
+                    1,
+                    Some(previous_output.clone()),
+                    Mode::NonZeroCounter,
+                    participants.clone(),
+                    participants.clone(),
+                )
+                .unwrap();
+                let max_players = NonZeroU32::new(participants.len() as u32).unwrap();
+
+                // Delay one healthy player's dealings through the first retry. A
+                // later retry must still have a complete response window before each
+                // dealer seals its log; otherwise Feldman-Desmedt permanently
+                // publishes that player's share.
+                let drop_rule = Arc::new(Mutex::new(DropMessages {
+                    from: None,
+                    to: keys[1].public_key(),
+                    tag: 0x00,
+                    remaining: 6,
+                    dropped: 0,
+                }));
+                let (senders, receivers) =
+                    build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                let mut finalized_log_txs = Vec::new();
+                let mut handles = Vec::new();
+
+                for (idx, ((key, sender), receiver)) in
+                    keys.iter().cloned().zip(senders).zip(receivers).enumerate()
+                {
+                    let participant_set = participants.clone();
+                    let prev_output = previous_output.clone();
+                    let prev_share = previous_shares[idx].clone();
+                    let progress_tx = progress_tx.clone();
+                    let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
+                    finalized_log_txs.push(finalized_log_tx);
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                run_initial_dkg(
+                                    &clock,
+                                    key,
+                                    participant_set,
+                                    Some(prev_output),
+                                    Some(prev_share),
+                                    1,
+                                    Some(progress_tx),
+                                    Some(finalized_log_rx),
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            }),
+                    );
+                }
+                drop(progress_tx);
+
+                let mut chain_logs = BTreeMap::new();
+                while chain_logs.len() < participants.len() {
+                    let progress = progress_rx
+                        .recv()
+                        .await
+                        .expect("progress channel should remain open");
+                    if let DkgProgress::LocalDealerLog(bytes) = progress {
+                        let mut reader = bytes.as_ref();
+                        let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+                            &mut reader,
+                            &max_players,
+                        )
+                        .unwrap();
+                        let (dealer, _log) = signed_log.check(&info).unwrap();
+                        chain_logs.entry(dealer).or_insert(bytes);
+                    }
+                }
+                for bytes in chain_logs.values() {
+                    for tx in &finalized_log_txs {
+                        tx.send(bytes.clone()).unwrap();
+                    }
+                }
+
+                assert!(
+                    drop_rule.lock().expect("drop rule lock").dropped == 6,
+                    "test must delay every remote dealer through the first retry"
+                );
+                for handle in handles {
+                    let result = handle.await.unwrap().unwrap();
+                    assert!(
+                        result.output.revealed().is_empty(),
+                        "an online player that ACKs the retry must not have its share revealed"
+                    );
+                }
             });
     }
 
