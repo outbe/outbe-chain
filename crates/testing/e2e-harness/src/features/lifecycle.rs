@@ -42,8 +42,11 @@ fn submit_offer(world: &mut World, name: String) {
         .evm_key()
         .expect("key");
     world.state.wwd_status_before = world.rpc.wwd_status(primary, &wwd);
+    world.state.tribute_tx_hash = world
+        .rpc
+        .offer_until_supply_hash(&key, &wwd, primary, "1", 5);
     assert!(
-        world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
+        world.state.tribute_tx_hash.is_some(),
         "committee did not process the offer (supply != 1)"
     );
 }
@@ -63,6 +66,13 @@ fn offer_processed_status_unchanged(world: &mut World) {
         world.state.wwd_status_before,
         "day status changed by the offer (should be time-driven)"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection(
+            world.state.tribute_tx_hash.as_deref().expect("tribute tx"),
+            60,
+        )
+        .expect("initial Tribute and both indexes must match on every committee validator");
 }
 
 /// S1 — provision + launch a REGISTERED (not staked) full node and sync it to tip.
@@ -158,8 +168,11 @@ fn promoted_with_inflight_offer(world: &mut World) {
         .expect("v1 key");
 
     // In-flight offer submitted during the reshare window; must land exactly once.
+    world.state.tribute_tx_hash = world
+        .rpc
+        .offer_until_supply_hash(&v1, &wwd, primary, "2", 15);
     assert!(
-        world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 15),
+        world.state.tribute_tx_hash.is_some(),
         "in-flight offer did not land (supply != 2)"
     );
     assert!(
@@ -181,6 +194,18 @@ fn promoted_with_inflight_offer(world: &mut World) {
         Some("2"),
         "in-flight offer landed once"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection_on_nodes(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("in-flight tribute tx"),
+            60,
+            world.validators.joiner_index() + 1,
+        )
+        .expect("in-flight Tribute and indexes must match across the promoted committee");
 
     sleep(Duration::from_secs(30)); // settle: engine restarts for the new epoch
     assert!(
@@ -360,8 +385,11 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2")
         .evm_key()
         .expect("v2 key");
+    world.state.tribute_tx_hash = world
+        .rpc
+        .offer_until_supply_hash(&v2, &wwd, primary, "3", 5);
     assert!(
-        world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5),
+        world.state.tribute_tx_hash.is_some(),
         "post-exit offer did not land (supply != 3)"
     );
     sleep(Duration::from_secs(6));
@@ -370,6 +398,18 @@ fn exits_and_demotes(world: &mut World) {
         world.rpc.supply(joiner_port),
         "demoted follower supply parity"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection_on_nodes(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("post-exit tribute tx"),
+            60,
+            world.validators.joiner_index() + 1,
+        )
+        .expect("post-exit Tribute and indexes must match across validators and follower");
 }
 
 /// Mature the short E2E unbonding entry and prove exact value conservation,

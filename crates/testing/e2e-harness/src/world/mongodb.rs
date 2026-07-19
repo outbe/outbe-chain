@@ -75,10 +75,20 @@ impl MongoDb {
     /// Wait for all three tribute namespaces in every validator database, then
     /// assert the complete BSON documents are identical across the committee.
     pub fn wait_for_tribute_projection(&self, tx_hash: &str, tries: u32) -> Result<()> {
+        self.wait_for_tribute_projection_on_nodes(tx_hash, tries, self.validators)
+    }
+
+    /// Verify the primary Tribute and both secondary indexes across an explicit
+    /// live node count, including a joiner after committee promotion.
+    pub fn wait_for_tribute_projection_on_nodes(
+        &self,
+        tx_hash: &str,
+        tries: u32,
+        validators: usize,
+    ) -> Result<()> {
         let uri = self.uri.clone();
         let database_prefix = self.database_prefix.clone();
         let scenario = self.scenario;
-        let validators = self.validators;
         let tx_hash = tx_hash.to_owned();
         std::thread::spawn(move || {
             wait_for_projection(

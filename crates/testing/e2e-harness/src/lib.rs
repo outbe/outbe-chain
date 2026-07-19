@@ -140,6 +140,13 @@ pub async fn run() {
         // build no `World`, so there is nothing to stop.
         .after(|_feature, _rule, _scenario, _event, world| {
             if let Some(world) = world {
+                if let Err(error) = world
+                    .localnet
+                    .audit_unexpected_logs(world.state.allow_unsupported_update_fatal)
+                {
+                    world.localnet.teardown();
+                    panic!("E2E log-safety audit failed: {error:#}");
+                }
                 world.localnet.teardown();
             }
             async move {}.boxed_local()

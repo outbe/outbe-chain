@@ -17,6 +17,9 @@ pub struct FixtureState {
     pub vote_deadline: Option<u64>,
     /// Voting window (blocks) the localnet was started with.
     pub voting_window: u64,
+    /// The unsupported-update scenario deliberately emits one narrowly matched
+    /// fatal compatibility message; every other fatal/alarm remains forbidden.
+    pub allow_unsupported_update_fatal: bool,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -81,6 +84,7 @@ impl Default for FixtureState {
             activation_height: None,
             vote_deadline: None,
             voting_window: 6,
+            allow_unsupported_update_fatal: false,
             joiner_addr: None,
             wwd: None,
             marker_height: None,

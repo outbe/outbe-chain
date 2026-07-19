@@ -869,6 +869,20 @@ impl Rpc {
         want: &str,
         tries: u32,
     ) -> bool {
+        self.offer_until_supply_hash(key, wwd, primary, want, tries)
+            .is_some()
+    }
+
+    /// Retry one Tribute offer until `supply(primary)` reaches `want`, returning
+    /// the included transaction hash for projection/index verification.
+    pub fn offer_until_supply_hash(
+        &self,
+        key: &str,
+        wwd: &str,
+        primary: u16,
+        want: &str,
+        tries: u32,
+    ) -> Option<String> {
         let mut pending_tx = None;
         for _ in 0..tries {
             if pending_tx.is_none() {
@@ -876,7 +890,7 @@ impl Rpc {
             }
             sleep(Duration::from_secs(6));
             if self.supply(primary).as_deref() == Some(want) {
-                return true;
+                return pending_tx;
             }
             // Do not blindly submit a replacement while the first offer is still
             // pending. The CLI intentionally uses the account's pending nonce, so
@@ -893,7 +907,9 @@ impl Rpc {
                 pending_tx = None;
             }
         }
-        self.supply(primary).as_deref() == Some(want)
+        (self.supply(primary).as_deref() == Some(want))
+            .then_some(pending_tx)
+            .flatten()
     }
 
     // ---- ZeroFee EIP-7702 vertical slice ----------------------------------

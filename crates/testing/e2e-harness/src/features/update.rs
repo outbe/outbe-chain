@@ -36,6 +36,7 @@ fn propose_update(world: &mut World, name: String) {
 /// (`version > 2.3`). Scheduling is allowed; activation is Fatal.
 #[when(expr = "operator {string} proposes an update to an unsupported protocol version")]
 fn propose_unsupported_update(world: &mut World, name: String) {
+    world.state.allow_unsupported_update_fatal = true;
     let active = world.rpc.active_version().expect("read active version");
     assert!(
         UNSUPPORTED_PROTOCOL_VERSION > active,
@@ -461,21 +462,32 @@ fn baseline_version_on_all_validators(world: &mut World) {
 #[then("the committee continues producing finalized blocks")]
 fn committee_continues_finalizing(world: &mut World) {
     let ports = validator_ports(world);
-    let before = world
-        .rpc
-        .finalized(ports[0])
-        .expect("finalized height before liveness check");
-    for port in ports {
+    let before = ports
+        .iter()
+        .map(|port| {
+            (
+                *port,
+                world.rpc.finalized(*port).unwrap_or_else(|| {
+                    panic!("RPC {port} finalized height unavailable before liveness check")
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (port, finalized_before) in before {
         let head = world
             .rpc
-            .wait_block(port, before.saturating_add(2), 60)
+            .wait_block(port, finalized_before.saturating_add(2), 60)
             .unwrap_or_else(|| panic!("RPC {port} did not advance"));
-        let finalized = world
-            .rpc
-            .finalized(port)
-            .unwrap_or_else(|| panic!("RPC {port} finalized height unavailable"));
-        assert!(head >= before + 2, "RPC {port} head did not advance");
-        assert!(finalized >= before, "RPC {port} finalized height regressed");
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, finalized_before.saturating_add(1), 60),
+            "RPC {port} finality did not advance beyond {finalized_before}"
+        );
+        assert!(
+            head >= finalized_before.saturating_add(2),
+            "RPC {port} head did not advance"
+        );
     }
 }
 
