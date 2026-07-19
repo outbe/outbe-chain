@@ -654,6 +654,27 @@ impl Rpc {
             key,
             addresses::ZEROFEE_ADDR,
         )?);
+        let delegation_hash = state
+            .zerofee_delegation_receipt
+            .as_ref()
+            .and_then(|receipt| {
+                receipt
+                    .get("transactionHash")
+                    .and_then(serde_json::Value::as_str)
+            });
+        state.zerofee_delegation_raw = delegation_hash.and_then(|hash| {
+            eth::raw_json_with_params(
+                &self.cfg.rpc0,
+                "eth_getRawTransactionByHash",
+                serde_json::json!([hash]),
+            )
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        });
+        if state.zerofee_delegation_raw.is_none() {
+            return Err(eyre!(
+                "public RPC did not return the exact signed EIP-7702 transaction"
+            ));
+        }
         state.zerofee_key = Some(key.to_string());
         state.zerofee_address = Some(format!("{address:#x}"));
         state.zerofee_balance_before = eth::balance(&self.cfg.rpc0, address);
@@ -665,6 +686,58 @@ impl Rpc {
         let code = eth::code(&self.cfg.rpc0, address).expect("read delegated account code");
         let expected = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
         assert_eq!(code.as_ref(), expected, "wrong EIP-7702 designator");
+    }
+
+    pub fn replay_zerofee_delegation(&self, state: &mut FixtureState) -> Result<()> {
+        let raw = state
+            .zerofee_delegation_raw
+            .as_deref()
+            .ok_or_else(|| eyre!("missing exact EIP-7702 transaction"))?;
+        let before_balance = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        let before_counter = self.zerofee_counter(zerofee_address(state));
+        let error = eth::raw_json_result(
+            &self.cfg.rpc0,
+            "eth_sendRawTransaction",
+            serde_json::json!([raw]),
+        )
+        .expect_err("exact included EIP-7702 transaction replay unexpectedly accepted");
+        state.zerofee_replay_error = Some(error.to_string());
+        assert_eq!(
+            eth::balance(&self.cfg.rpc0, zerofee_address(state)),
+            before_balance,
+            "replay changed signer balance"
+        );
+        assert_eq!(
+            self.zerofee_counter(zerofee_address(state)),
+            before_counter,
+            "replay changed ZeroFee counter"
+        );
+        self.assert_zerofee_delegation(state);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_persisted_on_ports(&self, state: &FixtureState, ports: &[u16]) {
+        let address = zerofee_address(state);
+        let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        for &port in ports {
+            let url = self.url(port);
+            assert_eq!(
+                eth::code(&url, address).map(|code| code.to_vec()),
+                Some(expected_code.clone()),
+                "delegation was not preserved on RPC port {port}"
+            );
+            let counter = eth::read_call(
+                &url,
+                addresses::ZEROFEE_ADDR,
+                &IZeroFee::getCounterCall { signer: address },
+            )
+            .map(|value| (value.day, value.count));
+            assert_eq!(
+                counter.map(|value| value.1),
+                Some(8),
+                "quota changed on RPC port {port}"
+            );
+        }
     }
 
     pub fn submit_zerofee_quota(&self, state: &mut FixtureState) -> Result<()> {

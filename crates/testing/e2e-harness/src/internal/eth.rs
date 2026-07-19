@@ -223,6 +223,24 @@ pub(crate) fn raw_json_with_params(
     })
 }
 
+/// A raw JSON-RPC request that preserves the server error. Negative E2E paths
+/// use this instead of [`raw_json_with_params`], whose `Option` intentionally
+/// treats transport and server errors alike for polling reads.
+pub(crate) fn raw_json_result(
+    url: &str,
+    method: &'static str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        provider
+            .raw_request::<_, serde_json::Value>(method.into(), params)
+            .await
+            .map_err(Into::into)
+    })
+}
+
 /// Receipt success flag for `tx`, or `None` if not yet mined / unreadable.
 pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
     let url = url.to_string();

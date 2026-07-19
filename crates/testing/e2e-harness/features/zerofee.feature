@@ -19,3 +19,20 @@ Feature: EIP-7702 ZeroFee sponsorship and paid fallback
     When the quota-exhausted account submits the same call with a priority fee
     Then the paid call succeeds, charges a fee, and does not change the quota
     And the product CLI emits a canonical ZeroFee authorization
+
+  @pfs-007-07 @pfs-007-08 @tee
+  Scenario: Exact replay is rejected and exhausted quota survives validator and committee restarts
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When a funded fresh account delegates to ZeroFee with EIP-7702
+    Then the exact ZeroFee delegation designator is installed
+    When the account submits eight eligible sponsored reward calls
+    Then all eight calls succeed without fees and consume the full quota
+    When the exact included ZeroFee delegation transaction is replayed
+    Then the replay is rejected without changing delegation or quota
+    When validator "validator-3" restarts after quota exhaustion
+    Then the exhausted ZeroFee state is identical on every validator
+    When the entire committee restarts after quota exhaustion
+    Then the exhausted ZeroFee state is identical on every validator
+    When the quota-exhausted account submits the same call with a priority fee
+    Then the paid call succeeds, charges a fee, and does not change the quota

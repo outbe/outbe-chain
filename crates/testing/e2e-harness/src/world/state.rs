@@ -45,6 +45,10 @@ pub struct FixtureState {
     pub zerofee_balance_after_ninth: Option<alloy_primitives::U256>,
     pub zerofee_paid_receipt: Option<serde_json::Value>,
     pub zerofee_balance_after_paid: Option<alloy_primitives::U256>,
+    /// Exact signed EIP-7702 transaction returned by public RPC for replay.
+    pub zerofee_delegation_raw: Option<String>,
+    /// RPC rejection observed when the exact signed transaction is replayed.
+    pub zerofee_replay_error: Option<String>,
 }
 
 impl Default for FixtureState {
@@ -72,6 +76,8 @@ impl Default for FixtureState {
             zerofee_balance_after_ninth: None,
             zerofee_paid_receipt: None,
             zerofee_balance_after_paid: None,
+            zerofee_delegation_raw: None,
+            zerofee_replay_error: None,
         }
     }
 }
