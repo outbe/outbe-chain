@@ -33,6 +33,13 @@ pub struct FixtureState {
     pub lifecycle_stake_before_exit: Option<alloy_primitives::U256>,
     pub lifecycle_total_before_exit: Option<alloy_primitives::U256>,
     pub lifecycle_staking_balance_before_exit: Option<alloy_primitives::U256>,
+    /// Exact punitive-accounting snapshot captured before a validator is taken offline.
+    pub slash_stake_before: Option<alloy_primitives::U256>,
+    pub slash_total_before: Option<alloy_primitives::U256>,
+    pub slash_staking_balance_before: Option<alloy_primitives::U256>,
+    pub slash_count_before: Option<u64>,
+    /// Stake remaining immediately after the first felony, used to prove idempotency.
+    pub slash_stake_after: Option<alloy_primitives::U256>,
     /// Hash of the encrypted tribute transaction under projection verification.
     pub tribute_tx_hash: Option<String>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
@@ -71,6 +78,11 @@ impl Default for FixtureState {
             lifecycle_stake_before_exit: None,
             lifecycle_total_before_exit: None,
             lifecycle_staking_balance_before_exit: None,
+            slash_stake_before: None,
+            slash_total_before: None,
+            slash_staking_balance_before: None,
+            slash_count_before: None,
+            slash_stake_after: None,
             tribute_tx_hash: None,
             duplicate_tribute_tx_hash: None,
             zerofee_key: None,

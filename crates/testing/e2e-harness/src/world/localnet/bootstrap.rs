@@ -18,6 +18,8 @@ const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
+const PROPOSER_FELONY_SLOT: u64 = 1;
+const VOTER_FELONY_SLOT: u64 = 12;
 /// A lifecycle E2E may opt into a short delay; production seed defaults remain
 /// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
 const STAKING_SUFFIX: &str = "ee02";
@@ -212,7 +214,7 @@ impl Localnet {
             .ok_or_else(|| eyre!("genesis has no alloc object"))?;
 
         // SlashIndicator lives at 0x…ee01 (config slot 1 = proposer felony, slot
-        // 13 = voter felony). Match the address however it's spelled in alloc.
+        // 12 = voter felony). Match the address however it's spelled in alloc.
         let key = alloc.keys().find(|k| ends_with_ee01(k)).cloned();
         let key = key.unwrap_or_else(|| {
             let k = "0x000000000000000000000000000000000000ee01".to_string();
@@ -228,9 +230,7 @@ impl Localnet {
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| eyre!("felony storage is not an object"))?;
-        let thr = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
-        storage.insert(format!("0x{:064x}", 1u64), thr.clone());
-        storage.insert(format!("0x{:064x}", 13u64), thr);
+        patch_felony_storage(storage);
 
         fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
         Ok(())
@@ -251,6 +251,12 @@ impl Localnet {
         fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
         Ok(())
     }
+}
+
+fn patch_felony_storage(storage: &mut serde_json::Map<String, serde_json::Value>) {
+    let threshold = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
+    storage.insert(format!("0x{PROPOSER_FELONY_SLOT:064x}"), threshold.clone());
+    storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
 
 /// A `TESTNET_*` tuning override parsed as `u64`, or `default`.
@@ -351,5 +357,21 @@ mod tests {
     fn lifecycle_timing_patch_rejects_unseeded_staking_entry() {
         let mut genesis = json!({ "alloc": {} });
         assert!(patch_staking_storage(&mut genesis, Some(8), None).is_err());
+    }
+
+    #[test]
+    fn felony_patch_uses_current_slashindicator_config_slots() {
+        let mut storage = serde_json::Map::new();
+        patch_felony_storage(&mut storage);
+        let expected = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
+        assert_eq!(
+            storage.get(&format!("0x{PROPOSER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert_eq!(
+            storage.get(&format!("0x{VOTER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert!(storage.get(&format!("0x{:064x}", 13u64)).is_none());
     }
 }

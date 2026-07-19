@@ -11,7 +11,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 use eyre::{eyre, Result, WrapErr as _};
 use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 
@@ -429,7 +429,8 @@ impl Rpc {
         )
     }
 
-    /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING, 4 UNBONDING, 5 INACTIVE.
+    /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
+    /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
         self.validator_record(port, addr).map(|r| r.status as u64)
     }
@@ -465,6 +466,29 @@ impl Rpc {
 
     pub fn staking_balance_on(&self, port: u16) -> Option<U256> {
         eth::balance(&self.url(port), addresses::STK_ADDR)
+    }
+
+    /// Whether a finalized VoterFelony event exists for `validator` at or after
+    /// `from_block`. The validator is the event's first indexed argument.
+    pub fn has_voter_felony_event(&self, port: u16, validator: &str, from_block: u64) -> bool {
+        let validator: Address = match validator.parse() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let signature = keccak256("VoterFelony(address,uint64,uint64)");
+        let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::SLASH_ADDR),
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_validator],
+            }]),
+        )
+        .and_then(|value| value.as_array().map(|logs| !logs.is_empty()))
+        .unwrap_or(false)
     }
 
     /// Whether the validator holds a live DKG share.
@@ -674,17 +698,15 @@ impl Rpc {
         Some(parse_rpc_u256(gas_used)? * parse_rpc_u256(gas_price)?)
     }
 
-    /// Felony slash percent from `outbe-cli slash config`, if readable.
+    /// Felony slash percent from the node's authoritative typed RPC response.
     pub fn slash_percent(&self) -> Option<u64> {
-        let out = self
-            .sh()
-            .cli(["--rpc-url", self.cfg.rpc0.as_str(), "slash", "config"])
-            .ok()?;
-        let line = out
-            .lines()
-            .find(|l| l.to_lowercase().contains("slash amount"))?;
-        let digits: String = line.chars().filter(char::is_ascii_digit).collect();
-        digits.parse().ok()
+        eth::raw_json_with_params(
+            &self.cfg.rpc0,
+            "outbe_getSlashConfig",
+            serde_json::json!([]),
+        )?
+        .get("slashAmountPercent")?
+        .as_u64()
     }
 
     // ---- lifecycle waits -----------------------------------------------------
