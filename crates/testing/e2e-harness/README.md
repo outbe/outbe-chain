@@ -197,7 +197,11 @@ The focused `tribute_projection` scenarios own MongoDB and verify the full
 encrypted offer → successful receipt → four-validator projection → independently
 verified compressed-entity proof path, including both absence-proof edge cases. The
 validator lifecycle, update, DKG, downtime, restart, stale-join, and follower
-flows are also wired under `features/`.
+flows are also wired under `features/`. DKG failure coverage includes both recovery
+of a stalled frozen target and permanent loss: the latter asserts that the outgoing
+committee finalizes without partial activation through the published VRF deadline
+and that every surviving validator then terminates fail-closed. It deliberately
+does not claim an automatic forfeiture/replacement policy.
 
 ## Ide support
 

@@ -34,6 +34,8 @@ pub struct FixtureState {
     pub marker_height: Option<u64>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
+    /// VRF expiry observed while a permanently stalled frozen DKG target is live.
+    pub vrf_expiry_height: Option<u64>,
     /// Worldwide-day status byte captured before a tribute offer (invariant check).
     pub wwd_status_before: Option<String>,
     /// Exact lifecycle accounting snapshot captured immediately before exit.
@@ -99,6 +101,7 @@ impl Default for FixtureState {
             wwd: None,
             marker_height: None,
             marker_count: None,
+            vrf_expiry_height: None,
             wwd_status_before: None,
             lifecycle_stake_before_exit: None,
             lifecycle_total_before_exit: None,

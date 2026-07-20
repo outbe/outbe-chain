@@ -1109,6 +1109,15 @@ fn pending_dkg_activation_decision(
     }
 }
 
+fn frozen_dkg_target_expired(
+    current_height: u64,
+    planned_activation_height: u64,
+    activation_grace_blocks: u64,
+) -> bool {
+    let deadline = planned_activation_height.saturating_add(activation_grace_blocks);
+    current_height >= deadline
+}
+
 fn provider_matches_consensus_tip(
     provider: &impl BlockHashReader,
     tip: crate::marshal_update_reporter::ConsensusTip,
@@ -3967,6 +3976,35 @@ where
                             let _ = execution_finalized_height_tx.send(current_height);
                         }
                         Err(e) => {
+                            // Height notifications are deliberately not consumed while a
+                            // ceremony is running. Check the authoritative finalized view
+                            // before scheduling a retry: otherwise an old queued height can
+                            // start another ceremony while the chain is already at the VRF
+                            // deadline, and the application cannot propose the next block
+                            // that would wake this branch again.
+                            if let Some(target) = frozen_dkg_target.as_ref() {
+                                let current_height =
+                                    finalization_view.read().last_finalized_number;
+                                if frozen_dkg_target_expired(
+                                    current_height,
+                                    target.planned_activation_height,
+                                    dkg_rotation_params.activation_grace_blocks,
+                                ) {
+                                    let activation_deadline = target
+                                        .planned_activation_height
+                                        .saturating_add(
+                                            dkg_rotation_params.activation_grace_blocks,
+                                        );
+                                    vrf_safety.mark_expired(current_height);
+                                    publish_randomness_status(&bridge, &vrf_safety);
+                                    return Err(eyre::eyre!(
+                                        "frozen DKG target missed VRF expiry: cycle {}, height {}, deadline {}",
+                                        target.dkg_cycle,
+                                        current_height,
+                                        activation_deadline
+                                    ));
+                                }
+                            }
                             warn!(?e, "DKG reshare failed, retrying frozen target on next check");
                             retry_frozen_dkg = true;
                         }
@@ -4798,7 +4836,11 @@ where
                         let activation_deadline = target
                             .planned_activation_height
                             .saturating_add(dkg_rotation_params.activation_grace_blocks);
-                        if current_height > activation_deadline {
+                        if frozen_dkg_target_expired(
+                            current_height,
+                            target.planned_activation_height,
+                            dkg_rotation_params.activation_grace_blocks,
+                        ) {
                             vrf_safety.mark_expired(current_height);
                             publish_randomness_status(&bridge, &vrf_safety);
                             return Err(eyre::eyre!(

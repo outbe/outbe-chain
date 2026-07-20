@@ -2163,6 +2163,16 @@ fn test_pending_dkg_activation_triggers_at_planned_height() {
 }
 
 #[test]
+fn frozen_dkg_target_expires_at_the_last_proposable_height() {
+    assert!(!frozen_dkg_target_expired(269, 240, 30));
+    assert!(
+        frozen_dkg_target_expired(270, 240, 30),
+        "the application refuses block 271, so the supervisor must fail closed at height 270"
+    );
+    assert!(frozen_dkg_target_expired(271, 240, 30));
+}
+
+#[test]
 fn local_reshare_role_classifies_old_new_removed_and_outsider() {
     let (old_keys, old_participants, previous_output, _share, _polynomial) =
         run_test_dkg_complete();
