@@ -21,6 +21,8 @@ mod follower;
 mod joiner;
 mod probes;
 
+pub(crate) use probes::LogAudit;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};

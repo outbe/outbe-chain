@@ -66,6 +66,9 @@ the harness reads no configuration from the environment.** Flags:
   single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
+- `--evidence-dir <PATH>` — persistent per-scenario JSON evidence. By default it
+  is written under `<data-dir>/evidence/<run-id>` and is not removed when a
+  successful run cleans its node data.
 - `--upgraded-chain-bin <PATH>` — optional prebuilt replacement node binary for
   the protocol-update recovery scenario. When omitted, that scenario creates a
   temporary detached worktree at the revision under test, changes only its
@@ -190,6 +193,13 @@ MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container
 cleanup backstop. Add `--no-cleanup` when a successful run's chain data should
 remain available for inspection; failed runs keep their data directory by
 default.
+
+Every scenario that constructs a World writes `scenario-NNN.json` before
+teardown. The record includes the source SHA and dirty-worktree bit, exact
+invocation, feature/scenario/result, duration, validator and TEE configuration,
+scenario data directory, and explicit log-audit counts (including zeros). This
+is compact durable evidence; verbose node logs remain in the run directory only
+for failed runs or when `--no-cleanup` is used.
 
 ## Status
 

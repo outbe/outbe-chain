@@ -18,6 +18,7 @@ use localnet::Localnet;
 use mongodb::MongoDb;
 use rpc::Rpc;
 use state::FixtureState;
+use std::time::Instant;
 use validators::Validators;
 
 // Public result types returned by the `Rpc` handle.
@@ -26,6 +27,7 @@ pub use crate::internal::parse::{ScheduledUpdate, VoteStatus};
 
 #[derive(Debug, cucumber::World)]
 pub struct World {
+    pub(crate) started_at: Instant,
     /// The localnet and every owned node: bootstrap/start/stop the committee,
     /// provision/launch the joiner + followers, kill/restart validators.
     pub localnet: Localnet,
@@ -50,6 +52,7 @@ impl Default for World {
         let mut cfg = Config::for_scenario(&env, id);
         let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
         Self {
+            started_at: Instant::now(),
             localnet: Localnet::new(cfg.clone()),
             mongodb,
             rpc: Rpc::new(cfg.clone()),
