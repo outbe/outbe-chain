@@ -102,11 +102,12 @@ MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
 On an SGX runner, `mise run e2e-sgx` builds the real enclave and runs the same
 features with four `gramine-sgx` containers. That lane raises the per-request
 TEE timeout to 120 seconds for EPC paging while retaining the normal 30-second
-default elsewhere. It also passes a 120-second node-local TEE bootstrap deadline
-and waits outside that deadline, because four co-located hardware enclaves have
-exceeded the node's normal 60-second default in consecutive-run evidence. The
-production/testnet default remains unchanged and must be calibrated for its
-deployment topology.
+default elsewhere. It also passes a 180-second node-local TEE bootstrap deadline
+and polls for up to 240 seconds outside that deadline, because four co-located
+hardware enclaves have exceeded both the node's normal 60-second bootstrap
+default and the host client's normal 30-second request deadline in consecutive-run
+evidence. The production/testnet defaults remain unchanged and must be calibrated
+for their deployment topology.
 
 Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice:
 
