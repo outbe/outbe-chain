@@ -14,8 +14,9 @@ const WORLDWIDE_DAY: u32 = 20260101;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 /// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
 const SRC_CHAIN: u32 = 1;
-/// Block timestamp the tests brief at; the schedule anchors at its midnight.
-const NOW: u64 = 1_700_000_000;
+/// Block timestamp the tests brief at: just after a midnight, so the brief
+/// anchors to that same midnight (the normal on-time case).
+const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 /// Production escrow basis: the brief config carries `PROMIS_LOAD` scaled to minor.
 const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
@@ -247,6 +248,80 @@ fn dispatch_auction_brief_oversized_supply_returns_false() {
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
             AuctionStage::None
+        );
+    });
+}
+
+// --- Late-brief deferral ---
+
+fn brief_anchor_at(now: u64) -> u64 {
+    with_storage(|s| {
+        assert!(crate::api::dispatch_auction_brief(
+            s.clone(),
+            WORLDWIDE_DAY,
+            U256::from(LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            true,
+            now,
+        )
+        .unwrap());
+        u64::from(
+            s.contract::<DesisContract>()
+                .auction_at
+                .read(&WORLDWIDE_DAY)
+                .unwrap(),
+        )
+    })
+}
+
+#[test]
+fn brief_anchors_to_this_midnight_within_grace() {
+    assert_eq!(brief_anchor_at(ANCHOR + 4 * 3600), ANCHOR);
+    assert_eq!(brief_anchor_at(ANCHOR + 6 * 3600), ANCHOR);
+}
+
+#[test]
+fn brief_defers_past_grace_to_next_midnight() {
+    assert_eq!(brief_anchor_at(ANCHOR + 6 * 3600 + 1), ANCHOR + 86_400);
+    assert_eq!(brief_anchor_at(ANCHOR + 12 * 3600), ANCHOR + 86_400);
+}
+
+#[test]
+fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
+    with_storage(|s| {
+        let noon = ANCHOR + 12 * 3600;
+        assert!(crate::api::dispatch_auction_brief(
+            s.clone(),
+            WORLDWIDE_DAY,
+            U256::from(10 * LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            true,
+            noon,
+        )
+        .unwrap());
+        assert_eq!(
+            u64::from(
+                s.contract::<DesisContract>()
+                    .auction_at
+                    .read(&WORLDWIDE_DAY)
+                    .unwrap()
+            ),
+            ANCHOR + 86_400
+        );
+        // The noon tick is before the deferred anchor: the day waits.
+        runtime::schedule_tick(&s, noon).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(WORLDWIDE_DAY)
+                .unwrap(),
+            AuctionStage::Briefed
+        );
+        // The next midnight starts it with the full commit window.
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Started
         );
     });
 }

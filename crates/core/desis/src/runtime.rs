@@ -5,15 +5,15 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO,
-    RATE_SCALE, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO,
+    QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -25,7 +25,8 @@ use crate::sol_ext::IOriginRouter;
 // ---------------------------------------------------------------------------
 
 /// Record the day's auction brief: supply (raw PROMIS), entry price and day
-/// type. The schedule anchor is the midnight of `now`.
+/// type. The schedule anchors to the midnight of `now`, or the next one when
+/// too little of the commit window would remain.
 pub fn record_brief(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
@@ -41,7 +42,16 @@ pub fn record_brief(
     if contract.read_stage(worldwide_day)? != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
-    let anchor = u32::try_from(date_key_to_utc_timestamp(timestamp_to_date_key(now)))
+    // Anchor to this midnight while it still leaves the minimum commit window;
+    // a late brief (stall past midnight) anchors to the next one instead.
+    let midnight = now - now % SECONDS_PER_DAY;
+    let anchor_ts =
+        if COMMIT_WINDOW_SECONDS.saturating_sub(now - midnight) >= MIN_COMMIT_WINDOW_SECONDS {
+            midnight
+        } else {
+            midnight + SECONDS_PER_DAY
+        };
+    let anchor = u32::try_from(anchor_ts)
         .map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))?;
 
     contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;

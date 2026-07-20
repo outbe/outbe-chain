@@ -31,6 +31,10 @@ pub const COMMIT_WINDOW_SECONDS: u64 = 24 * 3600;
 pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
 pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
 
+/// Guarantee at least this much commit window; a brief that would leave less
+/// anchors to the next midnight instead.
+pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 18 * 3600;
+
 /// `dayState` wire values carried by AUCTION_STAGE_START.
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
