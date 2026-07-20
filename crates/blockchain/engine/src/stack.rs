@@ -141,6 +141,47 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
 fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
     last_execution_height.min(finalized_tip)
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecoveredApplicationFinalization {
+    round: Round,
+    digest: Digest,
+}
+
+/// Promote the conservative cross-store anchor only when marshal proves the
+/// exact canonical execution-head digest. Height agreement alone is not
+/// sufficient: it could conceal a same-height fork after a partial restore.
+fn reconcile_recovered_execution_head(
+    last_execution_height: u64,
+    last_execution_hash: B256,
+    recovered: Option<RecoveredApplicationFinalization>,
+) -> Result<(u64, B256, Option<Round>)> {
+    if last_execution_height == 0 {
+        ensure!(
+            recovered.is_none(),
+            "marshal returned a finalization record for genesis execution height"
+        );
+        return Ok((0, last_execution_hash, None));
+    }
+
+    let recovered = recovered.ok_or_else(|| {
+        eyre::eyre!(
+            "marshal returned no finalization for non-genesis execution height {last_execution_height}"
+        )
+    })?;
+    ensure!(
+        recovered.digest.0 == last_execution_hash,
+        "marshal finalization digest mismatch at execution height {last_execution_height}: \
+         execution={last_execution_hash}, marshal={}",
+        recovered.digest.0
+    );
+
+    Ok((
+        last_execution_height,
+        last_execution_hash,
+        Some(recovered.round),
+    ))
+}
 /// epoch restart precondition: bounded wait for the finalization
 /// view to expose the continuity anchor before launching the new-epoch
 /// Simplex engine. Without this, `Automaton::genesis(epoch > 0)` could be
@@ -3134,7 +3175,7 @@ where
     };
 
     // ── 10. Create executor actor (state-aware init) ────────────────────
-    let (executor_actor, executor_mailbox) = ExecutorActor::new(
+    let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
         genesis_hash,
@@ -3281,63 +3322,79 @@ where
     // can backfill + verify finalized blocks from this validator.
     spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
 
-    let recovered_finalized_round = match recover_application_finalized_round(
-        ctx,
-        &marshal_mailbox,
-        last_execution_height,
-    )
-    .await
-    {
-        Ok(round) => round,
-        Err(error) if args.force_dkg && last_execution_height > 0 => {
-            return Err(error).wrap_err(
-                "--testnet.force-dkg existing-chain recovery requires durable marshal \
+    let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
+        match recover_application_finalized_round(ctx, &marshal_mailbox, last_execution_height)
+            .await
+        {
+            Ok(recovered) => reconcile_recovered_execution_head(
+                last_execution_height,
+                last_execution_hash,
+                recovered,
+            )?,
+            Err(error) if args.force_dkg && last_execution_height > 0 => {
+                return Err(error).wrap_err(
+                    "--testnet.force-dkg existing-chain recovery requires durable marshal \
                  finalization history; restore validator-N/data/consensus/outbe-* \
                  instead of deleting consensus archives",
-            );
-        }
-        Err(error) if startup_live_join_completed || args.trust_el_head => {
-            warn!(
-                %error,
-                last_execution_height,
-                "marshal archive lacks finalized-round history after startup live-join or force-dkg; continuing from synced execution boundary"
-            );
-            None
-        }
-        Err(head_error) => {
-            // reth's canonical head can lead consensus finalization by the
-            // in-flight block: one this node proposed and applied as its head
-            // but had not finalized when it stopped (steady state:
-            // head_height = finalized_height + 1). On a plain restart in that
-            // window the head's finalization legitimately does not exist yet —
-            // a normal unfinalized head, NOT archive corruption. Confirm the
-            // marshal still holds its own finalized tip's record (a gap *there*
-            // is genuine corruption) and that the head leads by a bounded
-            // amount, then continue from marshal's durable finalized boundary.
-            // The speculative Reth head remains available locally, but neither
-            // ExecutorActor nor FinalizationView may call it finalized. The
-            // network re-finalizes forward and Reth reorgs via forkchoice if a
-            // different block wins the first unfinalized height.
-            let finalized_tip = last_consensus_finalized.get();
-            if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
-                return Err(head_error);
+                );
             }
-            let Ok(recovered_round) =
-                recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
-            else {
-                return Err(head_error);
-            };
-            warn!(
-                last_execution_height,
-                finalized_tip,
-                head_lead = last_execution_height.saturating_sub(finalized_tip),
-                recovery_anchor_hash = %recovery_anchor_hash,
-                "execution head leads the marshal finalized tip on restart; anchoring \
-                 recovery at certified finality (unfinalized head re-finalized forward)"
-            );
-            recovered_round
-        }
-    };
+            Err(error) if startup_live_join_completed || args.trust_el_head => {
+                warn!(
+                    %error,
+                    last_execution_height,
+                    "marshal archive lacks finalized-round history after startup live-join or force-dkg; continuing from synced execution boundary"
+                );
+                (recovery_anchor_height, recovery_anchor_hash, None)
+            }
+            Err(head_error) => {
+                // reth's canonical head can lead consensus finalization by the
+                // in-flight block: one this node proposed and applied as its head
+                // but had not finalized when it stopped (steady state:
+                // head_height = finalized_height + 1). On a plain restart in that
+                // window the head's finalization legitimately does not exist yet —
+                // a normal unfinalized head, NOT archive corruption. Confirm the
+                // marshal still holds its own finalized tip's record (a gap *there*
+                // is genuine corruption) and that the head leads by a bounded
+                // amount, then continue from marshal's durable finalized boundary.
+                // The speculative Reth head remains available locally, but neither
+                // ExecutorActor nor FinalizationView may call it finalized. The
+                // network re-finalizes forward and Reth reorgs via forkchoice if a
+                // different block wins the first unfinalized height.
+                let finalized_tip = last_consensus_finalized.get();
+                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
+                    return Err(head_error);
+                }
+                let Ok(recovered_finalization) =
+                    recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+                else {
+                    return Err(head_error);
+                };
+                let (certified_height, certified_hash, recovered_round) =
+                    reconcile_recovered_execution_head(
+                        finalized_tip,
+                        recovery_anchor_hash,
+                        recovered_finalization,
+                    )
+                    .wrap_err(
+                        "marshal finalized-tip record disagrees with canonical execution history",
+                    )?;
+                warn!(
+                    last_execution_height,
+                    finalized_tip,
+                    head_lead = last_execution_height.saturating_sub(finalized_tip),
+                    recovery_anchor_hash = %recovery_anchor_hash,
+                    "execution head leads the marshal finalized tip on restart; anchoring \
+                     recovery at certified finality (unfinalized head re-finalized forward)"
+                );
+                (certified_height, certified_hash, recovered_round)
+            }
+        };
+
+    executor_actor = executor_actor.with_recovered_finalized_state(
+        genesis_hash,
+        recovery_anchor_height,
+        recovery_anchor_hash,
+    );
 
     // Start broadcast engine with P2P channel.
     let _broadcast_handle = broadcast_engine.start(broadcast_channel);
@@ -3383,12 +3440,12 @@ where
     // record on disk. Drop any finalization record above the recovered finalized
     // height so the store never retains a height the view has not reached.
     let pruned_ahead = finalized_parent_cert_store
-        .prune_above_height(last_execution_height)
+        .prune_above_height(recovery_anchor_height)
         .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
     if pruned_ahead > 0 {
         tracing::info!(
             pruned_ahead,
-            recovered_finalized_height = last_execution_height,
+            recovered_finalized_height = recovery_anchor_height,
             "dropped ahead-of-recovered-view finalization parent records at startup"
         );
     }
@@ -5251,7 +5308,7 @@ async fn recover_application_finalized_round(
     clock: &impl Clock,
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
-) -> Result<Option<Round>> {
+) -> Result<Option<RecoveredApplicationFinalization>> {
     if last_execution_height == 0 {
         return Ok(None);
     }
@@ -5271,12 +5328,14 @@ async fn recover_application_finalized_round(
         {
             Ok(Some(finalization)) => {
                 let round = finalization.proposal.round;
+                let digest = finalization.proposal.payload;
                 info!(
                     last_execution_height,
                     ?round,
+                    %digest,
                     "recovered application finalized round from marshal archive"
                 );
-                return Ok(Some(round));
+                return Ok(Some(RecoveredApplicationFinalization { round, digest }));
             }
             Ok(None) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
                 clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;

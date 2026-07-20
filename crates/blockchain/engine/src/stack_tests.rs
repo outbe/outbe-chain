@@ -1067,6 +1067,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let round = Round::new(Epoch::new(0), View::new(1175));
         let block = recovery_block(5700);
+        let expected_digest = block.digest();
         let (provider, finalization) = recovery_finalization_fixture(&block, round);
         let clock = context.child("recover_clock");
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
@@ -1083,10 +1084,51 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
-        recovered
+        (recovered, expected_digest)
     });
 
-    assert_eq!(recovered, Some(Round::new(Epoch::new(0), View::new(1175))));
+    assert_eq!(
+        recovered.0,
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(0), View::new(1175)),
+            digest: recovered.1,
+        })
+    );
+}
+
+#[test]
+fn exact_marshal_finalization_promotes_recovery_anchor_to_execution_head() {
+    let hash = B256::repeat_byte(0x42);
+    let round = Round::new(Epoch::new(3), View::new(17));
+    let reconciled = reconcile_recovered_execution_head(
+        91,
+        hash,
+        Some(RecoveredApplicationFinalization {
+            round,
+            digest: Digest(hash),
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(reconciled, (91, hash, Some(round)));
+}
+
+#[test]
+fn mismatched_marshal_finalization_digest_fails_closed() {
+    let error = reconcile_recovered_execution_head(
+        91,
+        B256::repeat_byte(0x42),
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(3), View::new(17)),
+            digest: Digest(B256::repeat_byte(0x24)),
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("marshal finalization digest mismatch at execution height 91"));
+    assert!(error.contains("execution=0x4242"));
+    assert!(error.contains("marshal=0x2424"));
 }
 
 #[test]
