@@ -280,7 +280,23 @@ fn proposal_parity(world: &mut World, id: u64) {
         expected.visible,
         "proposal #{id} must be visible on primary"
     );
+    // `vote_status` reads `latest`, so the primary can expose a vote as soon as
+    // its containing block becomes canonical locally.  Consensus delivers the
+    // same block to the other RPCs a few hundred milliseconds later (notably
+    // with co-located hardware enclaves).  Establish a finalized observation
+    // boundary before asserting exact state parity; otherwise this step races
+    // one node's pre-block state against the primary's post-block state.
+    let observation_height = world
+        .rpc
+        .head(world.validators.primary_port())
+        .expect("primary head for proposal parity");
     for port in validator_ports(world) {
+        assert!(
+            world.rpc.wait_finalized_at_least(port, observation_height, 15),
+            "RPC {port} did not finalize proposal parity observation height {observation_height}: head={:?}, finalized={:?}",
+            world.rpc.head(port),
+            world.rpc.finalized(port)
+        );
         let actual = world.rpc.vote_status_on(port, id);
         assert_eq!(
             actual.status, expected.status,
