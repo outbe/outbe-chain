@@ -11,9 +11,9 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
 
 use crate::constants::{
-    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, RATE_SCALE,
-    REVEAL_WINDOW_SECONDS,
+    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
+    DAY_STATE_RED, ISSUANCE_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO,
+    QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -85,31 +85,7 @@ pub fn start_auction(
         return Err(DesisError::InvalidStageTransition.into());
     }
 
-    // Derive minBidQty as 4% of the prior clearing's issued count.
-    let min_bid_qty: u16 = {
-        let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
-        if last_worldwide_day != 0 {
-            let prev_issued = contract.read_last_clearing_issued_count()?;
-            let derived =
-                (prev_issued as u64).saturating_mul(BID_QUANTITY_FLOOR_BPS as u64) / 10_000;
-            derived.min(u16::MAX as u64) as u16
-        } else {
-            0
-        }
-    };
-
-    // Genesis IntexFactory profile: floor/call derive from entry; window/threshold/
-    // period are the call-trigger params relayed to the target chain. Sourced here
-    // (storage in reach) and folded into the config before it is persisted, so the
-    // demand-side config carries the same values the wire message ships.
-    let iparams = outbe_intexfactory::read_params(&storage)?;
-    config.min_intex_bid_quantity = min_bid_qty;
-    config.call_trigger = crate::schema::IntexCallTrigger {
-        window_days: iparams.call_window_days,
-        threshold_days: iparams.call_threshold_days,
-        intex_call_period: iparams.intex_call_period_secs,
-    };
-    config.commit_bond_minor = iparams.commit_bond_minor;
+    let iparams = fold_profile(&storage, &contract, &mut config)?;
 
     let auction_at = u32::try_from(auction_timestamp)
         .map_err(|_| PrecompileError::Revert("auction timestamp exceeds u32".into()))?;
@@ -121,11 +97,64 @@ pub fn start_auction(
         worldwideDay: worldwide_day,
     })?;
 
-    // Broadcast AUCTION_STAGE_START to the target chains.
     // revealEnd = noon of the auction day; commitEnd/issuanceEnd are protocol offsets.
     let noon = auction_noon(auction_timestamp)?;
     let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
     let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
+    send_stage_start(
+        &storage,
+        worldwide_day,
+        &config,
+        &iparams,
+        commit_end,
+        noon,
+        issuance_end,
+        0,
+    )
+}
+
+/// Fold the prior-clearing bid floor and the genesis profile into the config,
+/// so the persisted config carries the same values the wire message ships.
+fn fold_profile(
+    storage: &StorageHandle<'_>,
+    contract: &DesisContract<'_>,
+    config: &mut AuctionConfig,
+) -> Result<outbe_intexfactory::IntexParams> {
+    // minBidQty = 4% of the prior clearing's issued count.
+    let min_bid_qty: u16 = {
+        let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
+        if last_worldwide_day != 0 {
+            let prev_issued = contract.read_last_clearing_issued_count()?;
+            let derived =
+                (prev_issued as u64).saturating_mul(BID_QUANTITY_FLOOR_BPS as u64) / 10_000;
+            derived.min(u16::MAX as u64) as u16
+        } else {
+            0
+        }
+    };
+    let iparams = outbe_intexfactory::read_params(storage)?;
+    config.min_intex_bid_quantity = min_bid_qty;
+    config.call_trigger = crate::schema::IntexCallTrigger {
+        window_days: iparams.call_window_days,
+        threshold_days: iparams.call_threshold_days,
+        intex_call_period: iparams.intex_call_period_secs,
+    };
+    config.commit_bond_minor = iparams.commit_bond_minor;
+    Ok(iparams)
+}
+
+/// Broadcast AUCTION_STAGE_START with the given schedule and day state.
+#[allow(clippy::too_many_arguments)]
+fn send_stage_start(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+    config: &AuctionConfig,
+    iparams: &outbe_intexfactory::IntexParams,
+    commit_end: u32,
+    reveal_end: u32,
+    issuance_end: u32,
+    day_state: u8,
+) -> Result<()> {
     let floor_price = config
         .entry_price_minor
         .checked_mul(U256::from(iparams.floor_price_num))
@@ -145,7 +174,7 @@ pub fn start_auction(
     let stage_params = IOriginRouter::AuctionStageStartParams {
         worldwideDay: worldwide_day,
         commitEnd: commit_end,
-        revealEnd: noon,
+        revealEnd: reveal_end,
         issuanceEnd: issuance_end,
         issuanceCurrency: config.issuance_currency,
         referenceCurrency: config.reference_currency,
@@ -157,8 +186,9 @@ pub fn start_auction(
         intexCallPeriod: iparams.intex_call_period_secs,
         callWindowDays: iparams.call_window_days,
         callThresholdDays: iparams.call_threshold_days,
-        minIntexBidQuantity: min_bid_qty,
+        minIntexBidQuantity: config.min_intex_bid_quantity,
         commitBondMinor: config.commit_bond_minor,
+        dayState: day_state,
     };
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
@@ -170,7 +200,6 @@ pub fn start_auction(
         .abi_encode()
         .into(),
     )?;
-
     Ok(())
 }
 
@@ -258,6 +287,156 @@ pub fn begin_clearing(
     )?;
 
     Ok(rounding_remainder)
+}
+
+// ---------------------------------------------------------------------------
+// Schedule tick
+// ---------------------------------------------------------------------------
+
+/// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
+/// runs in its own checkpoint — an Err rolls that day back (retried next slot).
+pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
+    schedule_tick(&ctx.storage, ctx.block.timestamp)
+}
+
+pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
+    let count = {
+        let contract = storage.contract::<DesisContract>();
+        contract.sched_active_count.read()?
+    };
+    if count == 0 {
+        return Ok(());
+    }
+    // Snapshot the set before iterating: transitions swap-pop it.
+    let mut days = Vec::with_capacity(count as usize);
+    {
+        let contract = storage.contract::<DesisContract>();
+        for i in 0..count {
+            days.push(contract.sched_active_at.read(&i)?);
+        }
+    }
+    for day in days {
+        let res = storage.with_checkpoint(|| advance_day(storage, day, now));
+        if let Err(e) = res {
+            tracing::warn!(target: "outbe::desis", day, error = ?e, "schedule tick: skipping day");
+        }
+    }
+    Ok(())
+}
+
+/// Walk one day's schedule: start at the anchor, flip to Revealing at commit
+/// end, arm the clearing gate at reveal end, retire overdue and terminal days.
+fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
+    loop {
+        let mut contract = storage.contract::<DesisContract>();
+        let stage = contract.read_stage(worldwide_day)?;
+        let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
+        let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
+        let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
+        match stage {
+            AuctionStage::Cleared | AuctionStage::Cancelled => {
+                return contract.remove_sched_active(worldwide_day);
+            }
+            _ if now >= issuance_end => {
+                contract.emit(IDesis::AuctionOverdue {
+                    worldwideDay: worldwide_day,
+                })?;
+                return contract.remove_sched_active(worldwide_day);
+            }
+            AuctionStage::Briefed if now >= anchor => {
+                let mut config = contract.read_auction_config(worldwide_day)?;
+                let iparams = fold_profile(storage, &contract, &mut config)?;
+                contract.write_auction_config(worldwide_day, &config)?;
+                let ends = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
+                if contract.brief_green.read(&worldwide_day)? == 0 {
+                    send_stage_start(
+                        storage,
+                        worldwide_day,
+                        &config,
+                        &iparams,
+                        ends.0,
+                        ends.1,
+                        ends.2,
+                        DAY_STATE_RED,
+                    )?;
+                    contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+                    contract.emit(IDesis::AuctionCancelledRedDay {
+                        worldwideDay: worldwide_day,
+                    })?;
+                    return contract.remove_sched_active(worldwide_day);
+                }
+                if now >= commit_end {
+                    contract.emit(IDesis::AuctionDispatchFailed {
+                        worldwideDay: worldwide_day,
+                        stage: "auction_stage_start".into(),
+                        reason: "commit window elapsed".into(),
+                    })?;
+                    contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+                    return contract.remove_sched_active(worldwide_day);
+                }
+                send_stage_start(
+                    storage,
+                    worldwide_day,
+                    &config,
+                    &iparams,
+                    ends.0,
+                    ends.1,
+                    ends.2,
+                    DAY_STATE_GREEN,
+                )?;
+                contract.write_stage(worldwide_day, AuctionStage::Started)?;
+            }
+            AuctionStage::Started if now >= commit_end => {
+                contract.write_stage(worldwide_day, AuctionStage::Revealing)?;
+            }
+            AuctionStage::Revealing if now >= reveal_end => {
+                if contract.clearing_initiated.read(&worldwide_day)? != 0 {
+                    return Ok(());
+                }
+                return arm_clearing(storage, worldwide_day, now);
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// u32 wire timestamp (bounded until 2106).
+fn ts32(ts: u64) -> Result<u32> {
+    u32::try_from(ts).map_err(|_| PrecompileError::Revert("schedule timestamp exceeds u32".into()))
+}
+
+/// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
+/// units, start the fan-in gate and broadcast the clearing stage.
+fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
+    let mut contract = storage.contract::<DesisContract>();
+    let config = contract.read_auction_config(worldwide_day)?;
+    if config.promis_load_minor == 0 {
+        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
+    }
+    let supply_promis = u128::try_from(contract.pending_supply_promis.read(&worldwide_day)?)
+        .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
+    let supply_intex = (supply_promis / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
+
+    contract.clearing_initiated.write(&worldwide_day, 1u8)?;
+    contract
+        .pending_supply_intex
+        .write(&worldwide_day, supply_intex)?;
+    contract
+        .clearing_deadline
+        .write(&worldwide_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
+    contract.push_gate_active(worldwide_day)?;
+
+    storage.call(
+        ORIGIN_ROUTER_ADDRESS,
+        U256::ZERO,
+        IOriginRouter::sendAuctionStageClearingCall {
+            worldwideDay: worldwide_day,
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

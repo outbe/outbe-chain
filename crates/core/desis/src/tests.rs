@@ -1387,6 +1387,151 @@ fn dispatch_auction_brief_duplicate_returns_false() {
     });
 }
 
+// --- Schedule tick ---
+
+const ANCHOR: u64 = NOW - NOW % 86_400;
+/// Production escrow basis: the brief config carries `PROMIS_LOAD` scaled to minor.
+const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
+
+fn brief(s: &StorageHandle, green: bool) {
+    assert!(crate::api::dispatch_auction_brief(
+        s.clone(),
+        WORLDWIDE_DAY,
+        U256::from(10 * LOAD_MINOR),
+        U256::from(ENTRY_PRICE),
+        green,
+        NOW,
+    )
+    .unwrap());
+}
+
+#[test]
+fn schedule_starts_a_green_brief() {
+    with_storage(|s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Started
+        );
+        let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
+        assert!(cfg.commit_bond_minor > 0, "profile folded at start");
+    });
+}
+
+#[test]
+fn schedule_flips_to_revealing_at_commit_end() {
+    with_storage(|s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Revealing
+        );
+        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 0);
+    });
+}
+
+#[test]
+fn schedule_arms_the_clearing_gate_at_reveal_end() {
+    with_storage(|s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Revealing
+        );
+        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(
+            contract.pending_supply_intex.read(&WORLDWIDE_DAY).unwrap(),
+            10
+        );
+        assert_eq!(contract.gate_active_count.read().unwrap(), 1);
+        assert_eq!(
+            contract.clearing_deadline.read(&WORLDWIDE_DAY).unwrap(),
+            ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS
+        );
+    });
+}
+
+#[test]
+fn schedule_catches_up_over_missed_ticks() {
+    with_storage(|s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400 + 3600).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Revealing
+        );
+        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
+    });
+}
+
+#[test]
+fn schedule_cancels_a_red_brief() {
+    with_storage(|s| {
+        brief(&s, false);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Cancelled
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+    });
+}
+
+#[test]
+fn schedule_cancels_a_missed_start() {
+    with_storage(|s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, ANCHOR + 86_400 + 3600).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Cancelled
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+        assert_eq!(contract.gate_active_count.read().unwrap(), 0);
+    });
+}
+
+#[test]
+fn schedule_retires_an_overdue_day() {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+        assert_eq!(contract.gate_active_count.read().unwrap(), 0);
+    });
+    let overdue_sig = IDesis::AuctionOverdue::SIGNATURE_HASH;
+    let found = storage
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .iter()
+        .any(|log| log.topics().first() == Some(&overdue_sig));
+    assert!(found, "expected AuctionOverdue event");
+}
+
 #[test]
 fn dispatch_auction_brief_oversized_supply_returns_false() {
     with_storage(|s| {

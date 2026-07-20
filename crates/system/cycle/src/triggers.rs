@@ -20,6 +20,7 @@ pub enum TriggerId {
     EmissionLimit1 = 0,
     IntexCallDaily = 1,
     WwdAdvanceNoon = 2,
+    AuctionAdvance = 3,
 }
 
 impl TriggerId {
@@ -60,6 +61,7 @@ pub enum TriggerHandler {
     EmissionLimitDaily,
     IntexDaily,
     WwdAdvanceNoon,
+    AuctionAdvance,
 }
 
 impl TriggerHandler {
@@ -75,6 +77,7 @@ impl TriggerHandler {
             }
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::WwdAdvanceNoon => outbe_metadosis::runtime::advance_active_worldwide_days(ctx),
+            Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
         }
     }
 }
@@ -118,6 +121,18 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
         // on the midnight `emission_limit_1` trigger.
         requires_accounting_window: false,
         handler: TriggerHandler::WwdAdvanceNoon,
+    },
+    TriggerSpec {
+        id: TriggerId::AuctionAdvance.as_u32(),
+        label: "auction_advance",
+        // 00:00 + 12:00: midnight transitions land on the 00:00 slot; the noon
+        // slot retries a reverted start within the commit window.
+        period_seconds: 43_200,
+        start_offset_seconds: 0,
+        // Must stay ordered after emission_limit_1: the brief it writes starts
+        // the auction in the same slot. Gated so the two defer together.
+        requires_accounting_window: true,
+        handler: TriggerHandler::AuctionAdvance,
     },
 ];
 

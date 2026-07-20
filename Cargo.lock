@@ -7413,6 +7413,7 @@ dependencies = [
  "outbe-agentreward",
  "outbe-common",
  "outbe-compressed-entities",
+ "outbe-desis",
  "outbe-emissionlimit",
  "outbe-intexfactory",
  "outbe-macros",
