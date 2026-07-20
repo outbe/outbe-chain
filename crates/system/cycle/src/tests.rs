@@ -357,6 +357,57 @@ fn cycle_lifecycle_begin_block_runs_dispatcher() {
 }
 
 // ---------------------------------------------------------------------------
+// auction_advance trigger
+// ---------------------------------------------------------------------------
+
+#[test]
+fn auction_advance_runs_after_emission_limit_1() {
+    use crate::triggers::ACTIVE_TRIGGERS;
+    let position = |id: u32| {
+        ACTIVE_TRIGGERS
+            .iter()
+            .position(|spec| spec.id == id)
+            .expect("trigger registered")
+    };
+    assert!(
+        position(TriggerId::AuctionAdvance.as_u32())
+            > position(TriggerId::EmissionLimit1.as_u32()),
+        "auction_advance must dispatch after emission_limit_1 so the same-slot brief starts the auction"
+    );
+}
+
+#[test]
+fn dispatcher_fires_auction_advance_at_its_slot() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enter(|handle| {
+        let anchor_ts = GENESIS_TS + 60;
+        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
+        anchor_genesis(&ctx_anchor);
+        dispatch_triggers(&ctx_anchor).unwrap();
+
+        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 5;
+        let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        account_parent(&ctx_fire, 2);
+        dispatch_triggers(&ctx_fire).unwrap();
+
+        let auction_advance_id = TriggerId::AuctionAdvance.as_u32();
+        let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&auction_advance_id).unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY / 2,
+            "fires the first 12h slot strictly after the anchor"
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&auction_advance_id)
+                .unwrap(),
+            2
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
 // End-to-end: handler effects on Rewards, AgentReward, Metadosis
 // ---------------------------------------------------------------------------
 
