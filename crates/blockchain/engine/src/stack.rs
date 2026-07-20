@@ -2683,6 +2683,7 @@ where
             // DKG identity-exchange cadence runs on the consensus runtime clock, not
             // tokio's wall-clock (mockable under the deterministic test runtime).
             let dkg_clock = ctx.child("tee_dkg_clock");
+            let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
                     // Host connect policy from the genesis teePolicy: strict
@@ -2692,7 +2693,7 @@ where
                     let (tribute_offer_public, tribute_offer_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &socket,
-                            &dkg_clock,
+                            dkg_clock,
                             n,
                             dkg_chain_id,
                             0,
@@ -2708,6 +2709,7 @@ where
                     );
                     let payload = crate::tee_bootstrap::run_tee_bootstrap_at_startup(
                         &socket,
+                        bootstrap_clock,
                         my_validator,
                         committee,
                         B256::from(tribute_offer_public),
