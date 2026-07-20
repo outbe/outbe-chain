@@ -157,9 +157,14 @@ stream, Mongo writer lease supervision, consensus execution recovery seeding, an
 the CE startup recovery coordinator. CE currently discards speculative candidates,
 classifies exact markers and replays contiguous canonical blocks while checking
 parent hashes/roots and computed roots. Projection readiness compares exact height
-and hash and exposes deterministic failure classes. These are strong component
-contracts, but no inspected production interface assembles and reconciles one
-complete cross-store vector. Status remains Proposed.
+and hash and exposes deterministic failure classes. For the bounded case where Reth's
+canonical head leads marshal's durable finalized tip, startup now seeds Executor and
+FinalizationView from the lower consensus-certified height and its canonical Reth
+hash; execution-only suffix blocks remain speculative and may be replaced when the
+network finalizes forward. These are strong component contracts, but no inspected
+production interface assembles and reconciles one complete cross-store vector or
+authenticates that recovered Reth hash against the certificate itself. Status remains
+Proposed.
 
 ## Consequences
 
@@ -184,9 +189,12 @@ cross-store effects cannot become legal state.
 1. **Critical:** there is no production coordinator that captures and validates one
    `RecoveryVectorV1` across consensus/marshal, Reth, CE and Mongo before enabling
    participation.
-2. **Critical:** ADR-B-CNS-003 records an execution-ahead-of-consensus startup path that
-   warns and skips backfill. Ahead state requires an explicit ancestry/repair policy;
-   warning is not reconciliation evidence.
+2. **Critical, partially closed:** the bounded execution-ahead-of-consensus path no
+   longer promotes the execution-only head to finalized state: it anchors Executor and
+   FinalizationView at the durable marshal height and canonical Reth hash. Complete the
+   ancestry proof, authenticate the hash from certificate/archive identity, and define
+   behavior for leads outside the bounded in-flight window; a height bound plus warning
+   is not the complete reconciliation protocol.
 3. **Critical:** Mongo `ProjectionAhead` is surfaced as an error, but no inspected
    rollback/quarantine API restores it to the certified canonical boundary.
 4. CE recovery deliberately fails on `MarkerAhead` and `MarkerConflict`; define the

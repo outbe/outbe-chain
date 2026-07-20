@@ -3152,6 +3152,14 @@ mod restart_recovery {
     }
 
     #[test]
+    fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
+        assert_eq!(durable_recovery_anchor_height(70, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(69, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(68, 69), 68);
+        assert_eq!(durable_recovery_anchor_height(0, 0), 0);
+    }
+
+    #[test]
     fn no_lead_is_not_a_recovery_case() {
         // head == finalized: recover(head) would have succeeded; not this arm.
         assert!(!unfinalized_head_lead_is_recoverable(69, 69));

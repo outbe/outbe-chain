@@ -134,6 +134,13 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
     let head_lead = last_execution_height.saturating_sub(finalized_tip);
     finalized_tip > 0 && head_lead > 0 && head_lead <= MAX_UNFINALIZED_HEAD_LEAD
 }
+
+/// Highest height that both the execution store and durable consensus finality
+/// can authorize at startup. An execution-only head is speculative and must not
+/// seed finalized forkchoice state; a consensus-only suffix is backfilled later.
+fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
+    last_execution_height.min(finalized_tip)
+}
 /// epoch restart precondition: bounded wait for the finalization
 /// view to expose the continuity anchor before launching the new-epoch
 /// Simplex engine. Without this, `Automaton::genesis(epoch > 0)` could be
@@ -2487,6 +2494,7 @@ where
     let mut last_execution_hash = startup_snapshot.last_execution_hash;
     let mut recovered_boundary = startup_snapshot.recovered_boundary;
     let startup_dkg_context = startup_snapshot.context;
+
     if args.force_dkg
         && startup_dkg_context.last_execution_height > 0
         && !startup_dkg_context.has_chain_finalized_dkg_boundary()
@@ -3096,13 +3104,42 @@ where
     let (consensus_tip_tx, mut consensus_tip_rx) =
         tokio::sync::watch::channel::<Option<crate::marshal_update_reporter::ConsensusTip>>(None);
 
+    // Reth may have one or more speculative canonical blocks above marshal's
+    // durable certified tip when the process stops. Those blocks remain useful
+    // as local payload data, but they are not a finalization authority. Seed the
+    // executor and FinalizationView at the highest height confirmed by both
+    // stores so a different block winning at the first unfinalized height can
+    // be imported and selected by forkchoice after restart.
+    let recovery_anchor_height =
+        durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
+    let recovery_anchor_hash = if recovery_anchor_height == 0 {
+        genesis_hash
+    } else if recovery_anchor_height == last_execution_height {
+        last_execution_hash
+    } else {
+        node.provider
+            .block_hash(recovery_anchor_height)
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to read recovery-anchor block hash at height \
+                     {recovery_anchor_height}: {error}"
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "missing canonical block hash for recovery anchor at height \
+                     {recovery_anchor_height}"
+                )
+            })?
+    };
+
     // ── 10. Create executor actor (state-aware init) ────────────────────
     let (executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
         genesis_hash,
-        last_execution_height,
-        last_execution_hash,
+        recovery_anchor_height,
+        recovery_anchor_hash,
         projection_readiness.clone(),
         Some(execution_finalized_height_tx.clone()),
     );
@@ -3276,30 +3313,29 @@ where
             // a normal unfinalized head, NOT archive corruption. Confirm the
             // marshal still holds its own finalized tip's record (a gap *there*
             // is genuine corruption) and that the head leads by a bounded
-            // amount, then continue from the synced execution boundary exactly
-            // like the live-join / trust-el-head path: the FinalizationActor is
-            // seeded with the durable finalized tip and the network re-finalizes
-            // the head forward (reth reorgs it via forkchoice if a different
-            // block wins that height). This reproduces the same recovered state
-            // (view at the EL head, round = None) the live-join path already
-            // produces, so no new seeding semantics or reth unwind is involved.
+            // amount, then continue from marshal's durable finalized boundary.
+            // The speculative Reth head remains available locally, but neither
+            // ExecutorActor nor FinalizationView may call it finalized. The
+            // network re-finalizes forward and Reth reorgs via forkchoice if a
+            // different block wins the first unfinalized height.
             let finalized_tip = last_consensus_finalized.get();
-            if unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip)
-                && recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip)
-                    .await
-                    .is_ok()
-            {
-                warn!(
-                    last_execution_height,
-                    finalized_tip,
-                    head_lead = last_execution_height.saturating_sub(finalized_tip),
-                    "execution head leads the marshal finalized tip on restart; continuing \
-                     from the synced execution boundary (unfinalized head re-finalized forward)"
-                );
-                None
-            } else {
+            if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
                 return Err(head_error);
             }
+            let Ok(recovered_round) =
+                recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+            else {
+                return Err(head_error);
+            };
+            warn!(
+                last_execution_height,
+                finalized_tip,
+                head_lead = last_execution_height.saturating_sub(finalized_tip),
+                recovery_anchor_hash = %recovery_anchor_hash,
+                "execution head leads the marshal finalized tip on restart; anchoring \
+                 recovery at certified finality (unfinalized head re-finalized forward)"
+            );
+            recovered_round
         }
     };
 
@@ -3316,8 +3352,8 @@ where
     // below the new finalized height from `block_cache`) hold the same
     // `Arc`s. Recovery state is seeded into the view here.
     let finalization_view = new_finalization_view(
-        last_execution_hash,
-        last_execution_height,
+        recovery_anchor_hash,
+        recovery_anchor_height,
         recovered_finalized_round,
     );
     let finalization_block_cache = BlockCache::new();
