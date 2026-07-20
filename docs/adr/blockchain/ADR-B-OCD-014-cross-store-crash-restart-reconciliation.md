@@ -31,13 +31,13 @@ ADR-B-OCD-010.
 Node startup constructs a typed `RecoveryVectorV1` before consensus participation,
 proposal building, transaction admission or authoritative RPC readiness:
 
-| Component | Required durable identity |
-|---|---|
-| Chain environment | chain id, genesis hash and ADR-B-OCD-006 manifest identity |
-| Consensus | certified/finalized height, block hash and certificate/archive identity |
-| Reth | canonical/finalized height and hash, with receipts/body availability |
-| CE tree | scheme version, height, block hash, parent hash/root and new root |
-| Mongo projection | height, block hash, schema/network identity and writer epoch |
+| Component         | Required durable identity                                               |
+| ----------------- | ----------------------------------------------------------------------- |
+| Chain environment | chain id, genesis hash and ADR-B-OCD-006 manifest identity              |
+| Consensus         | certified/finalized height, block hash and certificate/archive identity |
+| Reth              | canonical/finalized height and hash, with receipts/body availability    |
+| CE tree           | scheme version, height, block hash, parent hash/root and new root       |
+| Mongo projection  | height, block hash, schema/network identity and writer epoch            |
 
 The recovery coordinator owns the startup gate. Individual actors may validate their
 local store, but they cannot independently declare the node ready.
@@ -108,14 +108,14 @@ Reth, marshal, MDBX and Mongo stores.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Finalized chain selection | verified consensus certificate plus matching Reth canonical block |
-| Canonical replay input | durable Reth block, receipts and execution artifacts |
-| CE durable progress | exact `FinalizedMarker` |
-| Mongo durable progress | exact `ProjectionCheckpoint` plus environment/writer identity |
-| Startup convergence/readiness | node recovery coordinator |
-| Snapshot/import repair | ADR-B-OCD-008 |
+| Responsibility                | Authority                                                         |
+| ----------------------------- | ----------------------------------------------------------------- |
+| Finalized chain selection     | verified consensus certificate plus matching Reth canonical block |
+| Canonical replay input        | durable Reth block, receipts and execution artifacts              |
+| CE durable progress           | exact `FinalizedMarker`                                           |
+| Mongo durable progress        | exact `ProjectionCheckpoint` plus environment/writer identity     |
+| Startup convergence/readiness | node recovery coordinator                                         |
+| Snapshot/import repair        | ADR-B-OCD-008                                                     |
 
 ## Invariants
 
@@ -220,8 +220,8 @@ cross-store effects cannot become legal state.
     and that an expired writer cannot commit after a successor acquires authority.
 13. Specify CE rollback or immutable-generation replacement semantics for an ahead
     marker. Discarding speculative candidates handles only unfinalized staging.
-14. Add equivalent exact checkpoint/hash/root reconciliation for every other durable
-    sidecar discovered by the full codebase audit, not just Mongo and CE.
+14. Add equivalent exact checkpoint/hash/root reconciliation for every durable
+    sidecar discovered by the full codebase audit, including Mongo and CE.
 15. Add real crash-injection tests at every durable boundary. Current component tests
     cover classifications and replay but not a whole-node multi-store restart matrix.
 16. Define operator commands for inspect, quarantine, replay and verified repair with

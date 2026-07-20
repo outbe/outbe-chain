@@ -11,8 +11,8 @@
 Most Outbe protocol and business logic is implemented as native Rust precompiles,
 not Solidity contracts. Their storage nevertheless participates in the EVM journal,
 receipts and state root. A module can only pass an architecture review if its effective
-interface includes ABI-generated dispatch, raw storage facades, lifecycle hooks,
-cross-precompile calls, events and test adapters—not only its public Rust methods.
+interface includes its public Rust methods, ABI-generated dispatch, raw storage
+facades, lifecycle hooks, cross-precompile calls, events and test adapters.
 
 ## Decision
 
@@ -130,15 +130,15 @@ Every module ADR must instantiate these requirements:
 
 ## Side-effect ledger
 
-| Effect | Owner | Atomicity domain | Receipt/error | Replay |
-|---|---|---|---|---|
-| Slot/map/record mutation | owning module facade | EVM journal/checkpoint | propagated `Result` | transaction replay |
-| Native balance transfer | storage provider/module command | same EVM journal | success/error; checked amount | nonce/command semantics |
-| Canonical event | owning command/lifecycle | same journal + receipt | encoded log or error | removed on revert |
-| Precompile subcall | caller module + child EVM frame | nested journal | returndata/revert/halt | owning command policy |
-| Off-chain body mutation intent | compressed-body lifecycle | tx CE checkpoint + canonical event | commitment/typed lifecycle result | intent-bound ADR-B-OCD-006 and ADR-B-OCD-007 rules |
-| External asynchronous effect | owning specialized ADR | outside EVM unless proven otherwise | outbox/receipt required | explicit idempotency required |
-| Metric/trace/sidecar journal | diagnostics | non-transactional | best effort only when stated | may repeat/disappear |
+| Effect                         | Owner                           | Atomicity domain                    | Receipt/error                     | Replay                                             |
+| ------------------------------ | ------------------------------- | ----------------------------------- | --------------------------------- | -------------------------------------------------- |
+| Slot/map/record mutation       | owning module facade            | EVM journal/checkpoint              | propagated `Result`               | transaction replay                                 |
+| Native balance transfer        | storage provider/module command | same EVM journal                    | success/error; checked amount     | nonce/command semantics                            |
+| Canonical event                | owning command/lifecycle        | same journal + receipt              | encoded log or error              | removed on revert                                  |
+| Precompile subcall             | caller module + child EVM frame | nested journal                      | returndata/revert/halt            | owning command policy                              |
+| Off-chain body mutation intent | compressed-body lifecycle       | tx CE checkpoint + canonical event  | commitment/typed lifecycle result | intent-bound ADR-B-OCD-006 and ADR-B-OCD-007 rules |
+| External asynchronous effect   | owning specialized ADR          | outside EVM unless proven otherwise | outbox/receipt required           | explicit idempotency required                      |
+| Metric/trace/sidecar journal   | diagnostics                     | non-transactional                   | best effort only when stated      | may repeat/disappear                               |
 
 ## Determinism and bounded execution
 
