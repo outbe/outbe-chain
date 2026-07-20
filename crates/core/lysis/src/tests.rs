@@ -1144,3 +1144,113 @@ fn lysis_records_contributors_aggregated_by_owner() {
         end_block(storage, &scope).unwrap();
     });
 }
+
+#[test]
+fn lysis_omits_excluded_owners_from_contributor_map() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20260526);
+    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let mut storage = HashMapStorageProvider::new(1);
+    storage.set_timestamp(U256::from(T_NOW));
+    let bodies = TestBodyRepository::new();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        let scope = ExecutionScope::new();
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+        let pair_hash = OracleContract::pair_hash("COEN", "0xUSD");
+        oracle
+            .settlement_iso_to_pair
+            .write(&840u16, pair_hash)
+            .unwrap();
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_pair_count
+            .write(&wwd, 1u32)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_pair_id
+            .get_nested(&wwd)
+            .write(&0u32, pair_id)
+            .unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&0u32, cost_of_gratis)
+            .unwrap();
+
+        let owner_a = gas_audit_address(1);
+        let owner_b = gas_audit_address(2);
+        let owner_c = gas_audit_address(3);
+
+        // owner_b opts out of Intex issuance: it must still be transformed into a
+        // Nod, but must not appear in the contributor provenance map.
+        let excluded_b = TributeData {
+            tribute_id: entity_id(wwd, owner_b),
+            owner: owner_b,
+            worldwide_day: wwd,
+            issuance_amount_minor: U256::in_units(100u64),
+            issuance_currency: 1,
+            nominal_amount_minor: U256::in_units(200u64),
+            reference_currency: 840,
+            exclude_from_intex_issuance: true,
+            tribute_price_minor: U256::ZERO,
+        };
+
+        let mut tribute = TributeContract::new(storage.clone());
+        tribute.unseal_day(wwd).unwrap();
+        bodies.issue(
+            &mut tribute,
+            &scope,
+            &gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)),
+        );
+        bodies.issue(&mut tribute, &scope, &excluded_b);
+        bodies.issue(
+            &mut tribute,
+            &scope,
+            &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
+        );
+        tribute.seal_day(wwd).unwrap();
+
+        let total_nominal = U256::in_units(600u64);
+        let gratis_allocation = total_nominal / U256::from(10u64);
+
+        const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
+        let result = crate::runtime::lysis(
+            storage.clone(),
+            &scope,
+            &bodies,
+            wwd,
+            AUCTION_TS,
+            gratis_allocation,
+        )
+        .expect("lysis must complete");
+        assert_eq!(
+            result.nod_ids.len(),
+            3,
+            "excluded owners must still be transformed into a Nod"
+        );
+
+        let series_id = outbe_primitives::time::timestamp_to_date_key(AUCTION_TS);
+        assert_eq!(
+            outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
+            vec![
+                (owner_a, U256::in_units(100u64)),
+                (owner_c, U256::in_units(300u64)),
+            ],
+            "opted-out owner must be absent from the contributor map"
+        );
+        assert_eq!(
+            outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
+            U256::in_units(400u64),
+            "contributor total must exclude the opted-out owner's nominal"
+        );
+        assert_eq!(
+            outbe_intex::api::contributor_count(&storage, series_id).unwrap(),
+            2
+        );
+        end_block(storage, &scope).unwrap();
+    });
+}
