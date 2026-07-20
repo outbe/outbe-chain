@@ -104,16 +104,16 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Once a dealer has the Byzantine-liveness quorum, keep accepting ACKs through
-/// two complete share retries plus a response window before sealing its log.
+/// a bounded node+enclave restart window before sealing its log.
 /// Feldman-Desmedt deliberately publishes the evaluations of non-acking players;
-/// ending grace on a retry boundary can therefore turn ordinary message skew into
-/// a permanent share disclosure before the retry's ACK is processed. The bounded
-/// grace preserves offline-player liveness while avoiding that disclosure on a
-/// healthy network.
+/// ending grace before a healthy SGX node can restart can therefore turn a
+/// recoverable crash into permanent share disclosure. Healthy ceremonies still
+/// finalize immediately once every player ACKs; this longer bound affects only
+/// missing-player recovery and remains below the configured prepare window.
 #[cfg(not(test))]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(12);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(30);
 #[cfg(test)]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(250);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(450);
 
 /// Initial bootstrap has no chain carrier yet, so nodes that already collected
 /// all genesis logs keep gossiping them briefly before returning threshold
@@ -1829,15 +1829,16 @@ mod tests {
                 .unwrap();
                 let max_players = NonZeroU32::new(participants.len() as u32).unwrap();
 
-                // Delay one healthy player's dealings through the first retry. A
-                // later retry must still have a complete response window before each
-                // dealer seals its log; otherwise Feldman-Desmedt permanently
-                // publishes that player's share.
+                // Model a healthy player that disappears long enough for a real
+                // node+enclave restart, then reconnects while the ceremony is still
+                // recoverable.  Three complete retry rounds are dropped; the next
+                // retry must still arrive before each dealer seals its log, otherwise
+                // Feldman-Desmedt permanently publishes that player's share.
                 let drop_rule = Arc::new(Mutex::new(DropMessages {
                     from: None,
                     to: keys[1].public_key(),
                     tag: 0x00,
-                    remaining: 6,
+                    remaining: 12,
                     dropped: 0,
                 }));
                 let (senders, receivers) =
@@ -1900,10 +1901,6 @@ mod tests {
                     }
                 }
 
-                assert!(
-                    drop_rule.lock().expect("drop rule lock").dropped == 6,
-                    "test must delay every remote dealer through the first retry"
-                );
                 for handle in handles {
                     let result = handle.await.unwrap().unwrap();
                     assert!(
@@ -1911,6 +1908,11 @@ mod tests {
                         "an online player that ACKs the retry must not have its share revealed"
                     );
                 }
+                assert_eq!(
+                    drop_rule.lock().expect("drop rule lock").dropped,
+                    12,
+                    "test must delay every remote dealer through three retries"
+                );
             });
     }
 
