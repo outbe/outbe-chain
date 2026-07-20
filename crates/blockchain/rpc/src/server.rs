@@ -34,6 +34,20 @@ use crate::api::{
     ValidatorInfo,
 };
 
+fn read_effective_slash_config(
+    storage: StorageHandle<'_>,
+) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
+    let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
+    Ok(SlashConfig {
+        proposer_misdemeanor_threshold: si.proposer_misdemeanor_threshold()?,
+        proposer_felony_threshold: si.proposer_felony_threshold()?,
+        voter_misdemeanor_threshold: si.voter_misdemeanor_threshold()?,
+        voter_felony_threshold: si.voter_felony_threshold()?,
+        slash_amount_percent: si.slash_amount_percent()?,
+        evidence_reward_percent: si.evidence_reward_percent()?,
+    })
+}
+
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
 struct RethStateReader<'a> {
     state: &'a StateProviderBox,
@@ -459,16 +473,7 @@ where
     }
 
     async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
-        self.with_latest_state(|storage| {
-            let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-            Ok(SlashConfig {
-                proposer_misdemeanor_threshold: si.config_proposer_misdemeanor_threshold.read()?,
-                proposer_felony_threshold: si.config_proposer_felony_threshold.read()?,
-                voter_misdemeanor_threshold: si.config_voter_misdemeanor_threshold.read()?,
-                slash_amount_percent: si.config_slash_amount_percent.read()?,
-                evidence_reward_percent: si.config_evidence_reward_percent.read()?,
-            })
-        })
+        self.with_latest_state(read_effective_slash_config)
     }
 
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
@@ -617,4 +622,25 @@ fn eip191_hash(message: &[u8]) -> B256 {
     buf.extend_from_slice(message.len().to_string().as_bytes());
     buf.extend_from_slice(message);
     alloy_primitives::keccak256(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_effective_slash_config;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn slash_config_rpc_reports_runtime_defaults_for_zero_storage() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let config = StorageHandle::enter(&mut provider, |storage| {
+            read_effective_slash_config(storage).expect("read effective slash config")
+        });
+
+        assert_eq!(config.proposer_misdemeanor_threshold, 50);
+        assert_eq!(config.proposer_felony_threshold, 150);
+        assert_eq!(config.voter_misdemeanor_threshold, 150);
+        assert_eq!(config.voter_felony_threshold, 500);
+        assert_eq!(config.slash_amount_percent, 5);
+        assert_eq!(config.evidence_reward_percent, 10);
+    }
 }

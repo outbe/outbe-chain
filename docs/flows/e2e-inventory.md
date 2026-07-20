@@ -10,10 +10,10 @@ protocol-flow result.
 | Runner | Boundary | PFS evidence | Canonical command |
 |---|---|---|---|
 | `crates/testing/e2e-harness/features/tribute_projection.feature` | Four validators, mock TEE, isolated MongoDB projections | PFS-001-01, -02, -03, -05 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/update_operator.feature` | Four validators and real vote/update lifecycle | PFS-005-01, -09 | `mise run e2e` |
-| lifecycle, DKG, downtime, restart and stale-join harness features | Mutable four-validator committee and mock TEE, including simultaneous node/enclave restart from sealed state | PFS-006-01, -02, -03, -04, -06, -09; see each row's partial-coverage note | `mise run e2e` |
-| `crates/testing/e2e-harness/features/follower_upstream.feature` | Followers, validator recovery and warm promotion | PFS-008-01 through -04 | `mise run e2e` |
-| `crates/testing/e2e-harness/features/zerofee.feature` | Fresh four-validator localnet, native Alloy EIP-7702 signing | PFS-007-01 through -06 | `mise run e2e` |
+| `crates/testing/e2e-harness/features/update_operator.feature` | Four validators, restart boundaries, rejection paths and a real operator binary replacement over preserved datadirs | PFS-005-01, -09 plus named recovery/rejection scenarios | `mise run e2e` |
+| lifecycle, DKG, downtime, restart and stale-join harness features | Mutable four-validator committee and TEE, including join/exit/claim accounting, slash idempotency and node/enclave checkpoint recovery | PFS-006-01, -02, -03, -04, -06, -09 | `mise run e2e` |
+| `crates/testing/e2e-harness/features/follower_upstream.feature` | Followers, upstream loss/switch, validator recovery and restart-safe warm promotion | PFS-008-01 through -08 | `mise run e2e` |
+| `crates/testing/e2e-harness/features/zerofee.feature` | Fresh four-validator localnet, native Alloy EIP-7702 signing, replay/restart/error/day-boundary coverage | PFS-007-01 through -12 | `mise run e2e` |
 
 The nightly workflow runs the canonical harness. PFS rows tagged
 documentation-only are requirements, not claims of executable coverage.

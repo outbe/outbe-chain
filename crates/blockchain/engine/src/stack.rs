@@ -134,6 +134,13 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
     let head_lead = last_execution_height.saturating_sub(finalized_tip);
     finalized_tip > 0 && head_lead > 0 && head_lead <= MAX_UNFINALIZED_HEAD_LEAD
 }
+
+/// Highest height that both the execution store and durable consensus finality
+/// can authorize at startup. An execution-only head is speculative and must not
+/// seed finalized forkchoice state; a consensus-only suffix is backfilled later.
+fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
+    last_execution_height.min(finalized_tip)
+}
 /// epoch restart precondition: bounded wait for the finalization
 /// view to expose the continuity anchor before launching the new-epoch
 /// Simplex engine. Without this, `Automaton::genesis(epoch > 0)` could be
@@ -697,6 +704,8 @@ where
         .map_err(|e| eyre::eyre!("invalid participant set: {e}"))?;
     let local_key_in_current_consensus_set = startup_participants.position(&local_pk).is_some();
     let expected_remote_peers = validator_set.public_keys.len().saturating_sub(1);
+    let required_remote_peers =
+        genesis_formation_required_remote_peers(validator_set.public_keys.len());
     let gate_required = !startup_threshold_material_candidate_available(args);
     let started_at = ctx.current();
 
@@ -713,7 +722,7 @@ where
         let gate = genesis_formation_gate_decision(
             snapshot.context,
             genesis_hash,
-            expected_remote_peers,
+            required_remote_peers,
             &evidence,
         );
 
@@ -744,8 +753,9 @@ where
         let elapsed = elapsed_since(ctx.current(), started_at);
         if elapsed >= config::STARTUP_GENESIS_FORMATION_PROBE_TIMEOUT {
             return Err(eyre::eyre!(
-                "could not prove genesis formation before DKG round 0: connected_reth_peers={} expected_remote_peers={} reth_syncing={} reth_initial_syncing={} peer_query_failed={}",
+                "could not prove genesis formation before DKG round 0: connected_reth_peers={} required_remote_peers={} configured_remote_peers={} reth_syncing={} reth_initial_syncing={} peer_query_failed={}",
                 evidence.connected_peers,
+                required_remote_peers,
                 expected_remote_peers,
                 evidence.is_syncing,
                 evidence.is_initially_syncing,
@@ -755,6 +765,7 @@ where
 
         info!(
             connected_reth_peers = evidence.connected_peers,
+            required_remote_peers,
             expected_remote_peers,
             reth_syncing = evidence.is_syncing,
             reth_initial_syncing = evidence.is_initially_syncing,
@@ -900,7 +911,7 @@ fn startup_dkg_mode(
 fn genesis_formation_gate_decision(
     context: StartupDkgContext,
     genesis_hash: B256,
-    expected_remote_peers: usize,
+    required_remote_peers: usize,
     evidence: &RethGenesisPeerEvidence,
 ) -> GenesisFormationGate {
     if context.last_execution_height > 0
@@ -914,11 +925,11 @@ fn genesis_formation_gate_decision(
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.connected_peers < expected_remote_peers {
+    if evidence.connected_peers < required_remote_peers {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
-    if evidence.peers.len() < expected_remote_peers {
+    if evidence.peers.len() < required_remote_peers {
         return GenesisFormationGate::WaitForExecutionSync;
     }
 
@@ -932,6 +943,19 @@ fn genesis_formation_gate_decision(
     }
 
     GenesisFormationGate::Proven
+}
+
+/// Direct Reth connections needed to prove a fresh genesis formation before
+/// entering the all-member DKG. The execution P2P graph need not be a complete
+/// mesh: one local validator plus a `N-f` BFT quorum of matching genesis peers
+/// is sufficient evidence. DKG itself still requires every configured genesis
+/// dealer log, so lowering this transport gate cannot let a partial committee
+/// complete network formation.
+fn genesis_formation_required_remote_peers(validator_count: usize) -> usize {
+    let max_byzantine = validator_count.saturating_sub(1) / 3;
+    validator_count
+        .saturating_sub(max_byzantine)
+        .saturating_sub(1)
 }
 
 fn vrf_material_matches_recovered_boundary(
@@ -2470,6 +2494,7 @@ where
     let mut last_execution_hash = startup_snapshot.last_execution_hash;
     let mut recovered_boundary = startup_snapshot.recovered_boundary;
     let startup_dkg_context = startup_snapshot.context;
+
     if args.force_dkg
         && startup_dkg_context.last_execution_height > 0
         && !startup_dkg_context.has_chain_finalized_dkg_boundary()
@@ -2666,6 +2691,7 @@ where
             // DKG identity-exchange cadence runs on the consensus runtime clock, not
             // tokio's wall-clock (mockable under the deterministic test runtime).
             let dkg_clock = ctx.child("tee_dkg_clock");
+            let bootstrap_clock = ctx.child("tee_bootstrap_clock");
             let payload = ctx
                 .timeout(deadline, async move {
                     // Host connect policy from the genesis teePolicy: strict
@@ -2675,7 +2701,7 @@ where
                     let (tribute_offer_public, tribute_offer_group_public_key) =
                         crate::tee_bootstrap::run_tee_dkg_at_startup(
                             &socket,
-                            &dkg_clock,
+                            dkg_clock,
                             n,
                             dkg_chain_id,
                             0,
@@ -2691,6 +2717,7 @@ where
                     );
                     let payload = crate::tee_bootstrap::run_tee_bootstrap_at_startup(
                         &socket,
+                        bootstrap_clock,
                         my_validator,
                         committee,
                         B256::from(tribute_offer_public),
@@ -3077,13 +3104,42 @@ where
     let (consensus_tip_tx, mut consensus_tip_rx) =
         tokio::sync::watch::channel::<Option<crate::marshal_update_reporter::ConsensusTip>>(None);
 
+    // Reth may have one or more speculative canonical blocks above marshal's
+    // durable certified tip when the process stops. Those blocks remain useful
+    // as local payload data, but they are not a finalization authority. Seed the
+    // executor and FinalizationView at the highest height confirmed by both
+    // stores so a different block winning at the first unfinalized height can
+    // be imported and selected by forkchoice after restart.
+    let recovery_anchor_height =
+        durable_recovery_anchor_height(last_execution_height, last_consensus_finalized.get());
+    let recovery_anchor_hash = if recovery_anchor_height == 0 {
+        genesis_hash
+    } else if recovery_anchor_height == last_execution_height {
+        last_execution_hash
+    } else {
+        node.provider
+            .block_hash(recovery_anchor_height)
+            .map_err(|error| {
+                eyre::eyre!(
+                    "failed to read recovery-anchor block hash at height \
+                     {recovery_anchor_height}: {error}"
+                )
+            })?
+            .ok_or_else(|| {
+                eyre::eyre!(
+                    "missing canonical block hash for recovery anchor at height \
+                     {recovery_anchor_height}"
+                )
+            })?
+    };
+
     // ── 10. Create executor actor (state-aware init) ────────────────────
     let (executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
         genesis_hash,
-        last_execution_height,
-        last_execution_hash,
+        recovery_anchor_height,
+        recovery_anchor_hash,
         projection_readiness.clone(),
         Some(execution_finalized_height_tx.clone()),
     );
@@ -3257,30 +3313,29 @@ where
             // a normal unfinalized head, NOT archive corruption. Confirm the
             // marshal still holds its own finalized tip's record (a gap *there*
             // is genuine corruption) and that the head leads by a bounded
-            // amount, then continue from the synced execution boundary exactly
-            // like the live-join / trust-el-head path: the FinalizationActor is
-            // seeded with the durable finalized tip and the network re-finalizes
-            // the head forward (reth reorgs it via forkchoice if a different
-            // block wins that height). This reproduces the same recovered state
-            // (view at the EL head, round = None) the live-join path already
-            // produces, so no new seeding semantics or reth unwind is involved.
+            // amount, then continue from marshal's durable finalized boundary.
+            // The speculative Reth head remains available locally, but neither
+            // ExecutorActor nor FinalizationView may call it finalized. The
+            // network re-finalizes forward and Reth reorgs via forkchoice if a
+            // different block wins the first unfinalized height.
             let finalized_tip = last_consensus_finalized.get();
-            if unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip)
-                && recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip)
-                    .await
-                    .is_ok()
-            {
-                warn!(
-                    last_execution_height,
-                    finalized_tip,
-                    head_lead = last_execution_height.saturating_sub(finalized_tip),
-                    "execution head leads the marshal finalized tip on restart; continuing \
-                     from the synced execution boundary (unfinalized head re-finalized forward)"
-                );
-                None
-            } else {
+            if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
                 return Err(head_error);
             }
+            let Ok(recovered_round) =
+                recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+            else {
+                return Err(head_error);
+            };
+            warn!(
+                last_execution_height,
+                finalized_tip,
+                head_lead = last_execution_height.saturating_sub(finalized_tip),
+                recovery_anchor_hash = %recovery_anchor_hash,
+                "execution head leads the marshal finalized tip on restart; anchoring \
+                 recovery at certified finality (unfinalized head re-finalized forward)"
+            );
+            recovered_round
         }
     };
 
@@ -3297,8 +3352,8 @@ where
     // below the new finalized height from `block_cache`) hold the same
     // `Arc`s. Recovery state is seeded into the view here.
     let finalization_view = new_finalization_view(
-        last_execution_hash,
-        last_execution_height,
+        recovery_anchor_hash,
+        recovery_anchor_height,
         recovered_finalized_round,
     );
     let finalization_block_cache = BlockCache::new();
@@ -3734,6 +3789,19 @@ where
                                 | PendingDkgActivationDecision::Activate => {}
                             }
 
+                            if let Some(ref keys_dir) = args.keys_dir {
+                                persist_completed_dkg_before_activation(
+                                    keys_dir,
+                                    &key_backend,
+                                    current_epoch,
+                                    vrf_material_version,
+                                    &participants,
+                                    &target,
+                                    &dkg_complete,
+                                    current_height,
+                                )?;
+                            }
+
                             info!(
                                 epoch = %current_epoch,
                                 dkg_cycle = target.dkg_cycle,
@@ -4092,25 +4160,31 @@ where
                                     ));
                                 }
                                 if let Some(ref keys_dir) = args.keys_dir {
-                                    save_dkg_state(
-                                        keys_dir,
-                                        signing_share.as_ref().ok_or_else(|| {
-                                            eyre::eyre!(
-                                                "cannot promote finalized DKG state without a share"
-                                            )
-                                        })?,
-                                        &polynomial,
-                                        &boundary_output,
-                                        &key_backend,
-                                    )
-                                    .wrap_err("failed to promote finalized DKG state to disk")?;
+                                    if let Some(share) = signing_share.as_ref() {
+                                        save_dkg_state(
+                                            keys_dir,
+                                            share,
+                                            &polynomial,
+                                            &boundary_output,
+                                            &key_backend,
+                                        )
+                                        .wrap_err(
+                                            "failed to promote finalized DKG state to disk",
+                                        )?;
+                                        info!(
+                                            keys_dir = %keys_dir.display(),
+                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
+                                            "promoted finalized DKG state to durable storage"
+                                        );
+                                    } else {
+                                        info!(
+                                            keys_dir = %keys_dir.display(),
+                                            dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
+                                            "finalized DKG boundary adopted in verifier mode; no private share to promote"
+                                        );
+                                    }
                                     remove_pending_dkg_state(keys_dir);
                                     clear_pending_dkg_boundary(keys_dir);
-                                    info!(
-                                        keys_dir = %keys_dir.display(),
-                                        dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
-                                        "promoted finalized DKG state to durable storage"
-                                    );
                                 }
                             }
                         }
@@ -4722,10 +4796,30 @@ where
                                         round,
                                         prev_output.clone(),
                                         target.participants.clone(),
-                                        Some(finalized_log_tx),
+                                        Some(finalized_log_tx.clone()),
                                     ) {
                                         warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for frozen-target retry");
                                         reshare_in_progress = false;
+                                        outbe_consensus::metrics::record_dkg_status(0);
+                                        continue;
+                                    }
+                                    let mut replay_height = target.freeze_height;
+                                    if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                        &node.provider,
+                                        &mut replay_height,
+                                        current_height,
+                                        &dkg_manager,
+                                    ) {
+                                        warn!(
+                                            %error,
+                                            epoch = %current_epoch,
+                                            round,
+                                            from_height = target.freeze_height,
+                                            to_height = current_height,
+                                            "failed to replay finalized dealer logs for frozen-target retry"
+                                        );
+                                        reshare_in_progress = false;
+                                        retry_frozen_dkg = true;
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
@@ -4991,11 +5085,31 @@ where
                                     round,
                                     prev_output.clone(),
                                     target_participants.clone(),
-                                    Some(finalized_log_tx),
+                                    Some(finalized_log_tx.clone()),
                                 ) {
                                     warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for live reshare");
                                     reshare_in_progress = false;
                                     frozen_dkg_target = None;
+                                    outbe_consensus::metrics::record_dkg_status(0);
+                                    continue;
+                                }
+                                let mut replay_height = freeze_height;
+                                if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                    &node.provider,
+                                    &mut replay_height,
+                                    current_height,
+                                    &dkg_manager,
+                                ) {
+                                    warn!(
+                                        %error,
+                                        epoch = %current_epoch,
+                                        round,
+                                        from_height = freeze_height,
+                                        to_height = current_height,
+                                        "failed to replay finalized dealer logs for live reshare"
+                                    );
+                                    reshare_in_progress = false;
+                                    retry_frozen_dkg = true;
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
@@ -5454,6 +5568,71 @@ fn pending_dkg_boundary_path(storage_dir: &std::path::Path) -> std::path::PathBu
     storage_dir.join(DKG_PENDING_BOUNDARY_FILE)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn persist_completed_dkg_before_activation(
+    keys_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+    current_epoch: Epoch,
+    vrf_material_version: u64,
+    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    target: &FrozenDkgTarget,
+    complete: &dkg_actor::DkgComplete,
+    completed_at_height: u64,
+) -> Result<()> {
+    let activated_validator_set =
+        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
+    let activated_participants = participants_from_validator_set(&activated_validator_set)?;
+    ensure!(
+        complete.participants == activated_participants,
+        "completed DKG participant set does not match reconstructed output players"
+    );
+    let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
+    let next_vrf_material_version =
+        outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
+    let boundary_artifact =
+        dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
+            epoch: next_epoch,
+            validator_set: &activated_validator_set,
+            output: &complete.output,
+            is_full_dkg: false,
+            dkg_cycle: target.dkg_cycle,
+            freeze_height: target.freeze_height,
+            planned_activation_height: target.planned_activation_height,
+            vrf_material_version: next_vrf_material_version,
+            is_validator_set_change: activated_participants != *current_participants,
+            tee_reshare_registrations: Vec::new(),
+        })?;
+
+    if let Some(share) = complete.share.as_ref() {
+        save_pending_dkg_state(
+            keys_dir,
+            share,
+            complete.output.public(),
+            &complete.output,
+            key_backend,
+        )
+        .wrap_err("failed to durably save completed DKG state before activation")?;
+    }
+    let activated_at_height = completed_at_height.max(target.planned_activation_height);
+    save_pending_dkg_boundary(
+        keys_dir,
+        &PendingDkgBoundarySnapshot {
+            artifact: boundary_artifact,
+            activated_at_height,
+        },
+    )
+    .wrap_err("failed to durably save completed DKG boundary before activation")?;
+    info!(
+        keys_dir = %keys_dir.display(),
+        dkg_cycle = target.dkg_cycle,
+        epoch = %next_epoch,
+        activated_at_height,
+        dkg_output_hash = %dkg_manager::dkg_output_hash(&complete.output),
+        "persisted completed DKG state before activation"
+    );
+    Ok(())
+}
+
 fn save_pending_dkg_boundary(
     storage_dir: &std::path::Path,
     snapshot: &PendingDkgBoundarySnapshot,
@@ -5624,6 +5803,40 @@ fn feed_finalized_dealer_logs_from_headers(
                 artifacts.consensus_header_artifact
             {
                 let _ = finalized_log_tx.send(bytes);
+            }
+        }
+        *next_scan_height = next_scan_height.saturating_add(1);
+    }
+    Ok(())
+}
+
+fn replay_finalized_dealer_logs_into_manager(
+    provider: &impl HeaderProvider<Header = OutbeHeader>,
+    next_scan_height: &mut u64,
+    latest_height: u64,
+    dkg_manager: &DkgManagerMailbox,
+) -> Result<()> {
+    while *next_scan_height <= latest_height {
+        if let Some(header) = provider
+            .sealed_header(*next_scan_height)
+            .map_err(|error| eyre::eyre!("failed to read header {}: {error}", *next_scan_height))?
+        {
+            let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+                .map_err(|error| {
+                    eyre::eyre!(
+                        "failed to decode header artifacts at {}: {error}",
+                        *next_scan_height
+                    )
+                })?;
+            if matches!(
+                artifacts.consensus_header_artifact.as_ref(),
+                Some(ConsensusHeaderArtifact::DealerLog(_))
+            ) {
+                dkg_manager.note_finalized_header_artifact_at(
+                    *next_scan_height,
+                    header.hash(),
+                    artifacts.consensus_header_artifact.as_ref(),
+                );
             }
         }
         *next_scan_height = next_scan_height.saturating_add(1);

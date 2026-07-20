@@ -155,8 +155,10 @@ would be more dangerous than retaining the unacknowledged recovery point.
   and canonicalized the block, or tighten the accepted status contract.
 - The critical executor mailbox is unbounded and has no depth metric, cap or
   overload shutdown policy.
-- `execution ahead of consensus` only warns and skips backfill. ADR-B-OCD-007 must define
-  the only legal identities and whether this state is repairable or fatal.
+- A bounded `execution ahead of consensus` restart now seeds finalized state at the
+  marshal tip instead of the speculative Reth head, allowing forkchoice to replace the
+  first unfinalized height. ADR-B-OCD-014 still must authenticate the exact recovered
+  consensus/Reth identity and define repair or failure outside that bounded case.
 - CE failure occurs after FCU may have advanced Reth. A fault-injection matrix must
   cover crash before/after FCU durability, CE transaction commit, marker write and
   ACK delivery.

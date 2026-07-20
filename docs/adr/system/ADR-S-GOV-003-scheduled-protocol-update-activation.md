@@ -55,15 +55,15 @@ all registered handlers for the version run first, then active version/history,
 record status, waiting indexes, events and stale cancellations commit together.
 
 A handler failure is promoted to fatal and rolls the checkpoint back. Activating a
-version above the chain-specific binary ceiling is fatal, deliberately refusing to
-produce a block under unsupported rules. Replayed begin-block sees a terminal record
-and performs no second migration.
+version above the running binary's compiled protocol version is fatal on every
+chain, deliberately refusing to produce a block under unsupported rules. Replayed
+begin-block sees a terminal record and performs no second migration.
 
 ## Compatibility and trust boundary
 
-The production/unknown-chain ceiling is the binary's compiled protocol version;
-devnet/testnet currently allow a separate test ceiling. Node startup accepts active
-version zero or any version not newer than its binary and refuses an older binary.
+Every chain uses the binary's compiled protocol version as its activation ceiling;
+devnet/testnet have no compatibility bypass. Node startup accepts active version
+zero or any version not newer than its binary and refuses an older binary.
 Upgrade-handler order is compile-time list order, and all validators must ship the
 same handlers. Missing handlers only warn because version-only activation is valid.
 

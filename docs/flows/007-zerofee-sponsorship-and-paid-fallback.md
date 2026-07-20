@@ -70,8 +70,12 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | PFS-007-04 | quota exhaustion soft failure | delegated EOA, count 8 | submit ninth eligible call | mined status 0, code 110, no debit/increment | live Rust |
 | PFS-007-05 | paid fallback remains available | delegated EOA, exhausted quota | submit tipped call | status 1, positive fee, count 8, no sponsorship event | live Rust |
 | PFS-007-06 | CLI authorization | signer key and RPC chain id | run `zero-fee eip7702-authorize` | canonical target/chain/nonce/signature JSON | live Rust |
-| PFS-007-07 | authorization replay | consumed authorization nonce | resubmit same authorization | rejected; delegation/counter/balance unchanged | documentation-only pending raw replay step |
-| PFS-007-08 | restart with exhausted quota | finalized count 8 | restart validator/network | delegation and count remain; paid path works | documentation-only pending managed restart scenario |
+| PFS-007-07 | authorization replay | included raw delegation transaction and consumed nonce | resubmit the exact signed transaction before and after restart | rejected; delegation/quota/balance remain canonical on every validator | `@pfs-007-07` live-node |
+| PFS-007-08 | restart with exhausted quota | finalized count 8 | restart one validator, then the full committee | delegation and quota remain identical; replay remains rejected; paid path works | `@pfs-007-08` live-node |
+| PFS-007-09 | wrong-chain authorization | funded account and otherwise valid authorization | sign for a different chain id | no delegation or quota state is installed | `@pfs-007-09` live-node |
+| PFS-007-10 | wrong delegation target | funded delegated account | install a non-ZeroFee target and send a sponsored-shaped call | no sponsorship; quota remains unchanged | `@pfs-007-10` live-node |
+| PFS-007-11 | stale conflicting authorization | an existing wrong-target delegation | submit a stale conflicting authorization | prior delegation remains; quota remains unchanged | `@pfs-007-11` live-node |
+| PFS-007-12 | worldwide-day lazy reset | exhausted quota immediately before the UTC day boundary | advance through the boundary and submit the first eligible call | quota resets lazily once and converges on every validator | `@pfs-007-12` live-node |
 
 ## Open questions and technical debt
 

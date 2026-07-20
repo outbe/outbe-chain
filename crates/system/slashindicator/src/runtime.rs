@@ -56,7 +56,7 @@ const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 10;
 impl SlashIndicator<'_> {
     // --- Config helpers ---
 
-    pub(crate) fn proposer_felony_threshold(&self) -> Result<u64> {
+    pub fn proposer_felony_threshold(&self) -> Result<u64> {
         let v = self.config_proposer_felony_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_PROPOSER_FELONY_THRESHOLD
@@ -65,7 +65,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    pub(crate) fn proposer_misdemeanor_threshold(&self) -> Result<u64> {
+    pub fn proposer_misdemeanor_threshold(&self) -> Result<u64> {
         let v = self.config_proposer_misdemeanor_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
@@ -74,7 +74,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    pub(crate) fn voter_misdemeanor_threshold(&self) -> Result<u64> {
+    pub fn voter_misdemeanor_threshold(&self) -> Result<u64> {
         let v = self.config_voter_misdemeanor_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_VOTER_MISDEMEANOR_THRESHOLD
@@ -83,7 +83,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    pub(crate) fn voter_felony_threshold(&self) -> Result<u64> {
+    pub fn voter_felony_threshold(&self) -> Result<u64> {
         let v = self.config_voter_felony_threshold.read()?;
         Ok(if v == 0 {
             DEFAULT_VOTER_FELONY_THRESHOLD
@@ -92,7 +92,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    fn slash_amount_percent(&self) -> Result<u64> {
+    pub fn slash_amount_percent(&self) -> Result<u64> {
         let v = self.config_slash_amount_percent.read()?;
         Ok(if v == 0 {
             DEFAULT_SLASH_AMOUNT_PERCENT
@@ -101,7 +101,7 @@ impl SlashIndicator<'_> {
         })
     }
 
-    fn evidence_reward_percent(&self) -> Result<u64> {
+    pub fn evidence_reward_percent(&self) -> Result<u64> {
         let v = self.config_evidence_reward_percent.read()?;
         Ok(if v == 0 {
             DEFAULT_EVIDENCE_REWARD_PERCENT

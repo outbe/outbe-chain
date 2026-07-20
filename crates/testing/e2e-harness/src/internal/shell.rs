@@ -4,8 +4,9 @@
 //! lifecycle are owned Rust processes (see `world::localnet` / `internal::proc`).
 
 use std::ffi::OsStr;
+use std::process::Output;
 
-use eyre::Result;
+use eyre::{bail, Result};
 use xshell::Shell;
 
 use super::config::Config;
@@ -25,6 +26,17 @@ impl<'a> Sh<'a> {
         Ok(sh)
     }
 
+    fn cli_output(&self, argv: &[String]) -> Result<Output> {
+        Ok(self
+            .shell()?
+            .cmd(&self.cfg.bin_cli)
+            .args(argv)
+            .env("PATH", &self.cfg.path)
+            .quiet()
+            .ignore_status()
+            .output()?)
+    }
+
     /// Run `outbe-cli <args>` (caller supplies global `--rpc-url` / `--private-key`)
     /// and capture stdout.
     ///
@@ -38,19 +50,12 @@ impl<'a> Sh<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let sh = self.shell()?;
         // Collected so the same argv can be both passed and logged.
         let argv: Vec<String> = args
             .into_iter()
             .map(|a| a.as_ref().to_string_lossy().into_owned())
             .collect();
-        let out = sh
-            .cmd(&self.cfg.bin_cli)
-            .args(&argv)
-            .env("PATH", &self.cfg.path)
-            .quiet()
-            .ignore_status()
-            .output()?;
+        let out = self.cli_output(&argv)?;
 
         // `Cmd::read` strips one trailing newline; `Cmd::output` doesn't. Callers
         // parse this stdout, so keep the old shape.
@@ -74,6 +79,24 @@ impl<'a> Sh<'a> {
             eprintln!("[cli] {cmdline}");
         }
         Ok(stdout)
+    }
+
+    /// Run an `outbe-cli` command that is required to fail before broadcast and
+    /// return its stderr for an exact protocol-rejection assertion.
+    pub fn cli_expected_failure<I, S>(&self, args: I) -> Result<String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let argv: Vec<String> = args
+            .into_iter()
+            .map(|a| a.as_ref().to_string_lossy().into_owned())
+            .collect();
+        let out = self.cli_output(&argv)?;
+        if out.status.success() {
+            bail!("outbe-cli command unexpectedly succeeded")
+        }
+        Ok(String::from_utf8_lossy(&out.stderr).into_owned())
     }
 
     /// Run a raw command (program + args) under `sudo` unless `E2E_NO_SUDO`,

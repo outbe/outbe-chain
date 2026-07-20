@@ -3,11 +3,12 @@
 use std::net::TcpListener;
 use std::process::Stdio;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eyre::{bail, eyre, Result, WrapErr};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::sync::Client;
+use outbe_compressed_entities::decode_stored_tribute_v1;
 
 use crate::env::Environment;
 use crate::internal::config::Config;
@@ -32,6 +33,12 @@ pub struct MongoDb {
 pub struct ProjectedTribute {
     pub raw_id: outbe_compressed_entities::EntityId36,
     pub stored_body: Vec<u8>,
+}
+
+/// Exact primary and secondary documents for one logical Tribute.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TributeProjectionSnapshot {
+    pub documents: [Document; 3],
 }
 
 impl MongoDb {
@@ -75,10 +82,40 @@ impl MongoDb {
     /// Wait for all three tribute namespaces in every validator database, then
     /// assert the complete BSON documents are identical across the committee.
     pub fn wait_for_tribute_projection(&self, tx_hash: &str, tries: u32) -> Result<()> {
+        self.wait_for_tribute_projection_on_nodes_with_stage(
+            tx_hash,
+            tries,
+            self.validators,
+            "mongo-visible",
+        )
+    }
+
+    /// Verify the primary Tribute and both secondary indexes across an explicit
+    /// live node count, including a joiner after committee promotion.
+    pub fn wait_for_tribute_projection_on_nodes(
+        &self,
+        tx_hash: &str,
+        tries: u32,
+        validators: usize,
+    ) -> Result<()> {
+        let stage = if validators > self.validators {
+            "mongo-expanded-node-parity"
+        } else {
+            "mongo-visible"
+        };
+        self.wait_for_tribute_projection_on_nodes_with_stage(tx_hash, tries, validators, stage)
+    }
+
+    fn wait_for_tribute_projection_on_nodes_with_stage(
+        &self,
+        tx_hash: &str,
+        tries: u32,
+        validators: usize,
+        stage: &'static str,
+    ) -> Result<()> {
         let uri = self.uri.clone();
         let database_prefix = self.database_prefix.clone();
         let scenario = self.scenario;
-        let validators = self.validators;
         let tx_hash = tx_hash.to_owned();
         std::thread::spawn(move || {
             wait_for_projection(
@@ -88,6 +125,7 @@ impl MongoDb {
                 validators,
                 &tx_hash,
                 tries,
+                stage,
             )
         })
         .join()
@@ -103,6 +141,23 @@ impl MongoDb {
         );
         let tx_hash = tx_hash.to_owned();
         std::thread::spawn(move || projected_tribute(&uri, &name, &tx_hash))
+            .join()
+            .map_err(|_| eyre!("projection MongoDB worker panicked"))?
+    }
+
+    /// Capture the exact three-document projection for one Tribute on a node.
+    pub fn tribute_projection_snapshot(
+        &self,
+        validator: usize,
+        tx_hash: &str,
+    ) -> Result<TributeProjectionSnapshot> {
+        let uri = self.uri.clone();
+        let name = format!(
+            "{}_scenario_{}_validator-{validator}",
+            self.database_prefix, self.scenario
+        );
+        let tx_hash = tx_hash.to_owned();
+        std::thread::spawn(move || exact_tribute_projection(&uri, &name, &tx_hash))
             .join()
             .map_err(|_| eyre!("projection MongoDB worker panicked"))?
     }
@@ -166,16 +221,32 @@ fn wait_for_projection(
     validators: usize,
     tx_hash: &str,
     tries: u32,
+    stage: &'static str,
 ) -> Result<()> {
+    let started = Instant::now();
     let mut last = None;
     for _ in 0..tries {
         match tribute_projection(uri, database_prefix, scenario, validators, tx_hash) {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                eprintln!(
+                    "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} wait_elapsed_ms={} tx={tx_hash} nodes={validators}",
+                    unix_time_millis(),
+                    started.elapsed().as_millis(),
+                );
+                return Ok(());
+            }
             Err(error) => last = Some(error),
         }
         sleep(Duration::from_millis(500));
     }
     Err(last.unwrap_or_else(|| eyre!("projection did not appear")))
+}
+
+fn unix_time_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 fn tribute_projection(
@@ -186,32 +257,10 @@ fn tribute_projection(
     tx_hash: &str,
 ) -> Result<()> {
     let client = Client::with_uri_str(uri).wrap_err("connect projection MongoDB")?;
-    let mut canonical: Option<Vec<Document>> = None;
+    let mut canonical: Option<TributeProjectionSnapshot> = None;
     for validator in 0..validators {
         let name = format!("{database_prefix}_scenario_{scenario}_validator-{validator}");
-        let db = client.database(&name);
-        let mut documents = Vec::with_capacity(COLLECTIONS.len());
-        for collection_name in COLLECTIONS {
-            let collection = db.collection::<Document>(collection_name);
-            let count = collection.count_documents(doc! {}).run()?;
-            if count != 1 {
-                bail!("{name}.{collection_name}: expected 1 document, found {count}");
-            }
-            documents.push(
-                collection
-                    .find_one(doc! {})
-                    .run()?
-                    .ok_or_else(|| eyre!("{name}.{collection_name}: document disappeared"))?,
-            );
-        }
-
-        let projected_tx = documents[0]
-            .get_document("_projection")
-            .and_then(|projection| projection.get_str("tx_hash"))
-            .map_err(|error| eyre!("{name}.tributes missing _projection.tx_hash: {error}"))?;
-        if !projected_tx.eq_ignore_ascii_case(tx_hash) {
-            bail!("{name}.tributes projected tx {projected_tx}, expected successful tx {tx_hash}");
-        }
+        let documents = exact_tribute_projection_with_client(&client, &name, tx_hash)?;
 
         if let Some(expected) = &canonical {
             if &documents != expected {
@@ -222,6 +271,84 @@ fn tribute_projection(
         }
     }
     Ok(())
+}
+
+fn exact_tribute_projection(
+    uri: &str,
+    name: &str,
+    tx_hash: &str,
+) -> Result<TributeProjectionSnapshot> {
+    let client = Client::with_uri_str(uri).wrap_err("connect projection MongoDB")?;
+    exact_tribute_projection_with_client(&client, name, tx_hash)
+}
+
+fn exact_tribute_projection_with_client(
+    client: &Client,
+    name: &str,
+    tx_hash: &str,
+) -> Result<TributeProjectionSnapshot> {
+    let db = client.database(name);
+    let primary = db
+        .collection::<Document>("tributes")
+        .find_one(doc! {"_projection.tx_hash": tx_hash})
+        .run()?
+        .ok_or_else(|| eyre!("{name}.tributes has no row for transaction {tx_hash}"))?;
+    let projected_tx = primary
+        .get_document("_projection")
+        .and_then(|projection| projection.get_str("tx_hash"))
+        .map_err(|error| eyre!("{name}.tributes missing _projection.tx_hash: {error}"))?;
+    if !projected_tx.eq_ignore_ascii_case(tx_hash) {
+        bail!("{name}.tributes projected tx {projected_tx}, expected successful tx {tx_hash}");
+    }
+
+    let encoded_id = primary
+        .get_str("_id")
+        .map_err(|error| eyre!("{name}.tributes has invalid _id: {error}"))?;
+    let id = hex::decode(encoded_id).wrap_err("decode projected Tribute _id")?;
+    let raw_id = outbe_compressed_entities::EntityId36::try_from(id.as_slice())
+        .wrap_err("projected Tribute _id is not EntityId36")?;
+    let stored_body = match primary.get("value") {
+        Some(Bson::Binary(value)) => value.bytes.as_slice(),
+        other => return Err(eyre!("{name}.tributes has invalid value field: {other:?}")),
+    };
+    let body = decode_stored_tribute_v1(stored_body)
+        .wrap_err("decode projected Tribute canonical body")?;
+    if body.tribute_id != raw_id {
+        bail!("{name}.tributes primary key does not match its canonical body");
+    }
+
+    let mut owner_key = Vec::with_capacity(20 + raw_id.as_bytes().len());
+    owner_key.extend_from_slice(body.owner.as_slice());
+    owner_key.extend_from_slice(raw_id.as_bytes());
+    let mut day_key = Vec::with_capacity(4 + raw_id.as_bytes().len());
+    day_key.extend_from_slice(&body.worldwide_day.value().to_be_bytes());
+    day_key.extend_from_slice(raw_id.as_bytes());
+
+    let owner_index = exact_index_document(&db, name, "tributes_by_owner", &owner_key)?;
+    let day_index = exact_index_document(&db, name, "tributes_by_day", &day_key)?;
+    Ok(TributeProjectionSnapshot {
+        documents: [primary, owner_index, day_index],
+    })
+}
+
+fn exact_index_document(
+    db: &mongodb::sync::Database,
+    database_name: &str,
+    collection_name: &str,
+    key: &[u8],
+) -> Result<Document> {
+    let encoded_key = hex::encode(key);
+    let document = db
+        .collection::<Document>(collection_name)
+        .find_one(doc! {"_id": &encoded_key})
+        .run()?
+        .ok_or_else(|| eyre!("{database_name}.{collection_name} has no key {encoded_key}"))?;
+    match document.get("value") {
+        Some(Bson::Binary(value)) if value.bytes.is_empty() => Ok(document),
+        other => Err(eyre!(
+            "{database_name}.{collection_name} index value must be empty binary, found {other:?}"
+        )),
+    }
 }
 
 fn start_replica_set(cfg: &Config) -> Result<(String, DockerGuard)> {

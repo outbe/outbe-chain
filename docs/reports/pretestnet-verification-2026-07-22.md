@@ -188,6 +188,27 @@ Evidence: `e2e/sgx-smoke-final-2.log`, `e2e/e2e-sgx-full-final-4.log`, `e2e/sgx-
 
 ## Live E2E scenarios
 
+### PFS-005–PFS-008 branch addendum (pre-review)
+
+This addendum records the current `test/pfs-005-008-live-e2e` branch state. It
+does **not** supersede the final-suite evidence above and must not be read as a
+release PASS. At the operator's request, the final complete mock, hardware-SGX
+and workspace regressions are deliberately deferred until a separate review of
+the branch fixes and assertions is complete.
+
+| Flow | Reproducible scenarios now present | Evidence status before review |
+|---|---|---|
+| PFS-005 | voting-window validator restart; full-committee schedule and activation-boundary restarts; duplicate/unauthorized/conflicting/expired paths; unsupported activation, unchanged-binary restart and real replacement-binary recovery | self-contained unsupported-version operator recovery focused PASS: 20/20 steps, `/tmp/outbe-e2e-harness-3104132/run-1784490228-3104132`; final feature/suite deferred |
+| PFS-006 | join/exit/claim accounting; stale join; stalled reshare; actual downtime slash and duplicate-punishment guard; registration, in-flight DKG, completed-DKG, active-share, full-committee sealed-state and active-validator-during-reshare restarts | stalled-reshare focused PASS: 6/6 steps, `/tmp/outbe-e2e-harness-2903979/run-1784485353-2903979`; remaining historical runs and product-fix evidence require review before being promoted to final evidence |
+| PFS-007 | quota/fallback; exact raw replay before and after validator/full-committee restart; invalid/wrong-target/conflicting authorizations; worldwide-day lazy reset | scenarios implemented; final live rerun deliberately deferred until review |
+| PFS-008 | cold/chained sync; upstream loss, lag and switch; durable follower restart; warm-promotion boundary, duplicate readiness, promoted node/enclave restart and active-validator restart | scenarios implemented; final hardware-SGX rerun deliberately deferred until review |
+
+Product-fix commits on this branch are candidates for review, not automatically
+accepted findings. The review must reconstruct each red reproduction, verify the
+root cause from code/log evidence, and confirm that the regression would fail
+without the fix. Any item lacking that evidence must be reclassified rather than
+reported as a confirmed defect.
+
 The initial complete mock run passed 15 scenarios and failed the governance timing scenario. That failure was deterministic: the test cast votes after its own configured voting window. After `61feeb1`, the focused governance feature passed twice, 16/16 steps each time. The lifecycle feature was separately strengthened by `3d29b72` and passed 9/9 steps; restart coverage passed 7/7 focused steps. The broad hardware-SGX run passed every scenario except the late promotion case that produced the confirmed defect; the focused exact-candidate hardware regression then passed that corrected case. All runtime-affecting nightly-compatibility edits also passed their targeted Rust suites, and the final full workspace regression is recorded in the exact-candidate table.
 
 | Live feature | Primary observable invariants |
@@ -213,10 +234,10 @@ The initial complete mock run passed 15 scenarios and failed the governance timi
 | PFS-002 worldwide-day Tribute to Nod | Cycle, Metadosis, Lysis, Tribute/Nod factories | component tests for 002-01/06 and partial admission | no composed live scenario | 002-02/03/04/07/08 and full day-boundary composition |
 | PFS-003 Gratis pledge to Credis repayment | Gratis, Gratisfactory, Credis, factories, TEE | in-process coverage for 003-01/03/09/10/11/12; fragments of 003-02 | no composed live scenario | 003-04 through 003-08 and public-interface multi-step composition |
 | PFS-004 Intex settlement to Promis | Intex, Desis, Promis, bridges, auction contracts | extensive Foundry and runtime fragments | no composed two-chain live scenario | end-to-end auction/bridge/settlement, failure/retry, ordering and replay across two live chains |
-| PFS-005 governance update | Governance, Vote, Update, RPC, node lifecycle | unit coverage for 005-03/04/07/10/11/12 | 005-01 and expected-fatal 005-09; oversized RPC pagination | stateful 005-02, 005-05/06/08 and recovery after unsupported activation |
-| PFS-006 validator lifecycle | ValidatorSet, Staking, DKG, consensus, TEE | broad unit/simulation plus restart tests | 006-01/02/03 exclusion/04/06 liveness/09 restart | claim/value portion of 006-03; actual slash 006-06; 006-05/07/08; other restart checkpoints; complete exit accounting |
-| PFS-007 ZeroFee | EIP-7702 detection, admission, quota, accounting, txpool | unit/property plus native Alloy E2E | live 007-01 through 007-06 | exact replay 007-07; restart persistence 007-08 |
-| PFS-008 follower recovery/promotion | follower resolver, finality, DKG, validator activation | unit/simulation plus one composite feature | live 008-01 through 008-04, including exact-candidate hardware SGX | upstream partition 008-05; restart during promotion 008-06 |
+| PFS-005 governance update | Governance, Vote, Update, RPC, node lifecycle | unit coverage for 005-03/04/07/10/11/12 | live scenarios now include restart/rejection paths and focused 005-09 real binary replacement recovery | stateful 005-02, membership 005-05 and deliberately failing migration 005-06; final branch suite awaits review |
+| PFS-006 validator lifecycle | ValidatorSet, Staking, DKG, consensus, TEE | broad unit/simulation plus restart tests | live scenarios now include exact exit/claim accounting, actual slash/idempotency and six restart checkpoints | 006-05/07/08/10 remain outside the current goal's requested composition; final branch suite awaits review |
+| PFS-007 ZeroFee | EIP-7702 detection, admission, quota, accounting, txpool | unit/property plus native Alloy E2E | live scenarios implemented for 007-01 through 007-12, including replay/restarts/errors/day reset | final branch suite awaits review |
+| PFS-008 follower recovery/promotion | follower resolver, finality, DKG, validator activation | unit/simulation plus composite features | live scenarios implemented for 008-01 through 008-08, including upstream loss and boundary restarts | final hardware-SGX branch suite awaits review |
 
 ## Confirmed defects and disposition
 
