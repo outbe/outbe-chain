@@ -26,13 +26,9 @@ pub const RATE_SCALE: u32 = 1_000_000;
 /// day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 12 * 3600;
 
-/// Target-side auction phase timing: bid-reveal window before noon of the auction day.
-pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
-/// Target-side auction phase timing: issuance window after noon of the auction day.
-pub const ISSUANCE_WINDOW_SECONDS: u32 = 12 * 3600;
-
-/// Midnight-anchored schedule: the commit and settlement windows each span one day.
+/// Midnight-anchored schedule: the commit, reveal and settlement windows each span one day.
 pub const COMMIT_WINDOW_SECONDS: u64 = 24 * 3600;
+pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
 pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.

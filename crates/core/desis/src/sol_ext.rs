@@ -31,9 +31,6 @@ sol! {
         function sendAuctionStageStart(AuctionStageStartParams calldata params)
             external payable returns (bytes32 sendId);
 
-        function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay)
-            external payable returns (bytes32 sendId);
-
         function sendAuctionStageClearing(uint32 worldwideDay) external payable returns (bytes32 sendId);
 
         function sendAuctionResult(
