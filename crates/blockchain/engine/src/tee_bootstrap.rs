@@ -33,28 +33,41 @@ const TEE_BOOTSTRAP_BLOCK: u64 = 1;
 
 /// Adapts the consensus P2P channel (commonware `Sender`/`Receiver`) to the
 /// [`BootstrapGossip`] surface the coordination needs. Messages are opaque bytes.
-pub struct CommonwareBootstrapGossip<S, R> {
+pub struct CommonwareBootstrapGossip<S, R, C> {
     pub sender: S,
     pub receiver: R,
+    clock: C,
+    outbound: Vec<Vec<u8>>,
 }
 
-impl<S, R> BootstrapGossip for CommonwareBootstrapGossip<S, R>
+impl<S, R, C> BootstrapGossip for CommonwareBootstrapGossip<S, R, C>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     async fn broadcast(&mut self, bytes: Vec<u8>) -> Result<(), CeremonyError> {
-        // Mirror the DKG actor: `send` returns the accepting peers; an empty Vec
-        // is benign backpressure, not a hard failure (peers also receive via the
-        // committee's own broadcasts).
+        self.outbound.push(bytes.clone());
         let _ = self.sender.send(Recipients::All, bytes, true);
         Ok(())
     }
 
     async fn recv(&mut self) -> Option<Vec<u8>> {
-        match self.receiver.recv().await {
-            Ok((_from, raw)) => Some(raw.as_ref().to_vec()),
-            Err(_) => None,
+        const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
+        loop {
+            commonware_macros::select! {
+                recv = self.receiver.recv() => {
+                    return match recv {
+                        Ok((_from, raw)) => Some(raw.as_ref().to_vec()),
+                        Err(_) => None,
+                    };
+                },
+                _ = self.clock.sleep(RETRY_POLL) => {
+                    for bytes in &self.outbound {
+                        let _ = self.sender.send(Recipients::All, bytes.clone(), true);
+                    }
+                },
+            }
         }
     }
 }
@@ -76,27 +89,35 @@ const DKG_ENV_IDENTITY: u8 = 0x01;
 /// sends. Broadcasting addressed bundles instead would make every non-recipient
 /// enclave fail to open the share (it is sealed to one recipient) and abort the
 /// ceremony.
-pub struct CommonwareDkgGossip<S, R> {
+pub struct CommonwareDkgGossip<S, R, C> {
     sender: S,
     receiver: R,
+    clock: C,
     /// `tee_bls -> consensus P2P pubkey` for addressed ceremony sends.
     routing: BTreeMap<Vec<u8>, bls12381::PublicKey>,
     /// Ceremony messages received during the identity-exchange phase, replayed
     /// before reading new ones so the phase race loses nothing.
     buffered: VecDeque<(Vec<u8>, DkgWireMessage)>,
+    /// Finite startup transcript replayed on idle ticks. Ceremony consumers
+    /// deduplicate by dealer/player/signer, so replay closes transient P2P
+    /// backpressure gaps without repeating enclave side effects.
+    outbound: Vec<(Recipients<bls12381::PublicKey>, Vec<u8>)>,
 }
 
-impl<S, R> CommonwareDkgGossip<S, R>
+impl<S, R, C> CommonwareDkgGossip<S, R, C>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
-    pub fn new(sender: S, receiver: R) -> Self {
+    pub fn new(sender: S, receiver: R, clock: C) -> Self {
         Self {
             sender,
             receiver,
+            clock,
             routing: BTreeMap::new(),
             buffered: VecDeque::new(),
+            outbound: Vec::new(),
         }
     }
 
@@ -104,6 +125,7 @@ where
         let mut env = Vec::with_capacity(1 + 8);
         env.push(DKG_ENV_CEREMONY);
         env.extend_from_slice(&msg.to_bytes());
+        self.outbound.push((recipients.clone(), env.clone()));
         let _ = self.sender.send(recipients, env, true);
     }
 
@@ -114,7 +136,6 @@ where
     /// ceremony id and participant order).
     pub async fn exchange_identities(
         &mut self,
-        clock: &impl Clock,
         my_bls: Vec<u8>,
         my_enc: [u8; 32],
         my_sig: Vec<u8>,
@@ -173,7 +194,7 @@ where
                         }
                     }
                 },
-                _ = clock.sleep(POLL) => {
+                _ = self.clock.sleep(POLL) => {
                     // Timeout with no new identity: re-announce so peers that
                     // registered the round late still receive us. Bound the wait.
                     idle_ticks += 1;
@@ -200,10 +221,11 @@ where
     }
 }
 
-impl<S, R> DkgGossip for CommonwareDkgGossip<S, R>
+impl<S, R, C> DkgGossip for CommonwareDkgGossip<S, R, C>
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     async fn send(&mut self, to: &[u8], msg: DkgWireMessage) -> Result<(), CeremonyError> {
         match self.routing.get(to).cloned() {
@@ -224,17 +246,27 @@ where
         if let Some(buffered) = self.buffered.pop_front() {
             return Some(buffered);
         }
+        const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
-            let (from, raw) = self.receiver.recv().await.ok()?;
-            let bytes = raw.as_ref();
-            match bytes.first().copied() {
-                Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
-                    Ok(msg) => return Some((from.encode().to_vec(), msg)),
-                    Err(_) => continue,
+            commonware_macros::select! {
+                recv = self.receiver.recv() => {
+                    let (from, raw) = recv.ok()?;
+                    let bytes = raw.as_ref();
+                    match bytes.first().copied() {
+                        Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
+                            Ok(msg) => return Some((from.encode().to_vec(), msg)),
+                            Err(_) => continue,
+                        },
+                        // Late identity announcement (a peer still in its exchange phase):
+                        // ignore and keep reading.
+                        _ => continue,
+                    }
                 },
-                // Late identity announcement (a peer still in its exchange phase):
-                // ignore and keep reading.
-                _ => continue,
+                _ = self.clock.sleep(RETRY_POLL) => {
+                    for (recipients, env) in &self.outbound {
+                        let _ = self.sender.send(recipients.clone(), env.clone(), true);
+                    }
+                },
             }
         }
     }
@@ -319,9 +351,9 @@ pub fn quote_policy_from_tee_policy(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tee_dkg_at_startup<S, R>(
+pub async fn run_tee_dkg_at_startup<S, R, C>(
     enclave_socket: &Path,
-    clock: &impl Clock,
+    clock: C,
     n: usize,
     chain_id: B256,
     tribute_offer_epoch: u64,
@@ -332,6 +364,7 @@ pub async fn run_tee_dkg_at_startup<S, R>(
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     let endpoint = enclave_socket
         .to_str()
@@ -352,9 +385,9 @@ where
         other => return Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
     };
 
-    let mut gossip = CommonwareDkgGossip::new(sender, receiver);
+    let mut gossip = CommonwareDkgGossip::new(sender, receiver, clock);
     let identities = gossip
-        .exchange_identities(clock, my_bls.clone(), my_enc, my_sig, n)
+        .exchange_identities(my_bls.clone(), my_enc, my_sig, n)
         .await?;
     let ceremony_id = compute_ceremony_id(chain_id, 0, &identities);
     let coord = CeremonyCoordinator::new(ceremony_id, 0, my_bls, identities);
@@ -389,8 +422,9 @@ where
 // validator, committee, offer key, policy, signer, P2P endpoints). Bundling them
 // into a struct would not add clarity at the single call site in `stack.rs`.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tee_bootstrap_at_startup<S, R>(
+pub async fn run_tee_bootstrap_at_startup<S, R, C>(
     enclave_socket: &Path,
+    clock: C,
     my_validator: Address,
     committee: BTreeSet<Address>,
     tribute_offer_public_key: B256,
@@ -403,6 +437,7 @@ pub async fn run_tee_bootstrap_at_startup<S, R>(
 where
     S: P2pSender<PublicKey = bls12381::PublicKey>,
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
+    C: Clock,
 {
     // Fail fast if the validator's EVM signer cannot sign — otherwise the
     // coordination would emit an unverifiable signature.
@@ -441,7 +476,12 @@ where
         ),
     };
 
-    let mut gossip = CommonwareBootstrapGossip { sender, receiver };
+    let mut gossip = CommonwareBootstrapGossip {
+        sender,
+        receiver,
+        clock,
+        outbound: Vec::new(),
+    };
     let payload = run_tee_bootstrap_coordination(
         registration,
         &params,

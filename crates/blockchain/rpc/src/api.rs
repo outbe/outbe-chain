@@ -118,6 +118,7 @@ pub struct SlashConfig {
     pub proposer_misdemeanor_threshold: u64,
     pub proposer_felony_threshold: u64,
     pub voter_misdemeanor_threshold: u64,
+    pub voter_felony_threshold: u64,
     pub slash_amount_percent: u64,
     pub evidence_reward_percent: u64,
 }

@@ -20,7 +20,14 @@ fn tuned_setup(world: &mut World) {
     boot_localnet(
         world,
         6,
-        &[("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "600".to_string())],
+        &[
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "600".to_string()),
+            // Keep validator-3 ACTIVE until the height-90 target freeze. The
+            // default E2E threshold (30) would jail it first, silently turning
+            // the intended 4->5 target into a 4-member replacement target whose
+            // three online players can complete DKG without a retry.
+            ("TESTNET_DEV_FELONY_THRESHOLD", "119".to_string()),
+        ],
     );
 }
 
@@ -50,6 +57,12 @@ fn freeze_target(world: &mut World) {
 fn lose_quorum(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
+    world.state.expected_dkg_reveal = Some(
+        world
+            .localnet
+            .consensus_public_key(idx)
+            .expect("derive offline joiner's consensus public key"),
+    );
     world.state.marker_height = world.rpc.head(primary);
     world.localnet.stop_joiner(idx).expect("stop joiner");
     world.localnet.kill_validator(3).expect("kill validator-3");
@@ -112,5 +125,14 @@ fn reshare_completes(world: &mut World) {
     assert!(
         world.rpc.wait_active_count(primary, 5, 40),
         "reshare did not complete after the participant was restored (set != 5)"
+    );
+    let revealed = world
+        .state
+        .expected_dkg_reveal
+        .as_deref()
+        .expect("expected offline participant reveal identity");
+    assert!(
+        world.localnet.log_has(0, revealed),
+        "reshare completed without recording the expected offline participant reveal"
     );
 }

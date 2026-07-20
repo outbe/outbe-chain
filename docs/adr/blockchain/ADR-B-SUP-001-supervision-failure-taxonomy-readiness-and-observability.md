@@ -70,13 +70,13 @@ metrics cannot be confused with recovery.
 
 Every failure is classified along independent axes:
 
-| Axis | Values |
-|---|---|
-| Origin | configuration, compatibility, consensus, execution, persistence, projection, dependency, resource, operator shutdown |
-| Determinism | deterministic data/invariant vs local/transient availability |
-| Severity | request-rejected, degraded, not-ready, fatal-process, integrity-emergency |
-| Retry | none, bounded immediate, bounded backoff, restart/import/operator action |
-| Scope | request, actor, node, validator role, network evidence |
+| Axis        | Values                                                                                                               |
+| ----------- | -------------------------------------------------------------------------------------------------------------------- |
+| Origin      | configuration, compatibility, consensus, execution, persistence, projection, dependency, resource, operator shutdown |
+| Determinism | deterministic data/invariant vs local/transient availability                                                         |
+| Severity    | request-rejected, degraded, not-ready, fatal-process, integrity-emergency                                            |
+| Retry       | none, bounded immediate, bounded backoff, restart/import/operator action                                             |
+| Scope       | request, actor, node, validator role, network evidence                                                               |
 
 Unknown errors default to fatal for mandatory consensus/state writers, not transient.
 String matching is not classification authority. Typed errors carry a stable code,
@@ -103,7 +103,7 @@ convergence, Reth canonical/finalized health, CE marker, Mongo projection bounda
 required by execution, consensus/marshal/DKG/committee readiness, active signing
 material, TEE readiness when the chain requires it, writer leases and resource
 headroom. A follower has no signing-key requirement but must have certified ancestry
-and the same execution/projection gates. RPC readiness additionally declares which
+and the same execution/projection gates. RPC readiness declares which
 consistency tiers are serviceable.
 
 Ready is computed from typed component snapshots in one generation; it is never a
@@ -170,14 +170,14 @@ alerts are exercised against a real local network.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Component ownership/criticality | `NodeSupervisor` registry |
-| Current lifecycle/readiness | versioned supervisor snapshot |
-| Failure semantics | stable typed failure-code registry |
-| External probes | role-aware liveness/readiness/health RPC/HTTP contract |
-| Metrics and labels | checked observability schema |
-| Shutdown and exit result | root supervisor first-cause report |
+| Responsibility                  | Authority                                              |
+| ------------------------------- | ------------------------------------------------------ |
+| Component ownership/criticality | `NodeSupervisor` registry                              |
+| Current lifecycle/readiness     | versioned supervisor snapshot                          |
+| Failure semantics               | stable typed failure-code registry                     |
+| External probes                 | role-aware liveness/readiness/health RPC/HTTP contract |
+| Metrics and labels              | checked observability schema                           |
+| Shutdown and exit result        | root supervisor first-cause report                     |
 
 ## Invariants
 
@@ -296,7 +296,7 @@ socket.
     last progress age, exact checkpoint gaps, lease status and shutdown join results.
 21. Audit logs/errors/Debug output for private keys, DKG shares, upstream/Mongo URL
     credentials, bearer tokens, TEE material and user encrypted payloads. Add redaction
-    property tests, not only selected argument tests.
+    property tests across all argument paths.
 22. Define bounded graceful-shutdown deadlines and escalation for Reth, consensus,
     marshal ACKs, CE/Mongo writers, enclave and exporter. Current joins can otherwise
     delay termination indefinitely.

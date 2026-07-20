@@ -119,15 +119,15 @@ startup.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Chain identity tuple/digest | `ChainIdentityV1` manifest |
-| Address/precompile roles | ADR-B-WIR-001 generated registry |
+| Responsibility                    | Authority                              |
+| --------------------------------- | -------------------------------------- |
+| Chain identity tuple/digest       | `ChainIdentityV1` manifest             |
+| Address/precompile roles          | ADR-B-WIR-001 generated registry       |
 | Module slots/schema/genesis codec | ADR-B-EVM-003 plus owner module schema |
-| Public genesis input compilation | deterministic genesis compiler |
-| Consensus bootstrap expectation | typed chain-spec committee profile |
-| Runtime genesis readiness | node startup validator |
-| Post-genesis activation/migration | ADR-S-GOV-003 and owner ADR |
+| Public genesis input compilation  | deterministic genesis compiler         |
+| Consensus bootstrap expectation   | typed chain-spec committee profile     |
+| Runtime genesis readiness         | node startup validator                 |
+| Post-genesis activation/migration | ADR-S-GOV-003 and owner ADR            |
 
 ## Invariants
 
@@ -215,7 +215,7 @@ module audits can trace every initial state word to a module-owned schema.
    fields rather than mutating an arbitrary seed in place.
 9. The same script seeds deep business state for many Core modules using handwritten
    slots. Add owner-provided typed genesis builders and structural invariant checks
-   for every ledger/index/counter, not only serialization.
+   for every ledger, index and counter in addition to serialization checks.
 10. `validate_genesis_state` checks ValidatorSet and Staking but not Rewards anchor,
     governance authorities, Oracle, Cycle, emission, CE schema/root, ZeroFee, TEE
     policy, Core indexes or ordinary predeploy state.

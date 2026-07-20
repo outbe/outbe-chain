@@ -1,22 +1,24 @@
-# Проверка создания Tribute и MongoDB projection локально
+# Verify Tribute creation and MongoDB projection locally
 
-Эта инструкция проверяет полный protocol flow: encrypted offer отправляется в
-`TributeFactory`, расшифровывается и вычисляется в TEE sidecar, исполняется в
-блоке, после финализации событие проектируется ExEx в MongoDB. Прямых записей в
-MongoDB и обхода compressed-entity lifecycle здесь нет.
+This guide creates an encrypted Tribute on a local network and verifies its
+MongoDB projection. The offer goes to `TributeFactory`, the TEE sidecar decrypts
+it, and the transaction executes in a block. After finalization, ExEx projects the
+event into MongoDB. The flow never writes to MongoDB directly or bypasses the
+compressed-entity lifecycle.
 
-## Требования
+## Requirements
 
-- Собраны `outbe-chain`, `outbe-cli` и dev TEE mock:
+- Build `outbe-chain`, `outbe-cli`, and the development TEE mock:
 
   ```sh
   cargo build --bin outbe-chain --bin outbe-cli
   cargo build --release --bin outbe-tee-enclave-mock --features mock
   ```
 
-- Доступны `cast`, `python3`, Python package `cryptography`, `docker` и `mise`.
-- MongoDB запущена как replica set, потому что projection использует
-  транзакции. Пример для чистого локального MongoDB:
+- Install `cast`, `python3`, the Python `cryptography` package, `docker`, and
+  `mise`.
+- Run MongoDB as a replica set because the projection uses transactions. To start
+  a clean local MongoDB:
 
   ```sh
   docker run -d --name outbe-local-mongodb -p 27017:27017 \
@@ -25,10 +27,11 @@ MongoDB и обхода compressed-entity lifecycle здесь нет.
     'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
   ```
 
-## Поднять общий localnet stack через mise
+## Start the localnet with mise
 
-Общий порядок запуска и настройки описан в разделе `Managed localnet stack` в
-корневом [`README.md`](../README.md). Для этого сценария достаточно:
+The `Managed localnet stack` section in the root
+[`README.md`](../README.md) describes the complete setup. This check needs only
+three commands:
 
 ```sh
 mise run localnet-stack-start
@@ -36,35 +39,34 @@ mise run tribute-offer
 mise run tribute-show-mongo
 ```
 
-Это весь короткий demo flow: первая команда поднимает инфраструктуру, вторая
-создаёт один Tribute, третья показывает и проверяет его MongoDB projection на
-всех четырёх валидаторах. Очистка после демонстрации:
+The first command starts the infrastructure, the second creates one Tribute, and
+the third verifies its MongoDB projection on all four validators. Remove the
+localnet when finished:
 
 ```sh
 mise run localnet-stack-clean
 ```
 
-Ниже приведён альтернативный подробный путь по отдельным командам для ручной
-диагностики.
+For manual diagnosis, run the same steps separately.
 
-Сначала поднимите полноценное локальное окружение:
+Start the complete local environment:
 
 ```sh
 mise run localnet-stack-start
 ```
 
-Задача автоматически:
+The command:
 
-- собирает `outbe-chain`, `outbe-cli` и mock TEE;
-- создаёт чистый `/tmp/outbe-localnet-stack`;
-- поднимает отдельный `mongo:7.0` replica set на порту `27027`;
-- запускает четыре валидатора с mock TEE и отдельными projection databases;
-- ждёт доступности RPC и появления первого блока;
-- проверяет MongoDB-транзакцию, четыре живых validator process и четыре
-  созданные projection databases;
-- печатает RPC URL, MongoDB URI, database prefix и data-dir.
+- builds `outbe-chain`, `outbe-cli`, and the mock TEE;
+- creates a clean `/tmp/outbe-localnet-stack`;
+- starts a separate `mongo:7.0` replica set on port `27027`;
+- starts four validators with mock TEEs and separate projection databases;
+- waits for RPC and the first block;
+- checks a MongoDB transaction, four live validator processes, and four projection
+  databases;
+- prints the RPC URL, MongoDB URI, database prefix, and data directory.
 
-Для команд ниже установите напечатанные task значения (для defaults это):
+Export the printed values before running the commands below. The defaults are:
 
 ```sh
 export OUT_DIR=/tmp/outbe-localnet-stack
@@ -74,27 +76,27 @@ export MONGO_PORT=27027
 export DB_PREFIX=outbe_localnet_stack
 ```
 
-Это общий localnet, не Tribute-specific demo. Создание offer и проверка MongoDB
-выполняются вручную по разделам 2 и 3; раздел 1 при mise-запуске пропустите.
-После работы:
+This localnet does not create a Tribute automatically. Create the offer and check
+MongoDB as described in sections 2 and 3; skip section 1 after starting the network
+through `mise`. When finished:
 
 ```sh
-# остановить сеть и MongoDB, сохранив chain data
+# Stop the network and MongoDB but keep chain data.
 mise run localnet-stack-stop
 
-# либо остановить и удалить localnet data-dir
+# Or stop everything and delete the localnet data directory.
 mise run localnet-stack-clean
 ```
 
-Для второго стенда задайте уникальные `LOCALNET_STACK_DIR`,
+To run a second localnet, choose unique values for `LOCALNET_STACK_DIR`,
 `LOCALNET_STACK_MONGO_NAME`, `LOCALNET_STACK_MONGO_PORT`,
-`LOCALNET_STACK_PORT_OFFSET` и `LOCALNET_STACK_DATABASE_PREFIX` с
-непересекающимися портами. Следующие разделы описывают те же действия вручную.
+`LOCALNET_STACK_PORT_OFFSET`, and `LOCALNET_STACK_DATABASE_PREFIX`. The port
+ranges must not overlap. The following sections describe the same setup manually.
 
-## 1. Собрать genesis и запустить сеть
+## 1. Build genesis and start the network
 
-Выберите свободный `PORT_OFFSET`. Он должен быть одинаковым при bootstrap,
-start, status и stop.
+Choose an unused `PORT_OFFSET`. Use the same value for bootstrap, start, status,
+and stop.
 
 ```sh
 export OUT_DIR=/tmp/outbe-tribute-check
@@ -114,22 +116,21 @@ export OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/release/outbe-tee-enclave-mock"
 ./scripts/run-testnet.sh status "$OUT_DIR"
 ```
 
-Дождитесь, пока высота станет больше нуля:
+Wait until the block number is greater than zero:
 
 ```sh
 RPC_PORT=$((8545 + PORT_OFFSET))
 cast block-number --rpc-url "http://127.0.0.1:$RPC_PORT"
 ```
 
-Если для того же database prefix уже существует projection от другого
-genesis, startup намеренно завершится ошибкой `projection identity does not
-match configured chain`. Используйте новый prefix или удалите только старые
-одноразовые test databases перед чистым bootstrap.
+If the same database prefix already contains a projection from another genesis,
+startup fails with `projection identity does not match configured chain`. Use a
+new prefix, or delete the old disposable test databases before a clean bootstrap.
 
-## 2. Создать Tribute через Python flow
+## 2. Create a Tribute with the Python flow
 
-Worldwide day сети вычисляется в UTC+14. Public offer key читается из on-chain
-TEE registry, а private key берётся из локального bootstrap output:
+The network calculates WorldwideDay in UTC+14. Read the public offer key from the
+on-chain TEE registry and the private key from the local bootstrap output:
 
 ```sh
 RPC_URL="http://127.0.0.1:$RPC_PORT"
@@ -148,16 +149,16 @@ python3 scripts/tributefactory/offer_tribute.py \
   --rpc-url "$RPC_URL"
 ```
 
-Успех означает одновременно:
+The check passes when:
 
-- скрипт напечатал `Receipt status:0x1`;
-- `Total supply` увеличился на один;
-- receipt содержит `TributeBodyStored` и `TributeIssued` logs.
+- the script prints `Receipt status:0x1`;
+- `Total supply` increases by one;
+- the receipt contains `TributeBodyStored` and `TributeIssued` events.
 
-Повторная независимая проверка:
+Check the result independently:
 
 ```sh
-TX_HASH=<hash из вывода скрипта>
+TX_HASH=<hash from the script output>
 OWNER=$(cast wallet address --private-key "$V0")
 cast receipt "$TX_HASH" --rpc-url "$RPC_URL"
 cast call 0x0000000000000000000000000000000000001101 \
@@ -166,14 +167,14 @@ cast call 0x0000000000000000000000000000000000001101 \
   'getTributesByOwner(address)(bytes[])' "$OWNER" --rpc-url "$RPC_URL"
 ```
 
-Последний вызов читает finalized compressed bodies через обычный `eth_call`.
-MongoDB ниже остаётся независимой проверкой persistent projection на каждом
-валидаторе.
+The final call reads finalized compressed bodies through an ordinary `eth_call`.
+The MongoDB check below independently verifies the persisted projection on each
+validator.
 
-## 3. Проверить MongoDB
+## 3. Verify MongoDB
 
-`run-testnet.sh` создаёт отдельную базу для каждого валидатора:
-`<prefix>_validator_0` … `<prefix>_validator_3`.
+`run-testnet.sh` creates one database per validator:
+`<prefix>_validator_0` through `<prefix>_validator_3`.
 
 ```sh
 docker exec "$MONGO_CONTAINER" mongosh --quiet --port "$MONGO_PORT" --eval "
@@ -187,20 +188,20 @@ for (let i = 0; i < 4; i++) {
 }"
 ```
 
-Для созданного Tribute ожидается:
+The created Tribute should produce:
 
-- одна новая запись в `tributes`;
-- одна запись в `tributes_by_owner`;
-- одна запись в `tributes_by_day`;
-- в `tributes._projection.tx_hash` находится `TX_HASH` успешного receipt;
-- `_id` и binary `value` одинаковы во всех четырёх validator databases.
+- one new record in `tributes`;
+- one record in `tributes_by_owner`;
+- one record in `tributes_by_day`;
+- the successful receipt's `TX_HASH` in `tributes._projection.tx_hash`;
+- identical `_id` and binary `value` fields in all four validator databases.
 
-## 4. Остановить сеть
+## 4. Stop the network
 
 ```sh
 ./scripts/run-testnet.sh stop "$OUT_DIR"
 ```
 
-Mock TEE подходит только для функциональной localnet-проверки и не даёт SGX
-confidentiality/attestation. Production SGX flow описан в
-`docs/launching-with-sgx.md`.
+The mock TEE supports functional localnet testing but provides no SGX
+confidentiality or attestation. See `docs/launching-with-sgx.md` for the production
+SGX flow.

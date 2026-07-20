@@ -92,7 +92,7 @@ pub(crate) fn parse_vote_status(stdout: &str, id: u64) -> VoteStatus {
 }
 
 /// A read-off of `IUpdate.getScheduledUpdate` tuple fields.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScheduledUpdate {
     pub version: u64,
     pub activation: u64,

@@ -44,7 +44,7 @@ operations. Mutations require an ECDSA signer; reads do not.
 
 The signer currently constructs EIP-155 legacy transactions, reads chain id,
 `latest` nonce, gas price and estimate, adds gas buffers and submits raw bytes.
-TEE/Tribute commands additionally connect to a local enclave, read registry keys,
+TEE/Tribute commands connect to a local enclave, read registry keys,
 encrypt an offer or ingest a sealed handoff. Those enclave commands are secret and
 attestation boundaries governed by ADR-S-TEE-001 and ADR-S-TEE-002, not ordinary RPC helpers.
 
