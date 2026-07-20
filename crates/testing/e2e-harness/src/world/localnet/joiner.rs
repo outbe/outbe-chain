@@ -209,6 +209,7 @@ impl Localnet {
             "--consensus.dkg-output",
             dkg_output.display(),
         ]);
+        self.extend_real_sgx_startup_timeout(&mut a);
         a.extend(extra.iter().map(|s| s.to_string()));
 
         let mut cmd = Command::new(&self.cfg.bin_chain);

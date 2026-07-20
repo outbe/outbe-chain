@@ -115,6 +115,27 @@ impl Localnet {
         self.cfg.tee_mode.enabled()
     }
 
+    /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
+    /// four-enclave real-SGX evidence exceeded the historical 60-second node
+    /// deadline; keep the harness outside the node's 120-second fail-fast
+    /// deadline so it observes the node's verdict.
+    pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            36
+        } else {
+            18
+        }
+    }
+
+    /// Co-located hardware enclaves have an E2E-only startup allowance. The
+    /// node's production/testnet default remains unchanged and must be chosen
+    /// for the deployment topology by its operator.
+    fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            args.extend(args!["--tee-bootstrap-timeout-secs", "120"]);
+        }
+    }
+
     /// The flags common to every node process (committee, joiner, follower):
     /// reth http/p2p/discovery/authrpc/ipc/log for port index `i`, rooted at
     /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
