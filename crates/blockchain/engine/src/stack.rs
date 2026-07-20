@@ -2121,6 +2121,12 @@ where
             "--testnet.trust-el-head and --testnet.force-dkg are not allowed on mainnet (chain_id {chain_id})"
         ));
     }
+    if args.testnet_unix_time_offset_secs.is_some() && outbe_primitives::chain::is_mainnet(chain_id)
+    {
+        return Err(eyre::eyre!(
+            "--testnet.unix-time-offset-secs is not allowed on mainnet (chain_id {chain_id})"
+        ));
+    }
     if args.force_dkg && !args.trust_el_head {
         return Err(eyre::eyre!(
             "--testnet.force-dkg requires --testnet.trust-el-head"
@@ -3473,6 +3479,12 @@ where
 
     // Create application handler with marshal mailbox and shared finalization state.
     let application_handler = ApplicationHandler::new(ApplicationDeps {
+        unix_time_source: match args.testnet_unix_time_offset_secs {
+            Some(offset_secs) => Arc::new(outbe_consensus::application::OffsetUnixTimeSource::new(
+                offset_secs,
+            )),
+            None => Arc::new(outbe_consensus::application::SystemUnixTimeSource),
+        },
         rx: application_rx,
         engine: engine_handle,
         payload_builder,
