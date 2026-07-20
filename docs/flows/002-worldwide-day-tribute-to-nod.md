@@ -37,21 +37,21 @@ provenance and reaches a terminal day state with authenticated Tribute retiremen
 
 ## Success sequence
 
-| Step | Owner | Command/effect | Durable evidence |
-|---:|---|---|---|
-| 1 | Cycle | invoke due handler without advancing cursor | system-tx trace/checkpoint |
-| 2 | Metadosis | select canonical READY day and branch on limit/type/count | typed record |
-| 3 | Lysis | verify sealed CE population/totals and calculate allocations | no durable partial state |
-| 4 | NodFactory | create one Nod per Tribute | Nod records/events/CE intents |
-| 5 | Lysis | record contributors; consume Tribute totals/supply | closed equations |
-| 6 | Metadosis | commit returned remainder, terminal status and retirement intent | terminal record |
-| 7 | Cycle | commit scheduled cursor/event | trigger record |
-| 8 | end-block/CE | persist Nod bodies and Tribute collection retirement | roots/proofs/checkpoint |
+| Step | Owner        | Command/effect                                                   | Durable evidence              |
+| ---: | ------------ | ---------------------------------------------------------------- | ----------------------------- |
+|    1 | Cycle        | invoke due handler without advancing cursor                      | system-tx trace/checkpoint    |
+|    2 | Metadosis    | select canonical READY day and branch on limit/type/count        | typed record                  |
+|    3 | Lysis        | verify sealed CE population/totals and calculate allocations     | no durable partial state      |
+|    4 | NodFactory   | create one Nod per Tribute                                       | Nod records/events/CE intents |
+|    5 | Lysis        | record contributors; consume Tribute totals/supply               | closed equations              |
+|    6 | Metadosis    | commit returned remainder, terminal status and retirement intent | terminal record               |
+|    7 | Cycle        | commit scheduled cursor/event                                    | trigger record                |
+|    8 | end-block/CE | persist Nod bodies and Tribute collection retirement             | roots/proofs/checkpoint       |
 
 ## Boundaries and conservation
 
-Steps 1–7 share the Cycle trigger checkpoint; Lysis additionally isolates its
-transform. Any propagated failure restores the prior READY day and unchanged Cycle
+Steps 1–7 share the Cycle trigger checkpoint. Lysis isolates its transform in a
+separate checkpoint. Any propagated failure restores the prior READY day and unchanged Cycle
 cursor. CE disk persistence is a later block-lifecycle boundary that must agree with
 the committed root or fail the block.
 
@@ -78,16 +78,16 @@ reconstructs projections without rerunning Lysis.
 
 ## E2E scenario matrix
 
-| Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
-|---|---|---|---|---|---|
-| PFS-002-01 | populated day transformation | READY sealed day, canonical Tributes/budget/Oracle | Cycle executes due slot | day completes; one Nod per Tribute; budget/totals conserve | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis`; live proof gap |
-| PFS-002-02 | empty Tribute branch | READY day with sealed empty partition and full remainder | Cycle executes due slot | no Nod; exact remainder; terminal day and defined retirement result | documentation-only: fixture cannot form empty sealed CE partition |
-| PFS-002-03 | zero limit | READY day with zero Lysis limit | Cycle executes due slot | normative FAILED/auction branch; no Tribute/Nod mutation | documentation-only pending branch decision |
-| PFS-002-04 | totals/body mismatch | READY record totals disagree with authenticated bodies | Cycle executes due slot | complete rollback; cursor/day/Tributes unchanged and retryable | documentation-only: corrupt parent-body injection seam absent |
-| PFS-002-05 | duplicate owner/day identity | duplicate is attempted before sealing or appears in corrupt population | admit offer or execute Lysis | admission rejects duplicate; corrupt sealed population must atomically fail | `@pfs-001-05` covers admission only; Lysis fault injection absent |
-| PFS-002-06 | Nod creation failure | valid READY population with injected later Nod failure | Lysis transforms population | no partial Nods/contributors/consumption; day stays READY | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt` |
-| PFS-002-07 | CE persistence restart | EVM outcome prepared but CE end-block persistence interrupted | restart/reconcile node | either semantic pre-state or full roots/proofs; never partial population | documentation-only: persistence failpoint absent |
-| PFS-002-08 | long timestamp backlog | multiple overdue canonical Cycle slots | process a large timestamp jump | slots execute in defined order once; no skip/duplicate | documentation-only pending backlog policy |
+| Id         | Scenario                     | Given / canonical inputs                                               | When / trigger                 | Then / outputs and postconditions                                           | Verification                                                                           |
+| ---------- | ---------------------------- | ---------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| PFS-002-01 | populated day transformation | READY sealed day, canonical Tributes/budget/Oracle                     | Cycle executes due slot        | day completes; one Nod per Tribute; budget/totals conserve                  | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis`; live proof gap |
+| PFS-002-02 | empty Tribute branch         | READY day with sealed empty partition and full remainder               | Cycle executes due slot        | no Nod; exact remainder; terminal day and defined retirement result         | documentation-only: fixture cannot form empty sealed CE partition                      |
+| PFS-002-03 | zero limit                   | READY day with zero Lysis limit                                        | Cycle executes due slot        | normative FAILED/auction branch; no Tribute/Nod mutation                    | documentation-only pending branch decision                                             |
+| PFS-002-04 | totals/body mismatch         | READY record totals disagree with authenticated bodies                 | Cycle executes due slot        | complete rollback; cursor/day/Tributes unchanged and retryable              | documentation-only: corrupt parent-body injection seam absent                          |
+| PFS-002-05 | duplicate owner/day identity | duplicate is attempted before sealing or appears in corrupt population | admit offer or execute Lysis   | admission rejects duplicate; corrupt sealed population must atomically fail | `@pfs-001-05` covers admission only; Lysis fault injection absent                      |
+| PFS-002-06 | Nod creation failure         | valid READY population with injected later Nod failure                 | Lysis transforms population    | no partial Nods/contributors/consumption; day stays READY                   | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt`           |
+| PFS-002-07 | CE persistence restart       | EVM outcome prepared but CE end-block persistence interrupted          | restart/reconcile node         | either semantic pre-state or full roots/proofs; never partial population    | documentation-only: persistence failpoint absent                                       |
+| PFS-002-08 | long timestamp backlog       | multiple overdue canonical Cycle slots                                 | process a large timestamp jump | slots execute in defined order once; no skip/duplicate                      | documentation-only pending backlog policy                                              |
 
 ## Open questions and technical debt
 

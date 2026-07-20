@@ -150,15 +150,15 @@ verified implementation maxima.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Active consensus-critical limits | versioned `CapacityProfile` in protocol schedule |
-| Selector cost formula | generated precompile/ABI gas manifest |
-| EVM child-frame semantics | revm-compatible transaction/subcall meter |
-| CE reservation and rollback | execution-scope CE work meter |
-| Queue admission/backpressure | owning actor ingress contract |
-| Local RPC/projection/TEE policy | node role profile bounded by protocol maxima |
-| Production adequacy | reproducible worst-case benchmark and conformance suite |
+| Responsibility                   | Authority                                               |
+| -------------------------------- | ------------------------------------------------------- |
+| Active consensus-critical limits | versioned `CapacityProfile` in protocol schedule        |
+| Selector cost formula            | generated precompile/ABI gas manifest                   |
+| EVM child-frame semantics        | revm-compatible transaction/subcall meter               |
+| CE reservation and rollback      | execution-scope CE work meter                           |
+| Queue admission/backpressure     | owning actor ingress contract                           |
+| Local RPC/projection/TEE policy  | node role profile bounded by protocol maxima            |
+| Production adequacy              | reproducible worst-case benchmark and conformance suite |
 
 ## Invariants
 
@@ -272,9 +272,9 @@ published, reproducible envelope.
 17. Audit RPC batch size, request/response bytes, proof construction, concurrency and
     expensive `eth_call`/trace methods. Module-level page caps do not protect the
     server as a whole.
-18. ZeroFee removes price-based spam pressure. Reconcile sponsored gas/calldata and
-    per-block soft-failure caps with CPU, CE and external-work costs, not only signed
-    gas limits.
+18. ZeroFee removes price-based spam pressure. Reconcile sponsored gas/calldata,
+    signed gas limits and per-block soft-failure caps with CPU, CE and external-work
+    costs.
 19. Add checked arithmetic to every cost formula. Existing `saturating_add` in some
     block/system accounting paths can conceal an impossible bill; overflow should
     fail deterministically before state publication.

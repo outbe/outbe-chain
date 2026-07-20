@@ -33,12 +33,12 @@ Cross-language golden vectors cover every supported arity and boundary field val
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
+| Responsibility                | Authority                       |
+| ----------------------------- | ------------------------------- |
 | Parameters and field encoding | `PoseidonBn254CircomV1` profile |
-| Raw hash ABI and arity limit | Poseidon precompile |
-| Structured domain separation | owning protocol format ADR |
-| Address/gas/result mapping | ADR-B-WIR-001 and ADR-B-EVM-001 |
+| Raw hash ABI and arity limit  | Poseidon precompile             |
+| Structured domain separation  | owning protocol format ADR      |
+| Address/gas/result mapping    | ADR-B-WIR-001 and ADR-B-EVM-001 |
 
 ## Invariants
 
@@ -85,8 +85,8 @@ structured encoding/domain tags. Canonical field inputs eliminate malleable alia
 
 1. `Fr::from_be_bytes_mod_order` accepts values at/above the modulus and aliases them
    to smaller fields. Switch to strict canonical decoding and add malleability tests.
-2. Pin the exact `outbe-poseidon` revision/parameter digest in the profile, not only a
-   Cargo tag/lock entry.
+2. Pin the exact `outbe-poseidon` revision/parameter digest in the profile rather
+   than relying on a Cargo tag/lock entry.
 3. Current “off-chain reference” tests instantiate the same Rust library as the
    implementation. Add independent Circom/Noir/wallet golden vectors.
 4. Only arities 1, 2 and 4 have success tests. Add every arity 1 through 12 plus zero,

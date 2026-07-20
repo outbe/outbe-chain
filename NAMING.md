@@ -181,17 +181,15 @@ These rules refine the external baselines for this repository:
   baseline, preserve it unless the change deliberately migrates the entire safe
   surface and section 8 permits the migration.
 
-Project-specific consistency never means copying an accidental typo or stale
-historical label into new code. The exception MUST be supported by an external
-contract, compatibility constraint, dominant bounded-context vocabulary, or an
-explicit rule in this file.
+Do not copy an accidental typo or stale historical label into new code merely for
+consistency. An exception MUST come from an external contract, a compatibility
+constraint, dominant bounded-context vocabulary, or an explicit rule in this file.
 
 ## 4. Shared domain vocabulary
 
 ### 4.1 Semantic roles and suffixes
 
-Use these suffixes only for the stated role. A suffix is a semantic promise, not
-decoration.
+Use a suffix only when the symbol has the role stated below.
 
 | Form                     | Meaning                                                                  | Repository examples                                   |
 | ------------------------ | ------------------------------------------------------------------------ | ----------------------------------------------------- |

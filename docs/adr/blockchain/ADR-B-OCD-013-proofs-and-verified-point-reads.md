@@ -365,7 +365,7 @@ or hashing to another leaf:
   return unavailable; never return present or absent
 ```
 
-Mongo timeout/unavailability, a missing body, or body/leaf mismatch is exposed to the RPC caller as `unavailable` and recorded internally with its structured ADR-B-OCD-005, ADR-B-OCD-006 and ADR-B-OCD-015 classification. Deterministic local corruption may additionally disable proof readiness or trigger recovery/shutdown; it still never changes the finalized root or becomes a negative consensus vote. Mongo checkpoint comparison remains part of execution/projection readiness and ADR-B-OCD-014 reconciliation, not this proof RPC.
+Mongo timeout/unavailability, a missing body, or body/leaf mismatch is exposed to the RPC caller as `unavailable` and recorded internally with its structured ADR-B-OCD-005, ADR-B-OCD-006 and ADR-B-OCD-015 classification. Deterministic local corruption may disable proof readiness or trigger recovery/shutdown. It never changes the finalized root or becomes a negative consensus vote. Mongo checkpoint comparison remains part of execution/projection readiness and ADR-B-OCD-014 reconciliation, not this proof RPC.
 
 Authenticated tree absence does not require a Mongo lookup. A stale Mongo row cannot override a valid non-membership proof.
 

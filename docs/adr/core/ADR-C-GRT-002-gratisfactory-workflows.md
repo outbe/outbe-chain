@@ -103,7 +103,7 @@ Merkle or cohort internals.
    same frame; the age-preserving entrypoint is otherwise an issuance bypass.
 7. Specify whether an account may transfer/rotate control of outstanding shielded
    notes independently of the pledged-balance attribution.
-8. Add ABI-level end-to-end tests for pledge/unpledge using production proof
-   verification, not only direct internal APIs.
+8. Add ABI-level end-to-end tests for pledge/unpledge through both production proof
+   verification and direct internal APIs.
 9. Define gas/capacity bounds for commitment insertion and proof verification.
 10. Human economics review is required for eligibility and age preservation.
