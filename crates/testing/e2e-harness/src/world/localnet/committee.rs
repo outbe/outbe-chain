@@ -225,6 +225,7 @@ impl Localnet {
                 "--tee-enclave-socket",
                 format!("127.0.0.1:{}", self.cfg.tee_port(i))
             ]);
+            self.extend_real_sgx_startup_timeout(&mut a);
         }
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
