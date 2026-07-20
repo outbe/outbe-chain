@@ -141,7 +141,6 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
 fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
     last_execution_height.min(finalized_tip)
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RecoveredApplicationFinalization {
     round: Round,

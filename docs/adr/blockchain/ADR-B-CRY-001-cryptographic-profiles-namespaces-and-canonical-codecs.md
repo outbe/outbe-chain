@@ -53,18 +53,18 @@ unregistered byte strings or selecting a library default.
 
 At minimum the registry covers:
 
-| Purpose family | Required identity |
-|---|---|
-| Ethereum execution | active hardfork, Keccak/RLP/trie rules, secp256k1 signature and low-s/recovery semantics |
-| Consensus votes/certificates | BLS12-381 MinPk identity/vote keys, aggregation, bitmap/order, Commonware codec and namespaces |
-| Threshold randomness/DKG | BLS12-381 MinSig threshold material, polynomial/share encoding, VRF message and material version |
-| Committee commitment | canonical participant ordering, key encoding, length framing and `OUTBE_COMMITTEE_V1` Keccak domain |
-| System transactions | chain id, unsigned envelope/signature preimage, phase/kind/version and authorized signer profile |
-| CE commitments/tree | BN254 field conversion, Poseidon parameters/tags, CES1 grammar, CKB-SMT semantics and vendor revision |
-| CE bodies/proofs | protobuf/canonical body schema, proof encoding and strict persistence codecs |
-| ZK verification | curve/backend, circuit ID/version, VK/CRS hashes and public-input canonicalization |
-| TEE transport/custody | attestation evidence, Ed25519/X25519/AES-GCM profiles, transcript/AAD/nonces and sealed format |
-| ABI/storage | selector/event Keccak preimages, Solidity ABI canonical forms and storage-slot derivation |
+| Purpose family               | Required identity                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Ethereum execution           | active hardfork, Keccak/RLP/trie rules, secp256k1 signature and low-s/recovery semantics              |
+| Consensus votes/certificates | BLS12-381 MinPk identity/vote keys, aggregation, bitmap/order, Commonware codec and namespaces        |
+| Threshold randomness/DKG     | BLS12-381 MinSig threshold material, polynomial/share encoding, VRF message and material version      |
+| Committee commitment         | canonical participant ordering, key encoding, length framing and `OUTBE_COMMITTEE_V1` Keccak domain   |
+| System transactions          | chain id, unsigned envelope/signature preimage, phase/kind/version and authorized signer profile      |
+| CE commitments/tree          | BN254 field conversion, Poseidon parameters/tags, CES1 grammar, CKB-SMT semantics and vendor revision |
+| CE bodies/proofs             | protobuf/canonical body schema, proof encoding and strict persistence codecs                          |
+| ZK verification              | curve/backend, circuit ID/version, VK/CRS hashes and public-input canonicalization                    |
+| TEE transport/custody        | attestation evidence, Ed25519/X25519/AES-GCM profiles, transcript/AAD/nonces and sealed format        |
+| ABI/storage                  | selector/event Keccak preimages, Solidity ABI canonical forms and storage-slot derivation             |
 
 Using the same primitive in two purposes never implies the same domain or codec.
 
@@ -134,7 +134,7 @@ all crypto backends. A Cargo tag is review metadata; `Cargo.lock` resolution and
 release SBOM establish the actual source. Vendor forks record upstream base, patch
 digest and conformance vectors.
 
-Upgrade review compares semantic behavior, not only public APIs. A dependency update
+Upgrade review compares public APIs and semantic behavior. A dependency update
 that can alter accepted bytes, hash/signature/proof results, subgroup validation,
 SMT root, gas or execution behavior is a protocol change activated through
 ADR-S-GOV-003. Pure implementation changes require differential proof against all golden
@@ -164,14 +164,14 @@ TEE transcript replay before merge.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Purpose/primitive/domain/codec registry | `CryptoProfileManifest` source and digest |
-| Network activation | ADR-B-OCD-006 chain manifest plus ADR-S-GOV-003 schedule |
-| Consensus namespaces | generated typed namespace constructors |
-| Wire/persistence canonical bytes | versioned production codec for the purpose ID |
-| Dependency source identity | locked release dependency graph and SBOM |
-| Compatibility evidence | checked-in cross-implementation golden/negative vectors |
+| Responsibility                          | Authority                                                |
+| --------------------------------------- | -------------------------------------------------------- |
+| Purpose/primitive/domain/codec registry | `CryptoProfileManifest` source and digest                |
+| Network activation                      | ADR-B-OCD-006 chain manifest plus ADR-S-GOV-003 schedule |
+| Consensus namespaces                    | generated typed namespace constructors                   |
+| Wire/persistence canonical bytes        | versioned production codec for the purpose ID            |
+| Dependency source identity              | locked release dependency graph and SBOM                 |
+| Compatibility evidence                  | checked-in cross-implementation golden/negative vectors  |
 
 ## Invariants
 
@@ -288,7 +288,7 @@ stable purpose rather than restating primitives inconsistently.
     field-byte conversion, rejection, CKB merge-with-zero and catalog transcript as
     profile artifacts consumable outside Rust.
 17. Pin `outbe-poseidon` and circuit repositories by resolved commit in the release
-    manifest, not only `v0.11.0` tags, and prove VK/CRS/circuit/public-input profiles
+    manifest rather than relying on `v0.11.0` tags, and prove VK/CRS/circuit/public-input profiles
     cannot drift independently.
 18. Audit protobuf body encoding for canonicality. Protobuf generally permits field
     ordering/unknown-field variations; committed body bytes need one canonical

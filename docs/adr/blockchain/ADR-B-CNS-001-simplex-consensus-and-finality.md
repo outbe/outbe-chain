@@ -75,7 +75,7 @@ For round `R`, election uses this ordered policy
 
 Certificate seed-round recovery probes at most `u8::MAX` descending views. For a
 missed-proposer recomputation using one older anchor certificate, the verified
-seed is additionally bound to the elected round. The live immediately preceding
+seed is bound to the elected round. The live immediately preceding
 certificate path keeps its existing raw threshold-signature seed.
 
 Election is deterministic for identical certificate, round, committee and
@@ -105,16 +105,16 @@ interface promises.
 The complete Simplex protocol FSM remains supplied by the pinned Commonware
 version; Outbe owns the following externally observable adapter transitions:
 
-| Current | Event | Guard | Effects | Next/error |
-|---|---|---|---|---|
-| Epoch starting | load committee/material | non-empty canonical set; material matches epoch | register providers/subchannels | Voting epoch |
-| Voting epoch | propose | elected local leader; application resolves valid candidate | broadcast proposal | Await votes |
-| Voting epoch | verify proposal | valid namespace, committee, parent, metadata and execution result | true vote | Continue round |
-| Voting epoch | invalid proposal | deterministic protocol invalidity | false vote/evidence path | Continue round |
-| Voting epoch | local timeout/unavailable dependency | cannot decide before local budget | no false vote; response dropped/abstain | Retry/new view |
-| Voting epoch | quorum certificate/finalization | hybrid certificate verifies | persist/report/deliver finalized block | Next view or epoch fence |
-| Voting epoch | leader timeout | timing from genesis/pinned defaults | advance view, record activity | Next view |
-| Any active epoch | fatal actor/storage/verification invariant | classified fatal | propagate stack error | Node shutdown via ADR-B-NOD-001 |
+| Current          | Event                                      | Guard                                                             | Effects                                 | Next/error                      |
+| ---------------- | ------------------------------------------ | ----------------------------------------------------------------- | --------------------------------------- | ------------------------------- |
+| Epoch starting   | load committee/material                    | non-empty canonical set; material matches epoch                   | register providers/subchannels          | Voting epoch                    |
+| Voting epoch     | propose                                    | elected local leader; application resolves valid candidate        | broadcast proposal                      | Await votes                     |
+| Voting epoch     | verify proposal                            | valid namespace, committee, parent, metadata and execution result | true vote                               | Continue round                  |
+| Voting epoch     | invalid proposal                           | deterministic protocol invalidity                                 | false vote/evidence path                | Continue round                  |
+| Voting epoch     | local timeout/unavailable dependency       | cannot decide before local budget                                 | no false vote; response dropped/abstain | Retry/new view                  |
+| Voting epoch     | quorum certificate/finalization            | hybrid certificate verifies                                       | persist/report/deliver finalized block  | Next view or epoch fence        |
+| Voting epoch     | leader timeout                             | timing from genesis/pinned defaults                               | advance view, record activity           | Next view                       |
+| Any active epoch | fatal actor/storage/verification invariant | classified fatal                                                  | propagate stack error                   | Node shutdown via ADR-B-NOD-001 |
 
 The distinction between an invalid proposal and a local inability to decide is
 normative. For example, epoch-boundary parent mismatch is invalid, while missing
@@ -123,14 +123,14 @@ local anchor/Marshal data is infrastructure error and must not become a false vo
 
 ## Side-effect ledger
 
-| Effect | Owner | Atomicity domain | Receipt/error | Retry/replay |
-|---|---|---|---|---|
-| Sign/broadcast vote | Hybrid signer + network actor | one signed consensus message | feedback/error and protocol evidence | duplicate governed by Simplex/message identity |
-| Persist block/finalization | Marshal archive | Commonware storage journal/archive | durable Marshal acknowledgement | replayed from archive on restart |
-| Deliver finalized block to execution | consensus/execution bridge | ADR-B-CNS-003 delivery protocol | Engine response/ACK | exact identity required |
-| Publish finalization/activity | reporter/finalization actors | process-local mailboxes plus on-chain artifact path | typed messages | stale/duplicate rules owned by actor |
-| Select leader | elector | pure deterministic computation | `Participant` | recomputation must be identical |
-| Metrics/logging | consensus adapters | diagnostic | non-transactional | may repeat |
+| Effect                               | Owner                         | Atomicity domain                                    | Receipt/error                        | Retry/replay                                   |
+| ------------------------------------ | ----------------------------- | --------------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| Sign/broadcast vote                  | Hybrid signer + network actor | one signed consensus message                        | feedback/error and protocol evidence | duplicate governed by Simplex/message identity |
+| Persist block/finalization           | Marshal archive               | Commonware storage journal/archive                  | durable Marshal acknowledgement      | replayed from archive on restart               |
+| Deliver finalized block to execution | consensus/execution bridge    | ADR-B-CNS-003 delivery protocol                     | Engine response/ACK                  | exact identity required                        |
+| Publish finalization/activity        | reporter/finalization actors  | process-local mailboxes plus on-chain artifact path | typed messages                       | stale/duplicate rules owned by actor           |
+| Select leader                        | elector                       | pure deterministic computation                      | `Participant`                        | recomputation must be identical                |
+| Metrics/logging                      | consensus adapters            | diagnostic                                          | non-transactional                    | may repeat                                     |
 
 ## Persistent state and invariants
 

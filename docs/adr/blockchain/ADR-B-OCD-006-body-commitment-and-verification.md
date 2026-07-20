@@ -106,7 +106,7 @@ message NodBucketBody {
 
 The selected typed collection determines the payload message; no dynamic type URL or caller-selected type discriminator is stored in the envelope.
 
-Every stored body carries an explicit unsigned `schema_version`. The version is an authenticated body input, not only MongoDB metadata:
+Every stored body carries an explicit unsigned `schema_version`. The version participates in authentication and is also stored in MongoDB metadata:
 
 - it selects the allowed Protobuf fields, validation rules, and body-to-commitment preimage rules;
 - it is included in the commitment preimage;
@@ -292,7 +292,7 @@ A failure of the ExEx-checkable invariants writes no MongoDB domain mutation or 
 
 The event deliberately does not duplicate every body field as separate Solidity arguments. The published `.proto` schema and canonical payload are the normative, independently decodable body; duplicating both representations would create two body copies that could diverge.
 
-Until a later SMT/header root, an observer verifies the finalized event replay and may additionally use the ordinary EVM state root/proof for the direct commitment mapping. ADR-B-OCD-012 and ADR-B-OCD-013 later provide a dedicated finalized-header root and entity proofs.
+Until a later SMT/header root, an observer verifies the finalized event replay and may use the ordinary EVM state root/proof for the direct commitment mapping. ADR-B-OCD-012 and ADR-B-OCD-013 later provide a dedicated finalized-header root and entity proofs.
 
 ### Read-verification boundary
 
