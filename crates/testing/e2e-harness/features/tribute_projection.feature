@@ -28,5 +28,5 @@ Feature: Encrypted tribute projection
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
-    When the operator submits a duplicate logical tribute offer for the same day
+    When the operator submits a duplicate logical tribute offer with different parameters for the same day
     Then the duplicate is rejected without changing tribute state or projections

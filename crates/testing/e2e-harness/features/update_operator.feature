@@ -26,6 +26,74 @@ Feature: Operator protocol-version update via governance vote
     And the scheduled update is marked activated
     And the committee nodes agree on the state root
 
+  @pfs-005-restart-recovery
+  Scenario: Governance and update state survive voting and activation-boundary restarts
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validator "validator-3" restarts during the voting window
+    Then proposal 1 and its votes are identical on every validator
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    And proposal 1 and its votes are identical on every validator
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    When the entire committee restarts after update scheduling
+    Then the approved proposal and waiting schedule are identical on every validator
+    When the committee approaches the activation height
+    And the entire committee restarts at the activation boundary
+    Then the update activation converges on every validator after the boundary restart
+    When the committee passes the activation height
+    Then the activated update state is identical on every validator
+    And the committee continues producing finalized blocks
+
+  @pfs-005-duplicate-vote
+  Scenario: A duplicate ballot reverts without changing the approved update
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    When validator "validator-0" repeats the yes vote on proposal 1
+    Then the duplicate vote reverts and proposal 1 still has 3 yes votes on every validator
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    And approval and scheduling for proposal 1 are committed atomically exactly once
+
+  @pfs-005-authorization-conflict
+  Scenario: Unauthorized and conflicting updates are rejected without partial scheduling
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When a funded non-validator attempts to propose an update
+    Then the unauthorized proposal is rejected without creating proposal 1
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When operator "validator-1" proposes a conflicting update at the same activation height
+    Then proposal 2 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 1
+    And validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 2
+    Then proposal 2 is still pending with 3 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    And proposal 2 is rejected without a schedule on every validator
+    And approval and scheduling for proposal 1 are committed atomically exactly once
+    And the committee continues producing finalized blocks
+
+  @pfs-005-expired
+  Scenario: A below-quorum update expires without scheduling or version mutation
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1" cast yes votes
+    Then proposal 1 is still pending with 2 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is expired without an update schedule on every validator
+    And the active protocol version remains baseline on every validator
+    And the committee continues producing finalized blocks
+
   # Oversized U256 pagination args used to panic inside Vote::clamp_page via
   # U256::to::<u64>() and could take down the RPC node. After the saturating
   # conversion fix the call must stay non-fatal.
@@ -55,3 +123,10 @@ Feature: Operator protocol-version update via governance vote
     And the active protocol version is unchanged
     And the scheduled update is still waiting for activation
     And validator "validator-0" logs report the unsupported activation as fatal
+    When the entire committee restarts after the unsupported activation failure
+    Then every validator RPC recovers below the unsupported activation height
+    And the unsupported proposal and waiting schedule are identical on every validator
+    And the committee remains stalled below the unsupported activation height
+    And validator "validator-0" logs report the unsupported activation as fatal
+    When the operator replaces the committee binary with the supported version
+    Then the replacement binary activates the scheduled version and resumes the committee

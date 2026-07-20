@@ -594,6 +594,45 @@ fn genesis_formation_gate_proves_peers_are_at_genesis() {
 }
 
 #[test]
+fn genesis_formation_gate_accepts_quorum_connected_non_mesh_topology() {
+    let genesis = B256::with_last_byte(1);
+    let context = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: false,
+    };
+    let peer = RethGenesisPeerStatus {
+        genesis,
+        blockhash: genesis,
+        latest_block: Some(0),
+    };
+    let evidence = RethGenesisPeerEvidence {
+        connected_peers: 2,
+        is_syncing: true,
+        is_initially_syncing: true,
+        peer_query_failed: false,
+        peers: vec![peer; 2],
+    };
+
+    // Four validators need a 3-of-4 BFT quorum, hence two matching remote
+    // witnesses per node. Requiring all three remote validators creates a split
+    // startup gate on a healthy non-fully-meshed gossip topology: nodes seeing
+    // 3/3 start all-member DKG while nodes seeing 2/3 never enter it.
+    assert_eq!(
+        genesis_formation_gate_decision(
+            context,
+            genesis,
+            genesis_formation_required_remote_peers(4),
+            &evidence,
+        ),
+        GenesisFormationGate::Proven
+    );
+}
+
+#[test]
 fn genesis_formation_gate_rejects_remote_chain_progress() {
     let genesis = B256::with_last_byte(1);
     let context = StartupDkgContext {
@@ -1347,6 +1386,58 @@ fn test_save_load_and_clear_pending_dkg_boundary_snapshot() {
     );
     clear_pending_dkg_boundary(dir.path());
     assert!(load_pending_dkg_boundary(dir.path()).unwrap().is_none());
+}
+
+#[test]
+fn test_completed_dkg_is_durable_before_activation_boundary() {
+    let (keys, participants, output, share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let target = FrozenDkgTarget {
+        dkg_cycle: 4,
+        freeze_height: 90,
+        planned_activation_height: 120,
+        validator_set,
+        participants: participants.clone(),
+        is_validator_set_change: false,
+    };
+    let complete = dkg_actor::DkgComplete {
+        output: output.clone(),
+        share: Some(share),
+        participants: participants.clone(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let backend = bls::KeyBackend::Plaintext;
+
+    persist_completed_dkg_before_activation(
+        dir.path(),
+        &backend,
+        Epoch::new(3),
+        3,
+        &participants,
+        &target,
+        &complete,
+        104,
+    )
+    .unwrap();
+
+    let (_, _, recovered_output) = load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .expect("completed DKG material must survive a pre-activation crash");
+    assert_eq!(recovered_output, output);
+    let snapshot = load_pending_dkg_boundary(dir.path())
+        .unwrap()
+        .expect("completed DKG boundary must survive a pre-activation crash");
+    assert_eq!(snapshot.activated_at_height, 120);
+    assert_eq!(snapshot.artifact.epoch, 4);
+    assert_eq!(snapshot.artifact.dkg_cycle, 4);
 }
 
 #[test]
@@ -3058,6 +3149,14 @@ mod restart_recovery {
             69 + MAX_UNFINALIZED_HEAD_LEAD,
             69
         ));
+    }
+
+    #[test]
+    fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
+        assert_eq!(durable_recovery_anchor_height(70, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(69, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(68, 69), 68);
+        assert_eq!(durable_recovery_anchor_height(0, 0), 0);
     }
 
     #[test]

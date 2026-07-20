@@ -56,7 +56,7 @@ owns its projection checkpoint. ADR-B-OCD-007 must reconcile their identities at
 
 `LastCanonicalized` is immutable-until-success actor state. `canonicalize` computes
 a candidate forkchoice, sends FCU, and assigns the new state only after a response
-that is not invalid. Payload-building requests additionally require a payload ID;
+that is not invalid. Payload-building requests require a payload ID as well;
 absence does not commit the actor state (`executor/actor.rs:554-657`). Finalized
 height never regresses.
 
@@ -66,17 +66,17 @@ attributes; heartbeat errors are diagnostic and do not mutate actor state.
 
 ## Delivery FSM
 
-| Current | Event | Guard | Effects | Next/error |
-|---|---|---|---|---|
-| Recovered | Marshal ahead | every intermediate block retrievable | sequential replay through full pipeline | Live or fatal |
-| Recovered | execution ahead | no reconciliation performed here | warn, skip backfill | Live with ADR-B-OCD-007 debt |
-| Live | finalized genesis | exact recovered anchor | ACK only | Live |
-| Live | finalized successor | exact parent projection ready | new_payload -> FCU -> CE commit -> ACK | Advanced |
-| Live | duplicate/older canonicalize | immutable update is no-op | ACK only if full delivery already durable | Unchanged |
-| Applying | EL invalid/error | finalized block cannot apply | no ACK; structured fatal error | Node shutdown |
-| Applying | FCU invalid/error/dropped response | canonicalization failed | no actor commit, no CE commit, no ACK | Node shutdown |
-| Applying | CE commit error | EL may already be canonical | no ACK; fatal recovery required | Node shutdown |
-| Live | mailbox closes | lifecycle shutdown | actor exits cleanly | Stopped |
+| Current   | Event                              | Guard                                | Effects                                   | Next/error                   |
+| --------- | ---------------------------------- | ------------------------------------ | ----------------------------------------- | ---------------------------- |
+| Recovered | Marshal ahead                      | every intermediate block retrievable | sequential replay through full pipeline   | Live or fatal                |
+| Recovered | execution ahead                    | no reconciliation performed here     | warn, skip backfill                       | Live with ADR-B-OCD-007 debt |
+| Live      | finalized genesis                  | exact recovered anchor               | ACK only                                  | Live                         |
+| Live      | finalized successor                | exact parent projection ready        | new_payload -> FCU -> CE commit -> ACK    | Advanced                     |
+| Live      | duplicate/older canonicalize       | immutable update is no-op            | ACK only if full delivery already durable | Unchanged                    |
+| Applying  | EL invalid/error                   | finalized block cannot apply         | no ACK; structured fatal error            | Node shutdown                |
+| Applying  | FCU invalid/error/dropped response | canonicalization failed              | no actor commit, no CE commit, no ACK     | Node shutdown                |
+| Applying  | CE commit error                    | EL may already be canonical          | no ACK; fatal recovery required           | Node shutdown                |
+| Live      | mailbox closes                     | lifecycle shutdown                   | actor exits cleanly                       | Stopped                      |
 
 The CE-error row crosses atomicity domains: Reth can be ahead of CE after failure.
 It is safe only because Marshal remains unacknowledged and restart reconciliation
@@ -84,15 +84,15 @@ repairs or rejects the state before participation.
 
 ## Side-effect ledger
 
-| Effect | Owner | Atomicity domain | Commit/receipt | Replay |
-|---|---|---|---|---|
-| Enqueue Marshal update | Reporter mailbox | unbounded process mailbox | `Feedback::Ok/Closed` | Marshal Exact ACK remains outstanding |
-| Execute/import block | Reth Engine handle | Reth DB/journal | payload status | same block identity must be idempotent |
-| Canonicalize/finalize | Reth FCU | Reth canonical forkchoice | non-invalid FCU response | heartbeat repeats committed state |
-| Update actor state | ExecutorActor | process memory | assignment after FCU success | seeded from recovered finalized state |
-| Commit CE materialization | `FinalizedCeCommitter` | CE MDBX transaction/marker | propagated result | exact block marker/idempotency rules |
-| ACK Marshal | Exact acknowledgement | Marshal progress/pruning | `acknowledge()` | only after all required durable effects |
-| Notify subscribers | ExecutorActor | process-local wakeup | oneshot/channel signal | advisory; provider hash must be rechecked |
+| Effect                    | Owner                  | Atomicity domain           | Commit/receipt               | Replay                                    |
+| ------------------------- | ---------------------- | -------------------------- | ---------------------------- | ----------------------------------------- |
+| Enqueue Marshal update    | Reporter mailbox       | unbounded process mailbox  | `Feedback::Ok/Closed`        | Marshal Exact ACK remains outstanding     |
+| Execute/import block      | Reth Engine handle     | Reth DB/journal            | payload status               | same block identity must be idempotent    |
+| Canonicalize/finalize     | Reth FCU               | Reth canonical forkchoice  | non-invalid FCU response     | heartbeat repeats committed state         |
+| Update actor state        | ExecutorActor          | process memory             | assignment after FCU success | seeded from recovered finalized state     |
+| Commit CE materialization | `FinalizedCeCommitter` | CE MDBX transaction/marker | propagated result            | exact block marker/idempotency rules      |
+| ACK Marshal               | Exact acknowledgement  | Marshal progress/pruning   | `acknowledge()`              | only after all required durable effects   |
+| Notify subscribers        | ExecutorActor          | process-local wakeup       | oneshot/channel signal       | advisory; provider hash must be rechecked |
 
 ## Persistent invariants
 
@@ -155,8 +155,10 @@ would be more dangerous than retaining the unacknowledged recovery point.
   and canonicalized the block, or tighten the accepted status contract.
 - The critical executor mailbox is unbounded and has no depth metric, cap or
   overload shutdown policy.
-- `execution ahead of consensus` only warns and skips backfill. ADR-B-OCD-007 must define
-  the only legal identities and whether this state is repairable or fatal.
+- A bounded `execution ahead of consensus` restart now seeds finalized state at the
+  marshal tip instead of the speculative Reth head, allowing forkchoice to replace the
+  first unfinalized height. ADR-B-OCD-014 still must authenticate the exact recovered
+  consensus/Reth identity and define repair or failure outside that bounded case.
 - CE failure occurs after FCU may have advanced Reth. A fault-injection matrix must
   cover crash before/after FCU durability, CE transaction commit, marker write and
   ACK delivery.

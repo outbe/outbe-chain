@@ -48,4 +48,10 @@ impl Localnet {
         self.followers.clear();
         Ok(())
     }
+
+    /// Stop one follower while preserving its durable datadir for restart/catch-up tests.
+    pub fn stop_follower(&mut self, name: &str) -> Result<()> {
+        self.followers.remove(name);
+        Ok(())
+    }
 }

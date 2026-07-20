@@ -11,6 +11,8 @@ pub(crate) const TEE_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const VS_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
 /// Staking precompile.
 pub(crate) const STK_ADDR: Address = address!("0x000000000000000000000000000000000000EE02");
+/// SlashIndicator precompile.
+pub(crate) const SLASH_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 /// Tribute precompile (`totalSupply()`).
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).

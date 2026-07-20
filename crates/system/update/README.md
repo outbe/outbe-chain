@@ -104,12 +104,12 @@ fail fast when a local binary is older than the on-chain active protocol version
 This check is run before consensus/RPC startup.
 
 At activation height, `activate_scheduled_update` also requires
-`scheduled.version <= max_activatable_version(chain_id)`. On production /
-unknown chains that ceiling is the binary `PROTOCOL_VERSION`. On
-devnet/testnet it is raised to `v2.3` so integration tests can activate
-versions ahead of the workspace package version. A scheduled version above
-the ceiling returns `PrecompileError::Fatal` and aborts the block — nodes must
-upgrade (or stay within the test ceiling) before that height can be applied.
+`scheduled.version <= max_activatable_version(chain_id)`. On every chain that
+ceiling is the running binary's compiled `PROTOCOL_VERSION`; test networks do
+not bypass this compatibility rule. A scheduled version above the binary
+version returns `PrecompileError::Fatal` and aborts the block. The operator must
+install a binary that supports the scheduled version and restart the same
+persisted node state before that height can be applied.
 
 Use `warn_missing_handlers_for_waiting_updates(waiting, registry)` to warn about
 scheduled versions that have no migration handler. Missing handlers are warnings,

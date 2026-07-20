@@ -28,10 +28,10 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-005-01`, `-09` | Vote approval/Update activation and unsupported-version fatal boundary |
-| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit, stale join, DKG recovery, quorum liveness, active-share restart and full-committee sealed TEE recovery; consult the PFS matrix for deliberately partial assertions |
-| `PFS-007-01` through `-06` | Pectra/ZeroFee readiness, native EIP-7702 delegation, sponsored quota, soft failure and paid fallback |
-| `PFS-008-01` through `-04` | Cold/chained follower sync, validator recovery and warm promotion in one composite live scenario |
+| `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
+| `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
+| `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
+| `PFS-008-01` through `-08` | Cold/chained sync, upstream loss/switch, validator recovery, boundary restarts and idempotent warm promotion |
 
 Run one mapped example with `--tags '@pfs-001-05'`. A tag means that the
 scenario supplies the evidence stated in its PFS matrix row; it does not imply
@@ -66,6 +66,11 @@ the harness reads no configuration from the environment.** Flags:
   single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
+- `--upgraded-chain-bin <PATH>` — optional prebuilt replacement node binary for
+  the protocol-update recovery scenario. When omitted, that scenario creates a
+  temporary detached worktree at the revision under test, changes only its
+  workspace package version, builds the requested binary offline, and removes
+  the worktree after the build.
 - plus cucumber's own `--tags`, `--name`, `--input`.
 
 Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramine`
@@ -145,10 +150,12 @@ The scenario performs the complete product flow:
    deployment instead.
 3. Submits one encrypted `offerTribute` transaction through `outbe-cli`.
 4. Requires a successful receipt and `totalSupply == 1`.
-5. Waits for exactly one document in `tributes`, `tributes_by_owner`, and
-   `tributes_by_day` in every validator database.
-6. Requires `_projection.tx_hash` to match the successful transaction and the
-   complete BSON documents to be identical across all four validators.
+5. Finds the primary document by `_projection.tx_hash`, derives its exact owner
+   and Worldwide-Day index keys from the canonical body, and requires all three
+   documents on every validator. The check does not assume the database contains
+   only one Tribute, so lifecycle scenarios can validate later offers too.
+6. Requires the exact primary/owner/day BSON documents to be identical across
+   all four validators.
 7. Calls `outbe_getCompressedEntity` on every validator, fetches the exact
    selected block header, and verifies each proof package independently.
 8. Requires every validator's authenticated `Present` body bytes to equal the
@@ -162,6 +169,16 @@ The edge-case scenarios independently verify both authenticated absence forms:
   collection already exists;
 - `CollectionAbsent` for an unknown Tribute day, while also asserting that no
   primary or secondary MongoDB projection was created.
+
+The duplicate-identity scenario submits a second encrypted offer from the same
+owner in the same Worldwide Day with a different amount and opposite Intex
+exclusion flag. It requires a reverted receipt, unchanged supply, byte-identical
+primary/owner/day Mongo documents, and exactly the original Tribute ID in both
+on-chain indexes on every validator. Structured `E2E_TRIBUTE_TIMELINE` records
+correlate submission, receipt block/events, canonical state, finality, and Mongo
+visibility. Real-SGX runs widen only their scenario genesis consensus windows
+because four enclaves share one host; production/testnet timing defaults remain
+unchanged and must be calibrated on the deployment topology separately.
 
 On normal completion or failure, the harness stops the nodes and removes its
 MongoDB and TEE containers. SIGINT/SIGTERM also runs the managed-container

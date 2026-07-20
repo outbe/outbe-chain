@@ -86,12 +86,12 @@ waiting schedules and active version; terminal records prevent repeated migratio
 | PFS-005-01 | approve/schedule/activate | 4 active validators and supported next version/height | propose, cast 3 yes, cross deadline/height | Approved→Scheduled→Activated; version reads and committee roots agree | `@pfs-005-01` live + in-process full flow |
 | PFS-005-02 | migration succeeds once | scheduled version with stateful registered handler | activation height executes | migration and active-version publication commit atomically once | version handler covered; stateful migration fixture absent |
 | PFS-005-03 | below-quorum expiry | four validators with only two yes votes | tally after deadline | Expired; no schedule/event/version mutation | in-process `full_vote_update_flow_2_of_4_yes_expires_without_update_state_change` |
-| PFS-005-04 | duplicate ballot/dispatch | pending proposal and voter already recorded | repeat ballot or target dispatch | rejection/idempotency; one ballot and at most one schedule | in-process duplicate ballot; duplicate dispatch absent |
+| PFS-005-04 | duplicate ballot/dispatch | pending proposal and voter already recorded | repeat ballot or approve two conflicting updates | duplicate vote reverts; exactly one compatible schedule is committed | `@pfs-005-duplicate-vote` and `@pfs-005-authorization-conflict` live-node |
 | PFS-005-05 | membership changes during vote | pending proposal and changing active set | join/exit crosses tally deadline | quorum follows the normative snapshot rule; no node divergence | documentation-only pending snapshot decision |
 | PFS-005-06 | migration handler failure | scheduled update with deliberately failing registered handler | activation height executes | fatal rollback; schedule/version/migration pre-state retained; recovery defined | documentation-only: failing handler/recovery absent |
 | PFS-005-07 | old binary startup | chain active version newer than binary | node starts/restarts | readiness/startup refuses before participation | in-process compatibility check; mixed-node live gap |
 | PFS-005-08 | restart with overdue schedules | durable waiting updates now overdue | restart node | deterministic ordered execution exactly once | documentation-only pending order policy/restart fixture |
-| PFS-005-09 | unsupported version activation | approved schedule above binary ceiling | committee reaches activation height | block is fatal/stalls; version unchanged and schedule waiting | `@pfs-005-09` live-node |
+| PFS-005-09 | unsupported version activation and operator recovery | approved schedule above the running binary's supported version | old committee reaches activation, restarts unchanged, then operator installs a binary supporting the scheduled version | old binary stalls without version/schedule mutation; same datadirs recover; replacement binary activates once and finalization resumes | `@pfs-005-09` live-node; self-contained binary build/swap focused PASS |
 | PFS-005-10 | downgrade proposal | active version newer than payload | approve/tally downgrade | Rejected; no schedule or active-version change | in-process downgrade flow |
 | PFS-005-11 | conflicting activation height | one waiting update at height | approve another version for same height | second Rejected; first schedule unchanged | in-process conflicting update flow |
 | PFS-005-12 | stale activation | newer version already active with older schedule retained | execute older activation | no downgrade; deterministic terminal result | in-process stale activation flow |
@@ -103,7 +103,7 @@ waiting schedules and active version; terminal records prevent repeated migratio
 - Decide whether membership/quorum snapshots occur at creation or tally.
 - Decide whether zero-buffer same-block scheduling/activation is a supported
   localnet contract or merely a test shortcut.
-- Keep the oversized-pagination RPC regression intentionally outside PFS; close the remaining migration, membership and restart gaps.
+- Keep the oversized-pagination RPC regression intentionally outside PFS; close the remaining migration and membership gaps.
 - Define operator recovery when a scheduled handler is permanently fatal.
 - Add a registry fingerprint/readiness check so mixed handler tables fail before
   consensus execution.

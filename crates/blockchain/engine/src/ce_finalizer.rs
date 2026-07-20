@@ -557,6 +557,15 @@ impl RethCeFinalizer {
             if notification.number == block.height && notification.hash == block.block_hash {
                 return Ok(());
             }
+            if notification.number == block.height {
+                // Reth can persist a speculative canonical head at H before
+                // consensus finalizes a different block at the same H. The
+                // finalized block was already submitted through newPayload and
+                // FCU, so wait for its replacement persistence notification.
+                // Treating the old same-height hash as "passed" kills an honest
+                // validator during an ordinary pre-finalization reorg.
+                continue;
+            }
             if notification.number > block.height && self.verify_durable(block)?.is_some() {
                 // This is a watch stream, so a slow receiver may observe a
                 // later durable tip. The target is accepted only after a fresh
@@ -903,6 +912,40 @@ mod tests {
         state.set(1, hash(2), root);
         persisted_tx
             .unbounded_send(BlockNumHash::new(4, hash(4)))
+            .unwrap();
+        task.await.unwrap().unwrap();
+        assert_eq!(tree.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn same_height_speculative_persistence_waits_for_finalized_replacement() {
+        let staged = candidate();
+        let root = staged.new_root();
+        let (state, persisted_tx) = FakeDurableState::new();
+        let tree = FakeTree::new(Some(staged));
+        let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
+
+        let task = {
+            let finalizer = finalizer.clone();
+            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
+        };
+        tokio::task::yield_now().await;
+
+        // Reth may durably publish a speculative block at the target height
+        // before consensus canonicalizes a different block at that height.
+        persisted_tx
+            .unbounded_send(BlockNumHash::new(1, hash(9)))
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(
+            !task.is_finished(),
+            "old same-height fork must not be fatal"
+        );
+        assert_eq!(tree.attempts(), 0);
+
+        state.set(1, hash(2), root);
+        persisted_tx
+            .unbounded_send(BlockNumHash::new(1, hash(2)))
             .unwrap();
         task.await.unwrap().unwrap();
         assert_eq!(tree.attempts(), 1);
