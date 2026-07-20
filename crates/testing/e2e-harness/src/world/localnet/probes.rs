@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use eyre::{bail, Result, WrapErr};
 
+use crate::internal::proc::{first_hex, run_capture};
 use crate::internal::shell::Sh;
 
 use super::Localnet;
@@ -15,7 +16,11 @@ impl Localnet {
     /// unsupported-update flow may emit only its exact compatibility fatal;
     /// unrelated fatals and all panic/DKG-share/VRF/SGX/projection alarms fail
     /// the scenario even when its functional steps passed.
-    pub fn audit_unexpected_logs(&self, unsupported_version: Option<u64>) -> Result<()> {
+    pub fn audit_unexpected_logs(
+        &self,
+        unsupported_version: Option<u64>,
+        expected_dkg_reveal: Option<&str>,
+    ) -> Result<()> {
         let mut logs = Vec::new();
         collect_logs(&self.cfg.dir, &mut logs)?;
         let mut findings = Vec::new();
@@ -27,12 +32,23 @@ impl Localnet {
             )
         });
         let mut expected_by_validator = vec![0_usize; self.cfg.validators];
+        let mut expected_reveal_by_validator = vec![0_usize; self.cfg.validators];
         for path in logs {
             let content = fs::read_to_string(&path)
                 .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
             for (index, line) in content.lines().enumerate() {
                 if expected_fragment.as_deref().is_some_and(|fragment| {
                     accept_expected_update_fatal(&path, line, fragment, &mut expected_by_validator)
+                }) {
+                    continue;
+                }
+                if expected_dkg_reveal.is_some_and(|public_key| {
+                    accept_expected_dkg_reveal(
+                        &path,
+                        line,
+                        public_key,
+                        &mut expected_reveal_by_validator,
+                    )
                 }) {
                     continue;
                 }
@@ -49,6 +65,15 @@ impl Localnet {
                 if count == 0 {
                     findings.push(format!(
                         "validator-{validator}/node.log: expected unsupported-version fatal is absent"
+                    ));
+                }
+            }
+        }
+        if expected_dkg_reveal.is_some() {
+            for (validator, count) in expected_reveal_by_validator.into_iter().enumerate() {
+                if count == 0 {
+                    findings.push(format!(
+                        "validator-{validator}/node.log: expected exact DKG share reveal is absent"
                     ));
                 }
             }
@@ -126,6 +151,17 @@ impl Localnet {
             .to_string()
     }
 
+    /// Consensus BLS public key derived from this validator's provisioned
+    /// signing key, in the exact lowercase hex form used by DKG reveal alarms.
+    pub fn consensus_public_key(&self, index: usize) -> Result<String> {
+        let signing_key = self.cfg.validator_dir(index).join("signing-key.hex");
+        let output = run_capture(
+            &self.cfg.bin_keygen,
+            &["show-pubkey", "--key", &signing_key.display().to_string()],
+        )?;
+        first_hex(&output, 96).ok_or_else(|| eyre::eyre!("no BLS public key from keygen"))
+    }
+
     /// Whether a durable DKG share file exists in validator `index`'s keys dir
     /// (`e2e_assert "DKG share persisted to keys-dir"`, s4:28-29).
     pub fn has_share_file(&self, index: usize) -> bool {
@@ -188,6 +224,39 @@ fn accept_expected_update_fatal(
     true
 }
 
+fn accept_expected_dkg_reveal(
+    path: &Path,
+    line: &str,
+    expected_public_key: &str,
+    expected_by_validator: &mut [usize],
+) -> bool {
+    if !exact_expected_dkg_reveal(line, expected_public_key) {
+        return false;
+    }
+    if let Some(validator) = validator_node_log_index(path, expected_by_validator.len()) {
+        expected_by_validator[validator] += 1;
+    }
+    true
+}
+
+fn exact_expected_dkg_reveal(line: &str, expected_public_key: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    line.matches("dkg: a validator's individual share was revealed")
+        .count()
+        == 1
+        // `node.log` keeps tracing's ANSI formatting around the `=` separator,
+        // while `reth.log` is plain text. Match the field name and its exact
+        // value independently so both representations prove the same reveal.
+        && line.contains("revealed_validator")
+        && line.contains(&expected_public_key.to_ascii_lowercase())
+        && !line.contains("fatal")
+        && !line.contains("panic")
+        && !(line.contains("vrf") && line.contains("alarm"))
+        && !line.contains("eagain")
+        && !line.contains("resource temporarily unavailable")
+        && !(line.contains("projection") && line.contains("fatal"))
+}
+
 fn exact_expected_update_fatal(line: &str, expected_fragment: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.matches("fatal").count() == 1
@@ -217,8 +286,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        accept_expected_update_fatal, exact_expected_update_fatal, is_runtime_log,
-        unexpected_log_line,
+        accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
+        exact_expected_update_fatal, is_runtime_log, unexpected_log_line,
     };
 
     #[test]
@@ -266,6 +335,39 @@ mod tests {
             fragment
         ));
         assert!(unexpected_log_line("fatal: projection exited"));
+    }
+
+    #[test]
+    fn allows_only_the_exact_expected_dkg_reveal() {
+        let key = "91782b96da4ceae23d5adfa62ec55ef41827d43c8b624035972bc0a086f743266168a73e42e5b6c14c119dcf94d39588";
+        let expected = format!(
+            "WARN outbe::dkg: DKG: a validator's individual share was REVEALED (offline during the ceremony); rotate revealed_validator={key}"
+        );
+        assert!(exact_expected_dkg_reveal(&expected, key));
+        assert!(exact_expected_dkg_reveal(
+            &expected.replace(
+                "revealed_validator=",
+                "revealed_validator\u{1b}[0m\u{1b}[2m=\u{1b}[0m"
+            ),
+            key
+        ));
+        assert!(!exact_expected_dkg_reveal(
+            &expected.replace(key, &"0".repeat(96)),
+            key
+        ));
+        assert!(!exact_expected_dkg_reveal(
+            &format!("fatal {expected}"),
+            key
+        ));
+
+        let mut seen = [0_usize; 4];
+        assert!(accept_expected_dkg_reveal(
+            Path::new("scenario-1/validator-2/node.log"),
+            &expected,
+            key,
+            &mut seen,
+        ));
+        assert_eq!(seen, [0, 0, 1, 0]);
     }
 
     #[test]

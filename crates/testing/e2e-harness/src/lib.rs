@@ -146,6 +146,7 @@ pub async fn run() {
                         .allow_unsupported_update_fatal
                         .then_some(world.state.proposed_version)
                         .flatten(),
+                    world.state.expected_dkg_reveal.as_deref(),
                 ) {
                     world.localnet.teardown();
                     panic!("E2E log-safety audit failed: {error:#}");

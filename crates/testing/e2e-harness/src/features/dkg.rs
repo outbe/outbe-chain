@@ -57,6 +57,12 @@ fn freeze_target(world: &mut World) {
 fn lose_quorum(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
+    world.state.expected_dkg_reveal = Some(
+        world
+            .localnet
+            .consensus_public_key(idx)
+            .expect("derive offline joiner's consensus public key"),
+    );
     world.state.marker_height = world.rpc.head(primary);
     world.localnet.stop_joiner(idx).expect("stop joiner");
     world.localnet.kill_validator(3).expect("kill validator-3");
@@ -119,5 +125,14 @@ fn reshare_completes(world: &mut World) {
     assert!(
         world.rpc.wait_active_count(primary, 5, 40),
         "reshare did not complete after the participant was restored (set != 5)"
+    );
+    let revealed = world
+        .state
+        .expected_dkg_reveal
+        .as_deref()
+        .expect("expected offline participant reveal identity");
+    assert!(
+        world.localnet.log_has(0, revealed),
+        "reshare completed without recording the expected offline participant reveal"
     );
 }

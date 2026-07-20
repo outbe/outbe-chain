@@ -20,6 +20,10 @@ pub struct FixtureState {
     /// The unsupported-update scenario deliberately emits one narrowly matched
     /// fatal compatibility message; every other fatal/alarm remains forbidden.
     pub allow_unsupported_update_fatal: bool,
+    /// One stalled-reshare scenario deliberately leaves this exact participant
+    /// offline long enough for the protocol's documented share-reveal path.
+    /// Every other reveal/fatal/alarm remains forbidden by the log audit.
+    pub expected_dkg_reveal: Option<String>,
 
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
@@ -90,6 +94,7 @@ impl Default for FixtureState {
             vote_deadline: None,
             voting_window: 6,
             allow_unsupported_update_fatal: false,
+            expected_dkg_reveal: None,
             joiner_addr: None,
             wwd: None,
             marker_height: None,
