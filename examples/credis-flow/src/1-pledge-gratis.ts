@@ -103,13 +103,19 @@ async function main() {
   const pledgedAfter = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));
 
   console.log("\n=== State AFTER (decrypted with the view key) ===");
-  console.log(`  Balance:       ${formatToken(balanceAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged:       ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledge handle: ${handle}`);
+  console.log(`  Balance:         ${formatToken(balanceAfter, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Active pledged:  ${formatToken(pledgedAfter, gratisMeta.decimals, gratisMeta.symbol)} (credited to the pledged ledger only at requestCredis)`);
+  console.log(`  Pending pledge:  ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)} (parked in this ticket)`);
+  console.log(`  Pledge handle:   ${handle}`);
 
+  // A pledge moves `amount` from the liquid balance into a new pending ticket; the
+  // active pledged ledger (`pledgedOf`) stays flat until requestCredis consumes the
+  // ticket. So the pending line — not the pledged-ledger diff — is where a fresh
+  // pledge shows up.
   console.log("\n=== CHANGES ===");
-  console.log(`  Balance:  ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Balance:         ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Active pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)} (unchanged until requestCredis)`);
+  console.log(`  Pending pledge:  ${formatTokenDiff(amount, gratisMeta.decimals, gratisMeta.symbol)}`);
 
   const ticketPath = writeTicket({
     pledgeHandle: handle,

@@ -15,6 +15,12 @@ RPC_PORT=$((8545 + PORT_OFFSET))
 RPC_URL="http://127.0.0.1:${RPC_PORT}"
 MONGO_URI="mongodb://127.0.0.1:${MONGO_PORT}/?replicaSet=rs0&directConnection=true"
 
+# The MongoDB replica-set lifecycle lives in one shared script (also used by the
+# plain `localnet-*` mise tasks); point it at this stack's dedicated container.
+export OUTBE_LOCALNET_MONGO_NAME="$MONGO_NAME"
+export OUTBE_LOCALNET_MONGO_PORT="$MONGO_PORT"
+export OUTBE_LOCALNET_MONGO_VOLUME="$MONGO_VOLUME"
+
 case "$STACK_DIR" in
   /tmp/outbe-?*) ;;
   *)
@@ -50,13 +56,12 @@ stop_stack() {
   if [[ -d "$STACK_DIR" ]]; then
     ./scripts/run-testnet.sh stop "$STACK_DIR" || true
   fi
-  docker_cmd stop "$MONGO_NAME" >/dev/null 2>&1 || true
+  ./scripts/localnet-mongo.sh stop
 }
 
 remove_stack() {
   stop_stack
-  docker_cmd rm -f "$MONGO_NAME" >/dev/null 2>&1 || true
-  docker_cmd volume rm -f "$MONGO_VOLUME" >/dev/null 2>&1 || true
+  ./scripts/localnet-mongo.sh clean
 }
 
 print_connection_info() {
@@ -106,44 +111,7 @@ case "$ACTION" in
     cargo build -p outbe-chain --bin outbe-chain -p outbe-cli
     cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 
-    docker_cmd volume create "$MONGO_VOLUME" >/dev/null
-    docker_cmd run -d --name "$MONGO_NAME" --network host \
-      --mount "source=${MONGO_VOLUME},target=/data/db" mongo:7.0 \
-      --replSet rs0 --bind_ip 127.0.0.1 --port "$MONGO_PORT" >/dev/null
-
-    mongo_listening=0
-    for _ in $(seq 1 80); do
-      if docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" \
-        --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1; then
-        mongo_listening=1
-        break
-      fi
-      sleep 0.25
-    done
-    [[ $mongo_listening -eq 1 ]] || { echo "MongoDB did not become reachable" >&2; exit 1; }
-
-    docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" --eval \
-      "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:${MONGO_PORT}'}]})" >/dev/null
-    mongo_primary=0
-    for _ in $(seq 1 80); do
-      if docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" \
-        --eval 'if (!db.hello().isWritablePrimary) quit(1)' >/dev/null 2>&1; then
-        mongo_primary=1
-        break
-      fi
-      sleep 0.25
-    done
-    [[ $mongo_primary -eq 1 ]] || { echo "MongoDB replica set did not elect a primary" >&2; exit 1; }
-
-    docker_cmd exec "$MONGO_NAME" mongosh --quiet --port "$MONGO_PORT" --eval '
-      const s = db.getMongo().startSession();
-      const probe = s.getDatabase("localnet_stack_transaction_probe");
-      s.startTransaction();
-      probe.probe.insertOne({ready:true});
-      s.abortTransaction();
-      s.endSession();
-      if (db.getSiblingDB("localnet_stack_transaction_probe").probe.countDocuments({}) !== 0) quit(1);
-    ' >/dev/null
+    ./scripts/localnet-mongo.sh start
 
     network_env
     ./scripts/bootstrap-testnet.sh 4 "$STACK_DIR"
