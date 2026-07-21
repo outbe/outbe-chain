@@ -13,12 +13,10 @@ outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-evm.workspace = true
 outbe-metadosis.workspace = true
-outbe-intex.workspace = true
 outbe-tribute.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-gratisfactory.workspace = true
-outbe-vaultprovider.workspace = true
 # `test-enclave` drives the confidential Gratis mint via the in-process enclave
 # engine used by the WWD→…→mineGratis e2e.
 outbe-gratis = { workspace = true, features = ["test-enclave"] }

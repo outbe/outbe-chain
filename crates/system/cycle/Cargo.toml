@@ -15,7 +15,6 @@ outbe-rewards.workspace = true
 outbe-agentreward.workspace = true
 outbe-metadosis.workspace = true
 outbe-tribute.workspace = true
-outbe-nod.workspace = true
 outbe-intexfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
