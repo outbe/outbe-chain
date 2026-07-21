@@ -213,6 +213,9 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Res
                 contract.emit(IDesis::AuctionOverdue {
                     worldwideDay: worldwide_day,
                 })?;
+                refund_unsold_supply(storage, &mut contract, worldwide_day)?;
+                contract.remove_gate_active(worldwide_day)?;
+                contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
                 return contract.remove_sched_active(worldwide_day);
             }
             AuctionStage::Briefed if now >= anchor => {
@@ -293,6 +296,7 @@ fn start_auction(
             reason: "commit window elapsed".into(),
         })?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+        refund_unsold_supply(storage, contract, worldwide_day)?;
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
@@ -308,6 +312,28 @@ fn start_auction(
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Started)?;
     Ok(StartOutcome::Started)
+}
+
+/// Return a retiring day's unsold brief supply to PromisLimit. No-op once the
+/// supply was consumed at clearing (or for a red day, which briefs zero).
+fn refund_unsold_supply(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    worldwide_day: u32,
+) -> Result<()> {
+    let supply = contract.pending_supply_promis.read(&worldwide_day)?;
+    if supply.is_zero() {
+        return Ok(());
+    }
+    contract
+        .pending_supply_promis
+        .write(&worldwide_day, U256::ZERO)?;
+    contract.emit(IDesis::UnusedSupplyReported {
+        worldwideDay: worldwide_day,
+        unusedPromis: supply,
+    })?;
+    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(supply)?;
+    Ok(())
 }
 
 /// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex

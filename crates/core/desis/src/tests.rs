@@ -411,6 +411,7 @@ fn schedule_cancels_a_red_brief() {
 
 #[test]
 fn schedule_cancels_a_missed_start() {
+    use outbe_promislimit::PromisLimitContract;
     with_storage(|s| {
         brief(&s, true);
         runtime::schedule_tick(&s, ANCHOR + 86_400 + 3600).unwrap();
@@ -421,6 +422,12 @@ fn schedule_cancels_a_missed_start() {
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
+        assert_eq!(
+            PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(10 * LOAD_MINOR)
+        );
     });
 }
 
@@ -437,12 +444,19 @@ fn schedule_retires_an_overdue_day() {
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
+        use outbe_promislimit::PromisLimitContract;
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 3 * 86_400).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
+        assert_eq!(
+            PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(10 * LOAD_MINOR)
+        );
     });
     let overdue_sig = IDesis::AuctionOverdue::SIGNATURE_HASH;
     let found = storage
