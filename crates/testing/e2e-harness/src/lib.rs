@@ -17,6 +17,7 @@
 
 pub mod env;
 pub mod features;
+pub mod release_sgx;
 pub mod world;
 
 mod evidence;
