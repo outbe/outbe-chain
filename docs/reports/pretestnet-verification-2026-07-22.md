@@ -31,74 +31,74 @@ Release conditions:
 
 ## Candidate commits
 
-| Commit | Reason and confirming evidence |
-|---|---|
-| `36a1d1c` | Restores the main-branch Clippy CI gate. Final strict Clippy passes. |
-| `8ac65ed` | Aligns compressed-entity fixtures with schema v3. Covered by the full Rust suite. |
-| `7776718` | Restores the consensus dependency-boundary audit script. |
-| `01cf334` | Restores the missing mock-USDT deployment guard. It permits BSC testnet (`97`) and local Anvil (`31337`); it does not replace BSC with Anvil. |
-| `78f03e3` | Updates vulnerable runtime dependencies where compatible fixes exist. The remaining findings are disclosed below. |
-| `26f78bd` | Prevents healthy DKG-share disclosure in logs. Hardware-SGX audit found zero share-reveal alarms. |
-| `301b0e8` | Cancels stale compressed-tree payload jobs. Regression and lifecycle E2E pass. |
-| `d267f65` | Preserves stale-parent readiness instead of losing the lifecycle condition. |
-| `0be40c6` | Preserves typed readiness errors across the EVM hook boundary. |
-| `f787618` | Retries stale payload attempts without publishing an invalid attempt. |
-| `da03d06` | Persists sealed TEE state across full localnet restart. Four-node restart and hardware-SGX restart pass. |
-| `5e61927` | Builds payloads on canonical ancestors after forkchoice changes. Focused hardware-SGX lifecycle passes. |
-| `ed7bd37` | Makes Tribute E2E wait for a pending offer to be mined before asserting its projection. |
-| `f53b6da` | Applies repository-wide formatting required by the final format gate. |
-| `0b62a3b` | Advances a late verifier through a missed DKG freeze notification. Exact-HEAD hardware-SGX promotion passes. |
-| `8b9bfc4` | Adds the live late warm-promotion regression scenario. |
-| `8d6751c` | Reconciles the ADR coverage ledger with observed tests and gaps. |
-| `47c99cb` | Makes the isolated participation fuzz target runnable and pins its compatible lockfile. |
-| `06994a9` | Returns a normal CLI error for malformed private-key lengths instead of panicking. Unit and real CLI paths pass. |
-| `61feeb1` | Keeps governance votes within the proposal's actual voting window. The focused live scenario passes twice after the fix. |
-| `3d29b72` | Requires the lifecycle E2E to observe a successful Tribute receipt instead of accepting transaction submission alone. The 9-step lifecycle rerun passes. |
-| `bb86666` | Restores the current-nightly `cargo udeps` gate after an obsolete test import became a denied warning. |
-| `afbf3df`, `fa09bb2`, `f933901`, `8a632b8` | Replace future-incompatible tail-position `bail!` expressions without semantic changes. Affected strict Clippy and targeted suites pass. |
-| `c974eb7` | Updates the offchain reader to the current atomic API; strict Clippy and 26/26 tests pass. |
-| `b02326a` | Refreshes stale Intent ABI exports discovered by the exact CI freshness check. |
-| `282c292` | Adds a bounded Docker context and the missing libc++ builder dependencies. |
-| `80f56e4` | Retains the Solidity precompile interfaces required by Rust `sol!` expansion while excluding unrelated contract projects from the image context. |
-| `72e1370` | Installs libc++ in the runtime image after the first successful build failed its smoke launch on `libc++.so.1`. |
-| `e7c6a68` | Keeps Docker recipe metadata out of the Rust source layer, reducing unnecessary rebuild invalidation. |
+| Commit                                     | Reason and confirming evidence                                                                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `36a1d1c`                                  | Restores the main-branch Clippy CI gate. Final strict Clippy passes.                                                                                     |
+| `8ac65ed`                                  | Aligns compressed-entity fixtures with schema v3. Covered by the full Rust suite.                                                                        |
+| `7776718`                                  | Restores the consensus dependency-boundary audit script.                                                                                                 |
+| `01cf334`                                  | Restores the missing mock-USDT deployment guard. It permits BSC testnet (`97`) and local Anvil (`31337`); it does not replace BSC with Anvil.            |
+| `78f03e3`                                  | Updates vulnerable runtime dependencies where compatible fixes exist. The remaining findings are disclosed below.                                        |
+| `26f78bd`                                  | Prevents healthy DKG-share disclosure in logs. Hardware-SGX audit found zero share-reveal alarms.                                                        |
+| `301b0e8`                                  | Cancels stale compressed-tree payload jobs. Regression and lifecycle E2E pass.                                                                           |
+| `d267f65`                                  | Preserves stale-parent readiness instead of losing the lifecycle condition.                                                                              |
+| `0be40c6`                                  | Preserves typed readiness errors across the EVM hook boundary.                                                                                           |
+| `f787618`                                  | Retries stale payload attempts without publishing an invalid attempt.                                                                                    |
+| `da03d06`                                  | Persists sealed TEE state across full localnet restart. Four-node restart and hardware-SGX restart pass.                                                 |
+| `5e61927`                                  | Builds payloads on canonical ancestors after forkchoice changes. Focused hardware-SGX lifecycle passes.                                                  |
+| `ed7bd37`                                  | Makes Tribute E2E wait for a pending offer to be mined before asserting its projection.                                                                  |
+| `f53b6da`                                  | Applies repository-wide formatting required by the final format gate.                                                                                    |
+| `0b62a3b`                                  | Advances a late verifier through a missed DKG freeze notification. Exact-HEAD hardware-SGX promotion passes.                                             |
+| `8b9bfc4`                                  | Adds the live late warm-promotion regression scenario.                                                                                                   |
+| `8d6751c`                                  | Reconciles the ADR coverage ledger with observed tests and gaps.                                                                                         |
+| `47c99cb`                                  | Makes the isolated participation fuzz target runnable and pins its compatible lockfile.                                                                  |
+| `06994a9`                                  | Returns a normal CLI error for malformed private-key lengths instead of panicking. Unit and real CLI paths pass.                                         |
+| `61feeb1`                                  | Keeps governance votes within the proposal's actual voting window. The focused live scenario passes twice after the fix.                                 |
+| `3d29b72`                                  | Requires the lifecycle E2E to observe a successful Tribute receipt instead of accepting transaction submission alone. The 9-step lifecycle rerun passes. |
+| `bb86666`                                  | Restores the current-nightly `cargo udeps` gate after an obsolete test import became a denied warning.                                                   |
+| `afbf3df`, `fa09bb2`, `f933901`, `8a632b8` | Replace future-incompatible tail-position `bail!` expressions without semantic changes. Affected strict Clippy and targeted suites pass.                 |
+| `c974eb7`                                  | Updates the offchain reader to the current atomic API; strict Clippy and 26/26 tests pass.                                                               |
+| `b02326a`                                  | Refreshes stale Intent ABI exports discovered by the exact CI freshness check.                                                                           |
+| `282c292`                                  | Adds a bounded Docker context and the missing libc++ builder dependencies.                                                                               |
+| `80f56e4`                                  | Retains the Solidity precompile interfaces required by Rust `sol!` expansion while excluding unrelated contract projects from the image context.         |
+| `72e1370`                                  | Installs libc++ in the runtime image after the first successful build failed its smoke launch on `libc++.so.1`.                                          |
+| `e7c6a68`                                  | Keeps Docker recipe metadata out of the Rust source layer, reducing unnecessary rebuild invalidation.                                                    |
 
 ## Final exact-candidate gates
 
-| Check | Result | Duration | Evidence |
-|---|---:|---:|---|
-| `cargo fmt --all -- --check` | PASS | final exact-candidate run | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-cargo-fmt.log` |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | PASS | 11.60 s | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-cargo-clippy.log` |
-| `cargo nextest run --workspace --all-features` | PASS: 2706/2706; 21 skipped | 103.34 s | final exact-candidate terminal record |
-| `cargo test --doc --workspace` | PASS | 18.21 s | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-doctests.log` |
-| `cargo audit` against the local 1166-advisory DB | FAIL: 4 vulnerabilities; 9 warnings | 0.05 s | `/tmp/outbe-pretestnet-f2303c1/final-cargo-audit-local-db.log` |
-| `cargo deny check` | FAIL: advisories; bans/licenses/sources pass | 2.62 s | `/tmp/outbe-pretestnet-f2303c1/final-cargo-deny-escalated.log` |
-| `cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features` | PASS: all dependencies used | 15.69 s | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-udeps-final.log` |
-| `cargo llvm-cov --workspace --cobertura` | PASS: 76.314% lines (74,734/97,929) | 480.56 s | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-llvm-cov.log`; `ci/cobertura.xml` |
-| `cargo machete --with-metadata` | FAIL/advisory: 22 declarations in 8 packages | recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-machete-with-metadata.log` |
-| `cargo vet` | FAIL: missing policy for 12 git packages | recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-vet.log` |
-| `mise run build-release` | PASS: auditable release workspace | 242.00 s | `/tmp/outbe-pretestnet-f2303c1/ci/build-release.log` |
-| release binary audit | FAIL: 3 vulnerabilities in each scanned runtime binary; main binary too large to scan | recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-audit-release-binaries-valid.log` |
+| Check                                                                                |                                                                                Result |                  Duration | Evidence                                                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------: | ------------------------: | ------------------------------------------------------------------------- |
+| `cargo fmt --all -- --check`                                                         |                                                                                  PASS | final exact-candidate run | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-cargo-fmt.log`               |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings`               |                                                                                  PASS |                   11.60 s | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-cargo-clippy.log`            |
+| `cargo nextest run --workspace --all-features`                                       |                                                           PASS: 2706/2706; 21 skipped |                  103.34 s | final exact-candidate terminal record                                     |
+| `cargo test --doc --workspace`                                                       |                                                                                  PASS |                   18.21 s | `/tmp/outbe-pretestnet-f2303c1/final-e7c6a68-doctests.log`                |
+| `cargo audit` against the local 1166-advisory DB                                     |                                                   FAIL: 4 vulnerabilities; 9 warnings |                    0.05 s | `/tmp/outbe-pretestnet-f2303c1/final-cargo-audit-local-db.log`            |
+| `cargo deny check`                                                                   |                                          FAIL: advisories; bans/licenses/sources pass |                    2.62 s | `/tmp/outbe-pretestnet-f2303c1/final-cargo-deny-escalated.log`            |
+| `cargo +nightly udeps --workspace --lib --examples --tests --benches --all-features` |                                                           PASS: all dependencies used |                   15.69 s | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-udeps-final.log`                  |
+| `cargo llvm-cov --workspace --cobertura`                                             |                                                   PASS: 76.314% lines (74,734/97,929) |                  480.56 s | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-llvm-cov.log`; `ci/cobertura.xml` |
+| `cargo machete --with-metadata`                                                      |                                          FAIL/advisory: 22 declarations in 8 packages |                  recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-machete-with-metadata.log`        |
+| `cargo vet`                                                                          |                                              FAIL: missing policy for 12 git packages |                  recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-vet.log`                          |
+| `mise run build-release`                                                             |                                                     PASS: auditable release workspace |                  242.00 s | `/tmp/outbe-pretestnet-f2303c1/ci/build-release.log`                      |
+| release binary audit                                                                 | FAIL: 3 vulnerabilities in each scanned runtime binary; main binary too large to scan |                  recorded | `/tmp/outbe-pretestnet-f2303c1/ci/cargo-audit-release-binaries-valid.log` |
 
 The first exact-HEAD nextest attempt stopped after 15 CLI RPC tests could not bind loopback listeners under the sandbox (`EPERM`). The complete rerun with loopback access passed all 2706 tests. This is classified as an execution-environment failure, not hidden or counted as a product pass.
 
 ## Contract suites
 
-| Suite | Result | Evidence |
-|---|---:|---|
-| Crosschain Foundry | PASS: 60 | `contracts/crosschain-rerun.log` |
-| Intent Foundry | PASS: 98 | `contracts/intent-rerun.log` |
-| Intex Foundry | PASS: 623 | `contracts/intex-rerun.log` |
-| Smart account Foundry | PASS: 42 | `contracts/smart-account-rerun.log` |
-| Tokens Foundry | PASS: 44 | `contracts/tokens-fixed.log` |
-| Precompiles | BUILD PASS, 0 tests | `contracts/precompiles.log` |
-| Smart-account lint | FAIL: unresolved `kernel-7579-plugins` import | `contracts/smart-account-lint.log` |
-| Contract format checks | PASS: crosschain, intent, smart-account, tokens, Intex | `/tmp/outbe-pretestnet-f2303c1/ci/contracts-format-lint.log`; `intex-lint-format-compile.log` |
-| Contract high-severity lint | PASS: crosschain, intent, tokens; FAIL: smart-account import resolution | `/tmp/outbe-pretestnet-f2303c1/ci/contracts-format-lint.log` |
-| Intent ABI freshness | initially FAIL, fixed in `b02326a`; Smart Account fresh | generated diff and clean rerun |
-| Intex Solhint/format/compile | PASS, warnings disclosed | `/tmp/outbe-pretestnet-f2303c1/ci/intex-lint-format-compile.log` |
-| Intex Slither 0.11.5 | command PASS with 6 findings (2 reentrancy, 4 unused returns) | `/tmp/outbe-pretestnet-f2303c1/ci/intex-slither.log` |
-| Intex Aderyn 0.6.8 | command PASS; report contains 6 High categories and 10 Low categories | `/tmp/outbe-pretestnet-f2303c1/ci/intex-aderyn.log`; ignored generated `contracts/intex/report.md` |
+| Suite                        |                                                                  Result | Evidence                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------: | -------------------------------------------------------------------------------------------------- |
+| Crosschain Foundry           |                                                                PASS: 60 | `contracts/crosschain-rerun.log`                                                                   |
+| Intent Foundry               |                                                                PASS: 98 | `contracts/intent-rerun.log`                                                                       |
+| Intex Foundry                |                                                               PASS: 623 | `contracts/intex-rerun.log`                                                                        |
+| Smart account Foundry        |                                                                PASS: 42 | `contracts/smart-account-rerun.log`                                                                |
+| Tokens Foundry               |                                                                PASS: 44 | `contracts/tokens-fixed.log`                                                                       |
+| Precompiles                  |                                                     BUILD PASS, 0 tests | `contracts/precompiles.log`                                                                        |
+| Smart-account lint           |                           FAIL: unresolved `kernel-7579-plugins` import | `contracts/smart-account-lint.log`                                                                 |
+| Contract format checks       |                  PASS: crosschain, intent, smart-account, tokens, Intex | `/tmp/outbe-pretestnet-f2303c1/ci/contracts-format-lint.log`; `intex-lint-format-compile.log`      |
+| Contract high-severity lint  | PASS: crosschain, intent, tokens; FAIL: smart-account import resolution | `/tmp/outbe-pretestnet-f2303c1/ci/contracts-format-lint.log`                                       |
+| Intent ABI freshness         |                 initially FAIL, fixed in `b02326a`; Smart Account fresh | generated diff and clean rerun                                                                     |
+| Intex Solhint/format/compile |                                                PASS, warnings disclosed | `/tmp/outbe-pretestnet-f2303c1/ci/intex-lint-format-compile.log`                                   |
+| Intex Slither 0.11.5         |           command PASS with 6 findings (2 reentrancy, 4 unused returns) | `/tmp/outbe-pretestnet-f2303c1/ci/intex-slither.log`                                               |
+| Intex Aderyn 0.6.8           |   command PASS; report contains 6 High categories and 10 Low categories | `/tmp/outbe-pretestnet-f2303c1/ci/intex-aderyn.log`; ignored generated `contracts/intex/report.md` |
 
 The smart-account compiler/tests pass with Foundry remappings, while its separate lint tool cannot resolve the same import. This is a toolchain/remapping gap, not evidence that the linted source is clean.
 
@@ -188,52 +188,80 @@ Evidence: `e2e/sgx-smoke-final-2.log`, `e2e/e2e-sgx-full-final-4.log`, `e2e/sgx-
 
 ## Live E2E scenarios
 
+### PFS-005–PFS-008 branch addendum (pre-review)
+
+> Historical checkpoint only. The review, focused repetitions, canonical mock
+> and hardware-SGX suites, workspace regression and ignored-test audit have now
+> completed. The authoritative outcome is
+> [PFS-005–PFS-008 completion verification](pfs-005-008-completion-2026-07-20.md).
+> Statements below about deferred final suites describe the earlier checkpoint
+> and are retained only for chronology.
+
+This addendum records the current `test/pfs-005-008-live-e2e` branch state. It
+does **not** supersede the final-suite evidence above and must not be read as a
+release PASS. At the operator's request, the final complete mock, hardware-SGX
+and workspace regressions are deliberately deferred until a separate review of
+the branch fixes and assertions is complete.
+
+| Flow    | Reproducible scenarios now present                                                                                                                                                                                                                | Evidence status before review                                                                                                                                                                               |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PFS-005 | voting-window validator restart; full-committee schedule and activation-boundary restarts; duplicate/unauthorized/conflicting/expired paths; unsupported activation, unchanged-binary restart and real replacement-binary recovery                | self-contained unsupported-version operator recovery focused PASS: 20/20 steps, `/tmp/outbe-e2e-harness-3104132/run-1784490228-3104132`; final feature/suite deferred                                       |
+| PFS-006 | join/exit/claim accounting; stale join; stalled reshare; actual downtime slash and duplicate-punishment guard; registration, in-flight DKG, completed-DKG, active-share, full-committee sealed-state and active-validator-during-reshare restarts | stalled-reshare focused PASS: 6/6 steps, `/tmp/outbe-e2e-harness-2903979/run-1784485353-2903979`; remaining historical runs and product-fix evidence require review before being promoted to final evidence |
+| PFS-007 | quota/fallback; exact raw replay before and after validator/full-committee restart; invalid/wrong-target/conflicting authorizations; worldwide-day lazy reset                                                                                     | scenarios implemented; final live rerun deliberately deferred until review                                                                                                                                  |
+| PFS-008 | cold/chained sync; upstream loss, lag and switch; durable follower restart; warm-promotion boundary, duplicate readiness, promoted node/enclave restart and active-validator restart                                                              | scenarios implemented; final hardware-SGX rerun deliberately deferred until review                                                                                                                          |
+
+Product-fix commits on this branch are candidates for review, not automatically
+accepted findings. The review must reconstruct each red reproduction, verify the
+root cause from code/log evidence, and confirm that the regression would fail
+without the fix. Any item lacking that evidence must be reclassified rather than
+reported as a confirmed defect.
+
 The initial complete mock run passed 15 scenarios and failed the governance timing scenario. That failure was deterministic: the test cast votes after its own configured voting window. After `61feeb1`, the focused governance feature passed twice, 16/16 steps each time. The lifecycle feature was separately strengthened by `3d29b72` and passed 9/9 steps; restart coverage passed 7/7 focused steps. The broad hardware-SGX run passed every scenario except the late promotion case that produced the confirmed defect; the focused exact-candidate hardware regression then passed that corrected case. All runtime-affecting nightly-compatibility edits also passed their targeted Rust suites, and the final full workspace regression is recorded in the exact-candidate table.
 
-| Live feature | Primary observable invariants |
-|---|---|
-| Follower upstream | cold and chained followers track finality; killed validator catches up; warm follower joins, activates, and remains in lockstep |
-| Validator lifecycle | cold sync, promotion, in-flight offer, DKG/reshare, exit, continuing liveness |
-| Active restart | individual and full-committee sealed restart recover without a fresh initial ceremony |
-| DKG failure | missing dealer does not halt the old committee; restored dealer permits recovery |
-| Downtime | chain remains live after one validator is killed |
-| Stale join | unconfirmed joiner remains pending until confirm-ready |
-| Tribute projection | successful encrypted offer, inclusion/absence proofs, duplicate logical-offer rejection, four Mongo projections |
-| Update | vote, approval, schedule, activation, oversized RPC pagination, intentionally unsupported version produces the expected fatal stall |
-| Governance OIP/GIP | proposal, approval, and materialized Approved state |
-| ZeroFee | EIP-7702 delegation, free quota consumption, quota rejection, and paid fallback |
+| Live feature        | Primary observable invariants                                                                                                       |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Follower upstream   | cold and chained followers track finality; killed validator catches up; warm follower joins, activates, and remains in lockstep     |
+| Validator lifecycle | cold sync, promotion, in-flight offer, DKG/reshare, exit, continuing liveness                                                       |
+| Active restart      | individual and full-committee sealed restart recover without a fresh initial ceremony                                               |
+| DKG failure         | missing dealer does not halt the old committee; restored dealer permits recovery                                                    |
+| Downtime            | chain remains live after one validator is killed                                                                                    |
+| Stale join          | unconfirmed joiner remains pending until confirm-ready                                                                              |
+| Tribute projection  | successful encrypted offer, inclusion/absence proofs, duplicate logical-offer rejection, four Mongo projections                     |
+| Update              | vote, approval, schedule, activation, oversized RPC pagination, intentionally unsupported version produces the expected fatal stall |
+| Governance OIP/GIP  | proposal, approval, and materialized Approved state                                                                                 |
+| ZeroFee             | EIP-7702 delegation, free quota consumption, quota rejection, and paid fallback                                                     |
 
 ## Flow coverage matrix
 
 “Component” means in-process or contract evidence. “Live” means exercised through running nodes and public/operator interfaces. A component PASS does not promote a missing live composition to covered.
 
-| Flow | Components | Existing evidence | Executed live evidence | Material gaps |
-|---|---|---|---|---|
-| PFS-001 encrypted Tribute materialization | TEE, Tribute, compressed entities, RPC, ExEx/Mongo | unit/property, Mongo integration, four Gherkin scenarios | 001-01/02/03/05; manual Mongo outage/recovery covers the operational substance of 001-06 | malformed ciphertext 001-04; projection crash failpoint 001-07; enclave outage 001-08; exact envelope replay 001-09 |
-| PFS-002 worldwide-day Tribute to Nod | Cycle, Metadosis, Lysis, Tribute/Nod factories | component tests for 002-01/06 and partial admission | no composed live scenario | 002-02/03/04/07/08 and full day-boundary composition |
-| PFS-003 Gratis pledge to Credis repayment | Gratis, Gratisfactory, Credis, factories, TEE | in-process coverage for 003-01/03/09/10/11/12; fragments of 003-02 | no composed live scenario | 003-04 through 003-08 and public-interface multi-step composition |
-| PFS-004 Intex settlement to Promis | Intex, Desis, Promis, bridges, auction contracts | extensive Foundry and runtime fragments | no composed two-chain live scenario | end-to-end auction/bridge/settlement, failure/retry, ordering and replay across two live chains |
-| PFS-005 governance update | Governance, Vote, Update, RPC, node lifecycle | unit coverage for 005-03/04/07/10/11/12 | 005-01 and expected-fatal 005-09; oversized RPC pagination | stateful 005-02, 005-05/06/08 and recovery after unsupported activation |
-| PFS-006 validator lifecycle | ValidatorSet, Staking, DKG, consensus, TEE | broad unit/simulation plus restart tests | 006-01/02/03 exclusion/04/06 liveness/09 restart | claim/value portion of 006-03; actual slash 006-06; 006-05/07/08; other restart checkpoints; complete exit accounting |
-| PFS-007 ZeroFee | EIP-7702 detection, admission, quota, accounting, txpool | unit/property plus native Alloy E2E | live 007-01 through 007-06 | exact replay 007-07; restart persistence 007-08 |
-| PFS-008 follower recovery/promotion | follower resolver, finality, DKG, validator activation | unit/simulation plus one composite feature | live 008-01 through 008-04, including exact-candidate hardware SGX | upstream partition 008-05; restart during promotion 008-06 |
+| Flow                                      | Components                                               | Existing evidence                                                  | Executed live evidence                                                                                       | Material gaps                                                                                                       |
+| ----------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| PFS-001 encrypted Tribute materialization | TEE, Tribute, compressed entities, RPC, ExEx/Mongo       | unit/property, Mongo integration, four Gherkin scenarios           | 001-01/02/03/05; manual Mongo outage/recovery covers the operational substance of 001-06                     | malformed ciphertext 001-04; projection crash failpoint 001-07; enclave outage 001-08; exact envelope replay 001-09 |
+| PFS-002 worldwide-day Tribute to Nod      | Cycle, Metadosis, Lysis, Tribute/Nod factories           | component tests for 002-01/06 and partial admission                | no composed live scenario                                                                                    | 002-02/03/04/07/08 and full day-boundary composition                                                                |
+| PFS-003 Gratis pledge to Credis repayment | Gratis, Gratisfactory, Credis, factories, TEE            | in-process coverage for 003-01/03/09/10/11/12; fragments of 003-02 | no composed live scenario                                                                                    | 003-04 through 003-08 and public-interface multi-step composition                                                   |
+| PFS-004 Intex settlement to Promis        | Intex, Desis, Promis, bridges, auction contracts         | extensive Foundry and runtime fragments                            | no composed two-chain live scenario                                                                          | end-to-end auction/bridge/settlement, failure/retry, ordering and replay across two live chains                     |
+| PFS-005 governance update                 | Governance, Vote, Update, RPC, node lifecycle            | unit coverage for 005-03/04/07/10/11/12                            | live scenarios now include restart/rejection paths and focused 005-09 real binary replacement recovery       | stateful 005-02, membership 005-05 and deliberately failing migration 005-06; final branch suite awaits review      |
+| PFS-006 validator lifecycle               | ValidatorSet, Staking, DKG, consensus, TEE               | broad unit/simulation plus restart tests                           | live scenarios now include exact exit/claim accounting, actual slash/idempotency and six restart checkpoints | 006-05/07/08/10 remain outside the current goal's requested composition; final branch suite awaits review           |
+| PFS-007 ZeroFee                           | EIP-7702 detection, admission, quota, accounting, txpool | unit/property plus native Alloy E2E                                | live scenarios implemented for 007-01 through 007-12, including replay/restarts/errors/day reset             | final branch suite awaits review                                                                                    |
+| PFS-008 follower recovery/promotion       | follower resolver, finality, DKG, validator activation   | unit/simulation plus composite features                            | live scenarios implemented for 008-01 through 008-08, including upstream loss and boundary restarts          | final hardware-SGX branch suite awaits review                                                                       |
 
 ## Confirmed defects and disposition
 
-| Severity | Defect | Reproduction/impact | Cause | Disposition |
-|---|---|---|---|---|
-| High | Late warm-promoted verifier never activates | Broad hardware-SGX run stalled the promoted verifier at activation | DKG freeze notification was missed when the verifier joined after the transition point | Fixed `0b62a3b`; exact hardware regression passes |
-| High | Payload built on non-canonical parent after forkchoice change | Hardware lifecycle emitted payload/forkchoice failures | payload arguments retained a stale prefinalization parent | Fixed `5e61927`; lifecycle passes 9/9 |
-| High | Localnet full restart lost enclave state | all-enclave restart could not resume the active committee | localnet script did not persist/seal TEE state | Fixed `da03d06`; mock and hardware restart pass |
-| High | Stale compressed payload attempts could outlive canonical work | lifecycle tests exposed stale parent/readiness and retry races | job cancellation and typed readiness propagation were incomplete | Fixed by `301b0e8`, `d267f65`, `0be40c6`, and `f787618`; regression suite passes |
-| Medium | DKG share disclosure in healthy logs | log audit found share material on a non-error path | diagnostic path logged more than operational state | Fixed `26f78bd`; hardware audit count is zero |
-| Medium | Pending Tribute asserted before mining | reruns could report missing projection for a valid pending transaction | E2E assumed immediate inclusion | Fixed `ed7bd37`; receipt/projection wait is explicit |
-| Medium | CLI panics for empty/short/long private key | `outbe-cli ... --private-key ''` reached GenericArray length assertion | decoded `Vec` was converted through a slice without validating length | Fixed `06994a9`; unit and binary invocation return error, exit 1 |
-| Medium | Fuzz target cannot run from its manifest | Cargo rejects the nested unlisted package; latest isolated parser is incompatible | missing isolated workspace marker and unpinned isolated graph | Fixed `47c99cb`; 9.7M iterations pass |
-| Medium | Governance live test votes outside its configured window | Full mock E2E deterministically failed the governance scenario | scenario timing was inconsistent with proposal parameters | Fixed `61feeb1`; focused feature passes twice |
-| Medium | Lifecycle E2E accepted submission without proving execution | a rejected/reverted Tribute could leave the scenario green | assertion stopped at transaction submission | Fixed `3d29b72`; successful receipt is mandatory and lifecycle passes 9/9 |
-| Medium | Intent ABI exports stale | exact CI export changed Router and SolverEscrow ABIs | committed exports were not refreshed with source changes | Fixed `b02326a`; regeneration is clean |
-| High | Prerelease Docker image did not build or launch | bounded amd64 build failed on missing builder `libc++` and Solidity interfaces; first built image then lacked runtime `libc++.so.1` | Dockerfile dependencies and context contract were incomplete | Fixed by `282c292`, `80f56e4`, and `72e1370`; exact-candidate build and smoke pass |
+| Severity | Defect                                                         | Reproduction/impact                                                                                                                 | Cause                                                                                  | Disposition                                                                        |
+| -------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| High     | Late warm-promoted verifier never activates                    | Broad hardware-SGX run stalled the promoted verifier at activation                                                                  | DKG freeze notification was missed when the verifier joined after the transition point | Fixed `0b62a3b`; exact hardware regression passes                                  |
+| High     | Payload built on non-canonical parent after forkchoice change  | Hardware lifecycle emitted payload/forkchoice failures                                                                              | payload arguments retained a stale prefinalization parent                              | Fixed `5e61927`; lifecycle passes 9/9                                              |
+| High     | Localnet full restart lost enclave state                       | all-enclave restart could not resume the active committee                                                                           | localnet script did not persist/seal TEE state                                         | Fixed `da03d06`; mock and hardware restart pass                                    |
+| High     | Stale compressed payload attempts could outlive canonical work | lifecycle tests exposed stale parent/readiness and retry races                                                                      | job cancellation and typed readiness propagation were incomplete                       | Fixed by `301b0e8`, `d267f65`, `0be40c6`, and `f787618`; regression suite passes   |
+| Medium   | DKG share disclosure in healthy logs                           | log audit found share material on a non-error path                                                                                  | diagnostic path logged more than operational state                                     | Fixed `26f78bd`; hardware audit count is zero                                      |
+| Medium   | Pending Tribute asserted before mining                         | reruns could report missing projection for a valid pending transaction                                                              | E2E assumed immediate inclusion                                                        | Fixed `ed7bd37`; receipt/projection wait is explicit                               |
+| Medium   | CLI panics for empty/short/long private key                    | `outbe-cli ... --private-key ''` reached GenericArray length assertion                                                              | decoded `Vec` was converted through a slice without validating length                  | Fixed `06994a9`; unit and binary invocation return error, exit 1                   |
+| Medium   | Fuzz target cannot run from its manifest                       | Cargo rejects the nested unlisted package; latest isolated parser is incompatible                                                   | missing isolated workspace marker and unpinned isolated graph                          | Fixed `47c99cb`; 9.7M iterations pass                                              |
+| Medium   | Governance live test votes outside its configured window       | Full mock E2E deterministically failed the governance scenario                                                                      | scenario timing was inconsistent with proposal parameters                              | Fixed `61feeb1`; focused feature passes twice                                      |
+| Medium   | Lifecycle E2E accepted submission without proving execution    | a rejected/reverted Tribute could leave the scenario green                                                                          | assertion stopped at transaction submission                                            | Fixed `3d29b72`; successful receipt is mandatory and lifecycle passes 9/9          |
+| Medium   | Intent ABI exports stale                                       | exact CI export changed Router and SolverEscrow ABIs                                                                                | committed exports were not refreshed with source changes                               | Fixed `b02326a`; regeneration is clean                                             |
+| High     | Prerelease Docker image did not build or launch                | bounded amd64 build failed on missing builder `libc++` and Solidity interfaces; first built image then lacked runtime `libc++.so.1` | Dockerfile dependencies and context contract were incomplete                           | Fixed by `282c292`, `80f56e4`, and `72e1370`; exact-candidate build and smoke pass |
 
 ## Residual dependency and tooling risks
 
@@ -243,7 +271,7 @@ The initial complete mock run passed 15 scenarios and failed the governance timi
 - `rsa 0.9.10`: RUSTSEC-2023-0071, timing side channel, no fixed release;
 - `tracing-subscriber 0.2.25`: RUSTSEC-2025-0055, ANSI log injection, upgrade available.
 
-Warnings include unmaintained `atomic-polyfill`, `bincode`, `derivative`, `paste`, and `proc-macro-error2`, plus unsound advisories for `anyhow 1.0.102`, `git2 0.20.4` (two), and `memmap2 0.9.10`. `cargo deny` additionally reports yanked transitive versions. Ownership and reachability must be assigned before release rather than suppressed globally.
+Warnings include unmaintained `atomic-polyfill`, `bincode`, `derivative`, `paste`, and `proc-macro-error2`, plus unsound advisories for `anyhow 1.0.102`, `git2 0.20.4` (two), and `memmap2 0.9.10`. `cargo deny` also reports yanked transitive versions. Ownership and reachability must be assigned before release rather than suppressed globally.
 
 Other explicit limitations:
 

@@ -3,6 +3,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 
+use alloy_primitives::Address;
 use cucumber::{then, when};
 use outbe_compressed_entities::{
     verify_point_read_v1, AbsentEvidenceV1, EntityId36, PointReadRequestV1, PointReadResultV1,
@@ -27,7 +28,7 @@ fn submit_one_offer(world: &mut World) {
     world.state.tribute_tx_hash = Some(tx_hash);
 }
 
-#[when("the operator submits a duplicate logical tribute offer for the same day")]
+#[when("the operator submits a duplicate logical tribute offer with different parameters for the same day")]
 fn submit_duplicate_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     let key = world
@@ -38,7 +39,10 @@ fn submit_duplicate_offer(world: &mut World) {
         .expect("validator-0 key");
     let tx_hash = world
         .rpc
-        .tribute_offer(&key, &wwd)
+        // The first offer uses amount=100 and exclude=false. Change both
+        // fields here: the second transaction must still collide because the
+        // canonical Tribute identity is `(owner, worldwide_day)`.
+        .tribute_offer_with_params(&key, &wwd, "777", 840, true)
         .expect("replayed offerTribute returned transaction hash");
     world.state.duplicate_tribute_tx_hash = Some(tx_hash);
 }
@@ -47,12 +51,15 @@ fn submit_duplicate_offer(world: &mut World) {
 fn successful_receipt_and_supply(world: &mut World) {
     let tx_hash = world.state.tribute_tx_hash.as_deref().expect("tribute tx");
     assert!(
-        world.rpc.wait_successful_receipt(tx_hash, 60),
+        world.rpc.wait_successful_receipt(tx_hash, 240),
         "tribute transaction did not produce a successful receipt: {tx_hash}"
     );
     let primary = world.validators.primary_port();
     for _ in 0..30 {
         if world.rpc.supply(primary).as_deref() == Some("1") {
+            world
+                .rpc
+                .trace_tribute_state(tx_hash, "state-visible", primary);
             return;
         }
         sleep(Duration::from_millis(500));
@@ -67,6 +74,15 @@ fn projection_parity(world: &mut World) {
         .mongodb
         .wait_for_tribute_projection(tx_hash, 60)
         .expect("all validator projection databases contain the same tribute");
+    world
+        .rpc
+        .trace_tribute_state(tx_hash, "mongo-visible", world.validators.primary_port());
+    world.state.tribute_projection_before_duplicate = Some(
+        world
+            .mongodb
+            .tribute_projection_snapshot(0, tx_hash)
+            .expect("capture exact Tribute projection before a duplicate offer"),
+    );
 }
 
 #[then("the duplicate is rejected without changing tribute state or projections")]
@@ -77,7 +93,7 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .as_deref()
         .expect("duplicate tribute tx");
     assert!(
-        world.rpc.wait_receipt_status(duplicate, false, 60),
+        world.rpc.wait_receipt_status(duplicate, false, 240),
         "duplicate tribute transaction did not produce a reverted receipt: {duplicate}"
     );
     let primary = world.validators.primary_port();
@@ -95,6 +111,64 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .mongodb
         .wait_for_tribute_projection(original, 1)
         .expect("duplicate offer changed or duplicated a validator projection");
+    let after = world
+        .mongodb
+        .tribute_projection_snapshot(0, original)
+        .expect("load exact Tribute projection after duplicate rejection");
+    assert_eq!(
+        Some(&after),
+        world.state.tribute_projection_before_duplicate.as_ref(),
+        "duplicate offer mutated the original primary or either secondary index"
+    );
+
+    let key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    let owner: Address = world
+        .rpc
+        .address_of(&key)
+        .expect("derive duplicate owner")
+        .parse()
+        .expect("parse duplicate owner");
+    let wwd: u32 = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("worldwide day")
+        .parse()
+        .expect("numeric worldwide day");
+    let expected_id = after.documents[0]
+        .get_str("_id")
+        .expect("projected primary _id");
+    let expected_id = hex::decode(expected_id).expect("hex projected primary _id");
+    let expected_ids = vec![alloy_primitives::Bytes::from(expected_id)];
+    for port in world.validators.committee_ports() {
+        let mut owner_ids = None;
+        let mut day_ids = None;
+        for _ in 0..60 {
+            owner_ids = world.rpc.tributes_by_owner(port, owner);
+            day_ids = world.rpc.tributes_by_day(port, wwd);
+            if owner_ids.is_some() && day_ids.is_some() {
+                break;
+            }
+            sleep(Duration::from_millis(500));
+        }
+        let owner_ids = owner_ids.expect("read owner Tribute index");
+        assert_eq!(
+            owner_ids.as_slice(),
+            expected_ids,
+            "duplicate changed the owner's single-Tribute index on port {port}"
+        );
+        let day_ids = day_ids.expect("read Worldwide-Day Tribute index");
+        assert_eq!(
+            day_ids.as_slice(),
+            expected_ids,
+            "duplicate added or replaced a Tribute in the day index on port {port}"
+        );
+    }
 }
 
 #[then("every validator serves the same independently verified compressed tribute")]

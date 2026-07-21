@@ -7,9 +7,10 @@
 
 ## Context
 
-An Outbe node is not only the `outbe-chain` process. A validator deployment combines
-Reth data, consensus state and keys, compressed-entity state, a finalized Mongo
-projection, optional enclave state, network/RPC/metrics listeners and monitoring. The
+An Outbe node deployment combines the `outbe-chain` process with its persistent
+state and supporting services. For a validator, these include Reth data, consensus
+state and keys, compressed-entity state, a finalized Mongo projection, optional
+enclave state, network/RPC/metrics listeners and monitoring. The
 repository currently exposes systemd units and environment examples, local testnet and
 Docker orchestration, Mongo replica-set bootstrap, `mise` tasks and operator guidance.
 Those surfaces collectively determine whether a node starts with one coherent identity,
@@ -51,22 +52,22 @@ The supported operational actions are distinct typed plans:
 
 The profile assigns one owner and recovery rule to each component:
 
-| Component | Required identity/ownership |
-|---|---|
-| Reth execution database | chain/genesis and node data directory |
-| Consensus store | chain, validator identity, committee/key epoch and monotonic progress |
-| Compressed-entity store | schema/root/checkpoint governed by ADR-B-OCD-014 and ADR-B-OCD-015 |
-| Mongo projection | chain and validator-specific logical database plus writer lease/fencing |
-| Signing/EVM keys | validator identity and permissioned secret reference |
-| Enclave sealed state | enclave identity, policy and key epoch |
-| Logs/metrics/checkpoints | deployment-profile digest and redacted node identity |
+| Component                | Required identity/ownership                                             |
+| ------------------------ | ----------------------------------------------------------------------- |
+| Reth execution database  | chain/genesis and node data directory                                   |
+| Consensus store          | chain, validator identity, committee/key epoch and monotonic progress   |
+| Compressed-entity store  | schema/root/checkpoint governed by ADR-B-OCD-014 and ADR-B-OCD-015      |
+| Mongo projection         | chain and validator-specific logical database plus writer lease/fencing |
+| Signing/EVM keys         | validator identity and permissioned secret reference                    |
+| Enclave sealed state     | enclave identity, policy and key epoch                                  |
+| Logs/metrics/checkpoints | deployment-profile digest and redacted node identity                    |
 
 One Mongo server or replica set may host several validators in local or controlled
 environments, but validators never share one logical projection database. Each validator
 uses a distinct database namespace and independent writer lease/fencing identity. Resource,
 backup and failure-domain analysis must account for the shared physical service.
 
-Full-node/follower and validator profiles are separate. A validator profile additionally
+Full-node/follower and validator profiles are separate. A validator profile
 requires consensus listener/storage, signing and EVM identities, enclave/key readiness and
 eligibility/voting gates. Sidecars such as Mongo, an enclave service or monitoring are
 explicit dependencies with health contracts, not hidden assumptions.

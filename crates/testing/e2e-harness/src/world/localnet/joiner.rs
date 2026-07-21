@@ -15,6 +15,7 @@ use crate::internal::{
     eth::{self, IValidatorSet},
     proc::{
         self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed, wait_tcp,
+        SealSpec,
     },
     shell::Sh,
 };
@@ -56,21 +57,50 @@ impl Localnet {
         .ok_or_else(|| eyre!("no registration signature from keygen"))?;
         fs::write(vd.join("reth-p2p-secret.hex"), random_hex_32()?)?;
 
-        // Fund from validator-0, register, and publish the p2p address.
+        // Fund from validator-0, prove that an unrelated EOA cannot register
+        // this validator identity, then self-register and publish the P2P
+        // address. The rejected call uses the joiner's otherwise-valid BLS
+        // binding, isolating caller authorization from proof validation.
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::ether(2000))?;
-        eth::send_call(
+        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
+        let registration = IValidatorSet::registerValidatorCall {
+            v: addr,
+            pubkey: Bytes::from(hex::decode(&bls)?),
+            sig: Bytes::from(hex::decode(&sig)?),
+        };
+        let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
+        let unauthorized = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            &unrelated,
+            &registration,
+            None,
+        );
+        match unauthorized {
+            Err(error) if error.to_string().contains("unauthorized") => {}
+            Ok(tx) if eth::receipt_success(&self.cfg.rpc0, &tx) == Some(false) => {}
+            Err(error) => {
+                return Err(eyre!(
+                    "unexpected unrelated-EOA registration error for {addr:#x}: {error}"
+                ));
+            }
+            Ok(tx) => {
+                return Err(eyre!(
+                    "unrelated EOA unexpectedly registered joiner {addr:#x}: {tx}"
+                ));
+            }
+        }
+        let register_tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             &key,
-            &IValidatorSet::registerValidatorCall {
-                v: addr,
-                pubkey: Bytes::from(hex::decode(&bls)?),
-                sig: Bytes::from(hex::decode(&sig)?),
-            },
+            &registration,
             None,
         )?;
-        eth::send_call(
+        if eth::receipt_success(&self.cfg.rpc0, &register_tx) != Some(true) {
+            return Err(eyre!("joiner registration failed: {register_tx}"));
+        }
+        let p2p_tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             &key,
@@ -81,9 +111,40 @@ impl Localnet {
             },
             None,
         )?;
+        if eth::receipt_success(&self.cfg.rpc0, &p2p_tx) != Some(true) {
+            return Err(eyre!("joiner P2P registration failed: {p2p_tx}"));
+        }
 
         // Enclave container (owned foreground, no `-d`), then `tee join` once its
         // socket is up.
+        self.start_joiner_enclave(index)?;
+        let port = self.cfg.tee_port(index);
+        let sock = format!("127.0.0.1:{port}");
+        let _ = Sh::new(&self.cfg).cli([
+            "tee",
+            "join",
+            "--enclave-socket",
+            &sock,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            &key,
+            "--timeout-secs",
+            "60",
+        ]);
+        Ok(())
+    }
+
+    /// Restart a joiner's enclave from its existing writable TEE directory.
+    /// On hardware SGX this exercises EGETKEY unsealing rather than provisioning
+    /// fresh join material.
+    pub fn restart_joiner_enclave(&mut self, index: usize) -> Result<()> {
+        self.enclaves.remove(&index);
+        self.start_joiner_enclave(index)
+    }
+
+    fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
         proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo)?;
         let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
@@ -99,27 +160,18 @@ impl Localnet {
             sudo: self.cfg.sudo,
             mock,
             dkg_seed: mock.then(|| format!("{:064x}", index + 1)),
-            seal: None,
+            seal: Some(SealSpec {
+                tee_dir: vd.join("tee"),
+                chain_id_hex: self.chain_id_hex()?,
+            }),
             log_path: vd.join("enclave.log"),
             debug: self.cfg.debug,
         })?;
         self.enclaves.insert(index, guard);
         if !wait_tcp(port, 100) {
+            self.enclaves.remove(&index);
             return Err(eyre!("enclave socket 127.0.0.1:{port} never came up"));
         }
-        let sock = format!("127.0.0.1:{port}");
-        let _ = Sh::new(&self.cfg).cli([
-            "tee",
-            "join",
-            "--enclave-socket",
-            &sock,
-            "--rpc-url",
-            self.cfg.rpc0.as_str(),
-            "--private-key",
-            &key,
-            "--timeout-secs",
-            "60",
-        ]);
         Ok(())
     }
 
@@ -157,6 +209,7 @@ impl Localnet {
             "--consensus.dkg-output",
             dkg_output.display(),
         ]);
+        self.extend_real_sgx_startup_timeout(&mut a);
         a.extend(extra.iter().map(|s| s.to_string()));
 
         let mut cmd = Command::new(&self.cfg.bin_chain);

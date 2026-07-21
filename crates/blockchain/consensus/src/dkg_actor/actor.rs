@@ -27,10 +27,11 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use alloy_primitives::{keccak256, Bytes, B256};
-use commonware_codec::{Encode, Read as _};
+use commonware_codec::{Encode, Read as _, ReadExt as _};
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{
@@ -47,6 +48,7 @@ use commonware_utils::{
     N3f1,
 };
 use eyre::Result;
+use rand_core::{RngCore, SeedableRng};
 // Intentionally `tokio::sync::mpsc`: `progress_tx` / `finalized_log_rx` are created
 // cross-crate by `outbe-engine` (`crates/blockchain/engine/src/stack.rs`) and have no
 // timer/spawn dependency, so they are runtime-agnostic and do not require the tokio
@@ -55,6 +57,171 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use super::wire::{DkgCeremonyId, DkgMessage, DkgMessageReadError, DkgWireConfig};
+
+const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
+const DKG_DEALER_RETRY_MAGIC: &[u8; 8] = b"ODKGDR01";
+const DKG_DEALER_RETRY_HEADER_LEN: usize = 8 + 8 + 32 + 32 + 4;
+
+#[derive(Clone, Debug)]
+struct DkgDealerRetrySnapshot {
+    ceremony_id: DkgCeremonyId,
+    seed: [u8; 32],
+    accepted_acks: BTreeMap<bls12381::PublicKey, PlayerAck<bls12381::PublicKey>>,
+}
+
+/// Durable seed for reconstructing the exact same local dealer transcript after
+/// a process restart. The seed is secret key material and therefore uses the
+/// configured BLS key backend rather than an ordinary state file.
+#[derive(Clone, Debug)]
+pub struct DkgDealerRetryStore {
+    path: PathBuf,
+    backend: crate::bls::KeyBackend,
+}
+
+impl DkgDealerRetryStore {
+    #[must_use]
+    pub fn in_keys_dir(keys_dir: &Path, backend: crate::bls::KeyBackend) -> Self {
+        Self {
+            path: keys_dir.join(DKG_DEALER_RETRY_FILE),
+            backend,
+        }
+    }
+
+    fn load(&self, ceremony_id: DkgCeremonyId) -> Result<Option<DkgDealerRetrySnapshot>> {
+        if !self.path.exists() {
+            return Ok(None);
+        }
+        let bytes = crate::bls::load_raw(&self.path, &self.backend)
+            .map_err(|error| eyre::eyre!("failed to load DKG dealer retry snapshot: {error}"))?;
+        let snapshot = decode_dealer_retry_snapshot(&bytes)?;
+        if snapshot.ceremony_id == ceremony_id {
+            Ok(Some(snapshot))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn save(&self, snapshot: &DkgDealerRetrySnapshot) -> Result<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                eyre::eyre!(
+                    "failed to create DKG dealer retry directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        crate::bls::save_raw(
+            &self.path,
+            &encode_dealer_retry_snapshot(snapshot)?,
+            &self.backend,
+        )
+        .map_err(|error| eyre::eyre!("failed to persist DKG dealer retry snapshot: {error}"))
+    }
+
+    /// Remove the dealer transcript only after the matching DKG output has been
+    /// durably promoted at its canonical activation boundary.
+    pub fn clear(&self) -> Result<()> {
+        crate::bls::remove_raw(&self.path, &self.backend)
+            .map_err(|error| eyre::eyre!("failed to clear DKG dealer retry snapshot: {error}"))
+    }
+}
+
+fn encode_dealer_retry_snapshot(snapshot: &DkgDealerRetrySnapshot) -> Result<Vec<u8>> {
+    let ack_count: u32 = snapshot
+        .accepted_acks
+        .len()
+        .try_into()
+        .map_err(|_| eyre::eyre!("too many DKG dealer retry ACKs"))?;
+    let mut bytes = Vec::with_capacity(DKG_DEALER_RETRY_HEADER_LEN);
+    bytes.extend_from_slice(DKG_DEALER_RETRY_MAGIC);
+    bytes.extend_from_slice(&snapshot.ceremony_id.round.to_be_bytes());
+    bytes.extend_from_slice(snapshot.ceremony_id.info_hash.as_slice());
+    bytes.extend_from_slice(&snapshot.seed);
+    bytes.extend_from_slice(&ack_count.to_be_bytes());
+    for (player, ack) in &snapshot.accepted_acks {
+        let player = player.encode();
+        let ack = ack.encode();
+        let player_len: u32 = player.len().try_into()?;
+        let ack_len: u32 = ack.len().try_into()?;
+        bytes.extend_from_slice(&player_len.to_be_bytes());
+        bytes.extend_from_slice(&player);
+        bytes.extend_from_slice(&ack_len.to_be_bytes());
+        bytes.extend_from_slice(&ack);
+    }
+    Ok(bytes)
+}
+
+fn decode_dealer_retry_snapshot(bytes: &[u8]) -> Result<DkgDealerRetrySnapshot> {
+    if bytes.len() < DKG_DEALER_RETRY_HEADER_LEN {
+        return Err(eyre::eyre!(
+            "invalid DKG dealer retry snapshot length: expected at least {DKG_DEALER_RETRY_HEADER_LEN}, got {}",
+            bytes.len()
+        ));
+    }
+    if &bytes[..DKG_DEALER_RETRY_MAGIC.len()] != DKG_DEALER_RETRY_MAGIC {
+        return Err(eyre::eyre!("invalid DKG dealer retry snapshot magic"));
+    }
+    let round = u64::from_be_bytes(bytes[8..16].try_into()?);
+    let info_hash = B256::from(<[u8; 32]>::try_from(&bytes[16..48])?);
+    let seed = <[u8; 32]>::try_from(&bytes[48..80])?;
+    let ack_count = u32::from_be_bytes(bytes[80..84].try_into()?);
+    if ack_count > crate::bls::MAX_VALIDATORS {
+        return Err(eyre::eyre!(
+            "DKG dealer retry snapshot ACK count {ack_count} exceeds validator limit"
+        ));
+    }
+    let mut cursor = 84usize;
+    let mut accepted_acks = BTreeMap::new();
+    for _ in 0..ack_count {
+        let player_bytes = take_retry_snapshot_field(bytes, &mut cursor, "player")?;
+        let ack_bytes = take_retry_snapshot_field(bytes, &mut cursor, "ACK")?;
+        let mut player_reader = player_bytes;
+        let player = bls12381::PublicKey::read(&mut player_reader)
+            .map_err(|error| eyre::eyre!("invalid DKG retry player key: {error}"))?;
+        if !player_reader.is_empty() {
+            return Err(eyre::eyre!("trailing bytes in DKG retry player key"));
+        }
+        let mut ack_reader = ack_bytes;
+        let ack = PlayerAck::<bls12381::PublicKey>::read(&mut ack_reader)
+            .map_err(|error| eyre::eyre!("invalid DKG retry ACK: {error}"))?;
+        if !ack_reader.is_empty() {
+            return Err(eyre::eyre!("trailing bytes in DKG retry ACK"));
+        }
+        if accepted_acks.insert(player, ack).is_some() {
+            return Err(eyre::eyre!("duplicate player in DKG retry snapshot"));
+        }
+    }
+    if cursor != bytes.len() {
+        return Err(eyre::eyre!("trailing bytes in DKG dealer retry snapshot"));
+    }
+    Ok(DkgDealerRetrySnapshot {
+        ceremony_id: DkgCeremonyId { round, info_hash },
+        seed,
+        accepted_acks,
+    })
+}
+
+fn take_retry_snapshot_field<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    field: &str,
+) -> Result<&'a [u8]> {
+    let len_end = cursor
+        .checked_add(4)
+        .ok_or_else(|| eyre::eyre!("DKG retry {field} length overflow"))?;
+    let len_bytes = bytes
+        .get(*cursor..len_end)
+        .ok_or_else(|| eyre::eyre!("truncated DKG retry {field} length"))?;
+    let len = u32::from_be_bytes(len_bytes.try_into()?) as usize;
+    let value_end = len_end
+        .checked_add(len)
+        .ok_or_else(|| eyre::eyre!("DKG retry {field} value overflow"))?;
+    let value = bytes
+        .get(len_end..value_end)
+        .ok_or_else(|| eyre::eyre!("truncated DKG retry {field} value"))?;
+    *cursor = value_end;
+    Ok(value)
+}
 
 /// Result of a successful DKG ceremony.
 #[derive(Clone, Debug)]
@@ -103,16 +270,17 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Once a dealer has the Byzantine-liveness quorum, briefly keep accepting ACKs
-/// from the remaining online players before sealing its log. Feldman-Desmedt
-/// deliberately publishes the evaluations of non-acking players; finalizing at
-/// the first `2f+1` therefore turns ordinary message skew into a permanent share
-/// disclosure. The grace preserves offline-player liveness while avoiding that
-/// disclosure on a healthy network.
+/// Once a dealer has the Byzantine-liveness quorum, keep accepting ACKs through
+/// a bounded node+enclave restart window before sealing its log.
+/// Feldman-Desmedt deliberately publishes the evaluations of non-acking players;
+/// ending grace before a healthy SGX node can restart can therefore turn a
+/// recoverable crash into permanent share disclosure. Healthy ceremonies still
+/// finalize immediately once every player ACKs; this longer bound affects only
+/// missing-player recovery and remains below the configured prepare window.
 #[cfg(not(test))]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(5);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_secs(30);
 #[cfg(test)]
-const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(100);
+const ACK_COLLECTION_GRACE: Duration = Duration::from_millis(450);
 
 /// Initial bootstrap has no chain carrier yet, so nodes that already collected
 /// all genesis logs keep gossiping them briefly before returning threshold
@@ -171,6 +339,41 @@ pub async fn run_initial_dkg(
     round: u64,
     progress_tx: Option<mpsc::UnboundedSender<DkgProgress>>,
     finalized_log_rx: Option<mpsc::UnboundedReceiver<Bytes>>,
+    sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
+    receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+) -> Result<DkgComplete> {
+    run_initial_dkg_durable(
+        clock,
+        signing_key,
+        participants,
+        previous_output,
+        previous_share,
+        round,
+        progress_tx,
+        finalized_log_rx,
+        None,
+        sender,
+        receiver,
+    )
+    .await
+}
+
+/// Run a DKG ceremony with optional durable local-dealer transcript recovery.
+///
+/// When a store is supplied, the dealer seed is persisted before any bundle is
+/// sent. A restarted process reconstructs byte-identical bundles and safely
+/// retries them; players' duplicate-bundle ACK cache makes the replay idempotent.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_initial_dkg_durable(
+    clock: &impl Clock,
+    signing_key: bls12381::PrivateKey,
+    participants: Set<bls12381::PublicKey>,
+    previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    previous_share: Option<Share>,
+    round: u64,
+    progress_tx: Option<mpsc::UnboundedSender<DkgProgress>>,
+    finalized_log_rx: Option<mpsc::UnboundedReceiver<Bytes>>,
+    retry_store: Option<DkgDealerRetryStore>,
     mut sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     mut receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
 ) -> Result<DkgComplete> {
@@ -221,12 +424,51 @@ pub async fn run_initial_dkg(
     )
     .map_err(|e| eyre::eyre!("failed to create DKG info: {e:?}"))?;
 
+    let mut dealer_retry_snapshot = if is_local_dealer {
+        let snapshot = match retry_store.as_ref() {
+            Some(store) => match store.load(ceremony_id)? {
+                Some(snapshot) => {
+                    info!(round, "restoring durable DKG dealer transcript");
+                    snapshot
+                }
+                None => {
+                    let mut seed = [0u8; 32];
+                    rand_core::OsRng.fill_bytes(&mut seed);
+                    // Persist before the first network-visible dealer message.
+                    let snapshot = DkgDealerRetrySnapshot {
+                        ceremony_id,
+                        seed,
+                        accepted_acks: BTreeMap::new(),
+                    };
+                    store.save(&snapshot)?;
+                    snapshot
+                }
+            },
+            None => {
+                let mut seed = [0u8; 32];
+                rand_core::OsRng.fill_bytes(&mut seed);
+                DkgDealerRetrySnapshot {
+                    ceremony_id,
+                    seed,
+                    accepted_acks: BTreeMap::new(),
+                }
+            }
+        };
+        Some(snapshot)
+    } else {
+        None
+    };
+
     // Old share holders are dealers in a reshare. New validators are
     // players only until they receive a fresh threshold share.
     let (mut dealer, my_pub_msg, priv_msgs) = if is_local_dealer {
+        let dealer_seed = dealer_retry_snapshot
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("local dealer retry snapshot was not initialized"))?
+            .seed;
         let (dealer, my_pub_msg, priv_msgs) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_core::OsRng,
+                rand_chacha::ChaCha20Rng::from_seed(dealer_seed),
                 info.clone(),
                 signing_key.clone(),
                 previous_share,
@@ -259,17 +501,45 @@ pub async fn run_initial_dkg(
     if let (Some(my_pub_msg), Some(my_priv_msg)) =
         (my_pub_msg.as_ref(), unsent_shares.remove(&my_pk))
     {
-        if let Some(ack) =
+        if let Some(generated_ack) =
             player.dealer_message::<N3f1>(my_pk.clone(), my_pub_msg.clone(), my_priv_msg)
         {
             if let Some(ref mut d) = dealer {
+                let recovered_ack = dealer_retry_snapshot
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.accepted_acks.get(&my_pk))
+                    .cloned();
+                let is_recovered = recovered_ack.is_some();
+                let ack = recovered_ack.unwrap_or_else(|| generated_ack.clone());
                 d.receive_player_ack(my_pk.clone(), ack)
                     .map_err(|e| eyre::eyre!("failed to process self-ack: {e:?}"))?;
                 acked_players.insert(my_pk.clone());
+                if !is_recovered {
+                    if let Some(snapshot) = dealer_retry_snapshot.as_mut() {
+                        snapshot.accepted_acks.insert(my_pk.clone(), generated_ack);
+                        if let Some(store) = retry_store.as_ref() {
+                            store.save(snapshot)?;
+                        }
+                    }
+                }
             }
             debug!("self-dealing complete");
         } else {
             warn!("self-dealing validation failed");
+        }
+    }
+
+    // Rehydrate accepted remote ACKs before the first retry so a restarted
+    // dealer immediately targets only players that still owe an ACK.
+    if let (Some(d), Some(snapshot)) = (dealer.as_mut(), dealer_retry_snapshot.as_ref()) {
+        for (player_pk, ack) in &snapshot.accepted_acks {
+            if player_pk == &my_pk {
+                continue;
+            }
+            d.receive_player_ack(player_pk.clone(), ack.clone())
+                .map_err(|error| eyre::eyre!("failed to replay durable DKG ACK: {error:?}"))?;
+            unsent_shares.remove(player_pk);
+            acked_players.insert(player_pk.clone());
         }
     }
 
@@ -389,9 +659,17 @@ pub async fn run_initial_dkg(
                         // We are a Dealer receiving an ack from a Player.
                         // Only count unique acks per player.
                         if let Some(ref mut d) = dealer {
-                            match d.receive_player_ack(from.clone(), ack) {
+                            match d.receive_player_ack(from.clone(), ack.clone()) {
                                 Ok(()) => {
                                     let is_new_ack = acked_players.insert(from.clone());
+                                    if is_new_ack {
+                                        if let Some(snapshot) = dealer_retry_snapshot.as_mut() {
+                                            snapshot.accepted_acks.insert(from.clone(), ack);
+                                            if let Some(store) = retry_store.as_ref() {
+                                                store.save(snapshot)?;
+                                            }
+                                        }
+                                    }
                                     unsent_shares.remove(&from);
                                     let acks_received = acked_players.len();
                                     debug!(
@@ -603,7 +881,16 @@ pub async fn run_initial_dkg(
             }
         }
 
-        if dealer.is_none() && finalized_logs.len() as u32 >= log_threshold {
+        // Once the finalized chain carries a reconstructable threshold, an
+        // interrupted local dealer must not hold recovery hostage waiting for
+        // ACKs from peers that have already completed this ceremony. The
+        // canonical logs are the decision; player finalization below either
+        // recovers this node's share from them or safely yields a verifier-only
+        // outcome until the next scheduled rotation. Bootstrap still requires
+        // the local dealer to finish because it has no chain-finalized carrier.
+        if (chain_finalized_mode || dealer.is_none())
+            && finalized_logs.len() as u32 >= log_threshold
+        {
             if chain_finalized_mode {
                 // C1: do NOT complete on a RAW 2f+1 count. A byzantine dealer can
                 // chain-finalize a signed-but-content-garbage log (passes the
@@ -765,6 +1052,34 @@ pub async fn run_reshare_dealer_only(
     previous_share: Share,
     round: u64,
     progress_tx: mpsc::UnboundedSender<DkgProgress>,
+    sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
+    receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
+) -> Result<DkgDealerOnlyComplete> {
+    run_reshare_dealer_only_durable(
+        clock,
+        signing_key,
+        participants,
+        previous_output,
+        previous_share,
+        round,
+        progress_tx,
+        None,
+        sender,
+        receiver,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_reshare_dealer_only_durable(
+    clock: &impl Clock,
+    signing_key: bls12381::PrivateKey,
+    participants: Set<bls12381::PublicKey>,
+    previous_output: Output<MinSig, bls12381::PublicKey>,
+    previous_share: Share,
+    round: u64,
+    progress_tx: mpsc::UnboundedSender<DkgProgress>,
+    retry_store: Option<DkgDealerRetryStore>,
     mut sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     mut receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
 ) -> Result<DkgDealerOnlyComplete> {
@@ -794,15 +1109,6 @@ pub async fn run_reshare_dealer_only(
     )
     .map_err(|e| eyre::eyre!("failed to create dealer-only DKG info: {e:?}"))?;
 
-    let (mut dealer, my_pub_msg, priv_msgs) =
-        Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-            rand_core::OsRng,
-            info.clone(),
-            signing_key,
-            Some(previous_share),
-        )
-        .map_err(|e| eyre::eyre!("failed to start dealer-only DKG dealer: {e:?}"))?;
-
     let max_players = NonZeroU32::new(participants.len() as u32)
         .ok_or_else(|| eyre::eyre!("dealer-only DKG requires at least one target player"))?;
     let ceremony_id = DkgCeremonyId::new(
@@ -811,6 +1117,45 @@ pub async fn run_reshare_dealer_only(
         Some(&previous_output_for_id),
         &participants,
     );
+
+    let mut dealer_retry_snapshot = match retry_store.as_ref() {
+        Some(store) => match store.load(ceremony_id)? {
+            Some(snapshot) => {
+                info!(round, "restoring durable dealer-only DKG transcript");
+                snapshot
+            }
+            None => {
+                let mut seed = [0u8; 32];
+                rand_core::OsRng.fill_bytes(&mut seed);
+                let snapshot = DkgDealerRetrySnapshot {
+                    ceremony_id,
+                    seed,
+                    accepted_acks: BTreeMap::new(),
+                };
+                store.save(&snapshot)?;
+                snapshot
+            }
+        },
+        None => {
+            let mut seed = [0u8; 32];
+            rand_core::OsRng.fill_bytes(&mut seed);
+            DkgDealerRetrySnapshot {
+                ceremony_id,
+                seed,
+                accepted_acks: BTreeMap::new(),
+            }
+        }
+    };
+
+    let (mut dealer, my_pub_msg, priv_msgs) =
+        Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+            rand_chacha::ChaCha20Rng::from_seed(dealer_retry_snapshot.seed),
+            info.clone(),
+            signing_key,
+            Some(previous_share),
+        )
+        .map_err(|e| eyre::eyre!("failed to start dealer-only DKG dealer: {e:?}"))?;
+
     let wire_cfg = DkgWireConfig {
         max_players,
         expected_ceremony_id: ceremony_id,
@@ -819,6 +1164,13 @@ pub async fn run_reshare_dealer_only(
     let mut unsent_shares: BTreeMap<bls12381::PublicKey, _> = priv_msgs.into_iter().collect();
     let mut acked_players: std::collections::BTreeSet<bls12381::PublicKey> =
         std::collections::BTreeSet::new();
+    for (player_pk, ack) in &dealer_retry_snapshot.accepted_acks {
+        dealer
+            .receive_player_ack(player_pk.clone(), ack.clone())
+            .map_err(|error| eyre::eyre!("failed to replay durable dealer-only ACK: {error:?}"))?;
+        unsent_shares.remove(player_pk);
+        acked_players.insert(player_pk.clone());
+    }
     send_shares(&mut sender, ceremony_id, &my_pub_msg, &unsent_shares).await;
 
     // Same runtime-agnostic deadline + interval-cadence retry tick as
@@ -857,9 +1209,17 @@ pub async fn run_reshare_dealer_only(
 
                 match msg {
                     DkgMessage::Ack { ack, .. } => {
-                        match dealer.receive_player_ack(from.clone(), ack) {
+                        match dealer.receive_player_ack(from.clone(), ack.clone()) {
                             Ok(()) => {
                                 let is_new_ack = acked_players.insert(from.clone());
+                                if is_new_ack {
+                                    dealer_retry_snapshot
+                                        .accepted_acks
+                                        .insert(from.clone(), ack);
+                                    if let Some(store) = retry_store.as_ref() {
+                                        store.save(&dealer_retry_snapshot)?;
+                                    }
+                                }
                                 unsent_shares.remove(&from);
                                 debug!(
                                     ?from,
@@ -1217,13 +1577,15 @@ mod tests {
         drop_rule: Option<DropRule>,
     }
 
-    type DropRule = Arc<Mutex<DropFinalizedLogOnce>>;
+    type DropRule = Arc<Mutex<DropMessages>>;
 
     #[derive(Debug)]
-    struct DropFinalizedLogOnce {
-        from: bls12381::PublicKey,
+    struct DropMessages {
+        from: Option<bls12381::PublicKey>,
         to: bls12381::PublicKey,
-        dropped: bool,
+        tag: u8,
+        remaining: usize,
+        dropped: usize,
     }
 
     /// Checked sender returned by MockSender::check().
@@ -1256,7 +1618,7 @@ mod tests {
         ) -> commonware_actor::Unreliable<commonware_actor::Feedback> {
             let data: IoBuf = message.into().coalesce();
             for target in self.recipients() {
-                if should_drop_finalized_log_once(
+                if should_drop_message_once(
                     &self.sender.drop_rule,
                     &self.sender.my_pk,
                     &target,
@@ -1435,7 +1797,7 @@ mod tests {
         (participants, output.unwrap(), shares)
     }
 
-    fn should_drop_finalized_log_once(
+    fn should_drop_message_once(
         drop_rule: &Option<DropRule>,
         from: &bls12381::PublicKey,
         to: &bls12381::PublicKey,
@@ -1447,16 +1809,18 @@ mod tests {
         let Some(tag) = payload.get(1 + std::mem::size_of::<u64>() + B256::len_bytes()) else {
             return false;
         };
-        if *tag != 0x02 {
-            return false;
-        }
         let Ok(mut rule) = drop_rule.lock() else {
             return false;
         };
-        if rule.dropped || &rule.from != from || &rule.to != to {
+        if rule.remaining == 0
+            || rule.tag != *tag
+            || rule.from.as_ref().is_some_and(|expected| expected != from)
+            || &rule.to != to
+        {
             return false;
         }
-        rule.dropped = true;
+        rule.remaining -= 1;
+        rule.dropped += 1;
         true
     }
 
@@ -1620,10 +1984,12 @@ mod tests {
                     .try_collect::<Set<bls12381::PublicKey>>()
                     .unwrap();
 
-                let drop_rule = Arc::new(Mutex::new(DropFinalizedLogOnce {
-                    from: keys[0].public_key(),
+                let drop_rule = Arc::new(Mutex::new(DropMessages {
+                    from: Some(keys[0].public_key()),
                     to: keys[1].public_key(),
-                    dropped: false,
+                    tag: 0x02,
+                    remaining: 1,
+                    dropped: 0,
                 }));
                 let (senders, receivers) =
                     build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
@@ -1655,7 +2021,7 @@ mod tests {
                 }
 
                 assert!(
-                    drop_rule.lock().expect("drop rule lock").dropped,
+                    drop_rule.lock().expect("drop rule lock").dropped == 1,
                     "test must drop the first finalized log to exercise retry gossip"
                 );
 
@@ -1788,6 +2154,114 @@ mod tests {
                         .iter()
                         .any(|result| result.participants.position(&new_pk).is_some()),
                     "new player must be part of the reshared participant set"
+                );
+            });
+    }
+
+    #[test]
+    fn reshare_retry_gives_online_player_time_to_ack_before_dealer_finalizes() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(std::time::Duration::from_secs(600))
+            .start(|context| async move {
+                let mut keys: Vec<bls12381::PrivateKey> =
+                    (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+                keys.sort_by_key(|key| key.public_key().encode());
+                let (participants, previous_output, previous_shares) =
+                    run_direct_initial_round(&keys);
+                let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+                    &crate::config::outbe_app_namespace(),
+                    1,
+                    Some(previous_output.clone()),
+                    Mode::NonZeroCounter,
+                    participants.clone(),
+                    participants.clone(),
+                )
+                .unwrap();
+                let max_players = NonZeroU32::new(participants.len() as u32).unwrap();
+
+                // Model a healthy player that disappears long enough for a real
+                // node+enclave restart, then reconnects while the ceremony is still
+                // recoverable.  Three complete retry rounds are dropped; the next
+                // retry must still arrive before each dealer seals its log, otherwise
+                // Feldman-Desmedt permanently publishes that player's share.
+                let drop_rule = Arc::new(Mutex::new(DropMessages {
+                    from: None,
+                    to: keys[1].public_key(),
+                    tag: 0x00,
+                    remaining: 12,
+                    dropped: 0,
+                }));
+                let (senders, receivers) =
+                    build_mock_network_with_drop(&keys, Some(drop_rule.clone()));
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                let mut finalized_log_txs = Vec::new();
+                let mut handles = Vec::new();
+
+                for (idx, ((key, sender), receiver)) in
+                    keys.iter().cloned().zip(senders).zip(receivers).enumerate()
+                {
+                    let participant_set = participants.clone();
+                    let prev_output = previous_output.clone();
+                    let prev_share = previous_shares[idx].clone();
+                    let progress_tx = progress_tx.clone();
+                    let (finalized_log_tx, finalized_log_rx) = mpsc::unbounded_channel();
+                    finalized_log_txs.push(finalized_log_tx);
+                    handles.push(
+                        context
+                            .child("dkg_ceremony")
+                            .spawn(move |clock| async move {
+                                run_initial_dkg(
+                                    &clock,
+                                    key,
+                                    participant_set,
+                                    Some(prev_output),
+                                    Some(prev_share),
+                                    1,
+                                    Some(progress_tx),
+                                    Some(finalized_log_rx),
+                                    sender,
+                                    receiver,
+                                )
+                                .await
+                            }),
+                    );
+                }
+                drop(progress_tx);
+
+                let mut chain_logs = BTreeMap::new();
+                while chain_logs.len() < participants.len() {
+                    let progress = progress_rx
+                        .recv()
+                        .await
+                        .expect("progress channel should remain open");
+                    if let DkgProgress::LocalDealerLog(bytes) = progress {
+                        let mut reader = bytes.as_ref();
+                        let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+                            &mut reader,
+                            &max_players,
+                        )
+                        .unwrap();
+                        let (dealer, _log) = signed_log.check(&info).unwrap();
+                        chain_logs.entry(dealer).or_insert(bytes);
+                    }
+                }
+                for bytes in chain_logs.values() {
+                    for tx in &finalized_log_txs {
+                        tx.send(bytes.clone()).unwrap();
+                    }
+                }
+
+                for handle in handles {
+                    let result = handle.await.unwrap().unwrap();
+                    assert!(
+                        result.output.revealed().is_empty(),
+                        "an online player that ACKs the retry must not have its share revealed"
+                    );
+                }
+                assert_eq!(
+                    drop_rule.lock().expect("drop rule lock").dropped,
+                    12,
+                    "test must delay every remote dealer through three retries"
                 );
             });
     }
@@ -2286,6 +2760,124 @@ mod tests {
 
         // Starts at 0 (not 1 as the old code had)
         assert_eq!(acked_players.len(), 0, "acked_players must start empty");
+    }
+
+    #[test]
+    fn dealer_retry_snapshot_round_trips_and_is_ceremony_scoped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = DkgDealerRetryStore::in_keys_dir(dir.path(), crate::bls::KeyBackend::Plaintext);
+        let ceremony = DkgCeremonyId {
+            round: 7,
+            info_hash: B256::repeat_byte(0x42),
+        };
+        let seed = [0x5a; 32];
+
+        assert!(store.load(ceremony).unwrap().is_none());
+        let snapshot = DkgDealerRetrySnapshot {
+            ceremony_id: ceremony,
+            seed,
+            accepted_acks: BTreeMap::new(),
+        };
+        store.save(&snapshot).unwrap();
+        let recovered = store.load(ceremony).unwrap().unwrap();
+        assert_eq!(recovered.seed, seed);
+        assert!(recovered.accepted_acks.is_empty());
+        assert!(store
+            .load(DkgCeremonyId {
+                round: 8,
+                info_hash: ceremony.info_hash,
+            })
+            .unwrap()
+            .is_none());
+
+        store.clear().unwrap();
+        assert!(store.load(ceremony).unwrap().is_none());
+    }
+
+    #[test]
+    fn recovered_seed_reconstructs_identical_dealer_transcript() {
+        let mut keys: Vec<bls12381::PrivateKey> =
+            (30..33).map(bls12381::PrivateKey::from_seed).collect();
+        keys.sort_by_key(|key| key.public_key().encode());
+        let participants: Set<bls12381::PublicKey> = keys
+            .iter()
+            .map(|key| key.public_key())
+            .try_collect()
+            .unwrap();
+        let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+            &crate::config::outbe_app_namespace(),
+            0,
+            None,
+            Mode::NonZeroCounter,
+            participants.clone(),
+            participants,
+        )
+        .unwrap();
+        let seed = [0x33; 32];
+
+        let (_, first_pub, first_priv) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+            rand_chacha::ChaCha20Rng::from_seed(seed),
+            info.clone(),
+            keys[0].clone(),
+            None,
+        )
+        .unwrap();
+        let (mut recovered_dealer, recovered_pub, recovered_priv) =
+            Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+                rand_chacha::ChaCha20Rng::from_seed(seed),
+                info.clone(),
+                keys[0].clone(),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(first_pub.encode(), recovered_pub.encode());
+        let first_priv_for_ack = first_priv.clone();
+        let recovered_priv_for_retry = recovered_priv.clone();
+        let first_priv: Vec<_> = first_priv
+            .into_iter()
+            .map(|(pk, msg)| (pk.encode(), msg.encode()))
+            .collect();
+        let recovered_priv: Vec<_> = recovered_priv
+            .into_iter()
+            .map(|(pk, msg)| (pk.encode(), msg.encode()))
+            .collect();
+        assert_eq!(first_priv, recovered_priv);
+
+        let player_pk = keys[1].public_key();
+        let priv_msg = first_priv_for_ack
+            .into_iter()
+            .find(|(pk, _)| pk == &player_pk)
+            .unwrap()
+            .1;
+        let mut player =
+            Player::<MinSig, bls12381::PrivateKey>::new(info, keys[1].clone()).unwrap();
+        let ack = player
+            .dealer_message::<N3f1>(keys[0].public_key(), first_pub, priv_msg)
+            .unwrap();
+        let ceremony_id = DkgCeremonyId {
+            round: 0,
+            info_hash: B256::repeat_byte(0x77),
+        };
+        let snapshot = DkgDealerRetrySnapshot {
+            ceremony_id,
+            seed,
+            accepted_acks: BTreeMap::from([(player_pk.clone(), ack)]),
+        };
+        let recovered_snapshot =
+            decode_dealer_retry_snapshot(&encode_dealer_retry_snapshot(&snapshot).unwrap())
+                .unwrap();
+        let mut retry_targets: BTreeMap<_, _> = recovered_priv_for_retry.into_iter().collect();
+        for (acknowledged, ack) in &recovered_snapshot.accepted_acks {
+            recovered_dealer
+                .receive_player_ack(acknowledged.clone(), ack.clone())
+                .unwrap();
+            retry_targets.remove(acknowledged);
+        }
+        assert!(
+            !retry_targets.contains_key(&player_pk),
+            "durable retry must exclude a player whose ACK was journaled"
+        );
     }
 
     #[test]

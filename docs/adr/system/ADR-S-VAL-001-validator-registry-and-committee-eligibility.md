@@ -195,8 +195,8 @@ unbonding and cooldown semantics require an explicit terminal transition.
   counters and participation-ring sequence with explicit exhaustion behavior.
 - Prove `pending_set_change`, active-set hash, share flags and snapshot identity are
   mutually closed after every boundary failure and replay.
-- Validate duplicate addresses and canonical ordering in `new_active_set` inside
-  the owning command, not only in upstream artifact validation.
+- Validate duplicate addresses and canonical ordering in `new_active_set` both
+  inside the owning command and during upstream artifact validation.
 - Formalize the maximum late-finalization/replay horizon that justifies pruning
   participation guards at 64 and committee snapshots at eight epochs.
 - Bound or cursor the O(n) epoch/reshare/query scans and the unlimited inactive

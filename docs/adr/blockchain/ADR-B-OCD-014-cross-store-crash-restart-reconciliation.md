@@ -31,13 +31,13 @@ ADR-B-OCD-010.
 Node startup constructs a typed `RecoveryVectorV1` before consensus participation,
 proposal building, transaction admission or authoritative RPC readiness:
 
-| Component | Required durable identity |
-|---|---|
-| Chain environment | chain id, genesis hash and ADR-B-OCD-006 manifest identity |
-| Consensus | certified/finalized height, block hash and certificate/archive identity |
-| Reth | canonical/finalized height and hash, with receipts/body availability |
-| CE tree | scheme version, height, block hash, parent hash/root and new root |
-| Mongo projection | height, block hash, schema/network identity and writer epoch |
+| Component         | Required durable identity                                               |
+| ----------------- | ----------------------------------------------------------------------- |
+| Chain environment | chain id, genesis hash and ADR-B-OCD-006 manifest identity              |
+| Consensus         | certified/finalized height, block hash and certificate/archive identity |
+| Reth              | canonical/finalized height and hash, with receipts/body availability    |
+| CE tree           | scheme version, height, block hash, parent hash/root and new root       |
+| Mongo projection  | height, block hash, schema/network identity and writer epoch            |
 
 The recovery coordinator owns the startup gate. Individual actors may validate their
 local store, but they cannot independently declare the node ready.
@@ -108,14 +108,14 @@ Reth, marshal, MDBX and Mongo stores.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Finalized chain selection | verified consensus certificate plus matching Reth canonical block |
-| Canonical replay input | durable Reth block, receipts and execution artifacts |
-| CE durable progress | exact `FinalizedMarker` |
-| Mongo durable progress | exact `ProjectionCheckpoint` plus environment/writer identity |
-| Startup convergence/readiness | node recovery coordinator |
-| Snapshot/import repair | ADR-B-OCD-008 |
+| Responsibility                | Authority                                                         |
+| ----------------------------- | ----------------------------------------------------------------- |
+| Finalized chain selection     | verified consensus certificate plus matching Reth canonical block |
+| Canonical replay input        | durable Reth block, receipts and execution artifacts              |
+| CE durable progress           | exact `FinalizedMarker`                                           |
+| Mongo durable progress        | exact `ProjectionCheckpoint` plus environment/writer identity     |
+| Startup convergence/readiness | node recovery coordinator                                         |
+| Snapshot/import repair        | ADR-B-OCD-008                                                     |
 
 ## Invariants
 
@@ -157,9 +157,17 @@ stream, Mongo writer lease supervision, consensus execution recovery seeding, an
 the CE startup recovery coordinator. CE currently discards speculative candidates,
 classifies exact markers and replays contiguous canonical blocks while checking
 parent hashes/roots and computed roots. Projection readiness compares exact height
-and hash and exposes deterministic failure classes. These are strong component
-contracts, but no inspected production interface assembles and reconciles one
-complete cross-store vector. Status remains Proposed.
+and hash and exposes deterministic failure classes. For the bounded case where Reth's
+canonical head leads marshal's initialized durable tip, startup first selects the
+lower height. Once marshal is running, its archived finalization record supplies the
+certificate proposal payload: if that exact digest equals Reth's canonical head hash,
+startup reconciles Executor and FinalizationView at the head even when marshal
+initialization lagged its archive by one delivered block. If the head record is absent,
+the execution-only suffix remains speculative and may be replaced when the network
+finalizes forward; if an archived record names a different same-height digest, startup
+fails closed. These are strong component contracts, but no inspected production
+interface assembles and reconciles one complete cross-store vector across consensus,
+Reth, CE and Mongo. Status remains Proposed.
 
 ## Consequences
 
@@ -184,16 +192,22 @@ cross-store effects cannot become legal state.
 1. **Critical:** there is no production coordinator that captures and validates one
    `RecoveryVectorV1` across consensus/marshal, Reth, CE and Mongo before enabling
    participation.
-2. **Critical:** ADR-B-CNS-003 records an execution-ahead-of-consensus startup path that
-   warns and skips backfill. Ahead state requires an explicit ancestry/repair policy;
-   warning is not reconciliation evidence.
+2. **Critical, partially closed:** the bounded execution-ahead-of-consensus path no
+   longer promotes an execution-only head to finalized state. Startup anchors at the
+   durable marshal height unless the marshal archive returns an exact head
+   finalization whose certificate payload digest equals the canonical Reth head hash.
+   Complete the ancestry proof and define behavior for leads outside the bounded
+   in-flight window; this exact local certificate/hash check is still not the complete
+   cross-store reconciliation protocol.
 3. **Critical:** Mongo `ProjectionAhead` is surfaced as an error, but no inspected
    rollback/quarantine API restores it to the certified canonical boundary.
 4. CE recovery deliberately fails on `MarkerAhead` and `MarkerConflict`; define the
    authenticated operator repair/import path rather than requiring ad-hoc MDBX
    deletion.
-5. Prove how the recovered consensus finalized hash is obtained and authenticated,
-   not merely its height, before it seeds `LastCanonicalized` and Reth forkchoice.
+5. The recovered marshal certificate payload is now compared with the canonical Reth
+   hash before it seeds `LastCanonicalized`; prove the archive/certificate trust chain
+   as part of the complete recovery vector rather than treating this local comparison
+   as sufficient global authentication.
 6. The current CE recovery seam accepts `consensus_finalized_height`; make the exact
    consensus hash/certificate identity an explicit input instead of discovering it
    indirectly through Reth.
@@ -212,8 +226,8 @@ cross-store effects cannot become legal state.
     and that an expired writer cannot commit after a successor acquires authority.
 13. Specify CE rollback or immutable-generation replacement semantics for an ahead
     marker. Discarding speculative candidates handles only unfinalized staging.
-14. Add equivalent exact checkpoint/hash/root reconciliation for every other durable
-    sidecar discovered by the full codebase audit, not just Mongo and CE.
+14. Add equivalent exact checkpoint/hash/root reconciliation for every durable
+    sidecar discovered by the full codebase audit, including Mongo and CE.
 15. Add real crash-injection tests at every durable boundary. Current component tests
     cover classifications and replay but not a whole-node multi-store restart matrix.
 16. Define operator commands for inspect, quarantine, replay and verified repair with

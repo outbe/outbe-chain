@@ -1,8 +1,9 @@
 # Cocogitto (cog) — conventional-commit history check + auto-versioning.
 #
-# `cog check` validates that the commit history follows the Conventional
-# Commits spec; `cog bump --auto` derives the next SemVer from the commit
-# types since the last tag, writes the tag, and rolls the workspace version.
+# CI validates only commits introduced by a PR (and the new main commit after
+# merge), so historical pre-adoption squash titles do not poison every run.
+# `cog bump --auto` still derives the next SemVer from commits since the last
+# tag, writes the tag, and rolls the workspace version.
 tag_prefix = "v"
 branch_whitelist = ["main"]
 ignore_merge_commits = true

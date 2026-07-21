@@ -42,8 +42,14 @@ fn submit_offer(world: &mut World, name: String) {
         .evm_key()
         .expect("key");
     world.state.wwd_status_before = world.rpc.wwd_status(primary, &wwd);
+    world.state.tribute_tx_hash = world
+        .rpc
+        // The focused hardware run observed 9-12 seconds between canonical
+        // blocks. Keep the same state assertion, but allow the submitted offer
+        // enough canonicalization windows to reach `supply == 1`.
+        .offer_until_supply_hash(&key, &wwd, primary, "1", 20);
     assert!(
-        world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
+        world.state.tribute_tx_hash.is_some(),
         "committee did not process the offer (supply != 1)"
     );
 }
@@ -63,6 +69,13 @@ fn offer_processed_status_unchanged(world: &mut World) {
         world.state.wwd_status_before,
         "day status changed by the offer (should be time-driven)"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection(
+            world.state.tribute_tx_hash.as_deref().expect("tribute tx"),
+            60,
+        )
+        .expect("initial Tribute and both indexes must match on every committee validator");
 }
 
 /// S1 — provision + launch a REGISTERED (not staked) full node and sync it to tip.
@@ -105,6 +118,11 @@ fn full_node_parity(world: &mut World) {
         world.rpc.active_count(primary),
         Some(4),
         "active set unchanged by a full node"
+    );
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(0),
+        "authorized self-registration must leave the joiner REGISTERED after the rejected third-party attempt"
     );
 
     let pn = world.rpc.finalized(joiner_port).unwrap_or(20);
@@ -153,10 +171,24 @@ fn promoted_with_inflight_offer(world: &mut World) {
         .expect("v1 key");
 
     // In-flight offer submitted during the reshare window; must land exactly once.
+    world.state.tribute_tx_hash = world
+        .rpc
+        .offer_until_supply_hash(&v1, &wwd, primary, "2", 15);
     assert!(
-        world.rpc.offer_until_supply(&v1, &wwd, primary, "2", 15),
+        world.state.tribute_tx_hash.is_some(),
         "in-flight offer did not land (supply != 2)"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("in-flight tribute tx"),
+            120,
+        )
+        .expect("in-flight Tribute must be projected by the original committee");
     assert!(
         world.rpc.wait_participant(primary, &addr, 70),
         "joiner never became a consensus participant"
@@ -176,6 +208,18 @@ fn promoted_with_inflight_offer(world: &mut World) {
         Some("2"),
         "in-flight offer landed once"
     );
+    world
+        .mongodb
+        .wait_for_tribute_projection_on_nodes(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("in-flight tribute tx"),
+            60,
+            world.validators.joiner_index() + 1,
+        )
+        .expect("in-flight Tribute and indexes must match across the promoted committee");
 
     sleep(Duration::from_secs(30)); // settle: engine restarts for the new epoch
     assert!(
@@ -197,6 +241,46 @@ fn promoted_deactivates(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
 
+    let stake = world
+        .rpc
+        .stake_on(primary, &addr)
+        .expect("joiner stake before exit");
+    let total = world
+        .rpc
+        .total_staked_on(primary)
+        .expect("total stake before exit");
+    let staking_balance = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("Staking balance before exit");
+    assert!(!stake.is_zero(), "active joiner must have bonded stake");
+    world.state.lifecycle_stake_before_exit = Some(stake);
+    world.state.lifecycle_total_before_exit = Some(total);
+    world.state.lifecycle_staking_balance_before_exit = Some(staking_balance);
+
+    // A different validator cannot remove the joiner. The failed preflight or
+    // reverted receipt must leave every lifecycle/accounting value unchanged.
+    let other_key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    let target = addr.parse().expect("joiner address");
+    let unauthorized = world
+        .rpc
+        .deactivate_as(&other_key, target)
+        .expect_err("third party deactivation must fail")
+        .to_string();
+    assert!(
+        unauthorized.contains("unauthorized")
+            || unauthorized.contains("receipt was not successful"),
+        "unexpected unauthorized deactivate error: {unauthorized}"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(2));
+    assert_eq!(world.rpc.stake_on(primary, &addr), Some(stake));
+    assert_eq!(world.rpc.total_staked_on(primary), Some(total));
+
     world.rpc.deactivate(&key).expect("deactivate");
     sleep(Duration::from_secs(6));
     assert_eq!(
@@ -213,6 +297,20 @@ fn promoted_deactivates(world: &mut World) {
         Some(5),
         "consensus set still 5"
     );
+
+    let repeated = world
+        .rpc
+        .deactivate(&key)
+        .expect_err("repeated voluntary exit must fail")
+        .to_string();
+    assert!(
+        repeated.contains("can only deactivate an active validator")
+            || repeated.contains("receipt was not successful"),
+        "unexpected repeated deactivate error: {repeated}"
+    );
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(3));
+    assert_eq!(world.rpc.stake_on(primary, &addr), Some(stake));
+    assert_eq!(world.rpc.total_staked_on(primary), Some(total));
 }
 
 /// S3 — the exclusion reshare shrinks the set to 4, the exited validator becomes
@@ -244,6 +342,40 @@ fn exits_and_demotes(world: &mut World) {
         Some(4),
         "consensus set shrank to 4"
     );
+    let exited_stake = world.state.lifecycle_stake_before_exit.expect("exit stake");
+    let total_before = world
+        .state
+        .lifecycle_total_before_exit
+        .expect("total before exit");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, exit_h.saturating_add(1), 30),
+        "committee did not finalize the post-boundary block that drains UNBONDING stake"
+    );
+    for _ in 0..20 {
+        if world.rpc.stake_on(primary, &addr) == Some(alloy_primitives::U256::ZERO)
+            && world.rpc.total_staked_on(primary) == Some(total_before - exited_stake)
+        {
+            break;
+        }
+        sleep(Duration::from_secs(1));
+    }
+    assert_eq!(
+        world.rpc.stake_on(primary, &addr),
+        Some(alloy_primitives::U256::ZERO),
+        "UNBONDING validator must have zero bonded stake"
+    );
+    assert_eq!(
+        world.rpc.total_staked_on(primary),
+        Some(total_before - exited_stake),
+        "total_staked must decrease by exactly the exited stake"
+    );
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        world.state.lifecycle_staking_balance_before_exit,
+        "moving stake to the unbonding queue must not move native value"
+    );
     assert!(
         world.localnet.log_has(
             idx,
@@ -267,14 +399,154 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2")
         .evm_key()
         .expect("v2 key");
+    world.state.tribute_tx_hash = world
+        .rpc
+        .offer_until_supply_hash(&v2, &wwd, primary, "3", 5);
     assert!(
-        world.rpc.offer_until_supply(&v2, &wwd, primary, "3", 5),
+        world.state.tribute_tx_hash.is_some(),
         "post-exit offer did not land (supply != 3)"
     );
-    sleep(Duration::from_secs(6));
-    assert_eq!(
+    let post_exit_tx = world
+        .state
+        .tribute_tx_hash
+        .as_deref()
+        .expect("post-exit tribute tx");
+    let receipt_block = world
+        .rpc
+        .receipt_block_number(post_exit_tx, primary)
+        .expect("post-exit Tribute receipt block");
+    let mut follower_caught_up = false;
+    for _ in 0..240 {
+        let primary_supply = world.rpc.supply(primary);
+        let follower_supply = world.rpc.supply(joiner_port);
+        let follower_finalized = world.rpc.finalized(joiner_port).unwrap_or(0);
+        if primary_supply.as_deref() == Some("3")
+            && follower_supply == primary_supply
+            && follower_finalized >= receipt_block
+        {
+            follower_caught_up = true;
+            break;
+        }
+        sleep(Duration::from_millis(500));
+    }
+    assert!(
+        follower_caught_up,
+        "demoted follower did not finalize post-exit Tribute block {receipt_block} with supply parity; primary={:?} follower={:?} follower_finalized={:?}",
         world.rpc.supply(primary),
         world.rpc.supply(joiner_port),
-        "demoted follower supply parity"
+        world.rpc.finalized(joiner_port),
+    );
+    world
+        .mongodb
+        .wait_for_tribute_projection_on_nodes(
+            world
+                .state
+                .tribute_tx_hash
+                .as_deref()
+                .expect("post-exit tribute tx"),
+            60,
+            world.validators.joiner_index() + 1,
+        )
+        .expect("post-exit Tribute and indexes must match across validators and follower");
+}
+
+/// Mature the short E2E unbonding entry and prove exact value conservation,
+/// caller isolation, idempotency, per-node parity, and continued finalization.
+#[then("its unbonded stake can be claimed with exact accounting")]
+fn claim_with_exact_accounting(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let addr = world.state.joiner_addr.clone().expect("joiner addr");
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let amount = world.state.lifecycle_stake_before_exit.expect("exit stake");
+
+    // The configured period is eight seconds; wait for a block timestamp beyond
+    // it so claimability is an observed chain condition, not a wall-clock guess.
+    sleep(Duration::from_secs(10));
+    let before_height = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized before claim");
+    let user_before = world
+        .rpc
+        .balance_on(primary, &addr)
+        .expect("claimant balance");
+    let staking_before = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("Staking balance before claim");
+
+    // claimUnbonded has no target argument: another EOA can only inspect/claim
+    // its own queue. An empty successful claim must not touch the joiner's value.
+    let other_key = world
+        .validators
+        .by_name("validator-0")
+        .expect("validator-0")
+        .evm_key()
+        .expect("validator-0 key");
+    world
+        .rpc
+        .claim_unbonded(&other_key)
+        .expect("unrelated caller's empty claim receipt");
+    assert_eq!(world.rpc.balance_on(primary, &addr), Some(user_before));
+    assert_eq!(world.rpc.staking_balance_on(primary), Some(staking_before));
+    assert_eq!(world.rpc.validator_status(primary, &addr), Some(4));
+
+    let receipt = world.rpc.claim_unbonded(&key).expect("claim unbonded");
+    let fee = Rpc::receipt_gas_cost(&receipt).expect("claim receipt gas accounting");
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        Some(staking_before - amount),
+        "claim must transfer exactly the queued amount out of Staking"
+    );
+    assert_eq!(
+        world.rpc.balance_on(primary, &addr),
+        Some(user_before + amount - fee),
+        "claimant balance must increase by claim minus exact transaction fee"
+    );
+    assert_eq!(
+        world.rpc.validator_status(primary, &addr),
+        Some(5),
+        "mature claimed validator must become INACTIVE"
+    );
+
+    // A repeated claim succeeds as an empty idempotent operation and cannot pay
+    // the queue twice; only its own transaction fee may reduce the caller.
+    let repeat_user_before = world
+        .rpc
+        .balance_on(primary, &addr)
+        .expect("repeat balance");
+    let repeat_staking_before = world
+        .rpc
+        .staking_balance_on(primary)
+        .expect("repeat Staking balance");
+    let repeat = world.rpc.claim_unbonded(&key).expect("repeat empty claim");
+    let repeat_fee = Rpc::receipt_gas_cost(&repeat).expect("repeat claim gas");
+    assert_eq!(
+        world.rpc.staking_balance_on(primary),
+        Some(repeat_staking_before),
+        "repeated claim must not transfer value twice"
+    );
+    assert_eq!(
+        world.rpc.balance_on(primary, &addr),
+        Some(repeat_user_before - repeat_fee),
+        "empty repeated claim may charge only its exact gas fee"
+    );
+
+    let expected_total = world.state.lifecycle_total_before_exit.expect("total") - amount;
+    let expected_staking = repeat_staking_before;
+    for port in world.validators.committee_ports() {
+        assert_eq!(
+            world.rpc.stake_on(port, &addr),
+            Some(alloy_primitives::U256::ZERO)
+        );
+        assert_eq!(world.rpc.total_staked_on(port), Some(expected_total));
+        assert_eq!(world.rpc.staking_balance_on(port), Some(expected_staking));
+        assert_eq!(world.rpc.validator_status(port, &addr), Some(5));
+    }
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, before_height + 3, 30),
+        "committee did not continue finalizing after exit and claim"
     );
 }

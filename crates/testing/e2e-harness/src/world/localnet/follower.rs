@@ -32,6 +32,7 @@ impl Localnet {
             "--upstream",
             format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
         ]);
+        self.extend_real_sgx_startup_timeout(&mut a);
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216")
@@ -46,6 +47,12 @@ impl Localnet {
     /// Stop all follower nodes (drop owned handles → kill + reap).
     pub fn stop_followers(&mut self) -> Result<()> {
         self.followers.clear();
+        Ok(())
+    }
+
+    /// Stop one follower while preserving its durable datadir for restart/catch-up tests.
+    pub fn stop_follower(&mut self, name: &str) -> Result<()> {
+        self.followers.remove(name);
         Ok(())
     }
 }

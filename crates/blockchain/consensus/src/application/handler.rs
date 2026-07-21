@@ -33,13 +33,55 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-fn unix_now_millis() -> eyre::Result<u64> {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
-        .as_millis()
-        .try_into()
-        .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+/// Explicit source of proposer wall-clock time.
+///
+/// Production injects [`SystemUnixTimeSource`]. Localnet tests may inject an
+/// [`OffsetUnixTimeSource`] through the explicitly testnet-scoped CLI option;
+/// consensus code never consults ambient process environment for logical time.
+pub trait UnixTimeSource: Send + Sync {
+    fn now_millis(&self) -> eyre::Result<u64>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemUnixTimeSource;
+
+impl UnixTimeSource for SystemUnixTimeSource {
+    fn now_millis(&self) -> eyre::Result<u64> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+    }
+}
+
+#[derive(Debug)]
+pub struct OffsetUnixTimeSource {
+    base: SystemUnixTimeSource,
+    offset_secs: i64,
+}
+
+impl OffsetUnixTimeSource {
+    #[must_use]
+    pub const fn new(offset_secs: i64) -> Self {
+        Self {
+            base: SystemUnixTimeSource,
+            offset_secs,
+        }
+    }
+}
+
+impl UnixTimeSource for OffsetUnixTimeSource {
+    fn now_millis(&self) -> eyre::Result<u64> {
+        apply_unix_time_offset_millis(self.base.now_millis()?, self.offset_secs)
+    }
+}
+
+fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre::Result<u64> {
+    let shifted = i128::from(now) + i128::from(offset_secs) * 1_000;
+    u64::try_from(shifted)
+        .map_err(|_| eyre::eyre!("Unix time offset {offset_secs} moves timestamp outside u64"))
 }
 
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
@@ -322,6 +364,9 @@ pub struct ApplicationHandler {
 
 #[derive(Clone)]
 pub(crate) struct ApplicationShared {
+    /// Explicit proposer wall-clock source. Never derived from ambient env.
+    unix_time_source: Arc<dyn UnixTimeSource>,
+
     /// Engine handle for new_payload / fork_choice_updated.
     engine: EngineHandle,
 
@@ -429,6 +474,7 @@ pub(crate) struct ApplicationShared {
 /// test fixtures cannot transpose arguments — the wiring order lives in the type
 /// system rather than in a call-site convention.
 pub struct ApplicationDeps {
+    pub unix_time_source: Arc<dyn UnixTimeSource>,
     pub rx: futures::channel::mpsc::Receiver<Message>,
     pub engine: EngineHandle,
     pub payload_builder: PayloadBuilder,
@@ -467,6 +513,7 @@ impl ApplicationHandler {
     /// handle.
     pub fn new(deps: ApplicationDeps) -> Self {
         let ApplicationDeps {
+            unix_time_source,
             rx,
             engine,
             payload_builder,
@@ -495,6 +542,7 @@ impl ApplicationHandler {
         Self {
             rx,
             shared: ApplicationShared {
+                unix_time_source,
                 engine,
                 payload_builder,
                 executor_mailbox,
@@ -1155,7 +1203,7 @@ impl ApplicationShared {
         }
 
         let parent_timestamp_millis = self.finalization_view.timestamp_floor();
-        let now_millis = unix_now_millis()?;
+        let now_millis = self.unix_time_source.now_millis()?;
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
@@ -2041,10 +2089,23 @@ mod handler_tests;
 
 #[cfg(test)]
 mod clamp_tests {
-    use super::clamp_proposed_timestamp_millis;
+    use super::{apply_unix_time_offset_millis, clamp_proposed_timestamp_millis};
 
     const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
     const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+
+    #[test]
+    fn injected_clock_offset_is_explicit_and_checked() {
+        assert_eq!(
+            apply_unix_time_offset_millis(1_000_000, 60).unwrap(),
+            1_060_000
+        );
+        assert_eq!(
+            apply_unix_time_offset_millis(1_000_000, -60).unwrap(),
+            940_000
+        );
+        assert!(apply_unix_time_offset_millis(0, -1).is_err());
+    }
 
     #[test]
     fn genesis_child_uses_wall_clock_not_band() {
