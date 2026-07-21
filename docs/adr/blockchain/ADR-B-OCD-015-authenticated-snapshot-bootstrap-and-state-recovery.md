@@ -69,13 +69,13 @@ learned from the same snapshot server.
 
 One `NodeSnapshotManifestV1` binds a mutually consistent logical snapshot set:
 
-| Component | Normative content |
-|---|---|
-| Execution | canonical state at the checkpoint plus headers/receipts/artifacts required for post-checkpoint replay |
-| Consensus | certificate/block archive continuity and committee/DKG public history needed to verify later finality |
-| CE | canonical logical leaves and optional canonical bodies, reconstructed roots and exact finalized marker |
-| Projection | no authoritative state; Mongo may be rebuilt, or imported only as a checked acceleration artifact |
-| Configuration | chain/schedule/schema/codec/artifact identities, never private keys or local endpoints |
+| Component     | Normative content                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------ |
+| Execution     | canonical state at the checkpoint plus headers/receipts/artifacts required for post-checkpoint replay  |
+| Consensus     | certificate/block archive continuity and committee/DKG public history needed to verify later finality  |
+| CE            | canonical logical leaves and optional canonical bodies, reconstructed roots and exact finalized marker |
+| Projection    | no authoritative state; Mongo may be rebuilt, or imported only as a checked acceleration artifact      |
+| Configuration | chain/schedule/schema/codec/artifact identities, never private keys or local endpoints                 |
 
 The manifest declares format version, component versions, checkpoint identity,
 logical range coverage, ordered chunks, decoded sizes and content digests. Physical
@@ -84,7 +84,7 @@ portable protocol format. Implementations may offer a same-version physical fast
 path, but must still validate its semantic roots and full environment identity.
 
 CE `tree` coverage contains every current leaf needed to reconstruct every shard,
-collection, catalog and sealed root. `tree-with-bodies` additionally declares exact
+collection, catalog and sealed root. `tree-with-bodies` declares exact
 body ranges; a validator-capable profile contains every body required for deterministic
 post-checkpoint execution. Internal SMT nodes are acceleration data and may be
 discarded and rebuilt. Mongo documents and indexes are always derived from finalized
@@ -142,14 +142,14 @@ ADR-S-TEE-002.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
+| Responsibility                      | Authority                                                         |
+| ----------------------------------- | ----------------------------------------------------------------- |
 | Network identity and genesis anchor | ADR-B-GEN-001 genesis manifest and ADR-B-RLS-001 release manifest |
-| Finalized checkpoint selection | verified consensus finalization/committee proof |
-| Portable import contract | versioned semantic snapshot manifest and codecs |
-| Execution and CE integrity | independently reconstructed state/commitment roots |
-| Post-import convergence | ADR-B-OCD-014 recovery coordinator |
-| Validator secret restoration | ADR-S-KEY-001 and TEE custody ADRs, outside snapshot |
+| Finalized checkpoint selection      | verified consensus finalization/committee proof                   |
+| Portable import contract            | versioned semantic snapshot manifest and codecs                   |
+| Execution and CE integrity          | independently reconstructed state/commitment roots                |
+| Post-import convergence             | ADR-B-OCD-014 recovery coordinator                                |
+| Validator secret restoration        | ADR-S-KEY-001 and TEE custody ADRs, outside snapshot              |
 
 ## Invariants
 

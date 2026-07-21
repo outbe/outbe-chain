@@ -327,6 +327,26 @@ where
         self
     }
 
+    /// Reconcile the startup state after marshal has exposed the exact
+    /// application finalization record for the canonical execution head.
+    ///
+    /// Marshal must be started before that record can be queried, while its
+    /// reporter needs this actor's mailbox. This startup-only builder closes
+    /// that ordering loop without allowing a speculative execution head to be
+    /// treated as finalized: the caller is responsible for validating the
+    /// recovered finalization digest before invoking it.
+    #[must_use]
+    pub fn with_recovered_finalized_state(
+        mut self,
+        genesis_hash: B256,
+        finalized_height: u64,
+        finalized_hash: B256,
+    ) -> Self {
+        self.state =
+            LastCanonicalized::from_recovered(genesis_hash, finalized_height, finalized_hash);
+        self
+    }
+
     /// Installs the mandatory compressed-storage barrier for live node wiring.
     #[must_use]
     pub fn with_finalized_ce_committer(mut self, committer: Arc<dyn FinalizedCeCommitter>) -> Self {
@@ -663,16 +683,21 @@ where
             commonware_consensus::marshal::Update::Block(block, ack) => {
                 let height = Height::new(block.number());
                 let digest = Digest(block.block_hash());
+                if height == self.state.finalized_height
+                    && digest.0 == self.state.forkchoice.finalized_block_hash
+                {
+                    info!(
+                        %height,
+                        %digest,
+                        "marshal-delivered block already canonical after recovery; acknowledging without reexecution"
+                    );
+                    ack.acknowledge();
+                    self.notify_finalized_subscribers(height);
+                    self.notify_execution_finalized(height);
+                    return Ok(());
+                }
                 if height == Height::zero() {
                     let expected = self.state.forkchoice.finalized_block_hash;
-                    if self.state.finalized_height == Height::zero() && digest.0 == expected {
-                        info!(
-                            %digest,
-                            "marshal-delivered genesis already canonical; acknowledging anchor"
-                        );
-                        ack.acknowledge();
-                        return Ok(());
-                    }
                     return Err(eyre::eyre!(
                         "marshal delivered unexpected genesis anchor: digest {digest}, \
                          canonical finalized height {}, canonical hash {expected}",
@@ -1380,6 +1405,94 @@ mod tests {
             assert!(
                 engine_rx.try_recv().is_err(),
                 "genesis is already canonical and must not be sent through new_payload"
+            );
+        });
+    }
+
+    #[test]
+    fn recovered_canonical_block_is_acknowledged_without_reexecution() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let block = executor_test_block(28, 0x28);
+            let recovered_hash = block.block_hash();
+            let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            // The durable projection has already consumed the recovered EL head.
+            // Re-executing the same marshal delivery would ask it to regress to
+            // parent 27 and fail with ProjectionAhead.
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 28,
+                    block_hash: recovered_hash,
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                28,
+                recovered_hash,
+                projection_readiness,
+                None,
+            );
+
+            let (ack, waiter) = Exact::handle();
+            actor
+                .handle_marshal_update(Update::Block(block, ack))
+                .await
+                .expect("exact recovered canonical block must be idempotently accepted");
+            waiter
+                .await
+                .expect("exact recovered canonical block must acknowledge marshal");
+            assert!(
+                engine_rx.try_recv().is_err(),
+                "an already canonical block must not be sent through new_payload"
+            );
+            assert_eq!(actor.state.finalized_height, Height::new(28));
+            assert_eq!(actor.state.forkchoice.finalized_block_hash, recovered_hash);
+        });
+    }
+
+    #[test]
+    fn recovered_height_with_conflicting_hash_still_fails_closed() {
+        commonware_runtime::deterministic::Runner::default().start(|context| async move {
+            let genesis = B256::repeat_byte(0x01);
+            let canonical = executor_test_block(28, 0x28);
+            let conflicting = executor_test_block(28, 0x29);
+            assert_ne!(canonical.block_hash(), conflicting.block_hash());
+            let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
+            let engine = ConsensusEngineHandle::new(engine_tx);
+            let (_projection_publisher, projection_readiness) = ready_projection(
+                genesis,
+                ProjectionCheckpoint {
+                    block_number: 28,
+                    block_hash: canonical.block_hash(),
+                },
+            );
+            let (mut actor, _mailbox) = super::ExecutorActor::new(
+                context.child("test"),
+                engine,
+                genesis,
+                28,
+                canonical.block_hash(),
+                projection_readiness,
+                None,
+            );
+
+            let (ack, waiter) = Exact::handle();
+            let result = actor
+                .handle_marshal_update(Update::Block(conflicting, ack))
+                .await;
+            assert!(result.is_err(), "same-height conflicting block must fail");
+            assert!(
+                waiter.await.is_err(),
+                "same-height conflicting block must not acknowledge marshal"
+            );
+            assert_eq!(actor.state.finalized_height, Height::new(28));
+            assert_eq!(
+                actor.state.forkchoice.finalized_block_hash,
+                canonical.block_hash()
             );
         });
     }

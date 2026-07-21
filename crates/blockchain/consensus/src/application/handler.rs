@@ -34,12 +34,38 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
 fn unix_now_millis() -> eyre::Result<u64> {
-    std::time::SystemTime::now()
+    let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
         .as_millis()
         .try_into()
-        .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+        .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))?;
+
+    #[cfg(debug_assertions)]
+    let now = {
+        apply_debug_unix_time_offset_millis(
+            now,
+            std::env::var("OUTBE_TEST_UNIX_TIME_OFFSET_SECS")
+                .ok()
+                .as_deref(),
+        )?
+    };
+
+    Ok(now)
+}
+
+#[cfg(debug_assertions)]
+fn apply_debug_unix_time_offset_millis(now: u64, raw_offset: Option<&str>) -> eyre::Result<u64> {
+    let Some(raw_offset) = raw_offset else {
+        return Ok(now);
+    };
+    let offset_secs = raw_offset.parse::<i64>().map_err(|error| {
+        eyre::eyre!("invalid OUTBE_TEST_UNIX_TIME_OFFSET_SECS {raw_offset:?}: {error}")
+    })?;
+    let shifted = i128::from(now) + i128::from(offset_secs) * 1_000;
+    u64::try_from(shifted).map_err(|_| {
+        eyre::eyre!("OUTBE_TEST_UNIX_TIME_OFFSET_SECS {offset_secs} moves timestamp outside u64")
+    })
 }
 
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
@@ -2041,10 +2067,28 @@ mod handler_tests;
 
 #[cfg(test)]
 mod clamp_tests {
-    use super::clamp_proposed_timestamp_millis;
+    use super::{apply_debug_unix_time_offset_millis, clamp_proposed_timestamp_millis};
 
     const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
     const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+
+    #[test]
+    fn debug_clock_offset_is_explicit_and_checked() {
+        assert_eq!(
+            apply_debug_unix_time_offset_millis(1_000_000, None).unwrap(),
+            1_000_000
+        );
+        assert_eq!(
+            apply_debug_unix_time_offset_millis(1_000_000, Some("60")).unwrap(),
+            1_060_000
+        );
+        assert_eq!(
+            apply_debug_unix_time_offset_millis(1_000_000, Some("-60")).unwrap(),
+            940_000
+        );
+        assert!(apply_debug_unix_time_offset_millis(1_000_000, Some("not-a-number")).is_err());
+        assert!(apply_debug_unix_time_offset_millis(0, Some("-1")).is_err());
+    }
 
     #[test]
     fn genesis_child_uses_wall_clock_not_band() {

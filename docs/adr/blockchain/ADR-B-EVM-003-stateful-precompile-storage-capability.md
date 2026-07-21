@@ -83,13 +83,13 @@ declared subset and return explicit unavailable/unsupported for missing context.
 
 ## Authoritative interfaces
 
-| Responsibility | Owner/entrypoint |
-|---|---|
-| Capability vocabulary and typed errors | storage boundary |
-| EVM journal/static/gas implementation | ADR-B-EVM-001 provider |
-| Typed word/container codecs | storage types/DSL |
-| Contract slot layout generation | ADR-B-EVM-003 |
-| Domain mutation/state invariants | each module ADR |
+| Responsibility                         | Owner/entrypoint       |
+| -------------------------------------- | ---------------------- |
+| Capability vocabulary and typed errors | storage boundary       |
+| EVM journal/static/gas implementation  | ADR-B-EVM-001 provider |
+| Typed word/container codecs            | storage types/DSL      |
+| Contract slot layout generation        | ADR-B-EVM-003          |
+| Domain mutation/state invariants       | each module ADR        |
 
 ## Invariants
 
@@ -161,8 +161,8 @@ only when their adapter declares and proves the required semantics.
    rather than `try_borrow_mut`, so nested misuse can panic instead of returning a
    structured fatal error.
 6. Prove `CheckpointGuard` reverts on every unwind path and that provider checkpoint
-   covers logs, balances, code, transient storage, refunds and any custom side
-   channels—not only SSTORE.
+   covers SSTORE, logs, balances, code, transient storage, refunds and every custom
+   side channel.
 7. Handle-level static gates exist for some effects, but the trait contract does not
    state/enforce them uniformly for SSTORE/TSTORE/event/balance/subcall. Audit every
    provider and add conformance tests.

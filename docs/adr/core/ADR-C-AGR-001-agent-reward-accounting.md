@@ -53,7 +53,7 @@ input_pool = newly_credited_claims + returned_residue
 contract_native_balance = aggregate_outstanding_claims
 ```
 
-Additionally, recipient membership agrees with nonzero counts, a day/role is
+Recipient membership agrees with nonzero counts, a day/role is
 distributed and cleared at most once, an address never exceeds its cap for that
 allocation, and claims cannot replay.
 

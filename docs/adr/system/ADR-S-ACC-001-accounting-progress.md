@@ -101,7 +101,7 @@ the need for exact transition and caller tests.
    immediately before/after it and compare semantic state.
 4. Define genesis/block-one semantics precisely: zero is both a block number and
    “nothing accounted,” which can be ambiguous for parent zero.
-5. Add startup invariant checks for all 15 reserved slots in production, not only
+5. Add startup invariant checks for all 15 reserved slots in production and in
    tests/genesis construction.
 6. Specify behavior for snapshot import at nonzero height and validate imported
    marker against Rewards/fee/participation state.

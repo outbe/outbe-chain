@@ -22,6 +22,8 @@ pub(crate) struct Config {
     pub dir: PathBuf,
     /// `outbe-chain` node binary (`--chain-bin`).
     pub bin_chain: PathBuf,
+    /// Newer node binary (`--upgraded-chain-bin`) for operator replacement E2E.
+    pub bin_chain_upgraded: Option<PathBuf>,
     /// `outbe-cli` client binary (`--cli-bin`).
     pub bin_cli: PathBuf,
     /// `outbe-keygen` binary (`--keygen-bin`). Used by the joiner flow.
@@ -71,6 +73,7 @@ impl Config {
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
+            bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
             bin_mock: env.mock_bin.clone(),

@@ -1365,7 +1365,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
-        // The money reached creators, never the reserve vault.
+                                                                            // The money reached creators, never the reserve vault.
         assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });

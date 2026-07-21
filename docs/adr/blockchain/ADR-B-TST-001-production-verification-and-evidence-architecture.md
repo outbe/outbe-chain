@@ -52,18 +52,18 @@ Every ADR's `Production-interface verification evidence` and
 
 Evidence is classified, never flattened into “unit” versus “e2e”:
 
-| Layer | Proves | Does not prove by itself |
-|---|---|---|
-| Pure/reference | formulas, codecs, canonical vectors, overflow/bounds | storage, ABI or lifecycle wiring |
-| Stateful model/FSM | legal/illegal transitions and invariants over generated sequences | production adapter equivalence |
-| Module contract | public ABI/dispatch, authorization, journaling and events using production module code | whole-node ordering/networking |
-| Differential/conformance | two implementations/backends obey identical observable contract | either is complete without an independent oracle |
-| Execution integration | proposer/validator/import/replay parity through real executor/storage seams | multi-process consensus and external deployment |
-| Deterministic distributed simulation | Byzantine timing, partitions, retries, epochs and finality safety/liveness | OS/process/RPC/database behavior |
-| Process/localnet e2e | released binaries, genesis, RPC/CLI, consensus, Reth, Mongo/TEE and restart wiring | exhaustive state/fault space |
-| Crash/durability | kill/fault at every persistent boundary and exact recovery | protocol correctness outside tested boundary |
-| Compatibility/upgrade | historical replay, mixed versions, activation, snapshot/import | new feature semantics alone |
-| Capacity/security | maximum-shape benchmark, fuzz, adversarial resource and exploit properties | functional business completeness |
+| Layer                                | Proves                                                                                 | Does not prove by itself                         |
+| ------------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Pure/reference                       | formulas, codecs, canonical vectors, overflow/bounds                                   | storage, ABI or lifecycle wiring                 |
+| Stateful model/FSM                   | legal/illegal transitions and invariants over generated sequences                      | production adapter equivalence                   |
+| Module contract                      | public ABI/dispatch, authorization, journaling and events using production module code | whole-node ordering/networking                   |
+| Differential/conformance             | two implementations/backends obey identical observable contract                        | either is complete without an independent oracle |
+| Execution integration                | proposer/validator/import/replay parity through real executor/storage seams            | multi-process consensus and external deployment  |
+| Deterministic distributed simulation | Byzantine timing, partitions, retries, epochs and finality safety/liveness             | OS/process/RPC/database behavior                 |
+| Process/localnet e2e                 | released binaries, genesis, RPC/CLI, consensus, Reth, Mongo/TEE and restart wiring     | exhaustive state/fault space                     |
+| Crash/durability                     | kill/fault at every persistent boundary and exact recovery                             | protocol correctness outside tested boundary     |
+| Compatibility/upgrade                | historical replay, mixed versions, activation, snapshot/import                         | new feature semantics alone                      |
+| Capacity/security                    | maximum-shape benchmark, fuzz, adversarial resource and exploit properties             | functional business completeness                 |
 
 Names such as `e2e`, `integration` or `conformance` do not assign the layer; inspected
 components and assertions do.
@@ -102,7 +102,7 @@ In-memory storage does not prove Reth/MDBX/Mongo atomicity. Direct handler calls
 not prove ABI dispatch, precompile call frames or gas. Mock automata do not prove
 execution delivery. Gramine mock proves enclave protocol wiring but not SGX
 attestation/sealing hardware. Noop settlement proves orchestration around the hook,
-not value movement. These limitations appear in the ledger, not only comments.
+not value movement. These limitations appear in both the ledger and comments.
 
 ### Required project suites
 
@@ -162,8 +162,8 @@ The verification graph is fail-closed:
 
 - required jobs cannot be skipped by branch/event expressions without an explicit
   policy result;
-- coverage generation has risk-weighted requirement thresholds, not only line
-  percentages or a report comment;
+- coverage acceptance uses risk-weighted requirement thresholds; line percentages
+  and report comments are insufficient;
 - ignored/@todo/unsatisfied scenarios are counted and fail a full-coverage lane;
 - test discovery manifests detect renamed, filtered-out or zero-test commands;
 - exact commands/toolchains/features match the release build;
@@ -177,14 +177,14 @@ consume this manifest rather than assuming a workflow name succeeded.
 
 ## Authoritative interfaces
 
-| Responsibility | Authority |
-|---|---|
-| Required evidence per behavior | owner ADR/PFS requirement IDs |
-| Test-to-requirement mapping | generated `VerificationLedger` |
-| Layer/substitution classification | inspected test manifest |
-| Required commands/frequency/platform | CI verification graph |
-| Release evidence | exact-commit signed evidence manifest |
-| Unproven behavior | ADR debt plus ledger Gap/Expired state |
+| Responsibility                       | Authority                              |
+| ------------------------------------ | -------------------------------------- |
+| Required evidence per behavior       | owner ADR/PFS requirement IDs          |
+| Test-to-requirement mapping          | generated `VerificationLedger`         |
+| Layer/substitution classification    | inspected test manifest                |
+| Required commands/frequency/platform | CI verification graph                  |
+| Release evidence                     | exact-commit signed evidence manifest  |
+| Unproven behavior                    | ADR debt plus ledger Gap/Expired state |
 
 ## Invariants
 
@@ -193,8 +193,8 @@ consume this manifest rather than assuming a workflow name succeeded.
 - A mock/in-memory test cannot claim behavior of a substituted production component.
 - Ignored, skipped, todo, quarantined or advisory evidence cannot satisfy a required
   release claim.
-- Critical persistence/consensus behavior has negative, replay and fault evidence,
-  not only a happy path.
+- Critical persistence/consensus behavior has happy-path, negative, replay and fault
+  evidence.
 - Test and release artifacts name the exact source/dependency/genesis/profile identity.
 - A retry never erases the original failing result.
 - Full-suite lanes fail when their required environment or scenario is unavailable.

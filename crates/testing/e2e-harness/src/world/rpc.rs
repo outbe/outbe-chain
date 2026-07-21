@@ -9,9 +9,9 @@
 //! and `slash config` still go through `outbe-cli` (the product CLI under test).
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, U256};
 use eyre::{eyre, Result, WrapErr as _};
 use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
 
@@ -71,9 +71,26 @@ impl Rpc {
         eth::finalized_number(&self.url(port))
     }
 
+    /// Timestamp of the latest block, in EVM seconds.
+    pub fn latest_block_timestamp(&self, port: u16) -> Option<u64> {
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getBlockByNumber",
+            serde_json::json!(["latest", false]),
+        )
+        .and_then(|block| block.get("timestamp").cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+    }
+
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
+    }
+
+    /// Canonical block hash at `height` on the node at `port`.
+    pub fn block_hash(&self, port: u16, height: u64) -> Option<String> {
+        eth::block_hash(&self.url(port), height)
     }
 
     /// Fetch one latest-finalized compressed-entity package and its exact header.
@@ -149,8 +166,17 @@ impl Rpc {
 
     /// Active protocol version (`IUpdate.getActiveVersion`).
     pub fn active_version(&self) -> Option<u64> {
+        self.active_version_on_url(&self.cfg.rpc0)
+    }
+
+    /// Active protocol version on the node at `port`.
+    pub fn active_version_on(&self, port: u16) -> Option<u64> {
+        self.active_version_on_url(&self.url(port))
+    }
+
+    fn active_version_on_url(&self, rpc_url: &str) -> Option<u64> {
         eth::read_call(
-            &self.cfg.rpc0,
+            rpc_url,
             addresses::UPDATE_ADDR,
             &IUpdate::getActiveVersionCall {},
         )
@@ -159,8 +185,17 @@ impl Rpc {
 
     /// Scheduled update tuple for `id` (`IUpdate.getScheduledUpdate`).
     pub fn scheduled_update(&self, id: u64) -> Option<ScheduledUpdate> {
+        self.scheduled_update_on_url(&self.cfg.rpc0, id)
+    }
+
+    /// Scheduled update tuple for `id` on the node at `port`.
+    pub fn scheduled_update_on(&self, port: u16, id: u64) -> Option<ScheduledUpdate> {
+        self.scheduled_update_on_url(&self.url(port), id)
+    }
+
+    fn scheduled_update_on_url(&self, rpc_url: &str, id: u64) -> Option<ScheduledUpdate> {
         let r = eth::read_call(
-            &self.cfg.rpc0,
+            rpc_url,
             addresses::UPDATE_ADDR,
             &IUpdate::getScheduledUpdateCall { id: U256::from(id) },
         )?;
@@ -221,12 +256,21 @@ impl Rpc {
 
     /// Parsed `outbe-cli vote status` for proposal `id`.
     pub fn vote_status(&self, id: u64) -> VoteStatus {
+        self.vote_status_on_url(&self.cfg.rpc0, id)
+    }
+
+    /// Parsed `outbe-cli vote status` from the node at `port`.
+    pub fn vote_status_on(&self, port: u16, id: u64) -> VoteStatus {
+        self.vote_status_on_url(&self.url(port), id)
+    }
+
+    fn vote_status_on_url(&self, rpc_url: &str, id: u64) -> VoteStatus {
         let ids = id.to_string();
         let out = self
             .sh()
             .cli([
                 "--rpc-url",
-                self.cfg.rpc0.as_str(),
+                rpc_url,
                 "vote",
                 "status",
                 "--proposal-id",
@@ -262,6 +306,92 @@ impl Rpc {
         parse::extract_tx_hash(&out).ok_or_else(|| eyre!("no tx hash in propose output:\n{out}"))
     }
 
+    /// Fund the EOA derived from `recipient_key` with whole COEN from `funder`.
+    pub fn fund_key(
+        &self,
+        funder: &Validator,
+        recipient_key: &str,
+        amount_coen: u64,
+    ) -> Result<String> {
+        let recipient = eth::address_of(recipient_key)
+            .ok_or_else(|| eyre!("cannot derive funded recipient address"))?;
+        eth::send_value(
+            &self.cfg.rpc0,
+            recipient,
+            &funder.evm_key()?,
+            eth::coen(amount_coen),
+        )
+    }
+
+    /// Submit a proposal that must fail during CLI/RPC preflight.
+    pub fn send_propose_rejection(
+        &self,
+        key: &str,
+        target_module: &str,
+        payload: &str,
+    ) -> Result<String> {
+        self.sh().cli_expected_failure([
+            "--private-key",
+            key,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "vote",
+            "propose",
+            "--target-module",
+            target_module,
+            "--payload",
+            payload,
+        ])
+    }
+
+    fn proposal_event_blocks(
+        &self,
+        port: u16,
+        address: Address,
+        signature: &str,
+        proposal_id: u64,
+    ) -> Vec<u64> {
+        let signature = keccak256(signature.as_bytes());
+        let indexed_id = format!("0x{proposal_id:064x}");
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{address:#x}"),
+                "fromBlock": "0x0",
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_id],
+            }]),
+        )
+        .and_then(|value| value.as_array().cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|log| {
+            log.get("blockNumber")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+        })
+        .collect()
+    }
+
+    pub fn proposal_approved_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+        self.proposal_event_blocks(
+            port,
+            addresses::VOTE_ADDR,
+            "ProposalApproved(uint256,(uint64,uint64))",
+            proposal_id,
+        )
+    }
+
+    pub fn scheduled_update_created_event_blocks(&self, port: u16, proposal_id: u64) -> Vec<u64> {
+        self.proposal_event_blocks(
+            port,
+            addresses::UPDATE_ADDR,
+            "ScheduledUpdateCreated(uint256,uint32,uint64,bytes)",
+            proposal_id,
+        )
+    }
+
     /// `outbe-cli vote cast --proposal-id <id> --yes|--no`; returns the tx hash.
     pub fn cast_vote(&self, validator: &Validator, id: u64, approve: bool) -> Result<String> {
         let key = validator.evm_key()?;
@@ -279,6 +409,30 @@ impl Rpc {
             flag,
         ])?;
         parse::extract_tx_hash(&out).ok_or_else(|| eyre!("no tx hash in vote output:\n{out}"))
+    }
+
+    /// Submit a ballot that must be rejected during RPC preflight, returning
+    /// the product CLI/RPC error text for a precise assertion.
+    pub fn cast_vote_rejection(
+        &self,
+        validator: &Validator,
+        id: u64,
+        approve: bool,
+    ) -> Result<String> {
+        let key = validator.evm_key()?;
+        let ids = id.to_string();
+        let flag = if approve { "--yes" } else { "--no" };
+        self.sh().cli_expected_failure([
+            "--private-key",
+            key.as_str(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "vote",
+            "cast",
+            "--proposal-id",
+            ids.as_str(),
+            flag,
+        ])
     }
 
     // ---- waits (poll loops) --------------------------------------------
@@ -346,15 +500,20 @@ impl Rpc {
 
     /// Wait until the active protocol version equals `want`.
     pub fn wait_active_version(&self, want: u64, tries: u32) -> Option<u64> {
+        self.wait_active_version_on(self.cfg.primary_port(), want, tries)
+    }
+
+    /// Wait until one validator reports the requested active protocol version.
+    pub fn wait_active_version_on(&self, port: u16, want: u64, tries: u32) -> Option<u64> {
         for _ in 0..tries {
-            if let Some(v) = self.active_version() {
+            if let Some(v) = self.active_version_on(port) {
                 if v == want {
                     return Some(v);
                 }
             }
             sleep(Duration::from_secs(3));
         }
-        self.active_version()
+        self.active_version_on(port)
     }
 
     // ---- validator lifecycle reads (ValidatorSet / tribute / metadosis) ------
@@ -373,7 +532,8 @@ impl Rpc {
         )
     }
 
-    /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING, 4 UNBONDING, 5 INACTIVE.
+    /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
+    /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
         self.validator_record(port, addr).map(|r| r.status as u64)
     }
@@ -381,6 +541,57 @@ impl Rpc {
     /// Felony slash counter.
     pub fn slash_count(&self, port: u16, addr: &str) -> Option<u64> {
         self.validator_record(port, addr).map(|r| r.slashCount)
+    }
+
+    /// Bonded stake recorded by the Staking precompile on a specific node.
+    pub fn stake_on(&self, port: u16, addr: &str) -> Option<U256> {
+        let validator = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::STK_ADDR,
+            &IStaking::getStakeCall { validator },
+        )
+    }
+
+    /// Network-wide bonded total recorded by the Staking precompile.
+    pub fn total_staked_on(&self, port: u16) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::STK_ADDR,
+            &IStaking::getTotalStakedCall {},
+        )
+    }
+
+    /// Native balance on a specific node, including precompile balances.
+    pub fn balance_on(&self, port: u16, addr: &str) -> Option<U256> {
+        eth::balance(&self.url(port), addr.parse().ok()?)
+    }
+
+    pub fn staking_balance_on(&self, port: u16) -> Option<U256> {
+        eth::balance(&self.url(port), addresses::STK_ADDR)
+    }
+
+    /// Whether a finalized VoterFelony event exists for `validator` at or after
+    /// `from_block`. The validator is the event's first indexed argument.
+    pub fn has_voter_felony_event(&self, port: u16, validator: &str, from_block: u64) -> bool {
+        let validator: Address = match validator.parse() {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let signature = keccak256("VoterFelony(address,uint64,uint64)");
+        let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::SLASH_ADDR),
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_validator],
+            }]),
+        )
+        .and_then(|value| value.as_array().map(|logs| !logs.is_empty()))
+        .unwrap_or(false)
     }
 
     /// Whether the validator holds a live DKG share.
@@ -411,6 +622,16 @@ impl Rpc {
         .map(|v| v as u64)
     }
 
+    /// Current ValidatorSet epoch on a specific node.
+    pub fn epoch_on(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getEpochNumberCall {},
+        )
+        .and_then(|value| u64::try_from(value).ok())
+    }
+
     /// Consensus set size (ACTIVE + EXITING-with-share).
     pub fn consensus_count(&self, port: u16) -> Option<u64> {
         eth::read_call(
@@ -429,6 +650,26 @@ impl Rpc {
             &ITribute::totalSupplyCall {},
         )
         .map(|v| v.to_string())
+    }
+
+    /// Canonical Tribute identities indexed by one owner.
+    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getTributesByOwnerCall { owner },
+        )
+    }
+
+    /// Canonical Tribute identities indexed by one Worldwide Day.
+    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<Bytes>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getTributesByDayCall {
+                worldwideDay: worldwide_day,
+            },
+        )
     }
 
     /// Metadosis worldwide-day status byte (field 2 of `getWorldwideDay`).
@@ -460,23 +701,46 @@ impl Rpc {
 
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
-        let out = self
-            .sh()
-            .cli([
-                "--private-key",
-                key,
-                "--rpc-url",
-                self.cfg.rpc0.as_str(),
-                "tribute",
-                "offer",
-                wwd,
-                "--amount",
-                "100",
-                "--currency",
-                "840",
-            ])
-            .ok()?;
-        parse::extract_tx_hash(&out)
+        self.tribute_offer_with_params(key, wwd, "100", 840, false)
+    }
+
+    /// Submit a Tribute offer with explicit business fields. This is used by
+    /// duplicate-identity tests to prove that `(owner, worldwide_day)`, rather
+    /// than the rest of the encrypted payload, is the uniqueness boundary.
+    pub fn tribute_offer_with_params(
+        &self,
+        key: &str,
+        wwd: &str,
+        amount: &str,
+        currency: u16,
+        exclude_from_intex_issuance: bool,
+    ) -> Option<String> {
+        let started = Instant::now();
+        let mut args = vec![
+            "--private-key".to_owned(),
+            key.to_owned(),
+            "--rpc-url".to_owned(),
+            self.cfg.rpc0.clone(),
+            "tribute".to_owned(),
+            "offer".to_owned(),
+            wwd.to_owned(),
+            "--amount".to_owned(),
+            amount.to_owned(),
+            "--currency".to_owned(),
+            currency.to_string(),
+        ];
+        if exclude_from_intex_issuance {
+            args.push("--exclude-from-intex-issuance".to_owned());
+        }
+        let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
+        let tx_hash = parse::extract_tx_hash(&out)?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount={amount} currency={currency} exclude={exclude_from_intex_issuance}",
+            unix_time_millis(),
+            started.elapsed().as_millis(),
+            self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
+        );
+        Some(tx_hash)
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.
@@ -486,66 +750,179 @@ impl Rpc {
 
     /// Wait until a transaction receipt exists with the expected success bit.
     pub fn wait_receipt_status(&self, tx_hash: &str, expected: bool, tries: u32) -> bool {
+        let started = Instant::now();
         for _ in 0..tries {
             match eth::receipt_success(&self.cfg.rpc0, tx_hash) {
-                Some(status) => return status == expected,
+                Some(status) => {
+                    let receipt = eth::receipt_json(&self.cfg.rpc0, tx_hash);
+                    let block = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("blockNumber"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let block_hash = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("blockHash"))
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    let events = receipt
+                        .as_ref()
+                        .and_then(|value| value.get("logs"))
+                        .and_then(serde_json::Value::as_array)
+                        .map_or(0, Vec::len);
+                    eprintln!(
+                        "E2E_TRIBUTE_TIMELINE stage=receipt wall_ms={} wait_elapsed_ms={} tx={tx_hash} status={status} block={block} block_hash={block_hash} events={events} head={:?} finalized={:?}",
+                        unix_time_millis(),
+                        started.elapsed().as_millis(),
+                        self.head(self.cfg.primary_port()),
+                        self.finalized(self.cfg.primary_port()),
+                    );
+                    return status == expected;
+                }
                 None => sleep(Duration::from_millis(500)),
             }
         }
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=receipt-timeout wall_ms={} wait_elapsed_ms={} tx={tx_hash} expected_status={expected} head={:?} finalized={:?}",
+            unix_time_millis(),
+            started.elapsed().as_millis(),
+            self.head(self.cfg.primary_port()),
+            self.finalized(self.cfg.primary_port()),
+        );
         false
     }
 
-    /// Stake `amount` ether from `key` (REGISTERED/PENDING joiner).
-    pub fn stake(&self, key: &str, amount: u64) -> Result<()> {
+    /// Emit a state/finality observation correlated with one Tribute receipt.
+    pub fn trace_tribute_state(&self, tx_hash: &str, stage: &str, port: u16) {
+        let receipt = eth::receipt_json(&self.url(port), tx_hash);
+        let receipt_block = receipt
+            .as_ref()
+            .and_then(|value| value.get("blockNumber"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} tx={tx_hash} receipt_block={receipt_block} supply={:?} head={:?} finalized={:?}",
+            unix_time_millis(),
+            self.supply(port),
+            self.head(port),
+            self.finalized(port),
+        );
+    }
+
+    /// Canonical block number carried by a mined public receipt.
+    pub fn receipt_block_number(&self, tx_hash: &str, port: u16) -> Option<u64> {
+        let receipt = eth::receipt_json(&self.url(port), tx_hash)?;
+        let encoded = receipt.get("blockNumber")?.as_str()?;
+        u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+    }
+
+    /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).
+    pub fn stake(&self, key: &str, amount: u64) -> Result<String> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;
-        let wei = eth::ether(amount);
-        eth::send_call(
+        let base_units = eth::coen(amount);
+        let tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::STK_ADDR,
             key,
-            &IStaking::stakeCall { v, amount: wei },
-            Some(wei),
+            &IStaking::stakeCall {
+                v,
+                amount: base_units,
+            },
+            Some(base_units),
         )?;
-        Ok(())
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("stake receipt was not successful: {tx}"));
+        }
+        Ok(tx)
     }
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
     pub fn confirm_ready(&self, key: &str) -> Result<String> {
-        self.sh().cli([
+        let out = self.sh().cli([
             "--private-key",
             key,
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "validator",
             "confirm-ready",
-        ])
+        ])?;
+        let tx_hash = parse::extract_tx_hash(&out)
+            .ok_or_else(|| eyre!("no tx hash in confirm-ready output:\n{out}"))?;
+        if !self.wait_successful_receipt(&tx_hash, 60) {
+            return Err(eyre!(
+                "confirm-ready transaction was not successfully included: {tx_hash}"
+            ));
+        }
+        Ok(tx_hash)
     }
 
     /// Self-deactivate the validator owning `key` (ACTIVE -> EXITING).
-    pub fn deactivate(&self, key: &str) -> Result<()> {
+    pub fn deactivate(&self, key: &str) -> Result<String> {
         let v =
             eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for deactivate"))?;
-        eth::send_call(
-            &self.cfg.rpc0,
-            addresses::VS_ADDR,
-            key,
-            &IValidatorSet::deactivateValidatorCall { v },
-            None,
-        )?;
-        Ok(())
+        let tx = self.deactivate_as(key, v)?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx)
+            .ok_or_else(|| eyre!("deactivate receipt unavailable: {tx}"))?;
+        let topic = format!(
+            "{:#x}",
+            alloy_primitives::keccak256("ValidatorDeactivated(address,uint64)")
+        );
+        if !receipt_has_log(&receipt, addresses::VS_ADDR, Some(&topic)) {
+            return Err(eyre!(
+                "deactivate receipt has no ValidatorDeactivated event: {tx}"
+            ));
+        }
+        Ok(tx)
     }
 
-    /// Felony slash percent from `outbe-cli slash config`, if readable.
+    /// Attempt to deactivate `validator` using the EOA in `caller_key`.
+    pub fn deactivate_as(&self, caller_key: &str, validator: Address) -> Result<String> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            caller_key,
+            &IValidatorSet::deactivateValidatorCall { v: validator },
+            None,
+        )?;
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("deactivate receipt was not successful: {tx}"));
+        }
+        Ok(tx)
+    }
+
+    /// Claim the caller's matured queue and return the public receipt JSON.
+    pub fn claim_unbonded(&self, key: &str) -> Result<serde_json::Value> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            key,
+            &IStaking::claimUnbondedCall {},
+            None,
+        )?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx)
+            .ok_or_else(|| eyre!("claim receipt unavailable: {tx}"))?;
+        if !receipt_status(&receipt) {
+            return Err(eyre!("claim receipt was not successful: {tx}"));
+        }
+        Ok(receipt)
+    }
+
+    /// Exact native fee charged for a public receipt.
+    pub fn receipt_gas_cost(receipt: &serde_json::Value) -> Option<U256> {
+        let gas_used = receipt.get("gasUsed")?.as_str()?;
+        let gas_price = receipt.get("effectiveGasPrice")?.as_str()?;
+        Some(parse_rpc_u256(gas_used)? * parse_rpc_u256(gas_price)?)
+    }
+
+    /// Felony slash percent from the node's authoritative typed RPC response.
     pub fn slash_percent(&self) -> Option<u64> {
-        let out = self
-            .sh()
-            .cli(["--rpc-url", self.cfg.rpc0.as_str(), "slash", "config"])
-            .ok()?;
-        let line = out
-            .lines()
-            .find(|l| l.to_lowercase().contains("slash amount"))?;
-        let digits: String = line.chars().filter(char::is_ascii_digit).collect();
-        digits.parse().ok()
+        eth::raw_json_with_params(
+            &self.cfg.rpc0,
+            "outbe_getSlashConfig",
+            serde_json::json!([]),
+        )?
+        .get("slashAmountPercent")?
+        .as_u64()
     }
 
     // ---- lifecycle waits -----------------------------------------------------
@@ -572,6 +949,17 @@ impl Rpc {
         false
     }
 
+    /// Poll until finalized height reaches `want` on `port`.
+    pub fn wait_finalized_at_least(&self, port: u16, want: u64, tries: u32) -> bool {
+        for _ in 0..tries {
+            if self.finalized(port).is_some_and(|height| height >= want) {
+                return true;
+            }
+            sleep(Duration::from_secs(2));
+        }
+        self.finalized(port).is_some_and(|height| height >= want)
+    }
+
     /// Retry a tribute offer until `supply(primary)` reaches `want` (6s polls).
     pub fn offer_until_supply(
         &self,
@@ -581,6 +969,20 @@ impl Rpc {
         want: &str,
         tries: u32,
     ) -> bool {
+        self.offer_until_supply_hash(key, wwd, primary, want, tries)
+            .is_some()
+    }
+
+    /// Retry one Tribute offer until `supply(primary)` reaches `want`, returning
+    /// the included transaction hash for projection/index verification.
+    pub fn offer_until_supply_hash(
+        &self,
+        key: &str,
+        wwd: &str,
+        primary: u16,
+        want: &str,
+        tries: u32,
+    ) -> Option<String> {
         let mut pending_tx = None;
         for _ in 0..tries {
             if pending_tx.is_none() {
@@ -588,7 +990,10 @@ impl Rpc {
             }
             sleep(Duration::from_secs(6));
             if self.supply(primary).as_deref() == Some(want) {
-                return true;
+                if let Some(tx_hash) = pending_tx.as_deref() {
+                    self.trace_tribute_state(tx_hash, "state-visible", primary);
+                }
+                return pending_tx;
             }
             // Do not blindly submit a replacement while the first offer is still
             // pending. The CLI intentionally uses the account's pending nonce, so
@@ -605,7 +1010,9 @@ impl Rpc {
                 pending_tx = None;
             }
         }
-        self.supply(primary).as_deref() == Some(want)
+        (self.supply(primary).as_deref() == Some(want))
+            .then_some(pending_tx)
+            .flatten()
     }
 
     // ---- ZeroFee EIP-7702 vertical slice ----------------------------------
@@ -631,7 +1038,7 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::ether(1))?;
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(1))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,
@@ -654,6 +1061,27 @@ impl Rpc {
             key,
             addresses::ZEROFEE_ADDR,
         )?);
+        let delegation_hash = state
+            .zerofee_delegation_receipt
+            .as_ref()
+            .and_then(|receipt| {
+                receipt
+                    .get("transactionHash")
+                    .and_then(serde_json::Value::as_str)
+            });
+        state.zerofee_delegation_raw = delegation_hash.and_then(|hash| {
+            eth::raw_json_with_params(
+                &self.cfg.rpc0,
+                "eth_getRawTransactionByHash",
+                serde_json::json!([hash]),
+            )
+            .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        });
+        if state.zerofee_delegation_raw.is_none() {
+            return Err(eyre!(
+                "public RPC did not return the exact signed EIP-7702 transaction"
+            ));
+        }
         state.zerofee_key = Some(key.to_string());
         state.zerofee_address = Some(format!("{address:#x}"));
         state.zerofee_balance_before = eth::balance(&self.cfg.rpc0, address);
@@ -667,15 +1095,90 @@ impl Rpc {
         assert_eq!(code.as_ref(), expected, "wrong EIP-7702 designator");
     }
 
+    pub fn replay_zerofee_sponsored_transaction(&self, state: &mut FixtureState) -> Result<()> {
+        let raw = state
+            .zerofee_sponsored_raw
+            .as_deref()
+            .ok_or_else(|| eyre!("missing exact included sponsored transaction"))?;
+        let before_balance = eth::balance(&self.cfg.rpc0, zerofee_address(state));
+        let before_counter = self.zerofee_counter(zerofee_address(state));
+        let error = eth::raw_json_result(
+            &self.cfg.rpc0,
+            "eth_sendRawTransaction",
+            serde_json::json!([raw]),
+        )
+        .expect_err("exact included EIP-7702 transaction replay unexpectedly accepted");
+        state.zerofee_replay_error = Some(error.to_string());
+        assert_eq!(
+            eth::balance(&self.cfg.rpc0, zerofee_address(state)),
+            before_balance,
+            "replay changed signer balance"
+        );
+        assert_eq!(
+            self.zerofee_counter(zerofee_address(state)),
+            before_counter,
+            "replay changed ZeroFee counter"
+        );
+        self.assert_zerofee_delegation(state);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_persisted_on_ports(&self, state: &FixtureState, ports: &[u16]) {
+        let address = zerofee_address(state);
+        let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        let expected_counter = self
+            .zerofee_counter(address)
+            .expect("primary ZeroFee counter");
+        let expected_balance =
+            eth::balance(&self.cfg.rpc0, address).expect("primary delegated-account COEN balance");
+        assert_eq!(expected_counter.1, 8, "primary quota must remain exhausted");
+        for &port in ports {
+            let url = self.url(port);
+            assert_eq!(
+                eth::code(&url, address).map(|code| code.to_vec()),
+                Some(expected_code.clone()),
+                "delegation was not preserved on RPC port {port}"
+            );
+            let counter = eth::read_call(
+                &url,
+                addresses::ZEROFEE_ADDR,
+                &IZeroFee::getCounterCall { signer: address },
+            )
+            .map(|value| (value.day, value.count));
+            assert_eq!(
+                counter,
+                Some(expected_counter),
+                "quota/day changed on RPC port {port}"
+            );
+            assert_eq!(
+                eth::balance(&url, address),
+                Some(expected_balance),
+                "delegated-account COEN balance changed on RPC port {port}"
+            );
+        }
+    }
+
     pub fn submit_zerofee_quota(&self, state: &mut FixtureState) -> Result<()> {
         let key = zerofee_key(state).to_string();
         for _ in 0..8 {
-            state.zerofee_sponsored_receipts.push(eth::send_reward_call(
-                &self.cfg.rpc0,
-                &key,
-                addresses::AGENT_REWARD_ADDR,
-                0,
-            )?);
+            let receipt =
+                eth::send_reward_call(&self.cfg.rpc0, &key, addresses::AGENT_REWARD_ADDR, 0)?;
+            if state.zerofee_sponsored_raw.is_none() {
+                let tx_hash = receipt
+                    .get("transactionHash")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| eyre!("sponsored receipt has no transactionHash: {receipt}"))?;
+                state.zerofee_sponsored_raw = Some(
+                    eth::raw_json_with_params(
+                        &self.cfg.rpc0,
+                        "eth_getRawTransactionByHash",
+                        serde_json::json!([tx_hash]),
+                    )
+                    .and_then(|raw| raw.as_str().map(str::to_owned))
+                    .ok_or_else(|| eyre!("included sponsored transaction has no raw encoding"))?,
+                );
+            }
+            state.zerofee_sponsored_receipts.push(receipt);
         }
         state.zerofee_balance_after_quota = eth::balance(&self.cfg.rpc0, zerofee_address(state));
         Ok(())
@@ -798,6 +1301,206 @@ impl Rpc {
         assert_eq!(cli_chain, Some(chain));
     }
 
+    pub fn submit_zerofee_invalid_authorization(
+        &self,
+        funder: &Validator,
+        state: &mut FixtureState,
+    ) -> Result<()> {
+        let key = "0x2222222222222222222222222222222222222222222222222222222222222222";
+        let address = eth::address_of(key).ok_or_else(|| eyre!("derive negative signer"))?;
+        let funding = self.fund_key(funder, key, 1)?;
+        if !self.wait_successful_receipt(&funding, 20) {
+            return Err(eyre!("negative signer COEN funding failed: {funding}"));
+        }
+        let chain_id = self
+            .chain_id(self.cfg.primary_port())
+            .ok_or_else(|| eyre!("chain id"))?;
+        state.zerofee_invalid_authorization_receipt = Some(eth::install_delegation_with_overrides(
+            &self.cfg.rpc0,
+            key,
+            addresses::ZEROFEE_ADDR,
+            Some(U256::from(chain_id.saturating_add(1))),
+            None,
+        )?);
+        state.zerofee_negative_key = Some(key.to_string());
+        state.zerofee_negative_address = Some(format!("{address:#x}"));
+        Ok(())
+    }
+
+    pub fn assert_zerofee_invalid_authorization(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let receipt = state
+            .zerofee_invalid_authorization_receipt
+            .as_ref()
+            .expect("invalid authorization receipt");
+        assert!(
+            receipt_status(receipt),
+            "outer transaction carrying an invalid authorization must still be a valid included transaction"
+        );
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(Vec::new()),
+            "wrong-chain authorization installed delegation code"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn submit_zerofee_wrong_target(&self, state: &mut FixtureState) -> Result<()> {
+        let key = zerofee_negative_key(state).to_string();
+        let address = zerofee_negative_address(state);
+        // Authorization-list processing installs the designator before the
+        // outer call executes. Calling the newly delegated Update target with
+        // empty calldata may revert; that receipt status is not the delegation
+        // postcondition, so the live account code below is authoritative.
+        let _delegation = eth::install_delegation(&self.cfg.rpc0, &key, addresses::UPDATE_ADDR)?;
+        state.zerofee_wrong_target_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_wrong_target_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            &key,
+            addresses::AGENT_REWARD_ADDR,
+            0,
+        )?);
+        state.zerofee_wrong_target_balance_after = eth::balance(&self.cfg.rpc0, address);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_wrong_target(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let expected = [&[0xef, 0x01, 0x00][..], addresses::UPDATE_ADDR.as_slice()].concat();
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(expected),
+            "wrong-target delegation designator changed unexpectedly"
+        );
+        let receipt = state
+            .zerofee_wrong_target_receipt
+            .as_ref()
+            .expect("wrong-target call receipt");
+        assert!(
+            !receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "wrong-target delegation received ZeroFee sponsorship"
+        );
+        assert!(
+            state.zerofee_wrong_target_balance_after < state.zerofee_wrong_target_balance_before,
+            "wrong-target call did not pay its own COEN gas charge"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn submit_zerofee_conflicting_authorization(&self, state: &mut FixtureState) -> Result<()> {
+        state.zerofee_conflicting_authorization_receipt =
+            Some(eth::install_delegation_with_overrides(
+                &self.cfg.rpc0,
+                zerofee_negative_key(state),
+                addresses::ZEROFEE_ADDR,
+                None,
+                Some(0),
+            )?);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_conflicting_authorization(&self, state: &FixtureState) {
+        let address = zerofee_negative_address(state);
+        let receipt = state
+            .zerofee_conflicting_authorization_receipt
+            .as_ref()
+            .expect("conflicting authorization receipt");
+        assert!(
+            !receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "conflicting authorization unexpectedly emitted sponsorship"
+        );
+        let expected = [&[0xef, 0x01, 0x00][..], addresses::UPDATE_ADDR.as_slice()].concat();
+        assert_eq!(
+            eth::code(&self.cfg.rpc0, address).map(|code| code.to_vec()),
+            Some(expected),
+            "stale authorization replaced the existing delegation"
+        );
+        assert_eq!(self.zerofee_counter(address).map(|value| value.1), Some(0));
+    }
+
+    pub fn wait_zerofee_day_rollover_and_submit(&self, state: &mut FixtureState) -> Result<()> {
+        let address = zerofee_address(state);
+        let before = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read exhausted counter before day rollover"))?;
+        if before.1 != 8 {
+            return Err(eyre!(
+                "day rollover requires exhausted quota, got {before:?}"
+            ));
+        }
+        state.zerofee_day_before_rollover = Some(before.0);
+
+        let mut reset = None;
+        for _ in 0..150 {
+            let latest_timestamp = self.latest_block_timestamp(self.cfg.primary_port());
+            let current = self.zerofee_counter(address);
+            if latest_timestamp.is_some_and(|timestamp| timestamp % 86_400 < 200)
+                && current.is_some_and(|value| value.0 != before.0 && value.1 == 0)
+            {
+                reset = current;
+                break;
+            }
+            sleep(Duration::from_secs(1));
+        }
+        let _reset = reset.ok_or_else(|| eyre!("ZeroFee counter did not lazily reset"))?;
+        state.zerofee_new_day_balance_before = eth::balance(&self.cfg.rpc0, address);
+        state.zerofee_new_day_receipt = Some(eth::send_reward_call(
+            &self.cfg.rpc0,
+            zerofee_key(state),
+            addresses::AGENT_REWARD_ADDR,
+            0,
+        )?);
+        state.zerofee_new_day_balance_after = eth::balance(&self.cfg.rpc0, address);
+        Ok(())
+    }
+
+    pub fn assert_zerofee_day_rollover(&self, state: &FixtureState, ports: &[u16]) {
+        let address = zerofee_address(state);
+        let old_day = state
+            .zerofee_day_before_rollover
+            .expect("day before rollover");
+        let receipt = state
+            .zerofee_new_day_receipt
+            .as_ref()
+            .expect("new-day receipt");
+        assert!(
+            receipt_status(receipt),
+            "first new-day sponsored call failed: receipt={receipt}"
+        );
+        assert!(
+            receipt_has_log(receipt, addresses::ZEROFEE_ADDR, Some(SPONSORSHIP_TOPIC)),
+            "first new-day call has no sponsorship event"
+        );
+        assert_eq!(
+            state.zerofee_new_day_balance_after, state.zerofee_new_day_balance_before,
+            "first new-day sponsored call charged the signer COEN"
+        );
+        let expected = self
+            .zerofee_counter(address)
+            .expect("primary new-day counter");
+        assert_ne!(expected.0, old_day, "worldwide day did not change");
+        assert_eq!(expected.1, 1, "new-day quota must restart at one use");
+        let expected_code = [&[0xef, 0x01, 0x00][..], addresses::ZEROFEE_ADDR.as_slice()].concat();
+        for &port in ports {
+            let url = self.url(port);
+            assert_eq!(
+                eth::read_call(
+                    &url,
+                    addresses::ZEROFEE_ADDR,
+                    &IZeroFee::getCounterCall { signer: address },
+                )
+                .map(|value| (value.day, value.count)),
+                Some(expected),
+                "new-day quota differs on RPC port {port}"
+            );
+            assert_eq!(
+                eth::code(&url, address).map(|code| code.to_vec()),
+                Some(expected_code.clone()),
+                "delegation changed across day rollover on RPC port {port}"
+            );
+        }
+    }
+
     fn zerofee_counter(&self, signer: Address) -> Option<(u32, u32)> {
         let value = eth::read_call(
             &self.cfg.rpc0,
@@ -806,6 +1509,13 @@ impl Rpc {
         )?;
         Some((value.day, value.count))
     }
+}
+
+fn unix_time_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 const SPONSORSHIP_TOPIC: &str =
@@ -824,9 +1534,29 @@ fn zerofee_address(state: &FixtureState) -> Address {
         .expect("valid ZeroFee fixture address")
 }
 
+fn zerofee_negative_key(state: &FixtureState) -> &str {
+    state
+        .zerofee_negative_key
+        .as_deref()
+        .expect("negative ZeroFee fixture key")
+}
+
+fn zerofee_negative_address(state: &FixtureState) -> Address {
+    state
+        .zerofee_negative_address
+        .as_deref()
+        .expect("negative ZeroFee fixture address")
+        .parse()
+        .expect("valid negative ZeroFee fixture address")
+}
+
 fn receipt_status(receipt: &serde_json::Value) -> bool {
     matches!(receipt.get("status"), Some(serde_json::Value::Bool(true)))
         || receipt.get("status").and_then(serde_json::Value::as_str) == Some("0x1")
+}
+
+fn parse_rpc_u256(value: &str) -> Option<U256> {
+    U256::from_str_radix(value.trim_start_matches("0x"), 16).ok()
 }
 
 fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {

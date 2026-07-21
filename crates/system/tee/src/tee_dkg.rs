@@ -238,6 +238,7 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
 
     let mut dealer_finalized = false;
     let mut logs: BTreeMap<Vec<u8>, FinalizedLog> = BTreeMap::new();
+    let mut ingested_dealers: BTreeSet<Vec<u8>> = BTreeSet::new();
     let me_bls = coord.my_bls().to_vec();
     // Seam F sealed partials ADDRESSED TO THIS ENCLAVE that arrive while we are
     // still collecting dealer logs (a fast peer can finish and broadcast its
@@ -272,13 +273,18 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
         };
         match msg {
             DkgWireMessage::DealerBundle(bundle) => {
-                if let Some(ack) = coord.ingest(enclave, &bundle)? {
-                    gossip.send(&ack.to, DkgWireMessage::Ack(ack.msg)).await?;
+                if !ingested_dealers.contains(&bundle.dealer_bls) {
+                    if let Some(ack) = coord.ingest(enclave, &bundle)? {
+                        ingested_dealers.insert(bundle.dealer_bls.clone());
+                        gossip.send(&ack.to, DkgWireMessage::Ack(ack.msg)).await?;
+                    }
                 }
             }
             DkgWireMessage::Ack(ack) => {
-                coord.receive_ack(enclave, &ack)?;
-                my_acks.insert(ack.player_bls.clone());
+                if !my_acks.contains(&ack.player_bls) {
+                    coord.receive_ack(enclave, &ack)?;
+                    my_acks.insert(ack.player_bls.clone());
+                }
                 if let Some(log) = maybe_finalize_dealer(enclave, &my_acks, &mut dealer_finalized)?
                 {
                     logs.insert(log.dealer_bls.clone(), log.clone());

@@ -18,8 +18,34 @@ const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
+const PROPOSER_FELONY_SLOT: u64 = 1;
+const VOTER_FELONY_SLOT: u64 = 12;
+/// A lifecycle E2E may opt into a short delay; production seed defaults remain
+/// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
+const STAKING_SUFFIX: &str = "ee02";
 
 impl Localnet {
+    /// Keep a debug-only logical-clock E2E internally consistent by shifting the
+    /// genesis header by the same signed number of seconds passed to every node.
+    /// Without this, block 1 is correctly rejected by the production max-drift
+    /// validator before a day-boundary scenario can exercise ZeroFee.
+    pub(crate) fn shift_genesis_timestamp(&self, offset_secs: i64) -> Result<()> {
+        let path = self.cfg.dir.join("genesis.json");
+        let bytes = fs::read(&path)?;
+        let mut genesis: serde_json::Value = serde_json::from_slice(&bytes)?;
+        let raw = genesis
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre::eyre!("genesis timestamp is not a string"))?;
+        let seconds = u64::from_str_radix(raw.trim_start_matches("0x"), 16)?;
+        let shifted = i128::from(seconds) + i128::from(offset_secs);
+        let shifted = u64::try_from(shifted)
+            .map_err(|_| eyre::eyre!("genesis timestamp offset leaves u64 range"))?;
+        genesis["timestamp"] = serde_json::Value::String(format!("0x{shifted:x}"));
+        fs::write(path, serde_json::to_vec_pretty(&genesis)?)?;
+        Ok(())
+    }
+
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
     /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
     /// subprocesses; the genesis skeleton, port rewrite, and felony patch are
@@ -56,6 +82,8 @@ impl Localnet {
 
         // Step 2c: dev felony thresholds for observable localnet slashing.
         self.patch_felony(tuning)?;
+        // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
+        self.patch_staking_timing(tuning)?;
         Ok(())
     }
 
@@ -133,7 +161,7 @@ impl Localnet {
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
 
-        let genesis = json!({
+        let mut genesis = json!({
             "config": {
                 "chainId": 54_322_345,
                 "homesteadBlock": 0,
@@ -166,6 +194,13 @@ impl Localnet {
             "coinbase": "0x0000000000000000000000000000000000000000",
             "alloc": alloc,
         });
+        // Four real enclaves intentionally share one SGX host in this lane.
+        // EPC scheduling can make one validator's otherwise ~100-200 ms offer
+        // re-execution take just over five seconds. The production defaults
+        // assume one enclave per validator host; widen only this co-located
+        // hardware test network so a local resource stall does not cancel the
+        // execution-read budget before the deterministic retry completes.
+        apply_co_located_sgx_timing(&mut genesis, self.cfg.tee_mode)?;
         fs::write(
             self.cfg.dir.join("genesis.json"),
             serde_json::to_string_pretty(&genesis)? + "\n",
@@ -196,8 +231,9 @@ impl Localnet {
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
         let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
-        if DEV_FELONY_THRESHOLD >= epoch {
-            bail!("dev felony threshold {DEV_FELONY_THRESHOLD} must be < epoch length {epoch}");
+        let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
+        if felony_threshold >= epoch {
+            bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
         }
         let path = self.cfg.dir.join("genesis.json");
         let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
@@ -207,7 +243,7 @@ impl Localnet {
             .ok_or_else(|| eyre!("genesis has no alloc object"))?;
 
         // SlashIndicator lives at 0x…ee01 (config slot 1 = proposer felony, slot
-        // 13 = voter felony). Match the address however it's spelled in alloc.
+        // 12 = voter felony). Match the address however it's spelled in alloc.
         let key = alloc.keys().find(|k| ends_with_ee01(k)).cloned();
         let key = key.unwrap_or_else(|| {
             let k = "0x000000000000000000000000000000000000ee01".to_string();
@@ -223,13 +259,51 @@ impl Localnet {
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| eyre!("felony storage is not an object"))?;
-        let thr = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
-        storage.insert(format!("0x{:064x}", 1u64), thr.clone());
-        storage.insert(format!("0x{:064x}", 13u64), thr);
+        patch_felony_storage(storage, felony_threshold);
 
         fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
         Ok(())
     }
+
+    /// Apply opt-in staking lifecycle timings to the already-seeded genesis.
+    /// No slot is changed unless its corresponding `TESTNET_*` knob is present.
+    fn patch_staking_timing(&self, tuning: &[(&str, String)]) -> Result<()> {
+        let unbonding = tuned_optional(tuning, "TESTNET_UNBONDING_PERIOD_SECS");
+        let slashed = tuned_optional(tuning, "TESTNET_SLASHED_WITHDRAWAL_DELAY_SECS");
+        if unbonding.is_none() && slashed.is_none() {
+            return Ok(());
+        }
+
+        let path = self.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        patch_staking_storage(&mut genesis, unbonding, slashed)?;
+        fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
+        Ok(())
+    }
+}
+
+fn apply_co_located_sgx_timing(
+    genesis: &mut serde_json::Value,
+    tee_mode: crate::env::TeeMode,
+) -> Result<()> {
+    if !matches!(tee_mode, crate::env::TeeMode::Real) {
+        return Ok(());
+    }
+    let config = genesis["config"]
+        .as_object_mut()
+        .ok_or_else(|| eyre!("generated genesis config is not an object"))?;
+    config.insert("leaderTimeoutMs".to_owned(), json!(15_000));
+    config.insert("certificationTimeoutMs".to_owned(), json!(30_000));
+    Ok(())
+}
+
+fn patch_felony_storage(
+    storage: &mut serde_json::Map<String, serde_json::Value>,
+    felony_threshold: u64,
+) {
+    let threshold = json!(format!("0x{felony_threshold:064x}"));
+    storage.insert(format!("0x{PROPOSER_FELONY_SLOT:064x}"), threshold.clone());
+    storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
 
 /// A `TESTNET_*` tuning override parsed as `u64`, or `default`.
@@ -241,10 +315,137 @@ fn tuned(tuning: &[(&str, String)], key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
+    tuning
+        .iter()
+        .find(|(candidate, _)| *candidate == key)
+        .and_then(|(_, value)| value.parse().ok())
+}
+
+fn patch_staking_storage(
+    genesis: &mut serde_json::Value,
+    unbonding: Option<u64>,
+    slashed: Option<u64>,
+) -> Result<()> {
+    let alloc = genesis
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre!("genesis has no alloc object"))?;
+    let key = alloc
+        .keys()
+        .find(|key| address_has_suffix(key, STAKING_SUFFIX))
+        .cloned()
+        .ok_or_else(|| eyre!("seeded genesis has no Staking alloc entry"))?;
+    let storage = alloc
+        .get_mut(&key)
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|entry| entry.get_mut("storage"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre!("Staking alloc entry has no storage object"))?;
+    if let Some(value) = unbonding {
+        storage.insert(format!("0x{:064x}", 1u64), json!(format!("0x{value:064x}")));
+    }
+    if let Some(value) = slashed {
+        storage.insert(
+            format!("0x{:064x}", 11u64),
+            json!(format!("0x{value:064x}")),
+        );
+    }
+    Ok(())
+}
+
 /// Whether an alloc key normalizes (lowercase, `0x`-stripped, left-padded to 40)
 /// to a SlashIndicator address ending in `ee01` (`bootstrap-testnet.sh:244`).
 fn ends_with_ee01(key: &str) -> bool {
+    address_has_suffix(key, "ee01")
+}
+
+fn address_has_suffix(key: &str, suffix: &str) -> bool {
     let k = key.to_lowercase();
     let k = k.strip_prefix("0x").unwrap_or(&k);
-    format!("{k:0>40}").ends_with("ee01")
+    format!("{k:0>40}").ends_with(suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seeded_genesis() -> serde_json::Value {
+        json!({
+            "alloc": {
+                "000000000000000000000000000000000000ee02": {
+                    "storage": {
+                        format!("0x{:064x}", 1u64): format!("0x{:064x}", 1_814_400u64),
+                        format!("0x{:064x}", 11u64): format!("0x{:064x}", 3_628_800u64)
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn lifecycle_timing_patch_updates_only_requested_staking_slots() {
+        let mut genesis = seeded_genesis();
+        patch_staking_storage(&mut genesis, Some(8), None).unwrap();
+        let storage = genesis["alloc"]["000000000000000000000000000000000000ee02"]["storage"]
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            storage[&format!("0x{:064x}", 1u64)],
+            json!(format!("0x{:064x}", 8u64))
+        );
+        assert_eq!(
+            storage[&format!("0x{:064x}", 11u64)],
+            json!(format!("0x{:064x}", 3_628_800u64))
+        );
+    }
+
+    #[test]
+    fn lifecycle_timing_patch_rejects_unseeded_staking_entry() {
+        let mut genesis = json!({ "alloc": {} });
+        assert!(patch_staking_storage(&mut genesis, Some(8), None).is_err());
+    }
+
+    #[test]
+    fn felony_patch_uses_current_slashindicator_config_slots() {
+        let mut storage = serde_json::Map::new();
+        patch_felony_storage(&mut storage, DEV_FELONY_THRESHOLD);
+        let expected = json!(format!("0x{DEV_FELONY_THRESHOLD:064x}"));
+        assert_eq!(
+            storage.get(&format!("0x{PROPOSER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert_eq!(
+            storage.get(&format!("0x{VOTER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert!(storage.get(&format!("0x{:064x}", 13u64)).is_none());
+    }
+
+    #[test]
+    fn felony_patch_accepts_a_scenario_specific_threshold() {
+        let mut storage = serde_json::Map::new();
+        patch_felony_storage(&mut storage, 119);
+        let expected = json!(format!("0x{:064x}", 119u64));
+        assert_eq!(
+            storage.get(&format!("0x{PROPOSER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+        assert_eq!(
+            storage.get(&format!("0x{VOTER_FELONY_SLOT:064x}")),
+            Some(&expected)
+        );
+    }
+
+    #[test]
+    fn co_located_real_sgx_gets_wider_consensus_windows_only_in_hardware_lane() {
+        let mut real = json!({ "config": {} });
+        apply_co_located_sgx_timing(&mut real, crate::env::TeeMode::Real).unwrap();
+        assert_eq!(real["config"]["leaderTimeoutMs"], json!(15_000));
+        assert_eq!(real["config"]["certificationTimeoutMs"], json!(30_000));
+
+        let mut mock = json!({ "config": {} });
+        apply_co_located_sgx_timing(&mut mock, crate::env::TeeMode::Mock).unwrap();
+        assert!(mock["config"].as_object().unwrap().is_empty());
+    }
 }

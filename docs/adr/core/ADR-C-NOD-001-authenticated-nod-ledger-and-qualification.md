@@ -32,8 +32,8 @@ callable Rust functions.
 
 An item stores owner, day, Gratis load, league, floor price, bucket key, cost,
 issuance/reference currencies and block timestamp. A bucket stores day, floor,
-qualification, member count and entry price. Compact consensus state additionally
-stores total supply, a three-level radix-256 bitmap of nonempty unqualified price
+qualification, member count and entry price. The compact consensus state stores
+total supply, a three-level radix-256 bitmap of nonempty unqualified price
 bins, per-bin dense bucket arrays and scan cursors, plus `bucket_key -> day`.
 
 In every stable state:

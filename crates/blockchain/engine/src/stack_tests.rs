@@ -594,6 +594,45 @@ fn genesis_formation_gate_proves_peers_are_at_genesis() {
 }
 
 #[test]
+fn genesis_formation_gate_accepts_quorum_connected_non_mesh_topology() {
+    let genesis = B256::with_last_byte(1);
+    let context = StartupDkgContext {
+        last_execution_height: 0,
+        last_consensus_finalized_height: 0,
+        recovered_boundary_finalized: false,
+        recovered_vrf_group_public_key: None,
+        recovered_dkg_output_hash: None,
+        genesis_formation_proven: false,
+    };
+    let peer = RethGenesisPeerStatus {
+        genesis,
+        blockhash: genesis,
+        latest_block: Some(0),
+    };
+    let evidence = RethGenesisPeerEvidence {
+        connected_peers: 2,
+        is_syncing: true,
+        is_initially_syncing: true,
+        peer_query_failed: false,
+        peers: vec![peer; 2],
+    };
+
+    // Four validators need a 3-of-4 BFT quorum, hence two matching remote
+    // witnesses per node. Requiring all three remote validators creates a split
+    // startup gate on a healthy non-fully-meshed gossip topology: nodes seeing
+    // 3/3 start all-member DKG while nodes seeing 2/3 never enter it.
+    assert_eq!(
+        genesis_formation_gate_decision(
+            context,
+            genesis,
+            genesis_formation_required_remote_peers(4),
+            &evidence,
+        ),
+        GenesisFormationGate::Proven
+    );
+}
+
+#[test]
 fn genesis_formation_gate_rejects_remote_chain_progress() {
     let genesis = B256::with_last_byte(1);
     let context = StartupDkgContext {
@@ -1028,6 +1067,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let round = Round::new(Epoch::new(0), View::new(1175));
         let block = recovery_block(5700);
+        let expected_digest = block.digest();
         let (provider, finalization) = recovery_finalization_fixture(&block, round);
         let clock = context.child("recover_clock");
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
@@ -1044,10 +1084,51 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
-        recovered
+        (recovered, expected_digest)
     });
 
-    assert_eq!(recovered, Some(Round::new(Epoch::new(0), View::new(1175))));
+    assert_eq!(
+        recovered.0,
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(0), View::new(1175)),
+            digest: recovered.1,
+        })
+    );
+}
+
+#[test]
+fn exact_marshal_finalization_promotes_recovery_anchor_to_execution_head() {
+    let hash = B256::repeat_byte(0x42);
+    let round = Round::new(Epoch::new(3), View::new(17));
+    let reconciled = reconcile_recovered_execution_head(
+        91,
+        hash,
+        Some(RecoveredApplicationFinalization {
+            round,
+            digest: Digest(hash),
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(reconciled, (91, hash, Some(round)));
+}
+
+#[test]
+fn mismatched_marshal_finalization_digest_fails_closed() {
+    let error = reconcile_recovered_execution_head(
+        91,
+        B256::repeat_byte(0x42),
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(3), View::new(17)),
+            digest: Digest(B256::repeat_byte(0x24)),
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("marshal finalization digest mismatch at execution height 91"));
+    assert!(error.contains("execution=0x4242"));
+    assert!(error.contains("marshal=0x2424"));
 }
 
 #[test]
@@ -1347,6 +1428,58 @@ fn test_save_load_and_clear_pending_dkg_boundary_snapshot() {
     );
     clear_pending_dkg_boundary(dir.path());
     assert!(load_pending_dkg_boundary(dir.path()).unwrap().is_none());
+}
+
+#[test]
+fn test_completed_dkg_is_durable_before_activation_boundary() {
+    let (keys, participants, output, share, _polynomial) = run_test_dkg_complete();
+    let validator_set = validators::ValidatorSet {
+        public_keys: keys.iter().map(|key| key.public_key()).collect(),
+        addresses: vec![
+            Address::with_last_byte(0x11),
+            Address::with_last_byte(0x22),
+            Address::with_last_byte(0x33),
+        ],
+        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
+    };
+    let target = FrozenDkgTarget {
+        dkg_cycle: 4,
+        freeze_height: 90,
+        planned_activation_height: 120,
+        validator_set,
+        participants: participants.clone(),
+        is_validator_set_change: false,
+    };
+    let complete = dkg_actor::DkgComplete {
+        output: output.clone(),
+        share: Some(share),
+        participants: participants.clone(),
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let backend = bls::KeyBackend::Plaintext;
+
+    persist_completed_dkg_before_activation(
+        dir.path(),
+        &backend,
+        Epoch::new(3),
+        3,
+        &participants,
+        &target,
+        &complete,
+        104,
+    )
+    .unwrap();
+
+    let (_, _, recovered_output) = load_pending_dkg_state(dir.path(), &backend)
+        .unwrap()
+        .expect("completed DKG material must survive a pre-activation crash");
+    assert_eq!(recovered_output, output);
+    let snapshot = load_pending_dkg_boundary(dir.path())
+        .unwrap()
+        .expect("completed DKG boundary must survive a pre-activation crash");
+    assert_eq!(snapshot.activated_at_height, 120);
+    assert_eq!(snapshot.artifact.epoch, 4);
+    assert_eq!(snapshot.artifact.dkg_cycle, 4);
 }
 
 #[test]
@@ -2027,6 +2160,16 @@ fn test_pending_dkg_activation_triggers_at_planned_height() {
         pending_dkg_activation_decision(271, 240, 30),
         PendingDkgActivationDecision::Expired { deadline: 270 }
     );
+}
+
+#[test]
+fn frozen_dkg_target_expires_at_the_last_proposable_height() {
+    assert!(!frozen_dkg_target_expired(269, 240, 30));
+    assert!(
+        frozen_dkg_target_expired(270, 240, 30),
+        "the application refuses block 271, so the supervisor must fail closed at height 270"
+    );
+    assert!(frozen_dkg_target_expired(271, 240, 30));
 }
 
 #[test]
@@ -3058,6 +3201,14 @@ mod restart_recovery {
             69 + MAX_UNFINALIZED_HEAD_LEAD,
             69
         ));
+    }
+
+    #[test]
+    fn recovery_anchor_never_promotes_an_execution_only_head_to_finalized() {
+        assert_eq!(durable_recovery_anchor_height(70, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(69, 69), 69);
+        assert_eq!(durable_recovery_anchor_height(68, 69), 68);
+        assert_eq!(durable_recovery_anchor_height(0, 0), 0);
     }
 
     #[test]

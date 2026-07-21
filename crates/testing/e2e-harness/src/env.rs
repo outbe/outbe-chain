@@ -100,6 +100,12 @@ pub struct EnvCli {
     #[arg(long)]
     pub chain_bin: Option<PathBuf>,
 
+    /// Optional prebuilt newer `outbe-chain` binary for operator replacement.
+    /// When omitted, the update E2E builds the requested version itself from a
+    /// temporary worktree of the source revision under test.
+    #[arg(long)]
+    pub upgraded_chain_bin: Option<PathBuf>,
+
     /// `outbe-cli` binary. Defaults to `<repo>/target/debug/outbe-cli`.
     #[arg(long)]
     pub cli_bin: Option<PathBuf>,
@@ -144,6 +150,7 @@ pub struct Environment {
     pub repo: PathBuf,
     pub data_dir: PathBuf,
     pub chain_bin: PathBuf,
+    pub upgraded_chain_bin: Option<PathBuf>,
     pub cli_bin: PathBuf,
     pub keygen_bin: PathBuf,
     pub mock_bin: PathBuf,
@@ -171,6 +178,7 @@ impl Environment {
                 .chain_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/debug/outbe-chain")),
+            upgraded_chain_bin: cli.upgraded_chain_bin.clone(),
             cli_bin: cli
                 .cli_bin
                 .clone()
@@ -209,6 +217,7 @@ impl Default for Environment {
             repo: None,
             data_dir: None,
             chain_bin: None,
+            upgraded_chain_bin: None,
             cli_bin: None,
             keygen_bin: None,
             mock_bin: None,

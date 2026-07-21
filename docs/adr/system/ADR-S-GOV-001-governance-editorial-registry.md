@@ -51,7 +51,7 @@ commitment continuity but cannot reconstruct an old document.
 
 ```text
 Draft -> Approved -> Implemented
-   |         
+   |
    +-> Rejected
    +-> Rework -> Draft
 ```
@@ -97,8 +97,8 @@ because it bypasses validator eligibility and target-specific payload validation
 
 - Define authority removal, rotation, threshold and compromised-key recovery.
 - Replace unchecked counter increments with explicit exhaustion behavior.
-- Decide whether historical canon/meta-canon bytes must be retrievable, not only
-  their hashes.
+- Decide whether both historical canon/meta-canon bytes and their hashes must be
+  retrievable.
 - Add exhaustive primary-record versus author/status-index closure tests with
   rollback injection.
 - Specify whether OIP and GIP are intentionally structurally identical or need

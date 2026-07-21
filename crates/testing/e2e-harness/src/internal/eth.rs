@@ -17,7 +17,7 @@ use std::future::Future;
 use std::sync::mpsc::sync_channel;
 use std::sync::OnceLock;
 
-use alloy_eips::{eip7702::Authorization, BlockNumberOrTag};
+use alloy_eips::{eip7702::Authorization, BlockId, BlockNumberOrTag};
 use alloy_network::{EthereumWallet, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, TxHash, U256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -36,6 +36,7 @@ const GAS_PRICE_WEI: u128 = 1_000_000_000;
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IValidatorSet {
+        event ValidatorDeactivated(address indexed validator, uint64 atHeight);
         function validatorByAddress(address v) external view returns (
             address addr, bytes pubkey, uint256 stake, uint8 status,
             uint64 slashCount, uint64 missedBlocks, uint64 missedVotes,
@@ -44,6 +45,7 @@ sol! {
         function isConsensusParticipant(address v) external view returns (bool);
         function activeValidatorCount() external view returns (uint32);
         function activeConsensusCount() external view returns (uint32);
+        function getEpochNumber() external view returns (uint256);
         function deactivateValidator(address v) external;
         function registerValidator(address v, bytes pubkey, bytes sig) external;
         function setP2pAddress(address v, uint8 kind, bytes addr) external;
@@ -100,10 +102,15 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITribute {
         function totalSupply() external view returns (uint256);
+        function getTributesByOwner(address owner) external view returns (bytes[] memory);
+        function getTributesByDay(uint32 worldwideDay) external view returns (bytes[] memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IStaking {
         function stake(address v, uint256 amount) external payable;
+        function claimUnbonded() external;
+        function getStake(address validator) external view returns (uint256);
+        function getTotalStaked() external view returns (uint256);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IWorldwideDay {
@@ -161,7 +168,10 @@ where
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into());
-        let out = provider.call(tx).await.ok()?;
+        // Pin state and block context to the canonical head. Omitting the block
+        // tag lets some RPC implementations execute against `pending`, whose
+        // timestamp can cross a UTC boundary before a block is canonical.
+        let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
         C::abi_decode_returns(&out).ok()
     })
 }
@@ -201,6 +211,19 @@ pub(crate) fn state_root(url: &str, height: u64) -> Option<String> {
     })
 }
 
+/// Canonical block hash at `height`.
+pub(crate) fn block_hash(url: &str, height: u64) -> Option<String> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let block = provider
+            .get_block_by_number(BlockNumberOrTag::Number(height))
+            .await
+            .ok()??;
+        Some(format!("{:#x}", block.header.hash))
+    })
+}
+
 /// A custom JSON-RPC method returning an arbitrary JSON value (e.g.
 /// `outbe_consensusStatus`).
 pub(crate) fn raw_json(url: &str, method: &'static str) -> Option<serde_json::Value> {
@@ -223,6 +246,24 @@ pub(crate) fn raw_json_with_params(
     })
 }
 
+/// A raw JSON-RPC request that preserves the server error. Negative E2E paths
+/// use this instead of [`raw_json_with_params`], whose `Option` intentionally
+/// treats transport and server errors alike for polling reads.
+pub(crate) fn raw_json_result(
+    url: &str,
+    method: &'static str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        provider
+            .raw_request::<_, serde_json::Value>(method.into(), params)
+            .await
+            .map_err(Into::into)
+    })
+}
+
 /// Receipt success flag for `tx`, or `None` if not yet mined / unreadable.
 pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
     let url = url.to_string();
@@ -232,6 +273,12 @@ pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
         let receipt = provider.get_transaction_receipt(hash).await.ok()??;
         Some(receipt.status())
     })
+}
+
+/// Public JSON-RPC representation of a mined receipt. Lifecycle accounting uses
+/// this to prove the exact gas charge paid by a claimant.
+pub(crate) fn receipt_json(url: &str, tx: &str) -> Option<serde_json::Value> {
+    raw_json_with_params(url, "eth_getTransactionReceipt", serde_json::json!([tx]))
 }
 
 /// Sign and send a contract call from `key`, waiting for its receipt; returns the
@@ -265,7 +312,7 @@ pub(crate) fn send_call<C: SolCall>(
     })
 }
 
-/// Plain-ether value transfer from `key` to `to` (funds a new joiner account).
+/// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
@@ -340,6 +387,19 @@ pub(crate) fn install_delegation(
     key: &str,
     target: Address,
 ) -> Result<serde_json::Value> {
+    install_delegation_with_overrides(url, key, target, None, None)
+}
+
+/// Submit an EIP-7702 authorization with optional chain-id and authorization-
+/// nonce overrides. Negative live tests use this to prove that invalid or stale
+/// authorizations cannot mutate an account's delegation.
+pub(crate) fn install_delegation_with_overrides(
+    url: &str,
+    key: &str,
+    target: Address,
+    authorization_chain_id: Option<U256>,
+    authorization_nonce: Option<u64>,
+) -> Result<serde_json::Value> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let authority = signer.address();
     let chain_id = raw_json(url, "eth_chainId")
@@ -350,9 +410,9 @@ pub(crate) fn install_delegation(
         .ok_or_else(|| eyre!("read chain id"))?;
     let tx_nonce = nonce(url, authority).ok_or_else(|| eyre!("read authority nonce"))?;
     let authorization = Authorization {
-        chain_id: U256::from(chain_id),
+        chain_id: authorization_chain_id.unwrap_or_else(|| U256::from(chain_id)),
         address: target,
-        nonce: tx_nonce + 1,
+        nonce: authorization_nonce.unwrap_or(tx_nonce + 1),
     };
     let signature = signer.sign_hash_sync(&authorization.signature_hash())?;
     let signed = authorization.into_signed(signature);
@@ -425,8 +485,8 @@ pub(crate) fn address_of(key: &str) -> Option<Address> {
     Some(signer.address())
 }
 
-/// `amount` whole ether as wei.
-pub(crate) fn ether(amount: u64) -> U256 {
+/// `amount` whole COEN in the chain's 18-decimal native base units.
+pub(crate) fn coen(amount: u64) -> U256 {
     U256::from(amount) * U256::from(1_000_000_000_000_000_000u128)
 }
 
@@ -447,8 +507,8 @@ mod tests {
     }
 
     #[test]
-    fn ether_scales() {
-        assert_eq!(ether(1), U256::from(1_000_000_000_000_000_000u128));
-        assert_eq!(ether(0), U256::ZERO);
+    fn coen_scales_to_base_units() {
+        assert_eq!(coen(1), U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(coen(0), U256::ZERO);
     }
 }
