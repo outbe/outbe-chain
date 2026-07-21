@@ -40,11 +40,11 @@ abstract contract UpgradeBase is BaseScript {
     }
 }
 
-/// @title UpgradeBsc
+/// @title UpgradeTarget
 /// @notice Upgrade the BNB-side intex proxies to freshly compiled implementations.
 /// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, OUTBE_CHAIN_ID.
 ///      Impl constructor args mirror DeployBsc so the immutables are unchanged.
-contract UpgradeBsc is UpgradeBase {
+contract UpgradeTarget is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
@@ -64,10 +64,10 @@ contract UpgradeBsc is UpgradeBase {
     }
 }
 
-/// @title UpgradeOutbe
+/// @title UpgradeOrigin
 /// @notice Upgrade the Outbe-side intex proxies to freshly compiled implementations.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID. Impl constructor args mirror DeployOutbe.
-contract UpgradeOutbe is UpgradeBase {
+contract UpgradeOrigin is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);

@@ -9,13 +9,13 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
-/// @title DeployOutbe
+/// @title DeployOrigin
 /// @author Outbe
 /// @notice Deploy the Outbe-side intex contracts as UUPS proxies through the CREATE3 factory.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS (the ERC-7786 bridge all clients speak to), BNB_CHAIN_ID
 ///      (BNB's EVM chainId). The deployer is the admin (DEFAULT_ADMIN_ROLE) and delegate. Registers the
 ///      BNB-side peers on each client; app wiring (roles) is a separate step.
-contract DeployOutbe is BaseScript {
+contract DeployOrigin is BaseScript {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
