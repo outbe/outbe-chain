@@ -415,7 +415,6 @@ fn process_metadosis(
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
-        // The whole day limit is auctionable.
         let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
         tribute.retire_completed_partition(scope, wwd)?;
