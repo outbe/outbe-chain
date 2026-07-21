@@ -160,6 +160,18 @@ rollout so a node never accepts an obsolete vulnerable enclave or rejects the on
 activation-compatible one. Dev attestation flags must fail startup on production
 chain ids.
 
+Testnet release identity has two independently verified layers. Operators/CI verify the
+Cosign signature on the exact OCI digest before launch; Gramine verifies the embedded
+SIGSTRUCT at enclave load. The ReleaseManifest binds that OCI digest to MRENCLAVE,
+MRSIGNER, ISVPRODID, ISVSVN and the signed Gramine archive. Runtime containers receive no
+private signing key and do not render or sign their manifest.
+
+A normal enclave upgrade preserves MRSIGNER, never decreases ISVSVN and pre-authorizes an
+overlap of old/new MRENCLAVE before rolling nodes. MRSIGNER sealing therefore survives the
+code measurement change. A MRSIGNER rotation is a different operation: old sealed identity
+must fail to unseal and the network needs a governed handoff or rebootstrap. The current
+hardware release lane proves this local behavior without claiming DCAP remote attestation.
+
 ## Production-interface and architectural evidence
 
 Inspected evidence includes protocol/codec/client, quote verification, DKG driver,

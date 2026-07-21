@@ -1,0 +1,29 @@
+{
+  "artifacts": [
+    {"builder_a_sha256": "d15bea1e7407f2c0ecded17cc2744d9273778d01f63eab85fb554041de574006", "builder_b_sha256": "d15bea1e7407f2c0ecded17cc2744d9273778d01f63eab85fb554041de574006", "byte_identical": true, "name": "outbe-chain", "size": 190078456},
+    {"builder_a_sha256": "713bd47ceb455f5e252dc5e235a8aae4ac8a55cc36af446a227bd95709f9f9a2", "builder_b_sha256": "713bd47ceb455f5e252dc5e235a8aae4ac8a55cc36af446a227bd95709f9f9a2", "byte_identical": true, "name": "outbe-cli", "size": 10987928},
+    {"builder_a_sha256": "5784c014992b37966d2de0e85d244037508987d5f98e92d2ae5c9d0776923dbd", "builder_b_sha256": "5784c014992b37966d2de0e85d244037508987d5f98e92d2ae5c9d0776923dbd", "byte_identical": true, "name": "outbe-keygen", "size": 3873040},
+    {"builder_a_sha256": "75c17d1395ac020d5b4419bfd0848a2265aa5656329a63e51932505600fd39c6", "builder_b_sha256": "75c17d1395ac020d5b4419bfd0848a2265aa5656329a63e51932505600fd39c6", "byte_identical": true, "name": "outbe-feeder", "size": 17148176},
+    {"builder_a_sha256": "c5aeb10879f01f5fad9af46b37653f4c396e2de04f43e8b8174ecff3aa6fff7e", "builder_b_sha256": "c5aeb10879f01f5fad9af46b37653f4c396e2de04f43e8b8174ecff3aa6fff7e", "byte_identical": true, "name": "outbe-tee-enclave", "size": 4359960}
+  ],
+  "build_identity": {
+    "builder_image": "rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5",
+    "profile": "release",
+    "release_tag": "commit-cd0c0f87aa1631798d9f6392c594d4756fe05520",
+    "source_commit": "cd0c0f87aa1631798d9f6392c594d4756fe05520",
+    "source_date_epoch": 1784643961,
+    "target": "x86_64-unknown-linux-gnu"
+  },
+  "checks": ["manifest-schema-draft-2020-12", "manifest-canonical-bytes", "exact-five-elf-matrix", "per-artifact-manifest-digest-and-size", "elf-magic", "forbidden-absolute-build-paths", "byte-for-byte-two-builder-comparison"],
+  "differences": [
+    "builder-a: forbidden absolute build path in outbe-chain: /usr/local/cargo",
+    "builder-b: forbidden absolute build path in outbe-chain: /usr/local/cargo",
+    "builder-a: forbidden absolute build path in outbe-keygen: /usr/local/cargo",
+    "builder-b: forbidden absolute build path in outbe-keygen: /usr/local/cargo",
+    "builder-a: forbidden absolute build path in outbe-tee-enclave: /usr/local/cargo",
+    "builder-b: forbidden absolute build path in outbe-tee-enclave: /usr/local/cargo"
+  ],
+  "manifest": {"builder_a_sha256": "d356c3d0113a408c0a61c285edbd8ca79b98de4086206e297b176823cfbf2753", "builder_b_sha256": "d356c3d0113a408c0a61c285edbd8ca79b98de4086206e297b176823cfbf2753", "byte_identical": true},
+  "result": "failed",
+  "schema_version": "1.0.0"
+}

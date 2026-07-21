@@ -246,7 +246,7 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 
 # Full Rust/Cucumber gramine-mock TEE e2e suite.
 # Builds the node, CLI, keygen, and mock enclave, then runs every feature.
-# Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner
+# Requires sudo + Docker; the `outbe-tee-enclave-gramine-test` image (joiner
 # enclave). Runnable on any box with gramine-direct (no SGX hardware required for
 # the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
@@ -283,6 +283,38 @@ OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- 
 [tasks.sgx-smoke]
 description = "Hardware SGX smoke (build + sign + run enclave under gramine-sgx)"
 run = "./scripts/sgx-smoke.sh"
+
+[tasks.release-sgx-prepare]
+description = "Prepare an unsigned deterministic testnet SGX bundle"
+run = 'cargo xtask release sgx prepare "$@"'
+
+[tasks.release-sgx-compare]
+description = "Compare two independently prepared unsigned SGX bundles"
+run = 'cargo xtask release sgx compare "$@"'
+
+[tasks.release-sgx-sign]
+description = "Sign an unsigned SGX bundle with an explicitly supplied testnet key"
+run = 'cargo xtask release sgx sign "$@"'
+
+[tasks.release-sgx-verify]
+description = "Verify a pre-signed testnet SGX bundle and its SIGSTRUCT"
+run = 'cargo xtask release sgx verify "$@"'
+
+[tasks.release-sgx-archive]
+description = "Archive a verified signed testnet SGX bundle deterministically"
+run = 'cargo xtask release sgx archive "$@"'
+
+[tasks.release-sgx-image]
+description = "Build an immutable OCI image from a verified signed SGX bundle"
+run = 'cargo xtask release sgx image "$@"'
+
+[tasks.release-sgx-manifest]
+description = "Assemble the verified testnet ReleaseManifest from exact SGX release evidence"
+run = 'cargo xtask release sgx manifest "$@"'
+
+[tasks.release-sgx-hardware-e2e]
+description = "Run Rust/Gherkin acceptance against an exact published testnet SGX image digest"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
 
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;

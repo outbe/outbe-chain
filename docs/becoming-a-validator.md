@@ -55,6 +55,10 @@ cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
   `polynomial.hex` and `dkg-output.hex` (public, no secret share).
 - The `outbe-tee-enclave` sidecar (real SGX under gramine in production; a mock
   binary on localnet). Required to execute tribute offers.
+- For testnet, deploy the exact Cosign-verified enclave image digest and compare its
+  signed ReleaseManifest measurements by following
+  [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
+  release bundle on the validator host.
 - An EVM account (secp256k1) funded with native COEN.
 
 `outbe-cli` / `outbe-keygen` never send key material to the RPC; only signed

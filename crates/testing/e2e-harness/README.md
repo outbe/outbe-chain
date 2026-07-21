@@ -42,6 +42,8 @@ coverage of assertions that the row explicitly marks as a gap.
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
   `tribute_projection.feature` covers encrypted-offer projection plus compressed
   entity presence and absence proofs.
+- `release-features/` — the separate exact-artifact hardware-SGX acceptance scenario.
+  It does not bootstrap a localnet or MongoDB and never rebuilds the release image.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
   requirement/skip logic.
 - `src/world/` — encapsulated handles with verb APIs: `localnet.start(opts)`,
@@ -129,6 +131,36 @@ while `--validators 2 --all` exits non-zero.
 
 `--debug` streams the localnet setup output live; without it, that output is
 captured and only printed if a setup step fails.
+
+## Published testnet SGX release acceptance
+
+`outbe-release-sgx-e2e` is a second Rust/Cucumber entrypoint for one exact published
+`image@sha256:...`. It is separate from the localnet World because release acceptance owns
+an immutable bundle/image/sealed-state fixture, not validators or MongoDB:
+
+```bash
+cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+  --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
+  --bundle /tmp/extracted-signed-sgx-bundle \
+  --evidence /tmp/hardware-sgx.json
+```
+
+It requires real SGX devices and a Docker-pulled, Cosign-verified digest. The scenario:
+
+1. reruns typed bundle verification and checks the runtime has no key generation, signing
+   or direct-mode fallback;
+2. obtains a local SGX report from the running image and compares its
+   MRENCLAVE/MRSIGNER/ISVPRODID/ISVSVN with the signed bundle;
+3. requires both MRSIGNER- and MRENCLAVE-policy EGETKEY access;
+4. starts the same image twice with one sealed directory and requires same-signer identity
+   restoration;
+5. changes one signed artifact and requires verification failure; and
+6. re-signs a test copy with an ephemeral different key and proves the old MRSIGNER-sealed
+   identity is rejected rather than silently restored.
+
+Only after every step passes does it write canonical `hardware-sgx.json`. DCAP is recorded
+as unavailable/false under the current `remote_attestation = "none"` release contract; the
+scenario must not be cited as remote-attestation evidence.
 
 ## Focused Tribute compressed-entity checks
 
