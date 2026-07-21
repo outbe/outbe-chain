@@ -94,7 +94,7 @@ impl<'a> Sh<'a> {
             .collect();
         let out = self.cli_output(&argv)?;
         if out.status.success() {
-            bail!("outbe-cli command unexpectedly succeeded")
+            bail!("outbe-cli command unexpectedly succeeded");
         }
         Ok(String::from_utf8_lossy(&out.stderr).into_owned())
     }
