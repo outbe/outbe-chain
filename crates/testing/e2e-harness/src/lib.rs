@@ -19,6 +19,7 @@ pub mod env;
 pub mod features;
 pub mod world;
 
+mod evidence;
 mod internal;
 
 use cucumber::cli;
@@ -103,8 +104,19 @@ pub async fn run() {
             .unwrap_or(0);
         format!("run-{secs}-{}", std::process::id())
     };
-    environment.data_dir = environment.data_dir.join(run_id);
+    let base_data_dir = environment.data_dir.clone();
+    environment.data_dir = base_data_dir.join(&run_id);
+    environment.evidence_dir = Some(
+        environment
+            .evidence_dir
+            .clone()
+            .unwrap_or_else(|| base_data_dir.join("evidence").join(&run_id)),
+    );
     eprintln!("outbe-e2e: data dir {}", environment.data_dir.display());
+    eprintln!(
+        "outbe-e2e: evidence dir {}",
+        environment.evidence_dir.as_ref().unwrap().display()
+    );
 
     env::set_environment(environment.clone());
 
@@ -116,6 +128,7 @@ pub async fn run() {
     // Hand an owned clone to each `'static` closure.
     let env_hook = environment.clone();
     let env_filter = environment.clone();
+    let env_evidence = environment.clone();
     let env_cleanup = environment;
 
     let writer = World::cucumber()
@@ -138,16 +151,37 @@ pub async fn run() {
         // Tear the localnet down after every scenario (pass or fail) so the
         // network/enclave containers never outlive the run. Skipped scenarios
         // build no `World`, so there is nothing to stop.
-        .after(|_feature, _rule, _scenario, _event, world| {
+        .after(move |feature, _rule, scenario, event, world| {
             if let Some(world) = world {
-                if let Err(error) = world.localnet.audit_unexpected_logs(
+                let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
                         .allow_unsupported_update_fatal
                         .then_some(world.state.proposed_version)
                         .flatten(),
                     world.state.expected_dkg_reveal.as_deref(),
-                ) {
+                );
+                let audit = match audit {
+                    Ok(audit) => audit,
+                    Err(error) => {
+                        world.localnet.teardown();
+                        panic!("E2E log-safety audit could not run: {error:#}");
+                    }
+                };
+                if let Err(error) = evidence::write_scenario(evidence::ScenarioEvidence {
+                    env: &env_evidence,
+                    feature,
+                    scenario,
+                    event,
+                    scenario_id: world.localnet.scenario_id(),
+                    scenario_dir: world.localnet.scenario_dir(),
+                    elapsed: world.started_at.elapsed(),
+                    audit: &audit,
+                }) {
+                    world.localnet.teardown();
+                    panic!("E2E evidence write failed: {error:#}");
+                }
+                if let Err(error) = audit.ensure_clean() {
                     world.localnet.teardown();
                     panic!("E2E log-safety audit failed: {error:#}");
                 }

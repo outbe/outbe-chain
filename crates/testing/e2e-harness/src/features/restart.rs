@@ -608,6 +608,22 @@ fn restart_active_validator_during_reshare(world: &mut World) {
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
     assert!(!world.rpc.is_participant(primary, &addr));
     assert_eq!(world.rpc.active_count(primary), Some(4));
+    let retry_snapshot = world
+        .localnet
+        .scenario_dir()
+        .join("validator-3/data/keys/dkg_dealer_retry.hex");
+    let mut retry_snapshot_persisted = false;
+    for _ in 0..100 {
+        if retry_snapshot.exists() {
+            retry_snapshot_persisted = true;
+            break;
+        }
+        sleep(Duration::from_millis(50));
+    }
+    assert!(
+        retry_snapshot_persisted,
+        "active dealer did not persist its retry transcript before restart"
+    );
     world.state.marker_height = world.rpc.head(primary);
     world.state.marker_count = world
         .rpc
@@ -673,6 +689,12 @@ fn active_restart_reshare_converges(world: &mut World) {
             .localnet
             .enclave_log_has(3, "unsealed offer key + group signature"),
         "restarted active validator did not recover sealed enclave state"
+    );
+    assert!(
+        world
+            .localnet
+            .log_has(3, "restoring durable DKG dealer transcript"),
+        "restarted active dealer did not restore the interrupted DKG transcript"
     );
     assert!(
         lockstep_ok(&world.rpc, primary, restarted),
