@@ -234,20 +234,53 @@ pub(crate) fn unpledge(
     Ok(())
 }
 
+/// Recover the plaintext EOA behind a sealed owner blob through the enclave, without
+/// touching state. `handle = Some(h)` decrypts a live pledge ticket (at
+/// `consume_pledge`, before calldata carries the EOA); `None` decrypts the self-contained
+/// `eoa_ct` stored on a Credis position (at payAnadosis / expiry). The EOA is recovered
+/// this way so it never appears in calldata or stored plaintext — only in the (trusted)
+/// host to key the confidential ledgers.
+fn reveal_owner_inner(
+    storage: &StorageHandle<'_>,
+    blob: &[u8],
+    handle: Option<B256>,
+) -> Result<Address> {
+    let mut req = base_request(
+        GratisOp::RevealOwner,
+        chain_id_b256(storage)?,
+        Address::ZERO,
+        U256::ZERO,
+    );
+    req.current_pledge_record = blob.to_vec();
+    req.pledge_handle = handle;
+    let result = apply_gratis_op(req)?;
+    ensure_applied(&result)?;
+    Ok(result.revealed_owner)
+}
+
+/// Decrypt the `eoa_ct` blob stored on a Credis position back to the pledger EOA
+/// (single read-only `RevealOwner` round-trip).
+pub(crate) fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<Address> {
+    reveal_owner_inner(&storage, eoa_ct, None)
+}
+
 /// requestCredis: consume `pledge_handle`'s ticket (authorized by `spend_auth`, which
 /// binds it to `bundle`), crediting the collateral into the EOA's OWN pledged ledger
 /// and deleting the ticket. No escrow account and no aggregate change (it stays
-/// pledged, pending → active). Returns `gratis_amount` so credis can size the
-/// position. `eoa` is supplied by the caller and checked by the enclave against the
-/// ticket owner.
+/// pledged, pending → active). The EOA is not passed in calldata: the enclave carries it
+/// in the ticket, so we first `RevealOwner` it (to key its pledged ledger) and the
+/// consume result seals it into `eoa_ct` for the caller to store on the position. Returns
+/// `(gratis_amount, eoa_ct)`.
 pub(crate) fn consume_pledge(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
-    eoa: Address,
     spend_auth: [u8; 32],
-) -> Result<U256> {
+) -> Result<(U256, Vec<u8>)> {
     let gratis = Gratis::new(storage.clone());
+    let ticket_ct = gratis.pledge_ticket_ct_of(pledge_handle)?;
+    // Recover the pledger EOA from the ticket so we can read/write its own pledged ledger.
+    let eoa = reveal_owner_inner(&storage, &ticket_ct, Some(pledge_handle))?;
     let mut req = base_request(
         GratisOp::ConsumePledge,
         chain_id_b256(&storage)?,
@@ -255,7 +288,7 @@ pub(crate) fn consume_pledge(
         U256::ZERO,
     );
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
-    req.current_pledge_record = gratis.pledge_ticket_ct_of(pledge_handle)?;
+    req.current_pledge_record = ticket_ct;
     req.pledge_handle = Some(pledge_handle);
     req.bundle_account = Some(bundle);
     req.spend_auth = Some(spend_auth);
@@ -264,7 +297,7 @@ pub(crate) fn consume_pledge(
     // Credit the EOA's own pledged ledger and delete the consumed ticket.
     write_account_blobs(&gratis, eoa, &result)?;
     gratis.write_pledge_ticket_ct(pledge_handle, &result.new_pledge_record)?;
-    Ok(result.gratis_amount)
+    Ok((result.gratis_amount, result.eoa_ct))
 }
 
 /// payAnadosis: release `amount` of collateral from `eoa`'s own pledged ledger back
@@ -292,10 +325,14 @@ pub(crate) fn release_to_eoa(
         .checked_sub(result.event_amount)
         .ok_or_else(|| PrecompileError::Fatal("gratis pledged_total underflow".to_string()))?;
     gratis.set_pledged_total_supply(total_pledged)?;
+    // Scrub the EOA from the event: this is a credis-driven release tied to a specific
+    // position (credisfactory emits the position-scoped `AnadosisPaid`), so emitting the
+    // pledger address here would re-link EOA↔position on every payment. The aggregate
+    // `remainingPledged` signal is preserved.
     storage.emit_event(
         GRATIS_ADDRESS,
         SolEvent::encode_log_data(&IGratis::GratisUnpledged {
-            account: eoa,
+            account: Address::ZERO,
             amount: result.event_amount,
             remainingPledged: total_pledged,
         }),
@@ -324,10 +361,12 @@ pub(crate) fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U25
         .checked_sub(result.event_amount)
         .ok_or_else(|| PrecompileError::Fatal("gratis pledged_total underflow".to_string()))?;
     gratis.set_pledged_total_supply(total_pledged)?;
+    // Scrub the EOA from the event (see `release_to_eoa`): credis emits the position-scoped
+    // `CollateralBurned`; the supply signal here stays via `remainingSupply`.
     storage.emit_event(
         GRATIS_ADDRESS,
         SolEvent::encode_log_data(&IGratis::GratisBurned {
-            account: eoa,
+            account: Address::ZERO,
             amount: result.event_amount,
             remainingSupply: remaining,
         }),

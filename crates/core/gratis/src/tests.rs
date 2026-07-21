@@ -196,14 +196,20 @@ fn pledge_consume_and_pay_anadosis_flow() {
         // the ticket is deleted; pledged_total is unchanged.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let credis_amount =
-            api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).unwrap();
+        let (credis_amount, eoa_ct) =
+            api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
         assert_eq!(credis_amount, amount);
         assert_eq!(view_pledged(storage.clone(), alice()), amount);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
+        // The sealed EOA opens back to alice (the plaintext never left the enclave).
+        assert!(!eoa_ct.is_empty());
+        assert_eq!(
+            api::reveal_owner(storage.clone(), &eoa_ct).unwrap(),
+            alice()
+        );
 
         // Re-consuming the now-deleted ticket is rejected.
-        assert!(api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).is_err());
+        assert!(api::consume_pledge(storage.clone(), handle, bundle(), spend).is_err());
 
         // Pay 10 installments: each releases 1/10 from alice's pledged ledger back to
         // her balance.
@@ -243,7 +249,7 @@ fn burn_pledged_reduces_supply_and_pledged() {
         .unwrap();
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).unwrap();
+        api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
 
         // Release 3 installments (300), leaving 700 outstanding, then burn it.
         let per = amount / U256::from(10u64);
@@ -304,7 +310,7 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
         // The deleted ticket can no longer be consumed for credis.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        assert!(api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).is_err());
+        assert!(api::consume_pledge(storage.clone(), handle, bundle(), spend).is_err());
     });
 }
 

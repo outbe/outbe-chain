@@ -27,11 +27,6 @@
         "internalType": "address"
       },
       {
-        "name": "eoaAccount",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
         "name": "pledgeHandle",
         "type": "bytes32",
         "internalType": "bytes32"

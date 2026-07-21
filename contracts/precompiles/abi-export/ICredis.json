@@ -89,9 +89,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaAccount",
-            "type": "address",
-            "internalType": "address"
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }
@@ -221,9 +221,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaAccount",
-            "type": "address",
-            "internalType": "address"
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }
@@ -353,9 +353,9 @@
             "internalType": "uint16"
           },
           {
-            "name": "eoaAccount",
-            "type": "address",
-            "internalType": "address"
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }

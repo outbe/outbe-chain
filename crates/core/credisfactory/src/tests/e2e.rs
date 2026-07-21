@@ -155,16 +155,9 @@ fn full_pledge_request_pay_unlock_flow() {
         // requestCredis bound to alice's bundle account, with alice as the pledger
         // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, amount_stables) = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            handle,
-            spend,
-        )
-        .unwrap();
+        let (position_id, amount_stables) =
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
+                .unwrap();
         assert_eq!(view_pledged(&storage, alice()), pledge_amount);
 
         // amount_stables = pledge_amount * 2e18 / (1e12 * 1e18) for rate 2.0.
@@ -175,7 +168,13 @@ fn full_pledge_request_pay_unlock_flow() {
         let credis = CredisContract::new(storage.clone());
         let position = credis.get_position(position_id).unwrap();
         assert_eq!(position.bundle_account, alice());
-        assert_eq!(position.eoa_account, alice());
+        // The pledger EOA is stored sealed (ciphertext), never as a plaintext address,
+        // and the enclave opens it back to alice via RevealOwner.
+        assert!(!position.eoa_ct.is_empty(), "eoa stored as ciphertext");
+        assert_eq!(
+            outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct).unwrap(),
+            alice()
+        );
         assert_eq!(position.credis_principal, amount_stables);
         assert_eq!(position.refinancing_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
@@ -236,16 +235,9 @@ fn pay_anadosis_unlocks_one_installment() {
         .unwrap();
 
         let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            handle,
-            spend,
-        )
-        .unwrap();
+        let (position_id, _) =
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
+                .unwrap();
 
         // Pay a single installment: releases exactly pledge/10 from alice's pledged
         // ledger right away, without waiting for the loan to complete.
@@ -284,16 +276,7 @@ fn request_credis_rejects_overdue_anadosis() {
         )
         .unwrap();
         let spend1 = credis_spend_auth(alice(), h1, alice());
-        runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            h1,
-            spend1,
-        )
-        .unwrap();
+        runtime::request_credis(storage.clone(), alice(), asset(), alice(), h1, spend1).unwrap();
 
         // Second pledge — then attempt a second request once anadosis-1 is overdue
         // on the first position.
@@ -308,16 +291,8 @@ fn request_credis_rejects_overdue_anadosis() {
         storage
             .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
             .unwrap();
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            h2,
-            spend2,
-        )
-        .unwrap_err();
+        let err = runtime::request_credis(storage.clone(), alice(), asset(), alice(), h2, spend2)
+            .unwrap_err();
         assert!(err.to_string().contains("overdue"), "got: {err}");
     });
     test_enclave::uninstall();
@@ -332,7 +307,6 @@ fn request_credis_rejects_zero_asset() {
             storage.clone(),
             alice(),
             Address::ZERO,
-            alice(),
             alice(),
             B256::ZERO,
             [0u8; 32],
@@ -352,7 +326,6 @@ fn request_credis_rejects_zero_bundle_account() {
             alice(),
             asset(),
             Address::ZERO,
-            alice(),
             B256::ZERO,
             [0u8; 32],
         )
@@ -383,16 +356,9 @@ fn pay_anadosis_rejects_non_owner_caller() {
         )
         .unwrap();
         let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            handle,
-            spend,
-        )
-        .unwrap();
+        let (position_id, _) =
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
+                .unwrap();
 
         // bob is not the position's bundle account.
         let err = runtime::pay_anadosis(storage.clone(), bob(), position_id).unwrap_err();
@@ -425,16 +391,9 @@ fn expiry_sweep_burns_outstanding_collateral() {
         )
         .unwrap();
         let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            asset(),
-            alice(),
-            alice(),
-            handle,
-            spend,
-        )
-        .unwrap();
+        let (position_id, _) =
+            runtime::request_credis(storage.clone(), alice(), asset(), alice(), handle, spend)
+                .unwrap();
 
         // Pay 3 of 10 installments, leaving 7/10 of the collateral outstanding.
         for n in 1..=3u64 {

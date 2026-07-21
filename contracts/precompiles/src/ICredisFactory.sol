@@ -12,19 +12,14 @@ interface ICredisFactory {
     ///         `pledgeSecret` from its modify key + the handle off-chain. The
     ///         pledge-lock ticket is consumed once and bound to `bundleAccount`,
     ///         crediting the collateral into the EOA's own pledged ledger.
-    /// @param eoaAccount The original pledger EOA; checked against the ticket owner
-    ///        inside the enclave and stored on the position for the anadosis release
-    ///        and the expiry-burn sweep.
-    ///        TODO(privacy): pass this encrypted so observers can't read it.
+    ///         The pledger EOA is NOT passed in calldata: the enclave reads it from
+    ///         the ticket and returns it sealed, so it is stored as ciphertext on the
+    ///         position (no EOA↔bundle linkage is visible to external observers).
     /// @return positionId Derived from `pledgeHandle` and `bundleAccount`.
     /// @return amountStables Stablecoin amount disbursed (oracle-converted).
-    function requestCredis(
-        address asset,
-        address bundleAccount,
-        address eoaAccount,
-        bytes32 pledgeHandle,
-        bytes32 spendAuth
-    ) external returns (uint256 positionId, uint256 amountStables);
+    function requestCredis(address asset, address bundleAccount, bytes32 pledgeHandle, bytes32 spendAuth)
+        external
+        returns (uint256 positionId, uint256 amountStables);
 
     /// @notice Advance the named position by one anadosis installment and release
     ///         that installment's share of collateral from the pledger's own

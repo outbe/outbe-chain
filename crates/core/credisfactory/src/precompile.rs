@@ -36,7 +36,6 @@ pub fn dispatch(
                         sender,
                         c.asset,
                         c.bundleAccount,
-                        c.eoaAccount,
                         c.pledgeHandle,
                         c.spendAuth.0,
                     )?;

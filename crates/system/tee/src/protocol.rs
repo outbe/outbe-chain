@@ -146,6 +146,13 @@ pub enum GratisOp {
     /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
+    /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
+    /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
+    /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
+    /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
+    /// (used at `payAnadosis`/expiry to recover the EOA that keys the pledged ledger).
+    /// No state mutation, no authorization.
+    RevealOwner,
 }
 
 /// Proof that the caller holds the account's modify key, without revealing it.
@@ -169,9 +176,11 @@ pub struct GratisOpRequest {
     pub op: GratisOp,
     pub chain_id: B256,
     /// Balance/pledged-owning account (the EOA). For `ConsumePledge`/`ReleaseToEoa`/
-    /// `BurnPledged` this is the original pledger, supplied by the host (`eoaAccount`
-    /// calldata arg / stored on the Credis position). For `ConsumePledge` the enclave
-    /// also checks it against `ticket.owner`.
+    /// `BurnPledged` the EOA never appears in calldata or stored plaintext: the host first
+    /// recovers it with a `RevealOwner` round-trip (decrypting the pledge ticket, or the
+    /// `eoa_ct` stored on the Credis position) and passes the revealed address here. For
+    /// `ConsumePledge` the enclave still cross-checks it against `ticket.owner`. Ignored for
+    /// `RevealOwner` itself.
     pub account: Address,
     // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
     // visible in calldata (only cumulative balances are encrypted). To also hide
@@ -223,6 +232,13 @@ pub struct GratisOpResult {
     pub pledge_handle: B256,
     /// Pledged amount surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
+    /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
+    /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
+    pub revealed_owner: Address,
+    /// Self-contained sealed EOA blob (`nonce(12) ‖ ChaCha20Poly1305(owner 20B)` under the
+    /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
+    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_handle = None`).
+    pub eoa_ct: Vec<u8>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
     /// The account's next modify-auth nonce (for the host to persist).

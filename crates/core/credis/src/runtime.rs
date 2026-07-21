@@ -66,7 +66,7 @@ impl CredisContract<'_> {
         &mut self,
         handle_id: U256,
         bundle_account: Address,
-        eoa_account: Address,
+        eoa_ct: Vec<u8>,
         asset: Address,
         issuance_currency: u16,
         refinancing_rate: U256,
@@ -98,7 +98,7 @@ impl CredisContract<'_> {
             credis_principal,
             refinancing_rate,
             issuance_currency,
-            eoa_account,
+            eoa_ct,
         })?;
 
         for n in 1..=NUMBER_OF_ANADOSIS {
@@ -182,7 +182,7 @@ impl CredisContract<'_> {
     /// zeroes the outstanding balances, marks the schedule complete (so it is skipped
     /// by future sweeps and overdue checks), and emits `CollateralBurned`. Returns the
     /// pre-close snapshot so the caller can read `outstanding_gratis_amount` /
-    /// `eoa_account` / `bundle_account`.
+    /// `eoa_ct` / `bundle_account`.
     pub fn expire_position(&mut self, position_id: U256) -> Result<Position> {
         let mut position = self.load_position(position_id)?;
         let snapshot = position.clone();

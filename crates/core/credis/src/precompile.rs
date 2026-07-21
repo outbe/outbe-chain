@@ -86,7 +86,7 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         credisPrincipal: p.credis_principal,
         refinancingRate: p.refinancing_rate,
         issuanceCurrency: p.issuance_currency,
-        eoaAccount: p.eoa_account,
+        eoaCiphertext: p.eoa_ct.clone().into(),
     }
 }
 

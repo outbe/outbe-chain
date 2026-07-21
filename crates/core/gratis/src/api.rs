@@ -85,17 +85,24 @@ pub fn unpledge(
 // --- Credis-driven ---
 
 /// requestCredis: consume `pledge_handle`'s ticket for `bundle` (authorized by
-/// `spend_auth`), crediting the collateral into `eoa`'s OWN pledged ledger and
-/// deleting the ticket. Returns `gratis_amount`. `eoa` is supplied by the caller and
-/// checked by the enclave against the ticket owner.
+/// `spend_auth`), crediting the collateral into the pledger's OWN pledged ledger and
+/// deleting the ticket. The pledger EOA is not passed in calldata — the enclave recovers
+/// it from the ticket. Returns `(gratis_amount, eoa_ct)`, where `eoa_ct` is the sealed EOA
+/// the caller stores on the Credis position (later opened via [`reveal_owner`]).
 pub fn consume_pledge(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
-    eoa: Address,
     spend_auth: [u8; 32],
-) -> Result<U256> {
-    runtime::consume_pledge(storage, pledge_handle, bundle, eoa, spend_auth)
+) -> Result<(U256, Vec<u8>)> {
+    runtime::consume_pledge(storage, pledge_handle, bundle, spend_auth)
+}
+
+/// Decrypt a position's stored `eoa_ct` blob back to the pledger EOA (read-only, via the
+/// enclave). The caller uses the returned address to key the confidential ledgers at
+/// payAnadosis / expiry without the EOA ever appearing on-chain.
+pub fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<Address> {
+    runtime::reveal_owner(storage, eoa_ct)
 }
 
 /// payAnadosis: release `amount` of collateral from `eoa`'s own pledged ledger back
