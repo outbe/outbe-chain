@@ -7448,6 +7448,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-common",
  "outbe-compressed-entities",
+ "outbe-desis",
  "outbe-evm",
  "outbe-governance",
  "outbe-gratis",

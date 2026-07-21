@@ -8,13 +8,13 @@ This crate exists so broad integration scenarios do not force feature/test-only 
 
 ### `tests/wwd_lysis_nod_gratis.rs`
 
-One lifecycle-driven scenario covers two WWDs in sequence. Each tick runs the full Outbe pre-execution hook chain (`outbe_evm::executor::run_outbe_pre_execution_hooks`) in the same order as `OutbeBlockExecutor::apply_pre_execution_changes`: genesis validation (skipped), `EmissionLimitLifecycle`, validator-set epoch boundary, `MetadosisLifecycle`, staking unbonding, and `OracleLifecycle` tally/S-curve processing. Oracle slash-window penalties run after begin-zone system phases and before user transactions. Day-metadosis-limit is additionally pumped via an explicit `outbe_metadosis::emission_sink::apply` call per day so the tributes are funded deterministically. User mining goes through `outbe_nod::precompile::dispatch`.
+One lifecycle-driven scenario covers two WWDs in sequence. Each tick runs the Outbe pre-execution hook chain used by `OutbeBlockExecutor::apply_pre_execution_changes`, then explicitly drives NOD qualification and Metadosis because production now schedules those daily through Cycle. Oracle slash-window penalties run after begin-zone system phases and before user transactions. Day-metadosis-limit is additionally pumped via an explicit `outbe_metadosis::emission_sink::apply` call per day so the tributes are funded deterministically. User mining goes through `outbe_nod::precompile::dispatch`.
 
 1. **GREEN WWD**
    - pre-seed previous-day and current-day VWAP snapshots (so `day_type` is inferred, not set by hand);
    - tick through `FORMING -> LOOKBACK -> OFFERING -> WAITING -> READY`;
    - issue `Tribute` inside the OFFERING window while the status machine has unsealed the day;
-   - `process_metadosis` auto-runs `distribute_agent_rewards`, `calculate_metadosis_details`, and `outbe_lysis::runtime::lysis`, marks the day `COMPLETED` and accumulates remainder into `PromisLimit::total_unallocated`;
+   - `process_metadosis` auto-runs `distribute_agent_rewards`, `calculate_metadosis_details`, and `outbe_lysis::runtime::lysis`, marks the day `COMPLETED`, and hands the green remainder to Desis as pending auction supply; unsold supply returns to `PromisLimit` only when that auction clears or retires;
    - `lysis(...)` issues NODs into fresh *unqualified* buckets; the test then seeds the COEN/0xUSD exchange rate above the bucket's `floor_price_minor` and runs one more tick so `NodLifecycle::begin_block` flips `bucket_is_qualified`;
    - user call: `INod::mineGratisCall` through `outbe_nod::precompile::dispatch` — the dispatcher runs PoW, qualification check, noop settlement, NOD burn, and `Gratis::mine` in one atomic handler.
 
