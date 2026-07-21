@@ -278,8 +278,6 @@ contract TargetRouter is
 
         if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_START) {
             _handleAuctionStageStart(srcChainId, message);
-        } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL) {
-            _handleAuctionStageReveal(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING) {
             _handleAuctionStageClearing(srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_RESULT) {
@@ -297,24 +295,17 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Decode AUCTION_STAGE_START and forward the schedule and params to the Auction contract.
+    /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
     function _handleAuctionStageStart(uint32 _srcChainId, bytes calldata _message) internal {
         (
             uint32 worldwideDay,
+            IIntexAuction.WorldwideDayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(_message);
-        _ts().auction.auctionStart(worldwideDay, schedule, params);
+        _ts().auction.auctionStart(worldwideDay, dayState, schedule, params);
 
         emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
-    }
-
-    /// @notice Decode AUCTION_STAGE_REVEAL and start the revealing-bids stage on the Auction contract.
-    function _handleAuctionStageReveal(uint32 _srcChainId, bytes calldata _message) internal {
-        (uint32 worldwideDay, bool isGreenDay) = BridgeMsgCodec.decodeAuctionStageReveal(_message);
-        _ts().auction.startRevealingBidsStage(worldwideDay, isGreenDay);
-
-        emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
     }
 
     /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.

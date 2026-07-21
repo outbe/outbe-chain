@@ -80,6 +80,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = day;
+        p.dayState = 1;
         vm.prank(address(desis));
         origin.sendAuctionStageStart(p);
     }

@@ -15,8 +15,8 @@ import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
 import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
-///      commit takes the bond, reveal/cancel return it, a green-day no-reveal waits out
-///      `COMMIT_BOND_LOCK_PERIOD`, and a red day releases immediately.
+///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
+///      `COMMIT_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
     IntexAuction auction;
     EscrowAdapter escrow;
@@ -75,7 +75,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, _schedule(), _params(BOND));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(BOND));
     }
 
     // --- Helpers ---
@@ -125,8 +125,6 @@ contract IntexAuctionBondTest is Test {
     }
 
     function _enterRevealStage() internal {
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
         vm.warp(startTs + COMMIT_OFFSET + 1);
     }
 
@@ -157,7 +155,7 @@ contract IntexAuctionBondTest is Test {
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
         uint32 freeSeries = worldwideDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, _schedule(), _params(0));
+        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
@@ -216,14 +214,16 @@ contract IntexAuctionBondTest is Test {
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_RedDay_ReleasesImmediately() public {
-        _commit();
+    function test_ClaimCommitBond_RedDay_SkipsTimeGate() public {
+        uint32 redSeries = worldwideDay + 7;
         vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, false); // red day -> Cancelled
+        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND));
 
+        // Cancelled short-circuits the penalty window; with no bond the escrow reverts NotFound
+        // instead of CommitBondNotYetClaimable.
         vm.prank(outsider);
-        auction.claimCommitBond(worldwideDay, iba1);
-        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned on red day");
+        vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
+        auction.claimCommitBond(redSeries, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {
@@ -249,17 +249,6 @@ contract IntexAuctionBondTest is Test {
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned after the penalty window");
         assertEq(paymentToken.balanceOf(outsider), 0, "caller gets nothing");
-    }
-
-    /// @dev A never-signalled auction (worldwide-day state stays Unknown) still frees the bond
-    ///      once the wall-clock window passes — no relayer required.
-    function test_ClaimCommitBond_UnknownDay_ReleasesAfterWindow() public {
-        _commit();
-
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
-        vm.prank(outsider);
-        auction.claimCommitBond(worldwideDay, iba1);
-        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond recovered from a dead auction");
     }
 
     function test_ClaimCommitBond_RevertsForRevealedBidder() public {

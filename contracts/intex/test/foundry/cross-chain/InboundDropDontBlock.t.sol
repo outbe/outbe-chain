@@ -99,6 +99,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     function _freezeSnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = day;
+        p.dayState = 1;
         vm.prank(address(desis));
         outbeRouter.sendAuctionStageStart(p);
     }

@@ -5,15 +5,15 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::constants::{CALL_PRICE_DEN, FLOOR_PRICE_DEN};
 
 use crate::constants::{
-    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, ISSUANCE_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO, RATE_SCALE,
-    REVEAL_WINDOW_SECONDS,
+    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
+    DAY_STATE_RED, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_ISSUANCE_ISO,
+    QUALIFIER_REFERENCE_ISO, RATE_SCALE, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -24,32 +24,57 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Create a new auction for `worldwide_day` and transition to `Started`.
-///
-/// Derives minBidQty from the prior clearing (4% of issued count) and
-/// validates the config.
-pub fn start_auction(
+/// Record the day's auction brief: supply (raw PROMIS), entry price and day
+/// type. The schedule anchors to the midnight of `now`, or the next one when
+/// too little of the commit window would remain.
+pub fn record_brief(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
-    auction_timestamp: u64,
-    mut config: AuctionConfig,
+    supply_promis: u128,
+    entry_price: U256,
+    is_green: bool,
+    now: u64,
 ) -> Result<()> {
     if worldwide_day == 0 {
         return Err(DesisError::InvalidWorldwideDay(0).into());
     }
-    if config.promis_load_minor == 0 || config.escrow_basis_minor() == 0 {
-        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
-    }
-
     let mut contract = storage.contract::<DesisContract>();
-
-    // Duplicate guard.
-    let existing = contract.read_stage(worldwide_day)?;
-    if existing != AuctionStage::None {
+    if contract.read_stage(worldwide_day)? != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
+    // Anchor to this midnight while it still leaves the minimum commit window;
+    // a late brief (stall past midnight) anchors to the next one instead.
+    let midnight = now - now % SECONDS_PER_DAY;
+    let anchor_ts =
+        if COMMIT_WINDOW_SECONDS.saturating_sub(now - midnight) >= MIN_COMMIT_WINDOW_SECONDS {
+            midnight
+        } else {
+            midnight + SECONDS_PER_DAY
+        };
+    let anchor = u32::try_from(anchor_ts)
+        .map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))?;
 
-    // Derive minBidQty as 4% of the prior clearing's issued count.
+    contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;
+    contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
+    contract
+        .pending_supply_promis
+        .write(&worldwide_day, U256::from(supply_promis))?;
+    contract
+        .brief_green
+        .write(&worldwide_day, u8::from(is_green))?;
+    contract.auction_at.write(&worldwide_day, anchor)?;
+    contract.push_sched_active(worldwide_day)?;
+    Ok(())
+}
+
+/// Fold the prior-clearing bid floor and the genesis profile into the config,
+/// so the persisted config carries the same values the wire message ships.
+fn fold_profile(
+    storage: &StorageHandle<'_>,
+    contract: &DesisContract<'_>,
+    config: &mut AuctionConfig,
+) -> Result<outbe_intexfactory::IntexParams> {
+    // minBidQty = 4% of the prior clearing's issued count.
     let min_bid_qty: u16 = {
         let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
         if last_worldwide_day != 0 {
@@ -61,12 +86,7 @@ pub fn start_auction(
             0
         }
     };
-
-    // Genesis IntexFactory profile: floor/call derive from entry; window/threshold/
-    // period are the call-trigger params relayed to the target chain. Sourced here
-    // (storage in reach) and folded into the config before it is persisted, so the
-    // demand-side config carries the same values the wire message ships.
-    let iparams = outbe_intexfactory::read_params(&storage)?;
+    let iparams = outbe_intexfactory::read_params(storage)?;
     config.min_intex_bid_quantity = min_bid_qty;
     config.call_trigger = crate::schema::IntexCallTrigger {
         window_days: iparams.call_window_days,
@@ -74,22 +94,21 @@ pub fn start_auction(
         intex_call_period: iparams.intex_call_period_secs,
     };
     config.commit_bond_minor = iparams.commit_bond_minor;
+    Ok(iparams)
+}
 
-    let auction_at = u32::try_from(auction_timestamp)
-        .map_err(|_| PrecompileError::Revert("auction timestamp exceeds u32".into()))?;
-
-    contract.write_auction_config(worldwide_day, &config)?;
-    contract.write_stage(worldwide_day, AuctionStage::Started)?;
-    contract.auction_at.write(&worldwide_day, auction_at)?;
-    contract.emit(IDesis::AuctionCreated {
-        worldwideDay: worldwide_day,
-    })?;
-
-    // Broadcast AUCTION_STAGE_START to the target chains.
-    // revealEnd = noon of the auction day; commitEnd/issuanceEnd are protocol offsets.
-    let noon = auction_noon(auction_timestamp)?;
-    let commit_end = noon.saturating_sub(REVEAL_WINDOW_SECONDS);
-    let issuance_end = noon.saturating_add(ISSUANCE_WINDOW_SECONDS);
+/// Broadcast AUCTION_STAGE_START with the given schedule and day state.
+#[allow(clippy::too_many_arguments)]
+fn send_stage_start(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+    config: &AuctionConfig,
+    iparams: &outbe_intexfactory::IntexParams,
+    commit_end: u32,
+    reveal_end: u32,
+    issuance_end: u32,
+    day_state: u8,
+) -> Result<()> {
     let floor_price = config
         .entry_price_minor
         .checked_mul(U256::from(iparams.floor_price_num))
@@ -109,7 +128,7 @@ pub fn start_auction(
     let stage_params = IOriginRouter::AuctionStageStartParams {
         worldwideDay: worldwide_day,
         commitEnd: commit_end,
-        revealEnd: noon,
+        revealEnd: reveal_end,
         issuanceEnd: issuance_end,
         issuanceCurrency: config.issuance_currency,
         referenceCurrency: config.reference_currency,
@@ -121,8 +140,9 @@ pub fn start_auction(
         intexCallPeriod: iparams.intex_call_period_secs,
         callWindowDays: iparams.call_window_days,
         callThresholdDays: iparams.call_threshold_days,
-        minIntexBidQuantity: min_bid_qty,
+        minIntexBidQuantity: config.min_intex_bid_quantity,
         commitBondMinor: config.commit_bond_minor,
+        dayState: day_state,
     };
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
@@ -134,82 +154,209 @@ pub fn start_auction(
         .abi_encode()
         .into(),
     )?;
-
     Ok(())
 }
 
-/// Noon (12:00 UTC) of the day containing `auction_timestamp`.
-pub(crate) fn auction_noon(auction_timestamp: u64) -> Result<u32> {
-    u32::try_from(date_key_to_utc_timestamp(timestamp_to_date_key(auction_timestamp)) + 12 * 3600)
-        .map_err(|_| PrecompileError::Revert("auction day noon exceeds u32".into()))
+// ---------------------------------------------------------------------------
+// Schedule tick
+// ---------------------------------------------------------------------------
+
+/// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
+/// runs in its own checkpoint — an Err rolls that day back (retried next slot).
+pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
+    schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
 
-/// Signal `Started` → `Revealing` (green day) or `Started` → `Cancelled` (red day).
-pub fn reveal_auction(
-    storage: StorageHandle<'_>,
-    worldwide_day: u32,
-    is_green_day: bool,
-) -> Result<()> {
-    require_nonzero_worldwide_day(worldwide_day)?;
-    let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, worldwide_day, AuctionStage::Started)?;
-    let next = if is_green_day {
-        AuctionStage::Revealing
-    } else {
-        AuctionStage::Cancelled
+pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
+    let count = {
+        let contract = storage.contract::<DesisContract>();
+        contract.sched_active_count.read()?
     };
-    contract.write_stage(worldwide_day, next)?;
-    if !is_green_day {
+    if count == 0 {
+        return Ok(());
+    }
+    // Snapshot the set before iterating: transitions swap-pop it.
+    let mut days = Vec::with_capacity(count as usize);
+    {
+        let contract = storage.contract::<DesisContract>();
+        for i in 0..count {
+            days.push(contract.sched_active_at.read(&i)?);
+        }
+    }
+    for day in days {
+        let res = storage.with_checkpoint(|| advance_day(storage, day, now));
+        if let Err(e) = res {
+            tracing::warn!(target: "outbe::desis", day, error = ?e, "schedule tick: skipping day");
+        }
+    }
+    Ok(())
+}
+
+/// Walk one day's schedule: start at the anchor, flip to Revealing at commit
+/// end, arm the clearing gate at reveal end, retire overdue and terminal days.
+fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
+    loop {
+        let mut contract = storage.contract::<DesisContract>();
+        let stage = contract.read_stage(worldwide_day)?;
+        let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
+        let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
+        let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
+        match stage {
+            AuctionStage::Cleared | AuctionStage::Cancelled => {
+                return contract.remove_sched_active(worldwide_day);
+            }
+            _ if now >= issuance_end => {
+                contract.emit(IDesis::AuctionOverdue {
+                    worldwideDay: worldwide_day,
+                })?;
+                refund_unsold_supply(storage, &mut contract, worldwide_day)?;
+                contract.remove_gate_active(worldwide_day)?;
+                contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+                return contract.remove_sched_active(worldwide_day);
+            }
+            AuctionStage::Briefed if now >= anchor => {
+                if let StartOutcome::Retired = start_auction(
+                    storage,
+                    &mut contract,
+                    worldwide_day,
+                    commit_end,
+                    reveal_end,
+                    issuance_end,
+                    now,
+                )? {
+                    return Ok(());
+                }
+            }
+            AuctionStage::Started if now >= commit_end => {
+                contract.write_stage(worldwide_day, AuctionStage::Revealing)?;
+            }
+            AuctionStage::Revealing if now >= reveal_end => {
+                return arm_clearing(storage, worldwide_day, now);
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// u32 wire timestamp (bounded until 2106).
+fn ts32(ts: u64) -> Result<u32> {
+    u32::try_from(ts).map_err(|_| PrecompileError::Revert("schedule timestamp exceeds u32".into()))
+}
+
+enum StartOutcome {
+    /// Auction started; the schedule loop continues from `Started`.
+    Started,
+    /// Day was cancelled and retired; the schedule loop stops.
+    Retired,
+}
+
+/// Dispatch the START message for a briefed day: a red day is born cancelled, a
+/// day past its commit window is cancelled unstarted, otherwise it starts green.
+#[allow(clippy::too_many_arguments)]
+fn start_auction(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    worldwide_day: u32,
+    commit_end: u64,
+    reveal_end: u64,
+    issuance_end: u64,
+    now: u64,
+) -> Result<StartOutcome> {
+    let mut config = contract.read_auction_config(worldwide_day)?;
+    let iparams = fold_profile(storage, contract, &mut config)?;
+    contract.write_auction_config(worldwide_day, &config)?;
+    let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
+
+    if contract.brief_green.read(&worldwide_day)? == 0 {
+        send_stage_start(
+            storage,
+            worldwide_day,
+            &config,
+            &iparams,
+            commit,
+            reveal,
+            issuance,
+            DAY_STATE_RED,
+        )?;
+        contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         contract.emit(IDesis::AuctionCancelledRedDay {
             worldwideDay: worldwide_day,
         })?;
+        contract.remove_sched_active(worldwide_day)?;
+        return Ok(StartOutcome::Retired);
     }
-
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendAuctionStageRevealCall {
+    if now >= commit_end {
+        contract.emit(IDesis::AuctionDispatchFailed {
             worldwideDay: worldwide_day,
-            isGreenDay: is_green_day,
-        }
-        .abi_encode()
-        .into(),
+            stage: "auction_stage_start".into(),
+            reason: "commit window elapsed".into(),
+        })?;
+        contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+        refund_unsold_supply(storage, contract, worldwide_day)?;
+        contract.remove_sched_active(worldwide_day)?;
+        return Ok(StartOutcome::Retired);
+    }
+    send_stage_start(
+        storage,
+        worldwide_day,
+        &config,
+        &iparams,
+        commit,
+        reveal,
+        issuance,
+        DAY_STATE_GREEN,
     )?;
+    contract.write_stage(worldwide_day, AuctionStage::Started)?;
+    contract.emit(IDesis::AuctionCreated {
+        worldwideDay: worldwide_day,
+    })?;
+    Ok(StartOutcome::Started)
+}
 
+/// Return a retiring day's unsold brief supply to PromisLimit. No-op once the
+/// supply was consumed at clearing (or for a red day, which briefs zero).
+fn refund_unsold_supply(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    worldwide_day: u32,
+) -> Result<()> {
+    let supply = contract.pending_supply_promis.read(&worldwide_day)?;
+    if supply.is_zero() {
+        return Ok(());
+    }
+    contract
+        .pending_supply_promis
+        .write(&worldwide_day, U256::ZERO)?;
+    contract.emit(IDesis::UnusedSupplyReported {
+        worldwideDay: worldwide_day,
+        unusedPromis: supply,
+    })?;
+    PromisLimitContract::new(storage.clone()).add_to_total_unallocated(supply)?;
     Ok(())
 }
 
-/// Signal `Revealing` → clearing: store supply, arm the bid fan-in gate and
-/// broadcast the clearing stage; returns the Promis rounding remainder
-/// (supply_promis % promis_load_minor) to be returned to PromisLimit.
-pub fn begin_clearing(
-    storage: StorageHandle<'_>,
-    worldwide_day: u32,
-    supply_promis: u128,
-    now: u64,
-) -> Result<u128> {
-    require_nonzero_worldwide_day(worldwide_day)?;
+/// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
+/// units, start the fan-in gate and broadcast the clearing stage.
+fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, worldwide_day, AuctionStage::Revealing)?;
-
     let config = contract.read_auction_config(worldwide_day)?;
     if config.promis_load_minor == 0 {
         return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
-
-    let supply_intex = supply_promis / config.promis_load_minor;
-    let supply_intex32 =
-        u32::try_from(supply_intex).map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
-    let rounding_remainder = supply_promis % config.promis_load_minor;
+    let supply_promis = u128::try_from(contract.pending_supply_promis.read(&worldwide_day)?)
+        .map_err(|_| DesisError::InvalidWorldwideDay(worldwide_day))?;
+    let supply_intex = (supply_promis / config.promis_load_minor).min(u128::from(u32::MAX)) as u32;
 
     contract.clearing_initiated.write(&worldwide_day, 1u8)?;
     contract
         .pending_supply_intex
-        .write(&worldwide_day, supply_intex32)?;
+        .write(&worldwide_day, supply_intex)?;
     contract
         .clearing_deadline
         .write(&worldwide_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
     contract.push_gate_active(worldwide_day)?;
+    contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
@@ -220,13 +367,24 @@ pub fn begin_clearing(
         .abi_encode()
         .into(),
     )?;
-
-    Ok(rounding_remainder)
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Bid ingestion
 // ---------------------------------------------------------------------------
+
+/// Intake is open while `Revealing` and through the `Clearing` fan-in. Returns
+/// `true` to proceed, `false` for a redundant post-intake delivery (idempotent
+/// no-op, else the transport redelivers forever), `Err` before intake so the
+/// transport redelivers after reveal.
+fn intake_is_open(stage: AuctionStage) -> Result<bool> {
+    match stage {
+        AuctionStage::Revealing | AuctionStage::Clearing => Ok(true),
+        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
+        _ => Err(DesisError::InvalidStageTransition.into()),
+    }
+}
 
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`; a
 /// higher `generation` supersedes that chain's prior bids. Batches may arrive in any order over the
@@ -255,14 +413,8 @@ pub fn process_bids_batch(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    // Intake is open only while Revealing. Past intake a late/re-flushed batch is redundant → no-op (else the
-    // transport redelivers forever); before intake it's premature → revert so it redelivers after reveal.
-    let stage = contract.read_stage(worldwide_day)?;
-    if stage != AuctionStage::Revealing {
-        return match stage {
-            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
-            _ => Err(DesisError::InvalidStageTransition.into()),
-        };
+    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
+        return Ok(());
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
@@ -333,12 +485,8 @@ pub fn process_bids_done(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    let stage = contract.read_stage(worldwide_day)?;
-    if stage != AuctionStage::Revealing {
-        return match stage {
-            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
-            _ => Err(DesisError::InvalidStageTransition.into()),
-        };
+    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
+        return Ok(());
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
@@ -500,7 +648,7 @@ fn clear_inner(
     skipped: &[u32],
 ) -> Result<ClearingResult> {
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, worldwide_day, AuctionStage::Revealing)?;
+    require_stage(&contract, worldwide_day, AuctionStage::Clearing)?;
 
     let supply = contract.pending_supply_intex.read(&worldwide_day)?;
     if contract.clearing_initiated.read(&worldwide_day)? == 0 {
@@ -525,11 +673,15 @@ fn clear_inner(
     contract.write_last_clearing_issued_count(result.issued_intex_count)?;
 
     // Clear the bid working-set, pending inputs and the gate (CEI: state writes before external calls).
+    let supply_promis = contract.pending_supply_promis.read(&worldwide_day)?;
     for &chain_id in snapshot {
         contract.reset_chain_intake(worldwide_day, chain_id)?;
     }
     contract.day_bid_count.write(&worldwide_day, 0)?;
     contract.pending_supply_intex.write(&worldwide_day, 0)?;
+    contract
+        .pending_supply_promis
+        .write(&worldwide_day, U256::ZERO)?;
     contract.clearing_initiated.write(&worldwide_day, 0u8)?;
     contract.clearing_deadline.clear(&worldwide_day)?;
     contract.remove_gate_active(worldwide_day)?;
@@ -555,11 +707,11 @@ fn clear_inner(
         })?;
     }
 
-    // Return unused Promis to PromisLimit.
-    let remaining_supply = supply - result.issued_intex_count;
-    if remaining_supply > 0 {
-        let unused_promis =
-            U256::from(remaining_supply as u128) * U256::from(config.promis_load_minor);
+    // Return the unsold Promis (unsold whole units + conversion dust) to PromisLimit.
+    let issued_promis =
+        U256::from(result.issued_intex_count as u128) * U256::from(config.promis_load_minor);
+    let unused_promis = supply_promis.saturating_sub(issued_promis);
+    if !unused_promis.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
             worldwideDay: worldwide_day,
             unusedPromis: unused_promis,

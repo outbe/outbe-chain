@@ -14,7 +14,6 @@ library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
     uint256 internal constant AUCTION_STAGE_START = 500_000;
-    uint256 internal constant AUCTION_STAGE_REVEAL = 200_000;
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;

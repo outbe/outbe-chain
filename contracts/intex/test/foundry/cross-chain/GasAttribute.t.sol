@@ -45,6 +45,7 @@ contract GasAttributeTest is CrossChainTest {
     function test_fixedMessage_carriesTypeGas() public {
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = 42;
+        p.dayState = 1;
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
         _assertLastGas(IntexGas.AUCTION_STAGE_START);
@@ -54,6 +55,7 @@ contract GasAttributeTest is CrossChainTest {
         // Freeze day 42's snapshot so the addressed refund send passes membership.
         IOriginRouter.AuctionStageStartParams memory sp;
         sp.worldwideDay = 42;
+        sp.dayState = 1;
         vm.prank(desis);
         outbe.sendAuctionStageStart(sp);
 
@@ -74,6 +76,7 @@ contract GasAttributeTest is CrossChainTest {
         // quote signature compiles and returns without reverting under the gas attribute.
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = 7;
+        p.dayState = 1;
         outbe.quoteSendAuctionStageStart(p);
     }
 }

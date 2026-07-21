@@ -19,9 +19,8 @@ interface IIntexAuction {
         Cancelled
     }
 
-    /// @notice Worldwide-day state gating the reveal stage.
-    /// @dev `Unknown` = awaiting the bridge signal, `Green` = reveal allowed,
-    ///      `Red` = auction cancelled.
+    /// @notice Worldwide-day state, final at `auctionStart`.
+    /// @dev `Green` = live auction, `Red` = cancelled record; `Unknown` never persists.
     enum WorldwideDayState {
         Unknown,
         Green,
@@ -196,13 +195,12 @@ interface IIntexAuction {
     error ClearingRateBelowMin(uint64 clearingRate, uint32 minIntexBidRate);
     /// @notice Schedule timestamps are not strictly increasing or are in the past.
     error InvalidSchedule();
+    /// @notice `auctionStart` requires a final Green or Red day state.
+    error InvalidDayState();
     /// @notice Commit hash must be non-zero.
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
     error WrongChain(uint256 expected, uint256 got);
-    /// @notice `commitBid`/`cancelCommit` attempted at or after the published `commitEnd`.
-    ///         The commit window is `[start, commitEnd)`; the deadline second is already closed.
-    error CommitWindowClosed(uint32 commitEnd, uint32 nowTs);
     /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
     /// @param nowTs Current block timestamp.
@@ -218,18 +216,19 @@ interface IIntexAuction {
 
     /// @notice Create and start a new auction for `worldwideDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
-    ///      Outbe side (Desis) and passed in.
+    ///      Outbe side (Desis) and passed in. `dayState` is final at creation:
+    ///      Green opens the commit stage, Red records the series born Cancelled.
+    ///      Stage transitions follow the stored timestamps.
     /// @param worldwideDay Worldwide day (yyyymmdd, uint32).
+    /// @param dayState Final worldwide-day state (Green or Red).
     /// @param schedule Stage-end timestamps.
     /// @param params Auction input parameters.
-    function auctionStart(uint32 worldwideDay, AuctionSchedule calldata schedule, AuctionParams calldata params)
-        external;
-
-    /// @notice Start the reveal stage (bridge-driven; green day proceeds, red day cancels).
-    /// @dev Early green-day signal snaps `commitEnd` forward; `revealEnd` is unchanged.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param isGreenDay True = green day (proceed to reveal), false = red day (cancel auction).
-    function startRevealingBidsStage(uint32 worldwideDay, bool isGreenDay) external;
+    function auctionStart(
+        uint32 worldwideDay,
+        WorldwideDayState dayState,
+        AuctionSchedule calldata schedule,
+        AuctionParams calldata params
+    ) external;
 
     /// @notice Advance the auction to the issuance stage (bridge-driven clearing signal from Outbe).
     /// @dev Early signal snaps `revealEnd` forward; `issuanceEnd` is unchanged.
