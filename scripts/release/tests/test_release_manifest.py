@@ -3,14 +3,15 @@
 
 from __future__ import annotations
 
-import importlib.util
+import copy
 import hashlib
+import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -137,6 +138,35 @@ class ReleaseManifestTests(unittest.TestCase):
         first = release_manifest.canonical_json(self.build())
         second = release_manifest.canonical_json(self.build(source_commit="b" * 40))
         self.assertNotEqual(first, second)
+
+    def test_signed_tee_artifact_requires_complete_measurement_identity(self) -> None:
+        manifest = self.build()
+        signed = copy.deepcopy(manifest["artifacts"][1])
+        signed.update(
+            {
+                "kind": "archive",
+                "media_type": "application/x-tar",
+                "name": "outbe-tee-enclave-sgx-bundle",
+                "path": "release/outbe-tee-enclave-sgx.tar",
+                "tee": {
+                    "authorization_scope": "testnet",
+                    "isv_prod_id": 1,
+                    "isv_svn": 1,
+                    "mock": False,
+                    "mrenclave": "a" * 64,
+                    "mrsigner": "b" * 64,
+                    "sealed_state_schema": 1,
+                    "stage": "signed",
+                },
+            }
+        )
+        manifest["artifacts"].append(signed)
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        Draft202012Validator(schema).validate(manifest)
+
+        del signed["tee"]["mrsigner"]
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(manifest)
 
 
 class RepositoryBuildSpecTests(unittest.TestCase):

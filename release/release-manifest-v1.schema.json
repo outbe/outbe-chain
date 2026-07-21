@@ -463,9 +463,56 @@
     },
     "tee": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "stage": {
+                "const": "signed"
+              }
+            },
+            "required": ["stage"]
+          },
+          "then": {
+            "required": [
+              "authorization_scope",
+              "mrenclave",
+              "mrsigner",
+              "isv_prod_id",
+              "isv_svn",
+              "sealed_state_schema"
+            ]
+          }
+        }
+      ],
       "properties": {
+        "authorization_scope": {
+          "enum": ["testnet"]
+        },
+        "isv_prod_id": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "isv_svn": {
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
         "mock": {
           "const": false
+        },
+        "mrenclave": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "mrsigner": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sealed_state_schema": {
+          "minimum": 1,
+          "type": "integer"
         },
         "stage": {
           "enum": ["unsigned-bare-elf", "rendered", "signed"]

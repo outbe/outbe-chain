@@ -67,6 +67,13 @@ enum SgxCommand {
         #[arg(long)]
         bundle: PathBuf,
     },
+    /// Create a deterministic archive from an already verified signed bundle.
+    Archive {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Build an immutable OCI image from an already verified signed bundle.
     Image {
         #[arg(long)]
@@ -78,6 +85,27 @@ enum SgxCommand {
         /// Push by digest and emit BuildKit SBOM/provenance attestations.
         #[arg(long)]
         push: bool,
+    },
+    /// Promote one exact ELF, signed SGX bundle and OCI image to a verified ReleaseManifest.
+    Manifest {
+        #[arg(long)]
+        elf_manifest: PathBuf,
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        bundle_archive: PathBuf,
+        #[arg(long)]
+        oci_evidence: PathBuf,
+        #[arg(long)]
+        sbom: PathBuf,
+        #[arg(long)]
+        elf_evidence: PathBuf,
+        #[arg(long)]
+        sgx_evidence: PathBuf,
+        #[arg(long)]
+        hardware_evidence: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
     },
 }
 
@@ -117,6 +145,13 @@ fn main() -> Result<()> {
                     sgx::verify(&repo_root, &bundle)?;
                     println!("verified signed testnet SGX bundle: {}", bundle.display());
                 }
+                SgxCommand::Archive { bundle, output } => {
+                    sgx::archive(&repo_root, &bundle, &output)?;
+                    println!(
+                        "deterministic signed testnet SGX archive: {}",
+                        output.display()
+                    );
+                }
                 SgxCommand::Image {
                     bundle,
                     image,
@@ -125,6 +160,33 @@ fn main() -> Result<()> {
                 } => {
                     sgx::build_image(&repo_root, &bundle, &image, &output, push)?;
                     println!("testnet SGX OCI evidence: {}", output.display());
+                }
+                SgxCommand::Manifest {
+                    elf_manifest,
+                    bundle,
+                    bundle_archive,
+                    oci_evidence,
+                    sbom,
+                    elf_evidence,
+                    sgx_evidence,
+                    hardware_evidence,
+                    output,
+                } => {
+                    sgx::finalize_release_manifest(
+                        &repo_root,
+                        &sgx::VerifiedReleaseInputs {
+                            bundle,
+                            bundle_archive,
+                            elf_evidence,
+                            elf_manifest,
+                            hardware_evidence,
+                            oci_evidence,
+                            sbom,
+                            sgx_evidence,
+                        },
+                        &output,
+                    )?;
+                    println!("verified testnet ReleaseManifest: {}", output.display());
                 }
             },
         },

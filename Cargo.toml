@@ -291,6 +291,7 @@ time = "0.3"
 filetime = "0.2"
 sha2 = "0.10"
 walkdir = "2"
+tar = "0.4"
 
 [profile.dev]
 debug = "line-tables-only"

@@ -193,6 +193,18 @@ pub struct OciBuildEvidence {
     pub source: ManifestSource,
 }
 
+#[derive(Clone, Debug)]
+pub struct VerifiedReleaseInputs {
+    pub bundle: PathBuf,
+    pub bundle_archive: PathBuf,
+    pub elf_evidence: PathBuf,
+    pub elf_manifest: PathBuf,
+    pub hardware_evidence: PathBuf,
+    pub oci_evidence: PathBuf,
+    pub sbom: PathBuf,
+    pub sgx_evidence: PathBuf,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct TreeEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,6 +222,256 @@ pub fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let mut encoded = serde_json::to_vec(&value).wrap_err("encode canonical JSON")?;
     encoded.push(b'\n');
     Ok(encoded)
+}
+
+pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result<Value> {
+    let mut release: Value = read_canonical_json(&inputs.elf_manifest)?;
+    let bundle_manifest_path = inputs.bundle.join("metadata/testnet-sgx-bundle.json");
+    let bundle: BundleManifest = read_canonical_json(&bundle_manifest_path)?;
+    let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
+    validate_final_release_identity(&release, &bundle, &oci)?;
+
+    if !oci.provenance_attestation || !oci.sbom_attestation {
+        bail!("OCI image must carry BuildKit provenance and SBOM attestations");
+    }
+    if oci.bundle_manifest_digest != file_digest(&bundle_manifest_path)? {
+        bail!("OCI evidence does not bind the signed SGX bundle manifest");
+    }
+    require_evidence_result(&inputs.elf_evidence, &["passed"])?;
+    require_evidence_result(&inputs.sgx_evidence, &["identical"])?;
+    let hardware: Value = require_evidence_result(&inputs.hardware_evidence, &["passed"])?;
+    if hardware
+        .pointer("/environment/backend")
+        .and_then(Value::as_str)
+        != Some("gramine-sgx")
+        || hardware
+            .pointer("/environment/hardware_sgx")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || hardware.get("measurements") != Some(&serde_json::to_value(&bundle.measurements)?)
+        || hardware
+            .pointer("/image/digest/value")
+            .and_then(Value::as_str)
+            != Some(oci.image.digest.value.as_str())
+    {
+        bail!("hardware SGX evidence does not bind the release image and measurements");
+    }
+    require_nonempty_regular_file(&inputs.bundle_archive, "signed SGX bundle archive")?;
+    verify_bundle_archive(
+        &inputs.bundle,
+        &inputs.bundle_archive,
+        bundle.source.source_date_epoch,
+    )?;
+    require_nonempty_regular_file(&inputs.sbom, "SPDX SBOM")?;
+    let sbom: Value =
+        serde_json::from_slice(&fs::read(&inputs.sbom)?).wrap_err("parse SPDX SBOM")?;
+    if sbom.get("spdxVersion").and_then(Value::as_str) != Some("SPDX-2.3") {
+        bail!("release SBOM must use SPDX-2.3");
+    }
+
+    let release_object = release
+        .as_object_mut()
+        .ok_or_else(|| eyre!("ELF release manifest must be a JSON object"))?;
+    release_object
+        .get_mut("release")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| eyre!("ELF release manifest lacks release metadata"))?
+        .insert("lifecycle".to_owned(), Value::String("verified".to_owned()));
+    let provenance = release_object
+        .get_mut("build")
+        .and_then(Value::as_object_mut)
+        .and_then(|build| build.get_mut("provenance"))
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| eyre!("ELF release manifest lacks build provenance"))?;
+    provenance.insert(
+        "mode".to_owned(),
+        Value::String("github-actions".to_owned()),
+    );
+    provenance.insert(
+        "workflow".to_owned(),
+        Value::String(".github/workflows/testnet-release.yml".to_owned()),
+    );
+
+    let artifacts = release_object
+        .get_mut("artifacts")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| eyre!("ELF release manifest lacks artifacts"))?;
+    let tee = signed_tee_metadata(&bundle);
+    artifacts.push(file_artifact(
+        &inputs.bundle_archive,
+        "outbe-tee-enclave-sgx-bundle",
+        "archive",
+        "application/x-tar",
+        tee.clone(),
+    )?);
+    artifacts.push(serde_json::json!({
+        "classification": "production",
+        "digest": oci.image.digest,
+        "features": [],
+        "install_profiles": ["full-node", "validator"],
+        "kind": "oci-manifest",
+        "media_type": oci.image.media_type,
+        "name": "outbe-tee-enclave-testnet-oci",
+        "network_compatibility": "network-manifest-required",
+        "package": "outbe-tee-enclave",
+        "path": format!("oci/outbe-tee-enclave-testnet@sha256:{}", oci.image.digest.value),
+        "platform": release_platform(),
+        "role": "tee-enclave",
+        "size": oci.image.size,
+        "tee": tee.clone()
+    }));
+    artifacts.push(file_artifact(
+        &inputs.sbom,
+        "outbe-tee-enclave-sbom",
+        "sbom",
+        "application/spdx+json",
+        tee,
+    )?);
+
+    let gates = vec![
+        passed_gate(
+            "independent-byte-for-byte-elf-rebuild",
+            &inputs.elf_evidence,
+        )?,
+        passed_gate(
+            "release-manifest-schema-and-canonicalization",
+            &inputs.elf_manifest,
+        )?,
+        passed_gate("independent-unsigned-sgx-bundle", &inputs.sgx_evidence)?,
+        passed_gate("signed-sgx-sigstruct-verification", &bundle_manifest_path)?,
+        passed_gate("immutable-oci-sbom-and-provenance", &inputs.oci_evidence)?,
+        passed_gate("hardware-sgx-release-smoke", &inputs.hardware_evidence)?,
+    ];
+    release_object.insert("verification_gates".to_owned(), Value::Array(gates));
+    Ok(release)
+}
+
+fn validate_final_release_identity(
+    release: &Value,
+    bundle: &BundleManifest,
+    oci: &OciBuildEvidence,
+) -> Result<()> {
+    let commit = release
+        .pointer("/release/source/commit")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("ELF release manifest lacks source commit"))?;
+    let tag = release
+        .pointer("/release/tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("ELF release manifest lacks release tag"))?;
+    let epoch = release
+        .pointer("/build/source_date_epoch")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| eyre!("ELF release manifest lacks SOURCE_DATE_EPOCH"))?;
+    if commit != bundle.source.commit
+        || tag != bundle.source.tag
+        || epoch != bundle.source.source_date_epoch
+        || bundle.source != oci.source
+        || bundle.measurements != oci.measurements
+        || oci.platform != "linux/amd64"
+    {
+        bail!("ELF, SGX bundle and OCI evidence do not share one release identity");
+    }
+    Ok(())
+}
+
+fn signed_tee_metadata(bundle: &BundleManifest) -> Value {
+    serde_json::json!({
+        "authorization_scope": bundle.authorization_scope,
+        "isv_prod_id": bundle.measurements.isv_prod_id,
+        "isv_svn": bundle.measurements.isv_svn,
+        "mock": false,
+        "mrenclave": bundle.measurements.mrenclave,
+        "mrsigner": bundle.measurements.mrsigner,
+        "sealed_state_schema": bundle.sealed_state_schema,
+        "stage": "signed"
+    })
+}
+
+fn release_platform() -> Value {
+    serde_json::json!({
+        "architecture": "x86_64",
+        "os": "linux",
+        "target": "x86_64-unknown-linux-gnu"
+    })
+}
+
+fn file_artifact(
+    path: &Path,
+    name: &str,
+    kind: &str,
+    media_type: &str,
+    tee: Value,
+) -> Result<Value> {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            eyre!(
+                "release artifact needs a UTF-8 file name: {}",
+                path.display()
+            )
+        })?;
+    require_nonempty_regular_file(path, name)?;
+    let metadata = fs::metadata(path)?;
+    Ok(serde_json::json!({
+        "classification": "production",
+        "digest": file_digest(path)?,
+        "features": [],
+        "install_profiles": ["full-node", "validator"],
+        "kind": kind,
+        "media_type": media_type,
+        "name": name,
+        "network_compatibility": "network-manifest-required",
+        "package": "outbe-tee-enclave",
+        "path": format!("release/{file_name}"),
+        "platform": release_platform(),
+        "role": "tee-enclave",
+        "size": metadata.len(),
+        "tee": tee
+    }))
+}
+
+fn require_evidence_result(path: &Path, allowed: &[&str]) -> Result<Value> {
+    require_nonempty_regular_file(path, "release evidence")?;
+    let value: Value = read_canonical_json(path)?;
+    let result = value
+        .get("result")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("release evidence lacks result: {}", path.display()))?;
+    if !allowed.contains(&result) {
+        bail!("release evidence is not successful: {}", path.display());
+    }
+    Ok(value)
+}
+
+fn passed_gate(name: &str, evidence: &Path) -> Result<Value> {
+    require_nonempty_regular_file(evidence, "release evidence")?;
+    let file_name = evidence
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| eyre!("release evidence needs a UTF-8 file name"))?;
+    Ok(serde_json::json!({
+        "evidence": [{
+            "digest": file_digest(evidence)?,
+            "media_type": "application/json",
+            "uri": format!("release://evidence/{file_name}")
+        }],
+        "name": name,
+        "status": "passed"
+    }))
+}
+
+fn require_nonempty_regular_file(path: &Path, label: &str) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).wrap_err_with(|| format!("read {label}: {}", path.display()))?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || metadata.len() == 0 {
+        bail!(
+            "{label} must be a non-empty regular file: {}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn sort_json(value: Value) -> Value {
@@ -635,6 +897,158 @@ pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
 }
 
+pub fn archive(repo_root: &Path, bundle: &Path, output: &Path) -> Result<()> {
+    verify(repo_root, bundle)?;
+    let bundle = fs::canonicalize(bundle)
+        .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
+    let manifest: BundleManifest =
+        read_canonical_json(&bundle.join("metadata/testnet-sgx-bundle.json"))?;
+    let output = absolute_path(output)?;
+    if output.starts_with(repo_root) || output.starts_with(&bundle) {
+        bail!("signed SGX archive must be outside the checkout and bundle");
+    }
+    write_deterministic_bundle_archive(&bundle, &output, manifest.source.source_date_epoch)?;
+    verify_bundle_archive(&bundle, &output, manifest.source.source_date_epoch)
+}
+
+pub fn write_deterministic_bundle_archive(
+    bundle: &Path,
+    output: &Path,
+    source_date_epoch: i64,
+) -> Result<()> {
+    if source_date_epoch < 0 {
+        bail!("SOURCE_DATE_EPOCH must be non-negative");
+    }
+    if output.exists() {
+        bail!("signed SGX archive already exists: {}", output.display());
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .wrap_err_with(|| format!("create archive directory: {}", parent.display()))?;
+    }
+    let file = File::create(output)
+        .wrap_err_with(|| format!("create signed SGX archive: {}", output.display()))?;
+    let mut archive = tar::Builder::new(file);
+    archive.follow_symlinks(false);
+    for item in WalkDir::new(bundle).min_depth(1).sort_by_file_name() {
+        let item =
+            item.wrap_err_with(|| format!("walk signed SGX bundle: {}", bundle.display()))?;
+        let path = item.path();
+        let relative = path
+            .strip_prefix(bundle)
+            .wrap_err("derive archive relative path")?;
+        let metadata = fs::symlink_metadata(path)
+            .wrap_err_with(|| format!("read archive input: {}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            bail!("signed SGX bundle contains symlink: {}", relative.display());
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_uid(0);
+        header.set_gid(0);
+        header.set_mtime(source_date_epoch as u64);
+        header.set_mode(metadata.permissions().mode() & 0o7777);
+        if metadata.is_dir() {
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_cksum();
+            archive
+                .append_data(&mut header, relative, std::io::empty())
+                .wrap_err_with(|| format!("archive directory: {}", relative.display()))?;
+        } else if metadata.is_file() {
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(metadata.len());
+            header.set_cksum();
+            let mut input = File::open(path)
+                .wrap_err_with(|| format!("open archive input: {}", path.display()))?;
+            archive
+                .append_data(&mut header, relative, &mut input)
+                .wrap_err_with(|| format!("archive file: {}", relative.display()))?;
+        } else {
+            bail!(
+                "signed SGX bundle contains unsupported entry: {}",
+                relative.display()
+            );
+        }
+    }
+    archive.finish().wrap_err("finish signed SGX archive")?;
+    Ok(())
+}
+
+fn verify_bundle_archive(bundle: &Path, archive_path: &Path, source_date_epoch: i64) -> Result<()> {
+    require_nonempty_regular_file(archive_path, "signed SGX bundle archive")?;
+    let input = File::open(archive_path)
+        .wrap_err_with(|| format!("open signed SGX archive: {}", archive_path.display()))?;
+    let mut archive = tar::Archive::new(input);
+    let mut observed = Vec::new();
+    let mut paths = BTreeSet::new();
+    for item in archive.entries().wrap_err("read signed SGX archive")? {
+        let mut item = item.wrap_err("read signed SGX archive entry")?;
+        let path = item.path().wrap_err("read signed SGX archive path")?;
+        if path.as_os_str().is_empty()
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            bail!(
+                "signed SGX archive contains unsafe path: {}",
+                path.display()
+            );
+        }
+        let path = path.to_string_lossy().replace('\\', "/");
+        if !paths.insert(path.clone()) {
+            bail!("signed SGX archive contains duplicate path: {path}");
+        }
+        let header = item.header();
+        if header.uid()? != 0 || header.gid()? != 0 || header.mtime()? != source_date_epoch as u64 {
+            bail!("signed SGX archive has non-deterministic ownership/time: {path}");
+        }
+        let mode = format!("{:04o}", header.mode()? & 0o7777);
+        if header.entry_type().is_dir() {
+            observed.push(TreeEntry {
+                digest: None,
+                mode,
+                path,
+                size: None,
+                kind: "directory".to_owned(),
+            });
+        } else if header.entry_type().is_file() {
+            let size = header.size()?;
+            let mut hasher = Sha256::new();
+            let mut buffer = [0u8; 64 * 1024];
+            let mut read = 0u64;
+            loop {
+                let count = item.read(&mut buffer)?;
+                if count == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..count]);
+                read += count as u64;
+            }
+            if read != size {
+                bail!("signed SGX archive entry size mismatch: {path}");
+            }
+            observed.push(TreeEntry {
+                digest: Some(Sha256Digest {
+                    algorithm: "sha256".to_owned(),
+                    value: hex::encode(hasher.finalize()),
+                }),
+                mode,
+                path,
+                size: Some(size),
+                kind: "file".to_owned(),
+            });
+        } else {
+            bail!("signed SGX archive contains non-file entry: {path}");
+        }
+    }
+    observed.sort_by(|left, right| left.path.cmp(&right.path));
+    if observed != tree_entries(bundle)? {
+        bail!("signed SGX archive does not exactly reproduce the verified bundle tree");
+    }
+    Ok(())
+}
+
 pub fn build_image(
     repo_root: &Path,
     bundle: &Path,
@@ -690,6 +1104,23 @@ pub fn build_image(
         source: manifest.source,
     };
     write_canonical(&output, &evidence)
+}
+
+pub fn finalize_release_manifest(
+    repo_root: &Path,
+    inputs: &VerifiedReleaseInputs,
+    output: &Path,
+) -> Result<()> {
+    verify(repo_root, &inputs.bundle)?;
+    let output = absolute_path(output)?;
+    if output.exists() {
+        bail!(
+            "verified ReleaseManifest already exists: {}",
+            output.display()
+        );
+    }
+    let manifest = build_verified_release_manifest(inputs)?;
+    write_canonical(&output, &manifest)
 }
 
 pub fn repository_root() -> Result<PathBuf> {

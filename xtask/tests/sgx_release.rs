@@ -1,9 +1,11 @@
 use std::{fs, process::Command};
 
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xtask::release::sgx::{
-    build_bundle_manifest, canonical_json, compare_unsigned_trees, parse_oci_descriptor,
-    parse_sigstruct_view, verify_signed_bundle, BundleSpec, SourceIdentity,
+    build_bundle_manifest, build_verified_release_manifest, canonical_json, compare_unsigned_trees,
+    parse_oci_descriptor, parse_sigstruct_view, verify_signed_bundle,
+    write_deterministic_bundle_archive, BundleSpec, SourceIdentity, VerifiedReleaseInputs,
 };
 
 const SIGSTRUCT: &str = "Attributes:\n\
@@ -76,7 +78,9 @@ fn cli_exposes_typed_sgx_release_commands() {
         .expect("run xtask help");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
-    for command in ["prepare", "compare", "sign", "verify", "image"] {
+    for command in [
+        "prepare", "compare", "sign", "verify", "archive", "image", "manifest",
+    ] {
         assert!(
             stdout.contains(command),
             "missing command {command}: {stdout}"
@@ -207,4 +211,147 @@ fn verification_rejects_artifact_substitution() {
     let error = verify_signed_bundle(fixture.path(), &manifest, &spec, SIGSTRUCT)
         .expect_err("substitution must fail");
     assert!(error.to_string().contains("bundle file matrix mismatch"));
+}
+
+#[test]
+fn verified_release_manifest_binds_bundle_image_sbom_and_hardware_evidence() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let fixture = signed_fixture();
+    let source = SourceIdentity {
+        source_commit: "a".repeat(40),
+        source_date_epoch: 1_784_636_360,
+        release_tag: "v0.1.1-testnet.1".to_owned(),
+    };
+    let bundle_manifest = build_bundle_manifest(fixture.path(), &repo_spec(), &source, SIGSTRUCT)
+        .expect("bundle manifest");
+    fs::create_dir_all(fixture.path().join("metadata")).expect("metadata");
+    fs::write(
+        fixture.path().join("metadata/testnet-sgx-bundle.json"),
+        canonical_json(&bundle_manifest).expect("canonical bundle manifest"),
+    )
+    .expect("write bundle manifest");
+    let bundle_manifest_digest = hex::encode(Sha256::digest(
+        fs::read(fixture.path().join("metadata/testnet-sgx-bundle.json"))
+            .expect("read bundle manifest"),
+    ));
+
+    let elf_manifest = root.path().join("release-manifest.json");
+    let elf = serde_json::json!({
+        "$schema": "https://outbe.io/schemas/release-manifest-v1.json",
+        "artifacts": [{
+            "classification": "production",
+            "digest": {"algorithm": "sha256", "value": "a".repeat(64)},
+            "features": [],
+            "install_profiles": ["full-node", "validator"],
+            "kind": "elf",
+            "media_type": "application/vnd.outbe.elf",
+            "name": "outbe-tee-enclave",
+            "network_compatibility": "network-manifest-required",
+            "package": "outbe-tee-enclave",
+            "path": "bin/outbe-tee-enclave",
+            "platform": {"architecture": "x86_64", "os": "linux", "target": "x86_64-unknown-linux-gnu"},
+            "role": "tee-enclave",
+            "size": 1,
+            "tee": {"mock": false, "stage": "unsigned-bare-elf"}
+        }],
+        "build": {
+            "provenance": {"entrypoint": "scripts/release/reproducible-build.sh", "mode": "local-container"},
+            "source_date_epoch": source.source_date_epoch
+        },
+        "canonicalization": {},
+        "inputs": [],
+        "release": {
+            "lifecycle": "build-candidate",
+            "source": {"clean_tree_policy": "required", "commit": source.source_commit, "tree_state": "clean"},
+            "tag": source.release_tag
+        },
+        "schema_version": "1.0.0",
+        "verification_gates": []
+    });
+    fs::write(
+        &elf_manifest,
+        canonical_json(&elf).expect("canonical ELF manifest"),
+    )
+    .expect("write ELF manifest");
+
+    let oci_evidence = root.path().join("oci.json");
+    let oci = serde_json::json!({
+        "bundle_manifest_digest": {"algorithm": "sha256", "value": bundle_manifest_digest},
+        "image": {
+            "digest": {"algorithm": "sha256", "value": "c".repeat(64)},
+            "media_type": "application/vnd.oci.image.index.v1+json",
+            "size": 856
+        },
+        "image_reference": "ghcr.io/outbe/outbe-tee-enclave-testnet:v0.1.1-testnet.1",
+        "measurements": bundle_manifest.measurements,
+        "platform": "linux/amd64",
+        "provenance_attestation": true,
+        "sbom_attestation": true,
+        "schema_version": "1.0.0",
+        "source": bundle_manifest.source
+    });
+    fs::write(
+        &oci_evidence,
+        canonical_json(&oci).expect("canonical OCI evidence"),
+    )
+    .expect("write OCI evidence");
+
+    let bundle_archive = root.path().join("outbe-tee-enclave-sgx.tar");
+    let sbom = root.path().join("outbe-tee-enclave.spdx.json");
+    let elf_evidence = root.path().join("elf-reproducibility.json");
+    let sgx_evidence = root.path().join("sgx-reproducibility.json");
+    let hardware_evidence = root.path().join("hardware-sgx.json");
+    write_deterministic_bundle_archive(fixture.path(), &bundle_archive, source.source_date_epoch)
+        .expect("archive bundle fixture");
+    fs::write(&sbom, b"{\"spdxVersion\":\"SPDX-2.3\"}\n").expect("SBOM");
+    fs::write(&elf_evidence, b"{\"result\":\"passed\"}\n").expect("ELF evidence");
+    fs::write(&sgx_evidence, b"{\"result\":\"identical\"}\n").expect("SGX evidence");
+    let hardware = serde_json::json!({
+        "environment": {"backend": "gramine-sgx", "hardware_sgx": true},
+        "image": {"digest": {"algorithm": "sha256", "value": "c".repeat(64)}},
+        "measurements": bundle_manifest.measurements,
+        "result": "passed"
+    });
+    fs::write(
+        &hardware_evidence,
+        canonical_json(&hardware).expect("canonical hardware evidence"),
+    )
+    .expect("hardware evidence");
+
+    let manifest = build_verified_release_manifest(&VerifiedReleaseInputs {
+        bundle: fixture.path().to_owned(),
+        bundle_archive,
+        elf_evidence,
+        elf_manifest,
+        hardware_evidence,
+        oci_evidence,
+        sbom,
+        sgx_evidence,
+    })
+    .expect("verified release manifest");
+
+    assert_eq!(manifest["release"]["lifecycle"], "verified");
+    assert_eq!(manifest["build"]["provenance"]["mode"], "github-actions");
+    assert_eq!(
+        manifest["artifacts"].as_array().expect("artifacts").len(),
+        4
+    );
+    let signed = &manifest["artifacts"][1];
+    assert_eq!(signed["tee"]["stage"], "signed");
+    assert_eq!(
+        signed["tee"]["mrsigner"],
+        bundle_manifest.measurements.mrsigner
+    );
+    assert_eq!(
+        manifest["verification_gates"]
+            .as_array()
+            .expect("gates")
+            .len(),
+        6
+    );
+    assert!(manifest["verification_gates"]
+        .as_array()
+        .expect("gates")
+        .iter()
+        .all(|gate| gate["status"] == "passed"));
 }
