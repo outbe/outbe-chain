@@ -234,12 +234,10 @@ contract OriginRouter is
     /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA or does not advertise `IDesis` via
     ///      ERC-165. Catches the common operator mistake of wiring a typo'd address that would brick inbound.
     function _assertDesisInterface(address _desis) private view {
+        // TEST-ONLY BRANCH (test/deploy-smoke-no-desis-gate-2): the Desis ERC-165 interface-id
+        // gate is disabled so the origin can be wired against a node whose Desis precompile
+        // predates this build (contract-only multichain smoke). DO NOT MERGE.
         if (_desis.code.length == 0) revert InvalidDesisInterface(_desis);
-        try IERC165(_desis).supportsInterface(type(IDesis).interfaceId) returns (bool supported) {
-            if (!supported) revert InvalidDesisInterface(_desis);
-        } catch {
-            revert InvalidDesisInterface(_desis);
-        }
     }
 
     // --- Quote ---
