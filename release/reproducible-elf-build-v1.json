@@ -59,12 +59,13 @@
     "locked": true
   },
   "environment": {
-    "cflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/rustup=/rustup",
-    "cxxflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/rustup=/rustup",
+    "cflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/cargo/git=/cargo/git -ffile-prefix-map=/usr/local/rustup=/rustup",
+    "cxxflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/cargo/git=/cargo/git -ffile-prefix-map=/usr/local/rustup=/rustup",
     "locale": "C",
     "rustflags": [
       "--remap-path-prefix=/workspace=/usr/src/outbe-chain",
       "--remap-path-prefix=/usr/local/cargo/registry=/cargo/registry",
+      "--remap-path-prefix=/usr/local/cargo/git=/cargo/git",
       "--remap-path-prefix=/usr/local/rustup=/rustup",
       "-C",
       "link-arg=-Wl,--build-id=sha1"

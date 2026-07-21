@@ -94,6 +94,16 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
         self.assertEqual(evidence["result"], "failed")
         self.assertTrue(any("forbidden absolute build path" in item for item in evidence["differences"]))
 
+    def test_build_spec_remaps_cargo_git_checkout_paths(self) -> None:
+        environment = self.build_spec["environment"]
+        rustflags = environment["rustflags"]
+        expected_rust_remap = "--remap-path-prefix=/usr/local/cargo/git=/cargo/git"
+        expected_native_remap = "-ffile-prefix-map=/usr/local/cargo/git=/cargo/git"
+
+        self.assertIn(expected_rust_remap, rustflags)
+        self.assertIn(expected_native_remap, environment["cflags"])
+        self.assertIn(expected_native_remap, environment["cxxflags"])
+
 
 if __name__ == "__main__":
     unittest.main()
