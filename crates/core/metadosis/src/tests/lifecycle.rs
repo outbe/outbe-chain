@@ -638,6 +638,19 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
+        // A red day is recorded as a supply-less brief; the limit stays in PROMIS.
+        let series = u32::from(wwd);
+        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
+        assert_eq!(
+            desis.auction_stage.read(&series).unwrap(),
+            outbe_desis::schema::AuctionStage::Briefed as u8
+        );
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(
+            desis.pending_supply_promis.read(&series).unwrap(),
+            U256::ZERO
+        );
+
         let promis = PromisLimitContract::new(storage);
         assert_eq!(promis.get_total_unallocated().unwrap(), day_limit);
     });
@@ -773,13 +786,8 @@ fn test_ready_processing_lysis_failure_propagates_and_leaves_day_unsettled() {
 }
 
 #[test]
-fn no_tributes_green_day_clears_started_auction() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
-    );
-    StorageHandle::enter(&mut storage, |storage| {
+fn no_tributes_green_day_briefs_the_full_limit() {
+    with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(20260401u32);
         let day_limit = U256::from(10u64).pow(U256::from(26u64));
         let forming_start = wwd.start_timestamp();
@@ -803,42 +811,42 @@ fn no_tributes_green_day_clears_started_auction() {
             .unwrap();
         metadosis.set_metadosis_limit(wwd, day_limit).unwrap();
 
-        let auction_ts = metadosis
+        let scheduled = metadosis
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()
             .read()
             .unwrap();
 
-        assert!(outbe_desis::api::dispatch_stage_start(
-            storage.clone(),
-            u32::from(wwd),
-            auction_ts,
-            U256::from(10u64).pow(U256::from(18u64)),
-        )
-        .unwrap());
-        assert!(
-            outbe_desis::api::dispatch_stage_reveal(storage.clone(), u32::from(wwd), true).unwrap()
-        );
-
-        run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
+        let series = u32::from(wwd);
+        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
+        assert_eq!(
+            desis.auction_stage.read(&series).unwrap(),
+            outbe_desis::schema::AuctionStage::Briefed as u8
+        );
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 1);
+        assert_eq!(
+            desis.pending_supply_promis.read(&series).unwrap(),
+            day_limit
+        );
+
         let promis = PromisLimitContract::new(storage);
-        assert!(promis.get_total_unallocated().unwrap() < day_limit);
+        assert_eq!(
+            promis.get_total_unallocated().unwrap(),
+            U256::ZERO,
+            "a green brief takes the whole no-tributes limit"
+        );
     });
 }
 
 #[test]
-fn no_day_limit_green_day_still_empty_clears_started_auction() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 64]),
-    );
-    StorageHandle::enter(&mut storage, |storage| {
+fn zero_limit_green_day_dispatches_no_brief() {
+    with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(20260501u32);
         let forming_start = wwd.start_timestamp();
 
@@ -860,33 +868,25 @@ fn no_day_limit_green_day_still_empty_clears_started_auction() {
             .write(status::WAITING)
             .unwrap();
 
-        let auction_ts = metadosis
+        let scheduled = metadosis
             .worldwide_days
             .entry(wwd)
             .scheduled_process_time()
             .read()
             .unwrap();
 
-        assert!(outbe_desis::api::dispatch_stage_start(
-            storage.clone(),
-            u32::from(wwd),
-            auction_ts,
-            U256::from(10u64).pow(U256::from(18u64)),
-        )
-        .unwrap());
-        assert!(
-            outbe_desis::api::dispatch_stage_reveal(storage.clone(), u32::from(wwd), true).unwrap()
-        );
-
-        run_begin_block(storage.clone(), 2, auction_ts + SECONDS_PER_HOUR);
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
         let series = u32::from(wwd);
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
-        assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 1);
-        assert_eq!(desis.pending_supply_intex.read(&series).unwrap(), 0);
+        assert_eq!(
+            desis.auction_stage.read(&series).unwrap(),
+            outbe_desis::schema::AuctionStage::None as u8
+        );
+        assert_eq!(desis.clearing_initiated.read(&series).unwrap(), 0);
     });
 }
 
@@ -917,55 +917,36 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
 }
 
 #[test]
-fn intex_reveal_dispatched_on_mid_offering_tick() {
-    use alloy_sol_types::SolEvent;
-    use outbe_desis::precompile::IDesis;
-    // Offering spans two daily ticks (48h). Reveal must dispatch on the second
-    // (mid-offering) tick so it lands separately from clearing at READY; otherwise
-    // reveal and clearing collide on one tick. Probed via the best-effort
-    // AuctionDispatchFailed event (now emitted by Desis): Desis has no code in tests,
-    // so every dispatch attempt fails and emits one.
+fn auction_brief_dispatched_only_on_the_ready_tick() {
     const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
-    let fail_sig = IDesis::AuctionDispatchFailed::SIGNATURE_HASH;
-    let base_ts = crate::runtime::date_key_to_timestamp(20260601);
+    with_storage(|storage| {
+        let wwd_key: u32 = 20260601;
+        let base_ts = crate::runtime::date_key_to_timestamp(wwd_key);
 
-    // Track one wwd by its date key; many wwds dispatch each tick, so filter the
-    // event by its indexed worldwideDay (the wwd itself) to isolate it.
-    let wwd_key: u32 = 20260601;
-    let mut stages: Vec<Option<String>> = Vec::new();
-    for k in 0..7u64 {
-        storage.clear_events(desis_addr);
-        let ts = base_ts + k * SECONDS_PER_DAY;
-        StorageHandle::enter(&mut storage, |storage| {
-            run_begin_block(storage.clone(), k + 1, ts);
-        });
-        let stage = storage.get_events(desis_addr).iter().find_map(|log| {
-            if log.topics().first() != Some(&fail_sig) {
-                return None;
-            }
-            let ev = IDesis::AuctionDispatchFailed::decode_log_data(log).ok()?;
-            (ev.worldwideDay == wwd_key).then_some(ev.stage)
-        });
-        println!(
-            "tick {k}: date={} stage={stage:?}",
-            timestamp_to_date_key(ts)
+        // Block 1 creates the day; seed its limit afterwards so READY processing
+        // has something to brief.
+        run_begin_block(storage.clone(), 1, base_ts);
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .set_metadosis_limit(wwd_key.into(), U256::from(777u64))
+            .unwrap();
+        drop(metadosis);
+
+        // k1 FORMING, k2 offering entry, k3 mid-offering, k4 READY.
+        let mut stages = Vec::new();
+        for k in 1..5u64 {
+            run_begin_block(storage.clone(), k + 1, base_ts + k * SECONDS_PER_DAY);
+            let desis = storage.contract::<outbe_desis::schema::DesisContract>();
+            stages.push(desis.auction_stage.read(&wwd_key).unwrap());
+        }
+
+        let briefed = outbe_desis::schema::AuctionStage::Briefed as u8;
+        assert_eq!(
+            stages,
+            vec![0, 0, 0, briefed],
+            "the brief must dispatch on the READY tick only"
         );
-        stages.push(stage);
-    }
-
-    // k0/k1 FORMING, k2 offering entry (start), k3 mid-offering (reveal), k4 READY.
-    assert_eq!(
-        stages[2].as_deref(),
-        Some("auction_stage_start"),
-        "start must dispatch on the offering-entry tick: {stages:?}"
-    );
-    assert_eq!(
-        stages[3].as_deref(),
-        Some("auction_stage_reveal"),
-        "reveal must dispatch on the mid-offering tick, not bundled with clearing: {stages:?}"
-    );
+    });
 }
 
 #[test]

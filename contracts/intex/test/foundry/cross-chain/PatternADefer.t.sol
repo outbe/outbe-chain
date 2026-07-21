@@ -23,9 +23,12 @@ contract StubAuctionWithBids {
         bidCount = n;
     }
 
-    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
-        external {}
-    function startRevealingBidsStage(uint32, bool) external {}
+    function auctionStart(
+        uint32,
+        IIntexAuction.WorldwideDayState,
+        IIntexAuction.AuctionSchedule calldata,
+        IIntexAuction.AuctionParams calldata
+    ) external {}
     function startClearingStage(uint32) external {}
     function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
 

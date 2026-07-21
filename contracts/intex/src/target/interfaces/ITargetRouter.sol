@@ -27,7 +27,7 @@ interface ITargetRouter {
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param stageType BridgeMsgCodec message type (4=AuctionStageStart, 5=AuctionStageReveal, 6=AuctionStageClearing).
+    /// @param stageType BridgeMsgCodec message type (3=AuctionStageStart, 4=AuctionStageClearing).
     event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is received from Outbe.

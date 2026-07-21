@@ -123,6 +123,7 @@ contract IntexCallFlowTest is CrossChainTest {
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.worldwideDay = day;
+        p.dayState = 1;
         vm.prank(desis);
         originRouter.sendAuctionStageStart(p);
     }

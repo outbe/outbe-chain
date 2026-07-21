@@ -268,15 +268,6 @@ pub fn create_worldwide_day_for_date(
     Ok(())
 }
 
-/// Auction timestamp (scheduled process time) for a worldwide day.
-fn scheduled_auction_ts(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<u64> {
-    metadosis
-        .worldwide_days
-        .entry(wwd)
-        .scheduled_process_time()
-        .read()
-}
-
 fn update_wwd_status_machine(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -294,12 +285,6 @@ fn update_wwd_status_machine(
 
     let new_status = metadosis.update_wwd_status(wwd, timestamp)?;
 
-    if current_status == status::OFFERING && new_status == status::OFFERING {
-        let is_green_day = metadosis.get_wwd_day_type(wwd)? == day_type::GREEN;
-        outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), u32::from(wwd), is_green_day)?;
-        return Ok(());
-    }
-
     if new_status == current_status {
         return Ok(());
     }
@@ -313,14 +298,6 @@ fn update_wwd_status_machine(
 
     if current_status < status::OFFERING && new_status == status::OFFERING {
         tribute.unseal_day(wwd)?;
-        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
-        let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-        outbe_desis::api::dispatch_stage_start(
-            ctx.storage.clone(),
-            u32::from(wwd),
-            auction_ts,
-            coen_price,
-        )?;
     }
     if current_status == status::OFFERING {
         tribute.seal_day(wwd)?;
@@ -388,23 +365,16 @@ fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Res
 
 /// Settle a READY worldwide day. The five terminal outcomes are intentionally
 /// **not** uniform — each has a distinct PROMIS interaction, so do not collapse
-/// them into one shared "settle" helper. PromisLimit is a cross-day accumulator;
-/// `set` replaces the whole pool, `add` contributes to it.
+/// them into one shared "settle" helper.
 ///
-/// | branch        | auction clearing        | PromisLimit                  | mark      |
-/// |---------------|-------------------------|------------------------------|-----------|
-/// | limit == 0    | clear(0) to close it     | —                            | FAILED    |
-/// | day = UNKNOWN | none (not GREEN)         | `add(limit)` so it isn't lost| FAILED    |
-/// | no tributes   | clear(limit), close      | `add(remainder)`             | COMPLETED |
-/// | lysis Ok      | add day remainder, then  | `set(clearing remainder)` —  | COMPLETED |
-/// |               | clear the **whole** pool | the pool minus what the      |           |
-/// |               |                          | auction consumed             |           |
-/// | lysis Err     | none                     | none (propagates, reverts)   | —         |
-///
-/// `dispatch_auction_clearing` returns the PROMIS the auction could not consume
-/// (rounding dust on success, whole supply on best-effort failure); that value —
-/// not zero — is what the success branch writes back via `set`. Do not re-add the
-/// dust inside Desis; that double-counts and the `set` here would wipe it.
+/// | branch        | auction brief             | PromisLimit                  | mark      |
+/// |---------------|---------------------------|------------------------------|-----------|
+/// | limit == 0    | none                      | —                            | FAILED    |
+/// | day = UNKNOWN | none                      | `add(limit)` so it isn't lost| FAILED    |
+/// | no tributes   | green: limit, red: record | `add` what the brief left    | COMPLETED |
+/// | lysis Ok      | green: day remainder,     | `add` what the brief left    | COMPLETED |
+/// |               | red: record only          |                              |           |
+/// | lysis Err     | none                      | none (propagates, reverts)   | —         |
 fn process_metadosis(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -423,7 +393,6 @@ fn process_metadosis(
     let wwd_type = metadosis.get_wwd_day_type(wwd)?;
 
     if limit_amount.is_zero() {
-        dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), U256::ZERO)?;
         metadosis.mark_wwd_failed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
             worldwideDay: wwd.into(),
@@ -446,11 +415,7 @@ fn process_metadosis(
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
-        // No tributes, but the day still opened a GREEN auction at
-        // FORMING->OFFERING (see `update_wwd_status_machine`). Close it so no
-        // started auction is left dangling on a terminal day; whatever the
-        // clearing does not deliver is routed to PROMIS as unallocated.
-        let to_promis = dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), limit_amount)?;
+        let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
         tribute.retire_completed_partition(scope, wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
@@ -489,19 +454,8 @@ fn process_metadosis(
             let remainder =
                 lysis_result.remaining_gratis + metadosis_parameters.metadosis_limit_remainder;
 
-            promis_limit.add_to_total_unallocated(remainder)?;
-
-            let promis_total_unallocated = promis_limit.get_total_unallocated()?;
-
-            let clearing_reminder =
-                dispatch_auction_clearing(ctx, wwd_type, u32::from(wwd), promis_total_unallocated)?;
-
-            //TODO: ADD GUARD
-            // if (clearing_reminder > promis_total_unallocated) {
-            //     //drop error
-            // }
-
-            promis_limit.set_total_unallocated(clearing_reminder)?;
+            let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, remainder)?;
+            promis_limit.add_to_total_unallocated(to_promis)?;
 
             metadosis.mark_wwd_completed(wwd)?;
             tribute.retire_completed_partition(scope, wwd)?;
@@ -538,24 +492,50 @@ fn process_metadosis(
     }
 }
 
-fn dispatch_auction_clearing(
+/// Hand the day's auction brief to Desis: a green day carries `supply`, a red
+/// day is a cancelled record with none. Returns the PROMIS to route back into
+/// PromisLimit (everything on red or on a best-effort Desis failure).
+fn dispatch_brief(
     ctx: &BlockRuntimeContext,
+    metadosis: &MetadosisContract,
     dtype: u8,
-    worldwide_day: u32,
+    wwd: WorldwideDay,
     supply: U256,
 ) -> Result<U256> {
-    if dtype != day_type::GREEN {
-        return Ok(supply);
-    }
-    // Returns the PROMIS remainder the auction could not consume: the rounding
-    // remainder on a delivered clearing, or the whole `supply` on a best-effort
-    // Desis failure. The caller writes this back into the PromisLimit accumulator.
-    outbe_desis::api::dispatch_stage_clearing(
+    let entry_price = resolve_auction_entry_price(metadosis, ctx, wwd)?;
+    let is_green = dtype == day_type::GREEN;
+    let brief_supply = if is_green { supply } else { U256::ZERO };
+    let accepted = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
-        worldwide_day,
-        supply,
+        u32::from(wwd),
+        brief_supply,
+        entry_price,
+        is_green,
         ctx.block.timestamp,
-    )
+    )?;
+    Ok(if accepted {
+        supply - brief_supply
+    } else {
+        supply
+    })
+}
+
+/// Auction entry price: the daily VWAP of the last closed UTC day, falling back
+/// to the day's forming snapshot when the daily store has no data yet.
+fn resolve_auction_entry_price(
+    metadosis: &MetadosisContract,
+    ctx: &BlockRuntimeContext,
+    wwd: WorldwideDay,
+) -> Result<U256> {
+    let last_closed = primitives_previous_date_key(utc_date_key(ctx.block.timestamp));
+    if let Some(vwap) =
+        outbe_oracle::api::day_type_pair_utc_vwap(metadosis.storage.clone(), last_closed)?
+    {
+        if !vwap.is_zero() {
+            return Ok(vwap);
+        }
+    }
+    metadosis.worldwide_days.entry(wwd).current_vwap().read()
 }
 
 fn emit_failed_execution(

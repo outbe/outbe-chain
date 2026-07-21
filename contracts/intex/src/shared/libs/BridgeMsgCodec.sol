@@ -16,17 +16,16 @@ library BridgeMsgCodec {
 
     // Message types: target chain -> Outbe
     uint8 internal constant MSG_BIDS_BATCH = 1;
-    uint8 internal constant MSG_BIDS_DONE = 12;
+    uint8 internal constant MSG_BIDS_DONE = 2;
 
     // Message types: Outbe -> target chain
-    uint8 internal constant MSG_AUCTION_STAGE_START = 4;
-    uint8 internal constant MSG_AUCTION_STAGE_REVEAL = 5;
-    uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 6;
-    uint8 internal constant MSG_AUCTION_RESULT = 7;
-    uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 8;
-    uint8 internal constant MSG_REFUND_INSTRUCTIONS = 9;
-    uint8 internal constant MSG_MARK_CALLED = 10;
-    uint8 internal constant MSG_MARK_QUALIFIED = 11;
+    uint8 internal constant MSG_AUCTION_STAGE_START = 3;
+    uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 4;
+    uint8 internal constant MSG_AUCTION_RESULT = 5;
+    uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
+    uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
+    uint8 internal constant MSG_MARK_CALLED = 8;
+    uint8 internal constant MSG_MARK_QUALIFIED = 9;
 
     /// @notice Upper bound on every caller-supplied cross-chain payload array
     ///         (`BIDS_BATCH`, `ISSUANCE_INSTRUCTIONS`, `REFUND_INSTRUCTIONS`).
@@ -48,8 +47,7 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // encodePacked messages have a tight upper bound that equals the lower bound.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 92;
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_REVEAL = 7;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 93;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     uint16 internal constant MIN_LEN_MARK_CALLED = 6;
@@ -131,11 +129,6 @@ library BridgeMsgCodec {
     /// @param count Decoded number of bidders.
     /// @param max Maximum permitted bidders per message.
     error RefundBatchTooLarge(uint256 count, uint256 max);
-
-    /// @notice The `isGreenDay` flag byte was neither `0x00` nor `0x01`.
-    /// @dev A corrupted byte must not be silently coerced to `false`; reject it.
-    /// @param got The out-of-range flag byte read from the payload.
-    error InvalidGreenDayFlag(uint8 got);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
@@ -226,11 +219,11 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (92 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout (93 bytes), field order mirrors the Outbe `sol_ext` struct:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
     ///      [callPriceMinor(8)][intexCallPeriod(4)][callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)]
-    ///      [commitBondMinor(16)]
+    ///      [commitBondMinor(16)][dayState(1)]
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
@@ -247,6 +240,7 @@ library BridgeMsgCodec {
     /// @param _callThresholdDays The call-trigger threshold in days.
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units); 0 disables the bond.
+    /// @param _dayState The final worldwide-day state (1 = Green, 2 = Red).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
         uint32 _worldwideDay,
@@ -264,7 +258,8 @@ library BridgeMsgCodec {
         uint16 _callWindowDays,
         uint16 _callThresholdDays,
         uint16 _minIntexBidQuantity,
-        uint128 _commitBondMinor
+        uint128 _commitBondMinor,
+        uint8 _dayState
     ) internal pure returns (bytes memory) {
         // Split into two packed halves: 18 packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
@@ -288,17 +283,9 @@ library BridgeMsgCodec {
             _callWindowDays,
             _callThresholdDays,
             _minIntexBidQuantity,
-            _commitBondMinor
+            _commitBondMinor,
+            _dayState
         );
-    }
-
-    /// @notice Encodes AUCTION_STAGE_REVEAL message.
-    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)][isGreenDay(1)]
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
-    /// @param _isGreenDay The green-day flag for the series.
-    /// @return The wire-encoded AUCTION_STAGE_REVEAL message.
-    function encodeAuctionStageReveal(uint32 _worldwideDay, bool _isGreenDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_REVEAL, _worldwideDay, _isGreenDay);
     }
 
     /// @notice Encodes AUCTION_STAGE_CLEARING message.
@@ -358,9 +345,10 @@ library BridgeMsgCodec {
     ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///         [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
     ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][intexCallPeriod(4)]
-    ///         [callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)][commitBondMinor(16)]
+    ///         [callWindowDays(2)][callThresholdDays(2)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return dayState The final worldwide-day state (Green or Red).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
@@ -368,6 +356,7 @@ library BridgeMsgCodec {
         pure
         returns (
             uint32 worldwideDay,
+            IIntexAuction.WorldwideDayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         )
@@ -375,6 +364,9 @@ library BridgeMsgCodec {
         _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
+        uint8 rawDayState = uint8(_msg[92]);
+        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
+        dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),
             revealEnd: uint32(bytes4(_msg[10:14])),
@@ -567,26 +559,6 @@ library BridgeMsgCodec {
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
-    /// @notice Decodes AUCTION_STAGE_REVEAL message.
-    /// @dev encodePacked layout (7 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)][isGreenDay(1)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 7 bytes, `UnsupportedBodyVersion` on a
-    ///      stale version byte, and `InvalidGreenDayFlag` if the flag byte is neither 0 nor 1.
-    /// @param _msg The wire-encoded AUCTION_STAGE_REVEAL message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
-    /// @return isGreenDay The decoded green-day flag.
-    function decodeAuctionStageReveal(bytes calldata _msg)
-        internal
-        pure
-        returns (uint32 worldwideDay, bool isGreenDay)
-    {
-        _assertExactLength(_msg, MSG_AUCTION_STAGE_REVEAL, MIN_LEN_AUCTION_STAGE_REVEAL);
-        _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
-        uint8 flag = uint8(_msg[6]);
-        if (flag > 1) revert InvalidGreenDayFlag(flag);
-        isGreenDay = flag == 1;
-    }
-
     /// @notice Decodes AUCTION_STAGE_CLEARING message.
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
@@ -722,7 +694,6 @@ library BridgeMsgCodec {
     /// @return The minimum encoded length for `_msgType`, or 0 if unknown to the codec.
     function minLengthFor(uint8 _msgType) internal pure returns (uint16) {
         if (_msgType == MSG_AUCTION_STAGE_START) return MIN_LEN_AUCTION_STAGE_START;
-        if (_msgType == MSG_AUCTION_STAGE_REVEAL) return MIN_LEN_AUCTION_STAGE_REVEAL;
         if (_msgType == MSG_AUCTION_STAGE_CLEARING) return MIN_LEN_AUCTION_STAGE_CLEARING;
         if (_msgType == MSG_AUCTION_RESULT) return MIN_LEN_AUCTION_RESULT;
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;

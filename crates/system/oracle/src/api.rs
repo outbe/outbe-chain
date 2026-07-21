@@ -106,6 +106,18 @@ pub fn store_worldwide_day_vwap_snapshot(
     }
 }
 
+/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or
+/// `None` when the pair is not registered or the day has no finalized value.
+pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let (base, quote) = DAY_TYPE_PAIR;
+    let pair_id = oracle.get_pair_id(base, quote)?;
+    if pair_id == 0 {
+        return Ok(None);
+    }
+    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+}
+
 /// Returns the finalized VWAP for `pair_id` on the given UTC calendar day
 /// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
 /// day is not finalized or had no oracle data for that pair. Distinguishing

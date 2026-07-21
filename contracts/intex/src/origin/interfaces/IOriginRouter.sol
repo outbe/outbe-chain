@@ -158,6 +158,8 @@ interface IOriginRouter {
         uint16 minIntexBidQuantity;
         /// @notice Commit-entry bond (payment-token minor units); 0 disables the bond.
         uint128 commitBondMinor;
+        /// @notice Final worldwide-day state (1 = Green, 2 = Red).
+        uint8 dayState;
     }
 
     /// @notice Issuance instructions parameters grouped to keep the calldata layout resilient against stack limits.
@@ -251,8 +253,6 @@ interface IOriginRouter {
     // --- Quote ---
     /// @notice Native fee to broadcast auction stage start (summed over the registered targets).
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256 fee);
-    /// @notice Native fee to broadcast auction stage reveal (summed over the registered targets).
-    function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256 fee);
     /// @notice Native fee to broadcast auction stage clearing (summed over the registered targets).
     function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256 fee);
     /// @notice Native fee to send auction result to a single target chain.
@@ -285,8 +285,6 @@ interface IOriginRouter {
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
     ///         Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
-    /// @notice Broadcast auction stage reveal over the day's snapshot. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external payable;
     /// @notice Broadcast auction stage clearing over the day's snapshot. Restricted to `DESIS_ROLE`.
     function sendAuctionStageClearing(uint32 worldwideDay) external payable;
     /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.
