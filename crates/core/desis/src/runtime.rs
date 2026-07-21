@@ -64,9 +64,6 @@ pub fn record_brief(
         .write(&worldwide_day, u8::from(is_green))?;
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
-    contract.emit(IDesis::AuctionCreated {
-        worldwideDay: worldwide_day,
-    })?;
     Ok(())
 }
 
@@ -311,6 +308,9 @@ fn start_auction(
         DAY_STATE_GREEN,
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Started)?;
+    contract.emit(IDesis::AuctionCreated {
+        worldwideDay: worldwide_day,
+    })?;
     Ok(StartOutcome::Started)
 }
 
