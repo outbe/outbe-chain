@@ -9,7 +9,7 @@ use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{Bytecode, StorageHandle};
 
 use crate::api::IVaultProvider;
 use crate::precompile::dispatch;
@@ -329,6 +329,12 @@ fn withdraw_liquidity_happy_path_and_rejects_unknown_target() {
             .insert(vault())
             .unwrap();
 
+        // The bundle receiver must be a deployed contract; a CALL to a codeless
+        // account would silently no-op the topUp.
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+
         let burned = runtime::withdraw_liquidity(
             storage.clone(),
             target_account(),
@@ -339,6 +345,34 @@ fn withdraw_liquidity_happy_path_and_rejects_unknown_target() {
         )
         .unwrap();
         assert_eq!(burned, x);
+    });
+}
+
+#[test]
+fn withdraw_liquidity_rejects_undeployed_receiver() {
+    let x = U256::from(50u64);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(x));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultProviderContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        // receiver() has no code: topUp would be silently skipped, so the whole
+        // withdraw (and the requestCredis that drives it) must fail instead.
+        let err = runtime::withdraw_liquidity(
+            storage.clone(),
+            target_account(),
+            asset(),
+            U256::from(10),
+            receiver(),
+            IVaultProvider::LiquidityTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not a deployed contract"), "{err}");
     });
 }
 
@@ -392,6 +426,9 @@ fn abi_withdraw_liquidity_gates_msg_sender_against_registry() {
         VaultProviderContract::new(storage.clone())
             .asset_vault_set(asset())
             .insert(vault())
+            .unwrap();
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
             .unwrap();
 
         let calldata = IVaultProvider::withdrawLiquidityCall {
