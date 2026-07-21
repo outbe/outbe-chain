@@ -11,6 +11,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::net::TcpStream;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
@@ -18,6 +19,8 @@ use std::time::Duration;
 
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
+
+const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
 
 /// Build a `Vec<String>` of process arguments from `Display` tokens.
 ///
@@ -110,6 +113,9 @@ pub(crate) struct EnclaveSpec {
     pub tee_port: u16,
     /// Host enclave binary bind-mounted read-only at `/app/outbe-tee-enclave`.
     pub enclave_bin: PathBuf,
+    /// Scenario-scoped test signing key, mounted read-only and never baked into
+    /// the Gramine test image. Reused across restarts to preserve MRSIGNER.
+    pub signing_key: PathBuf,
     pub sudo: bool,
     /// Mock enclave (`gramine-direct`) — when false, real SGX device passthrough
     /// is attempted if the host exposes the device nodes.
@@ -123,32 +129,70 @@ pub(crate) struct EnclaveSpec {
     pub debug: bool,
 }
 
-/// Build the `outbe-tee-enclave-gramine` image if it isn't present
-/// (`run-testnet.sh:170-176`).
-pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool) -> Result<()> {
+/// Build the explicit test-only Gramine image and create one scenario-scoped
+/// signing key outside the image. Release images are pre-signed and do not use
+/// this adapter.
+pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) -> Result<()> {
     let present = base_cmd("docker", sudo)
-        .args(["image", "inspect", "outbe-tee-enclave-gramine"])
+        .args(["image", "inspect", TEST_ENCLAVE_IMAGE])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if present {
+    if !present {
+        let ctx = repo.join("bin/outbe-tee-enclave/gramine");
+        let dockerfile = ctx.join("Dockerfile.test");
+        let status = base_cmd("docker", sudo)
+            .args(["build", "-f"])
+            .arg(&dockerfile)
+            .args(["-t", TEST_ENCLAVE_IMAGE])
+            .arg(&ctx)
+            .status()
+            .wrap_err("docker build test-only Gramine enclave image")?;
+        if !status.success() {
+            bail!("docker build {TEST_ENCLAVE_IMAGE} failed");
+        }
+    }
+
+    if signing_key.exists() {
+        let metadata = fs::symlink_metadata(signing_key)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            bail!(
+                "unsafe existing test SGX signing key: {}",
+                signing_key.display()
+            );
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            bail!(
+                "test SGX signing key has unsafe permissions: {}",
+                signing_key.display()
+            );
+        }
         return Ok(());
     }
-    let ctx = repo.join("bin/outbe-tee-enclave/gramine");
+    let parent = signing_key
+        .parent()
+        .ok_or_else(|| eyre!("test SGX signing key has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let parent = parent.canonicalize()?;
+    let name = signing_key
+        .file_name()
+        .ok_or_else(|| eyre!("test SGX signing key has no file name"))?;
+    let owner = fs::metadata(&parent)?;
     let status = base_cmd("docker", sudo)
-        .args([
-            "build",
-            "-t",
-            "outbe-tee-enclave-gramine",
-            &ctx.display().to_string(),
-        ])
+        .args(["run", "--rm", "--user"])
+        .arg(format!("{}:{}", owner.uid(), owner.gid()))
+        .args(["--entrypoint", "gramine-sgx-gen-private-key", "-v"])
+        .arg(format!("{}:/keys", parent.display()))
+        .arg(TEST_ENCLAVE_IMAGE)
+        .arg(Path::new("/keys").join(name))
         .status()
-        .wrap_err("docker build outbe-tee-enclave-gramine")?;
+        .wrap_err("generate scenario-scoped test SGX signing key")?;
     if !status.success() {
-        bail!("docker build outbe-tee-enclave-gramine failed");
+        bail!("test SGX signing key generation failed");
     }
+    fs::set_permissions(signing_key, fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
@@ -196,10 +240,19 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
         .enclave_bin
         .canonicalize()
         .unwrap_or_else(|_| spec.enclave_bin.clone());
+    let signing_key = spec
+        .signing_key
+        .canonicalize()
+        .wrap_err("resolve scenario test SGX signing key")?;
     cmd.args([
         "-v",
         &format!("{}:/app/outbe-tee-enclave:ro", bin.display()),
-        "outbe-tee-enclave-gramine",
+        "-v",
+        &format!(
+            "{}:/run/secrets/outbe-test-sgx-key.pem:ro",
+            signing_key.display()
+        ),
+        TEST_ENCLAVE_IMAGE,
         "--socket",
         &format!("127.0.0.1:{}", spec.tee_port),
     ]);

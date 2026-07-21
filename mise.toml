@@ -246,7 +246,7 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 
 # Full Rust/Cucumber gramine-mock TEE e2e suite.
 # Builds the node, CLI, keygen, and mock enclave, then runs every feature.
-# Requires sudo + gramine + the `outbe-tee-enclave-gramine` docker image (joiner
+# Requires sudo + Docker; the `outbe-tee-enclave-gramine-test` image (joiner
 # enclave). Runnable on any box with gramine-direct (no SGX hardware required for
 # the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]

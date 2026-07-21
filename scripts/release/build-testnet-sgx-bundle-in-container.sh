@@ -25,7 +25,7 @@ prepare() {
   chmod 0700 "${bundle_root}/var/lib/outbe/tee"
 
   install -m 0755 /elf/bin/outbe-tee-enclave "${installed}/bin/outbe-tee-enclave"
-  install -m 0755 /source/bin/outbe-tee-enclave/gramine/release-entrypoint.sh \
+  install -m 0755 /source/bin/outbe-tee-enclave/gramine/entrypoint.sh \
     "${installed}/bin/outbe-tee-enclave-launch"
   install -m 0755 /usr/lib/x86_64-linux-gnu/gramine/sgx/loader \
     "${installed}/gramine/loader"

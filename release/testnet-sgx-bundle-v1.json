@@ -8,7 +8,8 @@
   },
   "inputs": [
     "bin/outbe-tee-enclave/gramine/outbe-tee-enclave.release.manifest.template",
-    "bin/outbe-tee-enclave/gramine/release-entrypoint.sh",
+    "bin/outbe-tee-enclave/gramine/Dockerfile",
+    "bin/outbe-tee-enclave/gramine/entrypoint.sh",
     "release/testnet-sgx-bundle-v1.json",
     "scripts/release/build-testnet-sgx-bundle-in-container.sh",
     "xtask/Cargo.toml",

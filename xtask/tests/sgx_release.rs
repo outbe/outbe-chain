@@ -31,14 +31,28 @@ fn repo_root() -> std::path::PathBuf {
 #[test]
 fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     let root = repo_root();
-    let entrypoint =
-        fs::read_to_string(root.join("bin/outbe-tee-enclave/gramine/release-entrypoint.sh"))
-            .expect("release entrypoint");
+    let entrypoint = fs::read_to_string(root.join("bin/outbe-tee-enclave/gramine/entrypoint.sh"))
+        .expect("release entrypoint");
     assert!(!entrypoint.contains("gramine-sgx-sign"));
     assert!(!entrypoint.contains("gramine-sgx-gen-private-key"));
     assert!(!entrypoint.contains("gramine-direct"));
     assert!(!entrypoint.contains("enclave-key.pem"));
     assert!(entrypoint.contains("exec"));
+
+    let dockerfile = fs::read_to_string(root.join("bin/outbe-tee-enclave/gramine/Dockerfile"))
+        .expect("release Dockerfile");
+    assert!(!dockerfile.contains("gramine-sgx-gen-private-key"));
+    assert!(dockerfile.contains("@sha256:"));
+
+    let test_dockerfile =
+        fs::read_to_string(root.join("bin/outbe-tee-enclave/gramine/Dockerfile.test"))
+            .expect("test Dockerfile");
+    assert!(!test_dockerfile.contains("gramine-sgx-gen-private-key"));
+    let test_entrypoint =
+        fs::read_to_string(root.join("bin/outbe-tee-enclave/gramine/entrypoint.test.sh"))
+            .expect("test entrypoint");
+    assert!(test_entrypoint.contains("/run/secrets/outbe-test-sgx-key.pem"));
+    assert!(test_entrypoint.contains("gramine-sgx-sign"));
 
     let template = fs::read_to_string(
         root.join("bin/outbe-tee-enclave/gramine/outbe-tee-enclave.release.manifest.template"),
