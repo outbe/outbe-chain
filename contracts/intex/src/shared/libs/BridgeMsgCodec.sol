@@ -5,7 +5,7 @@ import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
-/// @notice Library for encoding and decoding bridge messages between BNB and Outbe chains.
+/// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
 /// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
 ///      (issuance, mark) are keyed by `seriesId` (both uint32, equal in value while one series per day).
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
@@ -14,10 +14,11 @@ library BridgeMsgCodec {
     /// @notice Active body version emitted by every `encode*` and required by every `decode*`.
     uint8 internal constant BODY_VERSION_V1 = 1;
 
-    // Message types: BNB -> Outbe
+    // Message types: target chain -> Outbe
     uint8 internal constant MSG_BIDS_BATCH = 1;
+    uint8 internal constant MSG_BIDS_DONE = 12;
 
-    // Message types: Outbe -> BNB
+    // Message types: Outbe -> target chain
     uint8 internal constant MSG_AUCTION_STAGE_START = 4;
     uint8 internal constant MSG_AUCTION_STAGE_REVEAL = 5;
     uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 6;
@@ -53,6 +54,8 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     uint16 internal constant MIN_LEN_MARK_CALLED = 6;
     uint16 internal constant MIN_LEN_MARK_QUALIFIED = 6;
+    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
+    uint16 internal constant MIN_LEN_BIDS_DONE = 20;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
@@ -148,6 +151,24 @@ library BridgeMsgCodec {
     /// @param _max The configured upper bound.
     function requireMaxArrayLen(uint256 _actual, uint256 _max) internal pure {
         if (_actual > _max) revert PayloadArrayTooLong(_actual, _max);
+    }
+
+    /// @notice Encodes a BIDS_DONE marker: source chain `_srcChainId` has sent all `_totalBatches` batches
+    ///         of this flush generation for `_worldwideDay`.
+    /// @dev Fixed-length encodePacked. `_totalBids` is an integrity check: the receiver requires it to equal the
+    ///      sum of the arrived batch sizes before it treats the chain as complete. Redundant with the per-batch
+    ///      `totalBatches` field, kept as the explicit completeness marker + a cross-check.
+    /// @return The wire-encoded BIDS_DONE message.
+    function encodeBidsDone(
+        uint32 _worldwideDay,
+        uint32 _srcChainId,
+        uint32 _relayGeneration,
+        uint16 _totalBatches,
+        uint32 _totalBids
+    ) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _relayGeneration, _totalBatches, _totalBids
+        );
     }
 
     /// @notice Encodes BIDS_BATCH message.
@@ -437,6 +458,27 @@ library BridgeMsgCodec {
 
     // --- Decoding ---
 
+    /// @notice Decodes a BIDS_DONE marker.
+    /// @param _msg The wire-encoded BIDS_DONE message.
+    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return srcChainId The source chainId that finished sending its bids.
+    /// @return relayGeneration The flush generation this marker stamps.
+    /// @return totalBatches Total batches the source chain sent for this generation.
+    /// @return totalBids Total bids across those batches (integrity cross-check).
+    function decodeBidsDone(bytes calldata _msg)
+        internal
+        pure
+        returns (uint32 worldwideDay, uint32 srcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+    {
+        _assertExactLength(_msg, MSG_BIDS_DONE, MIN_LEN_BIDS_DONE);
+        _assertBodyVersion(_msg);
+        worldwideDay = uint32(bytes4(_msg[2:6]));
+        srcChainId = uint32(bytes4(_msg[6:10]));
+        relayGeneration = uint32(bytes4(_msg[10:14]));
+        totalBatches = uint16(bytes2(_msg[14:16]));
+        totalBids = uint32(bytes4(_msg[16:20]));
+    }
+
     /// @notice Returns the body version byte (offset 0).
     /// @param _msg The wire-encoded bridge message.
     /// @return The body version byte at offset 0.
@@ -686,6 +728,7 @@ library BridgeMsgCodec {
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
         if (_msgType == MSG_MARK_QUALIFIED) return MIN_LEN_MARK_QUALIFIED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;
+        if (_msgType == MSG_BIDS_DONE) return MIN_LEN_BIDS_DONE;
         if (_msgType == MSG_REFUND_INSTRUCTIONS) return MIN_LEN_REFUND_INSTRUCTIONS;
         if (_msgType == MSG_ISSUANCE_INSTRUCTIONS) return MIN_LEN_ISSUANCE_INSTRUCTIONS;
         return 0;

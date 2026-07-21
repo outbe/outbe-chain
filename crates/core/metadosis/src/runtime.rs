@@ -550,7 +550,12 @@ fn dispatch_auction_clearing(
     // Returns the PROMIS remainder the auction could not consume: the rounding
     // remainder on a delivered clearing, or the whole `supply` on a best-effort
     // Desis failure. The caller writes this back into the PromisLimit accumulator.
-    outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), worldwide_day, supply)
+    outbe_desis::api::dispatch_stage_clearing(
+        ctx.storage.clone(),
+        worldwide_day,
+        supply,
+        ctx.block.timestamp,
+    )
 }
 
 fn emit_failed_execution(

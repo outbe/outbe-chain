@@ -32,7 +32,7 @@ contract EscrowAdapterV2 is EscrowAdapter {
 }
 
 contract OriginRouterV2 is OriginRouter {
-    constructor(address lzEndpoint, uint32 bnbEid) OriginRouter(lzEndpoint, bnbEid) {}
+    constructor(address bridge_) OriginRouter(bridge_) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;

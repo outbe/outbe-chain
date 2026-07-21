@@ -72,7 +72,6 @@ contract UpgradeOutbe is UpgradeBase {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
-        uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
@@ -80,25 +79,24 @@ contract UpgradeOutbe is UpgradeBase {
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
         upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
-        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge, bnbChainId)));
+        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge)));
         vm.stopBroadcast();
     }
 }
 
 /// @title UpgradeOriginRouter
 /// @notice Upgrade only the OriginRouter proxy in place (UUPS), leaving the other proxies untouched.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS.
 contract UpgradeOriginRouter is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
-        uint32 bnbChainId = uint32(vm.envUint("BNB_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
 
         vm.startBroadcast(pk);
-        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge, bnbChainId)));
+        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge)));
         vm.stopBroadcast();
     }
 }

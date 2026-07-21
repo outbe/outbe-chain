@@ -205,6 +205,46 @@ pub struct IntexContract {
     /// series_id -> (active index + 1); 0 = not active.
     #[attribute(order = 10)]
     pub active_dist_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Creator-reward: multi-chain proceeds fan-in aggregation ---
+    /// series_id -> proceeds accumulated but not yet handed to a distribution round.
+    #[attribute(order = 11)]
+    pub proceeds_pot: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// series_id -> deadline after which the pot distributes without the missing chains.
+    #[attribute(order = 12)]
+    pub proceeds_deadline: outbe_primitives::storage::dsl::Map<u32, u64>,
+
+    /// series_id -> number of winning chains expected to route proceeds.
+    #[attribute(order = 13)]
+    pub proceeds_expected_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    /// series_id -> number of expected chains whose proceeds have arrived.
+    #[attribute(order = 14)]
+    pub proceeds_arrived_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    /// keccak256(series_id_be32 ++ chain_be32) -> 1 if a winning (expected) chain.
+    #[attribute(order = 15)]
+    pub proceeds_expected: outbe_primitives::storage::dsl::Map<B256, u8>,
+
+    /// keccak256(series_id_be32 ++ chain_be32) -> 1 once that chain's proceeds arrived.
+    #[attribute(order = 16)]
+    pub proceeds_arrived: outbe_primitives::storage::dsl::Map<B256, u8>,
+
+    /// series_id -> 1 if the in-flight distribution round should finalize (clear the
+    /// contributor map + aggregation state) on completion; 0 = retain for a late top-up.
+    #[attribute(order = 17)]
+    pub proceeds_finalize_on_done: outbe_primitives::storage::dsl::Map<u32, u8>,
+
+    // Awaiting-proceeds set (dense) for the begin-block deadline sweep.
+    #[attribute(order = 18)]
+    pub awaiting_proceeds_count: outbe_primitives::storage::dsl::Value<u32>,
+    /// dense index -> series_id.
+    #[attribute(order = 19)]
+    pub awaiting_proceeds_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// series_id -> (awaiting index + 1); 0 = not awaiting.
+    #[attribute(order = 20)]
+    pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl IntexContract<'_> {
@@ -214,6 +254,15 @@ impl IntexContract<'_> {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&series_id.to_be_bytes());
         buf[4..8].copy_from_slice(&index.to_be_bytes());
+        keccak256(buf)
+    }
+
+    /// Composite key for per-(series, chain) proceeds flags:
+    /// `keccak256(series_id_be32 ++ chain_be32)`.
+    pub fn proceeds_chain_key(series_id: u32, chain_id: u32) -> B256 {
+        let mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&series_id.to_be_bytes());
+        buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
     }
 }

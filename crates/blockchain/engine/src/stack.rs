@@ -141,6 +141,46 @@ fn unfinalized_head_lead_is_recoverable(last_execution_height: u64, finalized_ti
 fn durable_recovery_anchor_height(last_execution_height: u64, finalized_tip: u64) -> u64 {
     last_execution_height.min(finalized_tip)
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecoveredApplicationFinalization {
+    round: Round,
+    digest: Digest,
+}
+
+/// Promote the conservative cross-store anchor only when marshal proves the
+/// exact canonical execution-head digest. Height agreement alone is not
+/// sufficient: it could conceal a same-height fork after a partial restore.
+fn reconcile_recovered_execution_head(
+    last_execution_height: u64,
+    last_execution_hash: B256,
+    recovered: Option<RecoveredApplicationFinalization>,
+) -> Result<(u64, B256, Option<Round>)> {
+    if last_execution_height == 0 {
+        ensure!(
+            recovered.is_none(),
+            "marshal returned a finalization record for genesis execution height"
+        );
+        return Ok((0, last_execution_hash, None));
+    }
+
+    let recovered = recovered.ok_or_else(|| {
+        eyre::eyre!(
+            "marshal returned no finalization for non-genesis execution height {last_execution_height}"
+        )
+    })?;
+    ensure!(
+        recovered.digest.0 == last_execution_hash,
+        "marshal finalization digest mismatch at execution height {last_execution_height}: \
+         execution={last_execution_hash}, marshal={}",
+        recovered.digest.0
+    );
+
+    Ok((
+        last_execution_height,
+        last_execution_hash,
+        Some(recovered.round),
+    ))
+}
 /// epoch restart precondition: bounded wait for the finalization
 /// view to expose the continuity anchor before launching the new-epoch
 /// Simplex engine. Without this, `Automaton::genesis(epoch > 0)` could be
@@ -1066,6 +1106,15 @@ fn pending_dkg_activation_decision(
     } else {
         PendingDkgActivationDecision::Wait
     }
+}
+
+fn frozen_dkg_target_expired(
+    current_height: u64,
+    planned_activation_height: u64,
+    activation_grace_blocks: u64,
+) -> bool {
+    let deadline = planned_activation_height.saturating_add(activation_grace_blocks);
+    current_height >= deadline
 }
 
 fn provider_matches_consensus_tip(
@@ -2026,6 +2075,27 @@ where
     .await
 }
 
+fn validate_testnet_only_flags(
+    trust_el_head: bool,
+    force_dkg: bool,
+    unix_time_offset_secs: Option<i64>,
+    chain_id: u64,
+) -> Result<()> {
+    let is_explicit_test_network = outbe_primitives::chain::is_devnet(chain_id)
+        || outbe_primitives::chain::is_testnet(chain_id);
+    if (trust_el_head || force_dkg) && !is_explicit_test_network {
+        return Err(eyre::eyre!(
+            "--testnet.trust-el-head and --testnet.force-dkg are not allowed on non-test networks (chain_id {chain_id})"
+        ));
+    }
+    if unix_time_offset_secs.is_some() && !is_explicit_test_network {
+        return Err(eyre::eyre!(
+            "--testnet.unix-time-offset-secs is not allowed on non-test networks (chain_id {chain_id})"
+        ));
+    }
+    Ok(())
+}
+
 pub async fn run_consensus_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
@@ -2048,6 +2118,22 @@ where
         + Sync
         + 'static,
 {
+    // Validate network-scoped flags before any mode-specific early return. A
+    // follower must fail closed too, even when it does not currently consume
+    // these options.
+    let chain_id = node.chain_spec().chain().id();
+    validate_testnet_only_flags(
+        args.trust_el_head,
+        args.force_dkg,
+        args.testnet_unix_time_offset_secs,
+        chain_id,
+    )?;
+    if args.force_dkg && !args.trust_el_head {
+        return Err(eyre::eyre!(
+            "--testnet.force-dkg requires --testnet.trust-el-head"
+        ));
+    }
+
     // Follower mode: cold-sync finalized blocks from an upstream node and verify
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before any validator material is loaded.
@@ -2063,19 +2149,6 @@ where
             ce_startup_recovery,
         )
         .await;
-    }
-
-    // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
-    let chain_id = node.chain_spec().chain().id();
-    if (args.trust_el_head || args.force_dkg) && outbe_primitives::chain::is_mainnet(chain_id) {
-        return Err(eyre::eyre!(
-            "--testnet.trust-el-head and --testnet.force-dkg are not allowed on mainnet (chain_id {chain_id})"
-        ));
-    }
-    if args.force_dkg && !args.trust_el_head {
-        return Err(eyre::eyre!(
-            "--testnet.force-dkg requires --testnet.trust-el-head"
-        ));
     }
 
     // ── 1. Load signing key ─────────────────────────────────────────────
@@ -2667,6 +2740,13 @@ where
             let dkg_chain_id =
                 B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
             let n = participants.len();
+            let local_consensus_key = signing_key.public_key();
+            let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
+                .iter()
+                .filter(|peer| *peer != &local_consensus_key)
+                .cloned()
+                .collect();
+            let dkg_remote_peers = tee_remote_peers.clone();
             let deadline = std::time::Duration::from_secs(args.tee_bootstrap_timeout_secs);
 
             let (dkg_sender, dkg_receiver) = tee_dkg_round0
@@ -2706,6 +2786,7 @@ where
                             dkg_chain_id,
                             0,
                             &connect_policy,
+                            dkg_remote_peers,
                             dkg_sender,
                             dkg_receiver,
                         )
@@ -2724,6 +2805,7 @@ where
                         tribute_offer_group_public_key,
                         tee_policy,
                         &evm_signer,
+                        tee_remote_peers,
                         tee_sender,
                         tee_receiver,
                     )
@@ -3134,7 +3216,7 @@ where
     };
 
     // ── 10. Create executor actor (state-aware init) ────────────────────
-    let (executor_actor, executor_mailbox) = ExecutorActor::new(
+    let (mut executor_actor, executor_mailbox) = ExecutorActor::new(
         ctx.child("executor"),
         engine_handle.clone(),
         genesis_hash,
@@ -3281,63 +3363,79 @@ where
     // can backfill + verify finalized blocks from this validator.
     spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
 
-    let recovered_finalized_round = match recover_application_finalized_round(
-        ctx,
-        &marshal_mailbox,
-        last_execution_height,
-    )
-    .await
-    {
-        Ok(round) => round,
-        Err(error) if args.force_dkg && last_execution_height > 0 => {
-            return Err(error).wrap_err(
-                "--testnet.force-dkg existing-chain recovery requires durable marshal \
+    let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
+        match recover_application_finalized_round(ctx, &marshal_mailbox, last_execution_height)
+            .await
+        {
+            Ok(recovered) => reconcile_recovered_execution_head(
+                last_execution_height,
+                last_execution_hash,
+                recovered,
+            )?,
+            Err(error) if args.force_dkg && last_execution_height > 0 => {
+                return Err(error).wrap_err(
+                    "--testnet.force-dkg existing-chain recovery requires durable marshal \
                  finalization history; restore validator-N/data/consensus/outbe-* \
                  instead of deleting consensus archives",
-            );
-        }
-        Err(error) if startup_live_join_completed || args.trust_el_head => {
-            warn!(
-                %error,
-                last_execution_height,
-                "marshal archive lacks finalized-round history after startup live-join or force-dkg; continuing from synced execution boundary"
-            );
-            None
-        }
-        Err(head_error) => {
-            // reth's canonical head can lead consensus finalization by the
-            // in-flight block: one this node proposed and applied as its head
-            // but had not finalized when it stopped (steady state:
-            // head_height = finalized_height + 1). On a plain restart in that
-            // window the head's finalization legitimately does not exist yet —
-            // a normal unfinalized head, NOT archive corruption. Confirm the
-            // marshal still holds its own finalized tip's record (a gap *there*
-            // is genuine corruption) and that the head leads by a bounded
-            // amount, then continue from marshal's durable finalized boundary.
-            // The speculative Reth head remains available locally, but neither
-            // ExecutorActor nor FinalizationView may call it finalized. The
-            // network re-finalizes forward and Reth reorgs via forkchoice if a
-            // different block wins the first unfinalized height.
-            let finalized_tip = last_consensus_finalized.get();
-            if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
-                return Err(head_error);
+                );
             }
-            let Ok(recovered_round) =
-                recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
-            else {
-                return Err(head_error);
-            };
-            warn!(
-                last_execution_height,
-                finalized_tip,
-                head_lead = last_execution_height.saturating_sub(finalized_tip),
-                recovery_anchor_hash = %recovery_anchor_hash,
-                "execution head leads the marshal finalized tip on restart; anchoring \
-                 recovery at certified finality (unfinalized head re-finalized forward)"
-            );
-            recovered_round
-        }
-    };
+            Err(error) if startup_live_join_completed || args.trust_el_head => {
+                warn!(
+                    %error,
+                    last_execution_height,
+                    "marshal archive lacks finalized-round history after startup live-join or force-dkg; continuing from synced execution boundary"
+                );
+                (recovery_anchor_height, recovery_anchor_hash, None)
+            }
+            Err(head_error) => {
+                // reth's canonical head can lead consensus finalization by the
+                // in-flight block: one this node proposed and applied as its head
+                // but had not finalized when it stopped (steady state:
+                // head_height = finalized_height + 1). On a plain restart in that
+                // window the head's finalization legitimately does not exist yet —
+                // a normal unfinalized head, NOT archive corruption. Confirm the
+                // marshal still holds its own finalized tip's record (a gap *there*
+                // is genuine corruption) and that the head leads by a bounded
+                // amount, then continue from marshal's durable finalized boundary.
+                // The speculative Reth head remains available locally, but neither
+                // ExecutorActor nor FinalizationView may call it finalized. The
+                // network re-finalizes forward and Reth reorgs via forkchoice if a
+                // different block wins the first unfinalized height.
+                let finalized_tip = last_consensus_finalized.get();
+                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
+                    return Err(head_error);
+                }
+                let Ok(recovered_finalization) =
+                    recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+                else {
+                    return Err(head_error);
+                };
+                let (certified_height, certified_hash, recovered_round) =
+                    reconcile_recovered_execution_head(
+                        finalized_tip,
+                        recovery_anchor_hash,
+                        recovered_finalization,
+                    )
+                    .wrap_err(
+                        "marshal finalized-tip record disagrees with canonical execution history",
+                    )?;
+                warn!(
+                    last_execution_height,
+                    finalized_tip,
+                    head_lead = last_execution_height.saturating_sub(finalized_tip),
+                    recovery_anchor_hash = %recovery_anchor_hash,
+                    "execution head leads the marshal finalized tip on restart; anchoring \
+                     recovery at certified finality (unfinalized head re-finalized forward)"
+                );
+                (certified_height, certified_hash, recovered_round)
+            }
+        };
+
+    executor_actor = executor_actor.with_recovered_finalized_state(
+        genesis_hash,
+        recovery_anchor_height,
+        recovery_anchor_hash,
+    );
 
     // Start broadcast engine with P2P channel.
     let _broadcast_handle = broadcast_engine.start(broadcast_channel);
@@ -3383,12 +3481,12 @@ where
     // record on disk. Drop any finalization record above the recovered finalized
     // height so the store never retains a height the view has not reached.
     let pruned_ahead = finalized_parent_cert_store
-        .prune_above_height(last_execution_height)
+        .prune_above_height(recovery_anchor_height)
         .wrap_err("failed to prune ahead-of-view finalized parent certificate records")?;
     if pruned_ahead > 0 {
         tracing::info!(
             pruned_ahead,
-            recovered_finalized_height = last_execution_height,
+            recovered_finalized_height = recovery_anchor_height,
             "dropped ahead-of-recovered-view finalization parent records at startup"
         );
     }
@@ -3408,6 +3506,12 @@ where
 
     // Create application handler with marshal mailbox and shared finalization state.
     let application_handler = ApplicationHandler::new(ApplicationDeps {
+        unix_time_source: match args.testnet_unix_time_offset_secs {
+            Some(offset_secs) => Arc::new(outbe_consensus::application::OffsetUnixTimeSource::new(
+                offset_secs,
+            )),
+            None => Arc::new(outbe_consensus::application::SystemUnixTimeSource),
+        },
         rx: application_rx,
         engine: engine_handle,
         payload_builder,
@@ -3910,6 +4014,35 @@ where
                             let _ = execution_finalized_height_tx.send(current_height);
                         }
                         Err(e) => {
+                            // Height notifications are deliberately not consumed while a
+                            // ceremony is running. Check the authoritative finalized view
+                            // before scheduling a retry: otherwise an old queued height can
+                            // start another ceremony while the chain is already at the VRF
+                            // deadline, and the application cannot propose the next block
+                            // that would wake this branch again.
+                            if let Some(target) = frozen_dkg_target.as_ref() {
+                                let current_height =
+                                    finalization_view.read().last_finalized_number;
+                                if frozen_dkg_target_expired(
+                                    current_height,
+                                    target.planned_activation_height,
+                                    dkg_rotation_params.activation_grace_blocks,
+                                ) {
+                                    let activation_deadline = target
+                                        .planned_activation_height
+                                        .saturating_add(
+                                            dkg_rotation_params.activation_grace_blocks,
+                                        );
+                                    vrf_safety.mark_expired(current_height);
+                                    publish_randomness_status(&bridge, &vrf_safety);
+                                    return Err(eyre::eyre!(
+                                        "frozen DKG target missed VRF expiry: cycle {}, height {}, deadline {}",
+                                        target.dkg_cycle,
+                                        current_height,
+                                        activation_deadline
+                                    ));
+                                }
+                            }
                             warn!(?e, "DKG reshare failed, retrying frozen target on next check");
                             retry_frozen_dkg = true;
                         }
@@ -4149,6 +4282,12 @@ where
                                 if last_dkg_output.as_ref() != Some(&boundary_output) {
                                     let local_pk = signing_key.public_key();
                                     if boundary_output.players().position(&local_pk).is_none() {
+                                        if let Some(ref keys_dir) = args.keys_dir {
+                                            retire_activated_dkg_retry_state(
+                                                keys_dir,
+                                                &key_backend,
+                                            )?;
+                                        }
                                         info!(
                                             dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
                                             "finalized DKG boundary excludes local validator; exiting validator mode"
@@ -4183,8 +4322,7 @@ where
                                             "finalized DKG boundary adopted in verifier mode; no private share to promote"
                                         );
                                     }
-                                    remove_pending_dkg_state(keys_dir);
-                                    clear_pending_dkg_boundary(keys_dir);
+                                    retire_activated_dkg_retry_state(keys_dir, &key_backend)?;
                                 }
                             }
                         }
@@ -4741,7 +4879,11 @@ where
                         let activation_deadline = target
                             .planned_activation_height
                             .saturating_add(dkg_rotation_params.activation_grace_blocks);
-                        if current_height > activation_deadline {
+                        if frozen_dkg_target_expired(
+                            current_height,
+                            target.planned_activation_height,
+                            dkg_rotation_params.activation_grace_blocks,
+                        ) {
                             vrf_safety.mark_expired(current_height);
                             publish_randomness_status(&bridge, &vrf_safety);
                             return Err(eyre::eyre!(
@@ -4823,10 +4965,11 @@ where
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
+                                    let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
                                     ctx.child("dkg_retry").spawn(move |dkg_ctx| async move {
                                         let result = match role {
                                             LocalDkgRole::DealerAndPlayer => {
-                                                dkg_actor::run_initial_dkg(
+                                                dkg_actor::run_initial_dkg_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4835,6 +4978,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -4842,7 +4986,7 @@ where
                                                 .map(DkgTaskOutcome::Complete)
                                             }
                                             LocalDkgRole::PlayerOnly => {
-                                                dkg_actor::run_initial_dkg(
+                                                dkg_actor::run_initial_dkg_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4851,6 +4995,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -4858,7 +5003,7 @@ where
                                                 .map(DkgTaskOutcome::Complete)
                                             }
                                             LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
-                                                (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
+                                                (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4866,6 +5011,7 @@ where
                                                     share,
                                                     round,
                                                     progress_tx,
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5113,10 +5259,11 @@ where
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
+                                let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
                                 ctx.child("dkg_live").spawn(move |dkg_ctx| async move {
                                     let result = match role {
                                         LocalDkgRole::DealerAndPlayer => {
-                                            dkg_actor::run_initial_dkg(
+                                            dkg_actor::run_initial_dkg_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5125,6 +5272,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5132,7 +5280,7 @@ where
                                             .map(DkgTaskOutcome::Complete)
                                         }
                                         LocalDkgRole::PlayerOnly => {
-                                            dkg_actor::run_initial_dkg(
+                                            dkg_actor::run_initial_dkg_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5141,6 +5289,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5148,7 +5297,7 @@ where
                                             .map(DkgTaskOutcome::Complete)
                                         }
                                         LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
-                                            (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
+                                            (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5156,6 +5305,7 @@ where
                                                 share,
                                                 round,
                                                 progress_tx,
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5251,7 +5401,7 @@ async fn recover_application_finalized_round(
     clock: &impl Clock,
     marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
-) -> Result<Option<Round>> {
+) -> Result<Option<RecoveredApplicationFinalization>> {
     if last_execution_height == 0 {
         return Ok(None);
     }
@@ -5271,12 +5421,14 @@ async fn recover_application_finalized_round(
         {
             Ok(Some(finalization)) => {
                 let round = finalization.proposal.round;
+                let digest = finalization.proposal.payload;
                 info!(
                     last_execution_height,
                     ?round,
+                    %digest,
                     "recovered application finalized round from marshal archive"
                 );
-                return Ok(Some(round));
+                return Ok(Some(RecoveredApplicationFinalization { round, digest }));
             }
             Ok(None) if attempt < FINALIZED_ROUND_RECOVERY_ATTEMPTS => {
                 clock.sleep(FINALIZED_ROUND_RECOVERY_RETRY_DELAY).await;
@@ -5348,6 +5500,27 @@ const DKG_PENDING_POLYNOMIAL_FILE: &str = "dkg_pending_polynomial.hex";
 const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
+const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
+
+fn dkg_dealer_retry_store(
+    args: &ConsensusArgs,
+    key_backend: &bls::KeyBackend,
+) -> Option<dkg_actor::DkgDealerRetryStore> {
+    args.keys_dir
+        .as_ref()
+        .map(|keys_dir| dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+}
+
+fn retire_activated_dkg_retry_state(
+    keys_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+) -> Result<()> {
+    remove_pending_dkg_state(keys_dir);
+    clear_pending_dkg_boundary(keys_dir);
+    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+        .clear()
+        .wrap_err("failed to retire activated DKG retry state")
+}
 
 const DKG_ALL_FILES: &[&str] = &[
     DKG_SHARE_FILE,
@@ -5357,6 +5530,7 @@ const DKG_ALL_FILES: &[&str] = &[
     DKG_PENDING_POLYNOMIAL_FILE,
     DKG_PENDING_OUTPUT_FILE,
     DKG_PENDING_BOUNDARY_FILE,
+    DKG_DEALER_RETRY_FILE,
 ];
 
 /// Move DKG key files from legacy location (`consensus/`) to dedicated `keys/` dir.
@@ -5975,7 +6149,7 @@ where
         .map_err(|e| eyre::eyre!("failed to register startup live-join DKG subchannel: {e}"))?;
     let (finalized_log_tx, finalized_log_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut next_scan_height = freeze_height;
-    let dkg_future = dkg_actor::run_initial_dkg(
+    let dkg_future = dkg_actor::run_initial_dkg_durable(
         ctx,
         signing_key.clone(),
         target_participants,
@@ -5984,6 +6158,7 @@ where
         dkg_round,
         None,
         Some(finalized_log_rx),
+        dkg_dealer_retry_store(args, key_backend),
         dkg_tx,
         dkg_rx,
     );
@@ -6200,6 +6375,9 @@ async fn obtain_threshold_material(
                             )?;
                         remove_pending_dkg_state(keys_dir);
                         clear_pending_dkg_boundary(keys_dir);
+                        dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+                            .clear()
+                            .wrap_err("failed to retire recovered DKG retry state")?;
                         info!(
                             keys_dir = %keys_dir.display(),
                             vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
@@ -6379,7 +6557,7 @@ async fn obtain_threshold_material(
 
     info!("no threshold material available — running DKG ceremony (NO BLOCKS until complete)");
 
-    let dkg_result = dkg_actor::run_initial_dkg(
+    let dkg_result = dkg_actor::run_initial_dkg_durable(
         clock,
         signing_key.clone(),
         startup_participants,
@@ -6388,6 +6566,7 @@ async fn obtain_threshold_material(
         0,    // initial: round 0
         None,
         None,
+        dkg_dealer_retry_store(args, key_backend),
         dkg_sender,
         dkg_receiver,
     )

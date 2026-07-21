@@ -158,13 +158,16 @@ the CE startup recovery coordinator. CE currently discards speculative candidate
 classifies exact markers and replays contiguous canonical blocks while checking
 parent hashes/roots and computed roots. Projection readiness compares exact height
 and hash and exposes deterministic failure classes. For the bounded case where Reth's
-canonical head leads marshal's durable finalized tip, startup now seeds Executor and
-FinalizationView from the lower consensus-certified height and its canonical Reth
-hash; execution-only suffix blocks remain speculative and may be replaced when the
-network finalizes forward. These are strong component contracts, but no inspected
-production interface assembles and reconciles one complete cross-store vector or
-authenticates that recovered Reth hash against the certificate itself. Status remains
-Proposed.
+canonical head leads marshal's initialized durable tip, startup first selects the
+lower height. Once marshal is running, its archived finalization record supplies the
+certificate proposal payload: if that exact digest equals Reth's canonical head hash,
+startup reconciles Executor and FinalizationView at the head even when marshal
+initialization lagged its archive by one delivered block. If the head record is absent,
+the execution-only suffix remains speculative and may be replaced when the network
+finalizes forward; if an archived record names a different same-height digest, startup
+fails closed. These are strong component contracts, but no inspected production
+interface assembles and reconciles one complete cross-store vector across consensus,
+Reth, CE and Mongo. Status remains Proposed.
 
 ## Consequences
 
@@ -190,18 +193,21 @@ cross-store effects cannot become legal state.
    `RecoveryVectorV1` across consensus/marshal, Reth, CE and Mongo before enabling
    participation.
 2. **Critical, partially closed:** the bounded execution-ahead-of-consensus path no
-   longer promotes the execution-only head to finalized state: it anchors Executor and
-   FinalizationView at the durable marshal height and canonical Reth hash. Complete the
-   ancestry proof, authenticate the hash from certificate/archive identity, and define
-   behavior for leads outside the bounded in-flight window; a height bound plus warning
-   is not the complete reconciliation protocol.
+   longer promotes an execution-only head to finalized state. Startup anchors at the
+   durable marshal height unless the marshal archive returns an exact head
+   finalization whose certificate payload digest equals the canonical Reth head hash.
+   Complete the ancestry proof and define behavior for leads outside the bounded
+   in-flight window; this exact local certificate/hash check is still not the complete
+   cross-store reconciliation protocol.
 3. **Critical:** Mongo `ProjectionAhead` is surfaced as an error, but no inspected
    rollback/quarantine API restores it to the certified canonical boundary.
 4. CE recovery deliberately fails on `MarkerAhead` and `MarkerConflict`; define the
    authenticated operator repair/import path rather than requiring ad-hoc MDBX
    deletion.
-5. Prove how the recovered consensus finalized hash is obtained and authenticated,
-   not merely its height, before it seeds `LastCanonicalized` and Reth forkchoice.
+5. The recovered marshal certificate payload is now compared with the canonical Reth
+   hash before it seeds `LastCanonicalized`; prove the archive/certificate trust chain
+   as part of the complete recovery vector rather than treating this local comparison
+   as sufficient global authentication.
 6. The current CE recovery seam accepts `consensus_finalized_height`; make the exact
    consensus hash/certificate identity an explicit input instead of discovering it
    indirectly through Reth.

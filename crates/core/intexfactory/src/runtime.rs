@@ -13,11 +13,10 @@ use outbe_vaultprovider::api::IVaultProvider;
 use crate::config;
 use crate::constants::{
     CALL_PRICE_DEN, DIST_CHUNK_LIMIT, FLOOR_PRICE_DEN, INTEX_NFT1155_ADDRESS,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
-use crate::sol_ext::IIntexNFT1155::{CreateSeriesParams, IntexCallTrigger};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC20};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
@@ -25,9 +24,18 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())
 }
 
-/// Capture series identity in Intex and enroll it in the floor-bin
-/// index. The outbound ERC-7786 send is added with router wiring.
+/// Capture series identity in Intex, enroll it in the floor-bin index, and send
+/// ISSUANCE_INSTRUCTIONS to every target chain of the day's snapshot. The
+/// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
+/// broadcast (including a loopback leg on the origin), so there is no in-process
+/// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
+    if params.issued_intex_count == 0 {
+        // Zero-winner clearing: no series is created anywhere, so the day's
+        // lysis-recorded contributor map would never distribute — discard it.
+        return outbe_intex::api::finalize_proceeds(storage, params.worldwide_day);
+    }
+
     // u32 timestamp; bounded until 2106.
     let issued_at = u32::try_from(storage.timestamp()?.to::<u64>())
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
@@ -64,67 +72,52 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // Register the series on the local IntexNFT1155 so holders can be tracked
-    // on the Outbe side (required for the call-bridge credit path).
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::createSeriesCall {
-            params: CreateSeriesParams {
-                seriesId: params.series_id,
-                worldwideDay: params.worldwide_day,
-                issuanceCurrency: params.issuance_currency,
-                referenceCurrency: params.reference_currency,
-                issuedIntexCount: params.issued_intex_count,
-                promisLoadMinor: params.promis_load_minor,
-                entryPriceMinor: entry_price_minor_u64,
-                floorPriceMinor: floor_price_minor_u64,
-                callPriceMinor: call_price_minor_u64,
-                callTrigger: IntexCallTrigger {
-                    windowDays: cfg.call_window_days,
-                    thresholdDays: cfg.call_threshold_days,
-                    intexCallPeriod: cfg.intex_call_period_secs,
-                },
-            },
-        }
-        .abi_encode()
-        .into(),
-    )?;
-
-    // Send ISSUANCE_INSTRUCTIONS to BNB over the bridge (relay-float-funded, see below).
-    let floor_price_minor_u64 = u64::try_from(floor_price_minor)
-        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
-    let call_price_minor_u64 = u64::try_from(call_price_minor)
-        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
-    let router_params = IOriginRouter::IssuanceInstructionsParams {
-        seriesId: params.series_id,
-        worldwideDay: params.worldwide_day,
-        issuedIntexCount: params.issued_intex_count,
-        promisLoadMinor: params.promis_load_minor,
-        entryPriceMinor: entry_price_minor_u64,
-        floorPriceMinor: floor_price_minor_u64,
-        intexCallPeriod: cfg.intex_call_period_secs,
-        issuanceCurrency: params.issuance_currency,
-        referenceCurrency: params.reference_currency,
-        callWindowDays: cfg.call_window_days,
-        callThresholdDays: cfg.call_threshold_days,
-        callPriceMinor: call_price_minor_u64,
-        recipients: params.recipients,
-        quantities: params.quantities,
-    };
-    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendIssuanceInstructionsCall {
-            params: router_params,
-        }
-        .abi_encode()
-        .into(),
-    )?;
+    // One ISSUANCE per snapshot chain. Relay-float-funded: value 0, the router pays the bridge
+    // fee from its float.
+    for (chain_id, recipients, quantities) in issuance_legs(&params) {
+        let router_params = IOriginRouter::IssuanceInstructionsParams {
+            dstChainId: chain_id,
+            seriesId: params.series_id,
+            worldwideDay: params.worldwide_day,
+            issuedIntexCount: params.issued_intex_count,
+            promisLoadMinor: params.promis_load_minor,
+            entryPriceMinor: entry_price_minor_u64,
+            floorPriceMinor: floor_price_minor_u64,
+            intexCallPeriod: cfg.intex_call_period_secs,
+            issuanceCurrency: params.issuance_currency,
+            referenceCurrency: params.reference_currency,
+            callWindowDays: cfg.call_window_days,
+            callThresholdDays: cfg.call_threshold_days,
+            callPriceMinor: call_price_minor_u64,
+            recipients,
+            quantities,
+        };
+        storage.call(
+            ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+            IOriginRouter::sendIssuanceInstructionsCall {
+                params: router_params,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+    }
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
     factory.insert_unqualified(params.series_id, floor_price_minor)?;
+
+    // Arm the creator-reward proceeds fan-in: the winning chains are expected to
+    // route proceeds; creators are paid once all arrive or the deadline passes.
+    let deadline = storage
+        .timestamp()?
+        .to::<u64>()
+        .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
+    outbe_intex::api::arm_proceeds(
+        storage,
+        params.series_id,
+        &params.recipient_chains,
+        deadline,
+    )?;
 
     emit_event(
         storage,
@@ -134,6 +127,27 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             entryPrice: params.entry_price_minor,
         },
     )
+}
+
+/// One `(chain, recipients, quantities)` issuance leg per snapshot chain: winners land on their
+/// own chain and every other chain gets an empty leg, so the series is created there too (needed
+/// for user NFT bridging).
+pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, Vec<U256>)> {
+    params
+        .snapshot_chains
+        .iter()
+        .map(|&chain_id| {
+            let mut recipients = Vec::new();
+            let mut quantities = Vec::new();
+            for (i, &c) in params.recipient_chains.iter().enumerate() {
+                if c == chain_id {
+                    recipients.push(params.recipients[i]);
+                    quantities.push(params.quantities[i]);
+                }
+            }
+            (chain_id, recipients, quantities)
+        })
+        .collect()
 }
 
 pub(crate) fn derived_floor(entry_price: U256, floor_price_num: u64) -> Result<U256> {
@@ -175,15 +189,18 @@ pub fn set_authorized_settler(
     factory.write_authorized_settler(holder, series_id, settler)
 }
 
-/// Register an auction-proceeds distribution (native COEN, arriving as
-/// `amount` = msg.value) for the series' contributing tribute owners. Gated to
-/// the OriginRouter. Payouts run entirely in the begin-block drain, keeping
-/// the cross-chain delivery tx light and deterministic. Reverts on no
-/// contributors, returning the native value to the caller via the tx rollback.
+/// Credit auction proceeds (native COEN, arriving as `amount` = msg.value) from
+/// one target chain into the day's pot. Gated to the OriginRouter. Creators are
+/// paid once every winning chain has routed its proceeds (or the fan-in deadline
+/// passes); the payout itself runs in the begin-block drain. Because proceeds
+/// arrive once per winning chain (loopback same-block, remote minutes later),
+/// the credit only accumulates — it never reverts on a repeat or ownerless day,
+/// which would strand that chain's delivery.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
     worldwide_day: u32,
+    src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
     if caller != ORIGIN_ROUTER_ADDRESS {
@@ -192,11 +209,88 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let total = outbe_intex::api::contributor_total(storage, worldwide_day)?;
-    if total.is_zero() {
-        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
+    outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    let now = storage.timestamp()?.to::<u64>();
+    try_settle_proceeds(storage, worldwide_day, now)
+}
+
+/// Start a distribution round for a series if its proceeds fan-in is satisfied
+/// (all winning chains in) or its deadline has passed. Idempotent: it no-ops
+/// while a round is still draining, so repeated arrivals and the begin-block
+/// sweep can both call it safely.
+pub(crate) fn try_settle_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    now: u64,
+) -> Result<()> {
+    // Never overlap a round that is still paying out.
+    if outbe_intex::api::get_progress(storage, series_id)?.is_some() {
+        return Ok(());
     }
-    outbe_intex::api::start_distribution(storage, worldwide_day, amount, total)
+    let deadline = outbe_intex::api::proceeds_deadline(storage, series_id)?;
+    if deadline == 0 {
+        return Ok(()); // never armed (no issuance for this series)
+    }
+    let complete = outbe_intex::api::proceeds_ready(storage, series_id)?;
+    if !complete && now < deadline {
+        return Ok(()); // keep waiting for the remaining chains
+    }
+
+    let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+    if pot.is_zero() {
+        // Nothing new to pay. Once every chain is in, finalize (clears the map);
+        // a forced empty round just idles until a late arrival tops the pot up.
+        if complete {
+            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+        }
+        return Ok(());
+    }
+
+    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    if total.is_zero() {
+        // Ownerless proceeds: sweep to the reserve vault instead of stranding them.
+        sweep_to_reserve(storage, series_id, pot)?;
+        if complete {
+            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+        }
+        return Ok(());
+    }
+
+    // Finalize on completion only when every winning chain is in; otherwise the
+    // deadline forced a partial payout and the map is retained for a top-up.
+    outbe_intex::api::set_proceeds_finalize_on_done(storage, series_id, complete)?;
+    outbe_intex::api::start_distribution(storage, series_id, pot, total)
+}
+
+/// Begin-block sweep: settle every series whose proceeds fan-in deadline has
+/// passed. Each series runs in its own checkpoint so one failure is retried next
+/// block instead of halting the block.
+pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
+    let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
+    let mut series_ids = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        series_ids.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
+    }
+    for series_id in series_ids {
+        let res = storage.with_checkpoint(|| try_settle_proceeds(storage, series_id, now));
+        if let Err(e) = res {
+            tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "proceeds sweep: skipping series");
+        }
+    }
+    Ok(())
+}
+
+/// Sweep ownerless proceeds to the reserve vault (native transfer to the vault
+/// provider), so a series with no recorded contributors is not stranded.
+fn sweep_to_reserve(storage: &StorageHandle<'_>, series_id: u32, amount: U256) -> Result<()> {
+    storage.transfer_balance(INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS, amount)?;
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::ProceedsSweptToReserve {
+            seriesId: series_id,
+            amount,
+        },
+    )
 }
 
 /// Pay up to `limit` contributors of an in-flight distribution, advancing the
@@ -235,7 +329,10 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
     }
 
     if end == count {
-        outbe_intex::api::clear_distribution(storage, series_id)?;
+        // End this round (progress + active-set entry). Whether the contributor
+        // map is also cleared depends on the fan-in: finalize when every winning
+        // chain is in, otherwise retain the map for a late top-up.
+        outbe_intex::api::finish_distribution_round(storage, series_id)?;
         emit_event(
             storage,
             crate::precompile::IIntexFactory::ProceedsDistributed {
@@ -244,6 +341,19 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
                 contributors: count,
             },
         )?;
+        if outbe_intex::api::proceeds_finalize_on_done(storage, series_id)? {
+            // A straggler (or a chain sending its proceeds in parts) can top the
+            // pot up while this final round drains. finalize clears the map, so
+            // pay any such top-up over it first and finalize only once the pot is
+            // empty — otherwise the top-up is later swept to the reserve.
+            let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
+            if pot.is_zero() {
+                outbe_intex::api::finalize_proceeds(storage, series_id)?;
+            } else {
+                let total = outbe_intex::api::contributor_total(storage, series_id)?;
+                outbe_intex::api::start_distribution(storage, series_id, pot, total)?;
+            }
+        }
     } else {
         progress.cursor = end;
         progress.paid_so_far = paid;

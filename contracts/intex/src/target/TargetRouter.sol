@@ -35,8 +35,8 @@ contract TargetRouter is
 {
     using SafeERC20 for IERC20;
 
-    /// @notice Granted to the wired Auction contract; gates the `sendBidsBatch` outbound relay.
-    bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
+    /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
+    uint16 internal constant MAX_BIDS_BATCHES = 256;
 
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
@@ -104,6 +104,9 @@ contract TargetRouter is
         mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
         /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
         uint256 nextPendingProceedsRouteIdx;
+        /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
+        ///      re-relays under a fresh generation.
+        mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
     }
 
     /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
@@ -233,14 +236,10 @@ contract TargetRouter is
         if (_nftBridge == address(0)) revert ZeroAddress("nftBridge");
 
         TargetRouterStorage storage $ = _ts();
-        if (address($.auction) != address(0)) _revokeRole(AUCTION_ROLE, address($.auction));
-
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
         $.nftBridge = IIntexNFT1155Bridge(_nftBridge);
-
-        _grantRole(AUCTION_ROLE, _auction);
     }
 
     /// @inheritdoc ITargetRouter
@@ -256,59 +255,6 @@ contract TargetRouter is
         $.tokenBridge = IERC7786TokenBridge(_tokenBridge);
         $.originRouter = _originRouter;
         emit ProceedsRouteSet(_tokenBridge, _originRouter);
-    }
-
-    // --- Quote ---
-    /// @inheritdoc ITargetRouter
-    function quoteSendBidsBatch(BidsBatchParams calldata params) external view returns (uint256) {
-        // Mirror `sendBidsBatch`'s single-batch encoding so the quoted fee matches the send.
-        return _quoteFee(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.encodeBidsBatch(
-                params.worldwideDay,
-                uint32(block.chainid),
-                _ts().bidsRelayGeneration[params.worldwideDay],
-                0,
-                1,
-                params.bidderAddresses,
-                params.intexQuantities,
-                params.intexBidRates,
-                params.timestamps
-            ),
-            IntexGas.bidsBatch(params.bidderAddresses.length)
-        );
-    }
-
-    // --- Send ---
-    /// @inheritdoc ITargetRouter
-    function sendBidsBatch(BidsBatchParams calldata params)
-        external
-        payable
-        onlyRole(AUCTION_ROLE)
-        returns (bytes32 sendId)
-    {
-        uint256 len = params.bidderAddresses.length;
-        if (len == 0) revert EmptyArray();
-        if (
-            len != params.intexQuantities.length || len != params.intexBidRates.length
-                || len != params.timestamps.length
-        ) {
-            revert ArrayLengthMismatch();
-        }
-
-        // One generation per send so a re-send replaces rather than double-counts on the receiver. A caller-supplied
-        // set is a single-batch flush (index 0 of 1); the codec caps its size at `MAX_PAYLOAD_ARRAY_LEN`.
-        uint32 gen = ++_ts().bidsRelayGeneration[params.worldwideDay];
-        sendId = _sendOneBidsBatch(
-            params.worldwideDay,
-            gen,
-            0,
-            1,
-            params.bidderAddresses,
-            params.intexQuantities,
-            params.intexBidRates,
-            params.timestamps
-        );
     }
 
     // --- Receive ---
@@ -377,15 +323,19 @@ contract TargetRouter is
     function _handleAuctionStageClearing(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
         uint32 worldwideDay = BridgeMsgCodec.decodeAuctionStageClearing(_message);
-        $.auction.startClearingStage(worldwideDay);
+        $.auction.startClearingStage(worldwideDay); // idempotent; a failing transition propagates for redelivery
 
-        try this.relayBidsToOutbe(worldwideDay) {
-        // ok — bids forwarded
-        }
-        catch (bytes memory reason) {
-            uint256 idx = $.nextPendingBidsRelayIdx++;
-            $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
-            emit BidsRelayDeferred(idx, worldwideDay, reason);
+        // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
+        if (!$.clearingRelayed[worldwideDay]) {
+            $.clearingRelayed[worldwideDay] = true;
+            try this.relayBidsToOutbe(worldwideDay) {
+            // ok — bids forwarded
+            }
+            catch (bytes memory reason) {
+                uint256 idx = $.nextPendingBidsRelayIdx++;
+                $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
+                emit BidsRelayDeferred(idx, worldwideDay, reason);
+            }
         }
 
         emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
@@ -430,11 +380,18 @@ contract TargetRouter is
             _sendOneBidsBatch(
                 worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
             );
+            // Trusted bridge immutable; the flagged write is the erc7201 pointer load.
+            // slither-disable-next-line reentrancy-eth
+            _sendBidsDone(worldwideDay, gen, 1, 0);
             return;
         }
 
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
         uint16 totalBatches = SafeCast.toUint16((bidsCount + maxChunk - 1) / maxChunk);
+        // The receiver tracks batch arrival in a 256-bit mask, so it rejects any generation with more
+        // than 256 batches. Fail loudly here (the caller parks the relay) instead of sending a doomed
+        // generation that the receiver drops batch-by-batch, silently excluding the whole chain-day.
+        if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
         uint16 batchIndex = 0;
         for (uint256 start = 0; start < bidsCount; start += maxChunk) {
             uint256 end = start + maxChunk;
@@ -459,11 +416,26 @@ contract TargetRouter is
             );
             batchIndex++;
         }
+
+        // Completeness marker in the same tx/generation as the chunks, so it can never outrun a lost sibling.
+        // slither-disable-next-line reentrancy-eth
+        _sendBidsDone(worldwideDay, gen, totalBatches, SafeCast.toUint32(bidsCount));
+    }
+
+    /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day/generation. Carries this chain's chainId
+    ///      as its source, cross-checked by the receiver against the authenticated source.
+    function _sendBidsDone(uint32 worldwideDay, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids)
+        internal
+    {
+        bytes memory message = BridgeMsgCodec.encodeBidsDone(
+            worldwideDay, uint32(block.chainid), relayGeneration, totalBatches, totalBids
+        );
+        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_DONE);
+        emit BidsDoneSent(sendId, worldwideDay, totalBatches, totalBids);
     }
 
     /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId as its source
-    ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float on the
-    ///      relay path (`msg.value == 0`) or from `msg.value` on the direct `sendBidsBatch` entry.
+    ///      (cross-checked by the receiver against the authenticated source). Funded from the relay float.
     function _sendOneBidsBatch(
         uint32 worldwideDay,
         uint32 relayGeneration,
@@ -594,35 +566,39 @@ contract TargetRouter is
 
         $.intex.markCalled(seriesId);
 
-        uint256 tokenId = $.intex.issuedTokenId(seriesId);
-        (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
+        // On the origin-as-target the holders already sit on the canonical (shared) NFT, so there is nothing to
+        // migrate — only the remote targets bridge their holders back.
+        if (OUTBE_CHAIN_ID != uint32(block.chainid)) {
+            uint256 tokenId = $.intex.issuedTokenId(seriesId);
+            (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
 
-        // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
-        // series with more holders than the cap spans several sends. Each chunk is tried and parked independently, so
-        // one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the cap for
-        // `flushPendingHoldersRelay` to retry.
-        uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
-        for (uint256 start = 0; start < holders.length; start += maxChunk) {
-            uint256 end = start + maxChunk;
-            if (end > holders.length) end = holders.length;
-            uint256 chunkLen = end - start;
+            // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
+            // series with more holders than the cap spans several sends. Each chunk is tried and parked independently,
+            // so one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the
+            // cap for `flushPendingHoldersRelay` to retry.
+            uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+            for (uint256 start = 0; start < holders.length; start += maxChunk) {
+                uint256 end = start + maxChunk;
+                if (end > holders.length) end = holders.length;
+                uint256 chunkLen = end - start;
 
-            address[] memory chunkHolders = new address[](chunkLen);
-            uint256[] memory chunkAmounts = new uint256[](chunkLen);
-            for (uint256 i = 0; i < chunkLen; i++) {
-                chunkHolders[i] = holders[start + i];
-                chunkAmounts[i] = amounts[start + i];
-            }
+                address[] memory chunkHolders = new address[](chunkLen);
+                uint256[] memory chunkAmounts = new uint256[](chunkLen);
+                for (uint256 i = 0; i < chunkLen; i++) {
+                    chunkHolders[i] = holders[start + i];
+                    chunkAmounts[i] = amounts[start + i];
+                }
 
-            try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
-            // ok — chunk forwarded
-            }
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingHoldersRelayIdx++;
-                $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                    tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
-                });
-                emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
+                try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
+                // ok — chunk forwarded
+                }
+                catch (bytes memory reason) {
+                    uint256 idx = $.nextPendingHoldersRelayIdx++;
+                    $.pendingHoldersRelays[idx] = PendingHoldersRelay({
+                        tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
+                    });
+                    emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
+                }
             }
         }
 

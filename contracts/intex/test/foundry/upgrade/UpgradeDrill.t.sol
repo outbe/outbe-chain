@@ -9,6 +9,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -164,25 +165,50 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_OriginRouter() public {
-        OriginRouter origin = DeployProxy.originRouter(address(bridge), admin, B_CHAIN_ID);
+        OriginRouter origin = DeployProxy.originRouter(address(bridge), admin);
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
+        uint32 day = 20260614;
 
         vm.startPrank(admin);
         origin.wire(address(desisMock), factory);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
+        origin.addTarget(B_CHAIN_ID);
         vm.stopPrank();
 
-        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge), B_CHAIN_ID);
+        // Freeze the day's target snapshot, then drop the peer so the reveal leg parks.
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = day;
+        vm.prank(address(desisMock));
+        origin.sendAuctionStageStart(p);
+        vm.prank(admin);
+        origin.setRemoteMessenger(B_CHAIN_ID, "");
+        vm.prank(address(desisMock));
+        origin.sendAuctionStageReveal(day, true);
+
+        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
         origin.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(origin), address(newImpl));
         assertEq(origin.desis(), address(desisMock), "desis wiring lost");
         assertEq(origin.intexFactory(), factory, "factory wiring lost");
+        // Appended multi-target storage must survive the upgrade (tail-appended erc7201 fields).
+        assertTrue(origin.isTarget(B_CHAIN_ID), "target registry lost");
+        uint32[] memory snapshot = origin.targetsOf(day);
+        assertEq(snapshot.length, 1, "day snapshot lost");
+        assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
+        IOriginRouter.ParkedSend memory parked = origin.parkedSend(0);
+        assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
+        assertFalse(parked.sent, "parked send flag lost");
+
+        // The park queue stays functional: restore the peer and flush post-upgrade.
+        vm.prank(admin);
+        origin.setRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        assertEq(origin.BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
+        origin.flushPendingSend(0);
+        assertTrue(origin.parkedSend(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {

@@ -82,6 +82,13 @@ Election is deterministic for identical certificate, round, committee and
 epoch-scoped material. Local wall-clock time and container iteration order do not
 select the leader.
 
+Proposal timestamps read an explicitly injected `UnixTimeSource`. Production
+uses the system source; devnet/testnet verification may select an offset source
+through `--testnet.unix-time-offset-secs`. Consensus code does not read ambient
+environment variables for logical time. Test-only flags are admitted only for
+explicitly registered devnet/testnet chain IDs; an unknown future production ID
+fails closed rather than being treated as a test network.
+
 ### Finalization persistence and delivery
 
 The consensus stack initializes Commonware Marshal immutable archives for blocks
@@ -192,6 +199,8 @@ Current repository evidence includes:
 - hybrid scheme, proof verifier, fingerprint and cluster tests under
   `crates/blockchain/consensus/tests`;
 - timestamp/header validation tests in `crates/blockchain/node/src/consensus.rs`;
+- proposer-clock offset arithmetic and test-network admission tests in consensus
+  application and engine stack tests;
 - deterministic simulated-network consensus harness;
 - e2e liveness, follower, validator restart, DKG failure and governance scenarios.
 

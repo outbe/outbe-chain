@@ -21,6 +21,8 @@ mod follower;
 mod joiner;
 mod probes;
 
+pub(crate) use probes::LogAudit;
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -115,6 +117,27 @@ impl Localnet {
         self.cfg.tee_mode.enabled()
     }
 
+    /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
+    /// four-enclave real-SGX evidence exceeded the production-oriented node and
+    /// per-request deadlines; keep the harness outside its 180-second fail-fast
+    /// deadline so it observes the node's verdict.
+    pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            48
+        } else {
+            18
+        }
+    }
+
+    /// Co-located hardware enclaves have an E2E-only startup allowance. The
+    /// node's production/testnet default remains unchanged and must be chosen
+    /// for the deployment topology by its operator.
+    fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
+        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            args.extend(args!["--tee-bootstrap-timeout-secs", "180"]);
+        }
+    }
+
     /// The flags common to every node process (committee, joiner, follower):
     /// reth http/p2p/discovery/authrpc/ipc/log for port index `i`, rooted at
     /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
@@ -189,6 +212,7 @@ impl Localnet {
     /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
     fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+        extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
         cmd.env(
             "OUTBE_PROJECTION_MONGODB_URI",
             &self.cfg.projection_mongodb_uri,
@@ -278,6 +302,17 @@ impl Localnet {
     }
 }
 
+/// Co-located real enclaves share one physical EPC. A request can therefore
+/// complete in the enclave after the production-oriented 30-second host timeout:
+/// the enclave then observes a broken pipe even though it produced and sealed the
+/// result. Widen only the hardware E2E lane; production/testnet retain their
+/// explicit operator-selected/default deadline.
+fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Command) {
+    if matches!(mode, crate::env::TeeMode::Real) {
+        cmd.env("OUTBE_TEE_IO_TIMEOUT_SECS", "120");
+    }
+}
+
 /// The sealed-state dirs under `root` — the only paths the (root) enclave
 /// container writes. `root` is either a scenario dir (`validator-<i>/tee`) or a
 /// run dir (`scenario-<n>/validator-<i>/tee`); both shapes are checked.
@@ -341,6 +376,25 @@ fn ymd_utc(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsStr;
+
+    fn configured_timeout(mode: crate::env::TeeMode) -> Option<String> {
+        let mut cmd = Command::new("outbe-chain");
+        extend_real_sgx_process_environment(mode, &mut cmd);
+        cmd.get_envs()
+            .find(|(key, _)| *key == OsStr::new("OUTBE_TEE_IO_TIMEOUT_SECS"))
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn co_located_hardware_lane_alone_widens_enclave_io_timeout() {
+        use crate::env::TeeMode;
+
+        assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("120"));
+        assert_eq!(configured_timeout(TeeMode::Mock), None);
+        assert_eq!(configured_timeout(TeeMode::None), None);
+    }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.
     #[test]

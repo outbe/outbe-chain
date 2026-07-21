@@ -7,6 +7,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -23,7 +24,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
 ///         an entry caller drain the relay float.
-/// @dev Entry path is driven through `TargetRouter.sendBidsBatch` (payable, `AUCTION_ROLE`). The relay/float path
+/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable). The relay/float path
 ///      is driven both directly (`IntexNFT1155Bridge.systemMultiSend`, not payable → `msg.value == 0`) and through
 ///      an inbound MARK_CALLED delivery whose `_handleMarkCalled` handler fires that same relay from inside
 ///      `receiveMessage` — the canonical `msg.value == 0` relay send.
@@ -55,7 +56,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
@@ -63,11 +64,9 @@ contract PayNativeAccountingTest is CrossChainTest {
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
         nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
 
-        // Wire TM with a stub auction and the batch adapter; `auctionRole` gets AUCTION_ROLE so it can call
-        // `sendBidsBatch` directly (that role is normally held by the auction contract).
+        // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
         bnbRouter.wire(address(stubAuction), address(intex), admin, address(nftBridge));
-        bnbRouter.grantRole(bnbRouter.AUCTION_ROLE(), auctionRole);
 
         // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
         // Intex. `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
@@ -78,25 +77,16 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        // Series + one holder so markCalled + holder enumeration produce a non-empty relay.
+        // Series + holder balance so markCalled/holder enumeration and the entry-path bridge sends have tokens.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
         intex.markQualified(SERIES_ID);
-        intex.mint(holder, 1, SERIES_ID);
+        intex.mint(holder, 5, SERIES_ID);
     }
 
-    function _bidsParams() internal view returns (ITargetRouter.BidsBatchParams memory params) {
-        address[] memory bidders = new address[](1);
-        bidders[0] = address(0xB1D);
-        uint16[] memory qty = new uint16[](1);
-        qty[0] = 1;
-        uint32[] memory rate = new uint32[](1);
-        rate[0] = 100e6;
-        uint32[] memory ts = new uint32[](1);
-        ts[0] = uint32(block.timestamp);
-
-        params = ITargetRouter.BidsBatchParams({
-            worldwideDay: SERIES_ID, bidderAddresses: bidders, intexQuantities: qty, intexBidRates: rate, timestamps: ts
-        });
+    /// @dev A 1-token bridge-out to Outbe; the entry path (payable `send`) burns it from `holder`.
+    function _sendParam() internal view returns (SendParam memory) {
+        return
+            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(holder))), tokenId: TOKEN_ID, amount: 1});
     }
 
     function _holderArrays() internal view returns (address[] memory holders, uint256[] memory amounts) {
@@ -107,87 +97,88 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Entry path — msg.value handling (sendBidsBatch)
+    // Entry path — msg.value handling (IntexNFT1155Bridge.send)
     // ---------------------------------------------------------------
 
     function test_Entry_ExactFeeLeavesNoFloat() public {
-        ITargetRouter.BidsBatchParams memory params = _bidsParams();
-        uint256 fee = bnbRouter.quoteSendBidsBatch(params);
+        SendParam memory params = _sendParam();
+        uint256 fee = nftBridge.quoteSend(params);
         assertEq(fee, BRIDGE_FEE, "fee mirrors the positive bridge fee");
 
-        vm.deal(auctionRole, fee);
-        uint256 floatBefore = address(bnbRouter).balance;
+        vm.deal(holder, fee);
+        uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(auctionRole);
-        bnbRouter.sendBidsBatch{value: fee}(params);
+        vm.prank(holder);
+        nftBridge.send{value: fee}(params);
 
         // `msg.value` flowed through to the bridge exactly; nothing seeded the relay float.
-        assertEq(address(bnbRouter).balance, floatBefore, "no leakage on exact-fee entry");
-        assertEq(auctionRole.balance, 0, "caller paid the full fee");
+        assertEq(address(nftBridge).balance, floatBefore, "no leakage on exact-fee entry");
+        assertEq(holder.balance, 0, "caller paid the full fee");
     }
 
     function test_Entry_ExcessIsRefundedToCaller() public {
-        ITargetRouter.BidsBatchParams memory params = _bidsParams();
-        uint256 fee = bnbRouter.quoteSendBidsBatch(params);
+        SendParam memory params = _sendParam();
+        uint256 fee = nftBridge.quoteSend(params);
 
         uint256 buffer = 0.5 ether;
-        vm.deal(auctionRole, fee + buffer);
-        uint256 floatBefore = address(bnbRouter).balance;
+        vm.deal(holder, fee + buffer);
+        uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(auctionRole);
-        bnbRouter.sendBidsBatch{value: fee + buffer}(params);
+        vm.prank(holder);
+        nftBridge.send{value: fee + buffer}(params);
 
         // Excess refunded out of `_send`, not retained for future relay sends.
-        assertEq(address(bnbRouter).balance, floatBefore, "excess must not seed the relay float");
-        assertEq(auctionRole.balance, buffer, "caller refunded the excess");
+        assertEq(address(nftBridge).balance, floatBefore, "excess must not seed the relay float");
+        assertEq(holder.balance, buffer, "caller refunded the excess");
     }
 
     function test_Entry_BelowFeeRevertsMsgValueBelowFee() public {
-        ITargetRouter.BidsBatchParams memory params = _bidsParams();
-        uint256 fee = bnbRouter.quoteSendBidsBatch(params);
+        SendParam memory params = _sendParam();
+        uint256 fee = nftBridge.quoteSend(params);
 
         uint256 short = fee - 1;
-        vm.deal(auctionRole, fee);
+        vm.deal(holder, fee);
 
-        vm.prank(auctionRole);
+        vm.prank(holder);
         vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, short, fee));
-        bnbRouter.sendBidsBatch{value: short}(params);
+        nftBridge.send{value: short}(params);
     }
 
     /// @notice Pin the no-leakage invariant across an entry-followed-by-entry sequence: the second entry must not see
     ///         the first's `msg.value` accumulated as float.
     function test_Entry_DoesNotLeakIntoFloatAcrossSends() public {
-        ITargetRouter.BidsBatchParams memory params = _bidsParams();
-        uint256 fee = bnbRouter.quoteSendBidsBatch(params);
+        SendParam memory params = _sendParam();
+        uint256 fee = nftBridge.quoteSend(params);
 
         uint256 buffer = 1 ether;
-        vm.deal(auctionRole, (fee + buffer) * 2);
-        uint256 floatBefore = address(bnbRouter).balance;
+        vm.deal(holder, (fee + buffer) * 2);
+        uint256 floatBefore = address(nftBridge).balance;
 
-        vm.prank(auctionRole);
-        bnbRouter.sendBidsBatch{value: fee + buffer}(params);
-        assertEq(address(bnbRouter).balance, floatBefore, "first entry: no leakage");
+        vm.prank(holder);
+        nftBridge.send{value: fee + buffer}(params);
+        assertEq(address(nftBridge).balance, floatBefore, "first entry: no leakage");
 
-        vm.prank(auctionRole);
-        bnbRouter.sendBidsBatch{value: fee + buffer}(params);
-        assertEq(address(bnbRouter).balance, floatBefore, "second entry: no leakage");
-        assertEq(auctionRole.balance, 2 * buffer, "both excess values refunded");
+        vm.prank(holder);
+        nftBridge.send{value: fee + buffer}(params);
+        assertEq(address(nftBridge).balance, floatBefore, "second entry: no leakage");
+        assertEq(holder.balance, 2 * buffer, "both excess values refunded");
     }
 
     function test_Entry_RefundFailsRevertsRefundFailed() public {
         // `_send` refunds excess to msg.sender via `.call{value: refund}("")`; a caller whose receive() reverts trips
         // the RefundFailed guard. Without it, a refactor that swallowed the .call return would silently seed the
         // relay float with the entry caller's excess.
-        BidsRefundRejector rejector = new BidsRefundRejector(address(bnbRouter));
-        bnbRouter.grantRole(bnbRouter.AUCTION_ROLE(), address(rejector));
+        NftRefundRejector rejector = new NftRefundRejector(address(nftBridge));
+        intex.mint(address(rejector), 1, SERIES_ID);
 
-        ITargetRouter.BidsBatchParams memory params = _bidsParams();
-        uint256 fee = bnbRouter.quoteSendBidsBatch(params);
+        SendParam memory params = _sendParam();
+        params.to = bytes32(uint256(uint160(address(rejector))));
+        uint256 fee = nftBridge.quoteSend(params);
         uint256 buffer = 0.3 ether;
         vm.deal(address(rejector), fee + buffer);
 
         vm.expectRevert(ERC7786MessengerBase.RefundFailed.selector);
-        rejector.callSendBidsBatch{value: fee + buffer}(params);
+        rejector.callSend{value: fee + buffer}(params);
     }
 
     // ---------------------------------------------------------------
@@ -268,7 +259,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     function test_SweepNative_NonAdminReverts() public {
         vm.deal(address(bnbRouter), 1 ether);
-        vm.prank(auctionRole); // AUCTION_ROLE, not DEFAULT_ADMIN_ROLE
+        vm.prank(auctionRole); // an arbitrary non-admin caller
         vm.expectRevert();
         bnbRouter.sweepNative(payable(auctionRole), 1 ether);
     }
@@ -288,22 +279,26 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 }
 
-/// @dev Placeholder auction so `TargetRouter.wire` accepts a non-zero auction address. Neither the entry path
-///      (`sendBidsBatch` encodes its params directly) nor the delivered MARK_CALLED (which only touches `intex`)
-///      calls the auction, so no interface surface is needed.
+/// @dev Placeholder auction so `TargetRouter.wire` accepts a non-zero auction address. The delivered MARK_CALLED
+///      (which only touches `intex`) never calls the auction, so no interface surface is needed.
 // solhint-disable-next-line no-empty-blocks
 contract StubAuction {}
 
-/// @dev Helper whose `receive()` reverts; used to pin `_send`'s RefundFailed guard on the entry path.
-contract BidsRefundRejector {
-    TargetRouter private immutable router;
+/// @dev Holds a bridgeable token (accepts the ERC-1155 mint) but whose `receive()` reverts; used to pin `_send`'s
+///      RefundFailed guard on the entry path via the NFT bridge.
+contract NftRefundRejector {
+    IntexNFT1155Bridge private immutable bridge;
 
-    constructor(address _router) {
-        router = TargetRouter(payable(_router));
+    constructor(address _bridge) {
+        bridge = IntexNFT1155Bridge(payable(_bridge));
     }
 
-    function callSendBidsBatch(ITargetRouter.BidsBatchParams calldata params) external payable {
-        router.sendBidsBatch{value: msg.value}(params);
+    function callSend(SendParam calldata params) external payable {
+        bridge.send{value: msg.value}(params);
+    }
+
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        return this.onERC1155Received.selector;
     }
 
     receive() external payable {

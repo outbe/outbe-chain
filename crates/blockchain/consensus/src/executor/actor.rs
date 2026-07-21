@@ -327,6 +327,26 @@ where
         self
     }
 
+    /// Reconcile the startup state after marshal has exposed the exact
+    /// application finalization record for the canonical execution head.
+    ///
+    /// Marshal must be started before that record can be queried, while its
+    /// reporter needs this actor's mailbox. This startup-only builder closes
+    /// that ordering loop without allowing a speculative execution head to be
+    /// treated as finalized: the caller is responsible for validating the
+    /// recovered finalization digest before invoking it.
+    #[must_use]
+    pub fn with_recovered_finalized_state(
+        mut self,
+        genesis_hash: B256,
+        finalized_height: u64,
+        finalized_hash: B256,
+    ) -> Self {
+        self.state =
+            LastCanonicalized::from_recovered(genesis_hash, finalized_height, finalized_hash);
+        self
+    }
+
     /// Installs the mandatory compressed-storage barrier for live node wiring.
     #[must_use]
     pub fn with_finalized_ce_committer(mut self, committer: Arc<dyn FinalizedCeCommitter>) -> Self {

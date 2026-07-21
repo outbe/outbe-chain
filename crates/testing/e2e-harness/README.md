@@ -66,6 +66,9 @@ the harness reads no configuration from the environment.** Flags:
   single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
   `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
+- `--evidence-dir <PATH>` — persistent per-scenario JSON evidence. By default it
+  is written under `<data-dir>/evidence/<run-id>` and is not removed when a
+  successful run cleans its node data.
 - `--upgraded-chain-bin <PATH>` — optional prebuilt replacement node binary for
   the protocol-update recovery scenario. When omitted, that scenario creates a
   temporary detached worktree at the revision under test, changes only its
@@ -102,7 +105,12 @@ MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
 On an SGX runner, `mise run e2e-sgx` builds the real enclave and runs the same
 features with four `gramine-sgx` containers. That lane raises the per-request
 TEE timeout to 120 seconds for EPC paging while retaining the normal 30-second
-default elsewhere.
+default elsewhere. It also passes a 180-second node-local TEE bootstrap deadline
+and polls for up to 240 seconds outside that deadline, because four co-located
+hardware enclaves have exceeded both the node's normal 60-second bootstrap
+default and the host client's normal 30-second request deadline in consecutive-run
+evidence. The production/testnet defaults remain unchanged and must be calibrated
+for their deployment topology.
 
 Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice:
 
@@ -186,13 +194,24 @@ cleanup backstop. Add `--no-cleanup` when a successful run's chain data should
 remain available for inspection; failed runs keep their data directory by
 default.
 
+Every scenario that constructs a World writes `scenario-NNN.json` before
+teardown. The record includes the source SHA and dirty-worktree bit, exact
+invocation, feature/scenario/result, duration, validator and TEE configuration,
+scenario data directory, and explicit log-audit counts (including zeros). This
+is compact durable evidence; verbose node logs remain in the run directory only
+for failed runs or when `--no-cleanup` is used.
+
 ## Status
 
 The focused `tribute_projection` scenarios own MongoDB and verify the full
 encrypted offer → successful receipt → four-validator projection → independently
 verified compressed-entity proof path, including both absence-proof edge cases. The
 validator lifecycle, update, DKG, downtime, restart, stale-join, and follower
-flows are also wired under `features/`.
+flows are also wired under `features/`. DKG failure coverage includes both recovery
+of a stalled frozen target and permanent loss: the latter asserts that the outgoing
+committee finalizes without partial activation through the published VRF deadline
+and that every surviving validator then terminates fail-closed. It deliberately
+does not claim an automatic forfeiture/replacement policy.
 
 ## Ide support
 

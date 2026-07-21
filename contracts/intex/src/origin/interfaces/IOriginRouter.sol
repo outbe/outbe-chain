@@ -3,26 +3,51 @@ pragma solidity 0.8.30;
 
 /// @title IOriginRouter
 /// @author Outbe
-/// @notice Interface for the Outbe-side router. Sends auction/series messages to BNB and receives BIDS_BATCH
-///         from BNB over the protocol-agnostic ERC-7786 bridge.
-/// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. Outbound `send*` return the bridge `sendId`
-///      and are funded either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quote*`
-///      return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
+/// @notice Interface for the Outbe-side router. Broadcasts auction/series messages to every registered target chain
+///         and receives BIDS_BATCH / BIDS_DONE back from each over the protocol-agnostic ERC-7786 bridge.
+/// @dev Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`. The target set is
+///      a registry (see {addTarget}); it is snapshotted per day at STAGE_START so a mid-day membership change never
+///      reshapes an in-flight auction. Broadcast sends fan out over the snapshot; addressed sends carry a leading
+///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) — a single failing leg
+///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
+///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
     // --- Events ---
-    /// @notice Emitted when a BIDS_BATCH is received from BNB.
+    /// @notice Emitted when a BIDS_BATCH is received from a target chain.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids received.
     event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 bidsCount);
 
-    /// @notice Emitted when an auction stage message is sent to BNB.
+    /// @notice Emitted when a BIDS_DONE completeness marker is received from a target chain.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param totalBatches Number of BIDS_BATCH messages the source relayed for this day/generation.
+    /// @param totalBids Total bids the source relayed for this day/generation.
+    event BidsDoneReceived(
+        uint32 indexed srcChainId, uint32 indexed worldwideDay, uint16 totalBatches, uint32 totalBids
+    );
+
+    /// @notice Emitted when a chain is registered as an auction target.
+    event TargetAdded(uint32 indexed chainId);
+    /// @notice Emitted when a chain is deregistered as an auction target.
+    event TargetRemoved(uint32 indexed chainId);
+
+    /// @notice Emitted when an outbound leg fails to dispatch and is parked for a permissionless flush.
+    /// @param idx Parked-send index.
+    /// @param dstChainId Destination chainId of the parked leg.
+    /// @param msgType Codec message type of the parked payload.
+    event SendParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
+    /// @notice Emitted when a parked outbound leg is flushed successfully.
+    event PendingSendFlushed(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
+
+    /// @notice Emitted when an auction stage message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param stageType Codec message type (start/reveal/clearing).
     event AuctionStageSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint8 stageType);
 
-    /// @notice Emitted when an auction result is sent to BNB.
+    /// @notice Emitted when an auction result is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param issuedIntexCount Number of Intex units issued.
@@ -31,36 +56,27 @@ interface IOriginRouter {
         bytes32 indexed sendId, uint32 indexed worldwideDay, uint32 issuedIntexCount, uint64 clearingRate
     );
 
-    /// @notice Emitted when issuance instructions are sent to BNB.
+    /// @notice Emitted when issuance instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     /// @param recipientsCount Number of recipients.
     event IssuanceInstructionsSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 recipientsCount);
 
-    /// @notice Emitted when refund instructions are sent to BNB.
+    /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param instructionsCount Number of finalization instructions.
     event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 instructionsCount);
 
-    /// @notice Emitted when a mark-called message is sent to BNB.
+    /// @notice Emitted when a mark-called message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, uint32 indexed seriesId);
 
-    /// @notice Emitted when a mark-qualified message is sent to BNB.
+    /// @notice Emitted when a mark-qualified message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);
-
-    /// @notice Emitted when `_handleBidsBatch` auto-fires `Desis.clearAuction` for a `BidsReceived` series.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose auction was auto-cleared.
-    event ClearingAutoDispatched(uint32 indexed worldwideDay);
-
-    /// @notice Emitted when the auto-fired `Desis.clearAuction` reverts; the bid intake is kept.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose auto-clearing reverted.
-    /// @param reason Raw revert bytes from the failed `clearAuction` call.
-    event ClearingAutoDispatchFailed(uint32 indexed worldwideDay, bytes reason);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
@@ -85,9 +101,9 @@ interface IOriginRouter {
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
-    /// @notice Proceeds arrived from an unexpected source domain.
+    /// @notice Proceeds arrived from a chain that is not a target of the series.
     error UnexpectedProceedsSource(uint32 sourceDomain);
-    /// @notice Proceeds arrived from a source sender other than the registered BNB peer.
+    /// @notice Proceeds arrived from a source sender other than the registered peer for its chain.
     error UnauthorizedProceedsSender(bytes from);
     /// @notice No live parked distribution at `idx`.
     error NoParkedProceeds(uint256 idx);
@@ -96,8 +112,17 @@ interface IOriginRouter {
     /// @notice Auction proceeds unwrapped on Outbe but not yet distributed, awaiting permissionless retry.
     struct ParkedProceeds {
         uint32 worldwideDay;
+        uint32 srcChainId;
         uint128 amount;
         bool settled;
+    }
+
+    /// @notice An outbound leg that failed to dispatch, retained for a permissionless flush.
+    struct ParkedSend {
+        uint32 dstChainId;
+        uint64 gasLimit;
+        bool sent;
+        bytes payload;
     }
 
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
@@ -139,6 +164,8 @@ interface IOriginRouter {
     /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint` on the destination NFT
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
+        /// @notice Destination chain for this issuance leg (must be in the series' STAGE_START snapshot).
+        uint32 dstChainId;
         uint32 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
         uint32 worldwideDay;
@@ -161,6 +188,20 @@ interface IOriginRouter {
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
     error ZeroAddress(string field);
+    /// @notice Zero chainId provided.
+    error ZeroChainId();
+    /// @notice Chain is already a registered target.
+    error TargetAlreadyRegistered(uint32 chainId);
+    /// @notice Chain is not a registered target.
+    error TargetNotRegistered(uint32 chainId);
+    /// @notice No targets are registered, so a broadcast has no destinations.
+    error NoTargets();
+    /// @notice Addressed send targets a chain outside the series' STAGE_START snapshot.
+    error NotSeriesTarget(uint32 worldwideDay, uint32 dstChainId);
+    /// @notice `sendLeg` is an internal self-call seam; caller was not this contract.
+    error OnlySelf();
+    /// @notice No live parked send at `idx`.
+    error NoParkedSend(uint256 idx);
     /// @notice Array lengths do not match.
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
@@ -190,73 +231,97 @@ interface IOriginRouter {
     /// @param interop ERC-7930 interoperable address (empty to clear).
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
+    /// @notice Register `chainId` as an auction target; its peer messenger must already be set. Restricted to admin.
+    function addTarget(uint32 chainId) external;
+    /// @notice Deregister `chainId` as an auction target (swap-pop). In-flight series keep their own snapshot.
+    ///         Restricted to admin.
+    function removeTarget(uint32 chainId) external;
+    /// @notice The currently registered target chainIds.
+    function targets() external view returns (uint32[] memory);
+    /// @notice Whether `chainId` is a registered target.
+    function isTarget(uint32 chainId) external view returns (bool);
+    /// @notice The frozen target snapshot taken for `worldwideDay` at STAGE_START (empty if never started).
+    function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
+
     /// @notice Sweep native tokens (the relay-funded float) from the contract to an admin recipient.
     /// @param to Recipient address (must be non-zero).
     /// @param amount Amount in wei to sweep; must be ≤ contract balance.
     function sweepNative(address payable to, uint256 amount) external;
 
     // --- Quote ---
-    /// @notice Native fee to send auction stage start to BNB.
+    /// @notice Native fee to broadcast auction stage start (summed over the registered targets).
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256 fee);
-    /// @notice Native fee to send auction stage reveal to BNB.
+    /// @notice Native fee to broadcast auction stage reveal (summed over the registered targets).
     function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256 fee);
-    /// @notice Native fee to send auction stage clearing to BNB.
+    /// @notice Native fee to broadcast auction stage clearing (summed over the registered targets).
     function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256 fee);
-    /// @notice Native fee to send auction result to BNB.
+    /// @notice Native fee to send auction result to a single target chain.
     function quoteSendAuctionResult(
+        uint32 dstChainId,
         uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external view returns (uint256 fee);
-    /// @notice Native fee to send issuance instructions to BNB.
+    /// @notice Native fee to send issuance instructions to the target chain in `params.dstChainId`.
     function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params)
         external
         view
         returns (uint256 fee);
-    /// @notice Native fee to send refund instructions to BNB.
+    /// @notice Native fee to send refund instructions to a single target chain.
     function quoteSendRefundInstructions(
+        uint32 dstChainId,
         uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external view returns (uint256 fee);
-    /// @notice Native fee to send mark-called to BNB.
+    /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
     function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256 fee);
-    /// @notice Native fee to send mark-qualified to BNB.
+    /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
     function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256 fee);
 
     // --- Send ---
-    /// @notice Send auction stage start to BNB. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable returns (bytes32 sendId);
-    /// @notice Send auction stage reveal to BNB. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external payable returns (bytes32 sendId);
-    /// @notice Send auction stage clearing to BNB. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageClearing(uint32 worldwideDay) external payable returns (bytes32 sendId);
-    /// @notice Send auction result to BNB. Restricted to `DESIS_ROLE`.
+    /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
+    ///         Restricted to `DESIS_ROLE`.
+    function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
+    /// @notice Broadcast auction stage reveal over the day's snapshot. Restricted to `DESIS_ROLE`.
+    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external payable;
+    /// @notice Broadcast auction stage clearing over the day's snapshot. Restricted to `DESIS_ROLE`.
+    function sendAuctionStageClearing(uint32 worldwideDay) external payable;
+    /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.
     function sendAuctionResult(
+        uint32 dstChainId,
         uint32 worldwideDay,
         uint32 issuedIntexCount,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send issuance instructions to BNB. Restricted to `INTEX_FACTORY_ROLE`.
+    /// @notice Send issuance instructions to `params.dstChainId`. Empty `recipients` creates the series only.
+    ///         Restricted to `INTEX_FACTORY_ROLE`.
     function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
         external
         payable
         returns (bytes32 sendId);
-    /// @notice Send refund instructions to BNB. Restricted to `DESIS_ROLE`.
+    /// @notice Send refund instructions to a single target chain. Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(
+        uint32 dstChainId,
         uint32 worldwideDay,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
-    /// @notice Send mark-called to BNB. Restricted to `INTEX_FACTORY_ROLE`.
+    /// @notice Broadcast mark-called over the day's snapshot. Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev The settlement deadline is derived on the destination chain from `intexCallPeriod`.
-    function sendMarkCalled(uint32 seriesId) external payable returns (bytes32 sendId);
-    /// @notice Send mark-qualified to BNB, flipping the series to Qualified. Restricted to `INTEX_FACTORY_ROLE`.
-    function sendMarkQualified(uint32 seriesId) external payable returns (bytes32 sendId);
+    function sendMarkCalled(uint32 seriesId) external payable;
+    /// @notice Broadcast mark-qualified over the day's snapshot, flipping the series to Qualified.
+    ///         Restricted to `INTEX_FACTORY_ROLE`.
+    function sendMarkQualified(uint32 seriesId) external payable;
+
+    /// @notice Permissionless flush of a parked outbound leg.
+    function flushPendingSend(uint256 idx) external;
+    /// @notice Parked outbound leg by index.
+    function parkedSend(uint256 idx) external view returns (ParkedSend memory);
 
     // --- Proceeds ---
     /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
