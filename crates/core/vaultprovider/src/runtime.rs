@@ -38,6 +38,67 @@ fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// cross-chain configuration
+// ---------------------------------------------------------------------------
+
+/// Configures the Outbe ERC-7786 bridge. A zero address disables the
+/// cross-chain vault flow without affecting local liquidity operations.
+pub fn set_crosschain_bridge(
+    storage: StorageHandle<'_>,
+    sender: Address,
+    bridge: Address,
+) -> Result<()> {
+    ensure_owner(&storage, sender)?;
+    ensure_no_pending_crosschain_operations(&storage)?;
+    let mut contract = VaultProviderContract::new(storage);
+    let old_bridge = contract.crosschain_bridge.read()?;
+    contract.crosschain_bridge.write(bridge)?;
+    contract.emit(IVaultProvider::CrosschainBridgeUpdated {
+        oldBridge: old_bridge,
+        newBridge: bridge,
+    })
+}
+
+/// Registers the fixed vault adapter for a remote EVM chain. Passing the zero
+/// address clears the peer while retaining the chain key's default value.
+pub fn set_remote_vault_provider(
+    storage: StorageHandle<'_>,
+    sender: Address,
+    chain_id: U256,
+    provider: Address,
+) -> Result<()> {
+    ensure_owner(&storage, sender)?;
+    ensure_no_pending_crosschain_operations(&storage)?;
+    let local_chain_id = U256::from(storage.chain_id()?);
+    if chain_id.is_zero() || chain_id == local_chain_id {
+        return Err(VaultProviderError::InvalidDestinationChain.into());
+    }
+
+    let mut contract = VaultProviderContract::new(storage);
+    let old_provider = contract.remote_vault_providers.read(&chain_id)?;
+    if provider.is_zero() {
+        contract.remote_vault_providers.clear(&chain_id)?;
+    } else {
+        contract.remote_vault_providers.write(&chain_id, provider)?;
+    }
+    contract.emit(IVaultProvider::RemoteVaultProviderUpdated {
+        chainId: chain_id,
+        oldProvider: old_provider,
+        newProvider: provider,
+    })
+}
+
+fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Result<()> {
+    let pending = VaultProviderContract::new(storage.clone())
+        .pending_crosschain_operations
+        .read()?;
+    if !pending.is_zero() {
+        return Err(VaultProviderError::CrosschainOperationsPending(pending).into());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // vault management (owner-only)
 // ---------------------------------------------------------------------------
 

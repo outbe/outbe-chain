@@ -15,6 +15,7 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IERC20 {
         function approve(address spender, uint256 amount) external returns (bool);
+        function transfer(address to, uint256 amount) external returns (bool);
         function transferFrom(address from, address to, uint256 amount) external returns (bool);
         function balanceOf(address account) external view returns (uint256);
     }
@@ -31,5 +32,30 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITokenBundle {
         function topUp(address sender, address token, uint256 amount) external;
+    }
+
+    interface IERC7786Bridge {
+        function quote(bytes recipient, bytes payload, bytes[] attributes)
+            external view returns (uint256 nativeFee);
+        function sendMessage(bytes recipient, bytes payload, bytes[] attributes)
+            external payable returns (bytes32 sendId);
+    }
+
+    interface IERC7786TokenBridge {
+        function quoteSend(
+            uint32 destinationDomain,
+            address to,
+            uint256 amount,
+            bytes extraData,
+            uint256 gasLimit
+        ) external view returns (uint256 nativeFee);
+
+        function sendAndCall(
+            uint32 destinationDomain,
+            address to,
+            uint256 amount,
+            bytes extraData,
+            uint256 gasLimit
+        ) external payable returns (bytes32 sendId);
     }
 }
