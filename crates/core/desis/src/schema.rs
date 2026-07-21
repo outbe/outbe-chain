@@ -16,24 +16,24 @@ use crate::constants::PROMIS_LOAD;
 pub enum AuctionStage {
     #[default]
     None = 0,
-    Started = 1,
-    Revealing = 2,
-    BidsReceived = 3,
-    Cleared = 4,
-    Cancelled = 5,
-    Briefed = 6,
+    Briefed = 1,
+    Started = 2,
+    Revealing = 3,
+    BidsReceived = 4,
+    Cleared = 5,
+    Cancelled = 6,
 }
 
 impl AuctionStage {
     pub fn from_u8(value: u8) -> Result<Self, crate::DesisError> {
         match value {
             0 => Ok(Self::None),
-            1 => Ok(Self::Started),
-            2 => Ok(Self::Revealing),
-            3 => Ok(Self::BidsReceived),
-            4 => Ok(Self::Cleared),
-            5 => Ok(Self::Cancelled),
-            6 => Ok(Self::Briefed),
+            1 => Ok(Self::Briefed),
+            2 => Ok(Self::Started),
+            3 => Ok(Self::Revealing),
+            4 => Ok(Self::BidsReceived),
+            5 => Ok(Self::Cleared),
+            6 => Ok(Self::Cancelled),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
