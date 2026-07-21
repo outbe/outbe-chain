@@ -151,6 +151,15 @@ release emits archives, Linux packages, source archive, SBOM and Sigstore bundle
 prerelease runs cargo-vet, binary audit and image scanning. The workflows do not yet produce
 one manifest proving that all results apply to the same promoted artifacts.
 
+The first deterministic ELF proof was completed on 2026-07-21 for source commit
+`3f5e77a3265cfcd7a75b64b47fb2601a53347776`. Two clean no-cache local container builds
+produced byte-identical copies of all five declared ELF subjects, with no forbidden build
+paths and with matching manifest, checksum and embedded version evidence. The immutable
+comparison result is recorded in
+`docs/reports/evidence/p0-reproducible-elf-3f5e77a.json`; the scope and remaining release
+gaps are documented in `docs/reports/p0-reproducible-release-elf-2026-07-21.md`. This proof
+does not promote the candidate or close the package, SGX, OCI, signing or CI work below.
+
 ## Consequences
 
 An operator can prove what source and dependency graph produced a running artifact and
