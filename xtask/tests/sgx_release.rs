@@ -122,6 +122,25 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("cosign-image-verification.json"));
     assert!(workflow.contains("cosign-sbom-verification.json"));
     assert!(workflow.contains("cosign-provenance-verification.json"));
+    let package_job = workflow
+        .split_once("  package-and-sign-image:")
+        .expect("OCI package job")
+        .1
+        .split_once("\n  hardware-smoke:")
+        .expect("hardware job follows OCI package job")
+        .0;
+    let buildx_setup = package_job
+        .find("docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4")
+        .expect("pinned Buildx setup action in OCI package job");
+    let image_build = package_job
+        .find("cargo xtask release sgx image")
+        .expect("OCI image build command");
+    assert!(buildx_setup < image_build);
+    assert!(package_job.contains("version: v0.35.0"));
+    assert!(package_job.contains("driver: docker-container"));
+    assert!(package_job.contains(
+        "image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
+    ));
     assert!(!workflow.contains("buildkit-provenance.txt"));
 
     let cargo_config =

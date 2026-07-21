@@ -109,6 +109,9 @@ gh run watch --repo outbe/outbe-chain <run-id> --exit-status
 The ordered gates are two independent ELF builds, two unsigned SGX bundle builds,
 protected SIGSTRUCT signing, exact-digest OCI publication and Cosign signing, SPDX SBOM,
 hardware-SGX Rust/Gherkin acceptance, final schema validation and ReleaseManifest signing.
+The OCI job provisions pinned Buildx v0.35.0 and a digest-pinned BuildKit v0.31.2
+`docker-container` builder because the default Docker driver cannot emit the required
+BuildKit provenance and SBOM attestations.
 The first job exports one verified commit SHA and the verified signed tag-object SHA; every
 privileged job checks out the commit and rechecks that the authoritative GitHub ref still
 names the same tag object. Publication first creates a draft containing the complete asset
