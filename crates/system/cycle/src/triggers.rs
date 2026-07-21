@@ -125,12 +125,10 @@ pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &[
     TriggerSpec {
         id: TriggerId::AuctionAdvance.as_u32(),
         label: "auction_advance",
-        // 00:00 + 12:00: midnight transitions land on the 00:00 slot; the noon
-        // slot retries a reverted start within the commit window.
         period_seconds: 43_200,
         start_offset_seconds: 0,
-        // Must stay ordered after emission_limit_1: the brief it writes starts
-        // the auction in the same slot. Gated so the two defer together.
+        // Gated like emission_limit_1 so the brief it writes and this start
+        // land in the same slot.
         requires_accounting_window: true,
         handler: TriggerHandler::AuctionAdvance,
     },
