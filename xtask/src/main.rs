@@ -35,6 +35,10 @@ struct SgxArgs {
     command: SgxCommand,
 }
 
+// This command is parsed once and immediately executed. Keeping the manifest paths as
+// strongly typed clap fields is clearer than heap-boxing one arbitrary argument solely to
+// equalize enum layout.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum SgxCommand {
     /// Prepare an unsigned deterministic Gramine bundle from a verified ELF build.
@@ -96,6 +100,12 @@ enum SgxCommand {
         bundle_archive: PathBuf,
         #[arg(long)]
         oci_evidence: PathBuf,
+        #[arg(long)]
+        cosign_image_verification: PathBuf,
+        #[arg(long)]
+        cosign_sbom_verification: PathBuf,
+        #[arg(long)]
+        cosign_provenance_verification: PathBuf,
         #[arg(long)]
         sbom: PathBuf,
         #[arg(long)]
@@ -166,6 +176,9 @@ fn main() -> Result<()> {
                     bundle,
                     bundle_archive,
                     oci_evidence,
+                    cosign_image_verification,
+                    cosign_sbom_verification,
+                    cosign_provenance_verification,
                     sbom,
                     elf_evidence,
                     sgx_evidence,
@@ -177,6 +190,9 @@ fn main() -> Result<()> {
                         &sgx::VerifiedReleaseInputs {
                             bundle,
                             bundle_archive,
+                            cosign_image_verification,
+                            cosign_provenance_verification,
+                            cosign_sbom_verification,
                             elf_evidence,
                             elf_manifest,
                             hardware_evidence,

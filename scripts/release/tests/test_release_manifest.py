@@ -168,6 +168,40 @@ class ReleaseManifestTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Draft202012Validator(schema).validate(manifest)
 
+    def test_github_actions_provenance_requires_certificate_binding(self) -> None:
+        manifest = self.build()
+        manifest["build"]["provenance"]["mode"] = "github-actions"
+        manifest["build"]["provenance"]["workflow"] = (
+            ".github/workflows/testnet-release.yml"
+        )
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(manifest)
+
+        manifest["build"]["provenance"].update(
+            {
+                "certificate_identity": (
+                    "https://github.com/outbe/outbe-chain/.github/workflows/"
+                    "testnet-release.yml@refs/heads/main"
+                ),
+                "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+                "certificate_workflow_sha": "a" * 40,
+            }
+        )
+        Draft202012Validator(schema).validate(manifest)
+
+        manifest["build"]["provenance"]["certificate_identity"] = (
+            "https://github.com/outbe/outbe-chain/untrusted-workflow"
+        )
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(manifest)
+
+    def test_verified_lifecycle_requires_github_actions_provenance(self) -> None:
+        manifest = self.build(lifecycle="verified")
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        with self.assertRaises(ValidationError):
+            Draft202012Validator(schema).validate(manifest)
+
 
 class RepositoryBuildSpecTests(unittest.TestCase):
     def test_spec_declares_exact_current_release_elf_matrix(self) -> None:

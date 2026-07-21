@@ -24,6 +24,9 @@ jobs:
     name: two independent ELF and unsigned SGX builds
     runs-on: depot-ubuntu-24.04-4
     timeout-minutes: 90
+    outputs:
+      verified_commit: ${{ steps.identity.outputs.verified_commit }}
+      verified_tag_object: ${{ steps.identity.outputs.verified_tag_object }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -31,6 +34,9 @@ jobs:
           ref: ${{ inputs.release_tag }}
 
       - name: Bind workflow, tag and source identity
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
@@ -43,6 +49,22 @@ jobs:
           }
           test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${GITHUB_SHA}"
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          tag_object="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq 'select(.object.type == "tag") | .object.sha')"
+          test -n "${tag_object}"
+          tag_identity="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" \
+            --jq 'select(.verification.verified == true) |
+              select(.object.type == "commit") |
+              [.tag, .object.sha] | @tsv')"
+          IFS=$'\t' read -r signed_tag_name tag_commit <<< "${tag_identity}"
+          test "${signed_tag_name}" = "${RELEASE_TAG}"
+          test "${tag_commit}" = "${GITHUB_SHA}"
+          echo "verified_commit=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "verified_tag_object=${tag_object}" >> "${GITHUB_OUTPUT}"
 
       - name: Build the exact ELF matrix twice without cache
         run: |
@@ -107,7 +129,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Recheck immutable tag binding before SGX authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote_tag_object="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq 'select(.object.type == "tag") | .object.sha')"
+          test "${remote_tag_object}" = \
+            "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -158,7 +192,7 @@ jobs:
 
   package-and-sign-image:
     name: publish immutable OCI image, signature, SBOM and provenance
-    needs: sign
+    needs: [build-and-compare, sign]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -171,7 +205,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Recheck immutable tag binding before OCI publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote_tag_object="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq 'select(.object.type == "tag") | .object.sha')"
+          test "${remote_tag_object}" = \
+            "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -219,20 +265,44 @@ jobs:
           cosign attest --yes --type spdxjson \
             --predicate "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
             "${EXACT_IMAGE}"
+          docker buildx imagetools inspect "${EXACT_IMAGE}" \
+            --format '{{ json .Provenance.SLSA }}' \
+            | jq -cS . \
+            > "${RUNNER_TEMP}/published/buildkit-provenance-predicate.json"
+          jq -e '
+            .buildType == "https://mobyproject.org/buildkit@v1"
+            and (.materials | type == "array" and length > 0)
+          ' "${RUNNER_TEMP}/published/buildkit-provenance-predicate.json" >/dev/null
+          cosign attest --yes --type slsaprovenance02 \
+            --predicate "${RUNNER_TEMP}/published/buildkit-provenance-predicate.json" \
+            "${EXACT_IMAGE}"
           cosign verify \
             --certificate-identity-regexp \
               '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --certificate-github-workflow-sha \
+              '${{ needs.build-and-compare.outputs.verified_commit }}' \
             "${EXACT_IMAGE}" \
+            | jq -cS -s 'flatten' \
             > "${RUNNER_TEMP}/published/cosign-image-verification.json"
           cosign verify-attestation --type spdxjson \
             --certificate-identity-regexp \
               '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --certificate-github-workflow-sha \
+              '${{ needs.build-and-compare.outputs.verified_commit }}' \
             "${EXACT_IMAGE}" \
+            | jq -cS -s 'flatten' \
             > "${RUNNER_TEMP}/published/cosign-sbom-verification.json"
-          docker buildx imagetools inspect "${EXACT_IMAGE}" \
-            > "${RUNNER_TEMP}/published/buildkit-provenance.txt"
+          cosign verify-attestation --type slsaprovenance02 \
+            --certificate-identity-regexp \
+              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --certificate-github-workflow-sha \
+              '${{ needs.build-and-compare.outputs.verified_commit }}' \
+            "${EXACT_IMAGE}" \
+            | jq -cS -s 'flatten' \
+            > "${RUNNER_TEMP}/published/cosign-provenance-verification.json"
           cp "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
             "${RUNNER_TEMP}/published/"
 
@@ -246,7 +316,7 @@ jobs:
 
   hardware-smoke:
     name: exact published image on hardware SGX
-    needs: package-and-sign-image
+    needs: [build-and-compare, package-and-sign-image]
     runs-on: [self-hosted, sgx]
     timeout-minutes: 35
     permissions:
@@ -256,7 +326,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Recheck immutable tag binding before hardware acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote_tag_object="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq 'select(.object.type == "tag") | .object.sha')"
+          test "${remote_tag_object}" = \
+            "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -277,6 +359,8 @@ jobs:
             --certificate-identity-regexp \
               '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --certificate-github-workflow-sha \
+              '${{ needs.build-and-compare.outputs.verified_commit }}' \
             "${EXACT_IMAGE}"
           docker pull "${EXACT_IMAGE}"
 
@@ -288,7 +372,7 @@ jobs:
           mkdir "${RUNNER_TEMP}/signed"
           tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
-          cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+          cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
             --evidence "${RUNNER_TEMP}/hardware-sgx.json"
@@ -315,7 +399,19 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.build-and-compare.outputs.verified_commit }}
+
+      - name: Recheck immutable tag binding before final publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          remote_tag_object="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+            --jq 'select(.object.type == "tag") | .object.sha')"
+          test "${remote_tag_object}" = \
+            "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -334,6 +430,14 @@ jobs:
 
       - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
 
+      - name: Authenticate final verifier to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
       - name: Assemble and validate verified ReleaseManifest
         run: |
           set -euo pipefail
@@ -345,6 +449,9 @@ jobs:
             --bundle "${RUNNER_TEMP}/signed" \
             --bundle-archive "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             --oci-evidence "${RUNNER_TEMP}/published/oci-evidence.json" \
+            --cosign-image-verification "${RUNNER_TEMP}/final/cosign-image-verification.json" \
+            --cosign-sbom-verification "${RUNNER_TEMP}/final/cosign-sbom-verification.json" \
+            --cosign-provenance-verification "${RUNNER_TEMP}/final/cosign-provenance-verification.json" \
             --sbom "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
             --elf-evidence "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
             --sgx-evidence "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
@@ -362,6 +469,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          verified_tag_object='${{ needs.build-and-compare.outputs.verified_tag_object }}'
+          remote_tag_object() {
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" \
+              --jq 'select(.object.type == "tag") | .object.sha'
+          }
+          test "$(remote_tag_object)" = "${verified_tag_object}"
           cosign sign-blob --yes \
             --bundle "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json" \
             "${RUNNER_TEMP}/final/ReleaseManifest.json"
@@ -370,20 +486,36 @@ jobs:
             --certificate-identity-regexp \
               '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            --certificate-github-workflow-sha \
+              '${{ needs.build-and-compare.outputs.verified_commit }}' \
             "${RUNNER_TEMP}/final/ReleaseManifest.json"
-          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 \
-            || gh release create "${RELEASE_TAG}" --verify-tag --prerelease \
-              --title "Outbe ${RELEASE_TAG}"
-          gh release upload "${RELEASE_TAG}" --clobber \
-            "${RUNNER_TEMP}/final/ReleaseManifest.json" \
-            "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json" \
-            "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
-            "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
-            "${RUNNER_TEMP}/published/oci-evidence.json" \
-            "${RUNNER_TEMP}/published/oci-index.json" \
-            "${RUNNER_TEMP}/published/cosign-image-verification.json" \
-            "${RUNNER_TEMP}/published/cosign-sbom-verification.json" \
-            "${RUNNER_TEMP}/published/buildkit-provenance.txt" \
-            "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
-            "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "release ${RELEASE_TAG} already exists; use a new immutable tag" >&2
+            exit 2
+          fi
+          assets=(
+            "${RUNNER_TEMP}/final/ReleaseManifest.json"
+            "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json"
+            "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar"
+            "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json"
+            "${RUNNER_TEMP}/published/oci-evidence.json"
+            "${RUNNER_TEMP}/published/oci-index.json"
+            "${RUNNER_TEMP}/final/cosign-image-verification.json"
+            "${RUNNER_TEMP}/final/cosign-sbom-verification.json"
+            "${RUNNER_TEMP}/final/cosign-provenance-verification.json"
+            "${RUNNER_TEMP}/published/buildkit-provenance-predicate.json"
+            "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json"
+            "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json"
             "${RUNNER_TEMP}/hardware/hardware-sgx.json"
+          )
+          test "$(remote_tag_object)" = "${verified_tag_object}"
+          gh release create "${RELEASE_TAG}" "${assets[@]}" \
+            --verify-tag --draft --prerelease --title "Outbe ${RELEASE_TAG}"
+          roundtrip="${RUNNER_TEMP}/release-roundtrip"
+          mkdir "${roundtrip}"
+          gh release download "${RELEASE_TAG}" --dir "${roundtrip}"
+          for asset in "${assets[@]}"; do
+            cmp --silent "${asset}" "${roundtrip}/$(basename "${asset}")"
+          done
+          test "$(remote_tag_object)" = "${verified_tag_object}"
+          gh release edit "${RELEASE_TAG}" --draft=false --prerelease

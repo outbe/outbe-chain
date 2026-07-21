@@ -8,4 +8,4 @@
 # our own lint gate. Keep this file free of a workspace-wide lint cap.
 
 [alias]
-xtask = "run --package xtask --"
+xtask = "run --locked --package xtask --"

@@ -25,6 +25,31 @@ The private key is not needed on an SGX machine. SGX hardware is required to exe
 enclave, not to create its RSA SIGSTRUCT. Keep the original PEM outside the repository and
 GitHub logs. The workflow's signing job is the only consumer.
 
+Also configure a repository tag ruleset that blocks update and deletion of
+`v*-testnet.*`. The workflow reads the tag through the GitHub Git API, requires an annotated
+tag object whose `verification.verified` result is true, records that exact tag-object SHA,
+requires the embedded signed tag name to equal the requested release tag, and checks the
+same object before every privileged boundary and immediately before publication. The
+ruleset closes the remaining check-to-use race at the repository boundary.
+
+Enable GitHub immutable releases once with an administrator token, then confirm the
+repository returns `enabled: true`:
+
+```bash
+gh api --method PUT \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/outbe/outbe-chain/immutable-releases
+gh api \
+  -H 'Accept: application/vnd.github+json' \
+  -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/outbe/outbe-chain/immutable-releases
+```
+
+Release immutability protects the tag and assets after publication. The tag ruleset is
+still required before publication because draft releases are intentionally mutable while
+the workflow uploads and verifies their complete asset matrix.
+
 Register a self-hosted x86_64 GitHub runner with labels `self-hosted` and `sgx`. It needs
 Docker access and these device nodes (legacy `/dev/sgx/...` aliases are also accepted):
 
@@ -35,8 +60,9 @@ docker version
 
 ## Cut and run a release
 
-The workflow is manual and must be dispatched from `main`. The input tag must already
-exist, match `vX.Y.Z-testnet.N`, point to the same `main` commit and remain immutable:
+The workflow is manual and must be dispatched from `main`. The input tag must be an
+annotated signed tag, already exist, match `vX.Y.Z-testnet.N`, point to the same `main`
+commit and remain immutable:
 
 ```bash
 git switch main
@@ -61,7 +87,18 @@ gh run watch --repo outbe/outbe-chain <run-id> --exit-status
 The ordered gates are two independent ELF builds, two unsigned SGX bundle builds,
 protected SIGSTRUCT signing, exact-digest OCI publication and Cosign signing, SPDX SBOM,
 hardware-SGX Rust/Gherkin acceptance, final schema validation and ReleaseManifest signing.
+The first job exports one verified commit SHA and the verified signed tag-object SHA; every
+privileged job checks out the commit and rechecks that the authoritative GitHub ref still
+names the same tag object. Publication first creates a draft containing the complete asset
+matrix, downloads every draft asset and compares it byte-for-byte, then publishes the draft
+only after another tag-object check. Publication fails if a GitHub
+Release or failed draft already exists for the tag: reruns cannot replace assets, and
+changed output requires a new tag.
 There is no successful release asset if the SGX runner does not pass.
+
+If publication stops after draft creation, leave that draft as evidence and cut a new
+testnet tag after diagnosing the failed run. Do not delete assets and reuse the same release
+identity.
 
 ## Verify before rollout
 
@@ -81,13 +118,34 @@ cosign verify-blob \
   "/tmp/outbe-${TAG}/ReleaseManifest.json"
 
 IMAGE_DIGEST=$(jq -r .image.digest.value "/tmp/outbe-${TAG}/oci-evidence.json")
+EXPECTED_SHA=$(jq -r .release.source.commit "/tmp/outbe-${TAG}/ReleaseManifest.json")
 IMAGE="ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:${IMAGE_DIGEST}"
 cosign verify \
   --certificate-identity-regexp \
     '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate-github-workflow-sha "$EXPECTED_SHA" \
+  "$IMAGE"
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp \
+    '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate-github-workflow-sha "$EXPECTED_SHA" \
+  "$IMAGE"
+cosign verify-attestation --type slsaprovenance02 \
+  --certificate-identity-regexp \
+    '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate-github-workflow-sha "$EXPECTED_SHA" \
   "$IMAGE"
 ```
+
+The Rust finalizer invokes Cosign again with the exact certificate identity, OIDC issuer and
+verified workflow SHA; it does not trust uploaded JSON as proof. From that command output it
+records the image signature payload and both verified DSSE attestations, requires their
+subject to be the exact OCI digest, requires the attested SPDX predicate to equal the
+published SBOM, and requires material-bearing BuildKit provenance. Digests of all four
+verification documents are recorded by the OCI gate.
 
 Inspect the `verified` lifecycle and compare the expected measurements before touching a
 running node:

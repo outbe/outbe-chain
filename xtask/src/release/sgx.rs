@@ -9,6 +9,7 @@ use std::{
     process::{Command, Output},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,10 @@ const EXCLUDED_BUNDLE_FILES: [&str; 3] = [
     "SHA256SUMS",
     "SHA256SUMS.unsigned",
 ];
+
+const TESTNET_RELEASE_CERTIFICATE_IDENTITY: &str =
+    "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main";
+const GITHUB_ACTIONS_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct BundleSpec {
@@ -197,6 +202,9 @@ pub struct OciBuildEvidence {
 pub struct VerifiedReleaseInputs {
     pub bundle: PathBuf,
     pub bundle_archive: PathBuf,
+    pub cosign_image_verification: PathBuf,
+    pub cosign_provenance_verification: PathBuf,
+    pub cosign_sbom_verification: PathBuf,
     pub elf_evidence: PathBuf,
     pub elf_manifest: PathBuf,
     pub hardware_evidence: PathBuf,
@@ -224,7 +232,18 @@ pub fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result<Value> {
+/// Build a structurally validated candidate for tests and diagnostics.
+///
+/// This function never emits the terminal `verified` lifecycle. Only
+/// [`finalize_release_manifest`] can do that after it invokes Cosign itself.
+pub fn build_release_manifest_candidate(inputs: &VerifiedReleaseInputs) -> Result<Value> {
+    build_release_manifest_from_evidence(inputs, "build-candidate")
+}
+
+fn build_release_manifest_from_evidence(
+    inputs: &VerifiedReleaseInputs,
+    lifecycle: &str,
+) -> Result<Value> {
     let mut release: Value = read_canonical_json(&inputs.elf_manifest)?;
     let bundle_manifest_path = inputs.bundle.join("metadata/testnet-sgx-bundle.json");
     let bundle: BundleManifest = read_canonical_json(&bundle_manifest_path)?;
@@ -237,6 +256,7 @@ pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result
     if oci.bundle_manifest_digest != file_digest(&bundle_manifest_path)? {
         bail!("OCI evidence does not bind the signed SGX bundle manifest");
     }
+    verify_cosign_image_signature(&inputs.cosign_image_verification, &oci.image.digest.value)?;
     require_evidence_result(&inputs.elf_evidence, &["passed"])?;
     require_evidence_result(&inputs.sgx_evidence, &["identical"])?;
     let hardware: Value = require_evidence_result(&inputs.hardware_evidence, &["passed"])?;
@@ -268,6 +288,31 @@ pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result
     if sbom.get("spdxVersion").and_then(Value::as_str) != Some("SPDX-2.3") {
         bail!("release SBOM must use SPDX-2.3");
     }
+    let attested_sbom = verified_cosign_attestation(
+        &inputs.cosign_sbom_verification,
+        &oci.image.digest.value,
+        "https://spdx.dev/Document",
+    )?;
+    if attested_sbom.get("predicate") != Some(&sbom) {
+        bail!("attested SBOM does not match the exact release SBOM");
+    }
+    let attested_provenance = verified_cosign_attestation(
+        &inputs.cosign_provenance_verification,
+        &oci.image.digest.value,
+        "https://slsa.dev/provenance/v0.2",
+    )?;
+    let predicate = attested_provenance
+        .get("predicate")
+        .ok_or_else(|| eyre!("verified provenance attestation lacks a predicate"))?;
+    if predicate.get("buildType").and_then(Value::as_str)
+        != Some("https://mobyproject.org/buildkit@v1")
+        || predicate
+            .get("materials")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    {
+        bail!("verified provenance is not a material-bearing BuildKit statement");
+    }
 
     let release_object = release
         .as_object_mut()
@@ -276,7 +321,7 @@ pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result
         .get_mut("release")
         .and_then(Value::as_object_mut)
         .ok_or_else(|| eyre!("ELF release manifest lacks release metadata"))?
-        .insert("lifecycle".to_owned(), Value::String("verified".to_owned()));
+        .insert("lifecycle".to_owned(), Value::String(lifecycle.to_owned()));
     let provenance = release_object
         .get_mut("build")
         .and_then(Value::as_object_mut)
@@ -290,6 +335,18 @@ pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result
     provenance.insert(
         "workflow".to_owned(),
         Value::String(".github/workflows/testnet-release.yml".to_owned()),
+    );
+    provenance.insert(
+        "certificate_identity".to_owned(),
+        Value::String(TESTNET_RELEASE_CERTIFICATE_IDENTITY.to_owned()),
+    );
+    provenance.insert(
+        "certificate_oidc_issuer".to_owned(),
+        Value::String(GITHUB_ACTIONS_OIDC_ISSUER.to_owned()),
+    );
+    provenance.insert(
+        "certificate_workflow_sha".to_owned(),
+        Value::String(bundle.source.commit.clone()),
     );
 
     let artifacts = release_object
@@ -339,7 +396,15 @@ pub fn build_verified_release_manifest(inputs: &VerifiedReleaseInputs) -> Result
         )?,
         passed_gate("independent-unsigned-sgx-bundle", &inputs.sgx_evidence)?,
         passed_gate("signed-sgx-sigstruct-verification", &bundle_manifest_path)?,
-        passed_gate("immutable-oci-sbom-and-provenance", &inputs.oci_evidence)?,
+        passed_gate_many(
+            "immutable-oci-sbom-and-provenance",
+            &[
+                &inputs.oci_evidence,
+                &inputs.cosign_image_verification,
+                &inputs.cosign_sbom_verification,
+                &inputs.cosign_provenance_verification,
+            ],
+        )?,
         passed_gate("hardware-sgx-release-smoke", &inputs.hardware_evidence)?,
     ];
     release_object.insert("verification_gates".to_owned(), Value::Array(gates));
@@ -446,20 +511,92 @@ fn require_evidence_result(path: &Path, allowed: &[&str]) -> Result<Value> {
 }
 
 fn passed_gate(name: &str, evidence: &Path) -> Result<Value> {
-    require_nonempty_regular_file(evidence, "release evidence")?;
-    let file_name = evidence
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| eyre!("release evidence needs a UTF-8 file name"))?;
+    passed_gate_many(name, &[evidence])
+}
+
+fn passed_gate_many(name: &str, evidence: &[&Path]) -> Result<Value> {
+    let evidence = evidence
+        .iter()
+        .map(|path| {
+            require_nonempty_regular_file(path, "release evidence")?;
+            let file_name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| eyre!("release evidence needs a UTF-8 file name"))?;
+            Ok(serde_json::json!({
+                "digest": file_digest(path)?,
+                "media_type": "application/json",
+                "uri": format!("release://evidence/{file_name}")
+            }))
+        })
+        .collect::<Result<Vec<_>>>()?;
     Ok(serde_json::json!({
-        "evidence": [{
-            "digest": file_digest(evidence)?,
-            "media_type": "application/json",
-            "uri": format!("release://evidence/{file_name}")
-        }],
+        "evidence": evidence,
         "name": name,
         "status": "passed"
     }))
+}
+
+fn verify_cosign_image_signature(path: &Path, expected_digest: &str) -> Result<()> {
+    let verification: Value = read_canonical_json(path)?;
+    let entries = verification
+        .as_array()
+        .ok_or_else(|| eyre!("Cosign image verification must be a JSON array"))?;
+    let expected = format!("sha256:{expected_digest}");
+    let matched = entries.iter().any(|entry| {
+        entry
+            .pointer("/critical/image/docker-manifest-digest")
+            .and_then(Value::as_str)
+            == Some(expected.as_str())
+            && entry.pointer("/critical/type").and_then(Value::as_str)
+                == Some("cosign container image signature")
+    });
+    if !matched {
+        bail!("Cosign image verification does not bind the exact OCI digest");
+    }
+    Ok(())
+}
+
+fn verified_cosign_attestation(
+    path: &Path,
+    expected_digest: &str,
+    expected_predicate_type: &str,
+) -> Result<Value> {
+    require_nonempty_regular_file(path, "release evidence")?;
+    let verification: Value = read_canonical_json(path)?;
+    let envelopes = verification
+        .as_array()
+        .ok_or_else(|| eyre!("Cosign attestation verification must be a JSON array"))?;
+    for envelope in envelopes {
+        let Some(payload) = envelope.get("payload").and_then(Value::as_str) else {
+            continue;
+        };
+        let decoded = BASE64
+            .decode(payload)
+            .wrap_err("decode verified Cosign DSSE payload")?;
+        let statement: Value =
+            serde_json::from_slice(&decoded).wrap_err("parse verified Cosign statement")?;
+        let subject_matches = statement
+            .get("subject")
+            .and_then(Value::as_array)
+            .is_some_and(|subjects| {
+                subjects.iter().any(|subject| {
+                    subject.pointer("/digest/sha256").and_then(Value::as_str)
+                        == Some(expected_digest)
+                })
+            });
+        if statement.get("_type").and_then(Value::as_str)
+            == Some("https://in-toto.io/Statement/v0.1")
+            && statement.get("predicateType").and_then(Value::as_str)
+                == Some(expected_predicate_type)
+            && subject_matches
+        {
+            return Ok(statement);
+        }
+    }
+    bail!(
+        "Cosign attestation verification does not bind predicate {expected_predicate_type} to the exact OCI digest"
+    )
 }
 
 fn require_nonempty_regular_file(path: &Path, label: &str) -> Result<()> {
@@ -1083,7 +1220,11 @@ pub fn build_image(
         .args(["--tag", image_reference, "--metadata-file"])
         .arg(metadata_file.path());
     if push {
-        command.args(["--push", "--provenance=mode=max", "--sbom=true"]);
+        command.args([
+            "--push",
+            "--provenance=mode=max,version=v0.2",
+            "--sbom=true",
+        ]);
     } else {
         command.args(["--load", "--provenance=false", "--sbom=false"]);
     }
@@ -1119,8 +1260,109 @@ pub fn finalize_release_manifest(
             output.display()
         );
     }
-    let manifest = build_verified_release_manifest(inputs)?;
+    refresh_cosign_evidence(inputs)?;
+    let manifest = build_release_manifest_from_evidence(inputs, "verified")?;
     write_canonical(&output, &manifest)
+}
+
+fn refresh_cosign_evidence(inputs: &VerifiedReleaseInputs) -> Result<()> {
+    let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
+    let bundle: BundleManifest =
+        read_canonical_json(&inputs.bundle.join("metadata/testnet-sgx-bundle.json"))?;
+    let exact_image = exact_image_reference(&oci)?;
+    let workflow_sha = bundle.source.commit.as_str();
+
+    let mut image = Command::new("cosign");
+    image
+        .args([
+            "verify",
+            "--certificate-identity",
+            TESTNET_RELEASE_CERTIFICATE_IDENTITY,
+            "--certificate-oidc-issuer",
+            GITHUB_ACTIONS_OIDC_ISSUER,
+            "--certificate-github-workflow-sha",
+            workflow_sha,
+        ])
+        .arg(&exact_image);
+    let image_output = run_output(&mut image, "cryptographically verify exact OCI image")?;
+    write_canonical(
+        &inputs.cosign_image_verification,
+        &normalize_cosign_json_output(&image_output, "Cosign image verification")?,
+    )?;
+
+    refresh_cosign_attestation(
+        &exact_image,
+        workflow_sha,
+        "spdxjson",
+        &inputs.cosign_sbom_verification,
+    )?;
+    refresh_cosign_attestation(
+        &exact_image,
+        workflow_sha,
+        "slsaprovenance02",
+        &inputs.cosign_provenance_verification,
+    )
+}
+
+fn refresh_cosign_attestation(
+    exact_image: &str,
+    workflow_sha: &str,
+    predicate_type: &str,
+    output: &Path,
+) -> Result<()> {
+    let mut command = Command::new("cosign");
+    command
+        .args([
+            "verify-attestation",
+            "--type",
+            predicate_type,
+            "--certificate-identity",
+            TESTNET_RELEASE_CERTIFICATE_IDENTITY,
+            "--certificate-oidc-issuer",
+            GITHUB_ACTIONS_OIDC_ISSUER,
+            "--certificate-github-workflow-sha",
+            workflow_sha,
+        ])
+        .arg(exact_image);
+    let value = run_output(
+        &mut command,
+        &format!("cryptographically verify {predicate_type} OCI attestation"),
+    )?;
+    write_canonical(
+        output,
+        &normalize_cosign_json_output(&value, "Cosign attestation")?,
+    )
+}
+
+fn exact_image_reference(oci: &OciBuildEvidence) -> Result<String> {
+    if oci.image_reference.contains('@') {
+        bail!("OCI build evidence image reference must be a tag before digest promotion");
+    }
+    let slash = oci.image_reference.rfind('/').unwrap_or(0);
+    let colon = oci
+        .image_reference
+        .rfind(':')
+        .filter(|position| *position > slash)
+        .ok_or_else(|| eyre!("OCI build evidence image reference lacks a release tag"))?;
+    Ok(format!(
+        "{}@sha256:{}",
+        &oci.image_reference[..colon],
+        oci.image.digest.value
+    ))
+}
+
+pub fn normalize_cosign_json_output(output: &str, label: &str) -> Result<Value> {
+    let mut flattened = Vec::new();
+    for value in serde_json::Deserializer::from_str(output).into_iter::<Value>() {
+        match value.wrap_err_with(|| format!("parse {label} JSON output"))? {
+            Value::Array(values) => flattened.extend(values),
+            value => flattened.push(value),
+        }
+    }
+    if flattened.is_empty() {
+        bail!("{label} emitted no JSON evidence");
+    }
+    Ok(Value::Array(flattened))
 }
 
 pub fn repository_root() -> Result<PathBuf> {

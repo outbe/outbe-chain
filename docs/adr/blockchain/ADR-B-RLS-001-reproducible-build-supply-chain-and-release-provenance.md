@@ -133,15 +133,33 @@ mounted scenario key.
 
 The protected workflow:
 
-1. binds an existing `vX.Y.Z-testnet.N` tag to the selected `main` commit;
+1. reads an existing annotated `vX.Y.Z-testnet.N` tag through the GitHub Git API, requires
+   its signature verification result to be `verified`, requires the embedded signed tag
+   name to equal the requested release tag, binds its tag-object SHA and target commit to
+   the selected `main` commit, and rechecks that exact tag object before each privileged
+   boundary;
 2. performs two no-cache ELF builds and two unsigned Gramine bundle preparations;
 3. compares both pairs before the protected signing job runs;
 4. records MRENCLAVE, MRSIGNER, ISVPRODID and ISVSVN from the real SIGSTRUCT;
 5. builds and pushes one `linux/amd64` OCI index with BuildKit SBOM/provenance;
-6. signs the exact OCI digest through keyless Cosign and attaches an SPDX 2.3 SBOM;
+6. signs the exact OCI digest through keyless Cosign, attaches an SPDX 2.3 SBOM and the
+   extracted BuildKit provenance predicate, then verifies both DSSE subjects;
 7. verifies and pulls that digest on the self-hosted `sgx` runner; and
 8. promotes the candidate to a canonical `verified` ReleaseManifest only after the
-   Rust/Gherkin hardware scenario passes.
+   Rust/Gherkin hardware scenario passes, binding the image signature, attested SBOM and
+   attested BuildKit provenance evidence by digest.
+
+The Rust finalizer invokes Cosign itself with the exact certificate identity, OIDC issuer
+and verified workflow SHA, then canonicalizes that command's JSON output. Uploaded or
+locally fabricated verification JSON cannot independently produce the terminal `verified`
+lifecycle.
+
+An existing GitHub Release is a terminal publication identity. The workflow never uses
+`--clobber`. It creates a draft with the complete asset matrix, downloads and compares every
+asset byte-for-byte, rechecks the verified tag object, and only then makes the release public.
+Changed output or an abandoned draft requires a new immutable testnet tag. Repository tag
+rules must independently reject update/deletion of the testnet release pattern, and GitHub
+immutable releases must protect the tag and asset set after the verified draft is published.
 
 The hardware scenario checks local SGX report measurements, both EGETKEY policies,
 same-MRSIGNER sealing across restart, artifact-substitution rejection and failure to

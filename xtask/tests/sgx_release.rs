@@ -1,11 +1,13 @@
 use std::{fs, process::Command};
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use xtask::release::sgx::{
-    build_bundle_manifest, build_verified_release_manifest, canonical_json, compare_unsigned_trees,
-    parse_oci_descriptor, parse_sigstruct_view, verify_signed_bundle,
-    write_deterministic_bundle_archive, BundleSpec, SourceIdentity, VerifiedReleaseInputs,
+    build_bundle_manifest, build_release_manifest_candidate, canonical_json,
+    compare_unsigned_trees, normalize_cosign_json_output, parse_oci_descriptor,
+    parse_sigstruct_view, verify_signed_bundle, write_deterministic_bundle_archive, BundleSpec,
+    SourceIdentity, VerifiedReleaseInputs,
 };
 
 const SIGSTRUCT: &str = "Attributes:\n\
@@ -89,6 +91,43 @@ fn cli_exposes_typed_sgx_release_commands() {
 }
 
 #[test]
+fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
+    let root = repo_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/testnet-release.yml"))
+        .expect("testnet release workflow");
+    assert_eq!(
+        workflow.matches("ref: ${{ inputs.release_tag }}").count(),
+        1,
+        "only the initial unprivileged build may resolve the input tag"
+    );
+    assert!(
+        workflow
+            .matches("ref: ${{ needs.build-and-compare.outputs.verified_commit }}")
+            .count()
+            >= 4
+    );
+    assert!(!workflow.contains("--clobber"));
+    assert!(!workflow.contains("gh release upload"));
+    assert!(workflow.contains("release ${RELEASE_TAG} already exists"));
+    assert!(workflow.contains(".verification.verified == true"));
+    assert!(workflow.contains("verified_tag_object"));
+    assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
+    assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
+    assert!(!workflow.contains("git ls-remote --exit-code origin"));
+    assert!(workflow.contains("--draft --prerelease"));
+    assert!(workflow.contains("cmp --silent"));
+    assert!(workflow.contains("gh release edit \"${RELEASE_TAG}\" --draft=false"));
+    assert!(workflow.contains("cosign-image-verification.json"));
+    assert!(workflow.contains("cosign-sbom-verification.json"));
+    assert!(workflow.contains("cosign-provenance-verification.json"));
+    assert!(!workflow.contains("buildkit-provenance.txt"));
+
+    let cargo_config =
+        fs::read_to_string(root.join(".cargo/config.toml")).expect("Cargo configuration");
+    assert!(cargo_config.contains("xtask = \"run --locked --package xtask --\""));
+}
+
+#[test]
 fn parses_buildkit_oci_descriptor_and_rejects_missing_digest() {
     let descriptor = parse_oci_descriptor(
         r#"{
@@ -111,6 +150,18 @@ fn parses_buildkit_oci_descriptor_and_rejects_missing_digest() {
     let error = parse_oci_descriptor(r#"{"containerimage.descriptor": {}}"#)
         .expect_err("missing digest must fail");
     assert!(error.to_string().contains("OCI descriptor digest"));
+}
+
+#[test]
+fn normalizes_cosign_array_and_ndjson_output() {
+    let normalized =
+        normalize_cosign_json_output("[{\"critical\":1}]\n{\"payload\":\"abc\"}\n", "fixture")
+            .expect("normalize Cosign output");
+    assert_eq!(
+        normalized,
+        serde_json::json!([{"critical": 1}, {"payload": "abc"}])
+    );
+    assert!(normalize_cosign_json_output("", "fixture").is_err());
 }
 
 fn signed_fixture() -> TempDir {
@@ -214,7 +265,7 @@ fn verification_rejects_artifact_substitution() {
 }
 
 #[test]
-fn verified_release_manifest_binds_bundle_image_sbom_and_hardware_evidence() {
+fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     let root = tempfile::tempdir().expect("tempdir");
     let fixture = signed_fixture();
     let source = SourceIdentity {
@@ -297,13 +348,66 @@ fn verified_release_manifest_binds_bundle_image_sbom_and_hardware_evidence() {
     .expect("write OCI evidence");
 
     let bundle_archive = root.path().join("outbe-tee-enclave-sgx.tar");
+    let cosign_image_verification = root.path().join("cosign-image-verification.json");
+    let cosign_provenance_verification = root.path().join("cosign-provenance-verification.json");
+    let cosign_sbom_verification = root.path().join("cosign-sbom-verification.json");
     let sbom = root.path().join("outbe-tee-enclave.spdx.json");
     let elf_evidence = root.path().join("elf-reproducibility.json");
     let sgx_evidence = root.path().join("sgx-reproducibility.json");
     let hardware_evidence = root.path().join("hardware-sgx.json");
     write_deterministic_bundle_archive(fixture.path(), &bundle_archive, source.source_date_epoch)
         .expect("archive bundle fixture");
-    fs::write(&sbom, b"{\"spdxVersion\":\"SPDX-2.3\"}\n").expect("SBOM");
+    let sbom_value = serde_json::json!({"spdxVersion": "SPDX-2.3"});
+    fs::write(&sbom, canonical_json(&sbom_value).expect("canonical SBOM")).expect("SBOM");
+    let image_digest = format!("sha256:{}", "c".repeat(64));
+    fs::write(
+        &cosign_image_verification,
+        canonical_json(&serde_json::json!([{
+            "critical": {
+                "identity": {"docker-reference": "ghcr.io/outbe/outbe-tee-enclave-testnet"},
+                "image": {"docker-manifest-digest": image_digest},
+                "type": "cosign container image signature"
+            },
+            "optional": null
+        }]))
+        .expect("canonical image verification"),
+    )
+    .expect("image verification");
+    let attestation = |predicate_type: &str, predicate: serde_json::Value| {
+        let statement = serde_json::json!({
+            "_type": "https://in-toto.io/Statement/v0.1",
+            "predicateType": predicate_type,
+            "subject": [{"name": "ghcr.io/outbe/outbe-tee-enclave-testnet", "digest": {"sha256": "c".repeat(64)}}],
+            "predicate": predicate
+        });
+        serde_json::json!([{
+            "payload": BASE64.encode(canonical_json(&statement).expect("canonical statement")),
+            "payloadType": "application/vnd.in-toto+json",
+            "signatures": [{"sig": "verified-by-cosign"}]
+        }])
+    };
+    fs::write(
+        &cosign_sbom_verification,
+        canonical_json(&attestation("https://spdx.dev/Document", sbom_value))
+            .expect("canonical SBOM verification"),
+    )
+    .expect("SBOM verification");
+    fs::write(
+        &cosign_provenance_verification,
+        canonical_json(&attestation(
+            "https://slsa.dev/provenance/v0.2",
+            serde_json::json!({
+                "buildType": "https://mobyproject.org/buildkit@v1",
+                "builder": {"id": ""},
+                "materials": [{
+                    "uri": "pkg:docker/gramineproject/gramine@1.8.1",
+                    "digest": {"sha256": "d".repeat(64)}
+                }]
+            }),
+        ))
+        .expect("canonical provenance verification"),
+    )
+    .expect("provenance verification");
     fs::write(&elf_evidence, b"{\"result\":\"passed\"}\n").expect("ELF evidence");
     fs::write(&sgx_evidence, b"{\"result\":\"identical\"}\n").expect("SGX evidence");
     let hardware = serde_json::json!({
@@ -318,20 +422,27 @@ fn verified_release_manifest_binds_bundle_image_sbom_and_hardware_evidence() {
     )
     .expect("hardware evidence");
 
-    let manifest = build_verified_release_manifest(&VerifiedReleaseInputs {
+    let inputs = VerifiedReleaseInputs {
         bundle: fixture.path().to_owned(),
         bundle_archive,
+        cosign_image_verification,
+        cosign_provenance_verification,
+        cosign_sbom_verification,
         elf_evidence,
         elf_manifest,
         hardware_evidence,
         oci_evidence,
         sbom,
         sgx_evidence,
-    })
-    .expect("verified release manifest");
+    };
+    let manifest = build_release_manifest_candidate(&inputs).expect("release manifest candidate");
 
-    assert_eq!(manifest["release"]["lifecycle"], "verified");
+    assert_eq!(manifest["release"]["lifecycle"], "build-candidate");
     assert_eq!(manifest["build"]["provenance"]["mode"], "github-actions");
+    assert_eq!(
+        manifest["build"]["provenance"]["certificate_workflow_sha"],
+        source.source_commit
+    );
     assert_eq!(
         manifest["artifacts"].as_array().expect("artifacts").len(),
         4
@@ -354,4 +465,24 @@ fn verified_release_manifest_binds_bundle_image_sbom_and_hardware_evidence() {
         .expect("gates")
         .iter()
         .all(|gate| gate["status"] == "passed"));
+    let oci_gate = manifest["verification_gates"]
+        .as_array()
+        .expect("gates")
+        .iter()
+        .find(|gate| gate["name"] == "immutable-oci-sbom-and-provenance")
+        .expect("OCI gate");
+    assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
+
+    fs::write(
+        &inputs.cosign_sbom_verification,
+        canonical_json(&attestation(
+            "https://spdx.dev/Document",
+            serde_json::json!({"spdxVersion": "SPDX-2.2"}),
+        ))
+        .expect("mismatched verification"),
+    )
+    .expect("replace verification");
+    let error = build_release_manifest_candidate(&inputs)
+        .expect_err("attested SBOM substitution must fail");
+    assert!(error.to_string().contains("attested SBOM"));
 }

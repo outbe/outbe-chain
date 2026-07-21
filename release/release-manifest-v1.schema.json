@@ -2,6 +2,39 @@
   "$id": "https://outbe.io/schemas/release-manifest-v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "release": {
+            "properties": {
+              "lifecycle": {
+                "const": "verified"
+              }
+            },
+            "required": ["lifecycle"]
+          }
+        },
+        "required": ["release"]
+      },
+      "then": {
+        "properties": {
+          "build": {
+            "properties": {
+              "provenance": {
+                "properties": {
+                  "mode": {
+                    "const": "github-actions"
+                  }
+                },
+                "required": ["mode"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "$schema": {
       "const": "https://outbe.io/schemas/release-manifest-v1.json"
@@ -402,15 +435,45 @@
     },
     "provenance": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "github-actions"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "required": [
+              "certificate_identity",
+              "certificate_oidc_issuer",
+              "certificate_workflow_sha",
+              "workflow"
+            ]
+          }
+        }
+      ],
       "properties": {
         "entrypoint": {
           "const": "scripts/release/reproducible-build.sh"
+        },
+        "certificate_identity": {
+          "const": "https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main"
+        },
+        "certificate_oidc_issuer": {
+          "const": "https://token.actions.githubusercontent.com"
+        },
+        "certificate_workflow_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
         },
         "mode": {
           "enum": ["local-container", "github-actions"]
         },
         "workflow": {
-          "$ref": "#/$defs/ascii"
+          "const": ".github/workflows/testnet-release.yml"
         }
       },
       "required": ["mode", "entrypoint"],

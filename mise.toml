@@ -314,7 +314,7 @@ run = 'cargo xtask release sgx manifest "$@"'
 
 [tasks.release-sgx-hardware-e2e]
 description = "Run Rust/Gherkin acceptance against an exact published testnet SGX image digest"
-run = 'cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
 
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;

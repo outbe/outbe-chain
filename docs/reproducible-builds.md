@@ -142,5 +142,11 @@ publication.
 
 This local proof is deliberately narrower than a complete release. The protected workflow
 provides exact consumption, testnet Gramine/SIGSTRUCT/OCI authorization, Cosign, SPDX and
-hardware evidence, but deterministic native packages, every non-enclave OCI/profile,
+hardware evidence. Its privileged jobs consume one verified commit SHA, run the typed
+release commands with Cargo's locked dependency graph, require the GitHub Git API to verify
+and preserve one signed annotated tag object across every privileged boundary, and bind
+verified Cosign image, SBOM and BuildKit provenance evidence into the final manifest. The Rust finalizer obtains
+that evidence by invoking Cosign itself; publication remains a draft until every downloaded
+asset matches byte-for-byte. Deterministic native
+packages, every non-enclave OCI/profile,
 production signing authority, TUF, `outbeup` and the operator sidecar remain separate work.
