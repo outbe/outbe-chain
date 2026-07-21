@@ -23,11 +23,17 @@ use commonware_cryptography::bls12381::{
 };
 use commonware_utils::{ordered::Set, N3f1};
 use eyre::{ensure, Result, WrapErr};
-use std::{io::Write as _, num::NonZeroU32, path::Path};
+use std::{
+    io::Write as _,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 use tracing::debug;
 
 /// Maximum number of validators supported (used as upper bound for codec deserialization).
 pub(crate) const MAX_VALIDATORS: u32 = 256;
+static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
 // KeyBackend — storage backend for BLS key material
@@ -152,19 +158,36 @@ fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
         .file_name()
         .ok_or_else(|| eyre::eyre!("{kind} path has no file name: {}", path.display()))?
         .to_string_lossy();
-    let tmp_path = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
+    let open_temp = || -> Result<(PathBuf, std::fs::File)> {
+        loop {
+            let sequence = SECRET_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let tmp_path = path.with_file_name(format!(
+                ".{file_name}.tmp.{}.{}",
+                std::process::id(),
+                sequence
+            ));
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&tmp_path) {
+                Ok(file) => return Ok((tmp_path, file)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).wrap_err_with(|| {
+                        format!("failed to open {kind} file: {}", tmp_path.display())
+                    });
+                }
+            }
+        }
+    };
+
+    let (tmp_path, mut file) = open_temp()?;
 
     let write_result = (|| -> Result<()> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&tmp_path)
-            .wrap_err_with(|| format!("failed to open {kind} file: {}", tmp_path.display()))?;
         file.write_all(data)
             .wrap_err_with(|| format!("failed to write {kind} file: {}", tmp_path.display()))?;
         file.sync_all()

@@ -65,6 +65,42 @@ fn testnet_clock_offset_is_allowed_only_on_explicit_test_networks() {
     }
 }
 
+#[test]
+fn every_testnet_only_flag_is_rejected_for_unregistered_networks() {
+    let chain_id = 1_000_000_001;
+    assert!(validate_testnet_only_flags(true, false, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, true, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, false, Some(0), chain_id).is_err());
+}
+
+#[test]
+fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    for file in [
+        DKG_PENDING_SHARE_FILE,
+        DKG_PENDING_POLYNOMIAL_FILE,
+        DKG_PENDING_OUTPUT_FILE,
+        DKG_PENDING_BOUNDARY_FILE,
+        DKG_PENDING_BOUNDARY_TMP_FILE,
+        DKG_DEALER_RETRY_FILE,
+    ] {
+        std::fs::write(dir.path().join(file), b"stale").unwrap();
+    }
+
+    retire_activated_dkg_retry_state(dir.path(), &bls::KeyBackend::Plaintext).unwrap();
+
+    for file in [
+        DKG_PENDING_SHARE_FILE,
+        DKG_PENDING_POLYNOMIAL_FILE,
+        DKG_PENDING_OUTPUT_FILE,
+        DKG_PENDING_BOUNDARY_FILE,
+        DKG_PENDING_BOUNDARY_TMP_FILE,
+        DKG_DEALER_RETRY_FILE,
+    ] {
+        assert!(!dir.path().join(file).exists(), "{file} was not retired");
+    }
+}
+
 /// Run a minimal 3-node DKG to get a valid (Output, Share) for testing.
 #[allow(clippy::type_complexity)]
 fn run_test_dkg_complete() -> (

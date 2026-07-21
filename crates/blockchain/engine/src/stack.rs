@@ -2118,6 +2118,22 @@ where
         + Sync
         + 'static,
 {
+    // Validate network-scoped flags before any mode-specific early return. A
+    // follower must fail closed too, even when it does not currently consume
+    // these options.
+    let chain_id = node.chain_spec().chain().id();
+    validate_testnet_only_flags(
+        args.trust_el_head,
+        args.force_dkg,
+        args.testnet_unix_time_offset_secs,
+        chain_id,
+    )?;
+    if args.force_dkg && !args.trust_el_head {
+        return Err(eyre::eyre!(
+            "--testnet.force-dkg requires --testnet.trust-el-head"
+        ));
+    }
+
     // Follower mode: cold-sync finalized blocks from an upstream node and verify
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before any validator material is loaded.
@@ -2133,20 +2149,6 @@ where
             ce_startup_recovery,
         )
         .await;
-    }
-
-    // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
-    let chain_id = node.chain_spec().chain().id();
-    validate_testnet_only_flags(
-        args.trust_el_head,
-        args.force_dkg,
-        args.testnet_unix_time_offset_secs,
-        chain_id,
-    )?;
-    if args.force_dkg && !args.trust_el_head {
-        return Err(eyre::eyre!(
-            "--testnet.force-dkg requires --testnet.trust-el-head"
-        ));
     }
 
     // ── 1. Load signing key ─────────────────────────────────────────────
@@ -4280,6 +4282,12 @@ where
                                 if last_dkg_output.as_ref() != Some(&boundary_output) {
                                     let local_pk = signing_key.public_key();
                                     if boundary_output.players().position(&local_pk).is_none() {
+                                        if let Some(ref keys_dir) = args.keys_dir {
+                                            retire_activated_dkg_retry_state(
+                                                keys_dir,
+                                                &key_backend,
+                                            )?;
+                                        }
                                         info!(
                                             dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
                                             "finalized DKG boundary excludes local validator; exiting validator mode"
@@ -4314,12 +4322,7 @@ where
                                             "finalized DKG boundary adopted in verifier mode; no private share to promote"
                                         );
                                     }
-                                    remove_pending_dkg_state(keys_dir);
-                                    clear_pending_dkg_boundary(keys_dir);
-                                    dkg_dealer_retry_store(&args, &key_backend)
-                                        .expect("keys_dir is present")
-                                        .clear()
-                                        .wrap_err("failed to retire activated DKG retry state")?;
+                                    retire_activated_dkg_retry_state(keys_dir, &key_backend)?;
                                 }
                             }
                         }
@@ -5506,6 +5509,17 @@ fn dkg_dealer_retry_store(
     args.keys_dir
         .as_ref()
         .map(|keys_dir| dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+}
+
+fn retire_activated_dkg_retry_state(
+    keys_dir: &std::path::Path,
+    key_backend: &bls::KeyBackend,
+) -> Result<()> {
+    remove_pending_dkg_state(keys_dir);
+    clear_pending_dkg_boundary(keys_dir);
+    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+        .clear()
+        .wrap_err("failed to retire activated DKG retry state")
 }
 
 const DKG_ALL_FILES: &[&str] = &[

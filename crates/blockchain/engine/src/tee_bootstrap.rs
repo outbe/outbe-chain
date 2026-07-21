@@ -42,7 +42,8 @@ const DELIVERY_ID_DOMAIN: &[u8] = b"outbe:tee-delivery:v1";
 #[derive(Debug)]
 struct PendingDelivery {
     envelope: Vec<u8>,
-    recipients: Recipients<bls12381::PublicKey>,
+    broadcast: bool,
+    recipients: BTreeSet<bls12381::PublicKey>,
     acknowledged: BTreeSet<bls12381::PublicKey>,
     retry_in_ticks: u32,
     retry_every_ticks: u32,
@@ -85,9 +86,29 @@ impl DeliveryTracker {
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, CeremonyError> {
         let id = self.message_id(&payload);
-        if let Some(existing) = self.pending.get(&id) {
+        if let Some(existing) = self.pending.get_mut(&id) {
+            match recipients {
+                Recipients::All => existing.broadcast = true,
+                Recipients::One(peer) => {
+                    existing.recipients.insert(peer);
+                }
+                _ => {
+                    return Err(CeremonyError::Delivery(
+                        "unsupported recipient mode for tracked delivery".to_string(),
+                    ));
+                }
+            }
             return Ok(existing.envelope.clone());
         }
+        let (broadcast, recipients) = match recipients {
+            Recipients::All => (true, BTreeSet::new()),
+            Recipients::One(peer) => (false, [peer].into_iter().collect()),
+            _ => {
+                return Err(CeremonyError::Delivery(
+                    "unsupported recipient mode for tracked delivery".to_string(),
+                ));
+            }
+        };
         let mut envelope = Vec::with_capacity(1 + DELIVERY_ID_LEN + payload.len());
         envelope.push(DELIVERY_DATA);
         envelope.extend_from_slice(id.as_slice());
@@ -106,6 +127,7 @@ impl DeliveryTracker {
             id,
             PendingDelivery {
                 envelope: envelope.clone(),
+                broadcast,
                 recipients,
                 acknowledged: BTreeSet::new(),
                 retry_in_ticks: DELIVERY_INITIAL_RETRY_TICKS,
@@ -127,16 +149,17 @@ impl DeliveryTracker {
     fn acknowledge(&mut self, peer: &bls12381::PublicKey, id: B256) {
         let complete = if let Some(pending) = self.pending.get_mut(&id) {
             pending.acknowledged.insert(peer.clone());
-            match &pending.recipients {
-                Recipients::One(expected) => expected == peer,
-                Recipients::All => {
-                    self.known_peers.len() >= self.allowed_peers.len()
-                        && self
-                            .known_peers
-                            .iter()
-                            .all(|known| pending.acknowledged.contains(known))
-                }
-                _ => false,
+            if pending.broadcast {
+                self.known_peers.len() >= self.allowed_peers.len()
+                    && self
+                        .known_peers
+                        .iter()
+                        .all(|known| pending.acknowledged.contains(known))
+            } else {
+                pending
+                    .recipients
+                    .iter()
+                    .all(|expected| pending.acknowledged.contains(expected))
             }
         } else {
             false
@@ -155,17 +178,16 @@ impl DeliveryTracker {
                 pending.retry_in_ticks -= 1;
                 continue;
             }
-            match &pending.recipients {
-                Recipients::One(peer) if !pending.acknowledged.contains(peer) => {
+            if pending.broadcast && self.known_peers.len() >= self.allowed_peers.len() {
+                for peer in self.known_peers.difference(&pending.acknowledged) {
                     retry.push((Recipients::One(peer.clone()), pending.envelope.clone()));
                 }
-                Recipients::All if self.known_peers.len() >= self.allowed_peers.len() => {
-                    for peer in self.known_peers.difference(&pending.acknowledged) {
-                        retry.push((Recipients::One(peer.clone()), pending.envelope.clone()));
-                    }
+            } else if pending.broadcast {
+                retry.push((Recipients::All, pending.envelope.clone()));
+            } else {
+                for peer in pending.recipients.difference(&pending.acknowledged) {
+                    retry.push((Recipients::One(peer.clone()), pending.envelope.clone()));
                 }
-                Recipients::All => retry.push((Recipients::All, pending.envelope.clone())),
-                _ => {}
             }
             pending.retry_every_ticks = pending
                 .retry_every_ticks
@@ -1288,5 +1310,33 @@ mod tests {
             }
         }
         assert_eq!(sends, vec![1, 3, 7, 15, 31]);
+    }
+
+    #[test]
+    fn delivery_tracker_merges_recipients_for_identical_payloads() {
+        let peer_a = bls12381::PrivateKey::from_seed(104).public_key();
+        let peer_b = bls12381::PrivateKey::from_seed(105).public_key();
+        let mut tracker = DeliveryTracker::new(
+            B256::repeat_byte(0x33),
+            [peer_a.clone(), peer_b.clone()].into_iter().collect(),
+        );
+        assert!(tracker.observe_peer(peer_a.clone()));
+        assert!(tracker.observe_peer(peer_b.clone()));
+
+        let first = tracker
+            .envelope(Recipients::One(peer_a.clone()), b"same".to_vec())
+            .unwrap();
+        let second = tracker
+            .envelope(Recipients::One(peer_b.clone()), b"same".to_vec())
+            .unwrap();
+        assert_eq!(first, second);
+
+        let retry = tracker.retry_batch();
+        assert_eq!(retry.len(), 2);
+        let (_, id, _) = tracker.decode(&first).unwrap();
+        tracker.acknowledge(&peer_a, id);
+        assert!(!tracker.pending.is_empty());
+        tracker.acknowledge(&peer_b, id);
+        assert!(tracker.pending.is_empty());
     }
 }
