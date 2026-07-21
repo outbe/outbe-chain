@@ -18,10 +18,8 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 time = { workspace = true, features = ["formatting"] }
-walkdir.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
+walkdir.workspace = true
 
 [lints]
 workspace = true

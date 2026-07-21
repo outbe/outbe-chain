@@ -67,6 +67,18 @@ enum SgxCommand {
         #[arg(long)]
         bundle: PathBuf,
     },
+    /// Build an immutable OCI image from an already verified signed bundle.
+    Image {
+        #[arg(long)]
+        bundle: PathBuf,
+        #[arg(long)]
+        image: String,
+        #[arg(long)]
+        output: PathBuf,
+        /// Push by digest and emit BuildKit SBOM/provenance attestations.
+        #[arg(long)]
+        push: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -104,6 +116,15 @@ fn main() -> Result<()> {
                 SgxCommand::Verify { bundle } => {
                     sgx::verify(&repo_root, &bundle)?;
                     println!("verified signed testnet SGX bundle: {}", bundle.display());
+                }
+                SgxCommand::Image {
+                    bundle,
+                    image,
+                    output,
+                    push,
+                } => {
+                    sgx::build_image(&repo_root, &bundle, &image, &output, push)?;
+                    println!("testnet SGX OCI evidence: {}", output.display());
                 }
             },
         },

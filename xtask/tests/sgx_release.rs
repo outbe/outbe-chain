@@ -2,8 +2,8 @@ use std::{fs, process::Command};
 
 use tempfile::TempDir;
 use xtask::release::sgx::{
-    build_bundle_manifest, canonical_json, compare_unsigned_trees, parse_sigstruct_view,
-    verify_signed_bundle, BundleSpec, SourceIdentity,
+    build_bundle_manifest, canonical_json, compare_unsigned_trees, parse_oci_descriptor,
+    parse_sigstruct_view, verify_signed_bundle, BundleSpec, SourceIdentity,
 };
 
 const SIGSTRUCT: &str = "Attributes:\n\
@@ -76,12 +76,37 @@ fn cli_exposes_typed_sgx_release_commands() {
         .expect("run xtask help");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("UTF-8 help");
-    for command in ["prepare", "compare", "sign", "verify"] {
+    for command in ["prepare", "compare", "sign", "verify", "image"] {
         assert!(
             stdout.contains(command),
             "missing command {command}: {stdout}"
         );
     }
+}
+
+#[test]
+fn parses_buildkit_oci_descriptor_and_rejects_missing_digest() {
+    let descriptor = parse_oci_descriptor(
+        r#"{
+          "containerimage.descriptor": {
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "size": 856
+          },
+          "containerimage.digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        }"#,
+    )
+    .expect("valid BuildKit metadata");
+    assert_eq!(descriptor.size, 856);
+    assert_eq!(descriptor.digest.value.len(), 64);
+    assert_eq!(
+        descriptor.media_type,
+        "application/vnd.oci.image.index.v1+json"
+    );
+
+    let error = parse_oci_descriptor(r#"{"containerimage.descriptor": {}}"#)
+        .expect_err("missing digest must fail");
+    assert!(error.to_string().contains("OCI descriptor digest"));
 }
 
 fn signed_fixture() -> TempDir {

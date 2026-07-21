@@ -300,6 +300,10 @@ run = 'cargo xtask release sgx sign "$@"'
 description = "Verify a pre-signed testnet SGX bundle and its SIGSTRUCT"
 run = 'cargo xtask release sgx verify "$@"'
 
+[tasks.release-sgx-image]
+description = "Build an immutable OCI image from a verified signed SGX bundle"
+run = 'cargo xtask release sgx image "$@"'
+
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;
 #  2) e2e test: same path INCLUDING the Noise/UDS transport round-trip.

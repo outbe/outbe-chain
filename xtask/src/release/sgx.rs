@@ -173,6 +173,26 @@ pub struct ComparisonEvidence {
     pub tree_digest: Sha256Digest,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct OciDescriptor {
+    pub digest: Sha256Digest,
+    pub media_type: String,
+    pub size: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct OciBuildEvidence {
+    pub bundle_manifest_digest: Sha256Digest,
+    pub image: OciDescriptor,
+    pub image_reference: String,
+    pub measurements: Measurements,
+    pub platform: String,
+    pub provenance_attestation: bool,
+    pub sbom_attestation: bool,
+    pub schema_version: String,
+    pub source: ManifestSource,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct TreeEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +263,44 @@ pub fn parse_sigstruct_view(output: &str) -> Result<Measurements> {
             .wrap_err("parse SIGSTRUCT isv_svn")?,
         mrenclave,
         mrsigner,
+    })
+}
+
+pub fn parse_oci_descriptor(metadata: &str) -> Result<OciDescriptor> {
+    let value: Value = serde_json::from_str(metadata).wrap_err("parse BuildKit metadata")?;
+    let descriptor = value
+        .get("containerimage.descriptor")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre!("BuildKit metadata lacks OCI descriptor"))?;
+    let digest = descriptor
+        .get("digest")
+        .and_then(Value::as_str)
+        .or_else(|| value.get("containerimage.digest").and_then(Value::as_str))
+        .ok_or_else(|| eyre!("BuildKit metadata lacks OCI descriptor digest"))?;
+    let Some(digest) = digest.strip_prefix("sha256:") else {
+        bail!("OCI descriptor digest must use sha256");
+    };
+    if !is_lower_hex(digest, 64) {
+        bail!("OCI descriptor digest must contain 32 lowercase hexadecimal bytes");
+    }
+    let media_type = descriptor
+        .get("mediaType")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("BuildKit metadata lacks OCI descriptor media type"))?;
+    if media_type.is_empty() || !media_type.is_ascii() {
+        bail!("OCI descriptor media type must be non-empty ASCII");
+    }
+    let size = descriptor
+        .get("size")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| eyre!("BuildKit metadata lacks OCI descriptor size"))?;
+    Ok(OciDescriptor {
+        digest: Sha256Digest {
+            algorithm: "sha256".to_owned(),
+            value: digest.to_owned(),
+        },
+        media_type: media_type.to_owned(),
+        size,
     })
 }
 
@@ -575,6 +633,63 @@ pub fn verify(repo_root: &Path, bundle: &Path) -> Result<()> {
         .args([container_adapter(), "view"]);
     let sigstruct_view = run_output(&mut command, "read signed SGX SIGSTRUCT")?;
     verify_signed_bundle(&bundle, &manifest, &spec, &sigstruct_view)
+}
+
+pub fn build_image(
+    repo_root: &Path,
+    bundle: &Path,
+    image_reference: &str,
+    output: &Path,
+    push: bool,
+) -> Result<()> {
+    if image_reference.is_empty()
+        || !image_reference.is_ascii()
+        || image_reference.chars().any(char::is_whitespace)
+    {
+        bail!("OCI image reference must be non-empty ASCII without whitespace");
+    }
+    let output = absolute_path(output)?;
+    if output.exists() {
+        bail!("OCI build evidence already exists: {}", output.display());
+    }
+    verify(repo_root, bundle)?;
+    let bundle = fs::canonicalize(bundle)
+        .wrap_err_with(|| format!("resolve signed SGX bundle: {}", bundle.display()))?;
+    if output.starts_with(&bundle) {
+        bail!("OCI build evidence must be outside the signed bundle");
+    }
+    let manifest_path = bundle.join("metadata/testnet-sgx-bundle.json");
+    let manifest: BundleManifest = read_canonical_json(&manifest_path)?;
+    let metadata_file = tempfile::NamedTempFile::new().wrap_err("create BuildKit metadata file")?;
+    let dockerfile = repo_root.join("bin/outbe-tee-enclave/gramine/Dockerfile");
+    let mut command = Command::new("docker");
+    command
+        .args(["buildx", "build", "--platform", "linux/amd64", "--file"])
+        .arg(&dockerfile)
+        .args(["--tag", image_reference, "--metadata-file"])
+        .arg(metadata_file.path());
+    if push {
+        command.args(["--push", "--provenance=mode=max", "--sbom=true"]);
+    } else {
+        command.args(["--load", "--provenance=false", "--sbom=false"]);
+    }
+    command.arg(&bundle);
+    run_status(&mut command, "build immutable testnet SGX OCI image")?;
+    let buildkit_metadata =
+        fs::read_to_string(metadata_file.path()).wrap_err("read BuildKit OCI metadata")?;
+    let descriptor = parse_oci_descriptor(&buildkit_metadata)?;
+    let evidence = OciBuildEvidence {
+        bundle_manifest_digest: file_digest(&manifest_path)?,
+        image: descriptor,
+        image_reference: image_reference.to_owned(),
+        measurements: manifest.measurements,
+        platform: "linux/amd64".to_owned(),
+        provenance_attestation: push,
+        sbom_attestation: push,
+        schema_version: "1.0.0".to_owned(),
+        source: manifest.source,
+    };
+    write_canonical(&output, &evidence)
 }
 
 pub fn repository_root() -> Result<PathBuf> {
