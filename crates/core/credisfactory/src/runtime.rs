@@ -191,14 +191,9 @@ pub fn pay_anadosis(
     Ok(result)
 }
 
-// ---------------------------------------------------------------------------
-// expire_position (credis-period-expiry collateral burn — spec §3.6)
-// ---------------------------------------------------------------------------
-
 /// Burns the outstanding pledged collateral of an expired credis position, drops the
 /// pledger's fidelity cohort by the burned amount, and deposits the equivalent value
-/// into the Promis Reserve. Called by the begin-block expiry sweep for positions past
-/// their 10-month term with an unpaid balance.
+/// into the Promis Reserve.
 pub fn expire_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
     let now = storage.timestamp()?.to::<u64>();
     let position = CredisContract::new(storage.clone()).get_position(position_id)?;
