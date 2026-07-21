@@ -47,6 +47,11 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     assert!(template.contains("sgx.debug = false"));
     assert!(template.contains("sgx.remote_attestation = \"none\""));
     assert!(!template.contains("gramine-direct"));
+
+    let adapter =
+        fs::read_to_string(root.join("scripts/release/build-testnet-sgx-bundle-in-container.sh"))
+            .expect("Gramine container adapter");
+    assert!(adapter.contains("--chroot \"${bundle_root}\""));
 }
 
 #[test]

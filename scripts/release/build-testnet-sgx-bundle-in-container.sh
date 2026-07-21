@@ -39,6 +39,7 @@ prepare() {
     "${installed}/host-libs/libc.so.6"
 
   gramine-manifest \
+    --chroot "${bundle_root}" \
     -Dinstall_root="${install_root}" \
     -Dmax_threads="${SGX_MAX_THREADS}" \
     -Disv_prod_id="${SGX_ISV_PROD_ID}" \
