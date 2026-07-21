@@ -113,6 +113,8 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("verified_tag_object"));
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
+    assert!(workflow.contains("runs-on: testnet-release-sgx"));
+    assert!(!workflow.contains("runs-on: [self-hosted, sgx]"));
     assert!(!workflow.contains("git ls-remote --exit-code origin"));
     assert!(workflow.contains("--draft --prerelease"));
     assert!(workflow.contains("cmp --silent"));

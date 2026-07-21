@@ -317,7 +317,7 @@ jobs:
   hardware-smoke:
     name: exact published image on hardware SGX
     needs: [build-and-compare, package-and-sign-image]
-    runs-on: [self-hosted, sgx]
+    runs-on: testnet-release-sgx
     timeout-minutes: 35
     permissions:
       contents: read
