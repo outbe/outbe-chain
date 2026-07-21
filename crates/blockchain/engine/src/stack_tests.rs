@@ -46,6 +46,25 @@ use std::{
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
+    let unknown_production_chain = 1_000_000_001;
+    let error = validate_testnet_only_flags(false, false, Some(1), unknown_production_chain)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("--testnet.unix-time-offset-secs"));
+}
+
+#[test]
+fn testnet_clock_offset_is_allowed_only_on_explicit_test_networks() {
+    for chain_id in [
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        outbe_primitives::chain::TESTNET_CHAIN_ID,
+    ] {
+        validate_testnet_only_flags(false, false, Some(-60), chain_id).unwrap();
+    }
+}
+
 /// Run a minimal 3-node DKG to get a valid (Output, Share) for testing.
 #[allow(clippy::type_complexity)]
 fn run_test_dkg_complete() -> (
@@ -1929,6 +1948,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         keys_dir: None,
         trust_el_head: false,
         force_dkg: false,
+        testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
         payload_resolve_time_ms: 200,
@@ -2904,6 +2924,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         keys_dir: None,
         trust_el_head: false,
         force_dkg: false,
+        testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
         payload_resolve_time_ms: 200,
@@ -3335,6 +3356,7 @@ mod restart_recovery {
             keys_dir: None,
             trust_el_head: false,
             force_dkg: false,
+            testnet_unix_time_offset_secs: None,
             consensus_peers: Vec::new(),
             use_local_defaults: true,
             payload_resolve_time_ms: 200,

@@ -2075,6 +2075,27 @@ where
     .await
 }
 
+fn validate_testnet_only_flags(
+    trust_el_head: bool,
+    force_dkg: bool,
+    unix_time_offset_secs: Option<i64>,
+    chain_id: u64,
+) -> Result<()> {
+    let is_explicit_test_network = outbe_primitives::chain::is_devnet(chain_id)
+        || outbe_primitives::chain::is_testnet(chain_id);
+    if (trust_el_head || force_dkg) && !is_explicit_test_network {
+        return Err(eyre::eyre!(
+            "--testnet.trust-el-head and --testnet.force-dkg are not allowed on non-test networks (chain_id {chain_id})"
+        ));
+    }
+    if unix_time_offset_secs.is_some() && !is_explicit_test_network {
+        return Err(eyre::eyre!(
+            "--testnet.unix-time-offset-secs is not allowed on non-test networks (chain_id {chain_id})"
+        ));
+    }
+    Ok(())
+}
+
 pub async fn run_consensus_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
@@ -2116,17 +2137,12 @@ where
 
     // ── 0. Validate testnet-only disaster-recovery flags ─────────────────
     let chain_id = node.chain_spec().chain().id();
-    if (args.trust_el_head || args.force_dkg) && outbe_primitives::chain::is_mainnet(chain_id) {
-        return Err(eyre::eyre!(
-            "--testnet.trust-el-head and --testnet.force-dkg are not allowed on mainnet (chain_id {chain_id})"
-        ));
-    }
-    if args.testnet_unix_time_offset_secs.is_some() && outbe_primitives::chain::is_mainnet(chain_id)
-    {
-        return Err(eyre::eyre!(
-            "--testnet.unix-time-offset-secs is not allowed on mainnet (chain_id {chain_id})"
-        ));
-    }
+    validate_testnet_only_flags(
+        args.trust_el_head,
+        args.force_dkg,
+        args.testnet_unix_time_offset_secs,
+        chain_id,
+    )?;
     if args.force_dkg && !args.trust_el_head {
         return Err(eyre::eyre!(
             "--testnet.force-dkg requires --testnet.trust-el-head"
@@ -2722,6 +2738,13 @@ where
             let dkg_chain_id =
                 B256::left_padding_from(&node.chain_spec().chain().id().to_be_bytes());
             let n = participants.len();
+            let local_consensus_key = signing_key.public_key();
+            let tee_remote_peers: std::collections::BTreeSet<bls12381::PublicKey> = participants
+                .iter()
+                .filter(|peer| *peer != &local_consensus_key)
+                .cloned()
+                .collect();
+            let dkg_remote_peers = tee_remote_peers.clone();
             let deadline = std::time::Duration::from_secs(args.tee_bootstrap_timeout_secs);
 
             let (dkg_sender, dkg_receiver) = tee_dkg_round0
@@ -2761,6 +2784,7 @@ where
                             dkg_chain_id,
                             0,
                             &connect_policy,
+                            dkg_remote_peers,
                             dkg_sender,
                             dkg_receiver,
                         )
@@ -2779,6 +2803,7 @@ where
                         tribute_offer_group_public_key,
                         tee_policy,
                         &evm_signer,
+                        tee_remote_peers,
                         tee_sender,
                         tee_receiver,
                     )
@@ -4291,6 +4316,10 @@ where
                                     }
                                     remove_pending_dkg_state(keys_dir);
                                     clear_pending_dkg_boundary(keys_dir);
+                                    dkg_dealer_retry_store(&args, &key_backend)
+                                        .expect("keys_dir is present")
+                                        .clear()
+                                        .wrap_err("failed to retire activated DKG retry state")?;
                                 }
                             }
                         }
@@ -5468,6 +5497,7 @@ const DKG_PENDING_POLYNOMIAL_FILE: &str = "dkg_pending_polynomial.hex";
 const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
+const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
 
 fn dkg_dealer_retry_store(
     args: &ConsensusArgs,
@@ -5486,6 +5516,7 @@ const DKG_ALL_FILES: &[&str] = &[
     DKG_PENDING_POLYNOMIAL_FILE,
     DKG_PENDING_OUTPUT_FILE,
     DKG_PENDING_BOUNDARY_FILE,
+    DKG_DEALER_RETRY_FILE,
 ];
 
 /// Move DKG key files from legacy location (`consensus/`) to dedicated `keys/` dir.
@@ -6330,6 +6361,9 @@ async fn obtain_threshold_material(
                             )?;
                         remove_pending_dkg_state(keys_dir);
                         clear_pending_dkg_boundary(keys_dir);
+                        dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+                            .clear()
+                            .wrap_err("failed to retire recovered DKG retry state")?;
                         info!(
                             keys_dir = %keys_dir.display(),
                             vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),

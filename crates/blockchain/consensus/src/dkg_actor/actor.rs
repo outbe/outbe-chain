@@ -117,6 +117,13 @@ impl DkgDealerRetryStore {
         )
         .map_err(|error| eyre::eyre!("failed to persist DKG dealer retry snapshot: {error}"))
     }
+
+    /// Remove the dealer transcript only after the matching DKG output has been
+    /// durably promoted at its canonical activation boundary.
+    pub fn clear(&self) -> Result<()> {
+        crate::bls::remove_raw(&self.path, &self.backend)
+            .map_err(|error| eyre::eyre!("failed to clear DKG dealer retry snapshot: {error}"))
+    }
 }
 
 fn encode_dealer_retry_snapshot(snapshot: &DkgDealerRetrySnapshot) -> Result<Vec<u8>> {
@@ -2782,6 +2789,9 @@ mod tests {
             })
             .unwrap()
             .is_none());
+
+        store.clear().unwrap();
+        assert!(store.load(ceremony).unwrap().is_none());
     }
 
     #[test]

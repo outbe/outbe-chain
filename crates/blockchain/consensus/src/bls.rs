@@ -94,8 +94,7 @@ fn save_encrypted(path: &Path, data: &[u8], passphrase: &str) -> Result<()> {
     out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&in_out);
-    std::fs::write(path, out)
-        .wrap_err_with(|| format!("failed to write encrypted file: {}", path.display()))
+    atomic_write_secret(path, &out, "encrypted key")
 }
 
 use outbe_primitives::crypto::OneNonce;
@@ -103,12 +102,20 @@ use outbe_primitives::crypto::OneNonce;
 /// Save `data` to OS keychain and write a marker file at `path`.
 fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
     let service = "outbe-chain";
-    let account = path
+    let account_prefix = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
+    // A content-addressed account keeps the old marker + old secret valid until
+    // the new marker is atomically installed. Reusing one account would expose
+    // a cross-backend crash window where the marker still names a secret whose
+    // contents have already changed.
+    let account = format!(
+        "{account_prefix}-{}",
+        hex::encode(ring::digest::digest(&ring::digest::SHA256, data,))
+    );
 
-    let entry = keyring::Entry::new(service, account)
+    let entry = keyring::Entry::new(service, &account)
         .map_err(|e| eyre::eyre!("keychain entry creation failed: {e}"))?;
     entry
         .set_password(&hex::encode(data))
@@ -116,17 +123,7 @@ fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
 
     // Write marker file on disk (pointer to keychain entry)
     let marker = format!("{KEYCHAIN_MARKER}{service}\n{account}\n");
-    std::fs::write(path, &marker)
-        .wrap_err_with(|| format!("failed to write keychain marker: {}", path.display()))?;
-
-    // Restrictive file permissions on Unix
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    }
-
-    Ok(())
+    atomic_write_secret(path, marker.as_bytes(), "keychain marker")
 }
 
 /// Save raw bytes using the specified backend.
@@ -142,9 +139,18 @@ pub(crate) fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result
 }
 
 fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
+    atomic_write_secret(path, data, "plaintext key")
+}
+
+/// Crash-consistently replace one secret file.
+///
+/// The new bytes reach a fresh owner-only file first, then the file is renamed
+/// over the old version and the parent directory is synced so the rename itself
+/// survives power loss. Callers never expose a partially-written target.
+fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
     let file_name = path
         .file_name()
-        .ok_or_else(|| eyre::eyre!("plaintext key path has no file name: {}", path.display()))?
+        .ok_or_else(|| eyre::eyre!("{kind} path has no file name: {}", path.display()))?
         .to_string_lossy();
     let tmp_path = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
 
@@ -156,36 +162,29 @@ fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&tmp_path).wrap_err_with(|| {
-            format!("failed to open plaintext key file: {}", tmp_path.display())
-        })?;
-        file.write_all(data).wrap_err_with(|| {
-            format!("failed to write plaintext key file: {}", tmp_path.display())
-        })?;
-        file.sync_all().wrap_err_with(|| {
-            format!("failed to sync plaintext key file: {}", tmp_path.display())
-        })?;
+        let mut file = options
+            .open(&tmp_path)
+            .wrap_err_with(|| format!("failed to open {kind} file: {}", tmp_path.display()))?;
+        file.write_all(data)
+            .wrap_err_with(|| format!("failed to write {kind} file: {}", tmp_path.display()))?;
+        file.sync_all()
+            .wrap_err_with(|| format!("failed to sync {kind} file: {}", tmp_path.display()))?;
 
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))
                 .wrap_err_with(|| {
-                    format!(
-                        "failed to set plaintext key permissions: {}",
-                        tmp_path.display()
-                    )
+                    format!("failed to set {kind} permissions: {}", tmp_path.display())
                 })?;
             let mode = std::fs::metadata(&tmp_path)
-                .wrap_err_with(|| {
-                    format!("failed to stat plaintext key file: {}", tmp_path.display())
-                })?
+                .wrap_err_with(|| format!("failed to stat {kind} file: {}", tmp_path.display()))?
                 .permissions()
                 .mode()
                 & 0o777;
             ensure!(
                 mode == 0o600,
-                "plaintext key file {} has mode {mode:o}, expected 600",
+                "{kind} file {} has mode {mode:o}, expected 600",
                 tmp_path.display()
             );
         }
@@ -197,6 +196,13 @@ fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
                 path.display()
             )
         })?;
+        if let Some(parent) = path.parent() {
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .wrap_err_with(|| {
+                    format!("failed to sync {kind} directory: {}", parent.display())
+                })?;
+        }
         Ok(())
     })();
 
@@ -269,6 +275,49 @@ pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
             .to_string();
         hex::decode(&hex_str).wrap_err("invalid hex in key file")
     }
+}
+
+/// Remove backend-owned raw secret material after its protocol lifecycle ends.
+///
+/// For keychain storage the marker is removed and synced first, so a crash can
+/// only leave an unreachable orphaned keychain entry, never a marker that points
+/// at a secret already deleted. Orphans are safe and may be garbage-collected by
+/// operator tooling.
+pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let keychain_entry = if matches!(backend, KeyBackend::OsLevel) {
+        let raw = std::fs::read(path)
+            .wrap_err_with(|| format!("failed to read keychain marker: {}", path.display()))?;
+        if raw.starts_with(KEYCHAIN_MARKER.as_bytes()) {
+            let text = String::from_utf8(raw).wrap_err("keychain marker not UTF-8")?;
+            let lines: Vec<&str> = text.trim().lines().collect();
+            ensure!(lines.len() >= 3, "invalid keychain marker file");
+            Some((lines[1].to_owned(), lines[2].to_owned()))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    std::fs::remove_file(path)
+        .wrap_err_with(|| format!("failed to remove secret file: {}", path.display()))?;
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .wrap_err_with(|| format!("failed to sync secret directory: {}", parent.display()))?;
+    }
+
+    if let Some((service, account)) = keychain_entry {
+        let entry = keyring::Entry::new(&service, &account)
+            .map_err(|e| eyre::eyre!("keychain entry creation failed: {e}"))?;
+        entry
+            .delete_credential()
+            .map_err(|e| eyre::eyre!("keychain cleanup failed: {e}"))?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +634,27 @@ mod tests {
         let wrong_backend = KeyBackend::Encrypted("wrong-password".into());
         let err = load_signing_share(file.path(), &wrong_backend);
         assert!(err.is_err(), "wrong passphrase should fail");
+    }
+
+    #[test]
+    fn encrypted_backend_atomically_replaces_existing_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("retry.hex");
+        let backend = KeyBackend::Encrypted("replacement-password".into());
+
+        save_raw(&path, b"first", &backend).unwrap();
+        save_raw(&path, b"second", &backend).unwrap();
+
+        assert_eq!(load_raw(&path, &backend).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
