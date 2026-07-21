@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use eyre::{bail, Result, WrapErr};
+use serde_json::{json, Value};
 
 use crate::internal::proc::{first_hex, run_capture};
 use crate::internal::shell::Sh;
@@ -20,7 +21,7 @@ impl Localnet {
         &self,
         unsupported_version: Option<u64>,
         expected_dkg_reveal: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<LogAudit> {
         let mut logs = Vec::new();
         collect_logs(&self.cfg.dir, &mut logs)?;
         let mut findings = Vec::new();
@@ -33,6 +34,10 @@ impl Localnet {
         });
         let mut expected_by_validator = vec![0_usize; self.cfg.validators];
         let mut expected_reveal_by_validator = vec![0_usize; self.cfg.validators];
+        let mut counts = LogCounts {
+            runtime_log_files: logs.len(),
+            ..LogCounts::default()
+        };
         for path in logs {
             let content = fs::read_to_string(&path)
                 .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
@@ -40,6 +45,7 @@ impl Localnet {
                 if expected_fragment.as_deref().is_some_and(|fragment| {
                     accept_expected_update_fatal(&path, line, fragment, &mut expected_by_validator)
                 }) {
+                    counts.expected_update_fatal += 1;
                     continue;
                 }
                 if expected_dkg_reveal.is_some_and(|public_key| {
@@ -50,8 +56,10 @@ impl Localnet {
                         &mut expected_reveal_by_validator,
                     )
                 }) {
+                    counts.expected_dkg_reveal += 1;
                     continue;
                 }
+                counts.observe(line);
                 if unexpected_log_line(line) {
                     findings.push(format!("{}:{}: {}", path.display(), index + 1, line));
                     if findings.len() == 20 {
@@ -78,13 +86,15 @@ impl Localnet {
                 }
             }
         }
-        if !findings.is_empty() {
-            bail!(
-                "unexpected fatal/alarm log records:\n{}",
-                findings.join("\n")
-            );
-        }
-        Ok(())
+        Ok(LogAudit { counts, findings })
+    }
+
+    pub(crate) fn scenario_id(&self) -> usize {
+        self.cfg.scenario
+    }
+
+    pub(crate) fn scenario_dir(&self) -> &Path {
+        &self.cfg.dir
     }
 
     /// Relocate a datadir under the data dir (warm promotion reuses synced state).
@@ -174,6 +184,82 @@ impl Localnet {
                 })
             })
             .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Default)]
+struct LogCounts {
+    runtime_log_files: usize,
+    fatal: usize,
+    panic: usize,
+    dkg_share_reveal: usize,
+    vrf_alarm: usize,
+    sgx_resource_exhaustion: usize,
+    projection_fatal: usize,
+    expected_update_fatal: usize,
+    expected_dkg_reveal: usize,
+}
+
+impl LogCounts {
+    fn observe(&mut self, line: &str) {
+        let line = line.to_ascii_lowercase();
+        self.fatal += usize::from(line.contains("fatal"));
+        self.panic += usize::from(line.contains("panic"));
+        self.dkg_share_reveal += usize::from(
+            line.contains("dkg")
+                && line.contains("share")
+                && (line.contains("reveal") || line.contains("disclos")),
+        );
+        self.vrf_alarm += usize::from(line.contains("vrf") && line.contains("alarm"));
+        self.sgx_resource_exhaustion += usize::from(
+            line.contains("eagain") || line.contains("resource temporarily unavailable"),
+        );
+        self.projection_fatal += usize::from(line.contains("projection") && line.contains("fatal"));
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "runtime_log_files": self.runtime_log_files,
+            "fatal": self.fatal,
+            "panic": self.panic,
+            "dkg_share_reveal": self.dkg_share_reveal,
+            "vrf_alarm": self.vrf_alarm,
+            "sgx_resource_exhaustion": self.sgx_resource_exhaustion,
+            "projection_fatal": self.projection_fatal,
+            "expected_update_fatal": self.expected_update_fatal,
+            "expected_dkg_reveal": self.expected_dkg_reveal,
+        })
+    }
+}
+
+/// Structured result retained as scenario evidence before logs are removed.
+#[derive(Debug)]
+pub struct LogAudit {
+    counts: LogCounts,
+    findings: Vec<String>,
+}
+
+impl LogAudit {
+    pub(crate) fn is_clean(&self) -> bool {
+        self.findings.is_empty()
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        json!({
+            "clean": self.is_clean(),
+            "counts": self.counts.json(),
+            "findings": self.findings,
+        })
+    }
+
+    pub(crate) fn ensure_clean(&self) -> Result<()> {
+        if !self.findings.is_empty() {
+            bail!(
+                "unexpected fatal/alarm log records:\n{}",
+                self.findings.join("\n")
+            );
+        }
+        Ok(())
     }
 }
 
@@ -287,7 +373,7 @@ mod tests {
 
     use super::{
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
-        exact_expected_update_fatal, is_runtime_log, unexpected_log_line,
+        exact_expected_update_fatal, is_runtime_log, unexpected_log_line, LogCounts,
     };
 
     #[test]
@@ -318,6 +404,23 @@ mod tests {
             assert!(unexpected_log_line(line), "missed {line}");
         }
         assert!(!unexpected_log_line("committee finalized height=10"));
+    }
+
+    #[test]
+    fn evidence_counts_are_explicit_and_category_specific() {
+        let mut counts = LogCounts::default();
+        counts.observe("fatal projection supervisor exit");
+        counts.observe("VRF alarm: proof mismatch");
+        let json = counts.json();
+        assert_eq!(json["runtime_log_files"], 0);
+        assert_eq!(json["fatal"], 1);
+        assert_eq!(json["projection_fatal"], 1);
+        assert_eq!(json["vrf_alarm"], 1);
+        assert_eq!(json["panic"], 0);
+        assert_eq!(json["dkg_share_reveal"], 0);
+        assert_eq!(json["sgx_resource_exhaustion"], 0);
+        assert_eq!(json["expected_update_fatal"], 0);
+        assert_eq!(json["expected_dkg_reveal"], 0);
     }
 
     #[test]

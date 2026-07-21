@@ -139,14 +139,16 @@ fn lysis_inner(
             },
         )?;
         nod_ids.push(nod_id);
-        let entry = contributors.entry(tribute.owner).or_insert(U256::ZERO);
-        *entry = entry
-            .checked_add(tribute.nominal_amount_minor)
-            .ok_or_else(|| {
-                PrecompileError::BodyReadCorruption(
-                    "Tribute contributor nominal overflow during Lysis".into(),
-                )
-            })?;
+        if !tribute.exclude_from_intex_issuance {
+            let entry = contributors.entry(tribute.owner).or_insert(U256::ZERO);
+            *entry = entry
+                .checked_add(tribute.nominal_amount_minor)
+                .ok_or_else(|| {
+                    PrecompileError::BodyReadCorruption(
+                        "Tribute contributor nominal overflow during Lysis".into(),
+                    )
+                })?;
+        }
     }
 
     if nod_ids.len() != tributes.len() {

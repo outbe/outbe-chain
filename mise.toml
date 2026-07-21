@@ -22,6 +22,7 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 
 # ── Release / versioning ────────────────────────────────────────────── #
 cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
+duckdb = "latest"
 
 [env]
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).

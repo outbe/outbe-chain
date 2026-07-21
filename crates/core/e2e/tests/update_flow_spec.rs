@@ -17,6 +17,7 @@ use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_update::constants::PROTOCOL_VERSION;
 use outbe_update::lifecycle::UpdateLifecycle;
 use outbe_update::payload::encode_schedule_update_json;
 use outbe_update::precompile::{dispatch, IUpdate};
@@ -215,13 +216,21 @@ fn scheduled_update_activates_at_height() {
         let activation = min_activation(current);
         let proposal_id = U256::from(1);
         let mut update = Update::new(storage.clone());
-        schedule_update(&mut update, proposal_id, V1_2, activation, current);
+        schedule_update(
+            &mut update,
+            proposal_id,
+            PROTOCOL_VERSION,
+            activation,
+            current,
+        );
         run_update_begin_block(storage.clone(), activation);
 
         let scheduled = update.read_scheduled_update(proposal_id).unwrap().unwrap();
         assert_eq!(scheduled.status, ScheduledUpdateStatus::Activated);
-        assert_eq!(dispatch_get_active_version_u32(storage), V1_2.raw());
-        assert_eq!(V1_2.to_string(), "v1.2");
+        assert_eq!(
+            dispatch_get_active_version_u32(storage),
+            PROTOCOL_VERSION.raw()
+        );
     });
 }
 
@@ -281,7 +290,7 @@ fn lifecycle_events_visible_in_provider() {
     let activation = min_activation(100);
     let proposal_id = U256::from(1);
     let mut update = Update::new(storage.clone());
-    schedule_update(&mut update, proposal_id, V1_2, activation, 100);
+    schedule_update(&mut update, proposal_id, PROTOCOL_VERSION, activation, 100);
     run_update_begin_block(storage, activation);
 
     assert!(has_update_event(
@@ -303,7 +312,7 @@ fn lifecycle_events_visible_in_hook_events_receipt_partition() {
     let activation = min_activation(100);
     let proposal_id = U256::from(1);
     let mut update = Update::new(storage.clone());
-    schedule_update(&mut update, proposal_id, V1_2, activation, 100);
+    schedule_update(&mut update, proposal_id, PROTOCOL_VERSION, activation, 100);
     run_update_begin_block(storage, activation);
 
     let hook_logs: Vec<Log> = provider
@@ -353,7 +362,7 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
     with_vote_runtime_at(100, |storage, current| {
         let activation = proposal_activation(current);
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_update_proposal(&mut vote, V1_2, activation, current);
+        let proposal_id = create_update_proposal(&mut vote, PROTOCOL_VERSION, activation, current);
 
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
             .unwrap();
@@ -369,15 +378,18 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
 
         let update = Update::new(storage.clone());
         let scheduled = update.read_scheduled_update(proposal_id).unwrap().unwrap();
-        assert_eq!(scheduled.version, V1_2);
+        assert_eq!(scheduled.version, PROTOCOL_VERSION);
         assert_eq!(scheduled.activation_height, activation);
 
         run_update_begin_block(storage.clone(), activation);
 
         let update = Update::new(storage.clone());
-        assert_eq!(update.get_active_version().unwrap(), V1_2);
+        assert_eq!(update.get_active_version().unwrap(), PROTOCOL_VERSION);
         assert_eq!(update.get_active_version_height().unwrap(), activation);
-        assert_eq!(update.version_at_height(activation).unwrap(), V1_2);
+        assert_eq!(
+            update.version_at_height(activation).unwrap(),
+            PROTOCOL_VERSION
+        );
     });
 }
 
@@ -416,8 +428,10 @@ fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
         assert_eq!(scheduled.version, V1_2);
         assert_eq!(scheduled.activation_height, activation);
 
-        run_update_begin_block(storage.clone(), activation);
-        assert_eq!(Update::new(storage).get_active_version().unwrap(), V1_2);
+        assert_eq!(
+            Update::new(storage).get_active_version().unwrap(),
+            ProtocolVersion::ZERO
+        );
     });
 }
 
@@ -530,19 +544,12 @@ fn activation_does_not_downgrade_when_newer_version_already_active() {
         let activation_early = min_activation(current);
         let activation_late = activation_early + 500;
         let mut update = Update::new(storage.clone());
-        schedule_update(&mut update, U256::from(1), V1_3, activation_early, current);
-        schedule_update(&mut update, U256::from(2), V1_2, activation_late, current);
+        schedule_update(&mut update, U256::from(1), V1_2, activation_late, current);
 
-        run_update_begin_block(storage.clone(), activation_early);
-        assert_eq!(
-            Update::new(storage.clone()).get_active_version().unwrap(),
-            V1_3
-        );
-        let stale = Update::new(storage.clone())
-            .read_scheduled_update(U256::from(2))
-            .unwrap()
-            .unwrap();
-        assert_eq!(stale.status, ScheduledUpdateStatus::Canceled);
+        // Model durable state written by an already-installed newer binary. The
+        // current test binary must not pretend it can activate V1_3 merely to
+        // exercise stale-schedule cancellation.
+        update.set_active_version(V1_3, activation_early).unwrap();
 
         run_update_begin_block(storage.clone(), activation_late);
         assert_eq!(
@@ -550,6 +557,11 @@ fn activation_does_not_downgrade_when_newer_version_already_active() {
             V1_3,
             "activating an older scheduled update must not downgrade active version"
         );
+        let stale = Update::new(storage)
+            .read_scheduled_update(U256::from(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(stale.status, ScheduledUpdateStatus::Canceled);
     });
 }
 
@@ -567,7 +579,7 @@ fn executor_runs_vote_before_update() {
     schedule_update(
         &mut update,
         U256::from(100),
-        V1_2,
+        PROTOCOL_VERSION,
         activation_block,
         100_000,
     );
@@ -600,7 +612,7 @@ fn executor_runs_vote_before_update() {
             .status,
         ScheduledUpdateStatus::Activated
     );
-    assert_eq!(update.get_active_version().unwrap(), V1_2);
+    assert_eq!(update.get_active_version().unwrap(), PROTOCOL_VERSION);
 
     let vote = Vote::new(storage.clone());
     let record = vote.proposals.get(proposal_id).unwrap().unwrap();

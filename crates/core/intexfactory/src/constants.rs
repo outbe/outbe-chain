@@ -22,6 +22,12 @@ pub const POW_DIFFICULTY: usize = 1;
 /// Large series are drained across several blocks by the begin-block hook.
 pub const DIST_CHUNK_LIMIT: u32 = 200;
 
+/// Proceeds fan-in window: creators are paid once every winning chain has
+/// routed its proceeds, or this long after issuance — whichever comes first.
+/// A full day absorbs legitimate escrow-finalize retries so, in virtually all
+/// cases, creators receive a single payment.
+pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+
 /// Qualification maturity in days since issuance.
 pub const MATURITY_PERIOD_DAYS: u64 = 21;
 /// Derived seconds, for comparison against block timestamps.

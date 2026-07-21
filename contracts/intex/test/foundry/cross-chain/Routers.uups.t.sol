@@ -23,7 +23,7 @@ contract RoutersUupsTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
 
-        origin = DeployProxy.originRouter(address(bridge), address(this), BNB_CHAIN_ID);
+        origin = DeployProxy.originRouter(address(bridge), address(this));
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
     }
 
@@ -40,7 +40,7 @@ contract RoutersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        OriginRouter impl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
+        OriginRouter impl = new OriginRouter(address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(address(this));
 
@@ -50,7 +50,7 @@ contract RoutersUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_InitializeZeroDelegate() public {
-        OriginRouter impl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
+        OriginRouter impl = new OriginRouter(address(bridge));
         bytes memory initData = abi.encodeCall(OriginRouter.initialize, (address(0)));
         vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
         new ERC1967Proxy(address(impl), initData);
@@ -64,7 +64,7 @@ contract RoutersUupsTest is CrossChainTest {
         );
         target.upgradeToAndCall(address(newImpl), "");
 
-        OriginRouter newOriginImpl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
+        OriginRouter newOriginImpl = new OriginRouter(address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -78,8 +78,9 @@ contract RoutersUupsTest is CrossChainTest {
         address factory = makeAddr("factory");
         origin.wire(address(desisMock), factory);
         origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(target)));
+        origin.addTarget(BNB_CHAIN_ID);
 
-        OriginRouter newImpl = new OriginRouter(address(bridge), BNB_CHAIN_ID);
+        OriginRouter newImpl = new OriginRouter(address(bridge));
         origin.upgradeToAndCall(address(newImpl), "");
 
         bytes32 implSlot = vm.load(address(origin), ERC1967Utils.IMPLEMENTATION_SLOT);
@@ -89,6 +90,6 @@ contract RoutersUupsTest is CrossChainTest {
         assertEq(origin.remoteMessenger(BNB_CHAIN_ID), _interop(BNB_CHAIN_ID, address(target)));
         assertEq(address(origin.BRIDGE()), address(bridge));
         assertTrue(origin.hasRole(origin.DEFAULT_ADMIN_ROLE(), address(this)));
-        assertEq(origin.BNB_CHAIN_ID(), BNB_CHAIN_ID);
+        assertTrue(origin.isTarget(BNB_CHAIN_ID));
     }
 }

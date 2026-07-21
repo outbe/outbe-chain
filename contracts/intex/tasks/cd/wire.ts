@@ -648,7 +648,7 @@ const gemWire = task(
 // ============================================================================
 // Precompile-caller Wire — grant roles to the EVM frames that initiate the
 // gated calls: the begin-block system caller (auction stage sends + qualify/call
-// mark sends) and the Desis precompile (inbound clearAuction issuance, where
+// mark sends) and the Desis precompile (clearing tick, where
 // createSeries + issuance-instructions run in-process).
 // ============================================================================
 
@@ -739,7 +739,7 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
 
-  // Desis precompile frame (inbound clearAuction): issuance-instructions
+  // Desis precompile frame (clearing tick): issuance-instructions
   // (INTEX_FACTORY_ROLE) + createSeries (RELAYER_ROLE) run in-process here.
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, desisAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, desisAddress);
@@ -766,7 +766,7 @@ const systemGrantRoles = task(
   })
   .addOption({
     name: "desisContract",
-    description: "Desis precompile address (inbound clearAuction issuance frame)",
+    description: "Desis precompile address (clearing-tick issuance frame)",
     defaultValue: "",
   })
   .setAction(lazy(systemGrantRolesAction));
@@ -811,7 +811,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
     };
   };
 
-  // createSeries runs in the inbound clearAuction frame (Desis precompile);
+  // createSeries runs in the Desis clearing-tick frame;
   // markQualified / markCalled run from begin-block (the system caller). Both
   // need RELAYER_ROLE.
   const role = await intex.read.RELAYER_ROLE();

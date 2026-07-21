@@ -65,8 +65,9 @@ pub(crate) fn boot_localnet_with_opts(
     world.localnet.start(&opts).expect("start localnet");
 
     if world.localnet.tee_enabled() {
+        let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();
         assert!(
-            world.rpc.wait_bootstrapped(18),
+            world.rpc.wait_bootstrapped(bootstrap_wait_attempts),
             "TEE chain did not bootstrap"
         );
     } else {

@@ -54,10 +54,10 @@ pub fn dispatch(
                         runtime::set_authorized_settler(&storage, sender, c.seriesId, c.settler)
                     })
                 }
-                // The only payable selector: receives auction proceeds as
-                // msg.value and pays them to the series contributors.
+                // The only payable selector: credits auction proceeds (msg.value)
+                // from the source chain into the day's pot.
                 distribute(c) => mutate_void_payable(c, caller, value, |sender, c, val| {
-                    runtime::distribute(&storage, sender, c.worldwideDay, val)
+                    runtime::distribute(&storage, sender, c.worldwideDay, c.srcChainId, val)
                 }),
             }
         },

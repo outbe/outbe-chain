@@ -400,6 +400,8 @@ pub enum CeremonyError {
     MalformedWire(&'static str),
     #[error("enclave error: {0}")]
     EnclaveError(String),
+    #[error("bounded delivery error: {0}")]
+    Delivery(String),
 }
 
 type Result<T> = core::result::Result<T, CeremonyError>;

@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, mutate_void_payable, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate_void, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -13,8 +13,10 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::BidData;
 
-/// `IDesis` interface ID (XOR of non-ERC-165 selectors in IDesis).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xa2, 0xce, 0x63, 0xc8];
+/// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
+/// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
+/// (XOR of its 4 function selectors).
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xce, 0xe6, 0x92, 0x32];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -25,7 +27,7 @@ pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
     caller: Address,
-    value: U256,
+    _value: U256,
 ) -> Result<Bytes> {
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
@@ -48,8 +50,16 @@ pub fn dispatch(
                     bids,
                 )
             }),
-            clearAuction(c) => mutate_void_payable(c, caller, value, |sender, c, _val| {
-                runtime::clear_auction(storage.clone(), sender, c.worldwideDay).map(|_| ())
+            processBidsDone(c) => mutate_void(c, caller, |sender, c| {
+                runtime::process_bids_done(
+                    storage.clone(),
+                    sender,
+                    c.worldwideDay,
+                    c.srcChainId,
+                    c.relayGeneration,
+                    c.totalBatches,
+                    c.totalBids,
+                )
             }),
             getAuctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;
@@ -61,8 +71,21 @@ pub fn dispatch(
             getBidsCount(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
-                let count = contract.read_bid_count(c.worldwideDay)?;
+                let count = contract.day_bid_count.read(&c.worldwideDay)?;
                 Ok(U256::from(count))
+            }),
+            getChainBidsCount(c) => view(c, |c| {
+                use crate::schema::DesisContract;
+                let contract = storage.contract::<DesisContract>();
+                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                let count = contract.chain_bid_count.read(&key)?;
+                Ok(U256::from(count))
+            }),
+            isChainDone(c) => view(c, |c| {
+                use crate::schema::DesisContract;
+                let contract = storage.contract::<DesisContract>();
+                let key = DesisContract::chain_key(c.worldwideDay, c.srcChainId);
+                Ok(contract.chain_done.read(&key)? != 0)
             }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;

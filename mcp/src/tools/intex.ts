@@ -19,17 +19,20 @@ import { type Ctx, createCtx } from "../chain.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
+  DESIS_ABI,
   ERC20_ABI,
+  ESCROW_ABI,
   FACTORY_ABI,
   type IntexAddresses,
   NETWORKS,
   NFT_ABI,
   NFT_BRIDGE_ABI,
   INTEX_ABI,
+  ORIGIN_ROUTER_ABI,
   bridgeDstChainId,
   intexAddress,
 } from "../intex/registry.js";
-import { auctionStage, epochIso, intexState, intexStatus, isActiveStage } from "../intex/format.js";
+import { auctionStage, desisStage, epochIso, intexState, intexStatus, isActiveStage, lockStatus } from "../intex/format.js";
 import { commitHash, revealBidTypedData } from "../intex/bid.js";
 import { POW_DIFFICULTY, grindNonce } from "../intex/pow.js";
 
@@ -421,9 +424,51 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
+    "auction_chains",
+    "Per-chain bid fan-in for one auction day, read from outbe: the day's target-chain snapshot and, for " +
+      "each chain, whether its bids arrived in full (BIDS_DONE) and how many. Clearing runs once every " +
+      "chain reports or the fan-in deadline passes; a chain still done=false after clearing was skipped " +
+      "and its bidders reclaim locally (see auction_bids_by_owner on that chain).",
+    { worldwideDay: worldwideDayArg, network: networkArg.optional() },
+    handler(async ({ worldwideDay, network }) => {
+      const n = await resolveNetwork(network ?? "outbe-testnet");
+      const desis = addr(n, "desis");
+      const chains = (await n.client.readContract({
+        address: addr(n, "originRouter"),
+        abi: ORIGIN_ROUTER_ABI,
+        functionName: "targetsOf",
+        args: [worldwideDay],
+      })) as number[];
+      const [stage, total] = (await Promise.all([
+        n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getAuctionStage", args: [worldwideDay] }),
+        n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getBidsCount", args: [worldwideDay] }),
+      ])) as [number, bigint];
+      const perChain = await Promise.all(
+        chains.map(async (chainId) => {
+          const [done, bids] = (await Promise.all([
+            n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "isChainDone", args: [worldwideDay, chainId] }),
+            n.client.readContract({ address: desis, abi: DESIS_ABI, functionName: "getChainBidsCount", args: [worldwideDay, chainId] }),
+          ])) as [boolean, bigint];
+          return { chainId, done, bids: Number(bids) };
+        }),
+      );
+      return ok({
+        network: n.name,
+        worldwideDay,
+        stage: desisStage(stage),
+        totalBids: Number(total),
+        chains: perChain,
+      });
+    }),
+  );
+
+  server.tool(
     "auction_bids_by_owner",
-    "Your commit/reveal status across active auctions: for each active auction, whether you have a " +
-      "committed bid and whether it has been revealed. Pass worldwideDay to check just one.",
+    "Your commit/reveal status across active auctions, plus your escrow money on that chain: the commit " +
+      "bond (held from commit until reveal/cancel) and the bid lock (held from reveal until finalization). " +
+      "Emits a hint when funds are stuck — a no-reveal bond reclaimable via intex_claim_commit_bond, or a " +
+      "never-finalized lock (e.g. the chain missed the clearing deadline) reclaimable in full via " +
+      "auction_claim_refund after the shown refundClaimableAt. Pass worldwideDay to check just one.",
     { account: accountArg, worldwideDay: worldwideDayArg.optional(), network: networkArg.optional() },
     handler(async ({ account, worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -436,14 +481,61 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         const probed = await discoverByDate(n, ymdShift(today, -DEFAULT_DAYS_BACK), ymdShift(today, DEFAULT_DAYS_AHEAD));
         targets = probed.filter((x) => isActiveStage(x.stage)).map((x) => x.worldwideDay).sort((x, y) => x - y);
       }
+      const refundDelay = Number(
+        (await n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "REFUND_DELAY" })) as number,
+      );
       const bids = await Promise.all(
         targets.map(async (wwd) => {
-          const [commitHash, revealed] = (await Promise.all([
+          const [commitHash, revealed, lock, bond] = (await Promise.all([
             n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "committedBidsByHash", args: [wwd, who] }),
             n.client.readContract({ address: addr(n, "auction"), abi: AUCTION_ABI, functionName: "revealedBidsByBidder", args: [wwd, who] }),
-          ])) as [Hex, boolean];
+            n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getBidLock", args: [wwd, who] }),
+            n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "getCommitBond", args: [wwd, who] }),
+          ])) as [
+            Hex,
+            boolean,
+            { lockedAmount: bigint; lockedAt: number; status: number; failedRefund: bigint; splitRecorded: boolean },
+            { amount: bigint; lockedAt: number },
+          ];
           const committed = commitHash !== "0x" && /[1-9a-f]/i.test(commitHash.slice(2));
-          return { worldwideDay: wwd, committed, revealed, stage: auctionStage(await auctionStageOf(n, wwd)) };
+          const stage = await auctionStageOf(n, wwd);
+          const out: Record<string, unknown> = { worldwideDay: wwd, committed, revealed, stage: auctionStage(stage) };
+          const hints: string[] = [];
+          if (bond.amount > 0n) {
+            out.commitBond = { amount: bond.amount.toString(), lockedAt: epochIso(bond.lockedAt) };
+            // A held bond during commit/reveal is normal (it returns at reveal/cancel); past
+            // that window a no-reveal commit left it behind.
+            if (!revealed && !isActiveStage(stage)) {
+              hints.push(
+                "entry bond left by a no-reveal commit; reclaim via intex_claim_commit_bond (immediately on a cancelled day, else 21 days past revealEnd)",
+              );
+            }
+          }
+          if (lock.status !== 0) {
+            const [, , , finalized] = (await n.client.readContract({
+              address: addr(n, "escrow"),
+              abi: ESCROW_ABI,
+              functionName: "auctionEscrowState",
+              args: [wwd],
+            })) as [bigint, number, number, boolean];
+            const escrow: Record<string, unknown> = {
+              lockedAmount: lock.lockedAmount.toString(),
+              status: lockStatus(lock.status),
+              finalized,
+            };
+            // Locked + never finalized = no refund instructions reached this chain; the bidder
+            // self-serves the full principal once the delay passes. Only then is the claim time
+            // meaningful — a finalized lock refunds through the normal path, not this one.
+            if (lock.status === 1 && !finalized) {
+              escrow.refundClaimableAt = epochIso(lock.lockedAt + refundDelay);
+              hints.push(
+                "escrow not finalized on this chain; if no refund arrives, claim the full lock via auction_claim_refund from refundClaimableAt",
+              );
+            }
+            out.escrow = escrow;
+          }
+          if (hints.length > 0) out.hints = hints;
+          return out as { worldwideDay: number; committed: boolean; revealed: boolean };
         }),
       );
       const mine = bids.filter((b) => b.committed || b.revealed);
@@ -613,6 +705,22 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const who = bidder ? getAddress(bidder) : account.address;
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "claimCommitBond", args: [worldwideDay, who] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
+      return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
+    }),
+  );
+
+  server.tool(
+    "auction_claim_refund",
+    "Reclaim a bid lock the finalization never covered: the full principal 72h after the lock when no " +
+      "refund instructions reached this chain (e.g. it missed the clearing deadline), or the recorded " +
+      "refund portion post-finalize. Permissionless and always pays the stored bidder. Requires OUTBE_PRIVATE_KEY.",
+    { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
+    handler(async ({ worldwideDay, bidder, network, wait }) => {
+      const n = await resolveNetwork(network ?? "bsc-testnet");
+      const account = requireAccount();
+      const who = bidder ? getAddress(bidder) : account.address;
+      const data = encodeFunctionData({ abi: ESCROW_ABI, functionName: "claimRefund", args: [worldwideDay, who] });
+      const receipt = await submit(n, addr(n, "escrow"), data, 0n, wait);
       return ok({ network: n.name, worldwideDay, bidder: who, ...receipt });
     }),
   );

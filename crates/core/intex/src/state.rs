@@ -175,4 +175,40 @@ impl IntexContract<'_> {
         self.active_dist_count.write(last)?;
         Ok(())
     }
+
+    // ---------------------------------------------------------------------
+    // Creator-reward: proceeds fan-in (awaiting set, dense swap-pop)
+    // ---------------------------------------------------------------------
+
+    /// Append a series to the awaiting-proceeds set (idempotent).
+    pub(crate) fn push_awaiting_proceeds(&mut self, series_id: u32) -> Result<()> {
+        if self.awaiting_proceeds_slot.read(&series_id)? != 0 {
+            return Ok(());
+        }
+        let count = self.awaiting_proceeds_count.read()?;
+        self.awaiting_proceeds_at.write(&count, series_id)?;
+        // store index + 1 so that 0 unambiguously means "absent".
+        self.awaiting_proceeds_slot.write(&series_id, count + 1)?;
+        self.awaiting_proceeds_count.write(count + 1)?;
+        Ok(())
+    }
+
+    /// Remove a series from the awaiting-proceeds set via swap-remove (idempotent).
+    pub(crate) fn remove_awaiting_proceeds(&mut self, series_id: u32) -> Result<()> {
+        let slot1 = self.awaiting_proceeds_slot.read(&series_id)?;
+        if slot1 == 0 {
+            return Ok(());
+        }
+        let idx = slot1 - 1;
+        let last = self.awaiting_proceeds_count.read()? - 1;
+        if idx != last {
+            let last_series = self.awaiting_proceeds_at.read(&last)?;
+            self.awaiting_proceeds_at.write(&idx, last_series)?;
+            self.awaiting_proceeds_slot.write(&last_series, idx + 1)?;
+        }
+        self.awaiting_proceeds_at.clear(&last)?;
+        self.awaiting_proceeds_slot.clear(&series_id)?;
+        self.awaiting_proceeds_count.write(last)?;
+        Ok(())
+    }
 }

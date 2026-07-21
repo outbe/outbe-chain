@@ -46,7 +46,7 @@ contract InboundValidationTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
@@ -248,20 +248,20 @@ contract InboundValidationTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);

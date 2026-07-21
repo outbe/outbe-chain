@@ -62,14 +62,15 @@ pub fn dispatch_stage_clearing(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     supply_promis: U256,
+    now: u64,
 ) -> Result<U256> {
     let Ok(supply_u128) = u128::try_from(supply_promis) else {
         return clearing_failed(storage, worldwide_day, "supply exceeds u128", supply_promis);
     };
 
-    match storage
-        .with_checkpoint(|| runtime::begin_clearing(storage.clone(), worldwide_day, supply_u128))
-    {
+    match storage.with_checkpoint(|| {
+        runtime::begin_clearing(storage.clone(), worldwide_day, supply_u128, now)
+    }) {
         Ok(rounding_remainder) => Ok(U256::from(rounding_remainder)),
         Err(err) => clearing_failed(storage, worldwide_day, &format!("{err:?}"), supply_promis),
     }

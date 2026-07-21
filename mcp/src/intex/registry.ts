@@ -36,34 +36,61 @@ export interface IntexAddresses {
   intex?: Address;
   factory?: Address;
   promis?: Address;
+  desis?: Address;
+  originRouter?: Address;
 }
 
 const a = (s: string): Address => getAddress(s);
 
-// CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so app contracts share an
-// address across chains.
-export const INTEX: Record<string, IntexAddresses> = {
-  "bsc-testnet": {
-    auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
-    escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
-    // wCOEN — auction escrow pays wrapped COEN (18 decimals).
-    paymentToken: a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
-    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
-    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
-  },
-  "outbe-testnet": {
-    nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
-    nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
-    // outbe runtime precompiles (addresses.rs):
-    intex: a("0x0000000000000000000000000000000000001014"),
-    factory: a("0x0000000000000000000000000000000000001015"),
-    promis: a("0x0000000000000000000000000000000000001337"),
-  },
+const OUTBE = "outbe-testnet";
+
+// The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so
+// each one shares a single address on every chain; only the wCOEN payment token
+// is a per-chain deployment. Networks gate availability, addresses do not.
+const APP = {
+  auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
+  escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
+  nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
+  nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
+};
+
+/** outbe runtime precompiles (addresses.rs) + the fan-out router. */
+const OUTBE_ONLY = {
+  intex: a("0x0000000000000000000000000000000000001014"),
+  factory: a("0x0000000000000000000000000000000000001015"),
+  promis: a("0x0000000000000000000000000000000000001337"),
+  desis: a("0x0000000000000000000000000000000000001016"),
+  // CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
+  originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
+};
+
+/** Networks where the auction/escrow pair is live. The NFT pair runs on the origin
+ *  and every target; enabling a new target = adding it here + its wCOEN below. */
+const AUCTION_LIVE = new Set(["bsc-testnet"]);
+
+/** wCOEN — the auction's payment token (18 decimals), per chain. */
+const PAYMENT_TOKEN: Record<string, Address> = {
+  "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };
 
 /** Resolve a contract address for a network, or throw a clear error. */
 export function intexAddress(network: string, key: keyof IntexAddresses): Address {
-  const addr = INTEX[network]?.[key];
+  let addr: Address | undefined;
+  switch (key) {
+    case "auction":
+    case "escrow":
+      addr = AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      break;
+    case "nft":
+    case "nftBridge":
+      addr = network === OUTBE || AUCTION_LIVE.has(network) ? APP[key] : undefined;
+      break;
+    case "paymentToken":
+      addr = PAYMENT_TOKEN[network];
+      break;
+    default:
+      addr = network === OUTBE ? OUTBE_ONLY[key] : undefined;
+  }
   if (!addr) {
     throw new Error(`Intex "${key}" is not configured on "${network}"`);
   }
@@ -108,7 +135,7 @@ export const NFT_ABI: Abi = parseAbi([
   "function statusOf(uint256 tokenId) view returns (uint8)",
   "function balanceOf(address account, uint256 id) view returns (uint256)",
   "function tokenIds(uint32 seriesId) view returns (uint256 issued, uint256 settled)",
-  "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state) data)",
+  "function readData(uint32 seriesId) view returns ((uint16 issuanceCurrency, uint16 referenceCurrency, uint32 issuedIntexCount, uint128 promisLoadMinor, uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor, (uint16 windowDays, uint16 thresholdDays, uint32 intexCallPeriod) callTrigger, uint32 issuedAt, uint32 calledAt, uint32 totalSupply, uint8 status, uint8 state, uint32 worldwideDay) data)",
   "function isApprovedForAll(address account, address operator) view returns (bool)",
   "function setApprovalForAll(address operator, bool approved)",
 ]);
@@ -133,6 +160,29 @@ export const FACTORY_ABI: Abi = parseAbi([
   "function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) returns (uint256 promisAmount)",
   "function setAuthorizedSettler(uint32 seriesId, address settler)",
   "event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount)",
+]);
+
+/** Desis (outbe precompile): auction stage + per-chain bid fan-in views. */
+export const DESIS_ABI: Abi = parseAbi([
+  "function getAuctionStage(uint32 worldwideDay) view returns (uint8)",
+  "function getBidsCount(uint32 worldwideDay) view returns (uint256)",
+  "function getChainBidsCount(uint32 worldwideDay, uint32 srcChainId) view returns (uint256)",
+  "function isChainDone(uint32 worldwideDay, uint32 srcChainId) view returns (bool)",
+]);
+
+/** OriginRouter (outbe): the auction's target-chain registry + per-day snapshot. */
+export const ORIGIN_ROUTER_ABI: Abi = parseAbi([
+  "function targets() view returns (uint32[])",
+  "function targetsOf(uint32 worldwideDay) view returns (uint32[])",
+]);
+
+/** EscrowAdapter (target chains): bid locks, commit bonds and refunds. */
+export const ESCROW_ABI: Abi = parseAbi([
+  "function getBidLock(uint32 worldwideDay, address bidder) view returns ((uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded) lock)",
+  "function getCommitBond(uint32 worldwideDay, address bidder) view returns ((uint128 amount, uint32 lockedAt) bond)",
+  "function auctionEscrowState(uint32 worldwideDay) view returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)",
+  "function REFUND_DELAY() view returns (uint32)",
+  "function claimRefund(uint32 worldwideDay, address bidder)",
 ]);
 
 /** Minimal ERC20 (BSC payment token; outbe Promis balance). */

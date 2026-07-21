@@ -62,7 +62,7 @@ contract OriginRouterTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         // Deploy Outbe adapter
-        originRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin);
 
         // Deploy BNB adapter (for cross-chain testing)
         targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
@@ -73,6 +73,10 @@ contract OriginRouterTest is CrossChainTest {
         // Wire adapters (register remote messengers)
         originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
         targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+
+        // Register BNB as the single auction target and fund the relay float.
+        originRouter.addTarget(BNB_CHAIN_ID);
+        vm.deal(address(originRouter), 10 ether);
 
         // Wire Outbe adapter
         originRouter.wire(desis, intexFactory);
@@ -110,6 +114,7 @@ contract OriginRouterTest is CrossChainTest {
         returns (IOriginRouter.IssuanceInstructionsParams memory)
     {
         return IOriginRouter.IssuanceInstructionsParams({
+            dstChainId: BNB_CHAIN_ID,
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedIntexCount: 10_000,
@@ -127,9 +132,12 @@ contract OriginRouterTest is CrossChainTest {
         });
     }
 
-    // --- Constructor Tests ---
+    // --- Constructor / registry Tests ---
     function test_constructor() public view {
-        assertEq(originRouter.BNB_CHAIN_ID(), BNB_CHAIN_ID);
+        assertTrue(originRouter.isTarget(BNB_CHAIN_ID));
+        uint32[] memory t = originRouter.targets();
+        assertEq(t.length, 1);
+        assertEq(t[0], BNB_CHAIN_ID);
         assertTrue(originRouter.hasRole(originRouter.DEFAULT_ADMIN_ROLE(), admin));
     }
 
@@ -139,7 +147,7 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_wire_revert_zero_address() public {
-        OriginRouter newRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter newRouter = DeployProxy.originRouter(address(bridge), admin);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.ZeroAddress.selector, "desis"));
         newRouter.wire(address(0), intexFactory);
@@ -173,7 +181,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionResult{value: 0.1 ether}(WORLDWIDE_DAY, 10_000, 100e6, 50);
+        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, WORLDWIDE_DAY, 10_000, 100e6, 50);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
@@ -197,7 +205,9 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(
+            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+        );
     }
 
     function test_sendMarkQualified_revert_unauthorized() public {
@@ -207,13 +217,17 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     // --- Validation Tests ---
-    function test_sendIssuanceInstructions_revert_empty_array() public {
+    function test_sendIssuanceInstructions_emptyRecipients_ok() public {
+        // Empty recipients is valid: a snapshot chain with no local winners still gets its series created.
+        // Fire STAGE_START first so the day's target snapshot exists for the membership check.
+        vm.prank(desis);
+        originRouter.sendAuctionStageStart(_baseStageStartParams());
+
         address[] memory recipients = new address[](0);
         uint256[] memory quantities = new uint256[](0);
 
         vm.prank(intexFactory);
-        vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendIssuanceInstructions_revert_array_length_mismatch() public {
@@ -236,7 +250,9 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.EmptyArray.selector);
-        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(
+            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+        );
     }
 
     function test_sendRefundInstructions_revert_array_length_mismatch() public {
@@ -252,7 +268,9 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        originRouter.sendRefundInstructions{value: 0.1 ether}(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
+        originRouter.sendRefundInstructions{value: 0.1 ether}(
+            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+        );
     }
 
     // --- Role Constants Tests ---
@@ -280,8 +298,8 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendAuctionResult() public view {
-        // (seriesId, issuedIntexCount, auctionClearingRate, wonBidsCount)
-        uint256 fee = originRouter.quoteSendAuctionResult(WORLDWIDE_DAY, 500, 75e6, 42);
+        // (dstChainId, worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount)
+        uint256 fee = originRouter.quoteSendAuctionResult(BNB_CHAIN_ID, WORLDWIDE_DAY, 500, 75e6, 42);
 
         assertEq(fee, 0.001 ether);
     }
@@ -312,7 +330,9 @@ contract OriginRouterTest is CrossChainTest {
         paidAmounts[0] = 50e6;
         paidAmounts[1] = 75e6;
 
-        uint256 fee = originRouter.quoteSendRefundInstructions(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
+        uint256 fee = originRouter.quoteSendRefundInstructions(
+            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+        );
 
         assertEq(fee, 0.001 ether);
     }

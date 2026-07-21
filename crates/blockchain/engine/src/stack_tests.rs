@@ -46,6 +46,61 @@ use std::{
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
+    let unknown_production_chain = 1_000_000_001;
+    let error = validate_testnet_only_flags(false, false, Some(1), unknown_production_chain)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("--testnet.unix-time-offset-secs"));
+}
+
+#[test]
+fn testnet_clock_offset_is_allowed_only_on_explicit_test_networks() {
+    for chain_id in [
+        outbe_primitives::chain::DEVNET_CHAIN_ID,
+        outbe_primitives::chain::TESTNET_CHAIN_ID,
+    ] {
+        validate_testnet_only_flags(false, false, Some(-60), chain_id).unwrap();
+    }
+}
+
+#[test]
+fn every_testnet_only_flag_is_rejected_for_unregistered_networks() {
+    let chain_id = 1_000_000_001;
+    assert!(validate_testnet_only_flags(true, false, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, true, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, false, Some(0), chain_id).is_err());
+}
+
+#[test]
+fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
+    let dir = tempfile::tempdir().unwrap();
+    for file in [
+        DKG_PENDING_SHARE_FILE,
+        DKG_PENDING_POLYNOMIAL_FILE,
+        DKG_PENDING_OUTPUT_FILE,
+        DKG_PENDING_BOUNDARY_FILE,
+        DKG_PENDING_BOUNDARY_TMP_FILE,
+        DKG_DEALER_RETRY_FILE,
+    ] {
+        std::fs::write(dir.path().join(file), b"stale").unwrap();
+    }
+
+    retire_activated_dkg_retry_state(dir.path(), &bls::KeyBackend::Plaintext).unwrap();
+
+    for file in [
+        DKG_PENDING_SHARE_FILE,
+        DKG_PENDING_POLYNOMIAL_FILE,
+        DKG_PENDING_OUTPUT_FILE,
+        DKG_PENDING_BOUNDARY_FILE,
+        DKG_PENDING_BOUNDARY_TMP_FILE,
+        DKG_DEALER_RETRY_FILE,
+    ] {
+        assert!(!dir.path().join(file).exists(), "{file} was not retired");
+    }
+}
+
 /// Run a minimal 3-node DKG to get a valid (Output, Share) for testing.
 #[allow(clippy::type_complexity)]
 fn run_test_dkg_complete() -> (
@@ -1067,6 +1122,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
     let recovered = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let round = Round::new(Epoch::new(0), View::new(1175));
         let block = recovery_block(5700);
+        let expected_digest = block.digest();
         let (provider, finalization) = recovery_finalization_fixture(&block, round);
         let clock = context.child("recover_clock");
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
@@ -1083,10 +1139,51 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         drop(resolver_keepalive);
         actor_handle.abort();
         let _ = actor_handle.await;
-        recovered
+        (recovered, expected_digest)
     });
 
-    assert_eq!(recovered, Some(Round::new(Epoch::new(0), View::new(1175))));
+    assert_eq!(
+        recovered.0,
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(0), View::new(1175)),
+            digest: recovered.1,
+        })
+    );
+}
+
+#[test]
+fn exact_marshal_finalization_promotes_recovery_anchor_to_execution_head() {
+    let hash = B256::repeat_byte(0x42);
+    let round = Round::new(Epoch::new(3), View::new(17));
+    let reconciled = reconcile_recovered_execution_head(
+        91,
+        hash,
+        Some(RecoveredApplicationFinalization {
+            round,
+            digest: Digest(hash),
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(reconciled, (91, hash, Some(round)));
+}
+
+#[test]
+fn mismatched_marshal_finalization_digest_fails_closed() {
+    let error = reconcile_recovered_execution_head(
+        91,
+        B256::repeat_byte(0x42),
+        Some(RecoveredApplicationFinalization {
+            round: Round::new(Epoch::new(3), View::new(17)),
+            digest: Digest(B256::repeat_byte(0x24)),
+        }),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("marshal finalization digest mismatch at execution height 91"));
+    assert!(error.contains("execution=0x4242"));
+    assert!(error.contains("marshal=0x2424"));
 }
 
 #[test]
@@ -1887,6 +1984,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         keys_dir: None,
         trust_el_head: false,
         force_dkg: false,
+        testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
         payload_resolve_time_ms: 200,
@@ -2118,6 +2216,16 @@ fn test_pending_dkg_activation_triggers_at_planned_height() {
         pending_dkg_activation_decision(271, 240, 30),
         PendingDkgActivationDecision::Expired { deadline: 270 }
     );
+}
+
+#[test]
+fn frozen_dkg_target_expires_at_the_last_proposable_height() {
+    assert!(!frozen_dkg_target_expired(269, 240, 30));
+    assert!(
+        frozen_dkg_target_expired(270, 240, 30),
+        "the application refuses block 271, so the supervisor must fail closed at height 270"
+    );
+    assert!(frozen_dkg_target_expired(271, 240, 30));
 }
 
 #[test]
@@ -2852,6 +2960,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         keys_dir: None,
         trust_el_head: false,
         force_dkg: false,
+        testnet_unix_time_offset_secs: None,
         consensus_peers: Vec::new(),
         use_local_defaults: true,
         payload_resolve_time_ms: 200,
@@ -3283,6 +3392,7 @@ mod restart_recovery {
             keys_dir: None,
             trust_el_head: false,
             force_dkg: false,
+            testnet_unix_time_offset_secs: None,
             consensus_peers: Vec::new(),
             use_local_defaults: true,
             payload_resolve_time_ms: 200,

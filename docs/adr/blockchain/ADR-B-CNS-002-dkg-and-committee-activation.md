@@ -71,6 +71,15 @@ the loaded triplet is cryptographically cross-validated
 names. Key storage backends are plaintext (development), encrypted
 AES-256-GCM/Argon2id, or OS keychain (`consensus/src/bls.rs:35-48`).
 
+A local dealer persists a ceremony-bound random seed before publishing its first
+bundle and journals cryptographically accepted player ACKs. Restart reconstructs
+the byte-identical transcript and targets only players whose ACK is absent. Raw
+secret files use owner-only temporary files, file sync, atomic rename and parent
+directory sync for plaintext, encrypted envelopes and keychain markers. Keychain
+markers name content-versioned entries, so the old marker remains valid until the
+replacement marker commits. Dealer retry state is retained through the pending
+boundary and removed only after canonical activation/promotion.
+
 The keys directory is separate from consensus archives so routine data snapshots
 do not overwrite per-validator key material. Migration from the legacy location
 is process-owned startup behavior (ADR-B-NOD-001).
@@ -121,7 +130,8 @@ is an error/abstention, not a false vote.
 | Idle outgoing epoch | preparation height | canonical target frozen; no conflicting cycle | start threshold ceremony and gossip | Ceremony running |
 | Ceremony running | valid dealer/player material | canonical participant/round/proof checks | accumulate deterministic output | Running |
 | Ceremony running | threshold/all-genesis completion | output validates | persist pending triplet; create boundary artifact | Boundary pending |
-| Ceremony running | timeout/insufficient live threshold | liveness policy expires | keep outgoing committee live | Retry next policy window/error |
+| Ceremony running | timeout/insufficient live threshold before VRF deadline | frozen target unchanged | keep outgoing committee live | Retry same frozen target |
+| Ceremony running | timeout at or after VRF deadline | finalized height reached deadline | mark VRF expired and terminate consensus stack | Fatal/operator recovery |
 | Boundary pending | proposal before activation | parent ancestry says boundary not due | do not emit | Pending |
 | Boundary pending | activation proposal | exact artifact and parent-chain due status | carry artifact; arm epoch fence | Await execution commit |
 | Await execution commit | begin-zone succeeds | all activation guards/sub-effects succeed | atomically activate/store snapshots/events | Boundary committed |
@@ -130,9 +140,13 @@ is an error/abstention, not a false vote.
 | Any | stale/different artifact replay | epoch/hash/ancestry mismatch | reject | Unchanged |
 
 No nonterminal state may silently wait forever. Genesis is fail-fast/operator
-restart; live reshare keeps the outgoing committee live and requires an explicit
-retry/recovery cadence. Exact timeout and forfeiture rules must be pinned by the
-implementation-owned configuration and tests.
+restart. A live reshare keeps the outgoing committee live and retries the same
+frozen target while its VRF window remains valid. If the ceremony times out at
+or after the published VRF deadline, the supervisor reads the authoritative
+finalized height and terminates the consensus stack instead of starting another
+retry. This is bounded fail-closed behavior, not a forfeiture transition: the
+protocol does not currently remove an unavailable frozen-target participant or
+compute a replacement target automatically.
 
 ## Persistent state and invariants
 
@@ -215,10 +229,16 @@ Current evidence includes:
 - ValidatorSet atomic boundary/snapshot rollback tests;
 - epoch fence boundary/stale/future tests;
 - Rust e2e scenarios for join/activation, restart with persisted share, stalled
-  reshare liveness/recovery, exit/reshare-down and stale-join readiness.
+  reshare liveness/recovery, permanent frozen-target loss through VRF-expiry,
+  exit/reshare-down and stale-join readiness.
 
 The full 2026-07-17 Rust e2e run passed 12 scenarios/83 steps, including these
 paths. That does not prove every crash point or byzantine interleaving.
+The focused 2026-07-20 permanent-loss regression passed once with mock SGX and
+three consecutive times with hardware SGX. It asserts continued finalization by
+the outgoing four-member committee, no partial 4-to-5 activation, arrival at the
+published expiry height and process termination with the frozen-target expiry
+error on every surviving validator.
 
 ## Consequences
 
@@ -253,11 +273,18 @@ one material set for signing and verification parity.
 
 ## Open questions and technical debt
 
-- The exact live-reshare timeout, retry and forfeiture policy is spread across
-  engine control flow/config rather than expressed as one closed typed FSM.
-- Filesystem triplet writes need an inspected crash-atomic protocol (temporary
-  files, fsync, rename ordering, directory fsync). Complete-on-load validation
-  detects damage but does not itself prove durable atomic replacement.
+- Ceremony timeout and frozen-target retry remain spread across engine control
+  flow/config rather than expressed as one closed typed FSM. The VRF-expiry
+  fail-closed boundary is tested, but the protocol-level forfeiture/replacement
+  transition for a permanently unavailable frozen-target participant is not
+  defined.
+- Multi-file DKG triplet replacement still needs one manifest/generation commit
+  point and fault injection across every file boundary. Each individual secret
+  file is atomically replaced, but several files do not form one filesystem
+  transaction.
+- OS-keychain replacement can leave an unreachable content-versioned orphan after
+  a crash. This is safe for startup but needs operator garbage collection and a
+  backend integration test on supported Secret Service implementations.
 - Pending and committed boundary state is process-local `Mutex` state; recovery
   reconstructs it from files/chain, but a complete crash matrix for every
   pre/post-activation write boundary is missing.

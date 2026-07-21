@@ -497,6 +497,7 @@ fn finalizer_test_shared(
     );
 
     let shared = ApplicationShared {
+        unix_time_source: Arc::new(super::SystemUnixTimeSource),
         engine,
         payload_builder,
         executor_mailbox: crate::executor::Mailbox::from_sender(executor_tx),

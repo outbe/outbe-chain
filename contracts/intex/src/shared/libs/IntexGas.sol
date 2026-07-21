@@ -11,8 +11,8 @@ pragma solidity 0.8.30;
 ///      the array). Sized generously — the attribute is a ceiling, so over-provisioning only costs fee, while
 ///      under-provisioning risks an out-of-gas on the destination handler.
 library IntexGas {
-    // --- Outbe -> BNB fixed-size messages (TargetRouter handlers) ---
-    /// @dev auctionStart creates the series' auction on BNB.
+    // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
+    /// @dev auctionStart creates the series' auction on the target chain.
     uint256 internal constant AUCTION_STAGE_START = 500_000;
     uint256 internal constant AUCTION_STAGE_REVEAL = 200_000;
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
@@ -25,10 +25,14 @@ library IntexGas {
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     // --- Variable-size messages: base + per-item marginal ---
+    /// @notice Destination gas for a fixed-size BIDS_DONE completeness marker.
+    uint256 internal constant BIDS_DONE = 200_000;
+
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    uint256 internal constant ISSUANCE_BASE = 300_000;
-    uint256 internal constant ISSUANCE_PER_ITEM = 200_000;
+    /// @dev createSeries plus handler overhead; the NFT's enumerable-holder mints dominate the per-item cost.
+    uint256 internal constant ISSUANCE_BASE = 600_000;
+    uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
     /// @dev ERC-1155 crosschainMint loop (mint + enumerable holder bookkeeping + supply-cap check) per item.

@@ -225,6 +225,7 @@ impl Localnet {
                 "--tee-enclave-socket",
                 format!("127.0.0.1:{}", self.cfg.tee_port(i))
             ]);
+            self.extend_real_sgx_startup_timeout(&mut a);
         }
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
@@ -233,7 +234,7 @@ impl Localnet {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
         if let Some(offset) = opts.unix_time_offset_secs {
-            cmd.env("OUTBE_TEST_UNIX_TIME_OFFSET_SECS", offset.to_string());
+            a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
         }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
