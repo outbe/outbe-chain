@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "xtask",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -287,6 +288,9 @@ parking_lot = "0.12"
 tracing = "0.1"
 futures = "0.3"
 time = "0.3"
+filetime = "0.2"
+sha2 = "0.10"
+walkdir = "2"
 
 [profile.dev]
 debug = "line-tables-only"
