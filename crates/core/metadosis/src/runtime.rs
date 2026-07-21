@@ -363,11 +363,9 @@ fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Res
     Ok(())
 }
 
-/// Settle a READY worldwide day. The terminal outcomes are intentionally
+/// Settle a READY worldwide day. The five terminal outcomes are intentionally
 /// **not** uniform — each has a distinct PROMIS interaction, so do not collapse
-/// them into one shared "settle" helper. The auction brief carries only the
-/// day's own remainder; PromisLimit keeps accruing everything that has no
-/// auction to sell it (red days, briefs Desis rejected, unsold returns).
+/// them into one shared "settle" helper.
 ///
 /// | branch        | auction brief             | PromisLimit                  | mark      |
 /// |---------------|---------------------------|------------------------------|-----------|
@@ -417,7 +415,7 @@ fn process_metadosis(
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
-        // No tributes: nothing to distribute, the whole day limit is auctionable.
+        // The whole day limit is auctionable.
         let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
         tribute.retire_completed_partition(scope, wwd)?;

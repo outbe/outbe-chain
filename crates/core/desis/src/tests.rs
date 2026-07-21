@@ -18,7 +18,6 @@ const SRC_CHAIN: u32 = 1;
 /// anchors to that same midnight (the normal on-time case).
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
-/// Production escrow basis: the brief config carries `PROMIS_LOAD` scaled to minor.
 const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
 const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry feeds floor/call; escrow basis = promis_load)
 
@@ -308,7 +307,6 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
             ),
             ANCHOR + 86_400
         );
-        // The noon tick is before the deferred anchor: the day waits.
         runtime::schedule_tick(&s, noon).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
@@ -316,7 +314,6 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
                 .unwrap(),
             AuctionStage::Briefed
         );
-        // The next midnight starts it with the full commit window.
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
@@ -458,7 +455,6 @@ fn schedule_retires_an_overdue_day() {
 #[test]
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
-        // First auction: 100 units supply cleared in full.
         open_clearing(&s, 100);
         runtime::process_bids_batch(
             s.clone(),
@@ -481,7 +477,6 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
         mark_done(&s, SRC_CHAIN, 1, 1, 100);
         clear(&s);
 
-        // Second day's start folds min_bid_qty = 4% of 100 = 4.
         brief_at(&s, WORLDWIDE_DAY + 1, 10 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
@@ -1130,8 +1125,6 @@ fn clearing_returns_unsold_supply_and_dust_to_promis() {
     use outbe_promislimit::PromisLimitContract;
 
     with_storage(|s| {
-        // 3 whole units + 7 dust: only whole units are auctionable, and the
-        // dust rides back with the unsold supply after clearing.
         brief_at(&s, WORLDWIDE_DAY, 3 * LOAD_MINOR + 7, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
