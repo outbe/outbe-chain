@@ -198,7 +198,11 @@ impl Rpc for RpcClient {
         let result = self
             .call_rpc(
                 "eth_getTransactionCount",
-                serde_json::json!([format!("{address:?}"), "latest"]),
+                // Every caller uses this as the nonce of a transaction it is
+                // about to sign. Include already accepted pool transactions so
+                // a node-originated registration and an immediately following
+                // operator command cannot sign the same nonce.
+                serde_json::json!([format!("{address:?}"), "pending"]),
             )
             .await?;
         Self::parse_hex_u64(&result)
@@ -1094,7 +1098,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "method": "eth_getTransactionCount",
-                "params": [format!("{address:?}"), "latest"],
+                "params": [format!("{address:?}"), "pending"],
                 "id": 2,
             })
         );
