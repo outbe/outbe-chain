@@ -36,22 +36,20 @@ pub fn dispatch_auction_brief(
         return Ok(false);
     };
     best_effort(storage, worldwide_day, "auction_brief", |s| {
-        s.clone().with_checkpoint(|| {
-            runtime::record_brief(s, worldwide_day, supply_u128, entry_price, is_green, now)
-        })
+        runtime::record_brief(s, worldwide_day, supply_u128, entry_price, is_green, now)
     })
 }
 
-/// Run `f` against the storage handle; on error emit `AuctionDispatchFailed` and
-/// return `Ok(false)` instead of propagating, so a Desis fault never halts the
-/// caller's block hook.
+/// Run `f` under a storage checkpoint; on error revert its writes, emit
+/// `AuctionDispatchFailed` (outside the checkpoint) and return `Ok(false)` instead
+/// of propagating, so a Desis fault never halts the caller's block hook.
 fn best_effort(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     stage: &'static str,
     f: impl FnOnce(StorageHandle<'_>) -> Result<()>,
 ) -> Result<bool> {
-    match f(storage.clone()) {
+    match storage.with_checkpoint(|| f(storage.clone())) {
         Ok(()) => Ok(true),
         Err(err) => {
             let mut contract = storage.contract::<DesisContract>();

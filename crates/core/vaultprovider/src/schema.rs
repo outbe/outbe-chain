@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 use outbe_primitives::storage::types::{StorageKey, StorageSet};
@@ -42,6 +42,62 @@ pub struct VaultProviderContract {
     /// slot 9: `account -> LiquidityTarget` (stored as `u8`).
     #[attribute(order = 6)]
     pub liquidity_target_types: outbe_primitives::storage::dsl::Map<Address, u8>,
+
+    /// slot 10: Outbe ERC-7786 bridge used for remote management commands.
+    #[attribute(order = 7)]
+    pub crosschain_bridge: outbe_primitives::storage::dsl::Value<Address>,
+
+    /// slot 11: `chainId -> remote VaultProvider` executor.
+    #[attribute(order = 8)]
+    pub remote_vault_providers: outbe_primitives::storage::dsl::Map<U256, Address>,
+
+    /// slot 12: monotonic nonce used to derive cross-chain operation ids.
+    /// Kept at its existing slot for upgrade compatibility.
+    #[attribute(order = 9)]
+    pub crosschain_operation_nonce: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// slot 13: reserved legacy pause flag. Kept to preserve storage layout;
+    /// no VaultProvider function reads or writes it.
+    #[attribute(order = 10)]
+    pub reserved_legacy_pause: outbe_primitives::storage::dsl::Value<bool>,
+
+    /// slot 14: Outbe WCOEN used by the cross-chain vault flow.
+    #[attribute(order = 11)]
+    pub crosschain_asset: outbe_primitives::storage::dsl::Value<Address>,
+
+    /// slot 15: local WCOEN ERC-7786 token bridge.
+    #[attribute(order = 12)]
+    pub crosschain_token_bridge: outbe_primitives::storage::dsl::Value<Address>,
+
+    /// slot 16: fixed destination chain hosting the BNB vault adapter.
+    #[attribute(order = 13)]
+    pub crosschain_destination_chain_id: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// slot 17: finalized 1:1 remote vault receipt shares per Outbe user.
+    #[attribute(order = 14)]
+    pub crosschain_shares: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    /// slot 18: aggregate finalized Outbe receipt shares.
+    #[attribute(order = 15)]
+    pub total_crosschain_shares: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// slots 19-22: flat operation records keyed by operation id.
+    #[attribute(order = 16)]
+    pub operation_users: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    #[attribute(order = 17)]
+    pub operation_amounts: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    #[attribute(order = 18)]
+    pub operation_kinds: outbe_primitives::storage::dsl::Map<B256, u8>,
+
+    #[attribute(order = 19)]
+    pub operation_statuses: outbe_primitives::storage::dsl::Map<B256, u8>,
+
+    /// slot 23: number of sent operations whose authenticated completion has
+    /// not arrived yet. Cross-chain configuration is frozen while non-zero.
+    #[attribute(order = 20)]
+    pub pending_crosschain_operations: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl<'storage> VaultProviderContract<'storage> {

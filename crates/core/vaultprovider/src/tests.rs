@@ -5,13 +5,14 @@
 //! payload and `enable_sub_call_stub()` makes every other sub-call succeed with
 //! empty returndata (matching the convention in `outbe_credisfactory::tests`).
 
-use alloy_primitives::{address, Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::{SolCall, SolValue};
 
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::IVaultProvider;
+use crate::crosschain;
 use crate::precompile::dispatch;
 use crate::runtime;
 use crate::schema::VaultProviderContract;
@@ -39,6 +40,15 @@ fn vault() -> Address {
 fn receiver() -> Address {
     address!("0x0000000000000000000000000000000000000999")
 }
+fn bridge() -> Address {
+    address!("0x000000000000000000000000000000000000b111")
+}
+fn token_bridge() -> Address {
+    address!("0x000000000000000000000000000000000000b222")
+}
+fn remote_provider() -> Address {
+    address!("0x000000000000000000000000000000000000b517")
+}
 
 /// ABI encoding of a single `uint256`/`address` return: the 32-byte big-endian word.
 fn word(value: U256) -> Bytes {
@@ -50,6 +60,20 @@ fn set_owner(storage: &StorageHandle<'_>, who: Address) {
         .owner
         .write(who)
         .unwrap();
+}
+
+fn configure_crosschain(storage: &StorageHandle<'_>) {
+    runtime::set_crosschain_bridge(storage.clone(), owner(), bridge()).unwrap();
+    runtime::set_remote_vault_provider(storage.clone(), owner(), U256::from(56), remote_provider())
+        .unwrap();
+    crosschain::set_asset(
+        storage.clone(),
+        owner(),
+        asset(),
+        token_bridge(),
+        U256::from(56),
+    )
+    .unwrap();
 }
 
 // --- ownership ---------------------------------------------------------------
@@ -83,6 +107,304 @@ fn management_methods_reject_non_owner() {
 
         let err = runtime::add_vault(storage.clone(), stranger(), vault()).unwrap_err();
         assert!(err.to_string().contains("unauthorized"), "{err}");
+    });
+}
+
+// --- centralized management -------------------------------------------------
+
+#[test]
+fn owner_configures_bridge_and_remote_provider_through_abi() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        let bsc_chain_id = U256::from(56);
+
+        dispatch(
+            storage.clone(),
+            &IVaultProvider::setCrosschainBridgeCall { bridge: bridge() }.abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+        dispatch(
+            storage.clone(),
+            &IVaultProvider::setRemoteVaultProviderCall {
+                chainId: bsc_chain_id,
+                provider: remote_provider(),
+            }
+            .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap();
+
+        let bridge_out = dispatch(
+            storage.clone(),
+            &IVaultProvider::crosschainBridgeCall {}.abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultProvider::crosschainBridgeCall::abi_decode_returns(&bridge_out).unwrap(),
+            bridge()
+        );
+
+        let provider_out = dispatch(
+            storage.clone(),
+            &IVaultProvider::remoteVaultProviderCall {
+                chainId: bsc_chain_id,
+            }
+            .abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IVaultProvider::remoteVaultProviderCall::abi_decode_returns(&provider_out).unwrap(),
+            remote_provider()
+        );
+
+        let err =
+            runtime::set_crosschain_bridge(storage.clone(), stranger(), Address::ZERO).unwrap_err();
+        assert!(err.to_string().contains("unauthorized"), "{err}");
+    });
+}
+
+#[test]
+fn crosschain_deposit_stays_pending_until_authenticated_ack() {
+    let fee = U256::from(1_000_000);
+    let amount = U256::from(100);
+    let send_id = B256::from(fee.to_be_bytes::<32>());
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(token_bridge(), word(fee));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        configure_crosschain(&storage);
+
+        let quote = IVaultProvider::quoteCrosschainDepositCall {
+            assetsAmount: amount,
+            destinationGasLimit: U256::from(600_000),
+            acknowledgementGasLimit: U256::from(250_000),
+        };
+        let quote_out = dispatch(
+            storage.clone(),
+            &quote.abi_encode(),
+            source_account(),
+            U256::ZERO,
+        )
+        .unwrap();
+        let quoted =
+            IVaultProvider::quoteCrosschainDepositCall::abi_decode_returns(&quote_out).unwrap();
+        assert_eq!(quoted.nativeFee, fee);
+
+        let call = IVaultProvider::crosschainDepositCall {
+            assetsAmount: amount,
+            destinationGasLimit: quote.destinationGasLimit,
+            acknowledgementGasLimit: quote.acknowledgementGasLimit,
+        };
+        let out = dispatch(storage.clone(), &call.abi_encode(), source_account(), fee).unwrap();
+        let sent = IVaultProvider::crosschainDepositCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(sent.operationId, quoted.operationId);
+        assert_eq!(sent.sendId, send_id);
+
+        let contract = VaultProviderContract::new(storage.clone());
+        assert_eq!(
+            contract.crosschain_shares.read(&source_account()).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract.operation_statuses.read(&sent.operationId).unwrap(),
+            crosschain::STATUS_PENDING
+        );
+        assert_eq!(
+            contract.pending_crosschain_operations.read().unwrap(),
+            U256::from(1)
+        );
+
+        let err = runtime::set_crosschain_bridge(storage.clone(), owner(), stranger()).unwrap_err();
+        assert!(err.to_string().contains("operations pending"), "{err}");
+
+        let payload: Bytes = (
+            U256::from(crosschain::DEPOSIT_ACKNOWLEDGEMENT),
+            sent.operationId,
+            source_account(),
+            amount,
+        )
+            .abi_encode()
+            .into();
+        let sender: Bytes = crosschain::format_evm_v1(U256::from(56), remote_provider()).into();
+
+        let wrong = IVaultProvider::receiveMessageCall {
+            receiveId: B256::ZERO,
+            sender: sender.clone(),
+            payload: payload.clone(),
+        };
+        let err =
+            dispatch(storage.clone(), &wrong.abi_encode(), stranger(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid crosschain sender"),
+            "{err}"
+        );
+
+        let ack = IVaultProvider::receiveMessageCall {
+            receiveId: B256::ZERO,
+            sender,
+            payload,
+        };
+        dispatch(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap();
+
+        let contract = VaultProviderContract::new(storage.clone());
+        assert_eq!(
+            contract.crosschain_shares.read(&source_account()).unwrap(),
+            amount
+        );
+        assert_eq!(contract.total_crosschain_shares.read().unwrap(), amount);
+        assert_eq!(
+            contract.operation_statuses.read(&sent.operationId).unwrap(),
+            crosschain::STATUS_COMPLETED
+        );
+        assert_eq!(
+            contract.pending_crosschain_operations.read().unwrap(),
+            U256::ZERO
+        );
+
+        let err = dispatch(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("already completed"), "{err}");
+    });
+}
+
+#[test]
+fn crosschain_withdraw_burns_receipt_then_completes_on_token_return() {
+    let fee = U256::from(700_000);
+    let amount = U256::from(40);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(bridge(), word(fee));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        configure_crosschain(&storage);
+        let contract = VaultProviderContract::new(storage.clone());
+        contract
+            .crosschain_shares
+            .write(&source_account(), U256::from(100))
+            .unwrap();
+        contract
+            .total_crosschain_shares
+            .write(U256::from(100))
+            .unwrap();
+
+        let quote = IVaultProvider::quoteCrosschainWithdrawCall {
+            sharesAmount: amount,
+            requestGasLimit: U256::from(300_000),
+            returnGasLimit: U256::from(450_000),
+        };
+        let quote_out = dispatch(
+            storage.clone(),
+            &quote.abi_encode(),
+            source_account(),
+            U256::ZERO,
+        )
+        .unwrap();
+        let quoted =
+            IVaultProvider::quoteCrosschainWithdrawCall::abi_decode_returns(&quote_out).unwrap();
+        assert_eq!(quoted.nativeFee, fee);
+
+        let call = IVaultProvider::crosschainWithdrawCall {
+            sharesAmount: amount,
+            requestGasLimit: quote.requestGasLimit,
+            returnGasLimit: quote.returnGasLimit,
+        };
+        let out = dispatch(storage.clone(), &call.abi_encode(), source_account(), fee).unwrap();
+        let sent = IVaultProvider::crosschainWithdrawCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(sent.operationId, quoted.operationId);
+
+        let contract = VaultProviderContract::new(storage.clone());
+        assert_eq!(
+            contract.crosschain_shares.read(&source_account()).unwrap(),
+            U256::from(60)
+        );
+        assert_eq!(
+            contract.total_crosschain_shares.read().unwrap(),
+            U256::from(60)
+        );
+        assert_eq!(
+            contract.operation_statuses.read(&sent.operationId).unwrap(),
+            crosschain::STATUS_PENDING
+        );
+
+        let extra_data: Bytes = (
+            U256::from(crosschain::WITHDRAW_RETURN),
+            sent.operationId,
+            source_account(),
+            amount,
+        )
+            .abi_encode()
+            .into();
+        let returned = IVaultProvider::onCrosschainTokensReceivedCall {
+            sourceDomain: 56,
+            from: crosschain::format_evm_v1(U256::from(56), remote_provider()).into(),
+            amount,
+            extraData: extra_data,
+        };
+        dispatch(
+            storage.clone(),
+            &returned.abi_encode(),
+            token_bridge(),
+            U256::ZERO,
+        )
+        .unwrap();
+
+        assert_eq!(
+            VaultProviderContract::new(storage.clone())
+                .operation_statuses
+                .read(&sent.operationId)
+                .unwrap(),
+            crosschain::STATUS_COMPLETED
+        );
+    });
+}
+
+#[test]
+fn failed_crosschain_deposit_does_not_consume_nonce_or_shares() {
+    let fee = U256::from(50);
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(token_bridge(), word(fee));
+    storage.enable_sub_call_stub();
+
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        configure_crosschain(&storage);
+        let call = IVaultProvider::crosschainDepositCall {
+            assetsAmount: U256::from(100),
+            destinationGasLimit: U256::from(600_000),
+            acknowledgementGasLimit: U256::from(250_000),
+        };
+        let err = dispatch(
+            storage.clone(),
+            &call.abi_encode(),
+            source_account(),
+            fee - U256::from(1),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("fee mismatch"), "{err}");
+
+        let contract = VaultProviderContract::new(storage.clone());
+        assert_eq!(
+            contract.crosschain_operation_nonce.read().unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract.crosschain_shares.read(&source_account()).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            contract.pending_crosschain_operations.read().unwrap(),
+            U256::ZERO
+        );
     });
 }
 
