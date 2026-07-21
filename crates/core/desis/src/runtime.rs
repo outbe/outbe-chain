@@ -232,9 +232,6 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Res
                 contract.write_stage(worldwide_day, AuctionStage::Revealing)?;
             }
             AuctionStage::Revealing if now >= reveal_end => {
-                if contract.clearing_initiated.read(&worldwide_day)? != 0 {
-                    return Ok(());
-                }
                 return arm_clearing(storage, worldwide_day, now);
             }
             _ => return Ok(()),
@@ -333,6 +330,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Re
         .clearing_deadline
         .write(&worldwide_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
     contract.push_gate_active(worldwide_day)?;
+    contract.write_stage(worldwide_day, AuctionStage::Clearing)?;
 
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
@@ -350,13 +348,14 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Re
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
-/// Intake is open only while `Revealing`. Returns `true` to proceed, `false` for a
-/// redundant post-intake delivery (idempotent no-op, else the transport redelivers
-/// forever), `Err` before intake so the transport redelivers after reveal.
+/// Intake is open while `Revealing` and through the `Clearing` fan-in. Returns
+/// `true` to proceed, `false` for a redundant post-intake delivery (idempotent
+/// no-op, else the transport redelivers forever), `Err` before intake so the
+/// transport redelivers after reveal.
 fn intake_is_open(stage: AuctionStage) -> Result<bool> {
     match stage {
-        AuctionStage::Revealing => Ok(true),
-        AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
+        AuctionStage::Revealing | AuctionStage::Clearing => Ok(true),
+        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
         _ => Err(DesisError::InvalidStageTransition.into()),
     }
 }
@@ -623,7 +622,7 @@ fn clear_inner(
     skipped: &[u32],
 ) -> Result<ClearingResult> {
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, worldwide_day, AuctionStage::Revealing)?;
+    require_stage(&contract, worldwide_day, AuctionStage::Clearing)?;
 
     let supply = contract.pending_supply_intex.read(&worldwide_day)?;
     if contract.clearing_initiated.read(&worldwide_day)? == 0 {

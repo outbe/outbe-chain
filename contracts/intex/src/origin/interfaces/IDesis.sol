@@ -12,7 +12,7 @@ interface IDesis {
         Briefed,
         Started,
         Revealing,
-        BidsReceived,
+        Clearing,
         Cleared,
         Cancelled
     }

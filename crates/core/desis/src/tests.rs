@@ -365,7 +365,7 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Revealing
+            AuctionStage::Clearing
         );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
         assert_eq!(
@@ -389,7 +389,7 @@ fn schedule_catches_up_over_missed_ticks() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(WORLDWIDE_DAY).unwrap(),
-            AuctionStage::Revealing
+            AuctionStage::Clearing
         );
         assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
     });
@@ -1245,7 +1245,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             s.contract::<DesisContract>()
                 .read_stage(WORLDWIDE_DAY)
                 .unwrap(),
-            AuctionStage::Revealing
+            AuctionStage::Clearing
         );
 
         // Chain B reports → the gate opens and the tick clears.

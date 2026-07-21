@@ -7,10 +7,9 @@ use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::PROMIS_LOAD;
 
-/// Auction lifecycle stage.
-///
-/// `Revealing` is the bid-collecting window (entered on a green-day reveal);
-/// `BidsReceived` follows once bids arrive. `Cleared` / `Cancelled` are terminal.
+/// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
+/// commit window, `Revealing` for the reveal window, `Clearing` while the
+/// fan-in aggregates bids, then terminal `Cleared` / `Cancelled`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
@@ -19,7 +18,7 @@ pub enum AuctionStage {
     Briefed = 1,
     Started = 2,
     Revealing = 3,
-    BidsReceived = 4,
+    Clearing = 4,
     Cleared = 5,
     Cancelled = 6,
 }
@@ -31,7 +30,7 @@ impl AuctionStage {
             1 => Ok(Self::Briefed),
             2 => Ok(Self::Started),
             3 => Ok(Self::Revealing),
-            4 => Ok(Self::BidsReceived),
+            4 => Ok(Self::Clearing),
             5 => Ok(Self::Cleared),
             6 => Ok(Self::Cancelled),
             _ => Err(crate::DesisError::InvalidStageTransition),
