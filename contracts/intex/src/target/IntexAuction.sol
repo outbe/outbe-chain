@@ -283,12 +283,6 @@ contract IntexAuction is
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.CommittingBids, currentStage);
         }
-        // `_getAuctionStage` reports CommittingBids past `commitEnd` while the green-day signal is
-        // still Unknown; enforce the published deadline so late commits cannot slip in on relayer
-        // latency. Window is `[start, commitEnd)`.
-        if (uint32(block.timestamp) >= a.schedule.commitEnd) {
-            revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
-        }
         if ($.committedBidsByHash[worldwideDay][msg.sender] != bytes32(0)) revert BidAlreadyCommitted();
 
         $.committedBidsByHash[worldwideDay][msg.sender] = commitHash;
@@ -312,12 +306,6 @@ contract IntexAuction is
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(worldwideDay);
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.CommittingBids, currentStage);
-        }
-        // Mirror of `commitBid`: a sealed commit must not be withdrawable after `commitEnd`,
-        // otherwise a bidder could cancel post-deadline once conditions are observed — defeating
-        // the commit-reveal seal. Window is `[start, commitEnd)`.
-        if (uint32(block.timestamp) >= a.schedule.commitEnd) {
-            revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
         if ($.committedBidsByHash[worldwideDay][msg.sender] == bytes32(0)) revert BidNotFound();
 

@@ -201,9 +201,6 @@ interface IIntexAuction {
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
     error WrongChain(uint256 expected, uint256 got);
-    /// @notice `commitBid`/`cancelCommit` attempted at or after the published `commitEnd`.
-    ///         The commit window is `[start, commitEnd)`; the deadline second is already closed.
-    error CommitWindowClosed(uint32 commitEnd, uint32 nowTs);
     /// @notice `claimCommitBond` was called before the no-reveal penalty window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
     /// @param nowTs Current block timestamp.
