@@ -130,7 +130,7 @@ fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Save raw bytes using the specified backend.
-fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
+pub(crate) fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
     match backend {
         KeyBackend::Encrypted(passphrase) => save_encrypted(path, data, passphrase),
         KeyBackend::Plaintext => {
@@ -207,7 +207,7 @@ fn save_plaintext(path: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Load raw bytes, auto-detecting format (encrypted / keychain / plaintext hex).
-fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
+pub(crate) fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
     let raw = std::fs::read(path)
         .wrap_err_with(|| format!("failed to read key file: {}", path.display()))?;
 

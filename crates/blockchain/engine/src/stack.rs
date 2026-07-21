@@ -4933,10 +4933,11 @@ where
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
+                                    let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
                                     ctx.child("dkg_retry").spawn(move |dkg_ctx| async move {
                                         let result = match role {
                                             LocalDkgRole::DealerAndPlayer => {
-                                                dkg_actor::run_initial_dkg(
+                                                dkg_actor::run_initial_dkg_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4945,6 +4946,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -4952,7 +4954,7 @@ where
                                                 .map(DkgTaskOutcome::Complete)
                                             }
                                             LocalDkgRole::PlayerOnly => {
-                                                dkg_actor::run_initial_dkg(
+                                                dkg_actor::run_initial_dkg_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4961,6 +4963,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -4968,7 +4971,7 @@ where
                                                 .map(DkgTaskOutcome::Complete)
                                             }
                                             LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
-                                                (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
+                                                (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only_durable(
                                                     &dkg_ctx,
                                                     key,
                                                     parts,
@@ -4976,6 +4979,7 @@ where
                                                     share,
                                                     round,
                                                     progress_tx,
+                                                    dealer_retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5223,10 +5227,11 @@ where
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
+                                let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
                                 ctx.child("dkg_live").spawn(move |dkg_ctx| async move {
                                     let result = match role {
                                         LocalDkgRole::DealerAndPlayer => {
-                                            dkg_actor::run_initial_dkg(
+                                            dkg_actor::run_initial_dkg_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5235,6 +5240,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5242,7 +5248,7 @@ where
                                             .map(DkgTaskOutcome::Complete)
                                         }
                                         LocalDkgRole::PlayerOnly => {
-                                            dkg_actor::run_initial_dkg(
+                                            dkg_actor::run_initial_dkg_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5251,6 +5257,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5258,7 +5265,7 @@ where
                                             .map(DkgTaskOutcome::Complete)
                                         }
                                         LocalDkgRole::DealerOnly => match (prev_output, prev_share) {
-                                            (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only(
+                                            (Some(output), Some(share)) => dkg_actor::run_reshare_dealer_only_durable(
                                                 &dkg_ctx,
                                                 key,
                                                 parts,
@@ -5266,6 +5273,7 @@ where
                                                 share,
                                                 round,
                                                 progress_tx,
+                                                dealer_retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5460,6 +5468,15 @@ const DKG_PENDING_POLYNOMIAL_FILE: &str = "dkg_pending_polynomial.hex";
 const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
+
+fn dkg_dealer_retry_store(
+    args: &ConsensusArgs,
+    key_backend: &bls::KeyBackend,
+) -> Option<dkg_actor::DkgDealerRetryStore> {
+    args.keys_dir
+        .as_ref()
+        .map(|keys_dir| dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+}
 
 const DKG_ALL_FILES: &[&str] = &[
     DKG_SHARE_FILE,
@@ -6087,7 +6104,7 @@ where
         .map_err(|e| eyre::eyre!("failed to register startup live-join DKG subchannel: {e}"))?;
     let (finalized_log_tx, finalized_log_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut next_scan_height = freeze_height;
-    let dkg_future = dkg_actor::run_initial_dkg(
+    let dkg_future = dkg_actor::run_initial_dkg_durable(
         ctx,
         signing_key.clone(),
         target_participants,
@@ -6096,6 +6113,7 @@ where
         dkg_round,
         None,
         Some(finalized_log_rx),
+        dkg_dealer_retry_store(args, key_backend),
         dkg_tx,
         dkg_rx,
     );
@@ -6491,7 +6509,7 @@ async fn obtain_threshold_material(
 
     info!("no threshold material available — running DKG ceremony (NO BLOCKS until complete)");
 
-    let dkg_result = dkg_actor::run_initial_dkg(
+    let dkg_result = dkg_actor::run_initial_dkg_durable(
         clock,
         signing_key.clone(),
         startup_participants,
@@ -6500,6 +6518,7 @@ async fn obtain_threshold_material(
         0,    // initial: round 0
         None,
         None,
+        dkg_dealer_retry_store(args, key_backend),
         dkg_sender,
         dkg_receiver,
     )
