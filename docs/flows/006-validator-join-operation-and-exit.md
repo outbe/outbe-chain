@@ -118,7 +118,7 @@ committed state. A partial cross-module result is never accepted.
 | PFS-006-01 | join and activate | 4 validators plus registered/staked/synced joiner | confirm readiness and complete reshare | ACTIVE with canonical share/set hash; committee agrees | `@pfs-006-01` live-node |
 | PFS-006-02 | stale join guard | staked joiner not readiness-confirmed | reshare boundary passes, then confirm and retry | stays PENDING/no share first; activates only on later reshare | `@pfs-006-02` live-node |
 | PFS-006-03 | voluntary exit and claim | active validator with bonded stake | deactivate, reshare, mature and claim | excluded, UNBONDING→INACTIVE; exact value claimed once; unauthorized exit/claim rejected | `@pfs-006-03` live-node with exact claim/value accounting and caller isolation |
-| PFS-006-04 | DKG failure/recovery | frozen 4→5 target with ceremony quorum removed | stall then restore validator | old committee remains live; no partial activation; retry reaches 5 | `@pfs-006-04` live-node |
+| PFS-006-04 | DKG failure/recovery and bounded permanent loss | frozen 4→5 target with ceremony quorum removed | either restore the validator before expiry or leave the required players offline | recovery path keeps the old committee live and retry reaches 5; permanent-loss path never partially activates, finalizes through the published VRF deadline, then all surviving validators terminate fail-closed | two `@pfs-006-04` live-node scenarios; permanent-loss path passed mock once and hardware SGX 3/3 on 2026-07-20 |
 | PFS-006-05 | fee and late-voter settlement | finalized participation/escrow with delayed vote evidence | close settlement window | payouts plus burned residue equal escrow exactly once | documentation-only: fee-enabled genesis/metadata control absent |
 | PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash with exact bonded/burn/supply deltas; continued downtime cannot punish twice; chain remains live | `@pfs-006-06` live-node |
 | PFS-006-07 | duplicate evidence | one authenticated offense already processed | resubmit same canonical evidence | no second punishment/reporter reward | documentation-only: evidence construction/submission absent |
@@ -130,6 +130,9 @@ committed state. A partial cross-module result is never accepted.
 
 - Replace direct raw cross-module writes with typed command/receipt seams before
   treating this flow as Accepted.
+- Define a chain-authoritative forfeiture/replacement transition if the network
+  must recover automatically from a permanently unavailable member of an
+  already-frozen DKG target. Current behavior intentionally stops at VRF expiry.
 - Define one durable intent identity for DKG activation and every punishment.
 - Define exact restart ownership for in-flight DKG and overdue Rewards/unbonding work.
 - Implement the remaining Rewards settlement, externally submitted duplicate

@@ -190,6 +190,13 @@ Evidence: `e2e/sgx-smoke-final-2.log`, `e2e/e2e-sgx-full-final-4.log`, `e2e/sgx-
 
 ### PFS-005–PFS-008 branch addendum (pre-review)
 
+> Historical checkpoint only. The review, focused repetitions, canonical mock
+> and hardware-SGX suites, workspace regression and ignored-test audit have now
+> completed. The authoritative outcome is
+> [PFS-005–PFS-008 completion verification](pfs-005-008-completion-2026-07-20.md).
+> Statements below about deferred final suites describe the earlier checkpoint
+> and are retained only for chronology.
+
 This addendum records the current `test/pfs-005-008-live-e2e` branch state. It
 does **not** supersede the final-suite evidence above and must not be read as a
 release PASS. At the operator's request, the final complete mock, hardware-SGX

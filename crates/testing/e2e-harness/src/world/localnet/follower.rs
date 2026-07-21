@@ -32,6 +32,7 @@ impl Localnet {
             "--upstream",
             format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
         ]);
+        self.extend_real_sgx_startup_timeout(&mut a);
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216")
