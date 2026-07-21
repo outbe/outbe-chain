@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""Behavioral tests for the versioned Outbe ReleaseManifest contract."""
+
+from __future__ import annotations
+
+import importlib.util
+import hashlib
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from jsonschema import Draft202012Validator
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+GENERATOR_PATH = REPO_ROOT / "scripts/release/generate_release_manifest.py"
+SCHEMA_PATH = REPO_ROOT / "release/release-manifest-v1.schema.json"
+BUILD_SPEC_PATH = REPO_ROOT / "release/reproducible-elf-build-v1.json"
+
+
+def load_generator():
+    spec = importlib.util.spec_from_file_location("release_manifest", GENERATOR_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {GENERATOR_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+release_manifest = load_generator()
+
+
+class ReleaseManifestTests(unittest.TestCase):
+    maxDiff = None
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.root = Path(self.tempdir.name)
+        self.artifact_dir = self.root / "artifacts"
+        self.artifact_dir.mkdir()
+        self.input_dir = self.root / "source"
+        self.input_dir.mkdir()
+
+        self.spec = {
+            "spec_version": 1,
+            "target": "x86_64-unknown-linux-gnu",
+            "profile": "release",
+            "rust_toolchain": "1.96.0",
+            "builder": {
+                "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
+                "image": "rust:1.96.0-bookworm@sha256:" + "1" * 64,
+                "debian_snapshot": "20260501T000000Z",
+                "system_packages": ["clang", "cmake"],
+            },
+            "environment": {
+                "cflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain",
+                "cxxflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain",
+                "locale": "C",
+                "timezone": "UTC",
+                "rustflags": ["--remap-path-prefix=/workspace=.", "-C", "link-arg=-Wl,--build-id=sha1"],
+                "zero_ar_date": "1",
+            },
+            "cargo": {"locked": True},
+            "inputs": ["Cargo.lock", "rust-toolchain.toml"],
+            "artifacts": [
+                {
+                    "name": "outbe-chain",
+                    "package": "outbe-chain",
+                    "role": "node",
+                    "classification": "production",
+                    "features": [],
+                    "install_profiles": ["full-node", "validator"],
+                },
+                {
+                    "name": "outbe-tee-enclave",
+                    "package": "outbe-tee-enclave",
+                    "role": "tee-enclave",
+                    "classification": "production",
+                    "features": [],
+                    "install_profiles": ["full-node", "validator"],
+                },
+            ],
+        }
+        (self.input_dir / "Cargo.lock").write_bytes(b"locked\n")
+        (self.input_dir / "rust-toolchain.toml").write_bytes(b"1.96.0\n")
+        (self.artifact_dir / "outbe-chain").write_bytes(b"chain-elf")
+        (self.artifact_dir / "outbe-tee-enclave").write_bytes(b"enclave-elf")
+
+    def build(self, **overrides):
+        kwargs = {
+            "build_spec": self.spec,
+            "source_root": self.input_dir,
+            "artifact_dir": self.artifact_dir,
+            "release_tag": "v0.1.0-test",
+            "source_commit": "a" * 40,
+            "source_date_epoch": 1_784_000_000,
+            "lifecycle": "build-candidate",
+            "verification_gates": [],
+        }
+        kwargs.update(overrides)
+        return release_manifest.build_manifest(**kwargs)
+
+    def test_manifest_is_canonical_and_validates_against_schema(self) -> None:
+        manifest = self.build()
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(manifest)
+
+        first = release_manifest.canonical_json(manifest)
+        second = release_manifest.canonical_json(self.build())
+        self.assertEqual(first, second)
+        self.assertEqual(
+            hashlib.sha256(first).hexdigest(),
+            "8c7822770b8daef20ae46c6dde7538acfda606ec592e5e407107be7a6a10faa4",
+        )
+        self.assertTrue(first.endswith(b"\n"))
+        self.assertNotIn(str(self.root).encode(), first)
+
+    def test_missing_artifact_fails_closed(self) -> None:
+        (self.artifact_dir / "outbe-chain").unlink()
+        with self.assertRaisesRegex(ValueError, "missing release artifact: outbe-chain"):
+            self.build()
+
+    def test_production_enclave_rejects_mock_feature(self) -> None:
+        self.spec["artifacts"][1]["features"] = ["mock"]
+        with self.assertRaisesRegex(ValueError, "production enclave.*mock"):
+            self.build()
+
+    def test_input_path_cannot_escape_source_root(self) -> None:
+        self.spec["inputs"] = ["../outside"]
+        with self.assertRaisesRegex(ValueError, "input path escapes source root"):
+            self.build()
+
+    def test_changed_source_identity_changes_canonical_manifest(self) -> None:
+        first = release_manifest.canonical_json(self.build())
+        second = release_manifest.canonical_json(self.build(source_commit="b" * 40))
+        self.assertNotEqual(first, second)
+
+
+class RepositoryBuildSpecTests(unittest.TestCase):
+    def test_spec_declares_exact_current_release_elf_matrix(self) -> None:
+        spec = json.loads(BUILD_SPEC_PATH.read_text(encoding="utf-8"))
+        artifacts = spec["artifacts"]
+        self.assertEqual(
+            [artifact["name"] for artifact in artifacts],
+            [
+                "outbe-chain",
+                "outbe-cli",
+                "outbe-keygen",
+                "outbe-feeder",
+                "outbe-tee-enclave",
+            ],
+        )
+        enclave = artifacts[-1]
+        self.assertEqual(enclave["classification"], "production")
+        self.assertNotIn("mock", enclave["features"])
+
+
+if __name__ == "__main__":
+    unittest.main()

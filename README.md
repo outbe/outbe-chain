@@ -322,6 +322,10 @@ outbe-chain/
 
 Prerequisites: [`mise`](https://mise.jdx.dev) (provisions the Rust toolchain, Foundry, and cargo tools from `mise.toml`). Run `mise install` once, then `mise tasks` to list every task.
 
+To independently rebuild the five production Linux x86_64 ELF files from a clean commit,
+use `scripts/release/reproducible-build.sh`; the exact two-build procedure, manifest contract
+and current scope limits are documented in [Reproducible builds](docs/reproducible-builds.md).
+
 ```bash
 # 4-validator localnet
 mise run build-release

@@ -1,6 +1,6 @@
 # ADR-B-RLS-001: Releases bind reproducible builds, reviewed dependencies and artifact provenance
 
-- **Status:** Proposed; current CI, dependency and release surfaces profiled
+- **Status:** Accepted; deterministic ELF slice implemented, package/SGX/OCI authorization remains open
 - **Date:** 2026-07-17
 - **Owners/scope:** Rust/Node/Solidity dependency resolution, CI actions, release binaries/packages/images, SBOM, signatures and provenance
 - **Depends on:** ADR-B-CRY-001, ADR-B-GEN-001, ADR-B-TST-001, ADR-B-DEP-001, ADR-B-OPS-001
@@ -42,6 +42,55 @@ The supported artifact matrix is explicit. Omitting a production binary, archite
 enclave package, contract artifact or operator tool is a deliberate manifest decision, not
 an accidental difference between Docker, GoReleaser and local builds. Mock/test features
 and keys are forbidden from production artifacts and verified by artifact inspection.
+
+### ReleaseManifest v1 and canonical identity
+
+`release/release-manifest-v1.schema.json` owns the versioned machine contract. Its first
+implemented slice binds the exact source commit and required clean tree, release tag,
+`SOURCE_DATE_EPOCH`, target/profile/toolchain, digest-pinned builder, immutable Debian
+snapshot and direct package versions, reproducibility flags, material input digests and the
+five current production ELF subjects. Every artifact records its role, classification,
+feature set, install-profile compatibility, media type, length and SHA-256 digest. Network
+selection remains delegated to a future signed `NetworkManifest`; an ELF therefore declares
+`network-manifest-required` rather than silently claiming compatibility with every network.
+
+The v1 canonical signature subject is `outbe-canonical-json-v1`: UTF-8 JSON, object keys in
+Unicode code-point order, no insignificant whitespace, RFC 8259 string escaping with all
+non-ASCII code points emitted as lowercase hexadecimal Unicode escapes, integer numeric
+fields only, and exactly one trailing LF. Host path, wall-clock build time and output
+directory are not manifest identity. `SOURCE_DATE_EPOCH` is the source commit timestamp and
+is also the deterministic `vergen` timestamp embedded by `outbe-chain`.
+
+`build-candidate`, `verified` and `revoked` are distinct manifest lifecycle values. The local
+ELF builder emits only `build-candidate`: pending verification gates cannot be mistaken for
+an authorized release. A later release-gate slice must bind immutable evidence and promote
+the exact compared primary output; it must not rebuild it.
+
+### Deterministic Linux x86_64 ELF recipe
+
+`scripts/release/reproducible-build.sh` is the single public recipe for the first slice. It
+fails closed for a dirty checkout, an output directory inside the source tree, stale output,
+unknown arguments, a mutable builder reference, unlocked dependency resolution, a changed
+toolchain/profile/target contract, missing inputs or missing artifacts. It always builds:
+
+1. `outbe-chain`;
+2. `outbe-cli`;
+3. `outbe-keygen`;
+4. `outbe-feeder`; and
+5. production `outbe-tee-enclave` without the `mock` feature.
+
+The recipe uses Rust 1.96.0 on a digest-pinned Bookworm image, an immutable Debian snapshot
+with exact direct package versions, `cargo build --locked --release`, `LC_ALL=C`, `TZ=UTC`,
+fixed source identity supplied to `vergen`, Rust/C/C++ path remapping and an explicit SHA-1
+GNU build-id policy. The source path inside the builder is fixed, `.git` is excluded from the
+context, and emitted ELFs are checked for leaked builder paths. It preserves the existing
+`release` profile and panic/LTO/feature semantics. Tempo's separate `panic=abort`
+reproducibility profile and unproved `-C metadata=` flag are intentionally not copied.
+
+The current GoReleaser path still builds separately, while `mise run build-release` uses
+`cargo-auditable`; neither is evidence for this deterministic output. Release consumption,
+auditable metadata/SBOM binding and independent CI builders are later P0 slices. Until they
+land, this recipe proves local ELF reproducibility only and is not a complete release gate.
 
 ## Dependency and exception policy
 
@@ -105,9 +154,10 @@ an unbound CI run.
 
 ## Open questions and technical debt
 
-- **Critical:** create and sign one `ReleaseManifest` joining source, dependency locks,
-  exact artifact digests, SBOMs, gate results, deployment/genesis compatibility and builder
-  provenance. Current evidence is distributed across workflow logs and release assets.
+- **Critical, partially closed:** ReleaseManifest v1 now binds source, deterministic builder
+  inputs and the five ELF digests. Extend the same canonical manifest with native packages,
+  Gramine/SGX subjects, OCI subjects, SBOMs, completed immutable gate evidence,
+  deployment/genesis compatibility and signed provenance before release authorization.
 - **Critical:** pin third-party GitHub Actions and scanner/tool inputs to immutable commit
   digests. In particular, prerelease currently invokes `aquasecurity/trivy-action@master`;
   major/version tags elsewhere are also mutable supply-chain inputs.
