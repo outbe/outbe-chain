@@ -311,8 +311,10 @@ jobs:
         with:
           install: false
       - run: mise install cocogitto
-      - name: Validate new commits (Conventional Commits since last tag)
-        run: mise exec -- cog check --from-latest-tag
+      - name: Validate PR commits (Conventional Commits)
+        run: >-
+          mise exec -- cog check --ignore-merge-commits
+          "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
       - name: Preview bump
         run: |
           set -euo pipefail
@@ -353,7 +355,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Validate new commits
-        run: mise exec -- cog check --from-latest-tag
+        run: mise exec -- cog check --ignore-merge-commits "HEAD^..HEAD"
       - name: Cocogitto bump
         id: bump
         run: |

@@ -71,6 +71,15 @@ the loaded triplet is cryptographically cross-validated
 names. Key storage backends are plaintext (development), encrypted
 AES-256-GCM/Argon2id, or OS keychain (`consensus/src/bls.rs:35-48`).
 
+A local dealer persists a ceremony-bound random seed before publishing its first
+bundle and journals cryptographically accepted player ACKs. Restart reconstructs
+the byte-identical transcript and targets only players whose ACK is absent. Raw
+secret files use owner-only temporary files, file sync, atomic rename and parent
+directory sync for plaintext, encrypted envelopes and keychain markers. Keychain
+markers name content-versioned entries, so the old marker remains valid until the
+replacement marker commits. Dealer retry state is retained through the pending
+boundary and removed only after canonical activation/promotion.
+
 The keys directory is separate from consensus archives so routine data snapshots
 do not overwrite per-validator key material. Migration from the legacy location
 is process-owned startup behavior (ADR-B-NOD-001).
@@ -269,9 +278,13 @@ one material set for signing and verification parity.
   fail-closed boundary is tested, but the protocol-level forfeiture/replacement
   transition for a permanently unavailable frozen-target participant is not
   defined.
-- Filesystem triplet writes need an inspected crash-atomic protocol (temporary
-  files, fsync, rename ordering, directory fsync). Complete-on-load validation
-  detects damage but does not itself prove durable atomic replacement.
+- Multi-file DKG triplet replacement still needs one manifest/generation commit
+  point and fault injection across every file boundary. Each individual secret
+  file is atomically replaced, but several files do not form one filesystem
+  transaction.
+- OS-keychain replacement can leave an unreachable content-versioned orphan after
+  a crash. This is safe for startup but needs operator garbage collection and a
+  backend integration test on supported Secret Service implementations.
 - Pending and committed boundary state is process-local `Mutex` state; recovery
   reconstructs it from files/chain, but a complete crash matrix for every
   pre/post-activation write boundary is missing.

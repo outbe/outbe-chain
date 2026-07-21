@@ -132,6 +132,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-B-CNS-001](blockchain/ADR-B-CNS-001-simplex-consensus-and-finality.md) | Simplex consensus and finality | consensus | Proposed |
 | [ADR-B-CNS-002](blockchain/ADR-B-CNS-002-dkg-and-committee-activation.md) | DKG and committee activation boundary | consensus DKG | Proposed |
 | [ADR-B-CNS-003](blockchain/ADR-B-CNS-003-consensus-execution-delivery.md) | Acknowledged consensus-to-execution delivery | consensus/engine | Proposed |
+| [ADR-B-CNS-004](blockchain/ADR-B-CNS-004-persistent-dkg-failure-halt-and-recovery.md) | Persistent DKG failure halt and quorum recovery | consensus/DKG/operator recovery | Proposed |
 | [ADR-B-EVM-001](blockchain/ADR-B-EVM-001-block-lifecycle-and-system-transactions.md) | Block lifecycle and system transaction order | EVM executor | Proposed |
 | [ADR-B-EVM-002](blockchain/ADR-B-EVM-002-outbe-evm-extension-and-call-frame-contract.md) | Outbe EVM registry/context/call frames | EVM integration | Proposed |
 | [ADR-B-EVM-003](blockchain/ADR-B-EVM-003-stateful-precompile-storage-capability.md) | Journaled precompile storage capabilities | storage provider seam | Proposed |
@@ -181,6 +182,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-S-ORC-002](system/ADR-S-ORC-002-oracle-feeder-ingestion-and-delivery.md) | External feed ingestion/delivery | outbe-feeder | Proposed |
 | [ADR-S-TEE-001](system/ADR-S-TEE-001-node-enclave-protocol-and-execution-boundary.md) | Node/enclave execution boundary | tee/enclave | Proposed |
 | [ADR-S-TEE-002](system/ADR-S-TEE-002-enclave-identity-and-offer-key-registry.md) | Enclave identity and offer-key epochs | teeregistry | Proposed |
+| [ADR-S-TEE-003](system/ADR-S-TEE-003-bounded-startup-delivery.md) | Bounded acknowledged startup TEE delivery | TEE startup gossip | Proposed |
 | [ADR-S-GOV-001](system/ADR-S-GOV-001-governance-editorial-registry.md) | Governance editorial registry | governance | Proposed |
 | [ADR-S-GOV-002](system/ADR-S-GOV-002-executable-vote-state-machine.md) | Executable vote FSM | vote | Proposed |
 | [ADR-S-GOV-003](system/ADR-S-GOV-003-scheduled-protocol-update-activation.md) | Scheduled protocol activation | update | Proposed |

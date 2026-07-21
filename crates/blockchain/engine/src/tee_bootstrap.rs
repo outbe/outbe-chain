@@ -30,6 +30,198 @@ use outbe_tee::{EnclaveClient, QuotePolicy};
 /// The fixed block the one-time TEE bootstrap targets (the first non-genesis
 /// block, where `BoundaryOutcome` activates the genesis committee).
 const TEE_BOOTSTRAP_BLOCK: u64 = 1;
+const DELIVERY_DATA: u8 = 0xd0;
+const DELIVERY_ACK: u8 = 0xd1;
+const DELIVERY_ID_LEN: usize = 32;
+const DELIVERY_INITIAL_RETRY_TICKS: u32 = 1;
+const DELIVERY_MAX_RETRY_TICKS: u32 = 16;
+const DELIVERY_MAX_PENDING_MESSAGES: usize = 1024;
+const DELIVERY_MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+const DELIVERY_ID_DOMAIN: &[u8] = b"outbe:tee-delivery:v1";
+
+#[derive(Debug)]
+struct PendingDelivery {
+    envelope: Vec<u8>,
+    broadcast: bool,
+    recipients: BTreeSet<bls12381::PublicKey>,
+    acknowledged: BTreeSet<bls12381::PublicKey>,
+    retry_in_ticks: u32,
+    retry_every_ticks: u32,
+}
+
+/// Per-message delivery state. It is intentionally process-local: the enclosing
+/// startup ceremony has one existing deadline and a failed startup is retried by
+/// restarting the node. P2P sender identities authenticate receipts.
+#[derive(Debug)]
+struct DeliveryTracker {
+    scope: B256,
+    allowed_peers: BTreeSet<bls12381::PublicKey>,
+    known_peers: BTreeSet<bls12381::PublicKey>,
+    pending: BTreeMap<B256, PendingDelivery>,
+    pending_bytes: usize,
+}
+
+impl DeliveryTracker {
+    fn new(scope: B256, allowed_peers: BTreeSet<bls12381::PublicKey>) -> Self {
+        Self {
+            scope,
+            allowed_peers,
+            known_peers: BTreeSet::new(),
+            pending: BTreeMap::new(),
+            pending_bytes: 0,
+        }
+    }
+
+    fn message_id(&self, payload: &[u8]) -> B256 {
+        let mut preimage = Vec::with_capacity(DELIVERY_ID_DOMAIN.len() + 32 + payload.len());
+        preimage.extend_from_slice(DELIVERY_ID_DOMAIN);
+        preimage.extend_from_slice(self.scope.as_slice());
+        preimage.extend_from_slice(payload);
+        keccak256(preimage)
+    }
+
+    fn envelope(
+        &mut self,
+        recipients: Recipients<bls12381::PublicKey>,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, CeremonyError> {
+        let id = self.message_id(&payload);
+        if let Some(existing) = self.pending.get_mut(&id) {
+            match recipients {
+                Recipients::All => existing.broadcast = true,
+                Recipients::One(peer) => {
+                    existing.recipients.insert(peer);
+                }
+                _ => {
+                    return Err(CeremonyError::Delivery(
+                        "unsupported recipient mode for tracked delivery".to_string(),
+                    ));
+                }
+            }
+            return Ok(existing.envelope.clone());
+        }
+        let (broadcast, recipients) = match recipients {
+            Recipients::All => (true, BTreeSet::new()),
+            Recipients::One(peer) => (false, [peer].into_iter().collect()),
+            _ => {
+                return Err(CeremonyError::Delivery(
+                    "unsupported recipient mode for tracked delivery".to_string(),
+                ));
+            }
+        };
+        let mut envelope = Vec::with_capacity(1 + DELIVERY_ID_LEN + payload.len());
+        envelope.push(DELIVERY_DATA);
+        envelope.extend_from_slice(id.as_slice());
+        envelope.extend_from_slice(&payload);
+        if self.pending.len() >= DELIVERY_MAX_PENDING_MESSAGES
+            || self.pending_bytes.saturating_add(envelope.len()) > DELIVERY_MAX_PENDING_BYTES
+        {
+            return Err(CeremonyError::Delivery(format!(
+                "pending delivery budget exceeded: messages={}, bytes={}",
+                self.pending.len(),
+                self.pending_bytes
+            )));
+        }
+        self.pending_bytes += envelope.len();
+        self.pending.insert(
+            id,
+            PendingDelivery {
+                envelope: envelope.clone(),
+                broadcast,
+                recipients,
+                acknowledged: BTreeSet::new(),
+                retry_in_ticks: DELIVERY_INITIAL_RETRY_TICKS,
+                retry_every_ticks: DELIVERY_INITIAL_RETRY_TICKS,
+            },
+        );
+        Ok(envelope)
+    }
+
+    fn observe_peer(&mut self, peer: bls12381::PublicKey) -> bool {
+        if self.allowed_peers.contains(&peer) {
+            self.known_peers.insert(peer);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn acknowledge(&mut self, peer: &bls12381::PublicKey, id: B256) {
+        let complete = if let Some(pending) = self.pending.get_mut(&id) {
+            pending.acknowledged.insert(peer.clone());
+            if pending.broadcast {
+                self.known_peers.len() >= self.allowed_peers.len()
+                    && self
+                        .known_peers
+                        .iter()
+                        .all(|known| pending.acknowledged.contains(known))
+            } else {
+                pending
+                    .recipients
+                    .iter()
+                    .all(|expected| pending.acknowledged.contains(expected))
+            }
+        } else {
+            false
+        };
+        if complete {
+            if let Some(removed) = self.pending.remove(&id) {
+                self.pending_bytes = self.pending_bytes.saturating_sub(removed.envelope.len());
+            }
+        }
+    }
+
+    fn retry_batch(&mut self) -> Vec<(Recipients<bls12381::PublicKey>, Vec<u8>)> {
+        let mut retry = Vec::new();
+        for pending in self.pending.values_mut() {
+            if pending.retry_in_ticks > 1 {
+                pending.retry_in_ticks -= 1;
+                continue;
+            }
+            if pending.broadcast && self.known_peers.len() >= self.allowed_peers.len() {
+                for peer in self.known_peers.difference(&pending.acknowledged) {
+                    retry.push((Recipients::One(peer.clone()), pending.envelope.clone()));
+                }
+            } else if pending.broadcast {
+                retry.push((Recipients::All, pending.envelope.clone()));
+            } else {
+                for peer in pending.recipients.difference(&pending.acknowledged) {
+                    retry.push((Recipients::One(peer.clone()), pending.envelope.clone()));
+                }
+            }
+            pending.retry_every_ticks = pending
+                .retry_every_ticks
+                .saturating_mul(2)
+                .min(DELIVERY_MAX_RETRY_TICKS);
+            pending.retry_in_ticks = pending.retry_every_ticks;
+        }
+        retry
+    }
+
+    fn decode<'a>(&self, bytes: &'a [u8]) -> Option<(u8, B256, &'a [u8])> {
+        if bytes.len() < 1 + DELIVERY_ID_LEN {
+            return None;
+        }
+        let tag = bytes[0];
+        if tag != DELIVERY_DATA && tag != DELIVERY_ACK {
+            return None;
+        }
+        let id = B256::from_slice(&bytes[1..1 + DELIVERY_ID_LEN]);
+        let payload = &bytes[1 + DELIVERY_ID_LEN..];
+        match tag {
+            DELIVERY_DATA if self.message_id(payload) == id => Some((tag, id, payload)),
+            DELIVERY_ACK if payload.is_empty() => Some((tag, id, payload)),
+            _ => None,
+        }
+    }
+
+    fn ack_envelope(id: B256) -> Vec<u8> {
+        let mut ack = Vec::with_capacity(1 + DELIVERY_ID_LEN);
+        ack.push(DELIVERY_ACK);
+        ack.extend_from_slice(id.as_slice());
+        ack
+    }
+}
 
 /// Adapts the consensus P2P channel (commonware `Sender`/`Receiver`) to the
 /// [`BootstrapGossip`] surface the coordination needs. Messages are opaque bytes.
@@ -37,7 +229,7 @@ pub struct CommonwareBootstrapGossip<S, R, C> {
     pub sender: S,
     pub receiver: R,
     clock: C,
-    outbound: Vec<Vec<u8>>,
+    delivery: DeliveryTracker,
 }
 
 impl<S, R, C> BootstrapGossip for CommonwareBootstrapGossip<S, R, C>
@@ -47,8 +239,8 @@ where
     C: Clock,
 {
     async fn broadcast(&mut self, bytes: Vec<u8>) -> Result<(), CeremonyError> {
-        self.outbound.push(bytes.clone());
-        let _ = self.sender.send(Recipients::All, bytes, true);
+        let envelope = self.delivery.envelope(Recipients::All, bytes)?;
+        let _ = self.sender.send(Recipients::All, envelope, true);
         Ok(())
     }
 
@@ -58,13 +250,32 @@ where
             commonware_macros::select! {
                 recv = self.receiver.recv() => {
                     return match recv {
-                        Ok((_from, raw)) => Some(raw.as_ref().to_vec()),
+                        Ok((from, raw)) => {
+                            if !self.delivery.observe_peer(from.clone()) {
+                                continue;
+                            }
+                            match self.delivery.decode(raw.as_ref()) {
+                                Some((DELIVERY_DATA, id, payload)) => {
+                                    let _ = self.sender.send(
+                                        Recipients::One(from),
+                                        DeliveryTracker::ack_envelope(id),
+                                        true,
+                                    );
+                                    Some(payload.to_vec())
+                                }
+                                Some((DELIVERY_ACK, id, _)) => {
+                                    self.delivery.acknowledge(&from, id);
+                                    continue;
+                                }
+                                _ => continue,
+                            }
+                        }
                         Err(_) => None,
                     };
                 },
                 _ = self.clock.sleep(RETRY_POLL) => {
-                    for bytes in &self.outbound {
-                        let _ = self.sender.send(Recipients::All, bytes.clone(), true);
+                    for (recipients, bytes) in self.delivery.retry_batch() {
+                        let _ = self.sender.send(recipients, bytes, true);
                     }
                 },
             }
@@ -98,10 +309,10 @@ pub struct CommonwareDkgGossip<S, R, C> {
     /// Ceremony messages received during the identity-exchange phase, replayed
     /// before reading new ones so the phase race loses nothing.
     buffered: VecDeque<(Vec<u8>, DkgWireMessage)>,
-    /// Finite startup transcript replayed on idle ticks. Ceremony consumers
-    /// deduplicate by dealer/player/signer, so replay closes transient P2P
-    /// backpressure gaps without repeating enclave side effects.
-    outbound: Vec<(Recipients<bls12381::PublicKey>, Vec<u8>)>,
+    /// Typed, bounded delivery state. Transport acknowledgements suppress
+    /// retries per message and peer; the enclosing startup timeout remains the
+    /// ceremony deadline.
+    delivery: DeliveryTracker,
 }
 
 impl<S, R, C> CommonwareDkgGossip<S, R, C>
@@ -110,23 +321,34 @@ where
     R: P2pReceiver<PublicKey = bls12381::PublicKey>,
     C: Clock,
 {
-    pub fn new(sender: S, receiver: R, clock: C) -> Self {
+    pub fn new(
+        sender: S,
+        receiver: R,
+        clock: C,
+        scope: B256,
+        allowed_peers: BTreeSet<bls12381::PublicKey>,
+    ) -> Self {
         Self {
             sender,
             receiver,
             clock,
             routing: BTreeMap::new(),
             buffered: VecDeque::new(),
-            outbound: Vec::new(),
+            delivery: DeliveryTracker::new(scope, allowed_peers),
         }
     }
 
-    fn send_ceremony(&mut self, recipients: Recipients<bls12381::PublicKey>, msg: &DkgWireMessage) {
+    fn send_ceremony(
+        &mut self,
+        recipients: Recipients<bls12381::PublicKey>,
+        msg: &DkgWireMessage,
+    ) -> Result<(), CeremonyError> {
         let mut env = Vec::with_capacity(1 + 8);
         env.push(DKG_ENV_CEREMONY);
         env.extend_from_slice(&msg.to_bytes());
-        self.outbound.push((recipients.clone(), env.clone()));
-        let _ = self.sender.send(recipients, env, true);
+        let envelope = self.delivery.envelope(recipients.clone(), env)?;
+        let _ = self.sender.send(recipients, envelope, true);
+        Ok(())
     }
 
     /// Announce this enclave's `(tee_bls, dkg_enc)` identity and collect all `n`
@@ -150,7 +372,11 @@ where
         env.extend_from_slice(&my_enc);
         env.extend_from_slice(&(my_sig.len() as u32).to_be_bytes());
         env.extend_from_slice(&my_sig);
-        let _ = self.sender.send(Recipients::All, env.clone(), true);
+        let delivery_env = self
+            .delivery
+            .envelope(Recipients::All, env.clone())
+            .map_err(|error| eyre::eyre!(error))?;
+        let _ = self.sender.send(Recipients::All, delivery_env, true);
 
         // Re-broadcast our identity periodically until every peer's identity is
         // collected. The muxed sub-channel drops messages addressed to a round a
@@ -171,7 +397,24 @@ where
                 recv = self.receiver.recv() => {
                     match recv {
                         Ok((from, raw)) => {
-                            let bytes = raw.as_ref();
+                            if !self.delivery.observe_peer(from.clone()) {
+                                continue;
+                            }
+                            let bytes = match self.delivery.decode(raw.as_ref()) {
+                                Some((DELIVERY_DATA, id, payload)) => {
+                                    let _ = self.sender.send(
+                                        Recipients::One(from.clone()),
+                                        DeliveryTracker::ack_envelope(id),
+                                        true,
+                                    );
+                                    payload
+                                }
+                                Some((DELIVERY_ACK, id, _)) => {
+                                    self.delivery.acknowledge(&from, id);
+                                    continue;
+                                }
+                                _ => continue,
+                            };
                             match bytes.first().copied() {
                                 Some(DKG_ENV_IDENTITY) => {
                                     if let Some((bls, enc, sig)) = parse_identity(&bytes[1..]) {
@@ -204,7 +447,9 @@ where
                             ids.len()
                         ));
                     }
-                    let _ = self.sender.send(Recipients::All, env.clone(), true);
+                    for (recipients, bytes) in self.delivery.retry_batch() {
+                        let _ = self.sender.send(recipients, bytes, true);
+                    }
                 },
             }
         }
@@ -229,16 +474,16 @@ where
 {
     async fn send(&mut self, to: &[u8], msg: DkgWireMessage) -> Result<(), CeremonyError> {
         match self.routing.get(to).cloned() {
-            Some(peer) => self.send_ceremony(Recipients::One(peer), &msg),
+            Some(peer) => self.send_ceremony(Recipients::One(peer), &msg)?,
             // No route (should not happen post identity-exchange): broadcast so the
             // recipient still receives it; non-recipients ignore foreign shares.
-            None => self.send_ceremony(Recipients::All, &msg),
+            None => self.send_ceremony(Recipients::All, &msg)?,
         }
         Ok(())
     }
 
     async fn broadcast(&mut self, msg: DkgWireMessage) -> Result<(), CeremonyError> {
-        self.send_ceremony(Recipients::All, &msg);
+        self.send_ceremony(Recipients::All, &msg)?;
         Ok(())
     }
 
@@ -251,7 +496,24 @@ where
             commonware_macros::select! {
                 recv = self.receiver.recv() => {
                     let (from, raw) = recv.ok()?;
-                    let bytes = raw.as_ref();
+                    if !self.delivery.observe_peer(from.clone()) {
+                        continue;
+                    }
+                    let bytes = match self.delivery.decode(raw.as_ref()) {
+                        Some((DELIVERY_DATA, id, payload)) => {
+                            let _ = self.sender.send(
+                                Recipients::One(from.clone()),
+                                DeliveryTracker::ack_envelope(id),
+                                true,
+                            );
+                            payload
+                        }
+                        Some((DELIVERY_ACK, id, _)) => {
+                            self.delivery.acknowledge(&from, id);
+                            continue;
+                        }
+                        _ => continue,
+                    };
                     match bytes.first().copied() {
                         Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
                             Ok(msg) => return Some((from.encode().to_vec(), msg)),
@@ -263,8 +525,8 @@ where
                     }
                 },
                 _ = self.clock.sleep(RETRY_POLL) => {
-                    for (recipients, env) in &self.outbound {
-                        let _ = self.sender.send(recipients.clone(), env.clone(), true);
+                    for (recipients, env) in self.delivery.retry_batch() {
+                        let _ = self.sender.send(recipients, env, true);
                     }
                 },
             }
@@ -358,6 +620,7 @@ pub async fn run_tee_dkg_at_startup<S, R, C>(
     chain_id: B256,
     tribute_offer_epoch: u64,
     connect_policy: &QuotePolicy,
+    allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
     sender: S,
     receiver: R,
 ) -> eyre::Result<([u8; 32], Vec<u8>)>
@@ -385,7 +648,17 @@ where
         other => return Err(eyre::eyre!("unexpected GetPublicKeys response: {other:?}")),
     };
 
-    let mut gossip = CommonwareDkgGossip::new(sender, receiver, clock);
+    let mut dkg_scope = Vec::with_capacity(32 + 8 + 7);
+    dkg_scope.extend_from_slice(chain_id.as_slice());
+    dkg_scope.extend_from_slice(&tribute_offer_epoch.to_be_bytes());
+    dkg_scope.extend_from_slice(b"tee-dkg");
+    let mut gossip = CommonwareDkgGossip::new(
+        sender,
+        receiver,
+        clock,
+        keccak256(dkg_scope),
+        allowed_remote_peers,
+    );
     let identities = gossip
         .exchange_identities(my_bls.clone(), my_enc, my_sig, n)
         .await?;
@@ -431,6 +704,7 @@ pub async fn run_tee_bootstrap_at_startup<S, R, C>(
     tribute_offer_group_public_key: Vec<u8>,
     policy: outbe_primitives::tee_bootstrap::TeePolicy,
     evm_signer: &OutbeEvmSigner,
+    allowed_remote_peers: BTreeSet<bls12381::PublicKey>,
     sender: S,
     receiver: R,
 ) -> eyre::Result<TeeBootstrapPayload>
@@ -476,11 +750,15 @@ where
         ),
     };
 
+    let mut bootstrap_scope = Vec::with_capacity(32 + 32 + 8);
+    bootstrap_scope.extend_from_slice(tribute_offer_public_key.as_slice());
+    bootstrap_scope.extend_from_slice(params.policy.compute_hash().as_slice());
+    bootstrap_scope.extend_from_slice(&TEE_BOOTSTRAP_BLOCK.to_be_bytes());
     let mut gossip = CommonwareBootstrapGossip {
         sender,
         receiver,
         clock,
-        outbound: Vec::new(),
+        delivery: DeliveryTracker::new(keccak256(bootstrap_scope), allowed_remote_peers),
     };
     let payload = run_tee_bootstrap_coordination(
         registration,
@@ -883,8 +1161,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::quote_policy_from_tee_policy;
+    use super::{quote_policy_from_tee_policy, DeliveryTracker};
     use alloy_primitives::B256;
+    use commonware_cryptography::{bls12381, Signer as _};
+    use commonware_p2p::Recipients;
     use outbe_primitives::tee_bootstrap::TeePolicy;
 
     /// Fee handling: the registration tx `gas_price` must be NON-ZERO and clear
@@ -982,5 +1262,81 @@ mod tests {
         assert_eq!(strict.allowed_mrsigner, configured.allowed_mrsigner);
         assert_eq!(strict.allowed_mrenclave, configured.allowed_mrenclave);
         assert_eq!(strict.min_isv_svn, 3);
+    }
+
+    #[test]
+    fn delivery_tracker_retries_only_unacknowledged_peers() {
+        let peer_a = bls12381::PrivateKey::from_seed(101).public_key();
+        let peer_b = bls12381::PrivateKey::from_seed(102).public_key();
+        let mut tracker = DeliveryTracker::new(
+            B256::repeat_byte(0x11),
+            [peer_a.clone(), peer_b.clone()].into_iter().collect(),
+        );
+        assert!(tracker.observe_peer(peer_a.clone()));
+        assert!(tracker.observe_peer(peer_b.clone()));
+        let envelope = tracker
+            .envelope(Recipients::All, b"registration".to_vec())
+            .unwrap();
+        let (_, id, _) = tracker.decode(&envelope).unwrap();
+
+        assert_eq!(tracker.retry_batch().len(), 2);
+        tracker.acknowledge(&peer_a, id);
+        assert!(tracker.retry_batch().is_empty());
+        let retry = tracker.retry_batch();
+        assert_eq!(retry.len(), 1);
+        assert!(matches!(&retry[0].0, Recipients::One(peer) if peer == &peer_b));
+
+        tracker.acknowledge(&peer_b, id);
+        assert!(tracker.pending.is_empty());
+        assert!(tracker.retry_batch().is_empty());
+    }
+
+    #[test]
+    fn delivery_tracker_uses_capped_exponential_backoff() {
+        let peer = bls12381::PrivateKey::from_seed(103).public_key();
+        let mut tracker = DeliveryTracker::new(
+            B256::repeat_byte(0x22),
+            [peer.clone()].into_iter().collect(),
+        );
+        assert!(tracker.observe_peer(peer));
+        tracker
+            .envelope(Recipients::All, b"signature".to_vec())
+            .unwrap();
+
+        let mut sends = Vec::new();
+        for tick in 1..=31 {
+            if !tracker.retry_batch().is_empty() {
+                sends.push(tick);
+            }
+        }
+        assert_eq!(sends, vec![1, 3, 7, 15, 31]);
+    }
+
+    #[test]
+    fn delivery_tracker_merges_recipients_for_identical_payloads() {
+        let peer_a = bls12381::PrivateKey::from_seed(104).public_key();
+        let peer_b = bls12381::PrivateKey::from_seed(105).public_key();
+        let mut tracker = DeliveryTracker::new(
+            B256::repeat_byte(0x33),
+            [peer_a.clone(), peer_b.clone()].into_iter().collect(),
+        );
+        assert!(tracker.observe_peer(peer_a.clone()));
+        assert!(tracker.observe_peer(peer_b.clone()));
+
+        let first = tracker
+            .envelope(Recipients::One(peer_a.clone()), b"same".to_vec())
+            .unwrap();
+        let second = tracker
+            .envelope(Recipients::One(peer_b.clone()), b"same".to_vec())
+            .unwrap();
+        assert_eq!(first, second);
+
+        let retry = tracker.retry_batch();
+        assert_eq!(retry.len(), 2);
+        let (_, id, _) = tracker.decode(&first).unwrap();
+        tracker.acknowledge(&peer_a, id);
+        assert!(!tracker.pending.is_empty());
+        tracker.acknowledge(&peer_b, id);
+        assert!(tracker.pending.is_empty());
     }
 }

@@ -85,6 +85,11 @@ pub struct ConsensusArgs {
     #[arg(long = "testnet.force-dkg", default_value_t = false)]
     pub force_dkg: bool,
 
+    /// Signed proposer clock offset for deterministic local testnet scenarios.
+    /// Rejected on mainnet; normal nodes omit it and use the system clock.
+    #[arg(long = "testnet.unix-time-offset-secs", value_name = "SECONDS")]
+    pub testnet_unix_time_offset_secs: Option<i64>,
+
     /// Comma-separated list of bootstrap peers for P2P discovery.
     /// Format: `<hex_bls_pubkey>@<host:port>` (e.g. `aabb...ff@1.2.3.4:30400`).
     /// Used only as a bootstrap/discovery hint. Validator membership and target
@@ -201,6 +206,10 @@ impl fmt::Debug for ConsensusArgs {
             .field("listen_address", &self.listen_address)
             .field("trust_el_head", &self.trust_el_head)
             .field("force_dkg", &self.force_dkg)
+            .field(
+                "testnet_unix_time_offset_secs",
+                &self.testnet_unix_time_offset_secs,
+            )
             .field("use_local_defaults", &self.use_local_defaults)
             .field("worker_threads", &self.worker_threads)
             .field("bls_key_backend", &self.bls_key_backend)
@@ -389,6 +398,7 @@ mod tests {
             keys_dir: None,
             trust_el_head: false,
             force_dkg: false,
+            testnet_unix_time_offset_secs: None,
             consensus_peers: vec![],
             use_local_defaults: false,
             payload_resolve_time_ms: 200,

@@ -12,5 +12,7 @@ pub(crate) mod validation;
 pub(crate) mod verify_resolution;
 
 pub use epoch_boundary::ApplicationEpochFence;
-pub use handler::{ApplicationDeps, ApplicationHandler};
+pub use handler::{
+    ApplicationDeps, ApplicationHandler, OffsetUnixTimeSource, SystemUnixTimeSource, UnixTimeSource,
+};
 pub use ingress::Mailbox;

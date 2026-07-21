@@ -234,7 +234,7 @@ impl Localnet {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
         if let Some(offset) = opts.unix_time_offset_secs {
-            cmd.env("OUTBE_TEST_UNIX_TIME_OFFSET_SECS", offset.to_string());
+            a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
         }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
