@@ -95,7 +95,7 @@ def _artifact_record(spec: dict[str, Any], artifact_dir: Path, target: str) -> d
     return record
 
 
-def _validate_build_spec(build_spec: dict[str, Any]) -> None:
+def validate_build_spec(build_spec: dict[str, Any]) -> None:
     if build_spec.get("spec_version") != 1:
         raise ValueError("unsupported reproducible ELF build spec version")
     if build_spec.get("target") != "x86_64-unknown-linux-gnu":
@@ -107,8 +107,18 @@ def _validate_build_spec(build_spec: dict[str, Any]) -> None:
     image = build_spec.get("builder", {}).get("image", "")
     if not PINNED_IMAGE_RE.fullmatch(image):
         raise ValueError("builder image must be pinned by sha256 digest")
+    snapshot = build_spec.get("builder", {}).get("debian_snapshot", "")
+    if not re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", snapshot):
+        raise ValueError("builder must use an immutable Debian snapshot timestamp")
+    system_packages = build_spec.get("builder", {}).get("system_packages", [])
+    if not system_packages or any(
+        "=" not in package or re.search(r"\s", package) for package in system_packages
+    ):
+        raise ValueError("every direct system package must have an exact version")
     if build_spec.get("cargo", {}).get("locked") is not True:
         raise ValueError("release dependency resolution must be locked")
+    if build_spec.get("cargo", {}).get("auditable") is not False:
+        raise ValueError("recipe v1 must explicitly record cargo-auditable as disabled")
 
     names = [artifact.get("name") for artifact in build_spec.get("artifacts", [])]
     if not names or len(names) != len(set(names)):
@@ -129,7 +139,7 @@ def build_manifest(
 ) -> dict[str, Any]:
     """Build a path-independent manifest value from one completed ELF build."""
 
-    _validate_build_spec(build_spec)
+    validate_build_spec(build_spec)
     if not release_tag or not release_tag.isascii():
         raise ValueError("release tag must be non-empty ASCII")
     if not COMMIT_RE.fullmatch(source_commit):
@@ -181,6 +191,7 @@ def build_manifest(
         "build": {
             "builder": builder,
             "cargo": {
+                "auditable": build_spec["cargo"]["auditable"],
                 "locked": True,
                 "packages": [artifact["package"] for artifact in build_spec["artifacts"]],
             },

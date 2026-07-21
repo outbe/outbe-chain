@@ -82,15 +82,28 @@ toolchain/profile/target contract, missing inputs or missing artifacts. It alway
 The recipe uses Rust 1.96.0 on a digest-pinned Bookworm image, an immutable Debian snapshot
 with exact direct package versions, `cargo build --locked --release`, `LC_ALL=C`, `TZ=UTC`,
 fixed source identity supplied to `vergen`, Rust/C/C++ path remapping and an explicit SHA-1
-GNU build-id policy. The source path inside the builder is fixed, `.git` is excluded from the
-context, and emitted ELFs are checked for leaked builder paths. It preserves the existing
-`release` profile and panic/LTO/feature semantics. Tempo's separate `panic=abort`
+GNU build-id policy. Host-side validation rejects mutable builders before Docker execution.
+The source context is an exact `git archive HEAD`; ignored host files and ambient local tags
+cannot affect it. An explicit release tag must resolve to `HEAD`, otherwise the exact
+`commit-<SHA>` identity supplies both manifest tag and `vergen` description. The source path
+inside the builder is fixed, and emitted ELFs are checked for leaked workspace, Cargo and
+rustup paths. The builder executes and verifies `outbe-chain --version` against the exact
+commit, commit timestamp, profile and target, then preserves that output as evidence. It
+preserves the existing `release` profile and panic/LTO/feature semantics. Tempo's separate `panic=abort`
 reproducibility profile and unproved `-C metadata=` flag are intentionally not copied.
 
 The current GoReleaser path still builds separately, while `mise run build-release` uses
-`cargo-auditable`; neither is evidence for this deterministic output. Release consumption,
+`cargo-auditable`; neither is evidence for this deterministic output. Recipe v1 therefore
+records `cargo.auditable = false` instead of silently producing a third semantic variant.
+Release consumption, auditable metadata inclusion,
 auditable metadata/SBOM binding and independent CI builders are later P0 slices. Until they
 land, this recipe proves local ELF reproducibility only and is not a complete release gate.
+
+Independent verification uses Python 3.11 packages pinned by exact version and wheel hash in
+`release/reproducible-verifier-requirements.txt`. Verification recomputes source input and
+resolved system-package records, validates the exact output checksum matrix and saved binary
+version identity, and compares the five ELF files byte for byte. A matching hash alone does
+not excuse a repeated builder-path leak or a mismatched manifest material.
 
 ## Dependency and exception policy
 

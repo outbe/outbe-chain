@@ -52,7 +52,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
                 "image": "rust:1.96.0-bookworm@sha256:" + "1" * 64,
                 "debian_snapshot": "20260501T000000Z",
-                "system_packages": ["clang", "cmake"],
+                "system_packages": ["clang=1.0", "cmake=1.0"],
             },
             "environment": {
                 "cflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain",
@@ -62,7 +62,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 "rustflags": ["--remap-path-prefix=/workspace=.", "-C", "link-arg=-Wl,--build-id=sha1"],
                 "zero_ar_date": "1",
             },
-            "cargo": {"locked": True},
+            "cargo": {"auditable": False, "locked": True},
             "inputs": ["Cargo.lock", "rust-toolchain.toml"],
             "artifacts": [
                 {
@@ -113,7 +113,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(
             hashlib.sha256(first).hexdigest(),
-            "8c7822770b8daef20ae46c6dde7538acfda606ec592e5e407107be7a6a10faa4",
+            "ba39c0ca4c2acba8f5d1ee0e06c68988a1c5b59d7bb42e1d81cf6db52fc7aa4c",
         )
         self.assertTrue(first.endswith(b"\n"))
         self.assertNotIn(str(self.root).encode(), first)
@@ -156,6 +156,9 @@ class RepositoryBuildSpecTests(unittest.TestCase):
         enclave = artifacts[-1]
         self.assertEqual(enclave["classification"], "production")
         self.assertNotIn("mock", enclave["features"])
+        self.assertIs(spec["cargo"]["auditable"], False)
+        self.assertIn("release/reproducible-verifier-requirements.txt", spec["inputs"])
+        self.assertIn("scripts/release/verify_reproducible_elf.py", spec["inputs"])
 
 
 if __name__ == "__main__":

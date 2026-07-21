@@ -49,7 +49,7 @@ done
 
 [[ -n "${output_dir}" ]] || { echo "--output is required" >&2; exit 2; }
 
-for command in docker git python3 sha256sum; do
+for command in docker git mktemp python3 sha256sum tar; do
   command -v "${command}" >/dev/null || { echo "required command not found: ${command}" >&2; exit 2; }
 done
 
@@ -84,20 +84,18 @@ fi
 mkdir -p "${output_dir}"
 
 readonly spec=release/reproducible-elf-build-v1.json
-mapfile -t build_values < <(
-  python3 - "${spec}" <<'PY'
-import json
-import sys
-
-spec = json.load(open(sys.argv[1], encoding="utf-8"))
-print(spec["builder"]["image"])
-print(spec["builder"]["debian_snapshot"])
-print(" ".join(spec["builder"]["system_packages"]))
-print(" ".join(spec["environment"]["rustflags"]))
-print(spec["environment"]["cflags"])
-print(spec["environment"]["cxxflags"])
-PY
-)
+input_args=(--build-spec "${spec}" --repo-root "${repo_root}")
+if [[ -n "${release_tag}" ]]; then
+  input_args+=(--release-tag "${release_tag}")
+fi
+build_values_output="$(
+  python3 scripts/release/reproducible_build_inputs.py "${input_args[@]}"
+)"
+mapfile -t build_values <<<"${build_values_output}"
+if ((${#build_values[@]} != 10)); then
+  echo "validated build input resolver returned an incomplete contract" >&2
+  exit 2
+fi
 
 builder_image="${build_values[0]}"
 debian_snapshot="${build_values[1]}"
@@ -105,11 +103,10 @@ system_packages="${build_values[2]}"
 rustflags="${build_values[3]}"
 cflags="${build_values[4]}"
 cxxflags="${build_values[5]}"
-
-source_commit="$(git rev-parse --verify 'HEAD^{commit}')"
-source_date_epoch="$(git show -s --format=%ct HEAD)"
-source_describe="$(git describe --tags --always HEAD)"
-release_tag="${release_tag:-commit-${source_commit}}"
+source_commit="${build_values[6]}"
+source_date_epoch="${build_values[7]}"
+release_tag="${build_values[8]}"
+source_describe="${build_values[9]}"
 
 printf 'Reproducible ELF build inputs\n'
 printf '  source_commit      = %s\n' "${source_commit}"
@@ -122,10 +119,17 @@ printf '  builder_image      = %s\n' "${builder_image}"
 printf '  debian_snapshot    = %s\n' "${debian_snapshot}"
 printf '  output_dir         = %s\n' "${output_dir}"
 
+build_context="$(mktemp -d -t outbe-reproducible-source.XXXXXXXX)"
+cleanup() {
+  rm -rf "${build_context}"
+}
+trap cleanup EXIT
+git archive --format=tar HEAD | tar -xf - -C "${build_context}"
+
 docker_args=(
   build
   --platform linux/amd64
-  --file Dockerfile.reproducible
+  --file "${build_context}/Dockerfile.reproducible"
   --target artifacts
   --build-arg "BUILDER_IMAGE=${builder_image}"
   --build-arg "DEBIAN_SNAPSHOT=${debian_snapshot}"
@@ -142,7 +146,7 @@ docker_args=(
 if ((no_cache)); then
   docker_args+=(--no-cache)
 fi
-docker_args+=(.)
+docker_args+=("${build_context}")
 
 docker "${docker_args[@]}"
 (

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import shutil
 import tempfile
@@ -41,6 +42,7 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
         self.first = root / "first"
         self.second = root / "second"
         (self.first / "bin").mkdir(parents=True)
+        (self.first / "metadata").mkdir()
 
         self.build_spec = json.loads(
             (REPO_ROOT / "release/reproducible-elf-build-v1.json").read_text(encoding="utf-8")
@@ -49,6 +51,36 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
             (self.first / "bin" / artifact["name"]).write_bytes(
                 b"\x7fELF" + bytes([index]) + b"deterministic-test"
             )
+        packages = self.first / "metadata/builder-system-packages.txt"
+        packages.write_text("example=1.0\n", encoding="utf-8")
+        version_text = "\n".join(
+            [
+                "Outbe 0.1.0 (test)",
+                "Version: 0.1.0",
+                f"Commit SHA: {'a' * 40}",
+                "Build Timestamp: 2026-07-14T03:33:20.000000000Z",
+                "Build Features: default",
+                "Build Profile: release (x86_64-unknown-linux-gnu)",
+                "",
+                "Reth Version: test",
+                f"Commit SHA: {'a' * 40}",
+                "Build Timestamp: 2026-07-14T03:33:20.000000000Z",
+                "Build Features:",
+                "Build Profile: release",
+                "",
+            ]
+        )
+        (self.first / "metadata/outbe-chain.version.txt").write_text(
+            version_text, encoding="utf-8"
+        )
+        shutil.copy2(
+            REPO_ROOT / "release/release-manifest-v1.schema.json",
+            self.first / "metadata/release-manifest-v1.schema.json",
+        )
+        shutil.copy2(
+            REPO_ROOT / "release/reproducible-elf-build-v1.json",
+            self.first / "metadata/reproducible-elf-build-v1.json",
+        )
         manifest = generator.build_manifest(
             build_spec=self.build_spec,
             source_root=REPO_ROOT,
@@ -58,9 +90,19 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
             source_date_epoch=1_784_000_000,
             lifecycle="build-candidate",
             verification_gates=[],
+            resolved_system_packages=packages,
         )
         (self.first / "release-manifest.json").write_bytes(generator.canonical_json(manifest))
+        self._write_checksums(self.first)
         shutil.copytree(self.first, self.second)
+
+    @staticmethod
+    def _write_checksums(output: Path) -> None:
+        rows = []
+        for relative in sorted(verifier.EXPECTED_CHECKSUM_PATHS):
+            digest = hashlib.sha256((output / relative).read_bytes()).hexdigest()
+            rows.append(f"{digest}  {relative}\n")
+        (output / "SHA256SUMS").write_text("".join(rows), encoding="ascii")
 
     def test_identical_outputs_pass_with_per_artifact_evidence(self) -> None:
         evidence = verifier.verify_outputs(self.first, self.second, REPO_ROOT)
@@ -103,6 +145,21 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
         self.assertIn(expected_rust_remap, rustflags)
         self.assertIn(expected_native_remap, environment["cflags"])
         self.assertIn(expected_native_remap, environment["cxxflags"])
+
+    def test_changed_resolved_package_inventory_is_rejected(self) -> None:
+        (self.second / "metadata/builder-system-packages.txt").write_text(
+            "example=2.0\n", encoding="utf-8"
+        )
+        evidence = verifier.verify_outputs(self.first, self.second, REPO_ROOT)
+        self.assertEqual(evidence["result"], "failed")
+        self.assertTrue(any("package inventory" in item for item in evidence["differences"]))
+
+    def test_changed_version_identity_is_rejected(self) -> None:
+        path = self.second / "metadata/outbe-chain.version.txt"
+        path.write_text(path.read_text(encoding="utf-8").replace("release (", "debug ("))
+        evidence = verifier.verify_outputs(self.first, self.second, REPO_ROOT)
+        self.assertEqual(evidence["result"], "failed")
+        self.assertTrue(any("version identity mismatch" in item for item in evidence["differences"]))
 
 
 if __name__ == "__main__":

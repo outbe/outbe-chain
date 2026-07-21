@@ -47,6 +47,14 @@ for row in "${package_rows[@]}"; do
   install -m 0755 "target/${TARGET}/${PROFILE}/${name}" "${OUT}/bin/${name}"
 done
 
+"${OUT}/bin/outbe-chain" --version > "${OUT}/metadata/outbe-chain.version.txt"
+python3 scripts/release/verify_outbe_chain_version.py \
+  --version-file "${OUT}/metadata/outbe-chain.version.txt" \
+  --source-commit "${SOURCE_COMMIT}" \
+  --source-date-epoch "${SOURCE_DATE_EPOCH}" \
+  --target "${TARGET}" \
+  --profile "${PROFILE}"
+
 dpkg-query -W -f='${binary:Package}=${Version}\n' \
   | LC_ALL=C sort \
   > "${OUT}/metadata/builder-system-packages.txt"
@@ -72,6 +80,7 @@ cp "${SPEC}" "${OUT}/metadata/reproducible-elf-build-v1.json"
   sha256sum \
     bin/* \
     metadata/builder-system-packages.txt \
+    metadata/outbe-chain.version.txt \
     metadata/release-manifest-v1.schema.json \
     metadata/reproducible-elf-build-v1.json \
     release-manifest.json \
