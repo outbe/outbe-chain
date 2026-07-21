@@ -40,16 +40,17 @@ abstract contract UpgradeBase is BaseScript {
     }
 }
 
-/// @title UpgradeBsc
-/// @notice Upgrade the BNB-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, OUTBE_CHAIN_ID.
-///      Impl constructor args mirror DeployBsc so the immutables are unchanged.
-contract UpgradeBsc is UpgradeBase {
+/// @title UpgradeTarget
+/// @notice Upgrade a target chain's intex proxies (NFT + bridge + escrow + auction + router) to
+///         freshly compiled implementations.
+/// @dev Env: DEPLOYER_PRIVATE_KEY (holds the upgrade authority), BRIDGE_ADDRESS, ORIGIN_CHAIN_ID.
+///      Impl constructor args mirror DeployTarget so the immutables are unchanged.
+contract UpgradeTarget is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
-        uint32 outbeChainId = uint32(vm.envUint("OUTBE_CHAIN_ID"));
+        uint32 originChainId = uint32(vm.envUint("ORIGIN_CHAIN_ID"));
 
         Create3Factory factory = resolveFactory();
         address nft = predictProxy(factory, deployer, "IntexNFT1155");
@@ -59,35 +60,16 @@ contract UpgradeBsc is UpgradeBase {
         upgradeProxy(factory, deployer, "EscrowAdapter", address(new EscrowAdapter()));
         upgradeProxy(factory, deployer, "IntexAuction", address(new IntexAuction()));
         upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
-        upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, outbeChainId)));
+        upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, originChainId)));
         vm.stopBroadcast();
     }
 }
 
-/// @title UpgradeOutbe
-/// @notice Upgrade the Outbe-side intex proxies to freshly compiled implementations.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, BNB_CHAIN_ID. Impl constructor args mirror DeployOutbe.
-contract UpgradeOutbe is UpgradeBase {
-    function run() external {
-        uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address deployer = vm.addr(pk);
-        address bridge = vm.envAddress("BRIDGE_ADDRESS");
-
-        Create3Factory factory = resolveFactory();
-        address nft = predictProxy(factory, deployer, "IntexNFT1155");
-
-        vm.startBroadcast(pk);
-        upgradeProxy(factory, deployer, "IntexNFT1155", address(new IntexNFT1155()));
-        upgradeProxy(factory, deployer, "IntexNFT1155Bridge", address(new IntexNFT1155Bridge(nft, bridge)));
-        upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge)));
-        vm.stopBroadcast();
-    }
-}
-
-/// @title UpgradeOriginRouter
-/// @notice Upgrade only the OriginRouter proxy in place (UUPS), leaving the other proxies untouched.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS.
-contract UpgradeOriginRouter is UpgradeBase {
+/// @title UpgradeOrigin
+/// @notice Upgrade the origin engine (OriginRouter) in place. The NFT collection + bridge are a
+///         target concern now (see UpgradeTarget), so the origin has only OriginRouter to upgrade.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS. Impl constructor args mirror DeployOrigin.
+contract UpgradeOrigin is UpgradeBase {
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address deployer = vm.addr(pk);
