@@ -47,7 +47,7 @@ contract DeployOutbe is BaseScript {
             factory,
             deployer,
             "OriginRouter",
-            address(new OriginRouter(bridge, bnbChainId)),
+            address(new OriginRouter(bridge)),
             abi.encodeCall(OriginRouter.initialize, (delegate))
         );
 
@@ -63,6 +63,9 @@ contract DeployOutbe is BaseScript {
                 bnbChainId,
                 InteroperableAddress.formatEvmV1(bnbChainId, predictProxy(factory, deployer, "IntexNFT1155Bridge"))
             );
+
+        // Register BNB as an auction target (its peer is set above, satisfying addTarget's precondition).
+        OriginRouter(payable(router)).addTarget(bnbChainId);
 
         // Proceeds route (creator-reward): unwrap inbound WCOEN and hand the native to the factory precompile.
         // Skipped when the WCOEN bridge env is unset.

@@ -3,12 +3,12 @@ pragma solidity 0.8.30;
 
 /// @title ITargetRouter
 /// @author Outbe
-/// @notice Interface for the BNB-side router. Sends BIDS_BATCH to Outbe and receives auction/series messages from
-///         Outbe over the protocol-agnostic ERC-7786 bridge.
-/// @dev Deployed on BNB Chain behind a UUPS proxy. Inbound delivery arrives via
-///      {ERC7786MessengerBase-receiveMessage}. Outbound `sendBidsBatch` returns the bridge `sendId` and is funded
-///      either from `msg.value` or the contract's relay float (see {ERC7786MessengerBase}); `quoteSendBidsBatch`
-///      returns the native fee. Auction messages are keyed by `worldwideDay`; series (issuance/mark) messages by `seriesId`.
+/// @notice Interface for a target-chain router. Relays revealed bids to Outbe and receives auction/series messages
+///         from Outbe over the protocol-agnostic ERC-7786 bridge.
+/// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
+///      {ERC7786MessengerBase-receiveMessage}; the bids relay is triggered by the inbound AUCTION_STAGE_CLEARING and
+///      funded from the contract's relay float. Auction messages are keyed by `worldwideDay`; series
+///      (issuance/mark) messages by `seriesId`.
 interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
@@ -16,6 +16,13 @@ interface ITargetRouter {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsCount Number of bids sent.
     event BidsBatchSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 bidsCount);
+
+    /// @notice Emitted when the BIDS_DONE completeness marker is sent to Outbe after a day's chunks.
+    /// @param sendId Bridge send identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param totalBatches Number of BIDS_BATCH messages relayed for this day/generation.
+    /// @param totalBids Total bids relayed for this day/generation.
+    event BidsDoneSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 totalBatches, uint32 totalBids);
 
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -98,24 +105,14 @@ interface ITargetRouter {
     /// @param amount Amount of native tokens (wei) swept.
     event NativeSwept(address indexed to, uint256 amount);
 
-    // --- Types ---
-    /// @notice Parameters for sending a bids batch to Outbe.
-    struct BidsBatchParams {
-        uint32 worldwideDay;
-        address[] bidderAddresses;
-        uint16[] intexQuantities;
-        uint32[] intexBidRates;
-        uint32[] timestamps;
-    }
-
     // --- Errors ---
     /// @notice Zero address provided.
     /// @param field Field name that contains zero address.
     error ZeroAddress(string field);
-    /// @notice Array lengths do not match.
-    error ArrayLengthMismatch();
-    /// @notice Empty array provided.
-    error EmptyArray();
+    /// @notice A day's revealed bids need more than 256 batches, which the receiver's arrival mask cannot track.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose relay was rejected.
+    /// @param totalBatches Batch count the relay would have needed.
+    error TooManyBidsBatches(uint32 worldwideDay, uint16 totalBatches);
     /// @notice Native-token sweep transfer failed.
     error NativeSweepFailed();
     /// @notice Native-token balance is insufficient for the requested sweep.
@@ -153,15 +150,4 @@ interface ITargetRouter {
     /// @param to Recipient address (must be non-zero).
     /// @param amount Amount in wei to sweep; must be ≤ contract balance.
     function sweepNative(address payable to, uint256 amount) external;
-
-    // --- Send ---
-    /// @notice Native fee to send a bids batch to Outbe.
-    /// @param params Bids batch parameters.
-    /// @return fee Native fee the bridge requires.
-    function quoteSendBidsBatch(BidsBatchParams calldata params) external view returns (uint256 fee);
-
-    /// @notice Send a bids batch to Outbe. Restricted to `AUCTION_ROLE`.
-    /// @param params Bids batch parameters.
-    /// @return sendId Bridge send identifier.
-    function sendBidsBatch(BidsBatchParams calldata params) external payable returns (bytes32 sendId);
 }

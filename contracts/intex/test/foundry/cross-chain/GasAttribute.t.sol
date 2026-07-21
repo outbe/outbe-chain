@@ -8,7 +8,6 @@ import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 
 /// @dev Every send carries the destination gas as the ERC-7786 executionGasLimit attribute, sized from IntexGas.
@@ -24,14 +23,15 @@ contract GasAttributeTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        outbe = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbe = DeployProxy.originRouter(address(bridge), admin);
         bnb = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnb)));
         bnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbe)));
+        outbe.addTarget(BNB_CHAIN_ID);
+        vm.deal(address(outbe), 10 ether);
 
         desis = address(new MockDesis());
         outbe.wire(desis, makeAddr("factory"));
-        // AUCTION_ROLE goes to `admin` so this test can call sendBidsBatch directly.
         bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("nftBridge"));
     }
 
@@ -50,23 +50,23 @@ contract GasAttributeTest is CrossChainTest {
         _assertLastGas(IntexGas.AUCTION_STAGE_START);
     }
 
-    function test_bidsBatch_gasScalesWithItemCount() public {
-        _assertBidsGas(1);
-        _assertBidsGas(5);
-        // Sizing is strictly increasing in the bid count.
-        assertGt(IntexGas.bidsBatch(5), IntexGas.bidsBatch(1), "gas must grow with bids");
+    function test_variableMessage_gasScalesWithItemCount() public {
+        // Freeze day 42's snapshot so the addressed refund send passes membership.
+        IOriginRouter.AuctionStageStartParams memory sp;
+        sp.worldwideDay = 42;
+        vm.prank(desis);
+        outbe.sendAuctionStageStart(sp);
+
+        _assertRefundGas(1);
+        _assertRefundGas(5);
+        // Sizing is strictly increasing in the item count.
+        assertGt(IntexGas.refund(5), IntexGas.refund(1), "gas must grow with item count");
     }
 
-    function _assertBidsGas(uint256 n) internal {
-        ITargetRouter.BidsBatchParams memory p = ITargetRouter.BidsBatchParams({
-            worldwideDay: 42,
-            bidderAddresses: new address[](n),
-            intexQuantities: new uint16[](n),
-            intexBidRates: new uint32[](n),
-            timestamps: new uint32[](n)
-        });
-        bnb.sendBidsBatch(p);
-        _assertLastGas(IntexGas.bidsBatch(n));
+    function _assertRefundGas(uint256 n) internal {
+        vm.prank(desis);
+        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, new address[](n), new uint128[](n), new uint128[](n));
+        _assertLastGas(IntexGas.refund(n));
     }
 
     function test_quoteMatchesSend_bothCarryGas() public view {

@@ -99,7 +99,7 @@ impl AuctionConfig {
     }
 }
 
-/// One bid relayed from BNB.
+/// One bid relayed from a target chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidData {
     pub bidder_address: Address,
@@ -118,15 +118,22 @@ pub struct ClearingResult {
     pub clearing_rate: u32,
     pub winners: Vec<Address>,
     pub winner_quantities: Vec<U256>,
+    /// Source chain of each winning bid (parallel to `winners`).
+    pub winner_chains: Vec<u32>,
     pub all_bidders: Vec<Address>,
     pub refunded_amounts: Vec<u128>,
     pub paid_amounts: Vec<u128>,
+    /// Source chain of each bid (parallel to `all_bidders`).
+    pub bidder_chains: Vec<u32>,
 }
 
 /// EVM storage layout for the Desis module.
 ///
 /// Per-series: auction config, stage, bid-batch metadata, pending clearing
 /// inputs. Bids and clearing results are stored in separate vec-maps.
+///
+/// Attribute orders are append-only once the chain is live: renumbering or
+/// reusing an order changes the slot derivation and needs a chain wipe.
 #[storage_schema]
 #[contract(addr = DESIS_ADDRESS)]
 pub struct DesisContract {
@@ -136,93 +143,124 @@ pub struct DesisContract {
     pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
     pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<u32, u32>,
-    // order = 2 retired: the escrow basis is promis_load, no longer stored.
-    #[attribute(order = 3)]
+    #[attribute(order = 2)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// Entry price (1e18) captured at auction start; carried to IntexFactory.
-    #[attribute(order = 4)]
+    #[attribute(order = 3)]
     pub config_entry_price: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     // --- Auction stage ---
     /// worldwide_day -> AuctionStage (u8).
-    #[attribute(order = 5)]
+    #[attribute(order = 4)]
     pub auction_stage: outbe_primitives::storage::dsl::Map<u32, u8>,
 
-    // --- Bid-batch metadata ---
-    /// worldwide_day -> source-chain endpoint id of the last accepted bid batch.
-    #[attribute(order = 6)]
-    pub bid_source_eid: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> highest accepted bid-batch generation.
-    #[attribute(order = 7)]
-    pub last_bids_generation: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> bid count.
-    #[attribute(order = 8)]
-    pub bid_count: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> bidder address.
-    #[attribute(order = 9)]
+    // --- Bid storage (per chain) ---
+    /// keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32) -> bidder address.
+    #[attribute(order = 5)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
     /// Packed bid fields: limbs[0]=rate(u32), limbs[1]=quantity(u16)<<32|timestamp(u32).
-    #[attribute(order = 10)]
+    #[attribute(order = 6)]
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Pending clearing ---
     /// worldwide_day -> supply (Intex units) pending at clearing stage.
-    #[attribute(order = 11)]
+    #[attribute(order = 7)]
     pub pending_supply_intex: outbe_primitives::storage::dsl::Map<u32, u32>,
 
     // --- Global clearing state ---
     /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
-    #[attribute(order = 12)]
+    #[attribute(order = 8)]
     pub last_cleared_worldwide_day: outbe_primitives::storage::dsl::Value<u32>,
     /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
-    #[attribute(order = 13)]
+    #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// worldwide_day -> 1 once `begin_clearing` has run; lets `clear_auction` tell a
+    /// worldwide_day -> 1 once `begin_clearing` has run; lets `force_clear` tell a
     /// genuine zero supply from a clearing that was never initiated.
-    #[attribute(order = 14)]
+    #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,
 
     // --- Extended auction config (per series) ---
     /// worldwide_day -> issuance-currency ISO-4217 code.
-    #[attribute(order = 15)]
+    #[attribute(order = 11)]
     pub config_issuance_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> reference-currency ISO-4217 code.
-    #[attribute(order = 16)]
+    #[attribute(order = 12)]
     pub config_reference_currency: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call-trigger window (whole days).
-    #[attribute(order = 17)]
+    #[attribute(order = 13)]
     pub config_call_window_days: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call-trigger threshold (whole days).
-    #[attribute(order = 18)]
+    #[attribute(order = 14)]
     pub config_call_threshold_days: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> call cooldown (seconds).
-    #[attribute(order = 19)]
+    #[attribute(order = 15)]
     pub config_intex_call_period: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    // --- Bid-batch completeness (per bid-relay generation) ---
-    /// worldwide_day -> totalBatches expected for the current generation.
-    #[attribute(order = 20)]
-    pub bids_total_batches: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
-    #[attribute(order = 21)]
-    pub bids_arrived_mask: outbe_primitives::storage::dsl::Map<u32, U256>,
-
     /// worldwide_day -> commit-entry bond (payment-token minor units).
-    #[attribute(order = 22)]
+    #[attribute(order = 16)]
     pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     /// series/day -> scheduled auction timestamp, recorded at start (bounded until 2106).
-    #[attribute(order = 23)]
+    #[attribute(order = 17)]
     pub auction_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Per-chain bid intake (keyed keccak256(worldwide_day_be32 ++ chain_be32)) ---
+    /// Highest accepted bid-relay generation for the chain.
+    #[attribute(order = 18)]
+    pub chain_last_generation: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// totalBatches carried by the chain's batches for the current generation.
+    #[attribute(order = 19)]
+    pub chain_total_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Bitmap of arrived batchIndices for the current generation (bit i = batchIndex i seen).
+    #[attribute(order = 20)]
+    pub chain_arrived_mask: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Bids accepted from the chain for the current generation.
+    #[attribute(order = 21)]
+    pub chain_bid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// 1 once the chain's intake is complete (marker + all batches + totals match).
+    #[attribute(order = 22)]
+    pub chain_done: outbe_primitives::storage::dsl::Map<B256, u8>,
+    /// totalBatches claimed by the chain's BIDS_DONE marker (0 = no marker yet).
+    #[attribute(order = 23)]
+    pub chain_done_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// totalBids claimed by the chain's BIDS_DONE marker.
+    #[attribute(order = 24)]
+    pub chain_done_bids: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// worldwide_day -> bids accepted across all chains (getBidsCount view).
+    #[attribute(order = 25)]
+    pub day_bid_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Clearing fan-in gate ---
+    /// worldwide_day -> deadline after which clearing proceeds without the missing chains.
+    #[attribute(order = 26)]
+    pub clearing_deadline: outbe_primitives::storage::dsl::Map<u32, u64>,
+    /// Days awaiting the clearing gate (dense active set for the begin-block tick).
+    #[attribute(order = 27)]
+    pub gate_active_count: outbe_primitives::storage::dsl::Value<u32>,
+    /// dense index -> worldwide_day.
+    #[attribute(order = 28)]
+    pub gate_active_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// worldwide_day -> (active index + 1); 0 = not active.
+    #[attribute(order = 29)]
+    pub gate_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {
-    /// Composite key for per-bid fields: `keccak256(worldwide_day_be32 ++ index_be32)`.
-    pub fn bid_key(worldwide_day: u32, index: u32) -> B256 {
+    /// Composite key for per-(day, chain) fields: `keccak256(worldwide_day_be32 ++ chain_be32)`.
+    pub fn chain_key(worldwide_day: u32, chain_id: u32) -> B256 {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
+        buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
+        keccak256(buf)
+    }
+
+    /// Composite key for per-bid fields: `keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32)`.
+    pub fn bid_key(worldwide_day: u32, chain_id: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 12];
+        buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
+        buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
+        buf[8..12].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 }

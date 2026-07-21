@@ -18,9 +18,9 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter};
+use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
@@ -168,7 +168,6 @@ pub(crate) fn try_call(
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    mark_nft_called(storage, series_id)?;
     factory.remove_qualified(series_id, trigger)?;
 
     // Notify the target chain of the Called transition via ERC-7786; best-effort.
@@ -192,19 +191,6 @@ fn notify_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkCalledCall {
-            seriesId: series_id,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    Ok(())
-}
-
-fn mark_nft_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::markCalledCall {
             seriesId: series_id,
         }
         .abi_encode()

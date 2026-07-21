@@ -66,21 +66,30 @@ impl DesisContract<'_> {
             .write(&worldwide_day, cfg.entry_price_minor)
     }
 
-    // --- bid storage ---
+    // --- bid storage (per chain) ---
 
-    pub(crate) fn read_bid_count(&self, worldwide_day: u32) -> Result<u32> {
-        self.bid_count.read(&worldwide_day)
-    }
-
-    pub(crate) fn append_bid(&self, worldwide_day: u32, bid: &BidData) -> Result<u32> {
-        let index = self.bid_count.read(&worldwide_day)?;
-        self.write_bid_at(worldwide_day, index, bid)?;
-        self.bid_count.write(&worldwide_day, index + 1)?;
+    pub(crate) fn append_bid(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        bid: &BidData,
+    ) -> Result<u32> {
+        let chain_key = Self::chain_key(worldwide_day, chain_id);
+        let index = self.chain_bid_count.read(&chain_key)?;
+        self.write_bid_at(worldwide_day, chain_id, index, bid)?;
+        self.chain_bid_count.write(&chain_key, index + 1)?;
+        let day_count = self.day_bid_count.read(&worldwide_day)?;
+        self.day_bid_count.write(&worldwide_day, day_count + 1)?;
         Ok(index)
     }
 
-    pub(crate) fn read_bid_at(&self, worldwide_day: u32, index: u32) -> Result<BidData> {
-        let key = Self::bid_key(worldwide_day, index);
+    pub(crate) fn read_bid_at(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        index: u32,
+    ) -> Result<BidData> {
+        let key = Self::bid_key(worldwide_day, chain_id, index);
         let packed = self.bid_packed.read(&key)?;
         let limbs = packed.as_limbs();
         Ok(BidData {
@@ -91,8 +100,14 @@ impl DesisContract<'_> {
         })
     }
 
-    fn write_bid_at(&self, worldwide_day: u32, index: u32, bid: &BidData) -> Result<()> {
-        let key = Self::bid_key(worldwide_day, index);
+    fn write_bid_at(
+        &self,
+        worldwide_day: u32,
+        chain_id: u32,
+        index: u32,
+        bid: &BidData,
+    ) -> Result<()> {
+        let key = Self::bid_key(worldwide_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
         let packed = U256::from_limbs([
             u64::from(bid.intex_bid_rate),
@@ -103,28 +118,71 @@ impl DesisContract<'_> {
         self.bid_packed.write(&key, packed)
     }
 
-    /// Load all bids for a series into memory.
-    pub(crate) fn read_all_bids(&self, worldwide_day: u32) -> Result<Vec<BidData>> {
-        let count = self.bid_count.read(&worldwide_day)?;
-        (0..count)
-            .map(|i| self.read_bid_at(worldwide_day, i))
-            .collect()
-    }
-
-    // --- bid-batch metadata ---
-
-    pub(crate) fn read_last_generation(&self, worldwide_day: u32) -> Result<u32> {
-        self.last_bids_generation.read(&worldwide_day)
-    }
-
-    pub(crate) fn write_bid_batch_meta(
+    /// Load the chains' bids into memory, tagged with their source chain.
+    pub(crate) fn read_chains_bids(
         &self,
         worldwide_day: u32,
-        source_eid: u32,
-        generation: u32,
-    ) -> Result<()> {
-        self.bid_source_eid.write(&worldwide_day, source_eid)?;
-        self.last_bids_generation.write(&worldwide_day, generation)
+        chain_ids: &[u32],
+    ) -> Result<Vec<(u32, BidData)>> {
+        let mut bids = Vec::new();
+        for &chain_id in chain_ids {
+            let count = self
+                .chain_bid_count
+                .read(&Self::chain_key(worldwide_day, chain_id))?;
+            for i in 0..count {
+                bids.push((chain_id, self.read_bid_at(worldwide_day, chain_id, i)?));
+            }
+        }
+        Ok(bids)
+    }
+
+    /// Drop the chain's bids for a generation supersede or post-clear cleanup.
+    pub(crate) fn reset_chain_intake(&self, worldwide_day: u32, chain_id: u32) -> Result<()> {
+        let key = Self::chain_key(worldwide_day, chain_id);
+        let chain_count = self.chain_bid_count.read(&key)?;
+        let day_count = self.day_bid_count.read(&worldwide_day)?;
+        self.day_bid_count
+            .write(&worldwide_day, day_count.saturating_sub(chain_count))?;
+        self.chain_bid_count.write(&key, 0)?;
+        self.chain_total_batches.write(&key, 0)?;
+        self.chain_arrived_mask.write(&key, U256::ZERO)?;
+        self.chain_done.write(&key, 0u8)?;
+        self.chain_done_batches.write(&key, 0)?;
+        self.chain_done_bids.write(&key, 0)
+    }
+
+    // --- clearing fan-in gate (dense active set) ---
+
+    /// Append a day to the gate-active set (idempotent).
+    pub(crate) fn push_gate_active(&mut self, worldwide_day: u32) -> Result<()> {
+        if self.gate_active_slot.read(&worldwide_day)? != 0 {
+            return Ok(());
+        }
+        let count = self.gate_active_count.read()?;
+        self.gate_active_at.write(&count, worldwide_day)?;
+        // store index + 1 so that 0 unambiguously means "absent".
+        self.gate_active_slot.write(&worldwide_day, count + 1)?;
+        self.gate_active_count.write(count + 1)?;
+        Ok(())
+    }
+
+    /// Remove a day from the gate-active set via swap-remove (idempotent).
+    pub(crate) fn remove_gate_active(&mut self, worldwide_day: u32) -> Result<()> {
+        let slot1 = self.gate_active_slot.read(&worldwide_day)?;
+        if slot1 == 0 {
+            return Ok(());
+        }
+        let idx = slot1 - 1;
+        let last = self.gate_active_count.read()? - 1;
+        if idx != last {
+            let last_day = self.gate_active_at.read(&last)?;
+            self.gate_active_at.write(&idx, last_day)?;
+            self.gate_active_slot.write(&last_day, idx + 1)?;
+        }
+        self.gate_active_at.clear(&last)?;
+        self.gate_active_slot.clear(&worldwide_day)?;
+        self.gate_active_count.write(last)?;
+        Ok(())
     }
 
     // --- last cleared series ---

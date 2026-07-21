@@ -13,9 +13,9 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter};
+use crate::sol_ext::IOriginRouter;
 
 pub struct IntexLifecycle;
 
@@ -25,7 +25,10 @@ impl BlockLifecycle for IntexLifecycle {
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         scan_and_qualify(ctx)?;
+        // Drain in-flight payouts first, then start rounds for any series whose
+        // proceeds fan-in deadline has passed.
         crate::runtime::drain_distributions(&ctx.storage)?;
+        crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
         Ok(())
     }
 
@@ -155,7 +158,6 @@ pub(crate) fn try_qualify(
         return Ok(false);
     }
     outbe_intex::api::mark_qualified(storage, series_id)?;
-    mark_nft_qualified(storage, series_id)?;
     factory.remove_unqualified(series_id, floor)?;
     factory.insert_qualified(series_id, series.call_price_minor)?;
 
@@ -179,19 +181,6 @@ fn notify_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkQualifiedCall {
-            seriesId: series_id,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    Ok(())
-}
-
-fn mark_nft_qualified(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::markQualifiedCall {
             seriesId: series_id,
         }
         .abi_encode()

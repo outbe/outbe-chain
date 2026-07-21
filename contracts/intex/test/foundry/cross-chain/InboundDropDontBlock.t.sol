@@ -80,7 +80,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
@@ -91,6 +91,16 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         outbeRouter.wire(address(desis), intexFactory);
+        outbeRouter.addTarget(BNB_CHAIN_ID);
+    }
+
+    /// @dev Freeze `day`'s target snapshot (as the DESIS_ROLE holder) so its bids pass the inbound
+    ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
+    function _freezeSnapshot(uint32 day) internal {
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = day;
+        vm.prank(address(desis));
+        outbeRouter.sendAuctionStageStart(p);
     }
 
     function _deliverToTM(bytes memory packet) internal {
@@ -139,6 +149,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice A BIDS_BATCH whose downstream (Desis) prerequisite has not landed reverts; once Desis is ready,
     ///         re-delivering the same batch succeeds. The router no longer drops it to keep a lane moving.
     function test_OM_PrematureBidsBatch_RevertsThenRedeliverSucceeds() public {
+        _freezeSnapshot(42); // BNB is in the day's snapshot; the revert below is Desis-not-ready, not membership
         bytes memory bids = BridgeMsgCodec.encodeBidsBatch(
             42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
         );

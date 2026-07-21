@@ -7430,11 +7430,13 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-primitives",
  "outbe-promislimit",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

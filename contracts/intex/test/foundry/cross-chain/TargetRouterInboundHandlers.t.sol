@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -61,7 +62,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
@@ -122,6 +123,62 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(WORLDWIDE_DAY).result;
         assertEq(result.issuedIntexCount, ISSUED_INTEX_COUNT, "issuedIntexCount persisted");
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
+    }
+
+    // --- _handleAuctionStageClearing: relays a BIDS_DONE marker, exactly once ---
+    function test_handleAuctionStageClearing_emitsBidsDone() public {
+        _seedAuction();
+        vm.prank(address(bnbRouter));
+        auction.startRevealingBidsStage(SERIES_ID, true);
+
+        // No revealed bids: one empty BIDS_BATCH plus a BIDS_DONE(totalBatches=1, totalBids=0).
+        vm.expectEmit(false, true, false, true, address(bnbRouter));
+        emit ITargetRouter.BidsDoneSent(bytes32(0), SERIES_ID, 1, 0);
+        _deliver(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID));
+    }
+
+    function test_handleAuctionStageClearing_idempotentOnRedelivery() public {
+        _seedAuction();
+        vm.prank(address(bnbRouter));
+        auction.startRevealingBidsStage(SERIES_ID, true);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID);
+        _deliver(packet); // first CLEARING relays
+
+        // A redelivered CLEARING must not re-relay under a fresh generation.
+        vm.recordLogs();
+        _deliver(packet);
+        assertEq(_countLogs(keccak256("BidsDoneSent(bytes32,uint32,uint16,uint32)")), 0, "no re-relay");
+    }
+
+    // --- _handleMarkCalled: origin-as-target skips holder migration (holders already on the canonical NFT) ---
+    function test_handleMarkCalled_localTarget_skipsHolderMigration() public {
+        uint32 local = uint32(block.chainid);
+        TargetRouter localRouter = DeployProxy.targetRouter(address(bridge), admin, local);
+        address localOrigin = makeAddr("localOrigin");
+        localRouter.setRemoteMessenger(local, _interop(local, localOrigin));
+        localRouter.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        intex.grantRole(intex.RELAYER_ROLE(), address(localRouter));
+
+        address[] memory recipients = new address[](1);
+        recipients[0] = bidder;
+        uint256[] memory quantities = new uint256[](1);
+        quantities[0] = 5;
+        _deliver(local, localOrigin, address(localRouter), _issuancePacket(recipients, quantities));
+
+        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        assertEq(intex.balanceOf(bidder, tokenId), 5);
+
+        _deliver(local, localOrigin, address(localRouter), BridgeMsgCodec.encodeMarkCalled(SERIES_ID));
+
+        assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
+        assertEq(intex.balanceOf(bidder, tokenId), 5, "holders retained on the canonical NFT (no migration)");
+    }
+
+    function _countLogs(bytes32 sig) internal returns (uint256 n) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == sig) n++;
+        }
     }
 
     // --- _handleIssuanceInstructions: createSeries + per-recipient mint on the local IntexNFT1155 ---
