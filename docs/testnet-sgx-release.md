@@ -50,13 +50,35 @@ Release immutability protects the tag and assets after publication. The tag rule
 still required before publication because draft releases are intentionally mutable while
 the workflow uploads and verifies their complete asset matrix.
 
-Register a self-hosted x86_64 GitHub runner with labels `self-hosted` and `sgx`. It needs
-Docker access and these device nodes (legacy `/dev/sgx/...` aliases are also accepted):
+Register a dedicated ephemeral x86_64 GitHub runner with only the custom label
+`testnet-release-sgx`. Do not give this runner the default `self-hosted`, `Linux`, `X64` or
+generic `sgx` labels: those labels are shared by CI/nightly jobs and do not isolate the
+protected release workload. The release workflow targets the unique label directly.
+
+The runner needs Docker access and these device nodes (legacy `/dev/sgx/...` aliases are
+also accepted):
 
 ```bash
 ls -l /dev/sgx_enclave /dev/sgx_provision
 docker version
 ```
+
+Configure the pinned runner from its installation directory using a short-lived repository
+registration token. `--ephemeral` limits it to one job and `--no-default-labels` prevents it
+from consuming unrelated queued work:
+
+```bash
+./config.sh --unattended --ephemeral --disableupdate --no-default-labels \
+  --url https://github.com/outbe/outbe-chain \
+  --token "$RUNNER_REGISTRATION_TOKEN" \
+  --name "$(hostname)-outbe-testnet-release-sgx" \
+  --labels testnet-release-sgx \
+  --work _work
+```
+
+Start this runner only after the protected workflow is ready to advance to hardware
+acceptance. Confirm GitHub reports exactly the custom routing label before allowing the
+job to start.
 
 ## Cut and run a release
 
