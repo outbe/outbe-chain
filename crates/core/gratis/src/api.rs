@@ -60,19 +60,18 @@ pub fn burn(
     runtime::burn(storage, caller, amount, auth)
 }
 
-/// Pledge `amount` gratis from `caller` over `installments` anadosis payments.
+/// Pledge `amount` gratis from `caller` into a new pending `PledgeLockTicket`.
 /// Returns the pledge handle to present at `requestCredis`.
 pub fn pledge(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
-    installments: u32,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    runtime::pledge(storage, caller, amount, installments, auth)
+    runtime::pledge(storage, caller, amount, auth)
 }
 
-/// Directly unpledge an unspent pledge (`pledge_handle`) back to `caller`.
+/// Directly unpledge an unspent (pending) pledge (`pledge_handle`) back to `caller`.
 pub fn unpledge(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -85,26 +84,28 @@ pub fn unpledge(
 
 // --- Credis-driven ---
 
-/// requestCredis: consume `pledge_handle` for `bundle` (authorized by
-/// `spend_auth`), moving the collateral from `eoa`'s pledged ledger into the
-/// `CREDIS_ADDRESS` escrow balance. Returns `gratis_amount`. `eoa` is supplied by
-/// the caller and checked by the enclave against the pledge record.
-pub fn pledge_to_bundle(
+/// requestCredis: consume `pledge_handle`'s ticket for `bundle` (authorized by
+/// `spend_auth`), crediting the collateral into `eoa`'s OWN pledged ledger and
+/// deleting the ticket. Returns `gratis_amount`. `eoa` is supplied by the caller and
+/// checked by the enclave against the ticket owner.
+pub fn consume_pledge(
     storage: StorageHandle<'_>,
     pledge_handle: B256,
     bundle: Address,
     eoa: Address,
     spend_auth: [u8; 32],
 ) -> Result<U256> {
-    runtime::pledge_to_bundle(storage, pledge_handle, bundle, eoa, spend_auth)
+    runtime::consume_pledge(storage, pledge_handle, bundle, eoa, spend_auth)
 }
 
-/// payAnadosis: release one installment of `pledge_handle` from the
-/// `CREDIS_ADDRESS` escrow balance back to `eoa`. Returns the released amount.
-pub fn unlock_to_eoa(
-    storage: StorageHandle<'_>,
-    eoa: Address,
-    pledge_handle: B256,
-) -> Result<U256> {
-    runtime::unlock_to_eoa(storage, eoa, pledge_handle)
+/// payAnadosis: release `amount` of collateral from `eoa`'s own pledged ledger back
+/// to its balance. Returns the released amount.
+pub fn release_to_eoa(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
+    runtime::release_to_eoa(storage, eoa, amount)
+}
+
+/// Credis expiry: burn `amount` of collateral from `eoa`'s own pledged ledger
+/// (reduces `total_supply`). Returns the burned amount.
+pub fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
+    runtime::burn_pledged(storage, eoa, amount)
 }

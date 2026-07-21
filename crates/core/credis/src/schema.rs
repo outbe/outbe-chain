@@ -55,6 +55,14 @@ pub struct Position {
     /// from the disbursed asset's `isoCode()` at issuance.
     #[attribute(order = 11)]
     pub issuance_currency: u16,
+
+    /// Original pledger EOA that owns the confidential Gratis collateral backing this
+    /// position. Needed by the expiry sweep to burn the right `pledged_ct` and drop
+    /// the right fidelity cohort.
+    // TODO(TEE): the EOA is stored plaintext here; carry it in a client-encrypted blob
+    // decrypted inside the enclave to hide the EOA↔position linkage.
+    #[attribute(order = 12)]
+    pub eoa_account: Address,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.

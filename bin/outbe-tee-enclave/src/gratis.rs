@@ -29,9 +29,11 @@ use crate::errors::{Result, TeeError};
 const FIELD_BALANCE: u8 = 0;
 const FIELD_PLEDGED: u8 = 1;
 
-/// Pledge-record plaintext: `amount(32) ‖ eoa(20) ‖ bundle(20) ‖ total(4) ‖
-/// remaining(4) ‖ spent(1)`.
-const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 20 + 4 + 4 + 1;
+/// PledgeLockTicket plaintext: `amount(32) ‖ owner(20)` = 52 bytes. The ticket only
+/// exists between `Pledge` and its consumption (`ConsumePledge`/`Unpledge`); the
+/// active credis schedule (installments, outstanding collateral) is tracked on-chain
+/// by the Credis position, not here.
+const RECORD_PLAINTEXT_LEN: usize = 32 + 20;
 
 /// Amount blob length: `version(8, BE) ‖ ChaCha20Poly1305(U256 amount)` where the
 /// ct is a 32-byte plaintext + 16-byte Poly1305 tag = 56 bytes. Constant for every
@@ -237,24 +239,16 @@ pub fn decrypt_pledged(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Re
 // --- Pledge record --------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct PledgeRecord {
+struct PledgeLockTicket {
     amount: U256,
-    eoa: Address,
-    bundle: Address,
-    total: u32,
-    remaining: u32,
-    spent: bool,
+    owner: Address,
 }
 
-impl PledgeRecord {
+impl PledgeLockTicket {
     fn encode(&self) -> Vec<u8> {
         let mut b = Vec::with_capacity(RECORD_PLAINTEXT_LEN);
         b.extend_from_slice(&self.amount.to_be_bytes::<32>());
-        b.extend_from_slice(self.eoa.as_slice());
-        b.extend_from_slice(self.bundle.as_slice());
-        b.extend_from_slice(&self.total.to_be_bytes());
-        b.extend_from_slice(&self.remaining.to_be_bytes());
-        b.push(self.spent as u8);
+        b.extend_from_slice(self.owner.as_slice());
         b
     }
 
@@ -262,20 +256,14 @@ impl PledgeRecord {
         if b.len() != RECORD_PLAINTEXT_LEN {
             return Err(TeeError::DecryptFailed);
         }
-        let to4 =
-            |s: &[u8]| -> Result<[u8; 4]> { s.try_into().map_err(|_| TeeError::DecryptFailed) };
         Ok(Self {
             amount: U256::from_be_slice(&b[0..32]),
-            eoa: Address::from_slice(&b[32..52]),
-            bundle: Address::from_slice(&b[52..72]),
-            total: u32::from_be_bytes(to4(&b[72..76])?),
-            remaining: u32::from_be_bytes(to4(&b[76..80])?),
-            spent: b[80] != 0,
+            owner: Address::from_slice(&b[32..52]),
         })
     }
 }
 
-fn read_record(state_key: &[u8; 32], handle: B256, blob: &[u8]) -> Result<(u64, PledgeRecord)> {
+fn read_ticket(state_key: &[u8; 32], handle: B256, blob: &[u8]) -> Result<(u64, PledgeLockTicket)> {
     if blob.len() < 8 {
         return Err(TeeError::DecryptFailed);
     }
@@ -284,18 +272,18 @@ fn read_record(state_key: &[u8; 32], handle: B256, blob: &[u8]) -> Result<(u64, 
     let version = u64::from_be_bytes(vbytes);
     let nonce = slot_nonce(state_key, handle.as_slice(), version)?;
     let pt = chacha20poly1305_decrypt(state_key, &nonce, &blob[8..])?;
-    Ok((version, PledgeRecord::decode(&pt)?))
+    Ok((version, PledgeLockTicket::decode(&pt)?))
 }
 
-fn write_record(
+fn write_ticket(
     state_key: &[u8; 32],
     handle: B256,
     prev_version: u64,
-    rec: &PledgeRecord,
+    ticket: &PledgeLockTicket,
 ) -> Result<Vec<u8>> {
     let version = prev_version.saturating_add(1);
     let nonce = slot_nonce(state_key, handle.as_slice(), version)?;
-    let ct = chacha20poly1305_encrypt(state_key, &nonce, &rec.encode())?;
+    let ct = chacha20poly1305_encrypt(state_key, &nonce, &ticket.encode())?;
     let mut blob = version.to_be_bytes().to_vec();
     blob.extend_from_slice(&ct);
     Ok(blob)
@@ -309,7 +297,6 @@ fn base_result() -> GratisOpResult {
         new_balance: Vec::new(),
         new_pledged: Vec::new(),
         new_pledge_record: Vec::new(),
-        new_credis_balance: Vec::new(),
         pledge_handle: B256::ZERO,
         gratis_amount: U256::ZERO,
         event_amount: U256::ZERO,
@@ -346,8 +333,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge | GratisOp::Unpledge => {
             apply_owner_op(state_key, req)
         }
-        GratisOp::PledgeToBundle => apply_pledge_to_bundle(state_key, req),
-        GratisOp::UnlockToEoa => apply_unlock_to_eoa(state_key, req),
+        GratisOp::ConsumePledge => apply_consume_pledge(state_key, req),
+        GratisOp::ReleaseToEoa => apply_release_to_eoa(state_key, req),
+        GratisOp::BurnPledged => apply_burn_pledged(state_key, req),
     }
 }
 
@@ -374,7 +362,6 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 
     let view_key = derive_view_key(state_key, req.account)?;
     let (bver, balance) = read_amount(&view_key, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let (pver, pledged) = read_amount(&view_key, req.account, FIELD_PLEDGED, &req.current_pledged)?;
 
     let mut r = base_result();
     r.event_amount = req.amount;
@@ -401,22 +388,17 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
             )?;
         }
         GratisOp::Pledge => {
+            // Two-phase pledge: debit the liquid balance and PARK the amount in a new
+            // PledgeLockTicket. The pledged ledger is credited only later, when
+            // `ConsumePledge` consumes the ticket at requestCredis.
             if balance < req.amount {
                 return Ok(reject("insufficient balance"));
             }
-            let new_pledged = match pledged.checked_add(req.amount) {
-                Some(v) => v,
-                None => return Ok(reject("gratis pledged overflow")),
-            };
             let handle =
                 derive_pledge_handle(state_key, req.account, req.amount, req.modify_auth.op_nonce)?;
-            let record = PledgeRecord {
+            let ticket = PledgeLockTicket {
                 amount: req.amount,
-                eoa: req.account,
-                bundle: Address::ZERO,
-                total: req.installments.max(1),
-                remaining: req.installments.max(1),
-                spent: false,
+                owner: req.account,
             };
             r.new_balance = write_amount(
                 &view_key,
@@ -425,184 +407,148 @@ fn apply_owner_op(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
                 bver,
                 balance - req.amount,
             )?;
-            r.new_pledged = write_amount(&view_key, req.account, FIELD_PLEDGED, pver, new_pledged)?;
-            r.new_pledge_record = write_record(state_key, handle, 0, &record)?;
+            r.new_pledge_record = write_ticket(state_key, handle, 0, &ticket)?;
             r.pledge_handle = handle;
         }
         GratisOp::Unpledge => {
-            // Direct unpledge (e.g. credis rejected) is record-based: it fully
-            // closes an UNSPENT pledge so the record can never later be consumed
-            // for credis (double-spend) or drained via UnlockToEoa.
+            // Return a still-pending pledge (e.g. credis rejected): credit the ticket
+            // amount back to the balance and DELETE the ticket (host writes back the
+            // empty `new_pledge_record`) so it can never be consumed later.
             let Some(handle) = req.pledge_handle else {
                 return Ok(reject("unpledge requires a pledge handle"));
             };
-            let (rver, mut record) = read_record(state_key, handle, &req.current_pledge_record)?;
-            if record.spent {
-                return Ok(reject("pledge already consumed"));
+            let (_rver, ticket) = read_ticket(state_key, handle, &req.current_pledge_record)?;
+            if ticket.owner != req.account {
+                return Ok(reject("unpledge account does not match pledge ticket"));
             }
-            if record.eoa != req.account {
-                return Ok(reject("unpledge account does not match pledge record"));
+            if ticket.amount != req.amount {
+                return Ok(reject("unpledge amount does not match pledge ticket"));
             }
-            if record.amount != req.amount {
-                return Ok(reject("unpledge amount does not match pledge record"));
-            }
-            if pledged < record.amount {
-                return Ok(reject("insufficient pledged balance"));
-            }
-            let new_balance = match balance.checked_add(record.amount) {
+            let new_balance = match balance.checked_add(ticket.amount) {
                 Some(v) => v,
                 None => return Ok(reject("gratis balance overflow")),
             };
-            record.spent = true;
-            record.remaining = 0;
             r.new_balance = write_amount(&view_key, req.account, FIELD_BALANCE, bver, new_balance)?;
-            r.new_pledged = write_amount(
-                &view_key,
-                req.account,
-                FIELD_PLEDGED,
-                pver,
-                pledged - record.amount,
-            )?;
-            r.new_pledge_record = write_record(state_key, handle, rver, &record)?;
+            // `new_pledge_record` stays empty → host clears (deletes) the ticket slot.
         }
         _ => unreachable!("apply_owner_op only handles owner ops"),
     }
     Ok(r)
 }
 
-/// requestCredis: consume a pledge record, verify the spend binding to the bundle
-/// account, mark it spent, and move the collateral out of the EOA's pledged ledger
-/// into the `credis_account` escrow balance (`EOA.pledged -= amount;
-/// CREDIS.balance += amount`). The host supplies the EOA (`req.account`); the
-/// enclave checks it matches the record so the caller cannot debit a different
-/// account's pledged slot.
-fn apply_pledge_to_bundle(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    let (Some(handle), Some(bundle), Some(spend_auth), Some(credis)) = (
-        req.pledge_handle,
-        req.bundle_account,
-        req.spend_auth,
-        req.credis_account,
-    ) else {
+/// requestCredis: consume a `PledgeLockTicket`, verify the spend binding to the
+/// bundle account, credit the ticket amount into the EOA's OWN pledged ledger, and
+/// delete the ticket. No escrow account is involved — the collateral stays with the
+/// pledger for the whole credis term. The host supplies the EOA (`req.account`); the
+/// enclave checks it matches the ticket owner so the caller cannot consume a
+/// different account's ticket.
+fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
+    let (Some(handle), Some(bundle), Some(spend_auth)) =
+        (req.pledge_handle, req.bundle_account, req.spend_auth)
+    else {
         return Ok(reject(
-            "pledge_to_bundle requires handle, bundle, spend_auth, and credis_account",
+            "consume_pledge requires handle, bundle, and spend_auth",
         ));
     };
-    let (rver, mut record) = read_record(state_key, handle, &req.current_pledge_record)?;
-    if record.spent {
-        return Ok(reject("pledge already spent"));
-    }
-    if record.eoa != req.account {
+    let (_tver, ticket) = read_ticket(state_key, handle, &req.current_pledge_record)?;
+    if ticket.owner != req.account {
         return Ok(reject(
-            "pledge_to_bundle account does not match pledge record",
+            "consume_pledge account does not match pledge ticket",
         ));
     }
-    let modify_key = derive_modify_key(state_key, record.eoa)?;
+    let modify_key = derive_modify_key(state_key, ticket.owner)?;
     let secret = pledge_secret(&modify_key, handle);
     let expected = spend_auth_mac(&secret, bundle);
     if !constant_time_eq(&expected, &spend_auth) {
         return Ok(reject("invalid spend authorization"));
     }
 
-    // Debit the EOA's pledged ledger.
-    let eoa_view = derive_view_key(state_key, record.eoa)?;
-    let (pver, pledged) = read_amount(&eoa_view, record.eoa, FIELD_PLEDGED, &req.current_pledged)?;
-    if pledged < record.amount {
-        return Ok(reject("insufficient pledged balance"));
-    }
-    // Credit the escrow's balance.
-    let credis_view = derive_view_key(state_key, credis)?;
-    let (cver, credis_balance) =
-        read_amount(&credis_view, credis, FIELD_BALANCE, &req.credis_balance)?;
-    let new_credis_balance = match credis_balance.checked_add(record.amount) {
+    // Credit the EOA's OWN pledged ledger (pending → active); no escrow move.
+    let eoa_view = derive_view_key(state_key, ticket.owner)?;
+    let (pver, pledged) =
+        read_amount(&eoa_view, ticket.owner, FIELD_PLEDGED, &req.current_pledged)?;
+    let new_pledged = match pledged.checked_add(ticket.amount) {
         Some(v) => v,
-        None => return Ok(reject("escrow balance overflow")),
+        None => return Ok(reject("gratis pledged overflow")),
     };
 
-    record.spent = true;
-    record.bundle = bundle;
+    let mut r = base_result();
+    r.new_pledged = write_amount(&eoa_view, ticket.owner, FIELD_PLEDGED, pver, new_pledged)?;
+    // `new_pledge_record` stays empty → host clears (deletes) the ticket slot, so it
+    // can never be consumed twice (double-spend).
+    r.gratis_amount = ticket.amount;
+    r.event_amount = ticket.amount;
+    Ok(r)
+}
+
+/// payAnadosis: release `amount` of collateral from the EOA's OWN pledged ledger back
+/// to its balance (`EOA.pledged -= amount; EOA.balance += amount`). Amount-based (no
+/// ticket): the on-chain Credis position schedule is the accounting authority for the
+/// per-installment amount; the enclave only enforces pledged-ledger sufficiency.
+/// `req.account` is the EOA (supplied by the host from the position / `eoaAccount`).
+///
+// TODO(privacy): the host still passes the EOA in plaintext calldata (only the
+// amounts stay encrypted). To also hide the EOA, carry it in a client-encrypted blob
+// and decrypt it inside the enclave.
+fn apply_release_to_eoa(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
+    if req.amount.is_zero() {
+        return Ok(reject("amount must be positive"));
+    }
+    if req.account.is_zero() {
+        return Ok(reject("invalid address"));
+    }
+    let eoa_view = derive_view_key(state_key, req.account)?;
+    let (pver, pledged) = read_amount(&eoa_view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
+    if pledged < req.amount {
+        return Ok(reject("insufficient pledged balance"));
+    }
+    let (bver, balance) = read_amount(&eoa_view, req.account, FIELD_BALANCE, &req.current_balance)?;
+    let new_balance = match balance.checked_add(req.amount) {
+        Some(v) => v,
+        None => return Ok(reject("gratis balance overflow")),
+    };
 
     let mut r = base_result();
     r.new_pledged = write_amount(
         &eoa_view,
-        record.eoa,
+        req.account,
         FIELD_PLEDGED,
         pver,
-        pledged - record.amount,
+        pledged - req.amount,
     )?;
-    r.new_credis_balance = write_amount(
-        &credis_view,
-        credis,
-        FIELD_BALANCE,
-        cver,
-        new_credis_balance,
-    )?;
-    r.new_pledge_record = write_record(state_key, handle, rver, &record)?;
-    r.gratis_amount = record.amount;
-    r.event_amount = record.amount;
+    r.new_balance = write_amount(&eoa_view, req.account, FIELD_BALANCE, bver, new_balance)?;
+    r.gratis_amount = req.amount;
+    r.event_amount = req.amount;
     Ok(r)
 }
 
-/// payAnadosis: release one installment of collateral from the `credis_account`
-/// escrow balance back to the original EOA's balance (`CREDIS.balance -= release;
-/// EOA.balance += release`). `req.account` is the EOA (supplied by the host from
-/// the `eoaAccount` calldata arg); the enclave checks the record binds to it, so
-/// the caller can only route the release to the rightful pledger.
-///
-// TODO(privacy): the host still passes the EOA in plaintext calldata (only the
-// amounts stay encrypted), and the escrow debit hits the constant `CREDIS_ADDRESS`
-// slot so it no longer fingerprints the EOA. To also hide the EOA, carry it in a
-// client-encrypted blob and decrypt it inside the enclave.
-fn apply_unlock_to_eoa(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
-    let (Some(handle), Some(credis)) = (req.pledge_handle, req.credis_account) else {
-        return Ok(reject("unlock requires a pledge handle and credis_account"));
-    };
-    let (rver, mut record) = read_record(state_key, handle, &req.current_pledge_record)?;
-    if !record.spent {
-        return Ok(reject("pledge not requested for credis"));
+/// Credis expiry: burn `amount` of collateral from the EOA's OWN pledged ledger
+/// (`EOA.pledged -= amount`; the host then reduces `total_supply`). Amount-based (no
+/// ticket): the on-chain Credis position's outstanding collateral is the authority;
+/// the enclave only enforces pledged-ledger sufficiency.
+fn apply_burn_pledged(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
+    if req.amount.is_zero() {
+        return Ok(reject("amount must be positive"));
     }
-    if record.eoa != req.account {
-        return Ok(reject("unlock account does not match pledge record"));
+    if req.account.is_zero() {
+        return Ok(reject("invalid address"));
     }
-    if record.remaining == 0 {
-        return Ok(reject("pledge fully released"));
-    }
-    let total = record.total.max(1);
-    let per = record.amount / U256::from(total);
-    // The final installment releases the remainder so the sum is exactly `amount`.
-    let release = if record.remaining == 1 {
-        record.amount - per * U256::from(total - 1)
-    } else {
-        per
-    };
-
-    // Debit the escrow balance.
-    let credis_view = derive_view_key(state_key, credis)?;
-    let (cver, credis_balance) =
-        read_amount(&credis_view, credis, FIELD_BALANCE, &req.credis_balance)?;
-    if credis_balance < release {
-        return Ok(reject("escrow balance underflow"));
-    }
-    // Credit the EOA balance.
     let eoa_view = derive_view_key(state_key, req.account)?;
-    let (bver, balance) = read_amount(&eoa_view, req.account, FIELD_BALANCE, &req.current_balance)?;
-    let new_balance = match balance.checked_add(release) {
-        Some(v) => v,
-        None => return Ok(reject("gratis balance overflow")),
-    };
-    record.remaining -= 1;
+    let (pver, pledged) = read_amount(&eoa_view, req.account, FIELD_PLEDGED, &req.current_pledged)?;
+    if pledged < req.amount {
+        return Ok(reject("insufficient pledged balance"));
+    }
 
     let mut r = base_result();
-    r.new_balance = write_amount(&eoa_view, req.account, FIELD_BALANCE, bver, new_balance)?;
-    r.new_credis_balance = write_amount(
-        &credis_view,
-        credis,
-        FIELD_BALANCE,
-        cver,
-        credis_balance - release,
+    r.new_pledged = write_amount(
+        &eoa_view,
+        req.account,
+        FIELD_PLEDGED,
+        pver,
+        pledged - req.amount,
     )?;
-    r.new_pledge_record = write_record(state_key, handle, rver, &record)?;
-    r.gratis_amount = release;
-    r.event_amount = release;
+    r.gratis_amount = req.amount;
+    r.event_amount = req.amount;
     Ok(r)
 }
 
@@ -651,17 +597,10 @@ mod tests {
                 mac: [0u8; 32],
                 op_nonce: nonce,
             },
-            installments: 10,
             pledge_handle: None,
             bundle_account: None,
             spend_auth: None,
-            credis_account: None,
-            credis_balance: Vec::new(),
         }
-    }
-
-    fn credis() -> Address {
-        Address::repeat_byte(0xCD)
     }
 
     #[test]
@@ -718,80 +657,82 @@ mod tests {
         ));
     }
 
+    /// requestCredis consume: the pledge ticket credits the EOA's OWN pledged ledger
+    /// (no escrow), the ticket is deleted, and installments release from that same
+    /// ledger back to the EOA's balance.
     #[test]
-    fn pledge_request_credis_and_unlock_flow() {
+    fn pledge_consume_and_release_flow() {
         let sk = state_key();
-        // mine 1000 to alice
+        // mint 1000 to alice
         let mut m = req(GratisOp::Mint, alice(), U256::from(1000u64), 0);
         m.modify_auth = auth(&sk, alice(), GratisOp::Mint, m.amount, 0);
         let minted = apply_op(&sk, &m);
 
-        // pledge 1000 (10 installments)
+        // pledge 1000: balance drained, amount parked in the ticket (pledged still 0).
         let mut p = req(GratisOp::Pledge, alice(), U256::from(1000u64), 1);
         p.current_balance = minted.new_balance.clone();
-        p.installments = 10;
         p.modify_auth = auth(&sk, alice(), GratisOp::Pledge, p.amount, 1);
         let pledged = apply_op(&sk, &p);
         assert!(matches!(pledged.status, GratisOpStatus::Applied));
         let handle = pledged.pledge_handle;
         assert_ne!(handle, B256::ZERO);
-        // balance drained to 0
+        assert!(!pledged.new_pledge_record.is_empty(), "ticket written");
+        assert!(
+            pledged.new_pledged.is_empty(),
+            "pledge does not touch pledged_ct"
+        );
         let vk = derive_view_key(&sk, alice()).unwrap();
         let (_v, bal) = read_amount(&vk, alice(), FIELD_BALANCE, &pledged.new_balance).unwrap();
         assert_eq!(bal, U256::ZERO);
 
-        // requestCredis: alice derives the pledge secret and binds to the bundle.
-        // The collateral moves out of alice's pledged ledger into the credis escrow
-        // balance.
+        // requestCredis: alice derives the pledge secret and binds to the bundle. The
+        // collateral is credited into alice's OWN pledged ledger and the ticket is
+        // deleted (empty new_pledge_record).
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let secret = pledge_secret(&mk, handle);
         let spend = spend_auth_mac(&secret, bundle());
-        let mut rc = req(GratisOp::PledgeToBundle, alice(), U256::ZERO, 0);
+        let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = pledged.new_pledge_record.clone();
-        rc.current_pledged = pledged.new_pledged.clone();
+        rc.current_pledged = Vec::new();
         rc.pledge_handle = Some(handle);
         rc.bundle_account = Some(bundle());
         rc.spend_auth = Some(spend);
-        rc.credis_account = Some(credis());
         let credis_res = apply_op(&sk, &rc);
         assert!(matches!(credis_res.status, GratisOpStatus::Applied));
         assert_eq!(credis_res.gratis_amount, U256::from(1000u64));
-        // Alice's pledged drained to 0; the escrow now holds the full pledge.
+        assert!(
+            credis_res.new_pledge_record.is_empty(),
+            "ticket deleted on consume"
+        );
         let (_v, alice_pledged) =
             read_amount(&vk, alice(), FIELD_PLEDGED, &credis_res.new_pledged).unwrap();
-        assert_eq!(alice_pledged, U256::ZERO);
-        let cvk = derive_view_key(&sk, credis()).unwrap();
-        let (_v, escrow) = read_amount(
-            &cvk,
-            credis(),
-            FIELD_BALANCE,
-            &credis_res.new_credis_balance,
-        )
-        .unwrap();
-        assert_eq!(escrow, U256::from(1000u64));
+        assert_eq!(alice_pledged, U256::from(1000u64));
 
         // A wrong bundle binding is rejected (front-running defense).
         let mut bad = rc.clone();
         bad.bundle_account = Some(Address::repeat_byte(0xEE));
-        bad.current_pledge_record = pledged.new_pledge_record.clone();
         assert!(matches!(
             apply_op(&sk, &bad).status,
             GratisOpStatus::Rejected { .. }
         ));
 
-        // Pay 10 installments → unlocks 100 each from the escrow back to alice,
-        // exactly draining the escrow.
-        let mut record_blob = credis_res.new_pledge_record.clone();
+        // Re-consuming the (now deleted) ticket is rejected — no double-spend.
+        let mut again = rc.clone();
+        again.current_pledge_record = credis_res.new_pledge_record.clone();
+        assert!(matches!(
+            apply_op(&sk, &again).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+
+        // Pay 10 installments (amount-based release, 100 each) → drains pledged back
+        // to balance.
+        let mut pledged_blob = credis_res.new_pledged.clone();
         let mut bal_blob = pledged.new_balance.clone();
-        let mut escrow_blob = credis_res.new_credis_balance.clone();
         let mut total_released = U256::ZERO;
         for _ in 0..10 {
-            let mut u = req(GratisOp::UnlockToEoa, alice(), U256::ZERO, 0);
-            u.pledge_handle = Some(handle);
-            u.current_pledge_record = record_blob.clone();
+            let mut u = req(GratisOp::ReleaseToEoa, alice(), U256::from(100u64), 0);
+            u.current_pledged = pledged_blob.clone();
             u.current_balance = bal_blob.clone();
-            u.credis_account = Some(credis());
-            u.credis_balance = escrow_blob.clone();
             let un = apply_op(&sk, &u);
             assert!(
                 matches!(un.status, GratisOpStatus::Applied),
@@ -799,22 +740,18 @@ mod tests {
                 un.status
             );
             total_released += un.gratis_amount;
-            record_blob = un.new_pledge_record.clone();
+            pledged_blob = un.new_pledged.clone();
             bal_blob = un.new_balance.clone();
-            escrow_blob = un.new_credis_balance.clone();
         }
         assert_eq!(total_released, U256::from(1000u64));
         let (_v, final_bal) = read_amount(&vk, alice(), FIELD_BALANCE, &bal_blob).unwrap();
         assert_eq!(final_bal, U256::from(1000u64));
-        let (_v, final_escrow) = read_amount(&cvk, credis(), FIELD_BALANCE, &escrow_blob).unwrap();
-        assert_eq!(final_escrow, U256::ZERO);
-        // 11th unlock rejected — fully released.
-        let mut u = req(GratisOp::UnlockToEoa, alice(), U256::ZERO, 0);
-        u.pledge_handle = Some(handle);
-        u.current_pledge_record = record_blob;
+        let (_v, final_pledged) = read_amount(&vk, alice(), FIELD_PLEDGED, &pledged_blob).unwrap();
+        assert_eq!(final_pledged, U256::ZERO);
+        // An 11th release rejected — pledged ledger is empty.
+        let mut u = req(GratisOp::ReleaseToEoa, alice(), U256::from(100u64), 0);
+        u.current_pledged = pledged_blob;
         u.current_balance = bal_blob;
-        u.credis_account = Some(credis());
-        u.credis_balance = escrow_blob;
         assert!(matches!(
             apply_op(&sk, &u).status,
             GratisOpStatus::Rejected { .. }
@@ -828,16 +765,65 @@ mod tests {
         let minted = apply_op(sk, &m);
         let mut p = req(GratisOp::Pledge, alice(), amount, 1);
         p.current_balance = minted.new_balance.clone();
-        p.installments = 10;
         p.modify_auth = auth(sk, alice(), GratisOp::Pledge, amount, 1);
         let pledged = apply_op(sk, &p);
         (pledged.pledge_handle, pledged)
     }
 
-    /// Bug 1 regression: a direct unpledge closes the record so it can no longer
-    /// be consumed for credis (no double-spend).
+    /// Consume the collateral, then at expiry burn the remaining from the EOA's own
+    /// pledged ledger. `total_supply` is reduced host-side from `event_amount`.
     #[test]
-    fn unpledge_closes_record_and_blocks_credis() {
+    fn burn_pledged_debits_remaining_collateral() {
+        let sk = state_key();
+        let amount = U256::from(1000u64);
+        let (handle, pledged) = mine_and_pledge(&sk, amount);
+
+        let mk = derive_modify_key(&sk, alice()).unwrap();
+        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
+        let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
+        rc.current_pledge_record = pledged.new_pledge_record.clone();
+        rc.pledge_handle = Some(handle);
+        rc.bundle_account = Some(bundle());
+        rc.spend_auth = Some(spend);
+        let consumed = apply_op(&sk, &rc);
+        assert!(matches!(consumed.status, GratisOpStatus::Applied));
+
+        // Release 3 installments (300), leaving 700 outstanding.
+        let mut pledged_blob = consumed.new_pledged.clone();
+        let mut bal_blob = pledged.new_balance.clone();
+        for _ in 0..3 {
+            let mut u = req(GratisOp::ReleaseToEoa, alice(), U256::from(100u64), 0);
+            u.current_pledged = pledged_blob.clone();
+            u.current_balance = bal_blob.clone();
+            let un = apply_op(&sk, &u);
+            pledged_blob = un.new_pledged.clone();
+            bal_blob = un.new_balance.clone();
+        }
+
+        // Burn the outstanding 700.
+        let mut b = req(GratisOp::BurnPledged, alice(), U256::from(700u64), 0);
+        b.current_pledged = pledged_blob.clone();
+        let burned = apply_op(&sk, &b);
+        assert!(matches!(burned.status, GratisOpStatus::Applied));
+        assert_eq!(burned.event_amount, U256::from(700u64));
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let (_v, remaining) =
+            read_amount(&vk, alice(), FIELD_PLEDGED, &burned.new_pledged).unwrap();
+        assert_eq!(remaining, U256::ZERO);
+
+        // A second burn of the now-empty pledged ledger is rejected.
+        let mut b2 = req(GratisOp::BurnPledged, alice(), U256::from(700u64), 0);
+        b2.current_pledged = burned.new_pledged.clone();
+        assert!(matches!(
+            apply_op(&sk, &b2).status,
+            GratisOpStatus::Rejected { .. }
+        ));
+    }
+
+    /// A direct unpledge returns the pending collateral and deletes the ticket so it
+    /// can no longer be consumed for credis (no double-spend).
+    #[test]
+    fn unpledge_returns_pending_and_blocks_credis() {
         let sk = state_key();
         let amount = U256::from(1000u64);
         let (handle, pledged) = mine_and_pledge(&sk, amount);
@@ -846,7 +832,6 @@ mod tests {
         up.pledge_handle = Some(handle);
         up.current_pledge_record = pledged.new_pledge_record.clone();
         up.current_balance = pledged.new_balance.clone();
-        up.current_pledged = pledged.new_pledged.clone();
         up.modify_auth = auth(&sk, alice(), GratisOp::Unpledge, amount, 2);
         let un = apply_op(&sk, &up);
         assert!(
@@ -857,38 +842,21 @@ mod tests {
         let vk = derive_view_key(&sk, alice()).unwrap();
         let (_v, bal) = read_amount(&vk, alice(), FIELD_BALANCE, &un.new_balance).unwrap();
         assert_eq!(bal, amount, "collateral returned to alice");
+        assert!(
+            un.new_pledge_record.is_empty(),
+            "ticket deleted on unpledge"
+        );
 
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        let mut rc = req(GratisOp::PledgeToBundle, alice(), U256::ZERO, 0);
+        let mut rc = req(GratisOp::ConsumePledge, alice(), U256::ZERO, 0);
         rc.current_pledge_record = un.new_pledge_record.clone();
-        rc.current_pledged = un.new_pledged.clone();
         rc.pledge_handle = Some(handle);
         rc.bundle_account = Some(bundle());
         rc.spend_auth = Some(spend);
-        rc.credis_account = Some(credis());
         assert!(
             matches!(apply_op(&sk, &rc).status, GratisOpStatus::Rejected { .. }),
-            "closed pledge must not be spendable for credis"
-        );
-    }
-
-    /// Bug 2 regression: collateral cannot be unlocked before credis was requested
-    /// (the record must be `spent`).
-    #[test]
-    fn unlock_rejected_before_credis_requested() {
-        let sk = state_key();
-        let amount = U256::from(1000u64);
-        let (handle, pledged) = mine_and_pledge(&sk, amount);
-
-        let mut u = req(GratisOp::UnlockToEoa, alice(), U256::ZERO, 0);
-        u.pledge_handle = Some(handle);
-        u.current_pledge_record = pledged.new_pledge_record.clone();
-        u.current_balance = pledged.new_balance.clone();
-        u.credis_account = Some(credis());
-        assert!(
-            matches!(apply_op(&sk, &u).status, GratisOpStatus::Rejected { .. }),
-            "unlock must require the pledge to be spent for credis first"
+            "deleted ticket must not be spendable for credis"
         );
     }
 }

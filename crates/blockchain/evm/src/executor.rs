@@ -602,6 +602,10 @@ fn run_outbe_pre_execution_hooks_inner(
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
+    // CREDIS: burn the pledged collateral of positions past their 10-month term
+    // that still carry an unpaid balance (spec §3.6). Cursor-bounded per block.
+    <outbe_credisfactory::CredisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+
     Ok(())
 }
 

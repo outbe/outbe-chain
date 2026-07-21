@@ -5,7 +5,6 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
-use outbe_primitives::addresses::CREDIS_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -167,11 +166,12 @@ fn burn_insufficient_balance_reverts() {
 }
 
 #[test]
-fn pledge_request_credis_and_pay_anadosis_flow() {
+fn pledge_consume_and_pay_anadosis_flow() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let sk = test_enclave::state_key();
-        // Mine + pledge (10 installments).
+        // Mine + pledge: balance drained, amount parked in the ticket (pledged_ct
+        // still 0), pledged_total counts it.
         api::mint(
             storage.clone(),
             alice(),
@@ -183,45 +183,86 @@ fn pledge_request_credis_and_pay_anadosis_flow() {
             storage.clone(),
             alice(),
             amount,
-            10,
             auth(GratisOp::Pledge, alice(), amount, 1),
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(view_pledged(storage.clone(), alice()), amount);
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
 
         // requestCredis from a distinct bundle account: alice derives the pledge
         // secret from her modify key + the public handle and binds it to `bundle`.
-        // The collateral moves out of alice's pledged ledger into the CREDIS escrow
-        // balance, so pledged_total drops to zero.
+        // The collateral is credited into alice's OWN pledged ledger (no escrow) and
+        // the ticket is deleted; pledged_total is unchanged.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
         let credis_amount =
-            api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).unwrap();
+            api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).unwrap();
         assert_eq!(credis_amount, amount);
-        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(view_balance(storage.clone(), CREDIS_ADDRESS), amount);
-        assert_eq!(
-            api::pledged_total_supply(storage.clone()).unwrap(),
-            U256::ZERO
-        );
+        assert_eq!(view_pledged(storage.clone(), alice()), amount);
+        assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), amount);
 
-        // Re-spending the now-consumed handle is rejected.
-        assert!(api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).is_err());
+        // Re-consuming the now-deleted ticket is rejected.
+        assert!(api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).is_err());
 
-        // Pay 10 installments: each unlocks 1/10 from the escrow back to alice.
+        // Pay 10 installments: each releases 1/10 from alice's pledged ledger back to
+        // her balance.
+        let per = amount / U256::from(10u64);
         for _ in 0..10 {
-            api::unlock_to_eoa(storage.clone(), alice(), handle).unwrap();
+            api::release_to_eoa(storage.clone(), alice(), per).unwrap();
         }
         assert_eq!(view_balance(storage.clone(), alice()), amount);
-        assert_eq!(view_balance(storage.clone(), CREDIS_ADDRESS), U256::ZERO);
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         assert_eq!(
             api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
-        // 11th unlock rejected — fully released.
-        assert!(api::unlock_to_eoa(storage.clone(), alice(), handle).is_err());
+        // A further release rejected — pledged ledger is empty.
+        assert!(api::release_to_eoa(storage.clone(), alice(), per).is_err());
+    });
+}
+
+#[test]
+fn burn_pledged_reduces_supply_and_pledged() {
+    with_env(|storage| {
+        let amount = U256::from(1000u64);
+        let sk = test_enclave::state_key();
+        api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let handle = api::pledge(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Pledge, alice(), amount, 1),
+        )
+        .unwrap();
+        let mk = derive_modify_key(&sk, alice()).unwrap();
+        let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
+        api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).unwrap();
+
+        // Release 3 installments (300), leaving 700 outstanding, then burn it.
+        let per = amount / U256::from(10u64);
+        for _ in 0..3 {
+            api::release_to_eoa(storage.clone(), alice(), per).unwrap();
+        }
+        let outstanding = U256::from(700u64);
+        let burned = api::burn_pledged(storage.clone(), alice(), outstanding).unwrap();
+        assert_eq!(burned, outstanding);
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+        // total_supply drops by the burned collateral; the 300 released stays liquid.
+        assert_eq!(
+            api::total_supply(storage.clone()).unwrap(),
+            U256::from(300u64)
+        );
+        assert_eq!(
+            api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
     });
 }
 
@@ -241,12 +282,11 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
             storage.clone(),
             alice(),
             amount,
-            10,
             auth(GratisOp::Pledge, alice(), amount, 1),
         )
         .unwrap();
 
-        // Credis rejected → direct unpledge returns the whole collateral.
+        // Credis rejected → direct unpledge returns the whole (pending) collateral.
         api::unpledge(
             storage.clone(),
             alice(),
@@ -261,10 +301,10 @@ fn direct_unpledge_returns_collateral_and_blocks_credis() {
             U256::ZERO
         );
 
-        // The closed pledge can no longer be spent for credis.
+        // The deleted ticket can no longer be consumed for credis.
         let mk = derive_modify_key(&sk, alice()).unwrap();
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
-        assert!(api::pledge_to_bundle(storage.clone(), handle, bundle(), alice(), spend).is_err());
+        assert!(api::consume_pledge(storage.clone(), handle, bundle(), alice(), spend).is_err());
     });
 }
 

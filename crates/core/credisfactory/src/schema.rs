@@ -1,25 +1,20 @@
 //! Storage schema for the credisfactory precompile.
 //!
-//! Persists only the gratis pledge handle each position needs so `anadosis` can
-//! address the right pledge record. The pledger EOA is NOT stored — the caller
-//! passes it as an `eoaAccount` calldata arg at `anadosis`, and the enclave checks
-//! it against the record — so the durable position state no longer carries the
-//! EOA↔bundle linkage. Collateral is escrowed in the `CREDIS_ADDRESS` balance
-//! between `requestCredis` and `anadosis`.
-//!
-//! The credis schedule itself (positions, anadosis installments) lives in the
-//! `outbe_credis` crate; this schema only bridges `requestCredis` → `anadosis`.
+//! The credis schedule itself (positions, anadosis installments, the pledger EOA)
+//! lives in the `outbe_credis` crate. Collateral stays in the pledger's own
+//! confidential Gratis `pledged_ct` for the whole term (no escrow account), so this
+//! schema only needs the begin-block expiry-sweep cursor.
 
-use alloy_primitives::{B256, U256};
 use outbe_macros::contract;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
-use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::storage::types::Slot;
 
 /// EVM storage layout for the credisfactory precompile.
 ///
 /// Storage slots:
-///   0: mapping(position_id => bytes32) — the gratis pledge handle
+///   0: u64 — begin-block expiry-scan cursor (index into the credis dense position
+///      index to resume from next block).
 #[contract(addr = CREDIS_FACTORY_ADDRESS)]
 pub struct CredisFactoryContract {
-    pub position_pledge_handle: Mapping<U256, B256>,
+    pub expiry_scan_cursor: Slot<u64>,
 }

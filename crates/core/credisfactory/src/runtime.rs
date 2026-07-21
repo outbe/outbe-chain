@@ -12,7 +12,6 @@ use outbe_primitives::units::SCALE_1E18;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
-use crate::schema::CredisFactoryContract;
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
@@ -69,11 +68,11 @@ pub fn request_credis(
         }
     }
 
-    // Consume the pledge (the enclave verifies `spend_auth` binds it to
-    // `bundle_account`, so a mempool copy cannot redirect the loan) and move the
-    // collateral into the CREDIS_ADDRESS escrow. The enclave checks `eoa_account`
-    // matches the pledge record. Returns the pledged gratis amount.
-    let gratis_amount = outbe_gratis::api::pledge_to_bundle(
+    // Consume the pledge ticket (the enclave verifies `spend_auth` binds it to
+    // `bundle_account`, so a mempool copy cannot redirect the loan). The collateral
+    // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
+    // checks `eoa_account` matches the ticket owner. Returns the pledged gratis amount.
+    let gratis_amount = outbe_gratis::api::consume_pledge(
         storage.clone(),
         pledge_handle,
         bundle_account,
@@ -89,13 +88,16 @@ pub fn request_credis(
     let issuance_currency = read_iso_code(&storage, asset)?;
     let refinancing_rate = get_refinancing_rate(storage.clone(), issuance_currency)?;
 
-    // Open the credis position. The `commitment` argument to `create_position`
-    // builds the position_id; we use the globally-unique pledge handle.
+    // Open the credis position, storing the pledger EOA so the anadosis release and
+    // the expiry-burn sweep can address the right confidential pledged ledger. The
+    // `commitment` argument to `create_position` builds the position_id; we use the
+    // globally-unique pledge handle.
     let handle_id = U256::from_be_bytes(pledge_handle.0);
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.create_position(
         handle_id,
         bundle_account,
+        eoa_account,
         asset,
         issuance_currency,
         refinancing_rate,
@@ -103,17 +105,6 @@ pub fn request_credis(
         gratis_amount,
         current_time,
     )?;
-
-    // Persist the pledge handle so `pay_anadosis` can address the right pledge
-    // record one installment at a time. The pledger EOA is deliberately NOT stored
-    // (the caller re-supplies it at `anadosis`), so the position carries no durable
-    // EOA↔bundle linkage.
-    {
-        let factory = CredisFactoryContract::new(storage.clone());
-        factory
-            .position_pledge_handle
-            .write(&position_id, pledge_handle)?;
-    }
 
     // Withdraw the matching stablecoin from the vault to the smart account.
     outbe_vaultprovider::api::withdraw_liquidity(&storage, asset, amount_stables, bundle_account)?;
@@ -133,23 +124,19 @@ pub fn request_credis(
 // pay_anadosis
 // ---------------------------------------------------------------------------
 
-/// Advances the credis position by one anadosis installment and releases 1/N of
-/// the escrowed collateral from `CREDIS_ADDRESS` back to `eoa_account`'s
-/// confidential Gratis balance. The enclave checks `eoa_account` matches the
-/// pledge record, so the release can only reach the rightful pledger. The paid
-/// installment (the ERC20 → vault deposit below) is itself the authorization for
-/// the release — no separate proof is required.
-///
-// TODO(privacy): `eoa_account` is passed in plaintext calldata. Carry it in a
-// client-encrypted blob (decrypted inside the enclave) in a future slice.
+/// Advances the credis position by one anadosis installment and releases that
+/// installment's share of collateral from the pledger's OWN confidential pledged
+/// ledger back to its balance. The pledger EOA is read from the stored position (the
+/// single source of truth), so the release always reaches the rightful pledger. The
+/// paid installment (the ERC20 → vault deposit below) is the authorization for the
+/// release — no separate proof is required.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
-    eoa_account: Address,
 ) -> Result<AnadosisResult> {
     // Read-only validation pass before any mutation.
-    {
+    let eoa_account = {
         let credis_ro = CredisContract::new(storage.clone());
         let position = credis_ro.get_position(position_id)?;
         let next = credis_ro
@@ -165,7 +152,8 @@ pub fn pay_anadosis(
         if caller != position.bundle_account {
             return Err(CredisFactoryError::UnauthorizedCaller.into());
         }
-    }
+        position.eoa_account
+    };
 
     let current_time = storage.timestamp()?.to::<u64>();
     let mut credis = CredisContract::new(storage.clone());
@@ -196,14 +184,47 @@ pub fn pay_anadosis(
     // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
     outbe_vaultprovider::api::deposit_liquidity(&storage, asset, amount)?;
 
-    // 4) Release this installment's share of the escrowed collateral from
-    //    CREDIS_ADDRESS back to the pledger's encrypted Gratis balance. The enclave
-    //    checks `eoa_account` binds to the pledge record.
-    let factory = CredisFactoryContract::new(storage.clone());
-    let pledge_handle = factory.position_pledge_handle.read(&position_id)?;
-    outbe_gratis::api::unlock_to_eoa(storage.clone(), eoa_account, pledge_handle)?;
+    // 4) Release this installment's share of collateral from the pledger's own
+    //    pledged ledger back to its liquid Gratis balance.
+    outbe_gratis::api::release_to_eoa(storage.clone(), eoa_account, result.gratis_amount)?;
 
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// expire_position (credis-period-expiry collateral burn — spec §3.6)
+// ---------------------------------------------------------------------------
+
+/// Burns the outstanding pledged collateral of an expired credis position, drops the
+/// pledger's fidelity cohort by the burned amount, and deposits the equivalent value
+/// into the Promis Reserve. Called by the begin-block expiry sweep for positions past
+/// their 10-month term with an unpaid balance.
+pub fn expire_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
+    let now = storage.timestamp()?.to::<u64>();
+    let position = CredisContract::new(storage.clone()).get_position(position_id)?;
+
+    if now < CredisContract::expires_at(&position) {
+        return Err(CredisFactoryError::NotExpired.into());
+    }
+    if position.outstanding_anadosis_amount.is_zero() {
+        return Err(CredisFactoryError::NothingOutstanding.into());
+    }
+
+    // Burn the still-locked collateral from the pledger's own pledged ledger.
+    let burned = position.outstanding_gratis_amount;
+    outbe_gratis::api::burn_pledged(storage.clone(), position.eoa_account, burned)?;
+
+    // Fidelity drops by the burned collateral (records a LIFO sale cohort).
+    outbe_fidelity::api::cohort_out(storage.clone(), position.eoa_account, burned, now)?;
+
+    // The equivalent value is deposited 1:1 into the Promis Reserve.
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .add_to_total_unallocated(burned)?;
+
+    // Close the position (zero outstanding balances, emit CollateralBurned).
+    CredisContract::new(storage.clone()).expire_position(position_id)?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
