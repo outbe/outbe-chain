@@ -1,9 +1,11 @@
-# Reproducing the Outbe Linux x86_64 ELF set
+# Reproducing the Outbe Linux x86_64 release inputs
 
-The first reproducible-release slice builds the five current production ELF files from one
+The base reproducible-release slice builds the five current production ELF files from one
 clean commit: `outbe-chain`, `outbe-cli`, `outbe-keygen`, `outbe-feeder` and
-`outbe-tee-enclave` without `mock`. It does not yet prove native-package, Gramine, SIGSTRUCT,
-OCI-image, SBOM, signature or published-release reproducibility.
+`outbe-tee-enclave` without `mock`. The protected testnet workflow then consumes that exact
+enclave ELF, compares two deterministic unsigned Gramine bundles, signs one, publishes an
+immutable OCI image and binds its measurements, SPDX SBOM and hardware-SGX evidence into a
+verified ReleaseManifest. Native packages and the broader release matrix remain separate.
 
 ## Prerequisites and trust boundary
 
@@ -114,10 +116,31 @@ If installed, run `diffoscope` on the named ELF. Compare source commit, release 
 and both canonical manifests. Establish whether the state is reachable in the supported
 recipe and identify the byte-producing input before proposing a fix.
 
+## Testnet SGX continuation
+
+After both ELF outputs match, prepare the unsigned bundle from each output and compare the
+complete trees. `mise` exposes the commands while Rust `xtask` implements validation and
+orchestration:
+
+```bash
+mise run release-sgx-prepare -- \
+  --elf-output /tmp/outbe-rebuild-a --output /tmp/outbe-sgx-a
+mise run release-sgx-prepare -- \
+  --elf-output /tmp/outbe-rebuild-b --output /tmp/outbe-sgx-b
+mise run release-sgx-compare -- \
+  --first /tmp/outbe-sgx-a --second /tmp/outbe-sgx-b \
+  --output /tmp/outbe-sgx-reproducibility.json
+```
+
+The Gramine builder is pinned by digest and version/source identity in
+`release/testnet-sgx-bundle-v1.json`. `SOURCE_DATE_EPOCH` determines the SIGSTRUCT date.
+The unsigned output contains no private key. Only the protected workflow described in
+[Testnet SGX release and rollout](testnet-sgx-release.md) is authoritative for signing and
+publication.
+
 ## Current residual work
 
-This local proof is deliberately narrower than a full release. Independent CI builders,
-exact consumption by the release workflow, deterministic native packages, the self-contained
-Gramine production bundle and signed enclave measurements, two signed test-only OCI images,
-SBOM/provenance, publication verification and authorization remain separate P0 slices.
-Docker signing, TUF, `outbeup` and the operator sidecar are not part of this slice.
+This local proof is deliberately narrower than a complete release. The protected workflow
+provides exact consumption, testnet Gramine/SIGSTRUCT/OCI authorization, Cosign, SPDX and
+hardware evidence, but deterministic native packages, every non-enclave OCI/profile,
+production signing authority, TUF, `outbeup` and the operator sidecar remain separate work.

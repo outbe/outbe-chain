@@ -300,9 +300,21 @@ run = 'cargo xtask release sgx sign "$@"'
 description = "Verify a pre-signed testnet SGX bundle and its SIGSTRUCT"
 run = 'cargo xtask release sgx verify "$@"'
 
+[tasks.release-sgx-archive]
+description = "Archive a verified signed testnet SGX bundle deterministically"
+run = 'cargo xtask release sgx archive "$@"'
+
 [tasks.release-sgx-image]
 description = "Build an immutable OCI image from a verified signed SGX bundle"
 run = 'cargo xtask release sgx image "$@"'
+
+[tasks.release-sgx-manifest]
+description = "Assemble the verified testnet ReleaseManifest from exact SGX release evidence"
+run = 'cargo xtask release sgx manifest "$@"'
+
+[tasks.release-sgx-hardware-e2e]
+description = "Run Rust/Gherkin acceptance against an exact published testnet SGX image digest"
+run = 'cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
 
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;

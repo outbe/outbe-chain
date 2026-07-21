@@ -1,0 +1,389 @@
+name: testnet SGX release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing immutable testnet tag (vX.Y.Z-testnet.N)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testnet-sgx-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/outbe-tee-enclave-testnet
+  RELEASE_TAG: ${{ inputs.release_tag }}
+
+jobs:
+  build-and-compare:
+    name: two independent ELF and unsigned SGX builds
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - name: Bind workflow, tag and source identity
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]] || {
+            echo "dispatch this protected workflow only from main" >&2
+            exit 2
+          }
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-testnet\.[0-9]+$ ]] || {
+            echo "invalid testnet release tag: ${RELEASE_TAG}" >&2
+            exit 2
+          }
+          test "$(git rev-parse "${RELEASE_TAG}^{commit}")" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Build the exact ELF matrix twice without cache
+        run: |
+          set -euo pipefail
+          scripts/release/reproducible-build.sh \
+            --no-cache --release-tag "${RELEASE_TAG}" \
+            --output "${RUNNER_TEMP}/elf-a"
+          scripts/release/reproducible-build.sh \
+            --no-cache --release-tag "${RELEASE_TAG}" \
+            --output "${RUNNER_TEMP}/elf-b"
+
+      - name: Independently verify byte-for-byte ELF reproducibility
+        run: |
+          set -euo pipefail
+          python3 -m venv "${RUNNER_TEMP}/release-verifier"
+          "${RUNNER_TEMP}/release-verifier/bin/pip" install \
+            --require-hashes -r release/reproducible-verifier-requirements.txt
+          mkdir -p "${RUNNER_TEMP}/release-inputs"
+          "${RUNNER_TEMP}/release-verifier/bin/python" \
+            scripts/release/verify_reproducible_elf.py \
+            --first "${RUNNER_TEMP}/elf-a" \
+            --second "${RUNNER_TEMP}/elf-b" \
+            --repo-root . \
+            --output "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json"
+
+      - name: Prepare and compare two unsigned Gramine bundles
+        run: |
+          set -euo pipefail
+          cargo xtask release sgx prepare \
+            --elf-output "${RUNNER_TEMP}/elf-a" \
+            --output "${RUNNER_TEMP}/unsigned-a"
+          cargo xtask release sgx prepare \
+            --elf-output "${RUNNER_TEMP}/elf-b" \
+            --output "${RUNNER_TEMP}/unsigned-b"
+          cargo xtask release sgx compare \
+            --first "${RUNNER_TEMP}/unsigned-a" \
+            --second "${RUNNER_TEMP}/unsigned-b" \
+            --output "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json"
+          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-a/release-manifest.json")"
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${RUNNER_TEMP}/release-inputs/unsigned-sgx-bundle.tar" \
+            -C "${RUNNER_TEMP}/unsigned-a" .
+          cp "${RUNNER_TEMP}/elf-a/release-manifest.json" \
+            "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json"
+
+      - name: Upload exact unsigned release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reproducible-release-inputs
+          path: ${{ runner.temp }}/release-inputs
+          if-no-files-found: error
+          retention-days: 30
+
+  sign:
+    name: authorize SGX bundle with protected testnet key
+    needs: build-and-compare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: testnet-release
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reproducible-release-inputs
+          path: ${{ runner.temp }}/release-inputs
+
+      - name: Sign and independently verify the immutable Gramine bundle
+        env:
+          TESTNET_SGX_SIGNING_KEY_B64: ${{ secrets.TESTNET_SGX_SIGNING_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          cleanup_key() {
+            shred -u "${RUNNER_TEMP}/testnet-sgx-key.pem" 2>/dev/null \
+              || rm -f "${RUNNER_TEMP}/testnet-sgx-key.pem"
+          }
+          trap cleanup_key EXIT
+          test -n "${TESTNET_SGX_SIGNING_KEY_B64}"
+          printf '%s' "${TESTNET_SGX_SIGNING_KEY_B64}" \
+            | base64 --decode > "${RUNNER_TEMP}/testnet-sgx-key.pem"
+          chmod 600 "${RUNNER_TEMP}/testnet-sgx-key.pem"
+          mkdir "${RUNNER_TEMP}/unsigned"
+          tar -xf "${RUNNER_TEMP}/release-inputs/unsigned-sgx-bundle.tar" \
+            -C "${RUNNER_TEMP}/unsigned"
+          cargo xtask release sgx sign \
+            --unsigned "${RUNNER_TEMP}/unsigned" \
+            --key-file "${RUNNER_TEMP}/testnet-sgx-key.pem" \
+            --output "${RUNNER_TEMP}/signed"
+          cargo xtask release sgx verify --bundle "${RUNNER_TEMP}/signed"
+          mkdir "${RUNNER_TEMP}/signed-output"
+          cargo xtask release sgx archive \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --output "${RUNNER_TEMP}/signed-output/outbe-tee-enclave-sgx.tar"
+
+      - name: Prove the private key did not enter the signed output
+        run: |
+          set -euo pipefail
+          ! tar -tf "${RUNNER_TEMP}/signed-output/outbe-tee-enclave-sgx.tar" \
+            | grep -E '(^|/)(.*private.*|.*key.*\.pem)$'
+
+      - name: Upload signed bundle without the signing key
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-sgx-bundle
+          path: ${{ runner.temp }}/signed-output/outbe-tee-enclave-sgx.tar
+          if-no-files-found: error
+          retention-days: 30
+
+  package-and-sign-image:
+    name: publish immutable OCI image, signature, SBOM and provenance
+    needs: sign
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    outputs:
+      exact_image: ${{ steps.image.outputs.exact_image }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-sgx-bundle
+          path: ${{ runner.temp }}/package
+
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Authenticate to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build and push the verified signed bundle
+        id: image
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/signed" "${RUNNER_TEMP}/published"
+          tar -xf "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
+            -C "${RUNNER_TEMP}/signed"
+          cargo xtask release sgx image \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --image "${IMAGE_REPOSITORY}:${RELEASE_TAG}" \
+            --output "${RUNNER_TEMP}/published/oci-evidence.json" \
+            --push
+          digest="$(jq -r .image.digest.value "${RUNNER_TEMP}/published/oci-evidence.json")"
+          exact_image="${IMAGE_REPOSITORY}@sha256:${digest}"
+          echo "exact_image=${exact_image}" >> "${GITHUB_OUTPUT}"
+          docker buildx imagetools inspect --raw "${exact_image}" \
+            > "${RUNNER_TEMP}/published/oci-index.json"
+
+      - name: Sign the exact OCI index and attach SPDX SBOM
+        env:
+          EXACT_IMAGE: ${{ steps.image.outputs.exact_image }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "${EXACT_IMAGE}"
+          syft "${EXACT_IMAGE}" -o spdx-json \
+            > "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json"
+          cosign attest --yes --type spdxjson \
+            --predicate "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
+            "${EXACT_IMAGE}"
+          cosign verify \
+            --certificate-identity-regexp \
+              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "${EXACT_IMAGE}" \
+            > "${RUNNER_TEMP}/published/cosign-image-verification.json"
+          cosign verify-attestation --type spdxjson \
+            --certificate-identity-regexp \
+              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "${EXACT_IMAGE}" \
+            > "${RUNNER_TEMP}/published/cosign-sbom-verification.json"
+          docker buildx imagetools inspect "${EXACT_IMAGE}" \
+            > "${RUNNER_TEMP}/published/buildkit-provenance.txt"
+          cp "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
+            "${RUNNER_TEMP}/published/"
+
+      - name: Upload published-image evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: published-sgx-image
+          path: ${{ runner.temp }}/published
+          if-no-files-found: error
+          retention-days: 30
+
+  hardware-smoke:
+    name: exact published image on hardware SGX
+    needs: package-and-sign-image
+    runs-on: [self-hosted, sgx]
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: published-sgx-image
+          path: ${{ runner.temp }}/published
+
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Verify and pull the exact image by digest
+        env:
+          EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "${GHCR_TOKEN}" \
+            | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          cosign verify \
+            --certificate-identity-regexp \
+              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "${EXACT_IMAGE}"
+          docker pull "${EXACT_IMAGE}"
+
+      - name: Run Rust/Gherkin immutable-release and sealing acceptance
+        env:
+          EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/signed"
+          tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
+            -C "${RUNNER_TEMP}/signed"
+          cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+            --image "${EXACT_IMAGE}" \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --evidence "${RUNNER_TEMP}/hardware-sgx.json"
+
+      - name: Upload hardware-SGX evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hardware-sgx-evidence
+          path: ${{ runner.temp }}/hardware-sgx.json
+          if-no-files-found: error
+          retention-days: 30
+
+  finalize:
+    name: publish verified ReleaseManifest and evidence
+    needs: [build-and-compare, package-and-sign-image, hardware-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      id-token: write
+      packages: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.release_tag }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: reproducible-release-inputs
+          path: ${{ runner.temp }}/release-inputs
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: published-sgx-image
+          path: ${{ runner.temp }}/published
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hardware-sgx-evidence
+          path: ${{ runner.temp }}/hardware
+
+      - uses: sigstore/cosign-installer@cad07c2e89fa2edd6e2d7bab4c1aa38e53f76003 # v4.1.1
+
+      - name: Assemble and validate verified ReleaseManifest
+        run: |
+          set -euo pipefail
+          mkdir "${RUNNER_TEMP}/signed" "${RUNNER_TEMP}/final"
+          tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
+            -C "${RUNNER_TEMP}/signed"
+          cargo xtask release sgx manifest \
+            --elf-manifest "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json" \
+            --bundle "${RUNNER_TEMP}/signed" \
+            --bundle-archive "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
+            --oci-evidence "${RUNNER_TEMP}/published/oci-evidence.json" \
+            --sbom "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
+            --elf-evidence "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
+            --sgx-evidence "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
+            --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
+            --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
+          python3 -m venv "${RUNNER_TEMP}/release-verifier"
+          "${RUNNER_TEMP}/release-verifier/bin/pip" install \
+            --require-hashes -r release/reproducible-verifier-requirements.txt
+          "${RUNNER_TEMP}/release-verifier/bin/python" -m jsonschema \
+            --instance "${RUNNER_TEMP}/final/ReleaseManifest.json" \
+            release/release-manifest-v1.schema.json
+
+      - name: Sign and publish the final evidence package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json" \
+            "${RUNNER_TEMP}/final/ReleaseManifest.json"
+          cosign verify-blob \
+            --bundle "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json" \
+            --certificate-identity-regexp \
+              '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "${RUNNER_TEMP}/final/ReleaseManifest.json"
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 \
+            || gh release create "${RELEASE_TAG}" --verify-tag --prerelease \
+              --title "Outbe ${RELEASE_TAG}"
+          gh release upload "${RELEASE_TAG}" --clobber \
+            "${RUNNER_TEMP}/final/ReleaseManifest.json" \
+            "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json" \
+            "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
+            "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json" \
+            "${RUNNER_TEMP}/published/oci-evidence.json" \
+            "${RUNNER_TEMP}/published/oci-index.json" \
+            "${RUNNER_TEMP}/published/cosign-image-verification.json" \
+            "${RUNNER_TEMP}/published/cosign-sbom-verification.json" \
+            "${RUNNER_TEMP}/published/buildkit-provenance.txt" \
+            "${RUNNER_TEMP}/release-inputs/elf-reproducibility.json" \
+            "${RUNNER_TEMP}/release-inputs/sgx-reproducibility.json" \
+            "${RUNNER_TEMP}/hardware/hardware-sgx.json"

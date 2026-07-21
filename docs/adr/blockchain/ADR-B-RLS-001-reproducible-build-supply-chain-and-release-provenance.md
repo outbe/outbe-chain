@@ -1,6 +1,6 @@
 # ADR-B-RLS-001: Releases bind reproducible builds, reviewed dependencies and artifact provenance
 
-- **Status:** Accepted; deterministic ELF slice implemented, package/SGX/OCI authorization remains open
+- **Status:** Accepted; deterministic ELF and protected testnet SGX/OCI slices implemented, broader package authorization remains open
 - **Date:** 2026-07-17
 - **Owners/scope:** Rust/Node/Solidity dependency resolution, CI actions, release binaries/packages/images, SBOM, signatures and provenance
 - **Depends on:** ADR-B-CRY-001, ADR-B-GEN-001, ADR-B-TST-001, ADR-B-DEP-001, ADR-B-OPS-001
@@ -115,6 +115,51 @@ argument, compensating controls, owner and expiry/review trigger. A comment that
 unreachable is not permanent proof; a regression test or binary reachability evidence must
 support security-relevant exceptions.
 
+### Protected testnet SGX and OCI authorization
+
+The testnet enclave is packaged from the independently reproduced production ELF by
+typed `cargo xtask release sgx` commands, exposed to operators through `mise` tasks.
+Two unsigned Gramine trees are prepared in the digest-pinned Gramine 1.9 builder and
+compared before authorization. The protected `testnet-release` GitHub Environment is
+the only workflow scope that can read `TESTNET_SGX_SIGNING_KEY_B64`. The key is decoded
+with owner-only permissions, mounted read-only into one signing container, destroyed by
+an exit trap and never uploaded or copied into the runtime tree.
+
+The release Dockerfile accepts only that pre-signed `rootfs`. Its entrypoint verifies
+the required runtime files and directly invokes the pinned Gramine loader; it contains
+no key generation, runtime signing or `gramine-direct` fallback. Development and E2E
+runtime signing lives in the explicit `Dockerfile.test` path and requires a separately
+mounted scenario key.
+
+The protected workflow:
+
+1. binds an existing `vX.Y.Z-testnet.N` tag to the selected `main` commit;
+2. performs two no-cache ELF builds and two unsigned Gramine bundle preparations;
+3. compares both pairs before the protected signing job runs;
+4. records MRENCLAVE, MRSIGNER, ISVPRODID and ISVSVN from the real SIGSTRUCT;
+5. builds and pushes one `linux/amd64` OCI index with BuildKit SBOM/provenance;
+6. signs the exact OCI digest through keyless Cosign and attaches an SPDX 2.3 SBOM;
+7. verifies and pulls that digest on the self-hosted `sgx` runner; and
+8. promotes the candidate to a canonical `verified` ReleaseManifest only after the
+   Rust/Gherkin hardware scenario passes.
+
+The hardware scenario checks local SGX report measurements, both EGETKEY policies,
+same-MRSIGNER sealing across restart, artifact-substitution rejection and failure to
+silently restore the old sealed identity after a test-only MRSIGNER change. It does not
+claim DCAP: the testnet manifest deliberately keeps `sgx.remote_attestation = "none"`.
+
+Cosign verification is an operator/CI boundary before container launch; an application
+inside its own container cannot establish the registry identity of the image that started
+it. Gramine independently verifies SIGSTRUCT while loading the enclave. Both checks are
+required and bind different layers.
+
+For enclave upgrades, MRSIGNER continuity preserves MRSIGNER-sealed state, ISVSVN must be
+monotonic, and the network policy must authorize an overlap containing both the current
+and next MRENCLAVE before rollout. After every required node runs the new digest, the old
+MRENCLAVE may be retired. A signer rotation cannot reuse the old MRSIGNER-sealed identity;
+it requires an explicitly governed key/state handoff or rebootstrap and a new release
+identity. The testnet signing key is not a production authority.
+
 ## Build, verification and publication state machine
 
 ```text
@@ -158,7 +203,9 @@ paths and with matching manifest, checksum and embedded version evidence. The im
 comparison result is recorded in
 `docs/reports/evidence/p0-reproducible-elf-3f5e77a.json`; the scope and remaining release
 gaps are documented in `docs/reports/p0-reproducible-release-elf-2026-07-21.md`. This proof
-does not promote the candidate or close the package, SGX, OCI, signing or CI work below.
+does not by itself promote the candidate. The later protected workflow closes the testnet
+SGX/OCI authorization path for a new tag only when its exact hardware run passes; it does
+not retroactively promote this historical ELF-only evidence.
 
 ## Consequences
 
@@ -176,19 +223,19 @@ an unbound CI run.
 
 ## Open questions and technical debt
 
-- **Critical, partially closed:** ReleaseManifest v1 now binds source, deterministic builder
-  inputs and the five ELF digests. Extend the same canonical manifest with native packages,
-  Gramine/SGX subjects, OCI subjects, SBOMs, completed immutable gate evidence,
-  deployment/genesis compatibility and signed provenance before release authorization.
+- **Critical, partially closed:** ReleaseManifest v1 now binds source, the five ELF
+  digests, a signed testnet Gramine archive, OCI digest, SGX measurements, SPDX SBOM and
+  immutable testnet gate evidence. Native packages, deployment/genesis compatibility,
+  the remaining artifact roles and a production signing authority are still open.
 - **Critical:** pin third-party GitHub Actions and scanner/tool inputs to immutable commit
   digests. In particular, prerelease currently invokes `aquasecurity/trivy-action@master`;
   major/version tags elsewhere are also mutable supply-chain inputs.
 - Promote cargo-deny, cargo-vet and Cargo.lock CVE policy from advisory/partial workflow
   coverage to required release gates. Give every ignored advisory an owner, expiry and
   machine-tested reachability/mitigation claim.
-- Align artifact matrices: Docker currently builds only chain/keygen/CLI, GoReleaser adds
-  feeder and the enclave binary, and the enclave still needs a separately governed Gramine
-  manifest/signing package. Declare and test the complete production set.
+- Align the legacy GoReleaser/native-package artifact matrix with the verified
+  ReleaseManifest path. The protected SGX image must remain a consumer of the reproduced
+  enclave ELF, never an unrelated rebuild.
 - Use `--locked`/frozen resolution in every Docker, CI and package build and pin base image
   digests plus apt/system-library versions or snapshot repositories.
 - Add reproducibility builds on independent workers and compare binary, package, contract
