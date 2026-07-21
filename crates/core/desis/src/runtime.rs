@@ -216,47 +216,17 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Res
                 return contract.remove_sched_active(worldwide_day);
             }
             AuctionStage::Briefed if now >= anchor => {
-                let mut config = contract.read_auction_config(worldwide_day)?;
-                let iparams = fold_profile(storage, &contract, &mut config)?;
-                contract.write_auction_config(worldwide_day, &config)?;
-                let ends = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
-                if contract.brief_green.read(&worldwide_day)? == 0 {
-                    send_stage_start(
-                        storage,
-                        worldwide_day,
-                        &config,
-                        &iparams,
-                        ends.0,
-                        ends.1,
-                        ends.2,
-                        DAY_STATE_RED,
-                    )?;
-                    contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-                    contract.emit(IDesis::AuctionCancelledRedDay {
-                        worldwideDay: worldwide_day,
-                    })?;
-                    return contract.remove_sched_active(worldwide_day);
-                }
-                if now >= commit_end {
-                    contract.emit(IDesis::AuctionDispatchFailed {
-                        worldwideDay: worldwide_day,
-                        stage: "auction_stage_start".into(),
-                        reason: "commit window elapsed".into(),
-                    })?;
-                    contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-                    return contract.remove_sched_active(worldwide_day);
-                }
-                send_stage_start(
+                if let StartOutcome::Retired = start_auction(
                     storage,
+                    &mut contract,
                     worldwide_day,
-                    &config,
-                    &iparams,
-                    ends.0,
-                    ends.1,
-                    ends.2,
-                    DAY_STATE_GREEN,
-                )?;
-                contract.write_stage(worldwide_day, AuctionStage::Started)?;
+                    commit_end,
+                    reveal_end,
+                    issuance_end,
+                    now,
+                )? {
+                    return Ok(());
+                }
             }
             AuctionStage::Started if now >= commit_end => {
                 contract.write_stage(worldwide_day, AuctionStage::Revealing)?;
@@ -275,6 +245,72 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Res
 /// u32 wire timestamp (bounded until 2106).
 fn ts32(ts: u64) -> Result<u32> {
     u32::try_from(ts).map_err(|_| PrecompileError::Revert("schedule timestamp exceeds u32".into()))
+}
+
+enum StartOutcome {
+    /// Auction started; the schedule loop continues from `Started`.
+    Started,
+    /// Day was cancelled and retired; the schedule loop stops.
+    Retired,
+}
+
+/// Dispatch the START message for a briefed day: a red day is born cancelled, a
+/// day past its commit window is cancelled unstarted, otherwise it starts green.
+#[allow(clippy::too_many_arguments)]
+fn start_auction(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    worldwide_day: u32,
+    commit_end: u64,
+    reveal_end: u64,
+    issuance_end: u64,
+    now: u64,
+) -> Result<StartOutcome> {
+    let mut config = contract.read_auction_config(worldwide_day)?;
+    let iparams = fold_profile(storage, contract, &mut config)?;
+    contract.write_auction_config(worldwide_day, &config)?;
+    let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
+
+    if contract.brief_green.read(&worldwide_day)? == 0 {
+        send_stage_start(
+            storage,
+            worldwide_day,
+            &config,
+            &iparams,
+            commit,
+            reveal,
+            issuance,
+            DAY_STATE_RED,
+        )?;
+        contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+        contract.emit(IDesis::AuctionCancelledRedDay {
+            worldwideDay: worldwide_day,
+        })?;
+        contract.remove_sched_active(worldwide_day)?;
+        return Ok(StartOutcome::Retired);
+    }
+    if now >= commit_end {
+        contract.emit(IDesis::AuctionDispatchFailed {
+            worldwideDay: worldwide_day,
+            stage: "auction_stage_start".into(),
+            reason: "commit window elapsed".into(),
+        })?;
+        contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
+        contract.remove_sched_active(worldwide_day)?;
+        return Ok(StartOutcome::Retired);
+    }
+    send_stage_start(
+        storage,
+        worldwide_day,
+        &config,
+        &iparams,
+        commit,
+        reveal,
+        issuance,
+        DAY_STATE_GREEN,
+    )?;
+    contract.write_stage(worldwide_day, AuctionStage::Started)?;
+    Ok(StartOutcome::Started)
 }
 
 /// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
@@ -314,6 +350,17 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Re
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
+/// Intake is open only while `Revealing`. Returns `true` to proceed, `false` for a
+/// redundant post-intake delivery (idempotent no-op, else the transport redelivers
+/// forever), `Err` before intake so the transport redelivers after reveal.
+fn intake_is_open(stage: AuctionStage) -> Result<bool> {
+    match stage {
+        AuctionStage::Revealing => Ok(true),
+        AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
+        _ => Err(DesisError::InvalidStageTransition.into()),
+    }
+}
+
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`; a
 /// higher `generation` supersedes that chain's prior bids. Batches may arrive in any order over the
 /// unordered bridge, so completeness is tracked by a per-(chain, generation) bitmap of `batch_index`;
@@ -341,14 +388,8 @@ pub fn process_bids_batch(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    // Intake is open only while Revealing. Past intake a late/re-flushed batch is redundant → no-op (else the
-    // transport redelivers forever); before intake it's premature → revert so it redelivers after reveal.
-    let stage = contract.read_stage(worldwide_day)?;
-    if stage != AuctionStage::Revealing {
-        return match stage {
-            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
-            _ => Err(DesisError::InvalidStageTransition.into()),
-        };
+    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
+        return Ok(());
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
@@ -419,12 +460,8 @@ pub fn process_bids_done(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    let stage = contract.read_stage(worldwide_day)?;
-    if stage != AuctionStage::Revealing {
-        return match stage {
-            AuctionStage::BidsReceived | AuctionStage::Cleared | AuctionStage::Cancelled => Ok(()),
-            _ => Err(DesisError::InvalidStageTransition.into()),
-        };
+    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
+        return Ok(());
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
