@@ -594,9 +594,9 @@ fn verified_cosign_attestation(
             return Ok(statement);
         }
     }
-    bail!(
+    Err(eyre!(
         "Cosign attestation verification does not bind predicate {expected_predicate_type} to the exact OCI digest"
-    )
+    ))
 }
 
 fn require_nonempty_regular_file(path: &Path, label: &str) -> Result<()> {
@@ -649,7 +649,7 @@ pub fn parse_sigstruct_view(output: &str) -> Result<Measurements> {
     let debug = match field("debug_enclave")?.to_ascii_lowercase().as_str() {
         "true" => true,
         "false" => false,
-        _ => bail!("SIGSTRUCT debug_enclave must be True or False"),
+        _ => return Err(eyre!("SIGSTRUCT debug_enclave must be True or False")),
     };
 
     Ok(Measurements {
