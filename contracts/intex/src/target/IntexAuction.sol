@@ -168,23 +168,26 @@ contract IntexAuction is
     /// @inheritdoc IIntexAuction
     function auctionStart(
         uint32 worldwideDay,
+        IIntexAuction.WorldwideDayState dayState,
         IIntexAuction.AuctionSchedule calldata schedule,
         IIntexAuction.AuctionParams calldata params
     ) external override onlyRole(RELAYER_ROLE) {
         IntexAuctionStorage storage $ = _s();
         // `commitEnd == 0` is the canonical existence sentinel for an auction entry.
         if ($.auctions[worldwideDay].schedule.commitEnd != 0) revert AuctionAlreadyExists();
+        if (dayState == IIntexAuction.WorldwideDayState.Unknown) revert InvalidDayState();
 
-        // Schedule timestamps must be strictly increasing and the commit stage must end in the future.
+        // Schedule timestamps must be strictly increasing; a live (green) auction's
+        // commit stage must end in the future. A red day is a cancelled record only.
         if (
-            schedule.commitEnd <= block.timestamp || schedule.revealEnd <= schedule.commitEnd
-                || schedule.issuanceEnd <= schedule.revealEnd
+            schedule.revealEnd <= schedule.commitEnd || schedule.issuanceEnd <= schedule.revealEnd
+                || (dayState == IIntexAuction.WorldwideDayState.Green && schedule.commitEnd <= block.timestamp)
         ) {
             revert InvalidSchedule();
         }
 
         $.auctions[worldwideDay] = IIntexAuction.AuctionData({
-            worldwideDayState: IIntexAuction.WorldwideDayState.Unknown,
+            worldwideDayState: dayState,
             schedule: schedule,
             params: params,
             result: IIntexAuction.AuctionResult({
@@ -192,38 +195,18 @@ contract IntexAuction is
             })
         });
 
-        emit AuctionStageUpdated(worldwideDay, IIntexAuction.AuctionStage.CommittingBids, uint32(block.timestamp), "");
-    }
-
-    /// @inheritdoc IIntexAuction
-    function startRevealingBidsStage(uint32 worldwideDay, bool isGreenDay) external override onlyRole(RELAYER_ROLE) {
-        IIntexAuction.AuctionData storage a = _s().auctions[worldwideDay];
-        if (a.schedule.commitEnd == 0) revert AuctionNotFound();
-        IIntexAuction.AuctionStage currentStage = _getAuctionStage(worldwideDay);
-        if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
-            revert StageRequired(IIntexAuction.AuctionStage.CommittingBids, currentStage);
-        }
-
-        if (!isGreenDay) {
-            // Red day - cancel auction.
-            a.worldwideDayState = IIntexAuction.WorldwideDayState.Red;
+        if (dayState == IIntexAuction.WorldwideDayState.Red) {
             emit AuctionStageUpdated(
                 worldwideDay,
                 IIntexAuction.AuctionStage.Cancelled,
                 uint32(block.timestamp),
                 "Red day - auction cancelled"
             );
-            return;
+        } else {
+            emit AuctionStageUpdated(
+                worldwideDay, IIntexAuction.AuctionStage.CommittingBids, uint32(block.timestamp), ""
+            );
         }
-
-        // Green day - proceed to the revealing stage.
-        a.worldwideDayState = IIntexAuction.WorldwideDayState.Green;
-        // Snap commitEnd forward only when the signal is early; revealEnd never moves.
-        uint32 nowTs = uint32(block.timestamp);
-        if (nowTs < a.schedule.commitEnd) {
-            a.schedule.commitEnd = nowTs;
-        }
-        emit AuctionStageUpdated(worldwideDay, IIntexAuction.AuctionStage.RevealingBids, nowTs, "");
     }
 
     /// @inheritdoc IIntexAuction
@@ -300,12 +283,6 @@ contract IntexAuction is
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.CommittingBids, currentStage);
         }
-        // `_getAuctionStage` reports CommittingBids past `commitEnd` while the green-day signal is
-        // still Unknown; enforce the published deadline so late commits cannot slip in on relayer
-        // latency. Window is `[start, commitEnd)`.
-        if (uint32(block.timestamp) >= a.schedule.commitEnd) {
-            revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
-        }
         if ($.committedBidsByHash[worldwideDay][msg.sender] != bytes32(0)) revert BidAlreadyCommitted();
 
         $.committedBidsByHash[worldwideDay][msg.sender] = commitHash;
@@ -329,15 +306,6 @@ contract IntexAuction is
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(worldwideDay);
         if (currentStage != IIntexAuction.AuctionStage.CommittingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.CommittingBids, currentStage);
-        }
-        // Mirror of `commitBid`: a sealed commit must not be withdrawable after `commitEnd`,
-        // otherwise a bidder could cancel post-deadline once conditions are observed — defeating
-        // the commit-reveal seal. Window is `[start, commitEnd)`.
-        // Exception: a never-signalled auction pins CommittingBids forever, so stay cancellable once dead.
-        bool stuck = a.worldwideDayState == IIntexAuction.WorldwideDayState.Unknown
-            && uint32(block.timestamp) > a.schedule.issuanceEnd;
-        if (!stuck && uint32(block.timestamp) >= a.schedule.commitEnd) {
-            revert CommitWindowClosed(a.schedule.commitEnd, uint32(block.timestamp));
         }
         if ($.committedBidsByHash[worldwideDay][msg.sender] == bytes32(0)) revert BidNotFound();
 
@@ -514,8 +482,8 @@ contract IntexAuction is
     /// @notice Compute the current auction stage from the schedule and worldwide-day state.
     /// @dev Reverts `AuctionNotFound` when the series has no entry. Red day short-circuits to
     ///      `Cancelled`; a cleared auction short-circuits to `Completed` (the `cleared` flag, set by
-    ///      `executeAuctionClearing` — covers a no-sale clearing whose rate is 0); an `Unknown`
-    ///      worldwide-day state stays in `CommittingBids` regardless of `commitEnd`.
+    ///      `executeAuctionClearing` — covers a no-sale clearing whose rate is 0); otherwise the
+    ///      stage follows the stored schedule timestamps.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return Current auction stage.
     function _getAuctionStage(uint32 worldwideDay) internal view returns (IIntexAuction.AuctionStage) {
@@ -528,11 +496,6 @@ contract IntexAuction is
 
         if (_s().cleared[worldwideDay]) {
             return IIntexAuction.AuctionStage.Completed;
-        }
-
-        // The reveal stage requires the bridge green-day signal.
-        if (a.worldwideDayState == IIntexAuction.WorldwideDayState.Unknown) {
-            return IIntexAuction.AuctionStage.CommittingBids;
         }
 
         uint32 nowTs = uint32(block.timestamp);

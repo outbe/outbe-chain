@@ -1,0 +1,100 @@
+{
+  "artifacts": [
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["full-node", "validator"],
+      "name": "outbe-chain",
+      "package": "outbe-chain",
+      "role": "node"
+    },
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["operator-tools"],
+      "name": "outbe-cli",
+      "package": "outbe-cli",
+      "role": "operator-cli"
+    },
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["operator-tools"],
+      "name": "outbe-keygen",
+      "package": "outbe-keygen",
+      "role": "key-generation"
+    },
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["price-oracle"],
+      "name": "outbe-feeder",
+      "package": "outbe-feeder",
+      "role": "price-feed"
+    },
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["full-node", "validator"],
+      "name": "outbe-tee-enclave",
+      "package": "outbe-tee-enclave",
+      "role": "tee-enclave"
+    }
+  ],
+  "builder": {
+    "debian_snapshot": "20260501T000000Z",
+    "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
+    "image": "rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5",
+    "system_packages": [
+      "clang=1:14.0-55.7~deb12u1",
+      "cmake=3.25.1-1",
+      "libc++-dev=1:14.0-55.7~deb12u1",
+      "libc++abi-dev=1:14.0-55.7~deb12u1",
+      "libssl-dev=3.0.20-1~deb12u2",
+      "pkg-config=1.8.1-1",
+      "python3=3.11.2-1+b1"
+    ]
+  },
+  "cargo": {
+    "auditable": false,
+    "locked": true
+  },
+  "environment": {
+    "cflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/cargo/git=/cargo/git -ffile-prefix-map=/usr/local/rustup=/rustup",
+    "cxxflags": "-ffile-prefix-map=/workspace=/usr/src/outbe-chain -ffile-prefix-map=/usr/local/cargo/registry=/cargo/registry -ffile-prefix-map=/usr/local/cargo/git=/cargo/git -ffile-prefix-map=/usr/local/rustup=/rustup",
+    "locale": "C",
+    "rustflags": [
+      "--remap-path-prefix=/workspace=/usr/src/outbe-chain",
+      "--remap-path-prefix=/usr/local/cargo/registry=/cargo/registry",
+      "--remap-path-prefix=/usr/local/cargo/git=/cargo/git",
+      "--remap-path-prefix=/usr/local/rustup=/rustup",
+      "-C",
+      "link-arg=-Wl,--build-id=sha1"
+    ],
+    "timezone": "UTC",
+    "zero_ar_date": "1"
+  },
+  "inputs": [
+    ".cargo/config.toml",
+    "Cargo.lock",
+    "Cargo.toml",
+    "Dockerfile.reproducible",
+    "crates/core/compressed-entities/vendor/sparse-merkle-tree/UPSTREAM.sha256",
+    "crates/core/compressed-entities/vendor/sparse-merkle-tree/VENDORED.sha256",
+    "release/release-manifest-v1.schema.json",
+    "release/reproducible-elf-candidate-gates-v1.json",
+    "release/reproducible-elf-build-v1.json",
+    "release/reproducible-verifier-requirements.txt",
+    "rust-toolchain.toml",
+    "scripts/release/generate_release_manifest.py",
+    "scripts/release/build-elfs-in-container.sh",
+    "scripts/release/reproducible-build.sh",
+    "scripts/release/reproducible_build_inputs.py",
+    "scripts/release/verify_reproducible_elf.py",
+    "scripts/release/verify_outbe_chain_version.py"
+  ],
+  "profile": "release",
+  "rust_toolchain": "1.96.0",
+  "spec_version": 1,
+  "target": "x86_64-unknown-linux-gnu"
+}

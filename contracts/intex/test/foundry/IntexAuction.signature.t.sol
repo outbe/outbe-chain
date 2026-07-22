@@ -114,12 +114,10 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
     }
 
-    function _enterReveal(uint32 worldwideDay) internal {
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
+    function _enterReveal(uint32) internal {
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
     }
 
@@ -227,8 +225,8 @@ contract AuctionSignatureTest is Test {
             commitBondMinor: 0
         });
         vm.startPrank(bridger);
-        auction.auctionStart(worldwideDay, schedule, params);
-        other.auctionStart(worldwideDay, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
+        other.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
         vm.stopPrank();
 
         // Bidder signs for `auction` (verifyingContract=auction). Attacker tries to replay on `other`.
@@ -236,8 +234,6 @@ contract AuctionSignatureTest is Test {
         _commit(other, worldwideDay, iba1, sigForAuction);
 
         // Move to reveal stage on `other`.
-        vm.prank(bridger);
-        other.startRevealingBidsStage(worldwideDay, true);
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
 
         // Reveal on `other` — domain separator binds verifyingContract=other; recovery yields a

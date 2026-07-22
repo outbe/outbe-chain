@@ -51,6 +51,7 @@ use outbe_compressed_entities::{
     CompressedTreeService, EntityId36, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
     FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
+use outbe_desis::{AuctionStage, DesisContract};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_metadosis::{
@@ -522,8 +523,8 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     // legs; the provider is stubbed to return a decodable uint256 (shares).
     provider.enable_sub_call_stub();
     provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
-    // Pick non-adjacent WWDs so each day's full ~24-day lifecycle does not
-    // accidentally interleave with the other's.
+    // Adjacent WWDs exercise overlapping lifecycles while the ticks below keep
+    // every transition in timestamp order.
     let green_wwd = WorldwideDay::new(20241221);
     let red_wwd = WorldwideDay::new(20241222);
 
@@ -724,12 +725,31 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     );
     assert!(alice_floor_price < U256::from(500u64));
 
-    let promis_after_green = with_storage(&mut provider, |storage| {
-        PromisLimitContract::new(storage)
-            .get_total_unallocated()
-            .unwrap()
-    });
-    assert!(promis_after_green > U256::ZERO);
+    let (promis_after_green, green_pending_supply, green_auction_stage) =
+        with_storage(&mut provider, |storage| {
+            let promis = PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap();
+            let desis = DesisContract::new(storage);
+            let stage =
+                AuctionStage::from_u8(desis.auction_stage.read(&u32::from(green_wwd)).unwrap())
+                    .unwrap();
+            let pending_supply = desis
+                .pending_supply_promis
+                .read(&u32::from(green_wwd))
+                .unwrap();
+            (promis, pending_supply, stage)
+        });
+    assert_eq!(
+        promis_after_green,
+        U256::ZERO,
+        "an accepted green brief transfers its remainder to Desis"
+    );
+    assert!(
+        green_pending_supply > U256::ZERO,
+        "Desis must retain the green remainder until the auction clears or retires"
+    );
+    assert_eq!(green_auction_stage, AuctionStage::Briefed);
     assert!(mine_via_precompile(&mut provider, &mut bodies, alice) > U256::ZERO);
 
     // RED WAITING -> READY -> process_metadosis.

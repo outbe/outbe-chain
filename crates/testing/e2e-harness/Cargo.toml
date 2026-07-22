@@ -23,6 +23,9 @@ futures.workspace = true
 tokio.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
+walkdir.workspace = true
 mongodb.workspace = true
 hex.workspace = true
 outbe-compressed-entities.workspace = true
@@ -45,6 +48,10 @@ alloy-rpc-types.workspace = true
 [[bin]]
 name = "outbe-e2e"
 path = "src/main.rs"
+
+[[bin]]
+name = "outbe-release-sgx-e2e"
+path = "src/bin/outbe-release-sgx-e2e.rs"
 
 [lints]
 workspace = true

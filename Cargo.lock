@@ -7413,6 +7413,7 @@ dependencies = [
  "outbe-agentreward",
  "outbe-common",
  "outbe-compressed-entities",
+ "outbe-desis",
  "outbe-emissionlimit",
  "outbe-intexfactory",
  "outbe-macros",
@@ -7448,6 +7449,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-common",
  "outbe-compressed-entities",
+ "outbe-desis",
  "outbe-evm",
  "outbe-governance",
  "outbe-gratis",
@@ -7489,9 +7491,12 @@ dependencies = [
  "hex",
  "mongodb",
  "outbe-compressed-entities",
+ "serde",
  "serde_json",
+ "sha2 0.10.9",
  "time",
  "tokio",
+ "walkdir",
  "xshell",
 ]
 
@@ -15801,6 +15806,24 @@ name = "xshell-macros"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "clap",
+ "eyre",
+ "filetime",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "time",
+ "walkdir",
+]
 
 [[package]]
 name = "yansi"

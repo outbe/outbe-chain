@@ -7,31 +7,32 @@ use outbe_primitives::units::SCALE_1E18_U128;
 
 use crate::constants::PROMIS_LOAD;
 
-/// Auction lifecycle stage.
-///
-/// `Revealing` is the bid-collecting window (entered on a green-day reveal);
-/// `BidsReceived` follows once bids arrive. `Cleared` / `Cancelled` are terminal.
+/// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
+/// commit window, `Revealing` for the reveal window, `Clearing` while the
+/// fan-in aggregates bids, then terminal `Cleared` / `Cancelled`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
     #[default]
     None = 0,
-    Started = 1,
-    Revealing = 2,
-    BidsReceived = 3,
-    Cleared = 4,
-    Cancelled = 5,
+    Briefed = 1,
+    Started = 2,
+    Revealing = 3,
+    Clearing = 4,
+    Cleared = 5,
+    Cancelled = 6,
 }
 
 impl AuctionStage {
     pub fn from_u8(value: u8) -> Result<Self, crate::DesisError> {
         match value {
             0 => Ok(Self::None),
-            1 => Ok(Self::Started),
-            2 => Ok(Self::Revealing),
-            3 => Ok(Self::BidsReceived),
-            4 => Ok(Self::Cleared),
-            5 => Ok(Self::Cancelled),
+            1 => Ok(Self::Briefed),
+            2 => Ok(Self::Started),
+            3 => Ok(Self::Revealing),
+            4 => Ok(Self::Clearing),
+            5 => Ok(Self::Cleared),
+            6 => Ok(Self::Cancelled),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
@@ -175,7 +176,7 @@ pub struct DesisContract {
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// worldwide_day -> 1 once `begin_clearing` has run; lets `force_clear` tell a
+    /// worldwide_day -> 1 once `arm_clearing` has run; lets `force_clear` tell a
     /// genuine zero supply from a clearing that was never initiated.
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<u32, u8>,
@@ -244,6 +245,23 @@ pub struct DesisContract {
     /// worldwide_day -> (active index + 1); 0 = not active.
     #[attribute(order = 29)]
     pub gate_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Auction brief ---
+    /// worldwide_day -> auction supply in raw PROMIS minor units.
+    #[attribute(order = 30)]
+    pub pending_supply_promis: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// worldwide_day -> 1 for a green day.
+    #[attribute(order = 31)]
+    pub brief_green: outbe_primitives::storage::dsl::Map<u32, u8>,
+    /// Days with a scheduled auction (dense active set for the begin-block tick).
+    #[attribute(order = 32)]
+    pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,
+    /// dense index -> worldwide_day.
+    #[attribute(order = 33)]
+    pub sched_active_at: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// worldwide_day -> (active index + 1); 0 = not active.
+    #[attribute(order = 34)]
+    pub sched_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 impl DesisContract<'_> {

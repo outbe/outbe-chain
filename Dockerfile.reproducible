@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+#
+# Deterministic Linux x86_64 builder for the five production Outbe ELF files.
+# All build-defining values are read from release/reproducible-elf-build-v1.json
+# by scripts/release/reproducible-build.sh and passed as immutable build args.
+
+ARG BUILDER_IMAGE
+FROM ${BUILDER_IMAGE} AS builder
+
+ARG DEBIAN_SNAPSHOT
+ARG SYSTEM_PACKAGES
+
+RUN test -n "${DEBIAN_SNAPSHOT}" && test -n "${SYSTEM_PACKAGES}" && \
+    printf '%s\n' \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bookworm-security main" \
+      "deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm-updates main" \
+      > /etc/apt/sources.list && \
+    rm -f /etc/apt/sources.list.d/debian.sources && \
+    apt-get -o Acquire::Check-Valid-Until=false update && \
+    apt-get install -y --no-install-recommends ${SYSTEM_PACKAGES} && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+COPY . .
+
+ARG SOURCE_COMMIT
+ARG SOURCE_DATE_EPOCH
+ARG SOURCE_DESCRIBE
+ARG RELEASE_TAG
+ARG REPRODUCIBLE_RUSTFLAGS
+ARG REPRODUCIBLE_CFLAGS
+ARG REPRODUCIBLE_CXXFLAGS
+
+ENV CFLAGS=${REPRODUCIBLE_CFLAGS} \
+    CXXFLAGS=${REPRODUCIBLE_CXXFLAGS} \
+    LANG=C \
+    LC_ALL=C \
+    RUSTFLAGS=${REPRODUCIBLE_RUSTFLAGS} \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} \
+    TZ=UTC \
+    VERGEN_GIT_DESCRIBE=${SOURCE_DESCRIBE} \
+    VERGEN_GIT_DIRTY=false \
+    VERGEN_GIT_SHA=${SOURCE_COMMIT} \
+    ZERO_AR_DATE=1
+
+RUN scripts/release/build-elfs-in-container.sh
+
+FROM scratch AS artifacts
+COPY --from=builder /out/ /

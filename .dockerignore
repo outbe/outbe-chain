@@ -1,4 +1,7 @@
 .codegraph
+.git
+*.pyc
+__pycache__
 .bb-crs
 .dockerignore
 Dockerfile

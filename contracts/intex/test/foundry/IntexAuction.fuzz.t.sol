@@ -168,7 +168,7 @@ contract IntexAuctionFuzzTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, schedule, params);
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, schedule, params);
     }
 
     function _commit(uint32 worldwideDay, address bidder, bytes memory sig) internal {
@@ -176,9 +176,7 @@ contract IntexAuctionFuzzTest is Test {
         auction.commitBid(worldwideDay, keccak256(sig));
     }
 
-    function _enterReveal(uint32 worldwideDay) internal {
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
+    function _enterReveal(uint32) internal {
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
     }
 

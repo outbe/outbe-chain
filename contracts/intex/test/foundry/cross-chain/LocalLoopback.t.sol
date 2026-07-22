@@ -237,6 +237,7 @@ contract LocalLoopbackTest is Test {
         p.floorPriceMinor = 100;
         p.callPriceMinor = 200;
         p.minIntexBidQuantity = 1;
+        p.dayState = 1;
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {
@@ -276,9 +277,8 @@ contract LocalLoopbackTest is Test {
         vm.prank(iba2);
         auction.commitBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
 
-        // 3. Green-day reveal signal, then reveals with escrow locks (qty * load * rate / 1e6).
-        vm.prank(address(desis));
-        origin.sendAuctionStageReveal(DAY, true);
+        // 3. Past commitEnd the stage computes to RevealingBids; reveals lock escrow
+        //    (qty * load * rate / 1e6).
         vm.warp(startTs + 101);
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
         _commitAndReveal(iba1, 30, 800_000, iba1Pk);

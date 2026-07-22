@@ -260,15 +260,6 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external view returns (uint256) {
-        return _broadcastFee(
-            _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay),
-            IntexGas.AUCTION_STAGE_REVEAL
-        );
-    }
-
-    /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageClearing(uint32 worldwideDay) external view returns (uint256) {
         return _broadcastFee(
             _seriesOrRegistry(worldwideDay),
@@ -347,17 +338,6 @@ contract OriginRouter is
         for (uint256 i = 0; i < snapshot.length; ++i) {
             bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_START);
             emit AuctionStageSent(sendId, params.worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
-        }
-    }
-
-    /// @inheritdoc IOriginRouter
-    function sendAuctionStageReveal(uint32 worldwideDay, bool isGreenDay) external payable onlyRole(DESIS_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
-        if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeAuctionStageReveal(worldwideDay, isGreenDay);
-        for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_REVEAL);
-            emit AuctionStageSent(sendId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL);
         }
     }
 
@@ -554,7 +534,8 @@ contract OriginRouter is
             p.callWindowDays,
             p.callThresholdDays,
             p.minIntexBidQuantity,
-            p.commitBondMinor
+            p.commitBondMinor,
+            p.dayState
         );
     }
 

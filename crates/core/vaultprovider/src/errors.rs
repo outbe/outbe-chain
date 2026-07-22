@@ -30,6 +30,36 @@ pub enum VaultProviderError {
     LiquiditySourceNotFound,
     #[error("liquidity target not found")]
     LiquidityTargetNotFound,
+    #[error("invalid destination chain")]
+    InvalidDestinationChain,
+    #[error("crosschain bridge not configured")]
+    CrosschainBridgeNotConfigured,
+    #[error("crosschain asset not configured")]
+    CrosschainAssetNotConfigured,
+    #[error("crosschain token bridge not configured")]
+    CrosschainTokenBridgeNotConfigured,
+    #[error("remote vault provider not configured for chain {0}")]
+    RemoteVaultProviderNotConfigured(U256),
+    #[error("crosschain fee mismatch: provided={provided}, required={required}")]
+    CrosschainFeeMismatch { provided: U256, required: U256 },
+    #[error("invalid crosschain amount")]
+    InvalidCrosschainAmount,
+    #[error("crosschain operation not found")]
+    CrosschainOperationNotFound,
+    #[error("crosschain operation already exists")]
+    CrosschainOperationAlreadyExists,
+    #[error("crosschain operation already completed")]
+    CrosschainOperationAlreadyCompleted,
+    #[error("crosschain operations pending: {0}")]
+    CrosschainOperationsPending(U256),
+    #[error("invalid crosschain sender")]
+    InvalidCrosschainSender,
+    #[error("invalid crosschain callback")]
+    InvalidCrosschainCallback,
+    #[error("crosschain domain exceeds uint32")]
+    CrosschainDomainTooLarge,
+    #[error("insufficient crosschain shares: available={available}, required={required}")]
+    InsufficientCrosschainShares { available: U256, required: U256 },
     #[error("insufficient shares for withdraw: available={available}, required={required}")]
     InsufficientSharesForWithdraw { available: U256, required: U256 },
     #[error("token bundle receiver is not a deployed contract")]

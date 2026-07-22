@@ -38,6 +38,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
         p.worldwideDay = day;
+        p.dayState = 1;
     }
 
     function _fireStart(uint32 day) internal {
@@ -107,13 +108,13 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.sendAuctionStageStart(_params(DAY));
     }
 
-    function test_reveal_broadcastsOverSnapshot_notLiveRegistry() public {
+    function test_clearing_broadcastsOverSnapshot_notLiveRegistry() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
         vm.recordLogs();
         vm.prank(desis);
-        origin.sendAuctionStageReveal(DAY, true);
-        assertEq(_countStageSent(), 2, "reveal still fans to the frozen snapshot");
+        origin.sendAuctionStageClearing(DAY);
+        assertEq(_countStageSent(), 2, "clearing still fans to the frozen snapshot");
     }
 
     // --- Addressed-send membership ---

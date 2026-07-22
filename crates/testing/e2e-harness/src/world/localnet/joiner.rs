@@ -146,7 +146,11 @@ impl Localnet {
     fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
-        proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo)?;
+        proc::ensure_enclave_image(
+            &self.cfg.repo,
+            self.cfg.sudo,
+            &self.cfg.dir.join("test-sgx-signing-key.pem"),
+        )?;
         let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
         let enclave_bin = if mock {
             self.cfg.bin_mock.clone()
@@ -157,6 +161,7 @@ impl Localnet {
             name: self.cfg.tee_container(index),
             tee_port: port,
             enclave_bin,
+            signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             sudo: self.cfg.sudo,
             mock,
             dkg_seed: mock.then(|| format!("{:064x}", index + 1)),

@@ -7,15 +7,14 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
-/// @dev Schedule snap on bridge signal: early reveal/clearing signal pulls the matching
-///      stage boundary forward; late signal leaves the schedule untouched.
+/// @dev Schedule snap on the bridge clearing signal: an early signal pulls `revealEnd`
+///      forward; a late signal leaves the schedule untouched.
 contract IntexAuctionScheduleSnapTest is Test {
     IntexAuction auction;
     MockAuctionEscrow escrow;
 
     address admin = address(1);
     address bridger = address(2);
-    address bidder = address(3);
 
     uint32 constant COMMIT_OFFSET = 100;
     uint32 constant REVEAL_OFFSET = 200;
@@ -49,39 +48,7 @@ contract IntexAuctionScheduleSnapTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, s, p);
-    }
-
-    function test_RevealSignal_Early_SnapsCommitEnd() public {
-        uint32 worldwideDay = 20250130;
-        _start(worldwideDay);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
-        uint32 signalTs = b.schedule.commitEnd - 10;
-        vm.warp(signalTs);
-
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
-
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
-        assertEq(a.schedule.commitEnd, signalTs);
-        assertLt(a.schedule.commitEnd, b.schedule.commitEnd);
-        assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
-    }
-
-    function test_RevealSignal_Late_LeavesCommitEnd() public {
-        uint32 worldwideDay = 20250131;
-        _start(worldwideDay);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
-        vm.warp(b.schedule.commitEnd + 5);
-
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
-
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
-        assertEq(a.schedule.commitEnd, b.schedule.commitEnd);
-        assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, s, p);
     }
 
     function test_ClearingSignal_Early_SnapsRevealEnd() public {
@@ -89,8 +56,6 @@ contract IntexAuctionScheduleSnapTest is Test {
         _start(worldwideDay);
         IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
         vm.warp(b.schedule.commitEnd + 1);
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
 
         uint32 signalTs = b.schedule.commitEnd + 20;
         vm.warp(signalTs);
@@ -108,9 +73,6 @@ contract IntexAuctionScheduleSnapTest is Test {
         uint32 worldwideDay = 20250202;
         _start(worldwideDay);
         IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
-        vm.warp(b.schedule.commitEnd + 1);
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
 
         vm.warp(b.schedule.revealEnd + 5);
         vm.prank(bridger);
@@ -120,24 +82,5 @@ contract IntexAuctionScheduleSnapTest is Test {
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
         assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
-    }
-
-    function test_RevealSignal_Early_BlocksLateCommitBid() public {
-        uint32 worldwideDay = 20250203;
-        _start(worldwideDay);
-
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(worldwideDay, true);
-
-        // commitEnd snapped to now → stage = RevealingBids → commitBid reverts on stage gate.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexAuction.StageRequired.selector,
-                IIntexAuction.AuctionStage.CommittingBids,
-                IIntexAuction.AuctionStage.RevealingBids
-            )
-        );
-        vm.prank(bidder);
-        auction.commitBid(worldwideDay, keccak256("late"));
     }
 }

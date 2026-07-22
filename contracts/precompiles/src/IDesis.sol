@@ -3,16 +3,17 @@ pragma solidity ^0.8.30;
 
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
-///         Auction lifecycle (Start/Reveal) is driven by the Metadosis runtime
-///         module; bid ingestion is called by OriginRouter and clearing runs
-///         from the Desis begin-block gate.
+///         The Desis runtime drives the auction schedule from a Metadosis brief;
+///         bid ingestion is called by OriginRouter and clearing runs from the
+///         Desis begin-block gate.
 interface IDesis {
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {
         None,
+        Briefed,
         Started,
         Revealing,
-        BidsReceived,
+        Clearing,
         Cleared,
         Cancelled
     }
@@ -59,6 +60,7 @@ interface IDesis {
     /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
+    event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);

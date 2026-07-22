@@ -104,7 +104,8 @@ contract OriginRouterTest is CrossChainTest {
             callWindowDays: 0,
             callThresholdDays: 0,
             minIntexBidQuantity: 1,
-            commitBondMinor: 0
+            commitBondMinor: 0,
+            dayState: 1
         });
     }
 
@@ -158,12 +159,6 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams());
-    }
-
-    function test_sendAuctionStageReveal_revert_unauthorized() public {
-        vm.prank(user);
-        vm.expectRevert();
-        originRouter.sendAuctionStageReveal{value: 0.1 ether}(WORLDWIDE_DAY, true);
     }
 
     function test_sendMarkCalled_revert_unauthorized() public {
@@ -281,12 +276,6 @@ contract OriginRouterTest is CrossChainTest {
     // --- Quote Tests ---
     function test_quoteSendAuctionStageStart() public view {
         uint256 fee = originRouter.quoteSendAuctionStageStart(_baseStageStartParams());
-
-        assertEq(fee, 0.001 ether);
-    }
-
-    function test_quoteSendAuctionStageReveal() public view {
-        uint256 fee = originRouter.quoteSendAuctionStageReveal(WORLDWIDE_DAY, true);
 
         assertEq(fee, 0.001 ether);
     }

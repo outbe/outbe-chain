@@ -231,6 +231,16 @@ pub fn probe_to_stderr() {
     }
 
     let rd = [0u8; 64];
+    match local_report_measurements(&rd) {
+        Ok(m) => eprintln!(
+            "local_report: mrenclave={} mrsigner={} isv_prod_id={} isv_svn={}",
+            hex::encode(m.mrenclave),
+            hex::encode(m.mrsigner),
+            m.isv_prod_id,
+            m.isv_svn
+        ),
+        Err(e) => eprintln!("local_report: UNAVAILABLE ({e})"),
+    }
     match dcap_quote(&rd) {
         Ok(q) => {
             eprintln!("dcap_quote: {} bytes", q.len());

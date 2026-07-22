@@ -144,7 +144,8 @@ do_start() {
     # (signed; gramine-direct locally, gramine-sgx on SGX hardware) and the node
     # attests it at startup (--tee-enclave-socket; node fail-fasts if it is down).
     local tee_enclave_bin=""
-    local tee_gramine_image="outbe-tee-enclave-gramine"
+    local tee_gramine_image="outbe-tee-enclave-gramine-test"
+    local tee_test_signing_key=""
     if [ -n "${OUTBE_TEE_ENCLAVE:-}" ]; then
         # OUTBE_TEE_ENCLAVE_MOCK=1 selects the dev mock binary
         # (`outbe-tee-enclave-mock`, built `--features mock`): unattested quote +
@@ -189,11 +190,31 @@ do_start() {
                 exit 1
             fi
             if ! docker image inspect "$tee_gramine_image" >/dev/null 2>&1; then
-                echo "Gramine enclave image '$tee_gramine_image' missing — building it..."
-                if ! docker build -t "$tee_gramine_image" bin/outbe-tee-enclave/gramine; then
+                echo "Test-only Gramine enclave image '$tee_gramine_image' missing — building it..."
+                if ! docker build \
+                    -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
+                    -t "$tee_gramine_image" \
+                    bin/outbe-tee-enclave/gramine; then
                     echo "Error: failed to build the Gramine enclave image." >&2
                     exit 1
                 fi
+            fi
+            tee_test_signing_key="$OUTPUT_DIR/test-sgx-signing-key.pem"
+            if [ -L "$tee_test_signing_key" ]; then
+                echo "Error: unsafe symlink at test SGX signing key path: $tee_test_signing_key" >&2
+                exit 1
+            fi
+            if [ ! -f "$tee_test_signing_key" ]; then
+                if ! docker run --rm \
+                    --user "$(id -u):$(id -g)" \
+                    --entrypoint gramine-sgx-gen-private-key \
+                    -v "$(readlink -f "$OUTPUT_DIR"):/keys" \
+                    "$tee_gramine_image" \
+                    /keys/test-sgx-signing-key.pem; then
+                    echo "Error: failed to generate scenario-scoped test SGX signing key." >&2
+                    exit 1
+                fi
+                chmod 600 "$tee_test_signing_key"
             fi
         fi
         if [ -n "${OUTBE_TEE_ENCLAVE_BARE:-}" ]; then
@@ -320,7 +341,8 @@ do_start() {
                     "${sgx_dev[@]}" \
                     "${tee_seal_mount[@]}" \
                     -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
-                    outbe-tee-enclave-gramine \
+                    -v "$(readlink -f "$tee_test_signing_key"):/run/secrets/outbe-test-sgx-key.pem:ro" \
+                    "$tee_gramine_image" \
                     --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_seal_args[@]}" >/dev/null
                 echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             fi

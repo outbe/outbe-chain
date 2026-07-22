@@ -3,10 +3,11 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 
 /// @dev PR-A Tier-1 input-validation hardening of BridgeMsgCodec:
 ///      - fixed-width decoders assert exact length (truncation silent-truncation);
-///      - `isGreenDay` decodes strictly;
+///      - the STAGE_START `dayState` byte decodes strictly;
 ///      - outbound encoders cap payload arrays at `MAX_PAYLOAD_ARRAY_LEN`;
 ///      - `decode*` deliberately does NOT cap (inbound is A3's drop-don't-block job).
 ///
@@ -17,9 +18,9 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_OverLong_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
         );
-        bytes memory tooLong = abi.encodePacked(packet, hex"00"); // 93 bytes, expected 92
+        bytes memory tooLong = abi.encodePacked(packet, hex"00"); // 94 bytes, expected 93
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -48,9 +49,9 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
         );
-        bytes memory truncated = new bytes(packet.length - 1); // 91 bytes
+        bytes memory truncated = new bytes(packet.length - 1); // 92 bytes
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = packet[i];
         }
@@ -66,19 +67,6 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     // --- remaining fixed-width decoders reject over-long payloads ---
-
-    function test_AuctionStageReveal_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionStageReveal(1, true), hex"00");
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL,
-                tooLong.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_REVEAL
-            )
-        );
-        this.exposedDecodeAuctionStageReveal(tooLong);
-    }
 
     function test_AuctionStageClearing_OverLong_Reverts() public {
         bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionStageClearing(1), hex"00");
@@ -132,39 +120,23 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeMarkQualified(tooLong);
     }
 
-    // --- isGreenDay decodes strictly (only 0x00 / 0x01) ---
+    // --- the STAGE_START dayState byte decodes strictly (only 0x00 / 0x01 / 0x02) ---
 
-    function test_AuctionStageReveal_GreenDayByteTwo_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageReveal(1, false);
-        packet[6] = 0x02; // corrupt the flag byte
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidGreenDayFlag.selector, uint8(2)));
-        this.exposedDecodeAuctionStageReveal(packet);
-    }
-
-    function testFuzz_AuctionStageReveal_NonBooleanByte_Reverts(uint8 flag) public {
-        flag = uint8(bound(flag, 2, 255));
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageReveal(1, false);
-        packet[6] = bytes1(flag);
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidGreenDayFlag.selector, flag));
-        this.exposedDecodeAuctionStageReveal(packet);
-    }
-
-    function test_AuctionStageReveal_BooleanBytes_RoundTrip() public view {
-        (uint32 sFalse, bool gFalse) =
-            this.exposedDecodeAuctionStageReveal(BridgeMsgCodec.encodeAuctionStageReveal(3, false));
-        assertEq(sFalse, 3);
-        assertFalse(gFalse);
-        (uint32 sTrue, bool gTrue) =
-            this.exposedDecodeAuctionStageReveal(BridgeMsgCodec.encodeAuctionStageReveal(4, true));
-        assertEq(sTrue, 4);
-        assertTrue(gTrue);
+    function testFuzz_AuctionStageStart_DayStateByteAboveRed_Reverts(uint8 state) public {
+        state = uint8(bound(state, 3, 255));
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
+        );
+        packet[92] = bytes1(state);
+        vm.expectRevert(IIntexAuction.InvalidDayState.selector);
+        BridgeMsgCodec.decodeAuctionParams(packet);
     }
 
     // --- Happy-path round-trips still pass after the exact-length guard ---
 
     function test_FixedWidth_RoundTrips_StillPass() public view {
-        (uint32 s,,) = BridgeMsgCodec.decodeAuctionParams(
-            BridgeMsgCodec.encodeAuctionStageStart(42, 1, 2, 3, 840, 840, 1e18, 1, 2, 3, 4e6, 5, 6, 7, 1, 9e18)
+        (uint32 s,,,) = BridgeMsgCodec.decodeAuctionParams(
+            BridgeMsgCodec.encodeAuctionStageStart(42, 1, 2, 3, 840, 840, 1e18, 1, 2, 3, 4e6, 5, 6, 7, 1, 9e18, 1)
         );
         assertEq(s, 42, "stageStart");
         assertEq(this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(7)), 7, "clearing");
@@ -283,10 +255,6 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     // --- External wrappers ---
-
-    function exposedDecodeAuctionStageReveal(bytes calldata p) external pure returns (uint32, bool) {
-        return BridgeMsgCodec.decodeAuctionStageReveal(p);
-    }
 
     function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
         return BridgeMsgCodec.decodeAuctionStageClearing(p);

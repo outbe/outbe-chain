@@ -13,11 +13,18 @@ key and publishes it on-chain. The e2e suite uses a different path:
 > `verify_enclave_registration` is still a stub, so the chain cannot verify quotes
 > yet. See [Re-enabling DCAP](#re-enabling-dcap-attestation).
 
+This page describes a developer-owned localnet. Its `Dockerfile.test` renders and
+signs with a scenario-scoped test key at launch. It cannot authorize a testnet
+deployment. Testnet operators must pull and verify the pre-signed image digest from
+[Testnet SGX release and rollout](testnet-sgx-release.md); the release container has no
+runtime signing or `gramine-direct` fallback.
+
 ## Prerequisites
 
 - An SGX CPU with the in-kernel driver: `/dev/sgx_enclave` present.
-- `gramine-sgx` installed (`which gramine-sgx`); the runtime is otherwise carried by
-  the `outbe-tee-enclave-gramine` Docker image (built from `bin/outbe-tee-enclave/gramine`).
+- Docker access. The localnet harness builds the explicit
+  `outbe-tee-enclave-gramine-test` image from `Dockerfile.test`; host Gramine is not
+  used by that container path.
 - The current user can reach SGX. Either be in the `sgx`/`sgx_prv` groups or run via
   `sudo`. If quote/AESM operations are ever needed: `sudo systemctl restart aesmd`.
 - Docker, and the foundry tools (`cast`, on PATH) for the checks below.
@@ -26,7 +33,8 @@ key and publishes it on-chain. The e2e suite uses a different path:
   cargo build -p outbe-chain --bin outbe-chain
   cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave   # the REAL enclave (no mock)
   cargo build -p outbe-cli --bin outbe-cli
-  docker build -t outbe-tee-enclave-gramine bin/outbe-tee-enclave/gramine
+  docker build -f bin/outbe-tee-enclave/gramine/Dockerfile.test \
+    -t outbe-tee-enclave-gramine-test bin/outbe-tee-enclave/gramine
   ```
 
 ## Launch a four-validator SGX network
@@ -45,8 +53,9 @@ What the flags do:
 
 - `OUTBE_TEE_ENCLAVE=1` without `OUTBE_TEE_ENCLAVE_MOCK` starts the real
   `outbe-tee-enclave` binary. `run-testnet.sh` passes `/dev/sgx_enclave` (and
-  `/dev/sgx_provision` + the host AESM socket when present); the entrypoint then
-  auto-selects `gramine-sgx` because the SGX device is there.
+  `/dev/sgx_provision` + the host AESM socket when present); the test entrypoint
+  signs the mounted development binary with the localnet's generated test key and
+  selects `gramine-sgx` because the SGX device is there.
 - `OUTBE_TEE_SEAL=1` gives each validator a persistent `--tee-dir` (bind-mounted at
   `/tee`) and `--chain-id`. Under real SGX, it seals the DKG-derived offer key for
   faster restarts. It also makes the enclave generate its own DKG identity and seal
@@ -54,6 +63,9 @@ What the flags do:
   identity survives a container restart.
 - The `gramine-direct` mock path (`OUTBE_TEE_ENCLAVE_MOCK=1`) keeps a deterministic
   per-index `--dkg-seed`: it has no EGETKEY and cannot persist a random identity.
+- The generated test key lives under the localnet output directory with mode 0600,
+  is reused only for that localnet's restart stability and must never be copied into
+  a release or treated as the protected testnet signer.
 
 Each enclave logs, on a healthy boot:
 
@@ -154,9 +166,10 @@ measurements are currently accepted. Real measurement enforcement remains future
 To produce and verify real DCAP quotes:
 
 1. Provision a PCK / quote provider (PCCS or Intel PCS) on the host.
-2. Set `sgx.remote_attestation = "dcap"` in
-   `bin/outbe-tee-enclave/gramine/outbe-tee-enclave.manifest.template` and rebuild the
-   `outbe-tee-enclave-gramine` image.
+2. For a local-only experiment, set `sgx.remote_attestation = "dcap"` in the test
+   manifest template and rebuild `Dockerfile.test`. For an authorized release, change
+   `outbe-tee-enclave.release.manifest.template`, review/version the bundle contract and
+   create a new protected release; never modify or re-sign an existing image.
 3. Tighten the genesis `teePolicy` to require the expected MRENCLAVE/MRSIGNER and a
    minimum ISV-SVN, and replace the `verify_enclave_registration` stub with real
    on-chain measurement enforcement.
