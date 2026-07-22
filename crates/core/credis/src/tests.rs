@@ -22,6 +22,12 @@ fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
 
+/// Opaque sealed-EOA blob (`eoa_ct`) stored verbatim on the position. Credis unit tests
+/// treat it as bytes — decryption is exercised in the gratis/credisfactory enclave tests.
+fn eoa_ct() -> Vec<u8> {
+    vec![0xEEu8; 48]
+}
+
 fn test_commitment() -> U256 {
     U256::from_be_bytes(keccak256([0x33, 0x01]).0)
 }
@@ -75,6 +81,7 @@ fn create_position_populates_all_10_anadosis_records() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -115,6 +122,7 @@ fn create_position_applies_refinancing_rate_to_total_debt() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 rate,
@@ -149,6 +157,7 @@ fn create_position_zero_rate_matches_principal() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -171,6 +180,7 @@ fn create_position_rejects_duplicate() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -183,6 +193,7 @@ fn create_position_rejects_duplicate() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -203,6 +214,7 @@ fn create_position_rejects_zero_amount() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -223,6 +235,7 @@ fn create_position_grows_address_index() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -235,6 +248,7 @@ fn create_position_grows_address_index() {
             .create_position(
                 other_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -267,6 +281,7 @@ fn anadosis_amount_equal_split_without_remainder() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -293,6 +308,7 @@ fn anadosis_amount_remainder_absorbed_in_last_anadosis() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -340,6 +356,7 @@ fn make_next_anadosis_advances_pointer() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -372,6 +389,7 @@ fn make_next_anadosis_decrements_outstanding() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -397,6 +415,7 @@ fn make_next_anadosis_accepted_before_due_date() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -423,6 +442,7 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -437,6 +457,7 @@ fn make_next_anadosis_accepted_at_and_after_due_date() {
             .create_position(
                 other_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -475,6 +496,7 @@ fn get_anadosis_rejects_anadosis_number_zero() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -496,6 +518,7 @@ fn get_anadosis_rejects_anadosis_number_above_cap() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -531,6 +554,7 @@ fn has_overdue_anadosis_reflects_past_due_unpaid_anadosis() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -561,6 +585,7 @@ fn get_outstanding_amount_sums_across_positions() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -573,6 +598,7 @@ fn get_outstanding_amount_sums_across_positions() {
             .create_position(
                 other_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -604,6 +630,7 @@ fn precompile_get_position_returns_full_record() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -669,6 +696,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,
@@ -697,6 +725,7 @@ fn precompile_has_overdue_uses_storage_timestamp() {
             .create_position(
                 test_commitment(),
                 alice(),
+                eoa_ct(),
                 asset(),
                 840,
                 U256::ZERO,

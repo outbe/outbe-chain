@@ -10,6 +10,7 @@ protocol-flow result.
 | Runner | Boundary | PFS evidence | Canonical command |
 |---|---|---|---|
 | `crates/testing/e2e-harness/features/tribute_projection.feature` | Four validators, mock TEE, isolated MongoDB projections | PFS-001-01, -02, -03, -05 | `mise run e2e` |
+| `crates/testing/e2e-harness/features/l2_zk_gate.feature` | Four validators, mock TEE; harness-held BLS MinPk network key registered in the L2Registry | PFS-001-10, -11 | `mise run e2e` |
 | `crates/testing/e2e-harness/features/update_operator.feature` | Four validators, restart boundaries, rejection paths and a real operator binary replacement over preserved datadirs | PFS-005-01, -09 plus named recovery/rejection scenarios | `mise run e2e` |
 | lifecycle, DKG, downtime, restart and stale-join harness features | Mutable four-validator committee and TEE, including join/exit/claim accounting, slash idempotency and node/enclave checkpoint recovery | PFS-006-01, -02, -03, -04, -06, -09 | `mise run e2e` |
 | `crates/testing/e2e-harness/features/follower_upstream.feature` | Followers, upstream loss/switch, validator recovery and restart-safe warm promotion | PFS-008-01 through -08 | `mise run e2e` |
@@ -26,6 +27,7 @@ documentation-only are requirements, not claims of executable coverage.
 | `crates/core/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
 | `crates/core/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
 | `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, Credis repayments and reclaim plus invalid-input edges | Partial PFS-003 |
+| `crates/core/tributefactory/src/tests.rs` (`l2_zk_gate`) and `crates/system/l2registry/src/tests.rs` | L2Registry registration/toggle/removal invariants and the offer-time BLS zk signature gate (all check outcomes) | Partial PFS-001-10/-11 |
 | `crates/blockchain/evm/tests/e2e_system_tx.rs` | System-transaction ordering, wire layout and gas behavior | ADR-level blockchain evidence; not a complete PFS |
 | `bin/outbe-tee-enclave/tests/dkg_e2e.rs` | Four enclave peers over real UDS and Noise-IK transport | Partial PFS-006 and TEE/DKG ADR evidence; not live nodes |
 

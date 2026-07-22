@@ -57,6 +57,14 @@ pub struct FixtureState {
     pub tribute_projection_before_duplicate:
         Option<crate::world::mongodb::TributeProjectionSnapshot>,
 
+    // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
+    /// Encoded BLS MinPk private key the harness registered as the L2 network key.
+    pub l2_bls_private_hex: Option<String>,
+    /// L2 chain id registered for the operator under test.
+    pub l2_chain_id: Option<u64>,
+    /// Hash of an offer expected to be rejected by the zk signature gate.
+    pub l2_rejected_offer_tx_hash: Option<String>,
+
     // ---- ZeroFee live scenario ----
     pub zerofee_key: Option<String>,
     pub zerofee_address: Option<String>,
@@ -114,6 +122,9 @@ impl Default for FixtureState {
             tribute_tx_hash: None,
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
+            l2_bls_private_hex: None,
+            l2_chain_id: None,
+            l2_rejected_offer_tx_hash: None,
             zerofee_key: None,
             zerofee_address: None,
             zerofee_delegation_receipt: None,

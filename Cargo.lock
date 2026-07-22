@@ -7396,6 +7396,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultprovider",
@@ -7485,13 +7486,18 @@ dependencies = [
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "bytes",
  "clap",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
  "cucumber",
  "eyre",
  "futures",
  "hex",
  "mongodb",
  "outbe-compressed-entities",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -7600,6 +7606,7 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-intex",
  "outbe-intexfactory",
+ "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
@@ -7789,6 +7796,22 @@ dependencies = [
  "outbe-consensus",
  "rand_core 0.6.4",
  "tempfile",
+]
+
+[[package]]
+name = "outbe-l2registry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "bytes",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
+ "outbe-macros",
+ "outbe-primitives",
+ "rand_core 0.6.4",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -8256,11 +8279,15 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "commonware-codec",
+ "commonware-cryptography",
+ "commonware-math",
  "eyre",
  "hex",
  "outbe-agentreward",
  "outbe-common",
  "outbe-compressed-entities",
+ "outbe-l2registry",
  "outbe-lysis",
  "outbe-macros",
  "outbe-metadosis",
@@ -8268,6 +8295,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tribute",
+ "rand_core 0.6.4",
  "thiserror 2.0.18",
  "tracing",
 ]

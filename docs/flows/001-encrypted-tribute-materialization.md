@@ -22,7 +22,7 @@ retrievable with a compressed-entity presence proof against a finalized header.
 - **Source:** Tribute creator using transaction-capable client or operator tooling.
 - **Trigger:** A creator submits one `offerTribute` transaction encrypted for the committee offer-key epoch.
 - **Environment:** Four-validator finalizing localnet with active committee offer key, open WorldwideDay, Oracle state, enclaves and validator-isolated Mongo projections.
-- **Canonical inputs:** Creator/sender identity and nonce, encrypted canonical offer bytes, chain id, WorldwideDay, currency, amount, issuance flag, finalized block time, Oracle state and enclave-held decryption key.
+- **Canonical inputs:** Creator/sender identity and nonce, encrypted canonical offer bytes, chain id, WorldwideDay, currency, amount, issuance flag, L2Registry registration state for the sender plus the offer's `zkMerkleRoot`/`signature` pair, finalized block time, Oracle state and enclave-held decryption key.
 - **System under test:** TributeFactory, Tribute/CE execution, consensus finality, projection pipeline and CE read/proof RPC.
 - **Expected response:** Finalized receipt and CE event, canonical Tribute identity/body, per-validator Mongo projection/checkpoint, and a presence proof anchored to a finalized header.
 - **Response measures:** Exactly one Tribute and one supply/totals increment exist; all validators agree on execution and authenticated body; every projection matches it within the scenario timeout; the proof verifies against the selected finalized header.
@@ -37,6 +37,13 @@ retrievable with a compressed-entity presence proof against a finalized header.
   follows ADR-C-TRB-002 and its unresolved envelope-binding debt.
 - Oracle currency/rate input required by TributeFactory exists at the execution
   block.
+- L2 zk signature gate: if the sender is registered in the L2Registry
+  (`0x…EE0E`) as a network's L1 operator address and that network has
+  `zk_enabled` set, the offer must carry a non-empty `zkMerkleRoot` and a valid
+  BLS MinPk `signature` over it (namespace `_OUTBE_L2_ZK_MERKLE_ROOT`) from the
+  network's registered key; the gate rejects before any Oracle/enclave work.
+  Unregistered senders and zk-disabled networks bypass the gate with empty
+  bytes.
 - Each node uses a distinct projection database but the same replica-set service is
   allowed; database isolation is logical, not one Mongo server per validator.
 - Canonical inputs are encrypted offer bytes, chain id, transaction sender/nonce,
@@ -103,6 +110,8 @@ not produce validator-specific receipts.
 | PFS-001-07 | restart before projection | finalized offer and projector stopped before checkpoint | restart validator/projector | checkpoint recovery converges to four-way equality without resubmission | documentation-only: no deterministic projection failpoint |
 | PFS-001-08 | enclave unavailable | one executor/proposer enclave unavailable, otherwise valid offer | submit while affected node handles execution | deterministic failure/retry; no validator receipt/root divergence or projection | documentation-only pending retry policy and enclave fault control |
 | PFS-001-09 | identical encrypted-envelope replay | retained exact envelope and fresh valid transaction nonce | resubmit byte-identical encrypted envelope | replay rejected; identity/totals/projection unchanged | documentation-only: harness cannot retain raw envelope |
+| PFS-001-10 | zk-enabled L2 operator without signature | sender registered in L2Registry with `zk_enabled=true`; open day and valid canonical offer | submit offer with empty `zkMerkleRoot`/`signature`; then disable zk and resubmit | first offer reverts with zero supply/projection change; after `setZkEnabled(false)` an unsigned offer succeeds | `@pfs-001-10` live-node |
+| PFS-001-11 | zk-enabled L2 operator with valid signature | sender registered with `zk_enabled=true`; `zkMerkleRoot` signed by the registered BLS MinPk network key | submit offer carrying root + signature | gate passes; finalized success and one authenticated Tribute | `@pfs-001-11` live-node |
 
 ## Open questions and technical debt
 

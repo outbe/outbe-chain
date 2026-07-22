@@ -36,7 +36,6 @@ pub fn dispatch(
                         sender,
                         c.asset,
                         c.bundleAccount,
-                        c.eoaAccount,
                         c.pledgeHandle,
                         c.spendAuth.0,
                     )?;
@@ -46,7 +45,7 @@ pub fn dispatch(
                     })
                 }),
                 anadosis(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::pay_anadosis(storage.clone(), sender, c.positionId, c.eoaAccount)?;
+                    runtime::pay_anadosis(storage.clone(), sender, c.positionId)?;
                     Ok(())
                 }),
                 supportsInterface(c) => view(c, |c| {

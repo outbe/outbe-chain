@@ -20,6 +20,8 @@ pub(crate) struct OfferTributeInput<'a> {
     pub ephemeral_pubkey: U256,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
+    pub zk_merkle_root: &'a [u8],
+    pub signature: &'a [u8],
 }
 
 impl TributeFactoryContract<'_> {
@@ -43,8 +45,21 @@ impl TributeFactoryContract<'_> {
             ephemeral_pubkey,
             reference_currency,
             exclude_from_intex_issuance,
+            zk_merkle_root,
+            signature,
         } = input;
         check_currency(reference_currency)?;
+
+        // When the caller is a registered L2 operator with ZK verification
+        // enabled, the offer must carry a valid BLS MinPk signature over
+        // `zkMerkleRoot` from the network's registered key. Unregistered
+        // callers and zk-disabled networks pass through unchanged.
+        outbe_l2registry::api::check_zk_merkle_root_signature(
+            self.storage.clone(),
+            caller,
+            zk_merkle_root,
+            signature,
+        )?;
 
         // Current USDC/COEN rate at this block. There is a single active OFFERING
         // day, so its committed oracle price is the current rate (identical on

@@ -17,14 +17,10 @@ use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-/// Number of anadosis installments a pledge is spread over. MUST match credis'
-/// `NUMBER_OF_ANADOSIS` (the 10-month term) so `payAnadosis` releases exactly
-/// `1/N` of the collateral per payment.
-const ANADOSIS_INSTALLMENTS: u32 = 10;
-
-/// Pledge `amount` gratis from `caller` into the credis escrow (authorized by the
-/// caller's modify key). Returns the confidential pledge handle to present at
-/// `requestCredis`.
+/// Pledge `amount` gratis from `caller` into a pending pledge-lock ticket (authorized
+/// by the caller's modify key). Returns the confidential pledge handle to present at
+/// `requestCredis`. The anadosis installment count lives on the Credis position, not
+/// the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -38,7 +34,7 @@ pub fn pledge_gratis(
             return Err(GratisFactoryError::FidelityNotEligible.into());
         }
     }
-    gratis::pledge(storage, caller, amount, ANADOSIS_INSTALLMENTS, auth)
+    gratis::pledge(storage, caller, amount, auth)
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).

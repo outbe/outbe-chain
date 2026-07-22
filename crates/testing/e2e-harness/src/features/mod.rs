@@ -17,6 +17,7 @@ pub mod update;
 pub mod dkg;
 pub mod downtime;
 pub mod follower;
+pub mod l2_zk_gate;
 pub mod lifecycle;
 pub mod restart;
 pub mod stale_join;

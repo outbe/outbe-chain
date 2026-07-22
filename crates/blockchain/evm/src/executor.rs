@@ -141,7 +141,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -189,6 +189,10 @@ pub mod marker_addresses {
         // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
         // preservation path (reth22-1 class).
         TEE_REGISTRY_ADDRESS,
+        // L2 network registry (storage-backed, permissionless writes). Not
+        // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
+        // preservation path (reth22-1 class).
+        L2_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
         // System-only compressed-entity commitment state (no public dispatch).
@@ -605,6 +609,10 @@ fn run_outbe_pre_execution_hooks_inner(
     // DESIS: clear auctions whose bid fan-in gate is satisfied (every target
     // chain reported BIDS_DONE, or the deadline passed).
     <outbe_desis::DesisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+
+    // CREDIS: burn the pledged collateral of positions that still carry an unpaid balance.
+    // Cursor-bounded per block.
+    <outbe_credisfactory::CredisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())
 }

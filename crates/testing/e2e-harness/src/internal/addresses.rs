@@ -30,3 +30,5 @@ pub(crate) const AGENT_REWARD_ADDR: Address =
 pub(crate) const ZEROFEE_LOG_ADDR: Address = address!("0x000000000000000000000000000000000000EE06");
 /// Governance precompile (canon / OIP / GIP).
 pub(crate) const GOVERNANCE_ADDR: Address = address!("0x0000000000000000000000000000000000001018");
+/// L2 network registry precompile (`registerNetwork` / `setZkEnabled`).
+pub(crate) const L2_REGISTRY_ADDR: Address = address!("0x000000000000000000000000000000000000EE0E");

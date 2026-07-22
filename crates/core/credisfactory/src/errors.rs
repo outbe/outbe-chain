@@ -24,6 +24,10 @@ pub enum CredisFactoryError {
     OracleConversionOverflow,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
+    #[error("position has not reached its credis expiry")]
+    NotExpired,
+    #[error("position has no outstanding balance to expire")]
+    NothingOutstanding,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

@@ -118,31 +118,41 @@ pub struct ParticipantAnnounce {
 ///
 /// The op determines the sign of the aggregate deltas the host applies to the
 /// public `total_supply` / `pledged_total_supply` scalars, and which ciphertext
-/// slots move (balance vs pledged vs pledge-record).
+/// slots move (balance vs pledged vs pledge-lock-ticket).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOp {
     /// Mint `amount` to `account` (credit balance; `total_supply += amount`).
     Mint,
     /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
     Burn,
-    /// Move `amount` from `account`'s balance into its pledged ledger and open a
-    /// pledge record (`pledged_total_supply += amount`).
+    /// Lock `amount` of `account`'s balance into a new `PledgeLockTicket` pending a
+    /// credis request (debit balance; `pledged_total_supply += amount`). The amount
+    /// is parked in the ticket, NOT yet credited to the account's pledged ledger.
     Pledge,
-    /// Move `amount` from `account`'s pledged ledger back to its balance directly
-    /// (`pledged_total_supply -= amount`). Owner-driven unpledge (e.g. credis
-    /// rejected); does not touch a pledge record.
+    /// Return a still-pending pledge (e.g. credis rejected): read the ticket, credit
+    /// `amount` back to `account`'s balance, and delete the ticket
+    /// (`pledged_total_supply -= amount`).
     Unpledge,
-    /// Consume a pledge record for a credis request: verify `spend_auth`, mark it
-    /// spent, bind it to `bundle_account`, and move the pledged `gratis_amount` out
-    /// of the EOA's pledged ledger into the `credis_account` escrow balance
-    /// (`pledged_total_supply -= gratis_amount`). Returns `gratis_amount` so credis
-    /// can size the position.
-    PledgeToBundle,
-    /// Release one anadosis installment of collateral from the `credis_account`
-    /// escrow balance back to the original EOA's balance (no aggregate change — the
-    /// pledge left the pool at `PledgeToBundle`); decrements the record's remaining
-    /// installments.
-    UnlockToEoa,
+    /// Consume a `PledgeLockTicket` for a credis request: verify `spend_auth` binds
+    /// it to `bundle_account`, credit the ticket `amount` into the EOA's own pledged
+    /// ledger, and delete the ticket (no aggregate change — it stays pledged). Returns
+    /// `gratis_amount` so credis can size the position.
+    ConsumePledge,
+    /// Release `amount` of collateral from the EOA's own pledged ledger back to its
+    /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
+    /// on-chain Credis position schedule is the accounting authority.
+    ReleaseToEoa,
+    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis expiry
+    /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
+    /// ticket); the on-chain Credis position's outstanding balance is the authority.
+    BurnPledged,
+    /// Read-only: decrypt a state-key-sealed owner blob and return the plaintext EOA.
+    /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
+    /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
+    /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
+    /// (used at `payAnadosis`/expiry to recover the EOA that keys the pledged ledger).
+    /// No state mutation, no authorization.
+    RevealOwner,
 }
 
 /// Proof that the caller holds the account's modify key, without revealing it.
@@ -165,9 +175,12 @@ pub struct ModifyAuth {
 pub struct GratisOpRequest {
     pub op: GratisOp,
     pub chain_id: B256,
-    /// Balance-owning account (the EOA). For `PledgeToBundle`/`UnlockToEoa` this is
-    /// the original pledger, supplied by the host (`eoaAccount` calldata arg) and
-    /// checked by the enclave against `record.eoa`.
+    /// Balance/pledged-owning account (the EOA). For `ConsumePledge`/`ReleaseToEoa`/
+    /// `BurnPledged` the EOA never appears in calldata or stored plaintext: the host first
+    /// recovers it with a `RevealOwner` round-trip (decrypting the pledge ticket, or the
+    /// `eoa_ct` stored on the Credis position) and passes the revealed address here. For
+    /// `ConsumePledge` the enclave still cross-checks it against `ticket.owner`. Ignored for
+    /// `RevealOwner` itself.
     pub account: Address,
     // TODO(privacy): `amount` is a plaintext write input, so per-tx amounts are
     // visible in calldata (only cumulative balances are encrypted). To also hide
@@ -179,30 +192,19 @@ pub struct GratisOpRequest {
     pub current_balance: Vec<u8>,
     /// Current pledged-ledger blob (same `version ‖ ct` shape). Empty if none.
     pub current_pledged: Vec<u8>,
-    /// Existing pledge-record blob (`version ‖ ct`); empty for `Pledge`.
+    /// Existing pledge-lock-ticket blob (`version ‖ ct`); empty for `Pledge`. Set for
+    /// `Unpledge`/`ConsumePledge`.
     pub current_pledge_record: Vec<u8>,
-    /// Modify-key authorization (required for Mine/Burn/Pledge/Unpledge; ignored
-    /// for the credis-driven `PledgeToBundle`/`UnlockToEoa`).
+    /// Modify-key authorization (required for Mint/Burn/Pledge/Unpledge; ignored for
+    /// the credis-driven `ConsumePledge`/`ReleaseToEoa`/`BurnPledged`).
     pub modify_auth: ModifyAuth,
-    /// Number of anadosis installments; recorded in a new pledge record so
-    /// `UnlockToEoa` can release exactly `amount/installments` each call.
-    pub installments: u32,
-    /// Pledge handle identifying the record (set for `PledgeToBundle`/`UnlockToEoa`).
+    /// Pledge handle identifying the ticket (set for `Unpledge`/`ConsumePledge`).
     pub pledge_handle: Option<B256>,
-    /// Destination bundle account (set for `PledgeToBundle`).
+    /// Destination bundle account (set for `ConsumePledge`).
     pub bundle_account: Option<Address>,
     /// Spend authorization binding the pledge to `bundle_account`
-    /// (`HMAC(pledge_secret, "credis" ‖ bundle_account ‖ op_nonce)`), set for
-    /// `PledgeToBundle`.
+    /// (`spend_auth_mac(pledge_secret, bundle_account)`), set for `ConsumePledge`.
     pub spend_auth: Option<[u8; 32]>,
-    /// Escrow account holding credis collateral (`CREDIS_ADDRESS`). Set for the
-    /// two-account moves `PledgeToBundle` (credit its balance) and `UnlockToEoa`
-    /// (debit its balance); the enclave derives its view key from this address.
-    pub credis_account: Option<Address>,
-    /// Escrow account's current balance blob (`version ‖ ct`), forwarded so the
-    /// two-account move can read + re-encrypt it. Empty when the escrow has no
-    /// balance yet.
-    pub credis_balance: Vec<u8>,
 }
 
 /// Outcome of a single Gratis op.
@@ -222,17 +224,21 @@ pub struct GratisOpResult {
     pub new_balance: Vec<u8>,
     /// New pledged-ledger blob (`version ‖ ct`) to store verbatim.
     pub new_pledged: Vec<u8>,
-    /// New/updated pledge-record blob (`version ‖ ct`); empty unless the op touches one.
+    /// New pledge-lock-ticket blob (`version ‖ ct`) for `Pledge`; empty on
+    /// `Unpledge`/`ConsumePledge` (which the host writes back to clear/delete the
+    /// ticket slot). Empty and untouched for all other ops.
     pub new_pledge_record: Vec<u8>,
-    /// New escrow balance blob (`version ‖ ct`) to store verbatim under
-    /// `credis_account`; set for the two-account moves `PledgeToBundle` /
-    /// `UnlockToEoa`, empty otherwise.
-    pub new_credis_balance: Vec<u8>,
     /// Deterministic pledge handle for a `Pledge` (zero otherwise).
     pub pledge_handle: B256,
-    /// Pledged amount surfaced for credis (`PledgeToBundle`) or the installment
-    /// amount released (`UnlockToEoa`); zero otherwise.
+    /// Pledged amount surfaced for credis (`ConsumePledge`); zero otherwise.
     pub gratis_amount: U256,
+    /// Plaintext EOA recovered by a `RevealOwner` op (zero otherwise). Lets the host key the
+    /// per-account pledged/balance ledgers without the EOA ever appearing in calldata or state.
+    pub revealed_owner: Address,
+    /// Self-contained sealed EOA blob (`nonce(12) ‖ ChaCha20Poly1305(owner 20B)` under the
+    /// state key) produced by `ConsumePledge` for the host to store on the Credis position;
+    /// empty for every other op. Later decrypted via `RevealOwner` (`pledge_handle = None`).
+    pub eoa_ct: Vec<u8>,
     /// Amount for the emitted event (mint/burn/pledge/unpledge magnitude).
     pub event_amount: U256,
     /// The account's next modify-auth nonce (for the host to persist).
@@ -564,7 +570,6 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
     push_bytes(&mut buf, &req.current_pledge_record);
     buf.extend_from_slice(&req.modify_auth.mac);
     buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
-    buf.extend_from_slice(&req.installments.to_be_bytes());
     // Optional linkage fields: length/flag-prefixed so presence is unambiguous.
     match req.pledge_handle {
         Some(h) => {
@@ -587,14 +592,6 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
         }
         None => buf.push(0),
     }
-    match req.credis_account {
-        Some(a) => {
-            buf.push(1);
-            buf.extend_from_slice(a.as_slice());
-        }
-        None => buf.push(0),
-    }
-    push_bytes(&mut buf, &req.credis_balance);
     alloy_primitives::keccak256(buf)
 }
 

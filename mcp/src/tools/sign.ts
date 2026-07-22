@@ -106,6 +106,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
         "0x" as Hex,
         "0x" as Hex,
         "0x" as Hex,
+        "0x" as Hex,
       ];
 
       const factory = resolveContract("tributefactory");

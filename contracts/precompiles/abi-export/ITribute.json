@@ -59,9 +59,9 @@
     ],
     "outputs": [
       {
-        "name": "tokenIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "name": "tributeIds",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
       }
     ],
     "stateMutability": "view"
@@ -78,9 +78,9 @@
     ],
     "outputs": [
       {
-        "name": "tokenIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "name": "tributeIds",
+        "type": "bytes[]",
+        "internalType": "bytes[]"
       }
     ],
     "stateMutability": "view"
@@ -103,9 +103,9 @@
     "name": "ownerOf",
     "inputs": [
       {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "tributeId",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -154,9 +154,9 @@
     "name": "tokenURI",
     "inputs": [
       {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "tributeId",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -183,13 +183,75 @@
   },
   {
     "type": "event",
+    "name": "TributeBodyDeleted",
+    "inputs": [
+      {
+        "name": "tributeId",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "previousCommitment",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TributeBodyStored",
+    "inputs": [
+      {
+        "name": "tributeId",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
+      {
+        "name": "commitmentSchemeVersion",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "schemaVersion",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "previousCommitment",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "newCommitment",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "canonicalPayload",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TributeBurned",
     "inputs": [
       {
-        "name": "tokenId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
+        "name": "tributeId",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       },
       {
         "name": "owner",
@@ -217,10 +279,10 @@
         "internalType": "address"
       },
       {
-        "name": "tokenId",
-        "type": "uint256",
+        "name": "tributeId",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       },
       {
         "name": "worldwideDay",
@@ -245,6 +307,19 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TributePartitionRetired",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
