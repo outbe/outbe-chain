@@ -24,6 +24,7 @@ Common required environment:
 - `PRIVATE_KEY`
 - `DEPLOYER_ADDRESS` — broadcaster/signer address derived from `PRIVATE_KEY`
 - `OWNER_ADDRESS` — owner for the ERC-7802 token and token bridge; use a pre-deployed Safe/multisig on guarded testnet chains
+- `ALLOW_EOA_OWNER` — optional emergency override; set to `true` to allow an EOA owner on a guarded chain
 - `BRIDGE_ADDRESS` — local ERC-7786 bridge hub facade
 - `BSC_CHAIN_ID`
 - `OUTBE_CHAIN_ID`
@@ -75,6 +76,13 @@ On BSC testnet (`BSC_CHAIN_ID=97`) and on the configured `OUTBE_CHAIN_ID`,
 root behind a Safe/multisig while `PRIVATE_KEY` remains only the broadcaster.
 Set `OWNER_ADDRESS=$DEPLOYER_ADDRESS` only for local/dev chains that are not
 guarded by the deploy scripts.
+
+For a temporary deployment where a Safe is not available yet, set
+`ALLOW_EOA_OWNER=true`. This explicitly bypasses the guarded-chain contract-owner
+check and leaves the deployer EOA in control of minting and bridge configuration.
+Keep the override unset or `false` for normal deployments. Because the owner is
+part of the CREATE2 initialization code, redeploying later with a Safe produces
+different token and bridge addresses.
 
 Deploy source-side BSC testnet contracts. If `BSC_USDT_TOKEN` is not set, this
 deploys the mintable mock `USDT`; it also deploys the source `ERC7786TokenBridge`
