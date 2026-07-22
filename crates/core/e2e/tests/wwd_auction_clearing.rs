@@ -567,7 +567,7 @@ fn run_green_red_auction() -> ScenarioOutcome {
         with_storage(&mut provider, |storage| {
             outbe_intex::api::contributor_total(&storage, u32::from(green_wwd)).unwrap()
         }) > U256::ZERO,
-        "lysis must key the contributor map by the series id (== worldwide day)"
+        "lysis must record the day's contributor map"
     );
 
     // RED READY: the zero-supply brief lands and the same tick cancels the day;

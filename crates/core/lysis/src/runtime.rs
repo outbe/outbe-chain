@@ -148,8 +148,6 @@ fn lysis_inner(
     }
 
     let list: Vec<(Address, U256)> = contributors.into_iter().collect();
-    // Keyed by the worldwide day: `derive_series_id` is identity, so this is the
-    // series id the proceeds distribution reads back.
     outbe_intex::api::record_contributors(&storage, u32::from(wwd), &list)?;
     tribute_contract.consume_lysis_partition(
         wwd,
