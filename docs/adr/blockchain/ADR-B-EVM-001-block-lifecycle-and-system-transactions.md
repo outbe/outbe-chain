@@ -1,7 +1,7 @@
 # ADR-B-EVM-001: Protocol block work executes in one deterministic begin/user/seal order
 
 - **Status:** Proposed (documents the observed current implementation)
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Scope:** `crates/blockchain/evm`, `BlockLifecycle` implementations, reserved system transactions and header artifacts
 - **Depends on:** ADR-B-CNS-001, ADR-B-CNS-002, ADR-B-EVM-004
 - **Related:** ADR-B-EVM-002 through ADR-B-EVM-005, ADR-B-OCD-001, all System/Core module-owner ADRs,
@@ -64,7 +64,8 @@ After Phase 1 precommit, the current explicit pre-execution order is:
 6. Staking matured-unbonding processing;
 7. Oracle period/daily processing excluding slash-window exits;
 8. Gem maturity/floor promotion;
-9. Intex maturity/floor qualification.
+9. Intex maturity/floor qualification and proceeds settlement sweep;
+10. Desis auction clearing fan-in gate.
 
 Cycle owns UTC-midnight/noon economic orchestration and compressed-body mutations
 through receipt-visible system transactions. Oracle slash-window exits execute
