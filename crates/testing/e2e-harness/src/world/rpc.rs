@@ -19,8 +19,8 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet, IVote,
-        IWorldwideDay, IZeroFee,
+        self, IGovernance, IL2Registry, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet,
+        IVote, IWorldwideDay, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -814,6 +814,74 @@ impl Rpc {
         let receipt = eth::receipt_json(&self.url(port), tx_hash)?;
         let encoded = receipt.get("blockNumber")?.as_str()?;
         u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+    }
+
+    /// Register an L2 network in the L2Registry (permissionless precompile).
+    pub fn l2_register_network(
+        &self,
+        key: &str,
+        chain_id: u64,
+        l1_address: Address,
+        public_key: &[u8],
+    ) -> Result<String> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::L2_REGISTRY_ADDR,
+            key,
+            &IL2Registry::registerNetworkCall {
+                chainId: chain_id,
+                l1Address: l1_address,
+                publicKey: Bytes::copy_from_slice(public_key),
+            },
+            None,
+        )?;
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("registerNetwork receipt was not successful: {tx}"));
+        }
+        Ok(tx)
+    }
+
+    /// Toggle ZK verification for a registered L2 network.
+    pub fn l2_set_zk_enabled(&self, key: &str, chain_id: u64, enabled: bool) -> Result<String> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::L2_REGISTRY_ADDR,
+            key,
+            &IL2Registry::setZkEnabledCall {
+                chainId: chain_id,
+                enabled,
+            },
+            None,
+        )?;
+        if !self.wait_successful_receipt(&tx, 20) {
+            return Err(eyre!("setZkEnabled receipt was not successful: {tx}"));
+        }
+        Ok(tx)
+    }
+
+    /// Submit a Tribute offer carrying explicit L2 zk fields (`0x`-hex).
+    pub fn tribute_offer_with_zk(
+        &self,
+        key: &str,
+        wwd: &str,
+        zk_merkle_root_hex: &str,
+        signature_hex: &str,
+    ) -> Option<String> {
+        let args = vec![
+            "--private-key".to_owned(),
+            key.to_owned(),
+            "--rpc-url".to_owned(),
+            self.cfg.rpc0.clone(),
+            "tribute".to_owned(),
+            "offer".to_owned(),
+            wwd.to_owned(),
+            "--zk-merkle-root".to_owned(),
+            zk_merkle_root_hex.to_owned(),
+            "--signature".to_owned(),
+            signature_hex.to_owned(),
+        ];
+        let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
+        parse::extract_tx_hash(&out)
     }
 
     /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).

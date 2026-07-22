@@ -43,6 +43,14 @@ alloy-signer-local.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
 
+# BLS MinPk keygen/signing for the L2Registry zk-gate scenarios (PFS-001-10/-11):
+# the harness plays the L2 network signing `zkMerkleRoot` with a registered key.
+bytes.workspace = true
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
+commonware-math.workspace = true
+rand_core.workspace = true
+
 # The e2e runner is a binary: the CLI defines the environment (validators, TEE
 # mode, sudo); Gherkin tags define each scenario's requirements.
 [[bin]]

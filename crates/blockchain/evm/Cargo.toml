@@ -28,6 +28,7 @@ outbe-credisfactory.workspace = true
 outbe-tributefactory.workspace = true
 outbe-governance.workspace = true
 outbe-teeregistry.workspace = true
+outbe-l2registry.workspace = true
 outbe-tee.workspace = true
 outbe-vote.workspace = true
 outbe-update.workspace = true

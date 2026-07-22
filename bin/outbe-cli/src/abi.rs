@@ -130,7 +130,8 @@ sol! {
             bytes zkProof,
             bytes zkVerificationKey,
             bytes zkPublicKey,
-            bytes zkMerkleRoot
+            bytes zkMerkleRoot,
+            bytes signature
         ) external returns (uint256 tributeId);
     }
 
