@@ -13,6 +13,8 @@ outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-evm.workspace = true
 outbe-desis.workspace = true
+outbe-intex.workspace = true
+outbe-intexfactory.workspace = true
 outbe-metadosis.workspace = true
 outbe-tribute.workspace = true
 outbe-nod.workspace = true
