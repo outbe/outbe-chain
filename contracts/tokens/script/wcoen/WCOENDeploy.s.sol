@@ -74,7 +74,11 @@ contract WCOENDeploy is Script {
     }
 
     function _requireContractOwnerOnGuardedChain(address owner) internal view {
-        if (_isGuardedChain() && owner.code.length == 0) {
+        _requireContractOwnerOnGuardedChain(owner, vm.envOr("ALLOW_EOA_OWNER", false));
+    }
+
+    function _requireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) internal view {
+        if (_isGuardedChain() && owner.code.length == 0 && !allowEoaOwner) {
             revert OwnerMustBeMultisigContract(owner, block.chainid);
         }
     }
