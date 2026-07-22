@@ -25,6 +25,27 @@ One lifecycle-driven scenario covers two WWDs in sequence. Each tick runs the Ou
    - `process_metadosis` marks `COMPLETED`, `PromisLimit` total grows again;
    - user call: same precompile dispatch as GREEN.
 
+### `tests/wwd_auction_clearing.rs`
+
+The multichain auction day across the same hook-chain harness: Metadosis brief
+-> Desis schedule -> bid fan-in from two chains through the precompile
+dispatchers -> clearing gate -> IntexFactory issuance -> Lysis contributor map
+-> creator payout. OriginRouter and the NFT are stubbed at the EVM boundary;
+`tick_schedule` is invoked per tick the same way `start_metadosis` is.
+
+1. **Green day** — bids from a remote and the loopback chain clear at the
+   uniform rate; proceeds fan in per chain and the begin-block drain pays the
+   day's sole contributor the exact pot.
+2. **Red day** — the zero-supply brief still reaches Desis and the schedule
+   cancels the day before start.
+3. **Fan-in deadline** — a chain that never reports BIDS_DONE is excluded once
+   the deadline passes; the reporting chain's bids clear.
+
+The green/red scenario runs twice and both outcomes must match bit-for-bit
+(proposer/validator replay). Solidity auction mechanics, transport
+delivery and clearing-math edges stay with the Foundry, hub and Desis unit
+suites.
+
 ## Scope
 
 The test drives:

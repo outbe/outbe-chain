@@ -24,6 +24,7 @@ documentation-only are requirements, not claims of executable coverage.
 | Test owner | Evidence supplied | PFS relationship |
 |---|---|---|
 | `crates/core/e2e/tests/wwd_lysis_nod_gratis.rs` | WWD to Lysis, Nod and Gratis state transitions | Partial PFS-002 |
+| `crates/core/e2e/tests/wwd_auction_clearing.rs` | Auction day across Metadosis, Desis, IntexFactory, Lysis and Intex: green clearing with creator payout, red cancellation, fan-in deadline skip | PFS-009-01 through -03 |
 | `crates/core/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
 | `crates/core/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
 | `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, Credis repayments and reclaim plus invalid-input edges | Partial PFS-003 |
