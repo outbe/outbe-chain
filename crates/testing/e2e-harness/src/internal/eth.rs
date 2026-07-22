@@ -100,6 +100,13 @@ sol! {
         function isBootstrapped() external view returns (bool);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IL2Registry {
+        function registerNetwork(uint64 chainId, address l1Address, bytes publicKey) external;
+        function setZkEnabled(uint64 chainId, bool enabled) external;
+        function getNetwork(uint64 chainId) external view returns (
+            address l1Address, bytes publicKey, bool zkEnabled);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITribute {
         function totalSupply() external view returns (uint256);
         function getTributesByOwner(address owner) external view returns (bytes[] memory);

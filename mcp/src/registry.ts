@@ -52,7 +52,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     address: A("0x0000000000000000000000000000000000001100"),
     note: "TributeFactory (offerTribute, enclave decrypt)",
     abi: parseAbi([
-      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bool excludeFromIntexIssuance, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot) returns (uint256 tributeId)",
+      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bool excludeFromIntexIssuance, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot, bytes signature) returns (uint256 tributeId)",
     ]),
   },
 

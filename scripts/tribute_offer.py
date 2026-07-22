@@ -84,10 +84,12 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"bytes","name":"nonce"},
          {"type":"uint256","name":"ephemeralPubkey"},
          {"type":"uint16","name":"referenceCurrency"},
+         {"type":"bool","name":"excludeFromIntexIssuance"},
          {"type":"bytes","name":"zkProof"},
          {"type":"bytes","name":"zkVerificationKey"},
          {"type":"bytes","name":"zkPublicKey"},
-         {"type":"bytes","name":"zkMerkleRoot"}
+         {"type":"bytes","name":"zkMerkleRoot"},
+         {"type":"bytes","name":"signature"}
        ],
        "outputs":[{"type":"uint256","name":"tributeId"}]}
     ]"""
@@ -138,6 +140,8 @@ def main() -> None:
                     help="WorldwideDay (YYYYMMDD); auto-detect OFFERING if omitted")
     ap.add_argument("--amount", default="100", help="amount_base in whole units")
     ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
+    ap.add_argument("--exclude-from-intex-issuance", action="store_true",
+                    help="set the excludeFromIntexIssuance flag")
     ap.add_argument("--gas", type=int, default=8_000_000, help="explicit gas limit")
     ap.add_argument("--wait", action="store_true", help="wait for the receipt")
     args = ap.parse_args()
@@ -183,7 +187,8 @@ def main() -> None:
         nonce,
         int.from_bytes(eph_pub, "big"),
         int(args.currency),
-        b"", b"", b"", b"",
+        args.exclude_from_intex_issuance,
+        b"", b"", b"", b"", b"",
     ).build_transaction(
         {
             "from": creator,

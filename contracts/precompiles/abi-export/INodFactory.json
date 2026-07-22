@@ -48,12 +48,12 @@
         "indexed": true,
         "internalType": "address"
       },
-    {
-      "name": "nodId",
-      "type": "bytes",
-      "indexed": false,
-      "internalType": "bytes"
-    },
+      {
+        "name": "nodId",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      },
       {
         "name": "gratisLoadMinor",
         "type": "uint256",
@@ -75,9 +75,9 @@
       },
       {
         "name": "nodId",
-        "type": "uint256",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       },
       {
         "name": "worldwideDay",

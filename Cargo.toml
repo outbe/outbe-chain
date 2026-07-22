@@ -24,6 +24,7 @@ members = [
     "crates/system/zkproof",
     "crates/system/tee",
     "crates/system/teeregistry",
+    "crates/system/l2registry",
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
@@ -109,6 +110,7 @@ outbe-zkproof = { path = "crates/system/zkproof" }
 outbe-tee = { path = "crates/system/tee" }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
+outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }

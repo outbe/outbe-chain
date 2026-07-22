@@ -129,6 +129,20 @@ VRF seed (or the genesis round-robin exception), not Ethereum's default
 randomness. The txpool uses ZeroFee admission with deterministic priority
 classes.
 
+**L2 network registry.** The **L2Registry** precompile at
+`0x000000000000000000000000000000000000EE0E` (ABI:
+`contracts/precompiles/src/IL2Registry.sol`) records L2 networks keyed by
+`chain_id`: the L1 operator address that submits on behalf of the network, the
+network's BLS MinPk public key (48 bytes, the same variant as validator
+consensus keys), and a per-network `zk_enabled` flag. `registerNetwork` /
+`setZkEnabled` / `removeNetwork` are permissionless by design — any caller may
+invoke them. `TributeFactory.offerTribute` carries a `signature` field: when the
+offer caller is a registered L1 operator address and its network has
+`zk_enabled` set, the offer must include a valid BLS MinPk signature over
+`zkMerkleRoot` (signed under the `_OUTBE_L2_ZK_MERKLE_ROOT` namespace with the
+commonware `sign_message` recipe) or the call reverts; unregistered callers and
+zk-disabled networks pass empty bytes.
+
 ## Stateful Runtime Module Contract
 
 Stateful runtime modules (validator set, staking, rewards, slashing, emission,

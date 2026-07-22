@@ -31,10 +31,10 @@ fn build_extended_precompiles() -> PrecompilesMap {
 }
 
 #[test]
-fn registered_address_count_is_31() {
+fn registered_address_count_is_32() {
     let count = outbe_precompile_addresses().len();
     assert_eq!(
-        count, 31,
+        count, 32,
         "outbe stateful precompiles; if this changes, update the address list in \
          `outbe_precompile_addresses()` and the dispatch match in `extend_outbe_precompiles`"
     );

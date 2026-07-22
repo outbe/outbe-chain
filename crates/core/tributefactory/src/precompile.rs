@@ -41,6 +41,8 @@ pub fn dispatch(
                                 ephemeral_pubkey: c.ephemeralPubkey,
                                 reference_currency: c.referenceCurrency,
                                 exclude_from_intex_issuance: c.excludeFromIntexIssuance,
+                                zk_merkle_root: &c.zkMerkleRoot,
+                                signature: &c.signature,
                             },
                         )
                         .map(|id| Bytes::copy_from_slice(id.as_bytes()))

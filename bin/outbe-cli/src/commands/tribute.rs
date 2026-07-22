@@ -61,6 +61,15 @@ pub enum TributeCmd {
         /// Exclude the resulting Tribute from Intex issuance
         #[arg(long, default_value_t = false)]
         exclude_from_intex_issuance: bool,
+        /// L2 zkMerkleRoot bytes (`0x`-hex). Required together with
+        /// `--signature` when the sender is a registered L2 operator whose
+        /// network has ZK verification enabled in the L2Registry.
+        #[arg(long, default_value = "0x")]
+        zk_merkle_root: String,
+        /// BLS MinPk signature (96 bytes, `0x`-hex) over `--zk-merkle-root`
+        /// produced with the network key registered in the L2Registry.
+        #[arg(long, default_value = "0x")]
+        signature: String,
     },
 }
 
@@ -78,6 +87,8 @@ impl TributeCmd {
                 amount,
                 currency,
                 exclude_from_intex_issuance,
+                zk_merkle_root,
+                signature,
             } => {
                 offer(
                     client,
@@ -86,6 +97,8 @@ impl TributeCmd {
                     amount,
                     currency,
                     exclude_from_intex_issuance,
+                    &zk_merkle_root,
+                    &signature,
                 )
                 .await
             }
@@ -212,6 +225,7 @@ async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
 /// ChaCha20Poly1305, byte-identical to the enclave decrypt path), and sends
 /// `offerTribute`. The enclave decrypts it inside SGX during execution and the
 /// `TributeFactory` issues the canonical Tribute.
+#[allow(clippy::too_many_arguments)]
 async fn offer(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -219,9 +233,13 @@ async fn offer(
     amount_base: String,
     currency: u16,
     exclude_from_intex_issuance: bool,
+    zk_merkle_root: &str,
+    signature: &str,
 ) -> Result<()> {
     let signer = crate::commands::require_signer(private_key)?;
     let creator = signer.address();
+    let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
+    let signature = decode_hex_bytes(signature, "--signature")?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
     let bootstrapped = {
@@ -286,7 +304,8 @@ async fn offer(
         zkProof: Bytes::new(),
         zkVerificationKey: Bytes::new(),
         zkPublicKey: Bytes::new(),
-        zkMerkleRoot: Bytes::new(),
+        zkMerkleRoot: zk_merkle_root,
+        signature,
     };
     // `eth_estimateGas` cannot faithfully simulate the in-enclave decrypt, so
     // send with an explicit gas limit.
@@ -306,6 +325,16 @@ async fn offer(
     );
     println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     Ok(())
+}
+
+/// Decode a `0x`-hex CLI argument into raw bytes ("" and "0x" mean empty).
+fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
+    let stripped = value.strip_prefix("0x").unwrap_or(value);
+    if stripped.is_empty() {
+        return Ok(Bytes::new());
+    }
+    let bytes = hex::decode(stripped).map_err(|e| eyre::eyre!("{flag} is not valid hex: {e}"))?;
+    Ok(Bytes::from(bytes))
 }
 
 /// 32 fresh random bytes as a `0x`-hex string (offer draft id / su hash).
