@@ -1,7 +1,7 @@
 # ADR-S-CYC-001: Deterministic Cycle scheduling
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Decision owners:** Execution and protocol-scheduling maintainers
 - **Scope:** `crates/system/cycle`, `CycleLifecycle`, and the Cycle system transaction
 - **Depends on:** ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-EVM-004
@@ -37,6 +37,7 @@ The currently registered schedule is:
 | 0 | daily 00:00 UTC | previous UTC-day emission command | required |
 | 1 | daily 00:00 UTC | Intex call scan | not required |
 | 2 | daily 12:00 UTC | WorldwideDay advancement command | not required |
+| 3 | every 12h | auction schedule advancement | required |
 
 Names and order are normative even if handlers happen to commute today. A handler
 is an imported command boundary. Its calculations, state transitions, sinks and

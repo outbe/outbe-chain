@@ -1,7 +1,7 @@
 # ADR-C-MET-001: Metadosis owns the WorldwideDay state machine
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Decision owners:** Protocol economics maintainers
 - **Scope:** `crates/core/metadosis`, its WorldwideDay records and auction/PROMIS seams
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-CYC-001, ADR-S-ORC-001
@@ -38,9 +38,11 @@ Transition side effects are owned by the transition, not Cycle:
 
 - FORMING completion snapshots current/previous Oracle VWAP and determines the
   day type;
-- entry to OFFERING unseals Tribute offers and opens/reveals the auction stage;
+- entry to OFFERING unseals Tribute offers;
 - exit from OFFERING seals offers;
-- READY processing consumes the day's limit through the branch table below;
+- READY processing consumes the day's limit through the branch table below and
+  hands Desis its one-shot auction brief (supply, entry price, day type) — the
+  auction schedule is Desis-owned from that point;
 - terminal transition removes the active member and appends it to the bounded
   closed FIFO.
 
@@ -53,7 +55,7 @@ At most one selected READY day is processed per command today:
 
 | Condition | Economic command | Terminal status |
 |---|---|---|
-| zero limit | close applicable auction with zero | FAILED |
+| zero limit | no brief is dispatched | FAILED |
 | UNKNOWN type | add limit to unallocated Promis | FAILED |
 | no Tributes | clear supply, add remainder to Promis, retire empty partition | COMPLETED |
 | Tributes, Lysis succeeds | commit returned remainder and retire partition | COMPLETED |
@@ -132,16 +134,12 @@ rewriting the day FSM decision.
    distinct types and boundary fixtures.
 8. Limit application can overwrite rather than accumulate. Prove unique ordered
    writers or introduce an idempotent contribution ledger.
-9. Repeated OFFERING advancement may repeat auction reveal calls. Define and prove
-   downstream idempotency.
-10. Enumerate which auction errors are propagated versus swallowed; current
-    best-effort paths can split day and auction state.
-11. Normalize terminal auction state for RED, GREEN and UNKNOWN zero-limit paths.
-12. Terminal FIFO deletion removes the record while Oracle snapshots, events, Nods
+9. Normalize terminal auction state for RED, GREEN and UNKNOWN zero-limit paths.
+10. Terminal FIFO deletion removes the record while Oracle snapshots, events, Nods
     and retired Tribute history still reference the day. Define the durable history
     source and query semantics.
-13. An error path may write FAILED/event and then return an error, causing rollback
+11. An error path may write FAILED/event and then return an error, causing rollback
     of its diagnostic. Add non-consensus observability without implying committed
     state.
-14. Add an independent property model for all statuses, timestamp jumps, failures,
+12. Add an independent property model for all statuses, timestamp jumps, failures,
     retries, limit writers, partition state and FIFO eviction.

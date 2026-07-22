@@ -1,12 +1,12 @@
 # ADR-C-INX-002: IntexFactory owns issuance, qualification, settlement and Promis mining
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Decision owners:** Intex protocol maintainers
 - **Scope:** `crates/core/intexfactory`, its begin-block hooks and external
   ERC-1155, OriginRouter, VaultProvider and token seams
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-CYC-001, ADR-S-ORC-001, ADR-C-PRM-001, ADR-C-PRM-002, ADR-C-VLT-001, ADR-C-INX-001
-- **Related:** ADR-C-LYS-001, ADR-B-CRY-001 and PFS-004
+- **Related:** ADR-C-LYS-001, ADR-B-CRY-001, PFS-009 and PFS-004
 - **Supersedes:** IntexFactory portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
 
 ## Context
@@ -23,9 +23,12 @@ Promis.
 
 Only the authorized Desis/internal issuance seam may issue. Factory derives floor
 and call prices with checked fixed-point arithmetic, creates the Intex ledger
-record, creates the corresponding local ERC-1155 series, sends issuance instructions
-through the pinned OriginRouter and enrolls the series in the unqualified floor-bin
-index. These effects share one source-chain transaction.
+record, groups winners by their source chain and sends issuance instructions
+through the pinned OriginRouter to every chain of the day's snapshot (an empty
+recipient list provisions the series without mints — the local ERC-1155 series
+arrives the same way, through the loopback leg), arms the proceeds fan-in
+deadline and enrolls the series in the unqualified floor-bin index. These effects
+share one source-chain transaction.
 
 Begin-block qualification scans only due price bins and transitions eligible Issued
 series to Qualified consistently in both Rust and ERC-1155 representations. The
@@ -52,10 +55,14 @@ commit last in the same EVM frame.
 the per-series/holder sequence, burns Settled units and mints exactly
 `promis_load * amount` through PromisFactory.
 
-Only the pinned OriginRouter may deliver nonzero native proceeds. Factory opens a
-distribution over stored contributors. Begin-block drain snapshots active ids,
-advances each in a checkpoint and pays bounded chunks proportionally; the final
-contributor receives division remainder so payouts equal delivery exactly.
+Only the pinned OriginRouter may deliver nonzero native proceeds, tagged with
+their source chain. Deliveries accumulate in the day's pot; a distribution round
+over stored contributors opens once every winning chain has arrived, or at the
+fan-in deadline with whatever the pot holds — a late arrival after a forced
+partial round tops the retained map up with a supplementary round. A pot with no
+recorded contributors sweeps to the reserve. Begin-block drain snapshots active
+ids, advances each in a checkpoint and pays bounded chunks proportionally; the
+final contributor receives division remainder so payouts equal delivery exactly.
 
 ## State, authority and invariants
 
@@ -69,7 +76,8 @@ settlers, settle counters and mining sequences. Required closure:
 - settlement received asset delta is deposited and Issued burned equals Settled
   minted;
 - mine sequence advances iff equal Settled units are burned and exact Promis minted;
-- proceeds paid plus remaining progress equals received native amount;
+- proceeds paid plus remaining progress plus the undistributed pot equals the
+  received native amount;
 - contributor payout is deterministic and no delivery pays twice.
 
 ## Atomicity, replay and failure

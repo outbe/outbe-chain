@@ -1,7 +1,7 @@
 # ADR-C-INX-005: Target Intex auction owns a bounded commit/reveal FSM
 
 - **Status:** Proposed; current Solidity implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Owners/scope:** `contracts/intex/src/target/IntexAuction.sol`
 - **Depends on:** ADR-C-DES-001, ADR-C-INX-003, ADR-C-INX-006
 - **Related flow:** PFS-004
@@ -14,9 +14,11 @@ It owns timing, commitment and bidder participation state independently of Desis
 
 ## Decision
 
-Each series follows `Absent -> Commit -> Reveal | Cancelled -> Clearing -> Cleared`.
-Stage timestamps and immutable auction parameters are installed once by the authorized
-router. One bidder has at most one live commitment and one accepted reveal. Commitment
+Each series follows `CommittingBids -> RevealingBids -> Issuance -> Completed`,
+or lands as a `Cancelled` record when the day state delivered at `auctionStart` is
+red. Stage timestamps, the final day state and immutable auction parameters are
+installed once by the authorized router; the commit-to-reveal flip follows the
+installed schedule on the local clock — no cross-chain reveal signal exists. One bidder has at most one live commitment and one accepted reveal. Commitment
 binds series, bidder, quantity, rate, destination chain and salt using a canonical
 domain-separated encoding. Bond lock/release/abandonment effects are consumed through
 typed escrow receipts.
@@ -27,8 +29,8 @@ cannot move the stage or seize a non-expired bond.
 
 ## Authoritative interfaces
 
-Router-only `auctionStart`, `startRevealingBidsStage`, `startClearingStage` and
-`executeAuctionClearing` own stages. Public `commitBid`, `cancelCommit`, `revealBid`,
+Router-only `auctionStart`, `startClearingStage` and `executeAuctionClearing`
+own stages. Public `commitBid`, `cancelCommit`, `revealBid`,
 `claimCommitBond` and `reapAuction` own bidder actions and cleanup.
 
 ## Invariants

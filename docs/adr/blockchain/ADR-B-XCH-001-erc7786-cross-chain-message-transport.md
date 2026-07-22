@@ -1,7 +1,7 @@
 # ADR-B-XCH-001: ERC-7786 transport authenticates routes and provides replay-safe delivery
 
 - **Status:** Proposed; current Solidity implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Owners/scope:** `contracts/crosschain`, ERC-7786 bridge facade and Hyperlane/LayerZero adapters
 - **Depends on:** ADR-B-CRY-001, ADR-B-CAP-001, ADR-B-DEP-001
 - **Related flows:** PFS-003, PFS-004
@@ -11,7 +11,10 @@
 Outbe protocols exchange typed messages across chains through an ERC-7786-shaped
 gateway. `ERC7786Bridge` wraps a configured gateway and remote bridge registry;
 Hyperlane and LayerZero adapters translate interoperable addresses, fees, gas
-attributes and authenticated inbound transport into that interface. Every Core
+attributes and authenticated inbound transport into that interface; a loopback
+adapter serves same-chain routes (origin == destination) with synchronous
+delivery and an on-chain park/retry fallback. The bridge resolves its gateway
+per destination chain, falling back to the default. Every Core
 cross-chain protocol depends on this substrate, but transport must not interpret
 auction, token or intent business state.
 
@@ -35,8 +38,9 @@ must validate the same payload, route and attributes and return the transport id
 - `IERC7786GatewaySource.sendMessage`, `quote`, and `supportsAttribute` are the
   outbound capability.
 - `IERC7786Recipient.receiveMessage` is the authenticated inbound capability.
-- `ERC7786Bridge`, `HyperlaneGatewayAdapter` and `LayerZeroGatewayAdapter` own route
-  translation, remote-peer admission, fee forwarding and transport callbacks.
+- `ERC7786Bridge`, `HyperlaneGatewayAdapter`, `LayerZeroGatewayAdapter` and
+  `LoopbackGatewayAdapter` own route translation, remote-peer admission, fee
+  forwarding and transport callbacks.
 - Application routers own payload decoding, replay state and economic effects.
 
 ## Invariants

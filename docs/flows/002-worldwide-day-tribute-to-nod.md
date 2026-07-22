@@ -82,7 +82,7 @@ reconstructs projections without rerunning Lysis.
 | ---------- | ---------------------------- | ---------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | PFS-002-01 | populated day transformation | READY sealed day, canonical Tributes/budget/Oracle                     | Cycle executes due slot        | day completes; one Nod per Tribute; budget/totals conserve                  | in-process `test_runtime_e2e_green_then_red_wwd_lysis_nod_mine_gratis`; live proof gap |
 | PFS-002-02 | empty Tribute branch         | READY day with sealed empty partition and full remainder               | Cycle executes due slot        | no Nod; exact remainder; terminal day and defined retirement result         | documentation-only: fixture cannot form empty sealed CE partition                      |
-| PFS-002-03 | zero limit                   | READY day with zero Lysis limit                                        | Cycle executes due slot        | normative FAILED/auction branch; no Tribute/Nod mutation                    | documentation-only pending branch decision                                             |
+| PFS-002-03 | zero limit                   | READY day with zero Lysis limit                                        | Cycle executes due slot        | normative FAILED/auction branch; no Tribute/Nod mutation                    | module test `zero_limit_green_day_dispatches_no_brief` (day fails, no brief)          |
 | PFS-002-04 | totals/body mismatch         | READY record totals disagree with authenticated bodies                 | Cycle executes due slot        | complete rollback; cursor/day/Tributes unchanged and retryable              | documentation-only: corrupt parent-body injection seam absent                          |
 | PFS-002-05 | duplicate owner/day identity | duplicate is attempted before sealing or appears in corrupt population | admit offer or execute Lysis   | admission rejects duplicate; corrupt sealed population must atomically fail | `@pfs-001-05` covers admission only; Lysis fault injection absent                      |
 | PFS-002-06 | Nod creation failure         | valid READY population with injected later Nod failure                 | Lysis transforms population    | no partial Nods/contributors/consumption; day stays READY                   | module integration `later_nod_failure_rolls_back_the_complete_lysis_attempt`           |
@@ -97,5 +97,6 @@ reconstructs projections without rerunning Lysis.
 - One-block Lysis capacity is not proven; a paginated FSM may be required.
 - Define durable historical queries after terminal FIFO eviction and Tribute
   retirement.
-- Make Desis/Promis remainder conservation an enforced assertion, not a TODO.
+- Desis/Promis remainder conservation is asserted in-process by PFS-009's
+  automation; a live-node assertion is still open.
 - Add independent proof verification for all created Nods and retired collection.
