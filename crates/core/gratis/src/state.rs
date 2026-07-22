@@ -55,8 +55,8 @@ impl Gratis<'_> {
         self.op_nonce.read(&account)
     }
 
-    pub(crate) fn pledge_record_ct_of(&self, handle: B256) -> Result<Vec<u8>> {
-        self.pledge_records.get_bytes(&handle).read()
+    pub(crate) fn pledge_ticket_ct_of(&self, handle: B256) -> Result<Vec<u8>> {
+        self.pledge_lock_tickets.get_bytes(&handle).read()
     }
 
     // --- Writers (all `&self`; storage mutates through interior mutability) ---
@@ -69,8 +69,10 @@ impl Gratis<'_> {
         self.pledged_ct.get_bytes(&account).write(blob)
     }
 
-    pub(crate) fn write_pledge_record_ct(&self, handle: B256, blob: &[u8]) -> Result<()> {
-        self.pledge_records.get_bytes(&handle).write(blob)
+    /// Write (or, with an empty `blob`, clear/delete) the encrypted pledge-lock-ticket
+    /// under `handle`.
+    pub(crate) fn write_pledge_ticket_ct(&self, handle: B256, blob: &[u8]) -> Result<()> {
+        self.pledge_lock_tickets.get_bytes(&handle).write(blob)
     }
 
     pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {

@@ -55,6 +55,14 @@ pub struct Position {
     /// from the disbursed asset's `isoCode()` at issuance.
     #[attribute(order = 11)]
     pub issuance_currency: u16,
+
+    /// The pledger EOA sealed under the enclave state key (`nonce ‖ ct`, produced by
+    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
+    /// EOA to `bundle_account`; the expiry sweep / payAnadosis recover the plaintext EOA
+    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
+    /// cohort. Never a plaintext address on-chain.
+    #[attribute(order = 12)]
+    pub eoa_ct: Vec<u8>,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.

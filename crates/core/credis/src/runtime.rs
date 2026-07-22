@@ -66,6 +66,7 @@ impl CredisContract<'_> {
         &mut self,
         handle_id: U256,
         bundle_account: Address,
+        eoa_ct: Vec<u8>,
         asset: Address,
         issuance_currency: u16,
         refinancing_rate: U256,
@@ -97,6 +98,7 @@ impl CredisContract<'_> {
             credis_principal,
             refinancing_rate,
             issuance_currency,
+            eoa_ct,
         })?;
 
         for n in 1..=NUMBER_OF_ANADOSIS {
@@ -166,6 +168,34 @@ impl CredisContract<'_> {
             asset: position.asset,
             bundle_account: position.bundle_account,
         })
+    }
+
+    /// Timestamp at which `position`'s credis period expires — the due date of the
+    /// final anadosis installment (`created_at + NUMBER_OF_ANADOSIS × SECONDS_PER_MONTH`).
+    pub fn expires_at(position: &Position) -> u64 {
+        position
+            .created_at
+            .saturating_add((NUMBER_OF_ANADOSIS as u64).saturating_mul(SECONDS_PER_MONTH))
+    }
+
+    /// Closes an expired position after its collateral has been burned by the caller:
+    /// zeroes the outstanding balances, marks the schedule complete (so it is skipped
+    /// by future sweeps and overdue checks), and emits `CollateralBurned`. Returns the
+    /// pre-close snapshot so the caller can read `outstanding_gratis_amount` /
+    /// `eoa_ct` / `bundle_account`.
+    pub fn expire_position(&mut self, position_id: U256) -> Result<Position> {
+        let mut position = self.load_position(position_id)?;
+        let snapshot = position.clone();
+        position.outstanding_anadosis_amount = U256::ZERO;
+        position.outstanding_gratis_amount = U256::ZERO;
+        position.next_anadosis_number = NUMBER_OF_ANADOSIS + 1;
+        self.update_position_record(&position)?;
+        self.emit(ICredis::CollateralBurned {
+            positionId: position_id,
+            bundleAccount: snapshot.bundle_account,
+            gratisBurned: snapshot.outstanding_gratis_amount,
+        })?;
+        Ok(snapshot)
     }
 
     /// Loads the position head record. Reverts on missing.
@@ -261,6 +291,17 @@ impl CredisContract<'_> {
             }
         }
         Ok(out)
+    }
+
+    /// Total positions ever created (length of the global dense index). Used by the
+    /// begin-block expiry sweep to bound its cursor.
+    pub fn total_positions(&self) -> Result<u64> {
+        self.read_total_positions()
+    }
+
+    /// Position id at global dense-index `index` (`index < total_positions()`).
+    pub fn position_id_at(&self, index: u64) -> Result<U256> {
+        self.read_position_id_at(index)
     }
 
     /// All positions ever created, in creation order.

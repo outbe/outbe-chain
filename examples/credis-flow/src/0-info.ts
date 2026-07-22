@@ -21,6 +21,7 @@ import {
   requireEnv, formatTokenMeta2,
 } from "./utils.js";
 import { deriveGratisKeys, decryptBalance, decryptPledged, type GratisKeys } from "./confidential.js";
+import { listTickets } from "./ticket.js";
 
 const SALT = 0n;
 
@@ -126,11 +127,21 @@ async function printUserInfo(
     ? formatTokenMeta(decryptPledged(keys.viewKey, userAddress, pledgedBlob), gratisMeta)
     : `${pledgedBlob} (ciphertext — need view key)`;
 
+  // Pending pledges live in enclave-encrypted PledgeLockTickets (not readable with the
+  // view key) and are NOT yet in `pledgedOf` — that ledger fills only at requestCredis.
+  // The local ticket JSON is the only client-visible source, so sum this chain's tickets
+  // that haven't been consumed into a credis position yet (no positionId).
+  const { chainId } = await provider.getNetwork();
+  const pending = listTickets()
+    .filter((t) => !t.ticket.positionId && t.ticket.chainId === chainId.toString())
+    .reduce((sum, t) => sum + BigInt(t.ticket.amount), 0n);
+
   console.log(`\n=== User: ${userAddress} ===`);
   console.log(`  Native balance:  ${ethers.formatEther(nativeBalance)} COEN`);
   console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
   console.log(`  Gratis balance:  ${showGratis}   ${keys ? "(decrypted with view key)" : ""}`);
-  console.log(`  Pledged gratis:  ${showPledged}`);
+  console.log(`  Active pledged:  ${showPledged} (credited to the pledged ledger at requestCredis)`);
+  console.log(`  Pending pledged: ${formatTokenMeta(pending, gratisMeta)} (local tickets not yet requested)`);
   console.log(`  Pledged total:   ${formatTokenMeta(pledgedTotal, gratisMeta)} (system-wide, plaintext aggregate)`);
 }
 

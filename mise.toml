@@ -30,6 +30,9 @@ OUT_DIR            = "/tmp/outbe-testnet"
 VALIDATORS         = "4"
 OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
+# The projection sink needs a transaction-capable Mongo; localnet-start brings up
+# a one-member rs0 replica set in Docker (scripts/localnet-mongo.sh) at this URI.
+OUTBE_PROJECTION_MONGODB_URI = "mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true"
 
 # ─── Build ──────────────────────────────────────────────────────────── #
 
@@ -173,8 +176,9 @@ fi
 """
 
 [tasks.localnet-start]
-description = "Start a bootstrapped localnet from OUT_DIR"
+description = "Start a bootstrapped localnet from OUT_DIR (brings up Docker MongoDB first)"
 run = """
+./scripts/localnet-mongo.sh start
 ./scripts/run-testnet.sh start "$OUT_DIR"
 ./scripts/run-testnet.sh status "$OUT_DIR"
 """
@@ -217,8 +221,11 @@ mise run localnet-start
 """
 
 [tasks.localnet-clean]
-description = "Remove all validator-*/ and pids/ from OUT_DIR"
-run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
+description = "Remove all validator-*/ and pids/ from OUT_DIR, and the Docker MongoDB"
+run = """
+./scripts/clean-testnet-data.sh "$OUT_DIR"
+./scripts/localnet-mongo.sh clean
+"""
 
 [tasks.localnet-smoke]
 description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"

@@ -54,19 +54,20 @@ export function deleteTicket(path: string): void {
   if (existsSync(path)) unlinkSync(path);
 }
 
+/** All ticket files, newest first. */
+export function listTickets(): { path: string; ticket: Ticket }[] {
+  if (!existsSync(TICKETS_DIR)) return [];
+  return readdirSync(TICKETS_DIR)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => resolve(TICKETS_DIR, f))
+    .map((path) => ({ path, ticket: readTicket(path), mtime: statSync(path).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .map(({ path, ticket }) => ({ path, ticket }));
+}
+
 /** Most recently modified ticket file, or null if the directory is empty. */
 export function findLatestTicket(): { path: string; ticket: Ticket } | null {
-  if (!existsSync(TICKETS_DIR)) return null;
-  const entries = readdirSync(TICKETS_DIR)
-    .filter((f) => f.endsWith(".json"))
-    .map((f) => {
-      const path = resolve(TICKETS_DIR, f);
-      return { path, mtime: statSync(path).mtimeMs };
-    })
-    .sort((a, b) => b.mtime - a.mtime);
-  if (entries.length === 0) return null;
-  const { path } = entries[0];
-  return { path, ticket: readTicket(path) };
+  return listTickets()[0] ?? null;
 }
 
 export { TICKETS_DIR };

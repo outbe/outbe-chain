@@ -479,6 +479,12 @@ fn token_bundle_top_up(
     token: Address,
     amount: U256,
 ) -> Result<()> {
+    // A CALL to a codeless account succeeds and returns empty in EVM, so topUp's
+    // internal guards would be silently skipped if the bundle smart account is not
+    // deployed. Reject up front so requestCredis fails instead of half-completing.
+    if storage.with_account_info(receiver, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(VaultProviderError::ReceiverNotDeployed.into());
+    }
     let calldata = ITokenBundle::topUpCall {
         sender,
         token,

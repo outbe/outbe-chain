@@ -55,8 +55,9 @@ async function main() {
   console.log(`Pledge handle:${ticket.pledgeHandle}`);
   console.log(`Amount:       ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)}`);
   console.log(`Op-nonce:     ${opNonce}`);
-  console.log(`Balance:      ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`Pledged:      ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`Balance:        ${formatToken(balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`Active pledged: ${formatToken(pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)} (credited only at requestCredis)`);
+  console.log(`Pending pledge: ${formatToken(amount, gratisMeta.decimals, gratisMeta.symbol)} (this ticket, being reclaimed)`);
 
   const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Unpledge, amount, opNonce, chainId);
 
@@ -70,9 +71,12 @@ async function main() {
   const balanceAfter = decryptBalance(keys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const pledgedAfter = decryptPledged(keys.viewKey, userAddress, await gratis.pledgedOf(userAddress));
 
+  // Unpledge refunds the pending ticket back to the liquid balance and deletes it;
+  // the active pledged ledger (`pledgedOf`) was never credited, so it stays flat.
   console.log("\n=== CHANGES (decrypted) ===");
-  console.log(`  Balance:  ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
-  console.log(`  Pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Balance:         ${formatTokenDiff(balanceAfter - balanceBefore, gratisMeta.decimals, gratisMeta.symbol)}`);
+  console.log(`  Active pledged:  ${formatTokenDiff(pledgedAfter - pledgedBefore, gratisMeta.decimals, gratisMeta.symbol)} (unchanged)`);
+  console.log(`  Pending pledge:  ${formatTokenDiff(-amount, gratisMeta.decimals, gratisMeta.symbol)}`);
 
   deleteTicket(found.path);
   console.log(`\nTicket consumed: ${found.path}`);

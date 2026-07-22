@@ -10,6 +10,8 @@ outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-credis.workspace = true
 outbe-gratis.workspace = true
+outbe-fidelity.workspace = true
+outbe-promislimit.workspace = true
 outbe-vaultprovider.workspace = true
 outbe-oracle.workspace = true
 alloy-primitives.workspace = true
@@ -18,7 +20,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 outbe-gratisfactory.workspace = true
-outbe-fidelity.workspace = true
 # Drive the confidential Gratis path in the e2e tests via the in-process enclave
 # engine; `test-enclave` is unioned into the gratis dep for test builds.
 outbe-gratis = { workspace = true, features = ["test-enclave"] }

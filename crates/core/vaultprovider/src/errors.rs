@@ -62,6 +62,8 @@ pub enum VaultProviderError {
     InsufficientCrosschainShares { available: U256, required: U256 },
     #[error("insufficient shares for withdraw: available={available}, required={required}")]
     InsufficientSharesForWithdraw { available: U256, required: U256 },
+    #[error("token bundle receiver is not a deployed contract")]
+    ReceiverNotDeployed,
     #[error("undecodable sub-call return: {0}")]
     UndecodableReturn(&'static str),
 }

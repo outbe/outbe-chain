@@ -87,6 +87,11 @@
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }
@@ -214,6 +219,11 @@
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }
@@ -341,6 +351,11 @@
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
           }
         ]
       }
@@ -422,6 +437,31 @@
       },
       {
         "name": "anadosisAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CollateralBurned",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "bundleAccount",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisBurned",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

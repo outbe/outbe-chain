@@ -13,7 +13,7 @@
     "setup-erc20": "tsx src/0-setup-erc20.ts",
     "setup-gratis": "tsx src/0-setup-gratis.ts",
     "pledge-gratis": "tsx src/1-pledge-gratis.ts",
-    "unpledge-gratis-fast": "tsx src/1.1-unpledge-gratis.ts",
+    "unpledge-gratis": "tsx src/1.1-unpledge-gratis.ts",
     "top-up-bundle-account": "tsx src/2-top-up-bundle-account.ts",
     "request-credis": "tsx src/3-request-credis.ts",
     "cca-simulate-purchase": "tsx src/4-cca-simulate-purchase.ts",

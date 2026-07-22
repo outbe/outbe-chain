@@ -92,7 +92,7 @@ fn pledge_call(a: ModifyAuth, amount: U256) -> Bytes {
 }
 
 #[test]
-fn pledge_debits_balance_and_credits_pledged_ledger() {
+fn pledge_debits_balance_and_parks_in_ticket() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let seed = amount * U256::from(2u64);
@@ -116,9 +116,10 @@ fn pledge_debits_balance_and_credits_pledged_ledger() {
         let handle = IGratisFactory::pledgeGratisCall::abi_decode_returns(&out).unwrap();
         assert_ne!(handle, B256::ZERO, "a pledge handle is returned");
 
-        // Balance debited, per-account pledged ledger + aggregate credited.
+        // Balance debited; the amount is parked in the pending ticket (NOT yet in the
+        // per-account pledged ledger), and the aggregate counts it.
         assert_eq!(view_balance(&storage, alice()), amount);
-        assert_eq!(view_pledged(&storage, alice()), amount);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             amount
