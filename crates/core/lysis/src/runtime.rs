@@ -9,7 +9,6 @@ use outbe_primitives::units::SCALE_1E18;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
-    time::timestamp_to_date_key,
 };
 
 /// Result of a lysis execution.
@@ -34,19 +33,11 @@ pub fn lysis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
-    auction_timestamp: u64,
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
-    storage.clone().with_checkpoint(|| {
-        lysis_inner(
-            storage,
-            scope,
-            parent,
-            wwd,
-            auction_timestamp,
-            gratis_allocation,
-        )
-    })
+    storage
+        .clone()
+        .with_checkpoint(|| lysis_inner(storage, scope, parent, wwd, gratis_allocation))
 }
 
 fn lysis_inner(
@@ -54,7 +45,6 @@ fn lysis_inner(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     wwd: WorldwideDay,
-    auction_timestamp: u64,
     gratis_allocation: U256,
 ) -> Result<LysisResult> {
     let mut tribute_contract = outbe_tribute::TributeContract::new(storage.clone());
@@ -158,11 +148,9 @@ fn lysis_inner(
     }
 
     let list: Vec<(Address, U256)> = contributors.into_iter().collect();
-    outbe_intex::api::record_contributors(
-        &storage,
-        timestamp_to_date_key(auction_timestamp),
-        &list,
-    )?;
+    // Keyed by the worldwide day: `derive_series_id` is identity, so this is the
+    // series id the proceeds distribution reads back.
+    outbe_intex::api::record_contributors(&storage, u32::from(wwd), &list)?;
     tribute_contract.consume_lysis_partition(
         wwd,
         u32::try_from(tributes.len()).map_err(|_| {

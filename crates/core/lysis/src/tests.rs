@@ -188,7 +188,6 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             &scope,
             &bodies,
             wwd,
-            T_NOW,
             nominal / U256::from(5_u64),
         ) {
             Ok(_) => panic!("the second Tribute must fail without an ISO 978 oracle pair"),
@@ -208,12 +207,11 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             2
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        assert!(outbe_intex::api::read_contributors(
-            &storage,
-            outbe_primitives::time::timestamp_to_date_key(T_NOW)
-        )
-        .unwrap()
-        .is_empty());
+        assert!(
+            outbe_intex::api::read_contributors(&storage, u32::from(wwd))
+                .unwrap()
+                .is_empty()
+        );
     });
     assert!(storage.get_events(NOD_ADDRESS).is_empty());
 }
@@ -280,15 +278,9 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         );
         tribute.seal_day(wwd).unwrap();
 
-        let result = crate::runtime::lysis(
-            storage.clone(),
-            &scope,
-            &bodies,
-            wwd,
-            T_NOW,
-            gratis_allocation,
-        )
-        .expect("GAS-08 dense Lysis day must complete");
+        let result =
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+                .expect("GAS-08 dense Lysis day must complete");
 
         assert_eq!(
             result.tribute_ids.len(),
@@ -720,7 +712,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
         let gratis_allocation = nominal / U256::from(10u64);
-        let result = lysis(s.clone(), &scope, &bodies, wwd, T_NOW, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, gratis_allocation).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
         end_block(s, &scope).unwrap();
         result
@@ -1004,7 +996,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
         );
         tribute.seal_day(wwd).unwrap();
 
-        let result = lysis(s.clone(), &scope, &bodies, wwd, T_NOW, gratis_allocation).unwrap();
+        let result = lysis(s.clone(), &scope, &bodies, wwd, gratis_allocation).unwrap();
 
         // With the fix, the floor adapts to 4% and the NOD is issued. The buggy
         // (pinned-8%) path would compute an 8% load > remaining and skip issuance.
@@ -1102,18 +1094,9 @@ fn lysis_records_contributors_aggregated_by_owner() {
         let total_nominal = U256::in_units(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);
 
-        // The auction runs weeks after the tribute day; its date key — not the
-        // wwd — is the series id the map must land under.
-        const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
-        let result = crate::runtime::lysis(
-            storage.clone(),
-            &scope,
-            &bodies,
-            wwd,
-            AUCTION_TS,
-            gratis_allocation,
-        )
-        .expect("lysis must complete");
+        let result =
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+                .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
             3,
@@ -1121,9 +1104,8 @@ fn lysis_records_contributors_aggregated_by_owner() {
         );
 
         // Contributors are sorted by address (a < b < c) and carry each
-        // owner's nominal, under the auction series id (desis derivation).
-        let series_id = outbe_primitives::time::timestamp_to_date_key(AUCTION_TS);
-        assert_ne!(series_id, u32::from(wwd), "fixture must exercise the lag");
+        // owner's nominal, under the series id (== the worldwide day).
+        let series_id = u32::from(wwd);
         assert_eq!(
             outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
             vec![
@@ -1136,11 +1118,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
             outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
             U256::in_units(600u64)
         );
-        assert_eq!(
-            outbe_intex::api::contributor_count(&storage, u32::from(wwd)).unwrap(),
-            0,
-            "map must not be keyed by the tribute day"
-        );
+
         end_block(storage, &scope).unwrap();
     });
 }
@@ -1217,23 +1195,16 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         let total_nominal = U256::in_units(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);
 
-        const AUCTION_TS: u64 = 1_782_000_000; // 2026-06-21 UTC
-        let result = crate::runtime::lysis(
-            storage.clone(),
-            &scope,
-            &bodies,
-            wwd,
-            AUCTION_TS,
-            gratis_allocation,
-        )
-        .expect("lysis must complete");
+        let result =
+            crate::runtime::lysis(storage.clone(), &scope, &bodies, wwd, gratis_allocation)
+                .expect("lysis must complete");
         assert_eq!(
             result.nod_ids.len(),
             3,
             "excluded owners must still be transformed into a Nod"
         );
 
-        let series_id = outbe_primitives::time::timestamp_to_date_key(AUCTION_TS);
+        let series_id = u32::from(wwd);
         assert_eq!(
             outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
             vec![
