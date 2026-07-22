@@ -9,7 +9,6 @@ pub mod types;
 
 pub use handle::StorageHandle;
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
-// Re-exported because they appear in the public `PrecompileStorageProvider` signatures.
 pub use revm::state::{AccountInfo, Bytecode};
 
 use alloy_primitives::{Address, Bytes, LogData, U256};

@@ -606,8 +606,8 @@ fn run_outbe_pre_execution_hooks_inner(
     // chain reported BIDS_DONE, or the deadline passed).
     <outbe_desis::DesisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // CREDIS: burn the pledged collateral of positions past their 10-month term
-    // that still carry an unpaid balance (spec §3.6). Cursor-bounded per block.
+    // CREDIS: burn the pledged collateral of positions that still carry an unpaid balance.
+    // Cursor-bounded per block.
     <outbe_credisfactory::CredisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     Ok(())

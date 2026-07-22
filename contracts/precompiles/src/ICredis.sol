@@ -22,8 +22,7 @@ interface ICredis {
         uint256 credisPrincipal;
         uint256 refinancingRate;
         uint16 issuanceCurrency;
-        // Pledger EOA sealed under the enclave state key (ciphertext, not an address) so
-        // external observers cannot link the EOA to `bundleAccount`. The enclave recovers
+        // Pledger EOA ciphertext (not an address). The enclave recovers
         // the plaintext EOA on-chain via a RevealOwner round-trip.
         bytes eoaCiphertext;
     }
