@@ -1,7 +1,7 @@
 # ADR-C-INX-001: Intex owns series identity, lifecycle and contributor distribution state
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Decision owners:** Intex protocol maintainers
 - **Scope:** `crates/core/intex`
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004
@@ -39,13 +39,18 @@ rewritten by lifecycle transitions.
 ### Contributors and distribution progress
 
 Lysis records one pre-deduplicated, deterministic `(owner, nominal)` list per
-series, plus exact contributor total. An OriginRouter proceeds delivery may open one
-distribution progress record containing amount, total nominal, paid-so-far, cursor
-and active sentinel. Active distributions are held in a dense swap-and-pop set.
+series, plus exact contributor total. Proceeds deliveries credit a per-series pot
+tagged with their source chain; the ledger tracks the expected winning chains, the
+arrived set, the fan-in deadline and an awaiting-deadline membership set. A
+distribution round materializes one progress record (amount, total nominal,
+paid-so-far, cursor, active sentinel) once the fan-in completes or the deadline
+passes. Active distributions are held in a dense swap-and-pop set.
 
-Progress advances monotonically. Completion atomically deletes progress, removes
-active membership and clears the spent contributor list. Intex stores progress; the
-factory performs native transfers and calculates shares.
+Progress advances monotonically. A round forced by the deadline retains the
+contributor list so a late arrival funds a supplementary round over the same
+proportions; only completion with every expected chain arrived clears the list
+and the fan-in records. Intex stores pot and progress; the factory performs
+native transfers and calculates shares.
 
 ## Authority and interfaces
 
@@ -67,12 +72,14 @@ production callers and fail when a new mutator caller appears.
 - Immutable identity/economic fields never change after creation.
 - Contributor slots are dense and unique under the accepted aggregation rule;
   stored total equals the checked sum of all nominals.
-- At most one distribution is active per series.
+- At most one distribution is active per series; the pot only grows between
+  rounds and is zeroed by the round that spends it.
 - Progress cursor is at most contributor count; `paid_so_far <= amount`.
 - Active-set membership iff a valid active progress record exists, with reverse slot
   map agreeing in both directions.
-- Cleared distribution leaves neither progress, active membership nor contributor
-  data.
+- A fully settled series (all expected chains arrived, rounds drained) leaves
+  neither progress, active membership, pot nor contributor data; a deadline-forced
+  partial round leaves exactly the retained contributor list and fan-in records.
 
 ## Atomicity, replay and failure
 

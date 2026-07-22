@@ -47,9 +47,9 @@ The current workspace contains 57 Cargo packages.
 | `outbe-nodfactory` | `crates/core/nodfactory` | ADR-C-NOD-002, PFS-002 | Nod issuance/mining orchestration |
 | `outbe-gratis` | `crates/core/gratis` | ADR-C-GRT-001 | Gratis ledger |
 | `outbe-gratisfactory` | `crates/core/gratisfactory` | ADR-C-GRT-002, PFS-003 | Gratis workflow authority |
-| `outbe-metadosis` | `crates/core/metadosis` | ADR-C-MET-001, PFS-002 and PFS-004 | WorldwideDay orchestration |
+| `outbe-metadosis` | `crates/core/metadosis` | ADR-C-MET-001, PFS-002, PFS-004 and PFS-009 | WorldwideDay orchestration |
 | `outbe-agentreward` | `crates/core/agentreward` | ADR-C-AGR-001 | Agent reward ledger |
-| `outbe-lysis` | `crates/core/lysis` | ADR-C-LYS-001, PFS-002 | Tribute-to-Nod transformation |
+| `outbe-lysis` | `crates/core/lysis` | ADR-C-LYS-001, PFS-002 and PFS-009 | Tribute-to-Nod transformation |
 | `outbe-fidelity` | `crates/core/fidelity` | ADR-C-FID-001 | Fidelity cohorts |
 | `outbe-promis` | `crates/core/promis` | ADR-C-PRM-001 | Promis ledger |
 | `outbe-promisfactory` | `crates/core/promisfactory` | ADR-C-PRM-002, PFS-003 and PFS-004 | Promis conversions |
@@ -57,11 +57,11 @@ The current workspace contains 57 Cargo packages.
 | `outbe-credis` | `crates/core/credis` | ADR-C-CRD-001 | Credis position FSM |
 | `outbe-credisfactory` | `crates/core/credisfactory` | ADR-C-CRD-002, PFS-003 | Credis orchestration |
 | `outbe-vaultprovider` | `crates/core/vaultprovider` | ADR-C-VLT-001 | Liquidity authority |
-| `outbe-intex` | `crates/core/intex` | ADR-C-INX-001 | Native Intex ledger |
-| `outbe-intexfactory` | `crates/core/intexfactory` | ADR-C-INX-002, PFS-004 | Native Intex orchestration |
+| `outbe-intex` | `crates/core/intex` | ADR-C-INX-001, PFS-009 | Native Intex ledger |
+| `outbe-intexfactory` | `crates/core/intexfactory` | ADR-C-INX-002, PFS-004 and PFS-009 | Native Intex orchestration |
 | `outbe-gem` | `crates/core/gem` | ADR-C-GEM-001 | Gem ledger |
 | `outbe-gemfactory` | `crates/core/gemfactory` | ADR-C-GEM-002 | Gem orchestration |
-| `outbe-desis` | `crates/core/desis` | ADR-C-DES-001, PFS-004 | Native cross-chain auction FSM |
+| `outbe-desis` | `crates/core/desis` | ADR-C-DES-001, PFS-004 and PFS-009 | Native cross-chain auction FSM |
 | `outbe-governance` | `crates/core/governance` | ADR-S-GOV-001 | System authority despite physical path |
 | `outbe-cycle` | `crates/system/cycle` | ADR-S-CYC-001 | Scheduler |
 | `outbe-validatorset` | `crates/system/validatorset` | ADR-S-VAL-001 | Validator registry |
@@ -108,9 +108,9 @@ ADR-B-CLI-001 and ADR-S-KEY-001.
 | Package | Stateful authorities | Primary ADR(s) |
 |---|---|---|
 | `contracts/precompiles` | Solidity ABI/interface artifacts | ADR-B-EVM-004 and ADR-B-EVM-005 plus each System/Core owner ADR |
-| `contracts/crosschain` | ERC-7786 facade, Hyperlane and LayerZero adapters | ADR-B-XCH-001 |
+| `contracts/crosschain` | ERC-7786 facade, Hyperlane/LayerZero/loopback adapters | ADR-B-XCH-001 |
 | `contracts/tokens` | WCOEN/synthetic ledgers; fungible bridge | ADR-C-TOK-001 and ADR-C-TOK-002 |
-| `contracts/intex` | ERC-1155 ledger/bridge, target auction/escrow, routers | ADR-C-INX-003 through ADR-C-INX-007, ADR-C-DES-001, PFS-004 |
+| `contracts/intex` | ERC-1155 ledger/bridge, target auction/escrow, routers | ADR-C-INX-003 through ADR-C-INX-007, ADR-C-DES-001, PFS-004, PFS-009 |
 | `contracts/intent` | Origin/destination order FSM, solver auction/collateral | ADR-C-INT-001 through ADR-C-INT-003 |
 | `contracts/smart-account` | Factory, bundle plugin/hooks/policies/signers | ADR-B-SMA-001, PFS-003 |
 

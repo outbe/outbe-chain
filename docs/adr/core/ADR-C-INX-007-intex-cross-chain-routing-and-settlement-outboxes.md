@@ -1,17 +1,22 @@
 # ADR-C-INX-007: Intex routers use authenticated inboxes and durable settlement outboxes
 
 - **Status:** Proposed; current Solidity implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-22
 - **Owners/scope:** `OriginRouter`, `TargetRouter`, `ERC7786MessengerBase`, message codecs
 - **Depends on:** ADR-B-XCH-001, ADR-C-DES-001, ADR-C-INX-002 through ADR-C-INX-006, ADR-C-TOK-002
-- **Related flow:** PFS-004
+- **Related flow:** PFS-009, PFS-004
 
 ## Context
 
-OriginRouter connects Desis/IntexFactory to the target deployment. TargetRouter applies
-stage/result/issuance/refund/lifecycle messages, relays bids, bridges holders and routes
-proceeds. Both are upgradeable and maintain remote peers plus several pending retry
-queues. They coordinate but do not own the underlying ledgers.
+OriginRouter connects Desis/IntexFactory to N target deployments: it keeps a
+target-chain registry, freezes a per-day snapshot of it at stage start, broadcasts
+stage messages to every snapshot chain and addresses result/refund/issuance sends
+per chain. The origin chain itself is one of the targets, reached through the
+hub's loopback gateway. TargetRouter applies stage/result/issuance/refund/lifecycle
+messages, relays bid batches followed by a BIDS_DONE completeness marker, bridges
+holders and routes proceeds. Both are upgradeable and maintain remote peers plus
+several pending retry queues. They coordinate but do not own the underlying
+ledgers.
 
 ## Decision
 
@@ -30,10 +35,11 @@ Admin sweep excludes value reserved by pending routes.
 ## Authoritative interfaces
 
 OriginRouter's Desis/IntexFactory send methods and authenticated receive dispatch own
-Outbe-side routing; proceeds receive/retry owns the composed WCOEN distribution seam.
+Outbe-side routing; proceeds receive/retry owns the composed WCOEN distribution seam (per source
+chain, feeding the day's proceeds fan-in).
 TargetRouter's receive dispatch, bid relay, issuance mint, holder bridge and proceeds
 flush methods own target-side orchestration. `wire`, peer setters, proceeds routes,
-roles and upgrades are privileged configuration.
+roles, target registry membership and upgrades are privileged configuration.
 
 ## Invariants
 
