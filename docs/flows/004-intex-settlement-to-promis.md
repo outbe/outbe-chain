@@ -43,8 +43,8 @@ and converts consumed soulbound Settled units into the exact Promis load once.
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | IntexFactory | derive floor/call values and create Rust series | series record/index |
-| 2 | local ERC-1155 | create matching series/supply cap | token metadata/state |
-| 3 | OriginRouter | send bridge issuance instructions | send id/message |
+| 2 | OriginRouter | send issuance instructions to every snapshot chain (the local ERC-1155 series arrives through the loopback leg) | send ids/messages |
+| 3 | per-chain ERC-1155 | create series/supply cap, mint winners | token metadata/state |
 | 4 | IntexFactory | enroll floor index; later qualify/call from canonical Oracle scans | typed FSM state |
 | 5 | holder | optionally authorize a distinct settler | per-series authorization |
 | 6 | IntexFactory/VaultProvider | pull actual payment delta and deposit reserves | token/share deltas |
@@ -74,8 +74,9 @@ balance/supply by the recorded load product.
 
 ## Replay, retry, restart and failure
 
-Duplicate series/delivery must be rejected or idempotent. Failed bridge send rolls
-back local source issuance under the current synchronous call boundary. Failed
+Duplicate series/delivery must be rejected or idempotent. A failed issuance send
+parks as a durable pending item on the router and is permissionlessly flushed;
+the Rust series is not rolled back. Failed
 payment/vault/NFT step rolls back settlement. Invalid/replayed PoW or failed Promis
 mint leaves sequence and Settled balance unchanged. Restart must reconstruct scans
 and bridge delivery without reissuing the series.
@@ -101,7 +102,6 @@ and bridge delivery without reissuing the series.
   failure.
 - Reconcile the Rust Intex FSM with the richer ERC-1155 expiry/sweep lifecycle.
 - Pin PoW format/difficulty activation and provide independent vectors.
-- Prove contributor/proceeds distribution is not erased or replayed by a second
-  delivery.
-- No production e2e currently spans issuance, bridge, qualification, reserve
-  settlement and Promis mining.
+- No production e2e currently spans qualification, reserve settlement and Promis
+  mining in one walk; issuance through creator payout is covered in-process by
+  PFS-009's automation.
