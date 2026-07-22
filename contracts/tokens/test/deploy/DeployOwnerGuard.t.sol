@@ -9,14 +9,14 @@ import {WCOENDeploy} from "../../script/wcoen/WCOENDeploy.s.sol";
 contract ContractOwnerMock {}
 
 contract USDT0DeployHarness is USDT0Deploy {
-    function exposedRequireContractOwnerOnGuardedChain(address owner) external view {
-        _requireContractOwnerOnGuardedChain(owner);
+    function exposedRequireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) external view {
+        _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
     }
 }
 
 contract WCOENDeployHarness is WCOENDeploy {
-    function exposedRequireContractOwnerOnGuardedChain(address owner) external view {
-        _requireContractOwnerOnGuardedChain(owner);
+    function exposedRequireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) external view {
+        _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
     }
 }
 
@@ -37,7 +37,7 @@ contract DeployOwnerGuardTest is Test {
         address owner = makeAddr("owner");
 
         vm.expectRevert(abi.encodeWithSelector(USDT0Deploy.OwnerMustBeMultisigContract.selector, owner, uint256(97)));
-        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner);
+        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
     function test_WCOENGuard_RevertsForEOAOwnerOnBscTestnet() public {
@@ -45,23 +45,31 @@ contract DeployOwnerGuardTest is Test {
         address owner = makeAddr("owner");
 
         vm.expectRevert(abi.encodeWithSelector(WCOENDeploy.OwnerMustBeMultisigContract.selector, owner, uint256(97)));
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner);
+        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
     function test_Guards_AllowContractOwnerOnBscTestnet() public {
         vm.chainId(97);
         address owner = address(new ContractOwnerMock());
 
-        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner);
+        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
     function test_Guards_AllowEOAOwnerOnLocalChain() public {
         vm.chainId(31_337);
         address owner = makeAddr("owner");
 
-        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner);
+        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+    }
+
+    function test_Guards_AllowEOAOwnerOnGuardedChainWithExplicitOverride() public {
+        vm.chainId(97);
+        address owner = makeAddr("owner");
+
+        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner, true);
+        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, true);
     }
 
     function test_Guards_UseConfiguredOutbeChainId() public {
@@ -72,6 +80,6 @@ contract DeployOwnerGuardTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(USDT0Deploy.OwnerMustBeMultisigContract.selector, owner, uint256(54_322_345))
         );
-        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner);
+        usdt0Deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 }
