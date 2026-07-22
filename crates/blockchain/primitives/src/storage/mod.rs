@@ -8,8 +8,8 @@ pub mod readonly;
 pub mod types;
 
 pub use handle::StorageHandle;
-pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 pub use revm::state::{AccountInfo, Bytecode};
+pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 
 use alloy_primitives::{Address, Bytes, LogData, U256};
 use revm::{context::journaled_state::JournalCheckpoint, context::result::HaltReason};
