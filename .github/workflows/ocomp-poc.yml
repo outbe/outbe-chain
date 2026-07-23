@@ -4,7 +4,10 @@ on:
   pull_request:
     paths:
       - "outbe-plan/**"
+      - "crates/core/lysis/**"
+      - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
+      - "scripts/reference/**"
       - "scripts/ocomp-poc-task.sh"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -14,7 +17,10 @@ on:
     branches: ["main", "feat/ocomp-poc"]
     paths:
       - "outbe-plan/**"
+      - "crates/core/lysis/**"
+      - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
+      - "scripts/reference/**"
       - "scripts/ocomp-poc-task.sh"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -36,8 +42,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ocm-00-task-progress:
-    name: OCM-00 task progress
+  ocm-task-progress:
+    name: OCM task progress
     runs-on: depot-ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: mise run ocomp-poc-task -- OCM-00
+      - run: mise run ocomp-poc-task -- OCM-02
 
   poc-closure:
     name: PoC closure (fail closed)

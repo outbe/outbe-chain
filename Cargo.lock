@@ -7965,6 +7965,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-ocomp-protocol"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+]
+
+[[package]]
 name = "outbe-offchain-data"
 version = "0.1.0"
 dependencies = [

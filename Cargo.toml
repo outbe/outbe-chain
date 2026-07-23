@@ -28,6 +28,7 @@ members = [
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
+    "crates/system/ocomp-protocol",
     "crates/core/compressed-entities",
     # core outbe
     "crates/core/gratis",
@@ -114,6 +115,7 @@ outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }
+outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
 outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }

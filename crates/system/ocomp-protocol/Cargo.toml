@@ -1,0 +1,12 @@
+[package]
+name = "outbe-ocomp-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["std"] }
+
+[lints]
+workspace = true
