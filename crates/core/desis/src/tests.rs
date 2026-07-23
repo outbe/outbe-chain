@@ -263,6 +263,136 @@ fn strict_request_auction_base_rejects_oversized_supply_without_state() {
     });
 }
 
+fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
+    let contract = storage.contract::<DesisContract>();
+    assert_eq!(
+        contract.read_stage(WORLDWIDE_DAY).unwrap(),
+        AuctionStage::None
+    );
+    assert_eq!(
+        contract.read_auction_config(WORLDWIDE_DAY).unwrap(),
+        AuctionConfig {
+            issuance_currency: 0,
+            reference_currency: 0,
+            promis_load_minor: 0,
+            call_trigger: Default::default(),
+            min_intex_bid_rate: 0,
+            min_intex_bid_quantity: 0,
+            commit_bond_minor: 0,
+            entry_price_minor: U256::ZERO,
+        }
+    );
+    assert_eq!(
+        contract.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
+        U256::ZERO
+    );
+    assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 0);
+    assert_eq!(contract.auction_at.read(&WORLDWIDE_DAY).unwrap(), 0);
+    assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+    assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0);
+    assert_eq!(contract.sched_active_slot.read(&WORLDWIDE_DAY).unwrap(), 0);
+}
+
+#[test]
+fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
+    let mutation_count = {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            crate::ocomp_budget::apply_request_auction_base(
+                storage,
+                B256::repeat_byte(0x41),
+                WORLDWIDE_DAY,
+                U256::from(7 * PROMIS_LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                NOW,
+            )
+        });
+        assert!(result.is_ok());
+        provider.clear_mutation_failure()
+    };
+    assert!(
+        mutation_count > 1,
+        "fixture must cross partial-write boundaries"
+    );
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.fail_after_mutation_at(operation);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            crate::ocomp_budget::apply_request_auction_base(
+                storage,
+                B256::repeat_byte(0x41),
+                WORLDWIDE_DAY,
+                U256::from(7 * PROMIS_LOAD_MINOR),
+                U256::from(ENTRY_PRICE),
+                NOW,
+            )
+        });
+        assert!(
+            result.is_err(),
+            "fault after mutation {operation} must propagate"
+        );
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_no_request_brief_state(&storage)
+        });
+        assert!(provider.get_ordered_events().is_empty());
+    }
+}
+
+#[test]
+fn strict_request_auction_base_never_tops_up_a_live_auction() {
+    with_storage(|storage| {
+        crate::ocomp_budget::apply_request_auction_base(
+            storage.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::from(7 * PROMIS_LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            NOW,
+        )
+        .unwrap();
+        runtime::schedule_tick(&storage, NOW).unwrap();
+
+        let before = storage.contract::<DesisContract>();
+        assert_eq!(
+            before.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Started
+        );
+        let config = before.read_auction_config(WORLDWIDE_DAY).unwrap();
+        let anchor = before.auction_at.read(&WORLDWIDE_DAY).unwrap();
+
+        assert!(crate::ocomp_budget::apply_request_auction_base(
+            storage.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::from(9 * PROMIS_LOAD_MINOR),
+            U256::from(ENTRY_PRICE + 1),
+            NOW,
+        )
+        .is_err());
+
+        let after = storage.contract::<DesisContract>();
+        assert_eq!(
+            after.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Started
+        );
+        assert_eq!(
+            after.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
+            U256::from(7 * PROMIS_LOAD_MINOR)
+        );
+        assert_eq!(after.read_auction_config(WORLDWIDE_DAY).unwrap(), config);
+        assert_eq!(after.auction_at.read(&WORLDWIDE_DAY).unwrap(), anchor);
+        assert_eq!(after.sched_active_count.read().unwrap(), 1);
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage)
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
 #[test]
 fn dispatch_auction_brief_duplicate_returns_false() {
     use crate::precompile::IDesis;

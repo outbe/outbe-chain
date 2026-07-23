@@ -522,6 +522,8 @@ adapter, generic lease or auction top-up.
 strict-Desis failure; carry-over overflow/add/take; retry idempotence; compile/
 ABI assertions for the unchanged public surface. Absence of owner reservation
 state is verified by storage-layout review, not by source-text inspection.
+The primitive exposes separate fresh-apply and pure replay-validation paths;
+the authoritative persisted-receipt lookup belongs to `OCM-08`.
 
 **Evidence/CI:** `OCM-FAST` owner tests and `OCM-INT` checkpoint integration;
 pre/post typed state snapshots and storage-schema diff.
@@ -650,7 +652,9 @@ without executing Lysis.
 job/live/READY/expiry/terminal indexes; exact request checkpoint; exclusive
 deadline; one-block retry; terminal cap; empty/ineligible direct compatibility
 branches. Assemble the complete activation-precondition snapshot through the
-read-only projections owned here and in `OCM-06`.
+read-only projections owned here and in `OCM-06`. Perform the authoritative
+budget-effect receipt lookup before choosing the `OCM-05` fresh-apply or
+replay-validation path.
 
 **Invariants/failures:** status/index/budget equivalences; initial nonce zero and
 `attempt=checked_u32(nonce)`; expiry increments once; no scan; no `RUNNING`;

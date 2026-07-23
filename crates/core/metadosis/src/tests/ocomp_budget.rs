@@ -6,7 +6,10 @@ use outbe_ocomp_protocol::{
     receipts::{desis_request_brief_hash, BudgetSplitDestination},
 };
 
-use crate::ocomp_budget::{apply_request_budget_effect, RequestBudgetEffect, RequestBudgetSplit};
+use crate::ocomp_budget::{
+    apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
+    RequestBudgetEffect, RequestBudgetSplit,
+};
 
 #[test]
 fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
@@ -51,7 +54,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_request_budget_effect(storage.clone(), request, None)
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request)
             .expect("GREEN request budget effect");
 
         assert_eq!(receipt.day_limit, U256::from(100));
@@ -105,7 +108,7 @@ fn red_request_skips_desis_and_credits_exact_auction_base() {
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_request_budget_effect(storage.clone(), request, None)
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request)
             .expect("RED request budget effect");
 
         assert_eq!(receipt.destination, BudgetSplitDestination::CarryOver);
@@ -136,13 +139,13 @@ fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
             logical_anchor: 1_699_920_005,
         };
         let green_receipt =
-            apply_request_budget_effect(storage.clone(), green, None).expect("GREEN first effect");
+            apply_fresh_request_budget_effect(storage.clone(), green).expect("GREEN first effect");
         let green_retry = RequestBudgetEffect {
             pending_nonce: 2,
             ..green
         };
         assert_eq!(
-            apply_request_budget_effect(storage.clone(), green_retry, Some(&green_receipt))
+            validate_replayed_request_budget_effect(green_retry, &green_receipt)
                 .expect("GREEN retry"),
             green_receipt
         );
@@ -159,14 +162,13 @@ fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
             ..green
         };
         let red_receipt =
-            apply_request_budget_effect(storage.clone(), red, None).expect("RED first effect");
+            apply_fresh_request_budget_effect(storage.clone(), red).expect("RED first effect");
         let red_retry = RequestBudgetEffect {
             pending_nonce: 2,
             ..red
         };
         assert_eq!(
-            apply_request_budget_effect(storage.clone(), red_retry, Some(&red_receipt))
-                .expect("RED retry"),
+            validate_replayed_request_budget_effect(red_retry, &red_receipt).expect("RED retry"),
             red_receipt
         );
         assert_eq!(
@@ -191,18 +193,18 @@ fn retry_rejects_tampered_or_future_receipts_without_writing() {
             auction_entry_price: U256::from(2),
             logical_anchor: 1_699_920_005,
         };
-        let receipt = apply_request_budget_effect(storage.clone(), request, None).unwrap();
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request).unwrap();
         let before = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
             .unwrap();
 
         let mut tampered = receipt.clone();
         tampered.auction_entry_price += U256::from(1);
-        assert!(apply_request_budget_effect(storage.clone(), request, Some(&tampered)).is_err());
+        assert!(validate_replayed_request_budget_effect(request, &tampered).is_err());
 
         let mut future = receipt;
         future.pending_nonce = request.pending_nonce + 1;
-        assert!(apply_request_budget_effect(storage.clone(), request, Some(&future)).is_err());
+        assert!(validate_replayed_request_budget_effect(request, &future).is_err());
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()
@@ -239,7 +241,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             logical_anchor: 1_699_920_005,
         };
 
-        assert!(apply_request_budget_effect(storage.clone(), request, None).is_err());
+        assert!(apply_fresh_request_budget_effect(storage.clone(), request).is_err());
 
         let desis = DesisContract::new(storage.clone());
         assert_eq!(
@@ -274,7 +276,7 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             logical_anchor: 1_699_920_005,
         };
 
-        assert!(apply_request_budget_effect(storage.clone(), request, None).is_err());
+        assert!(apply_fresh_request_budget_effect(storage.clone(), request).is_err());
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
