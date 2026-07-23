@@ -21,6 +21,7 @@ pub struct TributePreAdmissionProjection {
     pub canonical_body_bytes: u64,
     pub distinct_owner_count: u32,
     pub distinct_reference_currency_count: u16,
+    pub capacity_exceeded: bool,
 }
 
 impl TributeContract<'_> {
@@ -150,6 +151,7 @@ impl TributeContract<'_> {
             canonical_body_bytes: admission.canonical_body_bytes,
             distinct_owner_count: admission.distinct_owner_count,
             distinct_reference_currency_count: admission.distinct_reference_currency_count,
+            capacity_exceeded: admission.capacity_exceeded,
         })
     }
 
@@ -236,6 +238,27 @@ impl TributeContract<'_> {
             .unwrap_or_else(|| DayPreAdmission::with_key(day));
         if admission.is_sealed {
             return Err(TributeError::PreAdmissionSealed.into());
+        }
+        if admission.capacity_exceeded {
+            return Ok(());
+        }
+
+        if is_add {
+            let totals = self.get_day_totals(day)?;
+            let max_tributes = u32::try_from(
+                outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
+                    .max_poc_tributes,
+            )
+            .map_err(|_| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "OCOMP Tribute cap exceeds u32".into(),
+                )
+            })?;
+            if totals.tribute_count > max_tributes {
+                admission.initialized = true;
+                admission.capacity_exceeded = true;
+                return self.store_day_pre_admission(&admission);
+            }
         }
 
         let body_bytes = outbe_compressed_entities::encode_tribute_v1(

@@ -285,13 +285,19 @@ impl TributeContract<'_> {
     pub fn seal_pre_admission(
         &mut self,
         day: WorldwideDay,
-        sealed_collection_root: alloy_primitives::B256,
+        sealed_collection: outbe_compressed_entities::SealedCollectionRoot,
     ) -> Result<crate::TributePreAdmissionProjection> {
         let storage = self.storage_handle();
         storage.with_checkpoint(|| {
             if !self.ocomp_profile_ready.read()? {
                 return Err(TributeError::OcompProfileNotReady.into());
             }
+            if sealed_collection.partition()
+                != outbe_compressed_entities::PartitionRef::TributeWwd(day)
+            {
+                return Err(TributeError::InvalidSealedCollectionRoot.into());
+            }
+            let sealed_collection_root = sealed_collection.root();
             if sealed_collection_root.is_zero() {
                 return Err(TributeError::InvalidSealedCollectionRoot.into());
             }

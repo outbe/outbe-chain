@@ -8296,6 +8296,7 @@ dependencies = [
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
  "serde",

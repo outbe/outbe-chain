@@ -5,8 +5,8 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
     CeMdbx, CeWorkConfig, CompressedTreeService, EntityId36, EnvironmentIdentity,
-    ExactParentIdentity, ExecutionScope, FinalizedMarker, StoredBody, ACTIVE_COMMITMENT_SCHEME,
-    LOCAL_STORAGE_SCHEMA_VERSION,
+    ExactParentIdentity, ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
@@ -139,16 +139,25 @@ impl TreeHarness {
         scope
     }
 
-    fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
-        let output = StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
+    fn seal(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) -> SealOutput {
+        StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap())
+    }
+
+    fn publish(&self, output: SealOutput) {
         let block_number = output.staged_tree_batch.block_number();
         let block_hash = keccak256(block_number.to_be_bytes());
+        let new_root = output.new_root;
         self.service
             .publish_candidate(block_hash, output.staged_tree_batch)
             .unwrap();
         self.service
-            .apply_finalized(block_number, block_hash, output.new_root)
+            .apply_finalized(block_number, block_hash, new_root)
             .unwrap();
+    }
+
+    fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
+        let output = self.seal(provider, scope);
+        self.publish(output);
     }
 }
 
@@ -173,6 +182,43 @@ fn seed_parent_commitments(
         }
     });
     finish(provider, &scope, tree);
+}
+
+#[test]
+fn completed_identity_seal_authenticates_an_unchanged_tribute_collection_root() {
+    let owner = Address::repeat_byte(0x19);
+    let body = tribute(owner, 20_260_723);
+    let mut provider = HashMapStorageProvider::new(1);
+    let tree = TreeHarness::new();
+    seed_parent_commitments(&mut provider, &tree, &[&body]);
+
+    let scope = activate(&mut provider, &tree);
+    let output = tree.seal(&mut provider, &scope);
+    assert_eq!(
+        output.parent_root, output.new_root,
+        "a block without compressed-entity mutations must preserve the parent root"
+    );
+
+    let partition = PartitionRef::TributeWwd(body.worldwide_day);
+    let sealed = scope.sealed_collection_root(&output, partition).unwrap();
+    assert_eq!(sealed.partition(), partition);
+    assert_ne!(sealed.root(), B256::ZERO);
+
+    let sibling_scope = activate(&mut provider, &tree);
+    let sibling = tribute(Address::repeat_byte(0x20), body.worldwide_day.value());
+    StorageHandle::enter(&mut provider, |storage| {
+        let canonical = outbe_tribute::canonical_body(&sibling);
+        mint(storage, &sibling_scope, BodyInput::Tribute(&canonical)).unwrap();
+    });
+    let sibling_output = tree.seal(&mut provider, &sibling_scope);
+    assert!(
+        scope
+            .sealed_collection_root(&sibling_output, partition)
+            .is_err(),
+        "an internally valid sibling candidate must not authorize this execution scope"
+    );
+
+    tree.publish(sibling_output);
 }
 
 #[test]

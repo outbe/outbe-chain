@@ -6,7 +6,7 @@ use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
     begin_block, decode_tribute_v1, derive_poseidon_entity_id, encode_tribute_v1, end_block,
-    EntityId36, ExecutionScope,
+    EntityId36, ExecutionScope, PartitionRef,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, TRIBUTE_ADDRESS};
@@ -327,34 +327,81 @@ fn pre_admission_projection_removes_burned_tribute_contribution() {
 
 #[test]
 fn sealed_pre_admission_projection_is_immutable() {
-    with_tribute(|tc| {
-        tc.initialize_fresh_ocomp_profile().unwrap();
-        let tribute = sample_tribute();
-        let sealed_root = B256::repeat_byte(0x31);
+    let mut provider = HashMapStorageProvider::new(1);
+    let (reader, _writer) = body_repository();
+    let scope = ExecutionScope::new();
+    let tribute = sample_tribute();
 
-        open_sample_day(tc);
-        tc.issue(&tribute).unwrap();
-        tc.seal_day(tribute.worldwide_day).unwrap();
-        let sealed = tc
-            .seal_pre_admission(tribute.worldwide_day, sealed_root)
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let mut contract = TributeContract::new(storage);
+        contract.initialize_fresh_ocomp_profile().unwrap();
+        contract.unseal_day(tribute.worldwide_day).unwrap();
+        contract.issue(&scope, &reader, &tribute).unwrap();
+        contract.seal_day(tribute.worldwide_day).unwrap();
+    });
+    let seal = StorageHandle::enter(&mut provider, |storage| end_block(storage, &scope).unwrap());
+
+    let mut forged = seal.clone();
+    forged.new_root = B256::repeat_byte(0x31);
+    assert!(scope
+        .sealed_collection_root(&forged, PartitionRef::TributeWwd(tribute.worldwide_day))
+        .is_err());
+
+    let mut sibling_provider = HashMapStorageProvider::new(1);
+    let sibling_scope = ExecutionScope::new();
+    let mut sibling_tribute = sample_tribute();
+    set_owner(
+        &mut sibling_tribute,
+        alloy_primitives::Address::repeat_byte(0x62),
+    );
+    StorageHandle::enter(&mut sibling_provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &sibling_scope).unwrap();
+        let mut contract = TributeContract::new(storage);
+        contract.unseal_day(sibling_tribute.worldwide_day).unwrap();
+        contract
+            .issue(&sibling_scope, &reader, &sibling_tribute)
             .unwrap();
+        contract.seal_day(sibling_tribute.worldwide_day).unwrap();
+    });
+    let sibling_seal = StorageHandle::enter(&mut sibling_provider, |storage| {
+        end_block(storage, &sibling_scope).unwrap()
+    });
+    assert!(scope
+        .sealed_collection_root(
+            &sibling_seal,
+            PartitionRef::TributeWwd(tribute.worldwide_day)
+        )
+        .is_err());
 
-        assert!(sealed.is_sealed);
-        assert_eq!(sealed.sealed_collection_root, sealed_root);
-        assert_eq!(sealed.tribute_count, 1);
-        assert_eq!(sealed.tribute_nominal_amount, tribute.nominal_amount_minor);
+    let sealed_collection = scope
+        .sealed_collection_root(&seal, PartitionRef::TributeWwd(tribute.worldwide_day))
+        .unwrap();
+    let sealed = StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
+            .unwrap()
+    });
 
-        assert!(tc.unseal_day(tribute.worldwide_day).is_err());
-        assert!(tc
-            .seal_pre_admission(tribute.worldwide_day, B256::repeat_byte(0x32))
+    assert!(sealed.is_sealed);
+    assert_eq!(sealed.sealed_collection_root, sealed_collection.root());
+    assert_eq!(sealed.tribute_count, 1);
+    assert_eq!(sealed.tribute_nominal_amount, tribute.nominal_amount_minor);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut contract = TributeContract::new(storage);
+        assert!(contract.unseal_day(tribute.worldwide_day).is_err());
+        assert!(contract
+            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
             .is_err());
-        assert!(tc.burn(tribute.tribute_id).is_err());
-
         assert_eq!(
-            tc.pre_admission_projection(tribute.worldwide_day).unwrap(),
+            contract
+                .pre_admission_projection(tribute.worldwide_day)
+                .unwrap(),
             sealed
         );
-        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_some());
     });
 }
 
@@ -406,6 +453,7 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
                 canonical_body_bytes: u64::MAX,
                 distinct_owner_count: 0,
                 distinct_reference_currency_count: 0,
+                capacity_exceeded: false,
             })
             .unwrap();
         let before = tc.pre_admission_projection(tribute.worldwide_day).unwrap();
@@ -421,6 +469,45 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
         assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
         assert_eq!(tc.total_supply().unwrap(), 0);
         assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_none());
+    });
+}
+
+#[test]
+fn cap_plus_one_latches_ineligibility_without_rejecting_tribute_or_allocating_more_identity_state()
+{
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let day = 20241220u32.into();
+        open_sample_day(tc);
+
+        for seed in 1_u16..=257 {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&seed.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute.reference_currency = 840 + (seed % 3);
+            tc.issue(&tribute).unwrap();
+        }
+
+        let exceeded = tc.pre_admission_projection(day).unwrap();
+        assert!(exceeded.capacity_exceeded);
+        assert_eq!(exceeded.tribute_count, 257);
+        assert_eq!(exceeded.distinct_owner_count, 256);
+        assert_eq!(tc.total_supply().unwrap(), 257);
+
+        let last = {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&257_u16.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute
+        };
+        tc.burn(last.tribute_id).unwrap();
+
+        let after_burn = tc.pre_admission_projection(day).unwrap();
+        assert!(after_burn.capacity_exceeded);
+        assert_eq!(after_burn.tribute_count, 256);
+        assert_eq!(after_burn.distinct_owner_count, 256);
     });
 }
 

@@ -1079,6 +1079,19 @@ impl OracleContract<'_> {
     /// Each entry is (pair_id, rate, volume). The snapshot is appended at
     /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
     pub fn write_snapshot(&mut self, timestamp: u64, entries: &[(u32, U256, U256)]) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
+        } else {
+            self.write_snapshot_inner(timestamp, entries)
+        }
+    }
+
+    fn write_snapshot_inner(
+        &mut self,
+        timestamp: u64,
+        entries: &[(u32, U256, U256)],
+    ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
         let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
             PrecompileError::BodyReadCorruption("Oracle snapshot write index overflow".into())
@@ -1598,6 +1611,22 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| {
+                self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+            })
+        } else {
+            self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+        }
+    }
+
+    fn store_worldwide_day_vwap_snapshot_inner(
+        &mut self,
+        worldwide_day: WorldwideDay,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<()> {
         let (pair_ids, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
@@ -1684,6 +1713,15 @@ impl OracleContract<'_> {
     /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
     /// watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.finalize_utc_day_vwap_inner(utc_day))
+        } else {
+            self.finalize_utc_day_vwap_inner(utc_day)
+        }
+    }
+
+    fn finalize_utc_day_vwap_inner(&mut self, utc_day: u32) -> Result<()> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
@@ -1720,9 +1758,12 @@ impl OracleContract<'_> {
                 pairId: pair_id,
                 vwap,
             };
-            let _ = self
+            let event_result = self
                 .storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            if next_ocomp_version.is_some() {
+                event_result?;
+            }
         }
 
         self.commit_ocomp_state_version(next_ocomp_version)

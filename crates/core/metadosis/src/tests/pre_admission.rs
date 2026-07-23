@@ -66,6 +66,7 @@ fn inputs() -> PreAdmissionInputs {
             canonical_body_bytes: 40_000,
             distinct_owner_count: 256,
             distinct_reference_currency_count: 16,
+            capacity_exceeded: false,
         },
         fidelity: FidelityOcompProjection {
             profile_ready: true,
@@ -101,6 +102,17 @@ fn pre_admission_accepts_exact_caps_and_defers_every_cap_plus_one() {
         evaluate_pre_admission(&context(), &over_tributes).unwrap(),
         PreAdmissionDecision::Deferred(PreAdmissionDeferredReason::TributeCountExceeded { .. })
     ));
+
+    let mut latched_tributes = inputs();
+    latched_tributes.tribute.capacity_exceeded = true;
+    latched_tributes.tribute.tribute_count = 1;
+    assert_eq!(
+        evaluate_pre_admission(&context(), &latched_tributes).unwrap(),
+        PreAdmissionDecision::Deferred(
+            PreAdmissionDeferredReason::TributeAccumulatorCapacityExceeded
+        ),
+        "the terminal accumulator latch must not recover after the live count falls below the cap"
+    );
 
     let mut over_fidelity = inputs();
     over_fidelity.fidelity.max_cohorts_observed = 65;

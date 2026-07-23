@@ -85,6 +85,13 @@ pub struct DayPreAdmission {
 
     #[attribute(order = 7, default = 0)]
     pub distinct_reference_currency_count: u16,
+
+    /// Latched when the live day first crosses an OCOMP profile bound. The
+    /// underlying Tribute remains valid, but this day can never be admitted
+    /// by the bounded PoC profile and no further per-identity OCOMP state is
+    /// allocated for it.
+    #[attribute(order = 8, default = false)]
+    pub capacity_exceeded: bool,
 }
 
 #[storage_schema]

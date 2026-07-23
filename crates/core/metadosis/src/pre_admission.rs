@@ -9,6 +9,7 @@ use outbe_ocomp_protocol::{
 };
 use outbe_oracle::api::{OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection};
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_tribute::TributePreAdmissionProjection;
 
 use crate::{
@@ -17,7 +18,7 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreAdmissionContext {
+pub(crate) struct PreAdmissionContext {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub fork_id: B256,
@@ -26,23 +27,24 @@ pub struct PreAdmissionContext {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PreAdmissionInputs {
+pub(crate) struct PreAdmissionInputs {
     pub tribute: TributePreAdmissionProjection,
     pub fidelity: FidelityOcompProjection,
     pub oracle: OcompOraclePreAdmissionProjection,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum PreAdmissionDecision {
+pub(crate) enum PreAdmissionDecision {
     Eligible(Box<PreAdmissionEnvelopeV1>),
     Deferred(PreAdmissionDeferredReason),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreAdmissionDeferredReason {
+pub(crate) enum PreAdmissionDeferredReason {
     TributeProfileNotReady,
     TributeNotSealed,
     EmptyTributeDay,
+    TributeAccumulatorCapacityExceeded,
     TributeCountExceeded { actual: u32, limit: u32 },
     ReferenceCurrencyCountExceeded { actual: u16, limit: u16 },
     FidelityProfileNotReady,
@@ -60,7 +62,11 @@ pub enum PreAdmissionDeferredReason {
 /// Produces the complete typed pre-admission envelope from bounded owner
 /// projections only. It never owns or enumerates Tribute, Fidelity or Oracle
 /// records.
-pub fn evaluate_pre_admission(
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "OCM-08 wires terminal pre-admission")
+)]
+pub(crate) fn evaluate_pre_admission(
     context: &PreAdmissionContext,
     inputs: &PreAdmissionInputs,
 ) -> Result<PreAdmissionDecision> {
@@ -82,6 +88,11 @@ pub fn evaluate_pre_admission(
     if tribute.tribute_count == 0 {
         return Ok(PreAdmissionDecision::Deferred(
             PreAdmissionDeferredReason::EmptyTributeDay,
+        ));
+    }
+    if tribute.capacity_exceeded {
+        return Ok(PreAdmissionDecision::Deferred(
+            PreAdmissionDeferredReason::TributeAccumulatorCapacityExceeded,
         ));
     }
 
@@ -302,7 +313,7 @@ impl MetadosisContract<'_> {
     /// The later fork handler owns the production call site. Repeating the
     /// exact initialization is idempotent; any non-canonical partial record is
     /// rejected.
-    pub fn initialize_ocomp_pre_admission(
+    pub(crate) fn initialize_ocomp_pre_admission(
         &mut self,
         wwd: WorldwideDay,
     ) -> Result<MetadosisPreAdmissionProjection> {
@@ -352,7 +363,11 @@ impl MetadosisContract<'_> {
 
     /// Commits the exact canonical envelope once. No component field can be
     /// replaced later because the non-zero hash is an immutable seal.
-    pub fn seal_pre_admission_envelope(
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "OCM-08 wires terminal pre-admission")
+    )]
+    pub(crate) fn seal_pre_admission_envelope(
         &mut self,
         wwd: WorldwideDay,
         envelope: &PreAdmissionEnvelopeV1,
@@ -402,4 +417,11 @@ impl MetadosisContract<'_> {
             self.ocomp_pre_admission_projection(wwd)
         })
     }
+}
+
+/// The only external mutation boundary for fresh-devnet profile setup.
+pub fn initialize_fresh_ocomp_profile(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<()> {
+    MetadosisContract::new(storage)
+        .initialize_ocomp_pre_admission(wwd)
+        .map(|_| ())
 }

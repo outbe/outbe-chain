@@ -31,8 +31,8 @@ pub use api::{
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
     CeWorkConfig, EntityRef, ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow,
     FinalLeafMutation, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceRef, PartitionRef,
-    QueryRef, RetirementOutcome, VerifiedBody, VerifiedBodyPage, VerifiedPayload,
-    MAX_ID_PAGE_LIMIT,
+    QueryRef, RetirementOutcome, SealedCollectionRoot, VerifiedBody, VerifiedBodyPage,
+    VerifiedPayload, MAX_ID_PAGE_LIMIT,
 };
 
 pub use collection::{

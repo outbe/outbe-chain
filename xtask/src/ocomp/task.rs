@@ -295,6 +295,8 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
+                    "outbe-compressed-entities",
+                    "-p",
                     "outbe-tribute",
                     "-p",
                     "outbe-fidelity",
@@ -307,8 +309,20 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             cargo(
                 repository_root,
                 &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-evm",
+                    "handlers::update::tests",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
                     "clippy",
                     "--locked",
+                    "-p",
+                    "outbe-compressed-entities",
                     "-p",
                     "outbe-tribute",
                     "-p",
@@ -317,6 +331,8 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "outbe-oracle",
                     "-p",
                     "outbe-metadosis",
+                    "-p",
+                    "outbe-evm",
                     "--all-targets",
                     "--",
                     "-D",

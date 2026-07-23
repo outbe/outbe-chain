@@ -7,7 +7,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::contract::{OracleContract, SCALE_1E18};
 use crate::precompile::IOracle;
@@ -320,17 +320,43 @@ pub fn store_scurve_entry(
     peak_day: u64,
     peak_price: U256,
 ) -> Result<()> {
-    let next_ocomp_version = oracle.next_ocomp_state_version()?;
+    if oracle.ocomp_profile_ready.read()? {
+        let storage = oracle.storage.clone();
+        storage.with_checkpoint(|| store_scurve_entry_inner(oracle, pair_id, peak_day, peak_price))
+    } else {
+        store_scurve_entry_inner(oracle, pair_id, peak_day, peak_price)
+    }
+}
+
+fn store_scurve_entry_inner(
+    oracle: &mut OracleContract,
+    pair_id: u32,
+    peak_day: u64,
+    peak_price: U256,
+) -> Result<()> {
     let idx = oracle.scurve_count.read()?;
+    let next_idx = idx.checked_add(1).ok_or_else(|| {
+        PrecompileError::BodyReadCorruption("Oracle S-curve write index overflow".into())
+    })?;
+    let next_ocomp_version = oracle.next_ocomp_state_version()?;
     oracle.scurve_pair_id.write(&idx, pair_id)?;
     oracle.scurve_peak_day.write(&idx, peak_day)?;
     oracle.scurve_peak_price.write(&idx, peak_price)?;
-    oracle.scurve_count.write(idx + 1)?;
+    oracle.scurve_count.write(next_idx)?;
     oracle.commit_ocomp_state_version(next_ocomp_version)
 }
 
 /// Evicts expired S-curve entries (older than 128 days).
 pub fn evict_expired_scurves(oracle: &mut OracleContract, current_timestamp: u64) -> Result<()> {
+    if oracle.ocomp_profile_ready.read()? {
+        let storage = oracle.storage.clone();
+        storage.with_checkpoint(|| evict_expired_scurves_inner(oracle, current_timestamp))
+    } else {
+        evict_expired_scurves_inner(oracle, current_timestamp)
+    }
+}
+
+fn evict_expired_scurves_inner(oracle: &mut OracleContract, current_timestamp: u64) -> Result<()> {
     let count = oracle.scurve_count.read()?;
     let oldest = oracle.scurve_oldest_idx.read()?;
     let cutoff = current_timestamp.saturating_sub(PERIOD as u64 * DAY_SECONDS);
@@ -366,6 +392,19 @@ pub fn process_daily_scurve(
     pair_id: u32,
     timestamp: u64,
 ) -> Result<()> {
+    if oracle.ocomp_profile_ready.read()? {
+        let storage = oracle.storage.clone();
+        storage.with_checkpoint(|| process_daily_scurve_inner(oracle, pair_id, timestamp))
+    } else {
+        process_daily_scurve_inner(oracle, pair_id, timestamp)
+    }
+}
+
+fn process_daily_scurve_inner(
+    oracle: &mut OracleContract,
+    pair_id: u32,
+    timestamp: u64,
+) -> Result<()> {
     let current_day = truncate_to_day(timestamp);
 
     // The daily hook fires on the first block of `current_day`, so
@@ -397,9 +436,12 @@ pub fn process_daily_scurve(
             peakPrice: close_d2,
             peakDay: day_minus_2,
         };
-        let _ = oracle
+        let event_result = oracle
             .storage
             .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+        if oracle.ocomp_profile_ready.read()? {
+            event_result?;
+        }
     }
 
     // Evict expired entries

@@ -2,6 +2,7 @@
 mod oracle_tests {
     use alloy_primitives::{Address, U256};
     use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+    use outbe_primitives::error::Result as PrecompileResult;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::units::Units;
@@ -271,6 +272,303 @@ mod oracle_tests {
             assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
             assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
             assert_eq!(oracle.ocomp_state_version.read().unwrap(), u64::MAX);
+        });
+    }
+
+    const ATOMIC_DAY_START: u64 = 1_753_228_800;
+
+    type OracleFixture = fn(&mut HashMapStorageProvider);
+    type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResult<()>;
+
+    fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+        });
+    }
+
+    fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
+        seed_ocomp_oracle(provider);
+        StorageHandle::enter(provider, |storage| {
+            OracleContract::new(storage)
+                .write_snapshot(
+                    ATOMIC_DAY_START + 100,
+                    &[(1, U256::from(125), U256::from(2))],
+                )
+                .unwrap();
+        });
+    }
+
+    fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvider) {
+        seed_ocomp_oracle(provider);
+        StorageHandle::enter(provider, |storage| {
+            crate::scurve::store_scurve_entry(
+                &mut OracleContract::new(storage),
+                1,
+                ATOMIC_DAY_START,
+                U256::from(125),
+            )
+            .unwrap();
+        });
+    }
+
+    const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * crate::scurve::DAY_SECONDS;
+
+    fn seed_oracle_with_peak_history(
+        provider: &mut HashMapStorageProvider,
+        initialize_ocomp: bool,
+    ) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            if initialize_ocomp {
+                crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            }
+            for (day, price) in [
+                (SCURVE_CURRENT_DAY - 3 * crate::scurve::DAY_SECONDS, 100_u64),
+                (SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS, 150_u64),
+                (SCURVE_CURRENT_DAY - crate::scurve::DAY_SECONDS, 120_u64),
+            ] {
+                oracle
+                    .write_snapshot(day + 100, &[(1, U256::from(price), U256::from(2))])
+                    .unwrap();
+            }
+        });
+    }
+
+    fn seed_ocomp_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
+        seed_oracle_with_peak_history(provider, true);
+    }
+
+    fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
+        seed_oracle_with_peak_history(provider, false);
+    }
+
+    fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .write_snapshot(
+                    ATOMIC_DAY_START + 100,
+                    &[(1, U256::from(125), U256::from(2))],
+                )
+                .unwrap();
+        });
+    }
+
+    fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).write_snapshot(
+            ATOMIC_DAY_START + 100,
+            &[(1, U256::from(125), U256::from(2))],
+        )
+    }
+
+    fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
+            outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
+            ATOMIC_DAY_START,
+            ATOMIC_DAY_START + outbe_primitives::time::SECONDS_PER_DAY,
+        )
+    }
+
+    fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).finalize_utc_day_vwap(
+            outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
+        )
+    }
+
+    fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::store_scurve_entry(
+            &mut OracleContract::new(storage),
+            1,
+            ATOMIC_DAY_START,
+            U256::from(125),
+        )
+    }
+
+    fn evict_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::evict_expired_scurves(
+            &mut OracleContract::new(storage),
+            ATOMIC_DAY_START
+                + (u64::try_from(crate::scurve::PERIOD).unwrap() + 1) * crate::scurve::DAY_SECONDS,
+        )
+    }
+
+    fn process_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::process_daily_scurve(
+            &mut OracleContract::new(storage),
+            1,
+            SCURVE_CURRENT_DAY,
+        )
+    }
+
+    fn assert_oracle_mutation_is_atomic(
+        label: &str,
+        fixture: OracleFixture,
+        mutation: OracleMutation,
+    ) {
+        let mutation_count = {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            StorageHandle::enter(&mut provider, mutation).unwrap();
+            provider.clear_mutation_failure()
+        };
+        assert!(
+            mutation_count > 1,
+            "{label} fixture must cross partial-write boundaries"
+        );
+
+        for operation in 0..mutation_count {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            let storage_before = provider.storage.clone();
+            let events_before = provider.events.clone();
+            provider.fail_after_mutation_at(operation);
+
+            let result = StorageHandle::enter(&mut provider, mutation);
+            assert!(
+                result.is_err(),
+                "{label}: fault after mutation {operation} must propagate"
+            );
+            assert_eq!(
+                provider.clear_mutation_failure(),
+                operation + 1,
+                "{label}: unexpected write boundary"
+            );
+            assert_eq!(
+                provider.storage, storage_before,
+                "{label}: persistent state changed after mutation {operation}"
+            );
+            assert_eq!(
+                provider.events, events_before,
+                "{label}: events changed after mutation {operation}"
+            );
+        }
+    }
+
+    #[test]
+    fn ocomp_oracle_owner_mutations_roll_back_every_partial_write_boundary() {
+        for (label, fixture, mutation) in [
+            (
+                "write_snapshot",
+                seed_ocomp_oracle as OracleFixture,
+                write_snapshot_mutation as OracleMutation,
+            ),
+            (
+                "store_worldwide_day_vwap_snapshot",
+                seed_ocomp_oracle_with_snapshot,
+                store_wwd_snapshot_mutation,
+            ),
+            (
+                "finalize_utc_day_vwap",
+                seed_ocomp_oracle_with_snapshot,
+                finalize_utc_day_mutation,
+            ),
+            (
+                "store_scurve_entry",
+                seed_ocomp_oracle,
+                store_scurve_mutation,
+            ),
+            (
+                "evict_expired_scurves",
+                seed_ocomp_oracle_with_scurve,
+                evict_scurve_mutation,
+            ),
+            (
+                "process_daily_scurve",
+                seed_ocomp_oracle_with_peak_history,
+                process_scurve_mutation,
+            ),
+        ] {
+            assert_oracle_mutation_is_atomic(label, fixture, mutation);
+        }
+    }
+
+    fn run_prefork_with_last_mutation_failure(
+        fixture: OracleFixture,
+        mutation: OracleMutation,
+    ) -> HashMapStorageProvider {
+        let mutation_count = {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            StorageHandle::enter(&mut provider, mutation).unwrap();
+            provider.clear_mutation_failure()
+        };
+        assert!(mutation_count > 1);
+
+        let mut provider = HashMapStorageProvider::new(1);
+        fixture(&mut provider);
+        provider.clear_mutation_failure();
+        let events_before = provider.events.clone();
+        provider.fail_mutation_at(mutation_count - 1);
+        StorageHandle::enter(&mut provider, mutation).unwrap();
+        assert_eq!(provider.clear_mutation_failure(), mutation_count - 1);
+        assert_eq!(
+            provider.events, events_before,
+            "pre-fork best-effort event failure must not synthesize an event"
+        );
+        provider
+    }
+
+    #[test]
+    fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
+        let mut finalized = run_prefork_with_last_mutation_failure(
+            seed_prefork_oracle_with_snapshot,
+            finalize_utc_day_mutation,
+        );
+        StorageHandle::enter(&mut finalized, |storage| {
+            let oracle = OracleContract::new(storage);
+            assert_eq!(
+                oracle
+                    .get_utc_day_vwap_for_pair_id(
+                        outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
+                        1,
+                    )
+                    .unwrap(),
+                Some(U256::from(125))
+            );
+            assert!(!oracle.ocomp_profile_ready.read().unwrap());
+        });
+
+        let mut processed = run_prefork_with_last_mutation_failure(
+            seed_prefork_oracle_with_peak_history,
+            process_scurve_mutation,
+        );
+        StorageHandle::enter(&mut processed, |storage| {
+            let oracle = OracleContract::new(storage);
+            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
+            assert_eq!(
+                oracle.scurve_peak_day.read(&0).unwrap(),
+                SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS
+            );
+            assert!(!oracle.ocomp_profile_ready.read().unwrap());
+        });
+    }
+
+    #[test]
+    fn scurve_count_overflow_rejects_before_any_owner_write() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            oracle.scurve_count.write(u32::MAX).unwrap();
+            let version_before = oracle.ocomp_state_version.read().unwrap();
+
+            assert!(crate::scurve::store_scurve_entry(
+                &mut oracle,
+                1,
+                ATOMIC_DAY_START,
+                U256::from(125),
+            )
+            .is_err());
+            assert_eq!(oracle.scurve_count.read().unwrap(), u32::MAX);
+            assert_eq!(oracle.scurve_pair_id.read(&u32::MAX).unwrap(), 0);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), version_before);
         });
     }
 
