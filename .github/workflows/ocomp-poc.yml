@@ -57,7 +57,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: mise run ocomp-poc-task -- OCM-02
+      - run: mise run ocomp-poc-task -- OCM-03
 
   poc-closure:
     name: PoC closure (fail closed)

@@ -95,6 +95,60 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             task_progress(repository_root, task, &["OCM-EVD-001", "OCM-SEM-001"])?;
         }
+        "OCM-03" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--test",
+                    "foundation_vectors",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--test",
+                    "typed_protocol",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(repository_root, task, &["OCM-EVD-001", "OCM-SEM-001"])?;
+        }
         _ => {
             cargo(
                 repository_root,

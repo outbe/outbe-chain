@@ -1,0 +1,23 @@
+use alloy_primitives::{address, b256, Address, B256};
+
+pub const METADOSIS_ADDRESS: Address = address!("000000000000000000000000000000000000100e");
+
+pub const ACTIVATE_LYSIS_SELECTOR: [u8; 4] = [0x5b, 0x28, 0x18, 0xca];
+pub const GET_OFFCHAIN_JOB_SELECTOR: [u8; 4] = [0x4c, 0x13, 0x2d, 0x3d];
+pub const GET_ACTIVE_LYSIS_GENERATION_SELECTOR: [u8; 4] = [0x50, 0xf8, 0xb3, 0xe4];
+pub const GET_LYSIS_TERMINAL_RECEIPT_SELECTOR: [u8; 4] = [0x20, 0xf4, 0x6b, 0xe7];
+pub const OCOMP_ACTIVATION_REJECTED_SELECTOR: [u8; 4] = [0x8e, 0x34, 0x68, 0x03];
+
+pub const OCOMP_REQUESTED_TOPIC0: B256 =
+    b256!("997139de4a9928090f392ef70b47db793b46eb650dd837141c0650776ea8e8ee");
+pub const OCOMP_EXPIRED_TOPIC0: B256 =
+    b256!("9ca54d8b0ae876fcd3b6e519643b9409e3694c8110d3e17f72f8baa51cea320d");
+pub const OCOMP_CONFLICTED_TOPIC0: B256 =
+    b256!("4ccae6e58910db3b75ee57048a6f1ef06f25b45ef2564a13ca9ef93aacc371bf");
+pub const LYSIS_ACTIVATED_TOPIC0: B256 =
+    b256!("f9f846ebfcc5895f442c47e436aeb0a86c170ad48a7863eb9f9dddb0a4492f68");
+
+pub const OCOMP_LIFECYCLE_BEGIN_SELECTOR: [u8; 4] = *b"OSE2";
+pub const OCOMP_TERMINAL_REQUEST_SELECTOR: [u8; 4] = *b"OSR2";
+
+pub const OCOMP_ACTIVATION_REJECTION_CODES: core::ops::RangeInclusive<u8> = 1..=17;

@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 alloy-primitives = { workspace = true, features = ["std"] }
+k256.workspace = true
 
 [lints]
 workspace = true

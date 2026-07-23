@@ -1,14 +1,28 @@
 //! Consensus-facing binary and commitment primitives for OCOMP.
 //!
-//! This crate deliberately stops below typed protocol objects. It owns OCB1
-//! framing, bounded canonical fields, registered hash domains and ordered-list
-//! roots, but it is not a general-purpose serialization framework.
+//! It owns the closed OCOMP V1 object registry, OCB1 framing, bounded canonical
+//! fields, registered hash domains, ordered-list roots and typed validation.
+//! It is deliberately not a general-purpose serialization framework.
 
+pub mod abi;
+pub mod activation;
+pub mod certificate;
 pub mod codec;
+pub mod committee;
+pub mod common;
+pub mod control;
 pub mod error;
 pub mod hash;
+pub mod input;
+pub mod intent;
 pub mod list;
+pub mod profile;
+pub mod receipts;
 pub mod registry;
+pub mod result;
+mod schema;
+pub mod state;
+pub mod unit;
 
 pub use codec::{
     decode_envelope, encode_envelope, ensure_strictly_increasing, require_canonical_reencoding,
@@ -19,3 +33,4 @@ pub use error::ProtocolError;
 pub use hash::{framed_preimage, hash_framed, verify_framed_hash};
 pub use list::{ordered_list_root, OrderedListLimits};
 pub use registry::{HashDomain, ListKind, ObjectKind};
+pub use schema::SchemaLimits;

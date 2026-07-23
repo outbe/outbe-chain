@@ -110,6 +110,10 @@ impl CanonicalWriter {
         self.write_raw(value)
     }
 
+    pub fn write_fixed<const N: usize>(&mut self, value: &[u8; N]) -> Result<(), ProtocolError> {
+        self.write_raw(value)
+    }
+
     pub fn write_bool(&mut self, value: bool) -> Result<(), ProtocolError> {
         self.write_u8(u8::from(value))
     }
@@ -259,6 +263,19 @@ impl<'a> CanonicalReader<'a> {
 
     pub fn read_entity_id36(&mut self) -> Result<[u8; 36], ProtocolError> {
         self.take_array()
+    }
+
+    pub fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N], ProtocolError> {
+        self.take_array()
+    }
+
+    pub fn read_fixed_dynamic(
+        &mut self,
+        length: usize,
+        field_cap: usize,
+    ) -> Result<&'a [u8], ProtocolError> {
+        check_cap("fixed byte field", field_cap, length)?;
+        self.take(length)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, ProtocolError> {

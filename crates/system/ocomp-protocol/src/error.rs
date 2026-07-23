@@ -18,6 +18,10 @@ pub enum ProtocolError {
     InvalidMagic([u8; 4]),
     UnknownObjectKind(u16),
     UnsupportedSchemaVersion(u16),
+    UnexpectedObjectKind {
+        expected: u16,
+        actual: u16,
+    },
     BodyLengthMismatch {
         declared: usize,
         remaining: usize,
@@ -58,6 +62,10 @@ pub enum ProtocolError {
     NonCanonicalEncoding,
     HashMismatch,
     UnknownListKind(u16),
+    InvalidInvariant(&'static str),
+    InvalidPublicKey,
+    InvalidSignature,
+    HighSignatureS,
 }
 
 impl fmt::Display for ProtocolError {
@@ -76,6 +84,12 @@ impl fmt::Display for ProtocolError {
             Self::UnknownObjectKind(kind) => write!(formatter, "unknown OCB1 object kind: {kind}"),
             Self::UnsupportedSchemaVersion(version) => {
                 write!(formatter, "unsupported OCB1 schema version: {version}")
+            }
+            Self::UnexpectedObjectKind { expected, actual } => {
+                write!(
+                    formatter,
+                    "unexpected OCB1 object kind: expected {expected}, got {actual}"
+                )
             }
             Self::BodyLengthMismatch {
                 declared,
@@ -113,6 +127,10 @@ impl fmt::Display for ProtocolError {
             Self::NonCanonicalEncoding => formatter.write_str("non-canonical re-encoding"),
             Self::HashMismatch => formatter.write_str("hash mismatch"),
             Self::UnknownListKind(kind) => write!(formatter, "unknown list kind: {kind}"),
+            Self::InvalidInvariant(name) => write!(formatter, "invalid invariant: {name}"),
+            Self::InvalidPublicKey => formatter.write_str("invalid compressed SEC1 public key"),
+            Self::InvalidSignature => formatter.write_str("invalid prehash signature"),
+            Self::HighSignatureS => formatter.write_str("non-canonical high-s signature"),
         }
     }
 }

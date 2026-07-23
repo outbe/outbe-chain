@@ -7982,6 +7982,7 @@ name = "outbe-ocomp-protocol"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "k256 0.13.4",
 ]
 
 [[package]]
