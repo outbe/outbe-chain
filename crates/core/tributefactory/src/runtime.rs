@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -13,15 +13,15 @@ use outbe_tribute::{TributeContract, TributeData};
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
 
-pub(crate) struct OfferTributeInput<'a> {
+pub(crate) struct OfferTributeInput {
     pub caller: Address,
-    pub cipher_text: &'a [u8],
-    pub nonce: &'a [u8],
+    pub cipher_text: Bytes,
+    pub nonce: Bytes,
     pub ephemeral_pubkey: U256,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
-    pub zk_merkle_root: &'a [u8],
-    pub signature: &'a [u8],
+    pub zk_merkle_root: Bytes,
+    pub signature: Bytes,
 }
 
 impl TributeFactoryContract<'_> {
@@ -36,7 +36,7 @@ impl TributeFactoryContract<'_> {
         &mut self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        input: OfferTributeInput<'_>,
+        input: OfferTributeInput,
     ) -> Result<EntityId36> {
         let OfferTributeInput {
             caller,
@@ -56,8 +56,8 @@ impl TributeFactoryContract<'_> {
         outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
-            zk_merkle_root,
-            signature,
+            &zk_merkle_root,
+            &signature,
         )?;
 
         // Current rate at this block. There is a single active OFFERING

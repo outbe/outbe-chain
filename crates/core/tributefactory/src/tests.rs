@@ -7,7 +7,7 @@ use crate::schema::TributeFactoryContract;
 const CHAIN_ID: u64 = 1;
 
 mod l2_zk_gate {
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, Bytes, U256};
     use outbe_compressed_entities::{
         EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
         QueryRef, StoredBody,
@@ -50,16 +50,16 @@ mod l2_zk_gate {
         Address::repeat_byte(0x77)
     }
 
-    fn offer<'a>(zk_merkle_root: &'a [u8], signature: &'a [u8]) -> OfferTributeInput<'a> {
+    fn offer(zk_merkle_root: &[u8], signature: &[u8]) -> OfferTributeInput {
         OfferTributeInput {
             caller: caller(),
-            cipher_text: &[],
-            nonce: &[],
+            cipher_text: Bytes::new(),
+            nonce: Bytes::new(),
             ephemeral_pubkey: U256::ZERO,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            zk_merkle_root,
-            signature,
+            zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
+            signature: Bytes::copy_from_slice(signature),
         }
     }
 
