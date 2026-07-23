@@ -924,7 +924,7 @@ fn protocol_crate_has_no_node_or_program_dependency_cycle() {
         .split("[dependencies]")
         .nth(1)
         .unwrap()
-        .split("[lints]")
+        .split("[dev-dependencies]")
         .next()
         .unwrap();
     assert_eq!(

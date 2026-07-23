@@ -1,0 +1,35 @@
+{
+  "armable": false,
+  "classification": "measurement_only",
+  "generator": {
+    "input_set_sha256": "8a00d7d5a33a00919ff8ef2310a3fd391e0c1a478381922e1a749189550c1ed3",
+    "invocation": "cargo xtask ocomp shape",
+    "source_sha256": "8368ca65e2d1e644af2bdb456ca78842b3e4b51becf7ad9650a7c61c4aff0e4d"
+  },
+  "independent_verification": {
+    "method": "generated envelope vectors are independently reconstructed and decoded by OCM-BYT-001",
+    "result": "PASS"
+  },
+  "network_binding": {
+    "capacity_profile_hash": null,
+    "chain_id": null,
+    "committee_snapshot_hash": null,
+    "genesis_hash": null,
+    "network_manifest_hash": null,
+    "protocol_bundle_hash": null
+  },
+  "profiles": {
+    "bundle_template_sha256": "3d2d5400c66e176987b7b6e522df77e699d953de37d7c6d852171d820827754c",
+    "candidate_compile_ceiling_sha256": "e52febadeeee298a8d13311bfad3502ff0acb98ee46f05e359e43ea3aed9d281",
+    "correctness_profile_sha256": "3b5bbce51a931113f56bffae5767454c8b51008588a6020388465cd9d72edd74",
+    "headroom_policy_sha256": "ec384d6b098771d4f7dc95f23cbe0995af7aeeae67539cc34151c67023a0516a",
+    "minimum_devnet_hardware_profile_sha256": "335e5f46dbb86ff41a5dcbd164fd681eb79a8a3e3f4880a1af2e42166d824144"
+  },
+  "registries": {
+    "canonical_schema_sha256": "2102dbeac7fd02474e65f76fdc1feb252ba20201be82703f6bead59e5a6df766",
+    "domain_preimage_sha256": "6db415f1fd6005dbecb5960fb2fc211e64e6f497c04f7ed82624d0f443933e1c",
+    "object_count": 30,
+    "object_domain_list_sha256": "fb1dbd8a98145f2728d607b643e10103b6684856fdd9e70e2bea81e5799be407"
+  },
+  "schema_version": 1
+}

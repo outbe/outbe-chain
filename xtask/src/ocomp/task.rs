@@ -149,6 +149,71 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             )?;
             task_progress(repository_root, task, &["OCM-EVD-001", "OCM-SEM-001"])?;
         }
+        "OCM-04" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "xtask", "ocomp::shape"],
+            )?;
+            for test in [
+                "golden_vectors",
+                "abi_and_system_tx",
+                "bounded_decode",
+                "typed_protocol",
+            ] {
+                cargo(
+                    repository_root,
+                    &[
+                        "test",
+                        "--locked",
+                        "-p",
+                        "outbe-ocomp-protocol",
+                        "--test",
+                        test,
+                    ],
+                )?;
+            }
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

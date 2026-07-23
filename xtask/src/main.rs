@@ -33,6 +33,12 @@ enum OcompCommand {
         #[arg(long)]
         check: bool,
     },
+    /// Generate or verify the measurement-only P0 protocol shape freeze.
+    Shape {
+        /// Fail if checked-in generated shape artifacts differ from their authorities.
+        #[arg(long)]
+        check: bool,
+    },
     /// Run one OCM task merge gate without claiming full PoC closure.
     Task {
         /// Exact task identifier, for example OCM-02.
@@ -149,6 +155,9 @@ fn main() -> Result<()> {
         Command::Ocomp(ocomp_args) => match ocomp_args.command {
             OcompCommand::Registry { check } => {
                 ocomp::registry::run(&repo_root, check)?;
+            }
+            OcompCommand::Shape { check } => {
+                ocomp::shape::run(&repo_root, check)?;
             }
             OcompCommand::Task { task } => {
                 ocomp::task::run(&repo_root, &task)?;
