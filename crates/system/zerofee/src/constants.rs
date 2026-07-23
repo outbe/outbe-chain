@@ -24,9 +24,9 @@ pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 /// Maximum `gas_limit` accepted for a sponsored free transaction.
 ///
 /// Caps the per-tx compute budget so 8 × N sybil-funded addresses cannot
-/// exhaust a block on the sponsored path. 200_000 covers ERC-20 transfer
+/// exhaust a block on the sponsored path. 500_000 covers ERC-20 transfer
 /// plus a small log, matching the typical onboarding interaction.
-pub const FREE_TX_DAILY_GAS_LIMIT: u64 = 200_000;
+pub const FREE_TX_DAILY_GAS_LIMIT: u64 = 500_000;
 
 /// Maximum calldata size accepted for a sponsored free transaction.
 ///
