@@ -1,6 +1,6 @@
 mod support;
 
-use std::{collections::BTreeSet, process::Command};
+use std::collections::BTreeSet;
 
 use alloy_primitives::{address, b256, B256, U256};
 use outbe_ocomp_protocol::{
@@ -511,7 +511,7 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 }
 
 #[test]
-fn generated_registry_is_complete_unique_and_current() {
+fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 30);
     assert_eq!(HashDomain::ALL.len(), 41);
     assert_eq!(ListKind::ALL.len(), 8);
@@ -527,13 +527,4 @@ fn generated_registry_is_complete_unique_and_current() {
         ListKind::try_from(0xffff),
         Err(ProtocolError::UnknownListKind(0xffff))
     );
-
-    let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let status = Command::new("python3")
-        .arg("registry/generate.py")
-        .arg("--check")
-        .current_dir(crate_dir)
-        .status()
-        .expect("python3 executes registry check");
-    assert!(status.success(), "generated registry differs from TSV");
 }

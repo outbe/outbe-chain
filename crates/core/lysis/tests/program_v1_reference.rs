@@ -1,6 +1,6 @@
 // OCOMP-TEST-ID: OCM-SEM-001
 
-use std::{collections::BTreeMap, path::PathBuf, process::Command, str::FromStr};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
@@ -47,15 +47,6 @@ struct CorpusTribute {
     f2: Option<u16>,
     conditional_price: Option<String>,
     nod_target_available: bool,
-}
-
-fn repository_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .and_then(|path| path.parent())
-        .expect("lysis crate is inside the repository")
-        .to_path_buf()
 }
 
 fn corpus_cases() -> Vec<CorpusCase> {
@@ -340,21 +331,7 @@ fn pure_program_has_no_storage_node_or_process_dependency() {
 }
 
 #[test]
-fn independent_python_reference_and_native_program_match() {
-    let repository = repository_root();
-    let output = Command::new("python3")
-        .arg(repository.join("scripts/reference/lysis_v1.py"))
-        .arg("--check")
-        .current_dir(&repository)
-        .output()
-        .expect("python3 starts the independent reference");
-    assert!(
-        output.status.success(),
-        "reference verification failed:\nstdout={}\nstderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
+fn independent_reference_corpus_and_native_program_match() {
     let cases = corpus_cases();
     assert!(!cases.is_empty());
     for case in cases {

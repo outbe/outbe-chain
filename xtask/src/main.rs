@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
-use xtask::release::sgx;
+use xtask::{ocomp, release::sgx};
 
 #[derive(Debug, Parser)]
 #[command(about = "Outbe repository development and release automation")]
@@ -14,7 +14,30 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Build, verify and publish release artifacts.
-    Release(ReleaseArgs),
+    Release(Box<ReleaseArgs>),
+    /// Generate and verify Off-chain Computation PoC development artifacts.
+    Ocomp(OcompArgs),
+}
+
+#[derive(Debug, Args)]
+struct OcompArgs {
+    #[command(subcommand)]
+    command: OcompCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum OcompCommand {
+    /// Generate or check the OCOMP V1 object/domain/list registry.
+    Registry {
+        /// Fail if checked-in generated files differ from the TSV authority.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Run one OCM task merge gate without claiming full PoC closure.
+    Task {
+        /// Exact task identifier, for example OCM-02.
+        task: String,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -123,6 +146,14 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let repo_root = sgx::repository_root()?;
     match cli.command {
+        Command::Ocomp(ocomp_args) => match ocomp_args.command {
+            OcompCommand::Registry { check } => {
+                ocomp::registry::run(&repo_root, check)?;
+            }
+            OcompCommand::Task { task } => {
+                ocomp::task::run(&repo_root, &task)?;
+            }
+        },
         Command::Release(release) => match release.command {
             ReleaseCommand::Sgx(sgx_args) => match sgx_args.command {
                 SgxCommand::Prepare { elf_output, output } => {

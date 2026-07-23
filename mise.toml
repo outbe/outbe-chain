@@ -278,7 +278,7 @@ depends = ["e2e"]
 
 [tasks.ocomp-poc-task]
 description = "Run one OCOMP implementation task merge gate without claiming PoC closure"
-run = "bash ./scripts/ocomp-poc-task.sh"
+run = "cargo xtask ocomp task"
 
 [tasks.ocomp-poc-fast]
 description = "Run the OCOMP fast lane; fails while any planned fast evidence is missing"

@@ -63,6 +63,7 @@ members = [
     "bin/outbe-tee-enclave",
     # testing
     "crates/testing/e2e-harness",
+    "crates/testing/lysis-v1-reference",
 ]
 resolver = "2"
 
@@ -231,6 +232,8 @@ zeroize = "1"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 ed25519-dalek = { version = "2", features = ["rand_core", "zeroize"] }
 either = "1"
+num-bigint = "0.4"
+num-traits = "0.2"
 
 # ZK / Poseidon
 outbe-poseidon = { git = "https://github.com/outbe/outbe-poseidon/", tag = "v0.11.0" }

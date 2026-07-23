@@ -7838,6 +7838,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-lysis-v1-reference"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "num-bigint",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
