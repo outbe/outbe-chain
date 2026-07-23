@@ -50,6 +50,7 @@ outbe-zkproof.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-evm.workspace = true
 
@@ -77,7 +78,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-nod = { workspace = true, features = ["test-utils"] }
-alloy-eips.workspace = true
 alloy-sol-types.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = [] }

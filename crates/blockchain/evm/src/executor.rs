@@ -5,12 +5,15 @@
 
 use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
+use alloy_eips::eip7685::Requests;
 use alloy_evm::{
     block::{
+        state_changes::{balance_increment_state, post_block_balance_increments},
         BlockExecutionError, BlockExecutor, BlockValidationError, CommitChanges, ExecutableTx,
-        GasOutput, InternalBlockExecutionError, OnStateHook, StateDB,
+        GasOutput, InternalBlockExecutionError, OnStateHook, StateChangePostBlockSource,
+        StateChangeSource, StateDB,
     },
-    eth::{EthBlockExecutor, EthTxResult},
+    eth::{dao_fork, eip6110, EthBlockExecutor, EthTxResult},
     revm::context::Block as _,
     Database, RecoveredTx,
 };
@@ -53,7 +56,8 @@ use crate::{
         SystemTxVisibleGasPlan,
     },
 };
-use reth_ethereum::chainspec::ChainSpec;
+use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
+use revm::database::DatabaseCommitExt;
 
 type ExpectedSystemTransaction = (
     usize,
@@ -828,6 +832,10 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
     ocomp_lifecycle_active: bool,
     ocomp_terminal_request_consumed: bool,
+    /// Standard Ethereum post-execution output captured before CE seal and
+    /// OSR2. Active OCOMP blocks must not call the inner executor's `finish`
+    /// afterward because that would create semantic writes after OSR2.
+    ethereum_post_execution_requests: Option<Requests>,
     system_layout_error: Option<String>,
     parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     proposer_evm_address: Option<Address>,
@@ -941,6 +949,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             expected_end_system_txs,
             ocomp_lifecycle_active: false,
             ocomp_terminal_request_consumed: false,
+            ethereum_post_execution_requests: None,
             system_layout_error,
             parent_consensus_metadata,
             proposer_evm_address,
@@ -1409,6 +1418,90 @@ where
         Ok(())
     }
 
+    /// Runs the standard Ethereum post-execution phase before the OCOMP
+    /// terminal boundary.
+    ///
+    /// This intentionally mirrors [`EthBlockExecutor::finish`]'s semantic
+    /// writes. The active OCOMP lifecycle requires a stricter order than the
+    /// upstream executor exposes:
+    ///
+    /// `Ethereum post-execution -> CE seal -> OSR2 -> read-only finish`.
+    ///
+    /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
+    /// which assembles the result without invoking the upstream phase again.
+    fn apply_ethereum_post_execution_before_ocomp_terminal(
+        &mut self,
+    ) -> Result<(), BlockExecutionError> {
+        if self.ethereum_post_execution_requests.is_some() {
+            return Err(BlockExecutionError::msg(
+                "standard Ethereum post-execution changes already applied",
+            ));
+        }
+
+        let requests = if self
+            .inner
+            .spec
+            .is_prague_active_at_timestamp(self.inner.evm.block().timestamp().saturating_to())
+        {
+            let deposit_requests =
+                eip6110::parse_deposits_from_receipts(self.inner.spec, &self.inner.receipts)?;
+            let mut requests = Requests::default();
+            if !deposit_requests.is_empty() {
+                requests.push_request_with_type(eip6110::DEPOSIT_REQUEST_TYPE, deposit_requests);
+            }
+            self.inner
+                .system_caller
+                .append_post_execution_changes(&mut self.inner.evm, &mut requests)?;
+            requests
+        } else {
+            Requests::default()
+        };
+
+        let mut balance_increments = post_block_balance_increments(
+            self.inner.spec,
+            self.inner.evm.block(),
+            self.inner.ctx.ommers,
+            self.inner.ctx.withdrawals.as_deref(),
+        );
+
+        if self
+            .inner
+            .spec
+            .ethereum_fork_activation(EthereumHardfork::Dao)
+            .transitions_at_block(self.inner.evm.block().number().saturating_to())
+        {
+            let drained_balance: u128 = self
+                .inner
+                .evm
+                .db_mut()
+                .drain_balances(dao_fork::DAO_HARDFORK_ACCOUNTS)
+                .map_err(|_| BlockValidationError::IncrementBalanceFailed)?
+                .into_iter()
+                .sum();
+            *balance_increments
+                .entry(dao_fork::DAO_HARDFORK_BENEFICIARY)
+                .or_default() += drained_balance;
+        }
+
+        self.inner
+            .evm
+            .db_mut()
+            .increment_balances(balance_increments.clone())
+            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
+        self.inner.system_caller.try_on_state_with(|| {
+            balance_increment_state(&balance_increments, self.inner.evm.db_mut()).map(|state| {
+                (
+                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
+                    std::borrow::Cow::Owned(state),
+                )
+            })
+        })?;
+
+        self.ethereum_post_execution_requests = Some(requests);
+        Ok(())
+    }
+
     fn execute_ocomp_terminal_request<R>(
         &mut self,
         recovered: R,
@@ -1493,9 +1586,11 @@ where
                 BlockExecutionError::msg(format!("terminal system tx intrinsic gas: {error}"))
             })?;
 
-        // This is the ordering boundary: all ordinary transactions have
-        // finished, the final CE root is committed, and only then may the
-        // terminal request handler inspect sealed state.
+        // This is the ordering boundary: all ordinary transactions and
+        // standard Ethereum post-execution changes have finished, the final
+        // CE root is committed, and only then may the terminal request handler
+        // inspect sealed state. No semantic writer may follow OSR2.
+        self.apply_ethereum_post_execution_before_ocomp_terminal()?;
         self.finalize_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
@@ -3775,13 +3870,37 @@ where
             current_summary,
         )?;
 
-        // proposer recording, finalized-parent settlement,
-        // slashing, Cycle, and BoundaryOutcome now execute as receipt-visible
-        // begin-zone system transactions in the normal tx loop. `finish` only
-        // validates header artifacts, finalizes the wrapped Ethereum executor,
-        // and records the committed execution summary.
-
-        let (evm, result) = self.inner.finish()?;
+        // Proposer recording, finalized-parent settlement, slashing, Cycle,
+        // and BoundaryOutcome execute as receipt-visible begin-zone system
+        // transactions in the normal tx loop. In an active OCOMP block,
+        // standard Ethereum post-execution already ran before CE seal and
+        // OSR2, so `finish` must be read-only with respect to state. Calling
+        // `EthBlockExecutor::finish` here would repeat that phase after the
+        // terminal transaction and violate the last-writer invariant.
+        let (evm, result) = if self.ocomp_lifecycle_active {
+            let requests = self
+                .ethereum_post_execution_requests
+                .take()
+                .ok_or_else(|| {
+                    BlockExecutionError::msg(
+                        "active OCOMP block is missing standard Ethereum post-execution output",
+                    )
+                })?;
+            let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
+                self.inner.max_block_gas_used()
+            } else {
+                self.inner.cumulative_tx_gas_used
+            };
+            let result = BlockExecutionResult {
+                receipts: std::mem::take(&mut self.inner.receipts),
+                requests,
+                gas_used,
+                blob_gas_used: self.inner.blob_gas_used,
+            };
+            (self.inner.evm, result)
+        } else {
+            self.inner.finish()?
+        };
         // Validator/import execution ends before Reth validates receipt and
         // state roots, so it must not publish speculative CE state here. The
         // proposer publishes only after block assembly supplies the final hash;
@@ -5016,8 +5135,15 @@ mod tests {
     }
 
     #[test]
-    fn active_terminal_request_seals_ce_once_and_rejects_later_transactions() {
+    fn active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions() {
         use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum ObservedWrite {
+            EthereumPostBlock,
+            CompressedEntitiesSeal,
+            Transaction(usize),
+        }
 
         let signer = test_evm_signer();
         let proposer = signer.address();
@@ -5026,20 +5152,36 @@ mod tests {
         let config = OutbeEvmConfig::new(chain_spec)
             .with_evm_signer(signer)
             .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
-        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(Some(5), Bytes::new()));
+        let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut ctx = execution_ctx(Some(5), Bytes::new());
+        ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![
+            alloy_eips::eip4895::Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                amount: 1,
+            },
+        ]));
+        let mut executor = config.create_executor(evm, ctx);
 
-        let ce_seals = Arc::new(Mutex::new(0usize));
-        let observed_ce_seals = ce_seals.clone();
+        let observed_writes = Arc::new(Mutex::new(Vec::new()));
+        let hook_writes = observed_writes.clone();
         executor.set_state_hook(Some(Box::new(
             move |source, _changes: &revm::state::EvmState| {
-                if matches!(
-                    source,
+                let observed = match source {
                     StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
-                        "compressed_entities_end_block"
-                    ))
-                ) {
-                    *observed_ce_seals.lock().unwrap() += 1;
+                        "compressed_entities_end_block",
+                    )) => Some(ObservedWrite::CompressedEntitiesSeal),
+                    StateChangeSource::PostBlock(_) => Some(ObservedWrite::EthereumPostBlock),
+                    StateChangeSource::Transaction(index) => {
+                        Some(ObservedWrite::Transaction(index))
+                    }
+                    StateChangeSource::PreBlock(_) => None,
+                };
+                if let Some(observed) = observed {
+                    hook_writes.lock().unwrap().push(observed);
                 }
             },
         )));
@@ -5077,7 +5219,25 @@ mod tests {
             .execute_transaction(end.into_iter().next().unwrap())
             .expect("terminal system tx executes after CE seal");
 
-        assert_eq!(*ce_seals.lock().unwrap(), 1);
+        let writes_after_terminal = observed_writes.lock().unwrap().clone();
+        let ethereum_post_block_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::EthereumPostBlock)
+            .expect("standard Ethereum post-block changes execute before OSR2");
+        let compressed_entities_seal_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::CompressedEntitiesSeal)
+            .expect("compressed entities seal executes before OSR2");
+        let terminal_transaction_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::Transaction(begin.len()))
+            .expect("OSR2 commits as the terminal transaction");
+        assert!(
+            ethereum_post_block_index < compressed_entities_seal_index
+                && compressed_entities_seal_index < terminal_transaction_index,
+            "semantic write order must be Ethereum post-block -> CE seal -> OSR2; got \
+             {writes_after_terminal:?}"
+        );
         assert!(executor.compressed_entities_seal_output().is_some());
         let receipt_count = executor.receipts().len();
         let later_user = test_regular_tx()
@@ -5085,14 +5245,27 @@ mod tests {
             .expect("regular tx signer recovers");
         assert!(executor.execute_transaction(later_user).is_err());
         assert_eq!(executor.receipts().len(), receipt_count);
-        assert_eq!(*ce_seals.lock().unwrap(), 1);
+        assert_eq!(
+            observed_writes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|write| **write == ObservedWrite::CompressedEntitiesSeal)
+                .count(),
+            1
+        );
 
         executor
             .prepare_final_header_artifacts(0)
             .expect("sealed CE root enters final header");
+        let writes_before_finish = observed_writes.lock().unwrap().clone();
         let (_evm, result) = executor.finish().expect("active executor finishes");
         assert_eq!(result.receipts.len(), 5);
-        assert_eq!(*ce_seals.lock().unwrap(), 1);
+        assert_eq!(
+            *observed_writes.lock().unwrap(),
+            writes_before_finish,
+            "finish must not perform any semantic write after OSR2"
+        );
     }
 
     #[test]

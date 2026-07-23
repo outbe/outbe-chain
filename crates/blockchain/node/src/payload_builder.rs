@@ -696,13 +696,396 @@ fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
 }
 
 #[cfg(test)]
-mod ce_work_tests {
+mod tests {
+    use std::{collections::BTreeMap, time::Instant};
+
     use super::*;
+    use alloy_consensus::{SignableTransaction as _, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind};
+    use alloy_rpc_types_engine::PayloadId;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity,
         ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
+    use outbe_evm::{
+        system_tx::{
+            split_system_layout, system_tx_intrinsic_gas, OcompLifecycleActivation, SystemTxKind,
+        },
+        OutbeEvmSigner,
+    };
+    use outbe_offchain_data::RuntimeBodyReaders;
+    use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+    use outbe_primitives::{
+        addresses::{COMPRESSED_ENTITIES_ADDRESS, REWARDS_ADDRESS},
+        consensus::{DkgBoundaryArtifact, ReshareResult},
+        projection::ExecutionReadBudget,
+        reshare_artifact::{
+            encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+        },
+        storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    };
+    use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
+    use reth_evm::execute::Executor as _;
+    use reth_payload_primitives::BuiltPayload as _;
+    use reth_primitives_traits::{SealedHeader, SignedTransaction as _};
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_transaction_pool::{
+        identifier::{SenderId, TransactionId},
+        noop::NoopTransactionPool,
+        EthPooledTransaction, TransactionOrigin,
+    };
+
+    type TestPool = NoopTransactionPool<EthPooledTransaction>;
+    type TestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
+    const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
+
+    struct TestBestTransactions {
+        transactions: std::vec::IntoIter<Arc<ValidPoolTransaction<EthPooledTransaction>>>,
+    }
+
+    impl TestBestTransactions {
+        fn one(transaction: Arc<ValidPoolTransaction<EthPooledTransaction>>) -> Self {
+            Self {
+                transactions: vec![transaction].into_iter(),
+            }
+        }
+    }
+
+    impl Iterator for TestBestTransactions {
+        type Item = Arc<ValidPoolTransaction<EthPooledTransaction>>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.transactions.next()
+        }
+    }
+
+    impl BestTransactions for TestBestTransactions {
+        fn mark_invalid(&mut self, _transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
+            panic!("boundary transaction unexpectedly rejected: {kind}");
+        }
+
+        fn no_updates(&mut self) {}
+
+        fn set_skip_blobs(&mut self, _skip_blobs: bool) {}
+    }
+
+    fn active_set_hash(addresses: &[alloy_primitives::Address]) -> B256 {
+        let mut bytes = Vec::with_capacity(8 + addresses.len() * 20);
+        bytes.extend_from_slice(&(addresses.len() as u64).to_be_bytes());
+        for address in addresses {
+            bytes.extend_from_slice(address.as_slice());
+        }
+        keccak256(bytes)
+    }
+
+    fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> Bytes {
+        let active_set = vec![proposer];
+        let vrf_group_public_key_bytes = vec![0x42u8; 96];
+        let snapshot = outbe_validatorset::CommitteeSnapshot {
+            committee: vec![outbe_validatorset::CommitteeEntry {
+                address: proposer,
+                consensus_pubkey: TEST_CONSENSUS_PUBLIC_KEY,
+            }],
+            vrf_material_version: 0,
+            vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            execution_summary: None,
+            consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(
+                DkgBoundaryArtifact {
+                    epoch: 0,
+                    dkg_cycle: 0,
+                    freeze_height: 0,
+                    planned_activation_height: 1,
+                    target_set_hash: B256::ZERO,
+                    vrf_material_version: 0,
+                    vrf_group_public_key: keccak256(&vrf_group_public_key_bytes),
+                    vrf_group_public_key_bytes: Bytes::from(vrf_group_public_key_bytes),
+                    committee_set_hash: outbe_validatorset::committee_set_hash_v2(0, &snapshot),
+                    is_validator_set_change: true,
+                    outcome: Bytes::new(),
+                    is_full_dkg: false,
+                    tee_recipient_pubkeys: Vec::new(),
+                    tee_reshare_registrations: Vec::new(),
+                    endorsement_signature: Bytes::new(),
+                    reshare: ReshareResult {
+                        active_set_hash: active_set_hash(&active_set),
+                        new_active_set: active_set,
+                    },
+                },
+            )),
+            timestamp_millis_part: 0,
+            late_finalize_credits: None,
+            compressed_entities_root: None,
+        })
+        .expect("genesis boundary artifacts encode")
+    }
+
+    fn active_ocomp_provider(
+        chain_spec: &Arc<ChainSpec<OutbeHeader>>,
+        proposer: alloy_primitives::Address,
+        funded_user: alloy_primitives::Address,
+    ) -> TestProvider {
+        const OWNER: alloy_primitives::Address =
+            address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+        let mut seed = HashMapStorageProvider::new(chain_spec.chain().id());
+        StorageHandle::enter(&mut seed, |storage| {
+            let root = outbe_compressed_entities::sealed_root(B256::ZERO)
+                .expect("CE genesis root is deterministic");
+            storage
+                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+                .expect("CE schema version seed succeeds");
+            storage
+                .sstore(
+                    COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1),
+                    U256::from_be_slice(root.as_slice()),
+                )
+                .expect("CE genesis root seed succeeds");
+
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validators
+                .config_owner
+                .write(OWNER)
+                .expect("validator owner seed succeeds");
+            validators
+                .config_max_validators
+                .write(128)
+                .expect("validator capacity seed succeeds");
+            validators
+                .config_epoch_length_blocks
+                .write(60)
+                .expect("validator epoch seed succeeds");
+            validators
+                .config_is_initialized
+                .write(true)
+                .expect("validator initialization seed succeeds");
+            validators
+                .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
+                .expect("proposer registration seed succeeds");
+            validators
+                .activate_reshared_set(&[proposer], B256::ZERO)
+                .expect("active proposer seed succeeds");
+
+            let mut oracle = outbe_oracle::contract::OracleContract::new(storage);
+            oracle
+                .register_pair("COEN", "0xUSD")
+                .expect("oracle pair seed succeeds");
+            oracle
+                .set_exchange_rate(
+                    alloy_primitives::Address::ZERO,
+                    "COEN",
+                    "0xUSD",
+                    U256::from(1_000_000_000_000_000_000u128),
+                    0,
+                    0,
+                )
+                .expect("oracle rate seed succeeds");
+        });
+
+        let provider =
+            MockEthProvider::<OutbePrimitives>::new().with_chain_spec(chain_spec.as_ref().clone());
+        let mut accounts: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for ((account, slot), value) in seed.storage {
+            accounts
+                .entry(account)
+                .or_default()
+                .push((B256::from(slot.to_be_bytes::<32>()), value));
+        }
+        for (account, storage) in accounts {
+            provider.add_account(
+                account,
+                ExtendedAccount::new(0, U256::ZERO)
+                    .with_bytecode(Bytes::from_static(&[0xef]))
+                    .extend_storage(storage),
+            );
+        }
+        provider.add_account(
+            funded_user,
+            ExtendedAccount::new(0, U256::from(100_000_000_000_000_000_000u128)),
+        );
+        provider
+    }
+
+    #[test]
+    fn active_payload_builder_preserves_terminal_reservation_and_replays_exactly() {
+        const BLOCK_GAS_LIMIT: u64 = 30_000_000;
+        const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
+
+        let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
+            .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
+            .build()
+            .map_header(OutbeHeader::new)
+            .into();
+        let signer = Arc::new(
+            OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"),
+        );
+        let proposer = signer.address();
+        let prefinal_extra_data = genesis_boundary_artifacts(proposer);
+        let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        let evm_config = OutbeEvmConfig::new_with_runtime_body_readers(
+            chain_spec.clone(),
+            RuntimeBodyReaders::new(body_storage),
+        )
+        .with_evm_signer(signer)
+        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(
+            alloy_consensus::Header {
+                number: 0,
+                gas_limit: BLOCK_GAS_LIMIT,
+                timestamp: BLOCK_TIMESTAMP - 1,
+                base_fee_per_gas: Some(1_000_000_000),
+                ..Default::default()
+            },
+        )));
+
+        let begin = evm_config
+            .build_begin_system_txs(
+                1,
+                chain_spec.chain().id(),
+                BLOCK_GAS_LIMIT,
+                parent.hash(),
+                &prefinal_extra_data,
+                None,
+                Some(proposer),
+                None,
+                None,
+            )
+            .expect("active begin zone builds");
+        let end = evm_config
+            .build_end_system_txs(1, chain_spec.chain().id(), begin.len(), Some(proposer))
+            .expect("active terminal zone builds");
+        assert_eq!(end.len(), 1);
+        let begin_visible_gas = begin
+            .iter()
+            .map(|transaction| {
+                system_tx_intrinsic_gas(transaction.tx().input().as_ref())
+                    .expect("system transaction has valid intrinsic gas")
+            })
+            .sum::<u64>();
+        let terminal_reserved_gas = end[0].tx().gas_limit();
+        let user_gas_limit = BLOCK_GAS_LIMIT
+            .checked_sub(begin_visible_gas)
+            .and_then(|remaining| remaining.checked_sub(terminal_reserved_gas))
+            .expect("system zones fit inside the block gas limit");
+
+        let user_tx: reth_ethereum::TransactionSigned = TxEip1559 {
+            chain_id: chain_spec.chain().id(),
+            nonce: 0,
+            gas_limit: user_gas_limit,
+            max_fee_per_gas: 2_000_000_000,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")),
+            value: U256::ZERO,
+            input: Bytes::new(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+        let user_hash = *user_tx.tx_hash();
+        let encoded_length = user_tx.encode_2718_len();
+        let recovered_user = user_tx
+            .try_into_recovered()
+            .expect("test user signature recovers");
+        let user_sender = alloy_primitives::Address::from(*recovered_user.signer());
+        let pooled_user = Arc::new(ValidPoolTransaction {
+            transaction: EthPooledTransaction::new(recovered_user, encoded_length),
+            transaction_id: TransactionId::new(SenderId::from(1), 0),
+            propagate: true,
+            timestamp: Instant::now(),
+            origin: TransactionOrigin::Local,
+            authority_ids: None,
+        });
+
+        let provider = active_ocomp_provider(&chain_spec, proposer, user_sender);
+        let payload_builder = OutbePayloadBuilder::new(
+            provider.clone(),
+            TestPool::new(),
+            evm_config.clone(),
+            EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
+        );
+        let attributes = OutbePayloadAttributes::new(
+            REWARDS_ADDRESS,
+            BLOCK_TIMESTAMP * 1000,
+            B256::repeat_byte(0x44),
+            None,
+            prefinal_extra_data,
+            None,
+            Some(proposer),
+        )
+        .with_execution_read_budget(ExecutionReadBudget::new());
+        let payload_config = PayloadConfig::new(parent, attributes, PayloadId::new([0x07; 8]));
+        let outcome = payload_builder
+            .build_payload(
+                BuildArguments::new(
+                    Default::default(),
+                    Default::default(),
+                    None,
+                    payload_config,
+                    Default::default(),
+                    None,
+                ),
+                |_| TestBestTransactions::one(pooled_user),
+            )
+            .expect("production payload builder succeeds");
+        let payload = outcome
+            .into_payload()
+            .expect("production payload builder returns a payload");
+        let body = &payload.block().body().transactions;
+        let layout = split_system_layout(body).expect("built payload has canonical system layout");
+
+        assert_eq!(
+            layout.begin_block_kinds().expect("begin inputs decode"),
+            vec![
+                SystemTxKind::OcompLifecycleBegin,
+                SystemTxKind::CycleTick,
+                SystemTxKind::BoundaryOutcome,
+                SystemTxKind::OracleSlashWindow,
+                SystemTxKind::HookEvents,
+            ]
+        );
+        assert_eq!(layout.user.len(), 1);
+        assert_eq!(*layout.user[0].tx_hash(), user_hash);
+        assert_eq!(layout.end.len(), 1);
+        assert_eq!(
+            layout.end_block_kinds().expect("terminal input decodes"),
+            vec![SystemTxKind::OcompTerminalRequest]
+        );
+
+        let executed = payload
+            .executed_block()
+            .expect("builder exposes the exact executed payload");
+        let receipts = &executed.execution_output.result.receipts;
+        assert_eq!(receipts.len(), body.len());
+        assert_eq!(
+            receipts[layout.begin.len() - 1]
+                .cumulative_gas_used
+                .checked_add(user_gas_limit)
+                .and_then(|used| used.checked_add(terminal_reserved_gas)),
+            Some(BLOCK_GAS_LIMIT),
+            "the user transaction is admitted exactly at the OSR2 reservation boundary"
+        );
+        assert!(
+            decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref())
+                .expect("built header artifacts decode")
+                .compressed_entities_root
+                .is_some(),
+            "the active payload publishes the CE seal committed before OSR2"
+        );
+
+        let replay = evm_config
+            .executor(StateProviderDatabase::new(&provider))
+            .execute(executed.recovered_block.as_ref())
+            .expect("validator replay succeeds");
+        assert_eq!(
+            replay, *executed.execution_output,
+            "proposer and validator replay must produce identical receipts, gas, requests, and state"
+        );
+    }
 
     fn tree_service() -> (tempfile::TempDir, Arc<CompressedTreeService>) {
         let directory = tempfile::tempdir().unwrap();

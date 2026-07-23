@@ -375,19 +375,25 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 repository_root,
                 &["test", "--locked", "-p", "outbe-primitives"],
             )?;
-            cargo(
-                repository_root,
-                &[
-                    "test",
-                    "--locked",
-                    "-p",
-                    "outbe-evm",
-                    "--test",
-                    "system_tx_layout",
-                ],
-            )?;
+            for integration_test in [
+                "system_tx_layout",
+                "e2e_system_tx",
+                "phase1_safety_verification",
+            ] {
+                cargo(
+                    repository_root,
+                    &[
+                        "test",
+                        "--locked",
+                        "-p",
+                        "outbe-evm",
+                        "--test",
+                        integration_test,
+                    ],
+                )?;
+            }
             for test in [
-                "active_terminal_request_seals_ce_once_and_rejects_later_transactions",
+                "active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions",
                 "active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts",
             ] {
                 cargo(
@@ -404,6 +410,17 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "outbe-node",
                     "--test",
                     "consensus_stateless",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-node",
+                    "--lib",
+                    "active_payload_builder_preserves_terminal_reservation_and_replays_exactly",
                 ],
             )?;
             cargo(

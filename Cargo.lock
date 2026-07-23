@@ -7924,6 +7924,7 @@ dependencies = [
  "outbe-evm",
  "outbe-offchain-data",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-txpool",
  "outbe-validatorset",
