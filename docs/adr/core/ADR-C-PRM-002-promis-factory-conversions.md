@@ -29,14 +29,18 @@ mineCoen(amount):
   consume equal Fidelity quantity LIFO
   increase caller native COEN balance 1:1
 
-convertToGratis(amount):
+# exposed on IGratisFactory (0x2003), not the Promis factory
+mineFromPromis(amount):
   burn caller Promis
   mint equal Gratis through Gratisfactory's age-preserving seam
   do not mutate Fidelity
 ```
 
-The absence of Fidelity mutation during Promis-to-Gratis conversion is deliberate:
-the same economic holding changes representation without resetting acquisition age.
+The Promis-to-Gratis command lives on the Gratis factory (`IGratisFactory.mineFromPromis`)
+so the gratis mint stays where gratis minting is owned; it burns the caller's Promis
+directly. The absence of Fidelity mutation during Promis-to-Gratis conversion is
+deliberate: the same economic holding changes representation without resetting
+acquisition age.
 Every sequence and event is one EVM transaction.
 
 ## Authority and invariants

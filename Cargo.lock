@@ -7747,6 +7747,7 @@ dependencies = [
  "outbe-fidelity",
  "outbe-gratis",
  "outbe-primitives",
+ "outbe-promis",
  "outbe-tee",
  "outbe-tee-enclave",
  "thiserror 2.0.18",
@@ -8065,12 +8066,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-fidelity",
- "outbe-gratis",
- "outbe-gratisfactory",
  "outbe-primitives",
  "outbe-promis",
- "outbe-tee",
- "outbe-tee-enclave",
 ]
 
 [[package]]

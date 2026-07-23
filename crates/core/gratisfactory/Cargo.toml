@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gratis.workspace = true
+outbe-promis.workspace = true
 outbe-fidelity.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true

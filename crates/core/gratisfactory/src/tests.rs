@@ -10,6 +10,7 @@ use outbe_gratis::enclave_client::test_enclave;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_promis::Promis;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
@@ -326,6 +327,104 @@ fn mine_coen_rejects_insufficient_balance() {
         // Atomic revert: no COEN minted, gratis untouched.
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
         assert_eq!(view_balance(&storage, alice()), U256::from(100u64));
+    });
+}
+
+#[test]
+fn mine_from_promis_burns_promis_mints_gratis_preserving_fidelity() {
+    const ONE_YEAR_SECS: u64 = 365 * 86_400;
+    with_env(|storage| {
+        let amount = U256::from(1_000u64);
+
+        // Seed promis to convert plus an active Fidelity cohort of the SAME size
+        // acquired a year ago, so it has positive RCFI now. Converting to gratis
+        // must leave this cohort untouched (aging preserved).
+        Promis::new(storage.clone()).mint(alice(), amount).unwrap();
+        outbe_fidelity::api::cohort_in(
+            storage.clone(),
+            alice(),
+            amount,
+            CREATED_AT - ONE_YEAR_SECS,
+        )
+        .unwrap();
+        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_fidelity_index(alice())
+            .unwrap();
+        assert!(rcfi_before > U256::ZERO);
+
+        // mineFromPromis on the gratisfactory precompile. The confidential gratis
+        // mint is authorized by alice's modify key at her current op-nonce (0).
+        let a = auth(GratisOp::Mint, alice(), amount, 0);
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineFromPromis(
+                IGratisFactory::mineFromPromisCall {
+                    amount,
+                    mac: FixedBytes(a.mac),
+                    opNonce: a.op_nonce,
+                },
+            )
+            .abi_encode(),
+        );
+        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+        let minted = IGratisFactory::mineFromPromisCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(minted, amount);
+
+        // Promis fully burned; gratis minted 1:1 to the account (decrypt the
+        // confidential balance to check; total supply is public).
+        let promis = Promis::new(storage.clone());
+        assert_eq!(promis.balance_of(alice()).unwrap(), U256::ZERO);
+        assert_eq!(promis.total_supply().unwrap(), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), amount);
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            amount
+        );
+
+        // Fidelity untouched: no cohort_out (promis burn) and no cohort_in (gratis
+        // mint), so RCFI is unchanged. If either hook crept in, this would move.
+        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
+            .get_fidelity_index(alice())
+            .unwrap();
+        assert_eq!(rcfi_after, rcfi_before);
+    });
+}
+
+/// mine_from_promis with insufficient balance must fail with no partial state:
+/// no promis burned, no gratis minted (atomic revert).
+#[test]
+fn mine_from_promis_rejects_insufficient_balance() {
+    with_env(|storage| {
+        // Alice holds 100 promis but tries to convert 200.
+        Promis::new(storage.clone())
+            .mint(alice(), U256::from(100u64))
+            .unwrap();
+
+        // The promis burn fails before the gratis mint is reached, so the auth is
+        // never checked — a zero placeholder is fine here.
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineFromPromis(
+                IGratisFactory::mineFromPromisCall {
+                    amount: U256::from(200u64),
+                    mac: FixedBytes([0u8; 32]),
+                    opNonce: 0,
+                },
+            )
+            .abi_encode(),
+        );
+        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("insufficient balance"),
+            "got: {err}"
+        );
+
+        // No gratis minted (no ciphertext ever written), promis untouched.
+        assert_eq!(
+            Promis::new(storage.clone()).balance_of(alice()).unwrap(),
+            U256::from(100u64)
+        );
+        assert!(outbe_gratis::api::balance_ct(storage.clone(), alice())
+            .unwrap()
+            .is_empty());
     });
 }
 
