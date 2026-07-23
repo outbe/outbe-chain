@@ -28,6 +28,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
+| `PFS-002-01` through `-24` | Gap: the off-chain request/export/q/activation scenarios are specified; `-07`/`-08` are deferred and no OCOMP scenario is implemented |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |

@@ -1,0 +1,1686 @@
+# Off-chain Computation PoC implementation plan
+
+Status: **READY_FOR_IMPLEMENTATION — planning audit passed**
+
+This is the canonical plan for the bounded fresh-devnet Lysis V1 PoC. It plans
+implementation but does not claim that any new OCOMP production surface, test
+or evidence currently exists.
+
+Normative inputs:
+
+- [`off-chain-computation.md`](../off-chain-computation.md);
+- [`off-chain-poc.md`](../off-chain-poc.md);
+- [`ADR-S-OCM-001`](../docs/adr/system/ADR-S-OCM-001-ocomp-kernel-and-typed-program-boundary.md)
+  through
+  [`ADR-S-OCM-004`](../docs/adr/system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md);
+- [`PFS-002`](../docs/flows/002-off-chain-poc-protocol-flow.md);
+- the [implementation decision map](off-chain-poc-implementation-decisions.md);
+- the [current-code map](off-chain-poc-current-code-map.md);
+- the [protocol freeze](off-chain-poc-protocol-freeze.md);
+- the [Lysis V1 semantic baseline](off-chain-poc-lysis-v1-semantics.md);
+- the [finalized input/export decision](off-chain-poc-finalized-input-export.md);
+- the [process/CAS decision](off-chain-poc-process-and-artifact-topology.md);
+- the [deterministic/quorum decision](off-chain-poc-deterministic-execution-and-quorum.md);
+- the [activation/apply decision](off-chain-poc-activation-and-atomic-apply.md);
+- the [test/evidence architecture](off-chain-poc-test-and-evidence.md) and
+  [planning ledger](off-chain-poc-evidence-ledger.yaml);
+- the final [implementation-plan audit](off-chain-poc-implementation-audit.md).
+
+## 1. Outcome and non-goals
+
+The last task must prove this real path:
+
+```text
+public Tribute transactions
+  -> terminal Metadosis JobIntent without Lysis/effects
+  -> finalized authenticated export
+  -> four independent validator-domain executions
+  -> three matching node-owned attestations
+  -> untrusted relay
+  -> normal paid public activateLysis transaction
+  -> bounded verification without Lysis
+  -> four certified activation-owner effects in one checkpoint
+  -> finalized Nod/effect/generation public reads and proofs
+```
+
+The plan adds exactly two workspace packages:
+
+- `crates/system/ocomp-protocol`;
+- `bin/outbe-ocomp`, one executable with fixed `supervisor`,
+  `snapshot-exporter`, `worker` and `relay` modes.
+
+It does not add a `ProgramRegistry`, `TaskAdapter`, second program, generic
+write/action dispatcher, new activation transaction type, new RPC namespace,
+separate CAS daemon, node-spawned arbitrary worker, synchronous fallback,
+ZeroFee rule, TargetLarge proof/DA path or supported-network deployment.
+
+`PFS-002-07` and `PFS-002-08` remain deferred. Normal restart and finalized
+generation replay are still PoC requirements.
+
+## 2. How tasks are executed
+
+Each `OCM-NN` card is one reviewable PR or a short stacked PR that:
+
+1. starts with the named task-local or ledger test failing;
+2. changes only the listed authority owners;
+3. keeps the PoC fork unarmed until `OCM-26`;
+4. records produced vectors/manifests/test discovery in the evidence format;
+5. ends with its task-local commands green and no skip/todo/quarantine;
+6. does not claim downstream production boundaries.
+
+“Closes test IDs” means the task owns implementation of those stable ledger
+tests. Final `PASS` is accepted only from the exact-source closure run in
+`OCM-27`; an earlier green run is development evidence.
+
+Incremental CI uses
+`mise run ocomp-poc-task -- OCM-NN`: it requires the named task's local tests,
+its closing ledger IDs and every already-discovered OCOMP test, while future
+planned IDs remain visibly `MISSING`. This mode may claim only the named task.
+The unqualified lane commands and `mise run ocomp-poc-closure` are fail-closed
+PoC-closure commands and do not become required closure gates until `OCM-27`.
+Thus early PRs are mergeable without converting missing future work into PASS.
+
+Existing unrelated worktree changes are preserved. Every PR regenerates only
+owned artifacts and includes a no-unregistered-literal/no-generic-bypass scan.
+
+## 3. Non-circular merge and fork gates
+
+The fork and capacity gates are deliberately split:
+
+| Gate | After task | Meaning |
+|---|---:|---|
+| `G0 EVIDENCE` | `OCM-00` | missing evidence is visible and fail-closed |
+| `G1 SHAPE FREEZE` | `OCM-04` | schemas/domains/registries/candidate ceilings frozen; no checked-in network can activate OCOMP |
+| `G2 REQUEST` | `OCM-08` | a measurement fixture can create/expire a real JobIntent with no Lysis/effects |
+| `G3 ONE DOMAIN` | `OCM-15` | one domain can export, compute, verify and durably attest |
+| `G4 QUORUM` | `OCM-16` | an untrusted relay can form only a valid q=3 certificate |
+| `G5 ACTIVATION` | `OCM-23` | public certified activation atomically applies four owner effects and terminal state |
+| `G6 PUBLIC MEASUREMENT` | `OCM-25` | disposable four-node measurement chain exercises real RPC/import/replay |
+| `G7 ARMING` | `OCM-26` | final cap/bundle/genesis/committee are checked in; canonical fresh-devnet fork may activate |
+| `G8 CLOSURE` | `OCM-27` | exact thirteen-step, isolation and evidence verifier pass |
+
+Before `G7`, code is unreachable on every checked-in network schedule. The
+capacity harness may generate a disposable measurement chain, but its
+provisional manifest/history cannot satisfy closure or become canonical PoC
+history.
+
+## 4. Dependency graph
+
+```mermaid
+flowchart TD
+  T00[OCM-00 evidence contract]
+  T01[OCM-01 pure Lysis V1]
+  T02[OCM-02 OCB1 core]
+  T03[OCM-03 protocol schemas]
+  T04[OCM-04 P0 shape freeze]
+  T05[OCM-05 split and carry-over primitives]
+  T06[OCM-06 pre-admission aggregates]
+  T07[OCM-07 begin/end lifecycle]
+  T08[OCM-08 Job FSM request expiry]
+  T09[OCM-09 finality and pin]
+  T10[OCM-10 checkpoint and openings]
+  T11[OCM-11 process control CAS]
+  T12[OCM-12 finalized discovery]
+  T13[OCM-13 authenticated exporter]
+  T14[OCM-14 planner workers reducer]
+  T15[OCM-15 attestation sign-once]
+  T16[OCM-16 relay certificate]
+  T17[OCM-17 activation verifier]
+  T18[OCM-18 Nod certified owner]
+  T19[OCM-19 Intex certified owner]
+  T20[OCM-20 Tribute certified owner]
+  T21[OCM-21 next-day carry-over]
+  T22[OCM-22 Promis activation credit]
+  T23[OCM-23 atomic public activation]
+  T24[OCM-24 harness and evidence]
+  T25[OCM-25 public measurement suite]
+  T26[OCM-26 capacity and arming]
+  T27[OCM-27 final closure]
+
+  T00 --> T01
+  T00 --> T02
+  T01 --> T03
+  T02 --> T03
+  T03 --> T04
+  T04 --> T05
+  T04 --> T06
+  T04 --> T07
+  T05 --> T08
+  T06 --> T08
+  T07 --> T08
+  T04 --> T11
+  T08 --> T09
+  T04 --> T09
+  T06 --> T10
+  T09 --> T10
+  T08 --> T12
+  T09 --> T12
+  T11 --> T12
+  T10 --> T13
+  T11 --> T13
+  T12 --> T13
+  T01 --> T14
+  T04 --> T14
+  T11 --> T14
+  T13 --> T14
+  T04 --> T15
+  T09 --> T15
+  T14 --> T15
+  T04 --> T16
+  T15 --> T16
+  T01 --> T17
+  T04 --> T17
+  T05 --> T17
+  T05 --> T18
+  T05 --> T19
+  T05 --> T20
+  T05 --> T21
+  T05 --> T22
+  T17 --> T18
+  T17 --> T19
+  T17 --> T20
+  T08 --> T21
+  T17 --> T22
+  T07 --> T23
+  T08 --> T23
+  T16 --> T23
+  T17 --> T23
+  T18 --> T23
+  T19 --> T23
+  T20 --> T23
+  T21 --> T23
+  T22 --> T23
+  T11 --> T24
+  T12 --> T24
+  T13 --> T24
+  T14 --> T24
+  T15 --> T24
+  T16 --> T24
+  T23 --> T24
+  T04 --> T25
+  T08 --> T25
+  T09 --> T25
+  T13 --> T25
+  T14 --> T25
+  T15 --> T25
+  T16 --> T25
+  T23 --> T25
+  T24 --> T25
+  T25 --> T26
+  T26 --> T27
+```
+
+Parallelizable groups:
+
+- `OCM-01` and `OCM-02`;
+- `OCM-05`, `OCM-06`, `OCM-07` and `OCM-11` after shape freeze;
+- process plane `OCM-09..16` and activation verifier `OCM-17`;
+- activation owner tasks `OCM-18..20` and `OCM-22`.
+
+## 5. Task index
+
+| ID | Deliverable | Depends on | Ledger tests owned |
+|---|---|---|---|
+| `OCM-00` | evidence/CI contract | — | `OCM-EVD-001` |
+| `OCM-01` | pure Lysis V1 + reference | `00` | `OCM-SEM-001` |
+| `OCM-02` | OCB1/hash/list foundation | `00` | contributes `OCM-BYT-001` |
+| `OCM-03` | complete protocol schemas/verifiers | `01,02` | contributes `BYT/APL/FIN/CRT` |
+| `OCM-04` | P0 shape freeze and vectors | `03` | `OCM-BYT-001/002`, `OCM-BND-003` |
+| `OCM-05` | budget split, strict Desis and carry-over primitives | `04` | contributes `OCM-REQ-001`, `OCM-APL-002` |
+| `OCM-06` | maintained bounded pre-admission | `04` | contributes `OCM-REQ/EXP/TIM` |
+| `OCM-07` | begin/end SystemTx lifecycle | `04` | contributes `OCM-REQ/PUB` |
+| `OCM-08` | Job FSM/request/expiry | `05,06,07` | `OCM-FSM-001`, `OCM-REQ-001` |
+| `OCM-09` | finalized proof and durable pin | `04,08` | `OCM-FIN-001`, `OCM-PIN-001` |
+| `OCM-10` | retained CE/Reth/Mongo/openings handoff | `06,09` | contributes `OCM-EXP-001` |
+| `OCM-11` | process/control/CAS/systemd base | `04` | `OCM-CTL-001` |
+| `OCM-12` | finalized cursor discovery | `08,09,11` | `OCM-DIS-001` |
+| `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001` |
+| `OCM-14` | deterministic plan/work/reduce | `01,04,11,13` | `OCM-SEM-002`, `OCM-DET-001` |
+| `OCM-15` | node attestation and sign-once | `04,09,14` | `OCM-SIG-001` |
+| `OCM-16` | relay and q=3 certificate | `04,15` | `OCM-CRT-001` |
+| `OCM-17` | structural verifier/capability/equations | `01,04,05` | `OCM-APL-001`, `OCM-BND-002` |
+| `OCM-18` | Nod certified batch | `05,17` | contributes `OCM-APL-002` |
+| `OCM-19` | Intex certified batch | `05,17` | contributes `OCM-APL-002` |
+| `OCM-20` | Tribute consume/retire | `05,17` | contributes `OCM-APL-002` |
+| `OCM-21` | consume carry-over into the next unformed day limit | `05,08` | contributes `OCM-REQ-001`, `OCM-TIM-001` |
+| `OCM-22` | Promis certified `unused_lysis` credit | `05,17` | contributes `OCM-APL-002` |
+| `OCM-23` | public atomic activation and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001` |
+| `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all public/E2E IDs |
+| `OCM-25` | public fork/activation measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-002/003/004` |
+| `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001`, `OCM-PUB-001` |
+| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001..008`, `OCM-ISO-001`, `OCM-TRC-001` |
+
+## 6. Detailed task cards
+
+### OCM-00 — Establish the verification contract first
+
+**Depends on:** none.
+
+**Outcome:** the repository can describe all planned OCOMP evidence and fail
+closed on missing or corrupt evidence before production work begins.
+
+**Files/symbols:**
+
+- `outbe-plan/off-chain-poc-evidence-ledger.yaml`;
+- `crates/testing/e2e-harness/src/evidence.rs`;
+- new OCOMP-specific evidence schema/writer modules under the same package;
+- new test-only `outbe-e2e-evidence` binary;
+- `mise.toml` command placeholders and fail-closed discovery checks;
+- task-progress CI plus closure workflow stubs that report `MISSING`, never
+  false green.
+
+**Changes:**
+
+- parse the planning ledger with duplicate-ID/reference validation;
+- define exact runtime manifest/assertion schemas and atomic publication;
+- add independent closure computation and deterministic JSON/Markdown report;
+- record tracked/untracked dirty state, toolchain, exact binary hashes and
+  exact node/OCOMP/network/systemd configuration hashes;
+- expose the six planned `mise` lanes without pretending absent tests pass.
+- expose `mise run ocomp-poc-task -- OCM-NN` separately from fail-closed
+  closure mode.
+
+**Invariants/failures:** mixed revisions, bad member hashes, missing tests,
+skip/todo/quarantine, illegal deferred IDs and retried-away failures reject.
+Incomplete implementation yields `MISSING`.
+
+**Fork impact:** none; this task creates verification tooling and cannot arm or
+alter consensus behavior.
+
+**Reuse/non-goals:** extend existing `ScenarioEvidence`; do not build a second
+harness, release-signing system or generic project-wide ADR ledger.
+
+**Test first:** `OCM-EVD-001` complete synthetic bundle plus every negative
+closure mutation.
+
+**Evidence/CI:** `OCM-FAST`; retain verifier fixtures, discovery output and
+closure report hash.
+
+**Observable acceptance:** `mise run ocomp-poc-task -- OCM-00` passes verifier
+self-tests and labels its claim `task_progress`; the closure command on an
+empty OCOMP implementation returns non-zero with exact missing IDs.
+
+**Risks:** a verifier that trusts scenario `"passed"` fields or its own writer.
+Mitigation: recompute coverage from the checked-in ledger and independent
+fixtures.
+
+**DoD:** verifier positive/negative fixtures pass, zero duplicate/unowned IDs,
+no mandatory lane can convert missing evidence to success.
+
+### OCM-01 — Extract pure Lysis V1 and freeze the independent oracle
+
+**Depends on:** `OCM-00`.
+
+**Outcome:** one storage-independent Lysis implementation preserves the current
+successful economics and first-failure order; the synchronous legacy path calls
+that same semantic core.
+
+**Files/symbols:**
+
+- `crates/core/lysis/src/runtime.rs::lysis_inner` extraction source;
+- new `crates/core/lysis/src/program_v1/`;
+- independent Rust reference crate with no production dependencies and a
+  versioned JSONL corpus;
+- `crates/core/lysis/tests/program_v1_reference.rs`.
+
+**Changes:** define canonical logical inputs/observations, checked arithmetic,
+Fidelity/Oracle snapshot use, actions, semantic events and failures. Keep
+storage reads/writes in the legacy adapter only.
+
+**Invariants/failures:** exact operation order; `f=allocation/nominal`,
+`fmax=2f`; zero/over-budget failure; exclusion affects contributor issuance but
+not Tribute/Nod conservation; no wall-clock/current-state input.
+
+**Fork impact:** none; legacy behavior remains active and equivalent.
+
+**Reuse/non-goals:** reuse existing arithmetic and identity helpers. Do not add
+workers, codecs, storage abstraction, new economic behavior or on-chain
+reference execution.
+
+**Test first:** `OCM-SEM-001`; native/reference differential for required edge
+classes and an adapter equivalence corpus against the current path.
+
+**Evidence/CI:** `OCM-FAST`; corpus hash, reference implementation hash, case
+IDs and native/reference output bytes.
+
+**Observable acceptance:** all valid cases are byte/field equivalent and both
+implementations select the same first failure.
+
+**Risks:** accidentally freezing stale comments or unused constants.
+Mitigation: derive corpus expected values independently and preserve runtime
+source links.
+
+**DoD:** no storage/node/process dependency under `program_v1`; legacy tests and
+independent differential pass; corpus changes require explicit review.
+
+### OCM-02 — Implement OCB1, hash framing and ordered roots
+
+**Depends on:** `OCM-00`.
+
+**Outcome:** the one shared protocol package provides bounded canonical scalar,
+collection, envelope, hash-domain and list-root primitives.
+
+**Files/symbols:**
+
+- new `crates/system/ocomp-protocol/Cargo.toml`;
+- `src/{codec,hash,list,registry,error}.rs`;
+- independent test encoder/decoder under `tests/support/`.
+
+**Changes:** exact big-endian grammar, OCB1 envelope, strict re-encode check,
+domain framing, padded ordered-list roots, preallocation limits and one
+machine-generated registry source.
+
+**Invariants/failures:** reject unknown kind/version/enum, duplicate/order
+violations, truncation, trailing bytes and cap+1 before allocation. No `serde`
+or Rust layout is consensus encoding.
+
+**Fork impact:** none; no schema/bundle is armable yet.
+
+**Reuse/non-goals:** reuse `keccak256` and fixed primitive types. Do not add a
+generic serialization framework, program registry, database/process/HTTP
+dependency or compression.
+
+**Task-local tests:** every scalar/option/vector/envelope boundary, list
+empty/leaf/pad/node/root and domain collision. Contributes `OCM-BYT-001` and
+`OCM-BND-003`.
+
+**Evidence/CI:** `OCM-FAST`; canonical bytes, allocation counters and registry
+generation diff.
+
+**Observable acceptance:** production and independent implementations agree
+for core vectors; mutation at every byte boundary rejects deterministically.
+
+**Risks:** two handwritten literal authorities. Mitigation: generator owns
+constants and CI scans duplicates.
+
+**DoD:** package has no forbidden dependencies, core vectors pass, regeneration
+is byte-reproducible and unregistered domains/tags fail CI.
+
+### OCM-03 — Implement all frozen protocol schemas and pure verifiers
+
+**Depends on:** `OCM-01`, `OCM-02`.
+
+**Outcome:** every durable/wire/hashed PoC object has one bounded canonical type
+and pure validation contract.
+
+**Files/symbols:**
+
+- `crates/system/ocomp-protocol/src/{profile,intent,input,unit,result,committee,certificate,state,activation,receipts,control}.rs`;
+- ABI/system-transaction/event/error registries;
+- golden vector semantic fixtures.
+
+**Changes:** implement the complete object registry `0x0001..0x001e`, nested
+types, exact IDs/hashes/signature rules, Job/attempt/deadline bindings, local
+control frames, receipts/job record and public ABI constants.
+
+**Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
+bundle/job; q=3 distinct signers; high-s/invalid keys reject; fixed owner order;
+no opaque target/call/write bytes.
+
+**Fork impact:** defines bytes only; no checked-in schedule selects them.
+
+**Reuse/non-goals:** reuse the OCB1 foundation and pure Lysis shapes. Do not add
+node, filesystem, signer backend, Lysis storage access or generic program
+traits.
+
+**Task-local tests:** per-type roundtrip/negative/cap/hash tests, independent ABI
+selector/topic checks and schema dependency-cycle checks. Contributes
+`OCM-BYT-001/002`, `OCM-FIN-001`, `OCM-APL-001` and `OCM-CRT-001`.
+
+**Evidence/CI:** `OCM-FAST`; schema/domain manifests and preliminary marked
+measurement vectors.
+
+**Observable acceptance:** every registry type has positive and mandatory
+negative fixtures; unknown future bytes cannot decode as V1.
+
+**Risks:** self-referential plan/artifact or committee/genesis hashes.
+Mitigation: enforce the frozen producer-UnitId, root-carrier exclusion and
+two-stage final chain binding.
+
+**DoD:** all types/caps/hash formulas exist once, independent vectors agree and
+no provisional network is armable.
+
+### OCM-04 — P0 protocol shape freeze
+
+**Depends on:** `OCM-03`.
+
+**Outcome:** `G1` freezes every semantic byte decision before dependent runtime
+merges while leaving final capacity/network identity explicitly unarmed.
+
+**Files/symbols:**
+
+- machine-readable protocol/crypto/object/schema/domain registries;
+- correctness profile and candidate compile-ceiling manifest;
+- exact `OcompPocDevnetMachineV1` and 20%-headroom measurement policy;
+- marked measurement `ProtocolBundleV1` template and vector set;
+- generated Rust constants/docs and CI literal scans.
+
+**Changes:** add deterministic generator invocation, source hash, independent
+verification result, machine/headroom policy hash and explicit
+`measurement_only` evidence classification. No checked-in genesis/fork
+schedule may reference the fixture.
+
+**Invariants/failures:** regeneration without inputs is byte-identical;
+candidate limits never exceed documented ceilings; provisional bundle/genesis/
+committee values cannot be accepted as final closure identities.
+
+**Fork impact:** OCOMP remains unreachable on every checked-in network.
+
+**Reuse/non-goals:** use protocol package generators and existing genesis
+tooling. Do not guess final capacity, publish a canonical devnet or generate
+production secrets.
+
+**Test first:** close `OCM-BYT-001`, `OCM-BYT-002`, `OCM-BND-003` against the
+shape fixture; add a negative test that checked-in network manifests cannot
+select it.
+
+**Evidence/CI:** `OCM-FAST`; registries, vectors, generator command/source and
+non-armability assertion.
+
+**Observable acceptance:** dependent crates can compile solely against generated
+schema/ceiling constants, while starting any checked-in network cannot create
+an OCOMP job.
+
+**Risks:** treating candidate cap/vector identity as final. Mitigation:
+different evidence classification and closure verifier rejection.
+
+**DoD:** `G1` artifacts are complete/reproducible, all shape tests pass and no
+armable manifest or hardcoded provisional identity exists.
+
+### OCM-05 — Add budget split, strict Desis and carry-over primitives
+
+**Depends on:** `OCM-04`.
+
+**Outcome:** Metadosis can derive one checked day split, Desis can strictly
+accept GREEN `auction_base`, and PromisLimit can checked-add/take carry-over.
+No owner receives OCOMP reservation state.
+
+**Files/symbols:**
+
+- `crates/core/{metadosis,desis,promislimit}/src/`;
+- narrow internal `ocomp_budget.rs` modules;
+- protocol split/precondition/receipt types only.
+
+**Changes:** add checked `day_limit = lysis_budget + auction_base`; strict
+request-phase Desis apply; checked carry-over add/take; read-only Tribute/Nod/
+contributor/Metadosis activation-precondition projections; canonical
+`RequestBudgetSplitReceiptV1`.
+
+**Invariants/failures:** exactly one request effect per day split; GREEN brief
+supply is `auction_base`; RED has no brief and credits `auction_base`; checked
+overflow or owner refusal leaves no partial split/intent.
+
+**Fork impact:** the new strict methods are private and unreachable before the
+OCOMP request handler is active.
+
+**Reuse/non-goals:** reuse Desis validation/storage and PromisLimit accumulator
+helpers. Do not add state fields to Desis/Intex/Tribute/NodFactory, an owner
+adapter, generic lease or auction top-up.
+
+**Task-local tests:** checked split boundaries; GREEN/RED exact effects;
+strict-Desis failure; carry-over overflow/add/take; retry idempotence; compile/
+schema assertions that no owner reservation record exists.
+
+**Evidence/CI:** `OCM-FAST` owner tests and `OCM-INT` checkpoint integration;
+pre/post typed state snapshots and storage-schema diff.
+
+**Observable acceptance:** a synthetic request commits the exact split and one
+early effect or none; repeating an attempt never repeats that effect.
+
+**Risks:** changing public owner behavior or topping up a live auction.
+Mitigation: private strict methods, no selector and explicit no-top-up tests.
+
+**DoD:** split/add/take and strict Desis APIs pass rollback/idempotence tests;
+public ABI is unchanged and no reservation storage was added.
+
+### OCM-06 — Maintain bounded authenticated pre-admission state
+
+**Depends on:** `OCM-04`.
+
+**Outcome:** terminal request creation decides eligibility and caps in O(1)
+without enumerating Tribute, Fidelity or Oracle.
+
+**Files/symbols:**
+
+- `crates/core/metadosis` WorldwideDay/state update paths;
+- bounded Tribute day totals/collection seal hooks;
+- existing Fidelity/Oracle update owners for authenticated counts/opening
+  bounds and auction-entry-price source;
+- protocol `PreAdmissionEnvelopeV1` and `FrozenMetadosisValuesV1`.
+
+**Changes:** maintain sealed root/count/nominal/body bytes, distinct owner/
+currency counts, Fidelity cohort maximum, Oracle WWD/S-curve counts, encoded
+upper bounds, auction price/source/day and Oracle state version. Store envelope
+hash and increment `state_version` with relevant updates.
+
+**Invariants/failures:** accumulator updates use checked arithmetic and exact
+canonical identity; the sealed envelope equals later full export; cap+1 marks
+the WWD ineligible/deferred before allocation; request/activation never call
+Oracle calculation.
+
+**Fork impact:** new state fields are initialized by the fresh-devnet fork
+handler; pre-fork semantics and existing status values are unchanged.
+
+**Reuse/non-goals:** reuse current day totals, CE collection identity and Oracle
+state. Do not cache Tribute bodies, leagues or computed Lysis outputs on-chain.
+
+**Task-local tests:** randomized incremental totals versus independent full fold,
+auction source selection, cap boundaries, overflow rollback and seal immutability.
+Contributes `OCM-REQ-001`, `OCM-EXP-001`, `OCM-TIM-001`.
+
+**Evidence/CI:** `OCM-FAST`; envelope/hash vectors and incremental/full-fold
+comparison. Later `OCM-EXP-001` discharges storage authority.
+
+**Observable acceptance:** terminal code can make the complete pre-admission
+decision from bounded state reads whose final envelope matches an independent
+fold.
+
+**Risks:** derived accumulator drift. Mitigation: update at the canonical owner
+mutation and compare against full-fold fixtures at seal.
+
+**DoD:** every envelope field has one update owner, checked limits and seal test;
+no request-time data-dependent scan is reachable.
+
+### OCM-07 — Add the mandatory begin/end SystemTx lifecycle
+
+**Depends on:** `OCM-04`.
+
+**Outcome:** the executor has stable OCOMP expiry and post-CE-seal request slots
+without a second execution path.
+
+**Files/symbols:**
+
+- `crates/blockchain/primitives/src/system_tx.rs`;
+- `crates/blockchain/evm/src/{executor.rs,begin_block_precompile.rs}`;
+- `crates/blockchain/node/src/payload_builder.rs`;
+- system transaction layout/cursor tests.
+
+**Changes:** add `OcompLifecycleBegin` (`OSE2`) after
+`LateFinalizeCredits`/before `CycleTick`; add sole end-zone
+`OcompTerminalRequest` (`OSR2`); finalize compressed entities when the first end
+envelope is reached; reject missing/duplicate/misordered/user-after-end forms.
+
+**Invariants/failures:** ordinary transactions finish before CE sealing; final
+CE root exists before request; no semantic writer follows terminal request;
+proposer/import/replay enforce identical layout and visible receipts.
+
+**Fork impact:** pre-fork blocks contain neither envelope; measurement/final
+fork includes both. End-zone structural support remains inert without an armed
+schedule.
+
+**Reuse/non-goals:** extend current `SystemTxLayout` and idempotent CE finalizer.
+Do not add an executor, transaction type, infinite gas or alternate block loop.
+
+**Task-local tests:** H-1/H/H+1 layout, envelope bytes/order, CE finalization
+exactly once, malformed suffix and proposer/import/replay unit parity.
+Contributes `OCM-REQ-001`, `OCM-PUB-001`, `OCM-PUB-003`.
+
+**Evidence/CI:** `OCM-FAST` structural tests and `OCM-INT` execution integration;
+phase/receipt/CE-root traces.
+
+**Observable acceptance:** a measurement block executes begin -> users -> final
+CE seal -> end, and any alternate order is invalid.
+
+**Risks:** double CE finalization or accepting a later user transaction.
+Mitigation: one cursor transition and explicit closed-scope assertion.
+
+**DoD:** builder/executor/import/replay share one layout authority, all order
+mutations reject and pre-fork blocks remain byte-compatible.
+
+### OCM-08 — Implement Metadosis Job FSM, request and expiry
+
+**Depends on:** `OCM-05`, `OCM-06`, `OCM-07`.
+
+**Outcome:** an eligible non-empty READY WWD creates one bounded JobIntent and
+one request-phase budget effect, then expires/requeues with the same budget and
+without executing Lysis.
+
+**Files/symbols:**
+
+- `crates/core/metadosis/src/ocomp/{schema,state,request,expiry,views}.rs`;
+- `crates/core/common/src/worldwideday.rs`;
+- Metadosis dispatch/interface for the initial job view;
+- lifecycle handlers wired from `OCM-07`.
+
+**Changes:** append `OFFCHAIN_PENDING=8`; add nonce/state/envelope fields;
+job/live/READY/expiry/terminal indexes; exact request checkpoint; exclusive
+deadline; one-block retry; terminal cap; empty/ineligible direct compatibility
+branches.
+
+**Invariants/failures:** status/index/budget equivalences; initial nonce zero and
+`attempt=checked_u32(nonce)`; expiry increments once; no scan; no `RUNNING`;
+retry does not repeat Desis/carry-over; terminal evidence is not silently
+evicted; invariant corruption is fatal.
+
+**Fork impact:** pre-fork remains synchronous; active eligible non-empty path has
+no synchronous fallback; empty/zero/ineligible behavior remains pinned.
+
+**Reuse/non-goals:** reuse `CycleLifecycle`, `StorageHandle::with_checkpoint`
+and existing compatibility operations. Do not calculate Lysis, finality, export
+or local progress.
+
+**Test first:** `OCM-FSM-001` model plus `OCM-REQ-001` real executor checkpoint/
+CE-seal/no-effects integration.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; transition sequences, exact pre/post
+state/events and zero-effect public reads.
+
+**Observable acceptance:** a measurement request block exposes the canonical
+split, exact early effect and `OFFCHAIN_PENDING` intent, with zero Nod/
+contributor/Tribute-consume effects. Expiry preserves the budget and schedules
+only height+1.
+
+**Risks:** re-acquiring in the expiry block or scanning READY state. Mitigation:
+exact due indexes and fixed retry key.
+
+**DoD:** `G2` request/expiry paths and invariant checker pass; every failure is
+atomic; fork compatibility tests remain green.
+
+### OCM-09 — Bind finalized proof authority and durable retention pins
+
+**Depends on:** `OCM-04`, `OCM-08`.
+
+**Outcome:** only a finalized canonical request becomes a signable JobId, and
+each validator durably pins its source before a positive vote.
+
+**Files/symbols:**
+
+- `crates/blockchain/node/src/ocomp/{retention,finality}.rs`;
+- consensus vote/finalization hooks;
+- `FinalizedParentCertStore`, `CertifiedParentProofRecord` adapters;
+- immutable one-entry pin journal;
+- protocol finality proof verifier/tests.
+
+**Changes:** implement `OcompRetentionCoordinator`,
+`FinalizedInputProofSource`, tentative-before-vote ack, finalized/orphan
+reconciliation, historical committee opening and exact `JobId` proof building.
+
+**Invariants/failures:** event is not authority; missing/wrong finality abstains;
+pin fsync failure withholds local positive vote; orphan releases and becomes
+non-signable; ambiguous/corrupt pin quarantines OCOMP while consensus continues.
+
+**Fork impact:** node-local readiness only; cannot change block validity or
+threshold.
+
+**Reuse/non-goals:** adapt persisted finalization records/subscriptions and
+existing key permission patterns. Do not expose broad proof RPC, stream bodies,
+sign or schedule work.
+
+**Test first:** `OCM-FIN-001` adversarial proof vectors and `OCM-PIN-001`
+persistence/orphan/restart boundaries.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; proof bytes, tentative/final/orphan
+journal bytes and withheld-vote/refusal result.
+
+**Observable acceptance:** four nodes derive the same JobId after finality; an
+orphaned candidate cannot be exported or signed after restart.
+
+**Risks:** blocking consensus on local export health. Mitigation: only
+tentative-pin durability participates before vote; all later OCOMP failures
+abstain locally.
+
+**DoD:** finality vectors and durable pin FSM pass, source identity is exact and
+no event/live-state shortcut exists.
+
+### OCM-10 — Add the bounded finalized checkpoint/opening handoff
+
+**Depends on:** `OCM-06`, `OCM-09`.
+
+**Outcome:** an exporter UID can open one exact finalized CE/Reth/Mongo source
+window without receiving writer or arbitrary query authority.
+
+**Files/symbols:**
+
+- CE MDBX `FinalizedMarker` read-only open/next-apply lease seam;
+- node `FinalizedInputProofSource`;
+- Tribute projection raw-body retention/pinned namespace;
+- Fidelity/Oracle historical opening builders;
+- Mongo projection checkpoint containment checks.
+
+**Changes:** implement opaque lease generation, bounded open timeout, exact block
+hash/state/CE marker identity, typed raw proof set and terminal+64-finalized-block
+release ownership.
+
+**Invariants/failures:** CE marker ahead/missed lease, pruned state, Mongo lag,
+wrong containment/proof or opening cap makes that validator abstain; exporter
+cannot mutate source; worker/supervisor cannot release pins.
+
+**Fork impact:** local availability only; no live-state fallback and no change
+to consensus validity.
+
+**Reuse/non-goals:** reuse CE snapshots, Reth exact-block reads, Mongo storage
+and current proof types. Do not add historical CE query service, second
+projection DB or long-horizon production recovery.
+
+**Task-local tests:** lease generation/stale handle, marker race, raw retention,
+Mongo behind/ahead containment and Fidelity/Oracle proof mutation. Contributes
+`OCM-EXP-001`.
+
+**Evidence/CI:** `OCM-INT` with real CE MDBX and Mongo; checkpoint identities,
+proofs and exact release-height records.
+
+**Observable acceptance:** exporter can read one final JobId snapshot and no
+other height/path; source ambiguity yields no manifest/signature while blocks
+continue.
+
+**Risks:** holding the CE writer indefinitely. Mitigation: one bounded
+next-apply gate and local abstention on timeout.
+
+**DoD:** typed handoff and retention/release tests pass on real backends; no
+caller-selected path/query/writer capability is exposed.
+
+### OCM-11 — Implement the fixed process/control/CAS base
+
+**Depends on:** `OCM-04`.
+
+**Outcome:** one `outbe-ocomp` package runs only the four fixed roles over
+bounded UDS/CAS contracts, with checked-in systemd/cgroup topology.
+
+**Files/symbols:**
+
+- new `bin/outbe-ocomp/{Cargo.toml,src/}`;
+- role entrypoints `supervisor`, `snapshot-exporter`, `worker`, `relay`;
+- bounded frame/session/counter clients using `outbe-ocomp-protocol`;
+- filesystem CAS and worker inbox;
+- `deploy/systemd/outbe-ocomp-*` service/socket/target/slice units.
+
+**Changes:** exact role CLI, UID/peer-credential/method ACLs, inherited
+descriptor handling, session generation/counters, atomic digest publish,
+same-descriptor read verification, quotas and one-unit socket-activated worker.
+
+**Invariants/failures:** no role accepts path/query/command/key/arbitrary digest;
+wrong UID/bundle/session/counter/cap rejects before privileged work; fifth worker
+connection is refused; CAS corruption/full causes retry/abstention, never node
+failure.
+
+**Fork impact:** none; processes cannot write chain state or sign.
+
+**Reuse/non-goals:** reuse bounded socket/file-permission patterns and existing
+service supervision vocabulary. Do not reuse TEE Noise semantics, add a CAS
+daemon, launch broker, one crate per role or node lifecycle dependency.
+
+**Test first:** `OCM-CTL-001`; task-local CAS atomicity, worker-one-unit and
+`systemd-analyze verify` tests.
+
+**Evidence/CI:** `OCM-INT`; frame vectors, peer credentials, process exits,
+object hashes and unit dependency report. Isolation claims wait for `OCM-27`.
+
+**Observable acceptance:** node can be absent; each role starts only with its
+declared capabilities; four real worker processes handle four exact UnitIds and
+exit.
+
+**Risks:** one executable accidentally grants all roles. Mitigation: startup
+checks effective UID/descriptors/mounts and role-specific method tables.
+
+**DoD:** exactly one new compute package, bounded protocols and CAS tests pass,
+service units have no node `Requires/BindsTo`, and `OCM-CTL-001` is green.
+
+### OCM-12 — Discover finalized work by cursor, not event
+
+**Depends on:** `OCM-08`, `OCM-09`, `OCM-11`.
+
+**Outcome:** each supervisor independently discovers every finalized live job
+exactly once through the node control cursor.
+
+**Files/symbols:**
+
+- `crates/blockchain/node/src/ocomp/control.rs`;
+- bounded finalized cursor and job-read methods;
+- `bin/outbe-ocomp` supervisor discovery/journal;
+- node readiness state and metrics.
+
+**Changes:** add bounded `ListFinalizedJobsV1`/exact job retrieval from the
+frozen control registry, durable `DISCOVERED` cursor/journal and event hint that
+only reduces latency.
+
+**Invariants/failures:** lost/duplicate/reordered event cannot lose/duplicate
+work; cursor resumes after restart; incompatible bundle sets local
+`ocomp_ready=false`; control outage cannot stop node finality.
+
+**Fork impact:** local readiness only.
+
+**Reuse/non-goals:** adapt existing finalized subscription/cursor and child
+process ownership. Do not add public job streaming, database scan, consensus
+`RUNNING` or event authority.
+
+**Test first:** `OCM-DIS-001` real UDS lost-event/restart/duplicate scenarios.
+
+**Evidence/CI:** `OCM-INT`; canonical job read, cursor/journal bytes, process
+restart and exactly-once assertion.
+
+**Observable acceptance:** dropping the complete request subscription still
+discovers the finalized job once; replaying the hint changes nothing.
+
+**Risks:** unbounded cursor backlog. Mitigation: PoC max one pending job and one
+bounded response.
+
+**DoD:** supervisor uses only finalized cursor authority, discovery test passes
+with real processes and no direct node DB access exists.
+
+### OCM-13 — Export and close the authenticated input manifest
+
+**Depends on:** `OCM-10`, `OCM-11`, `OCM-12`.
+
+**Outcome:** each validator domain independently materializes one immutable
+`InputManifestV1` whose root/count/nominal/openings match the finalized job.
+
+**Files/symbols:**
+
+- `bin/outbe-ocomp` snapshot-exporter and CAS modules;
+- node checkpoint/proof control clients;
+- canonical Tribute body decoder/commitment verifier;
+- input chunk/manifest construction and supervisor adoption;
+- export journal transition.
+
+**Changes:** execute the exact authority chain/full fold, normalize canonical
+order, verify Mongo bodies and state openings, publish chunks/manifest
+atomically and record exported identity only after closure.
+
+**Invariants/failures:** Mongo/CAS/path are transport only; missing/extra/
+changed/reordered body or opening fails root/count/nominal; worker hashes exact
+consumed stream; restart is idempotent; no bad manifest reaches sign-once.
+
+**Fork impact:** none; local abstention on all failures.
+
+**Reuse/non-goals:** reuse existing body repository, CE commitment and proof
+verification. Do not let workers query Mongo/node or add streaming TargetLarge
+input.
+
+**Test first:** `OCM-EXP-001` real CE/Mongo/opening matrix and `OCM-CAS-001`
+publish/TOCTOU/corruption/quota matrix.
+
+**Evidence/CI:** `OCM-INT`; finality/checkpoint refs, exact manifest/chunk bytes,
+semantic/transport digests and unchanged sign journal on every negative case.
+
+**Observable acceptance:** four domains reconstruct the same manifest semantic
+root independently; corrupt local transport produces no signature.
+
+**Risks:** check-then-reopen TOCTOU. Mitigation: hash/decode/use the same open
+descriptor and compare final metadata/EOF.
+
+**DoD:** exporter closes only complete authenticated inputs, both ledger tests
+pass with real backends and no trusted Mongo/CAS assertion exists.
+
+### OCM-14 — Implement deterministic planning, workers and reducers
+
+**Depends on:** `OCM-01`, `OCM-04`, `OCM-11`, `OCM-13`.
+
+**Outcome:** one finalized manifest deterministically produces one
+`BoundedLysisResultV1` independent of worker count, order and retries.
+
+**Files/symbols:**
+
+- `crates/core/lysis/src/program_v1/{planner,phases,reducers,result}.rs`;
+- `bin/outbe-ocomp` supervisor scheduler, worker runner and artifact adoption;
+- plan/unit/result protocol types and vector fixtures.
+
+**Changes:** implement fixed 32-Tribute source ranges, padded Fidelity tree,
+fixed prefix scan, output finalization, owner/bucket shuffle and root reducer;
+verify producer membership/coverage before CAS adoption.
+
+**Invariants/failures:** topological canonical UnitSpec order; stable UnitId;
+zero/many executions allowed; only exact plan member participates; two
+different valid-looking artifacts cause abstention; no reduce-as-completed;
+worker identity/wall time/filesystem order are irrelevant.
+
+**Fork impact:** none; pure/local work.
+
+**Reuse/non-goals:** link pure Lysis program, protocol codecs and fixed worker
+entrypoint. Do not copy semantics into process code, count workers as voters or
+add generic DAG/program interfaces.
+
+**Test first:** `OCM-SEM-002` complete plan/reducer vectors and `OCM-DET-001`
+real 1/2/4-worker randomized kill/retry/order runs.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; seed/operation schedule, UnitSpecs,
+artifacts, coverage roots, result bytes and digest equality.
+
+**Observable acceptance:** the same JobId under 1, 2 and 4 workers produces
+byte-identical plan/result/digest and matches the independent Lysis corpus.
+
+**Risks:** hidden completion-order or hash self-reference.
+Mitigation: fixed tree width/order, producer UnitIds and final root carrier
+exclusion.
+
+**DoD:** both deterministic tests pass across real worker processes; no worker
+has node/Mongo/key/write-CAS authority.
+
+### OCM-15 — Add node-owned OCOMP keys, attestation and sign-once
+
+**Depends on:** `OCM-04`, `OCM-09`, `OCM-14`.
+
+**Outcome:** a node independently reloads and validates a candidate, then
+releases at most one durable signature for one exact job attempt.
+
+**Files/symbols:**
+
+- `crates/blockchain/node/src/ocomp/{attestation,signer,sign_once}.rs`;
+- node control attestation method;
+- existing `bin/outbe-keygen` offline OCOMP key/registration/PoP command;
+- immutable sign-once directory/store.
+
+**Changes:** separate secp256k1 OCOMP key type/epoch, proof-of-possession
+artifacts, exact 64-lowercase-hex-plus-LF owner-only secret file, candidate
+reload/reconstruction, cap/program checks and create/write/file-fsync/
+no-clobber-link/directory-fsync-before-response protocol.
+
+**Invariants/failures:** compute processes never access key; caller supplies no
+arbitrary digest/purpose; exact retry returns recorded signature; different
+digest refuses after restart; uncertain/corrupt/full store disables local
+signing only. Symlink/non-regular/wrong-owner/wrong-mode/non-canonical key files
+reject before readiness.
+
+**Fork impact:** key artifacts are measurement-only until final arming;
+attestation cannot affect consensus validity.
+
+**Reuse/non-goals:** reuse k256 and safe file permission/key loading patterns.
+Do not reuse EVM/consensus/TEE keys, current best-effort JSON journals or expose
+a generic signing endpoint.
+
+**Test first:** `OCM-SIG-001` fault after every persistence boundary, exact
+retry, equivocation and restart.
+
+**Evidence/CI:** `OCM-INT`; key public identity/epoch, candidate/digest,
+sign-once exact bytes, fsync boundary and typed refusal.
+
+**Observable acceptance:** one domain signs the independently reconstructed
+ResultDigest; a second digest is refused before and after node restart.
+
+**Risks:** signature released before durable record. Mitigation: response is
+strictly after directory fsync and startup reconciliation.
+
+**DoD:** `G3` one-domain export/compute/attest passes, key isolation/call shape
+is closed and `OCM-SIG-001` is green.
+
+### OCM-16 — Implement the replaceable relay and q=3 certificate
+
+**Depends on:** `OCM-04`, `OCM-15`.
+
+**Outcome:** an untrusted relay groups exact result bytes and can submit only a
+canonical certificate with three distinct eligible matching signatures.
+
+**Files/symbols:**
+
+- `bin/outbe-ocomp` relay mode/HTTP ingress and bounded storage;
+- `CandidateAnnouncementV1`, certificate builder and activation calldata
+  builder;
+- production certificate verifier fixtures;
+- public exact-block finality/proof client.
+
+**Changes:** bounded announcement validation, group by complete result/digest,
+select sorted first three eligible indexes, reconstruct finality/state proof and
+build one normal Ethereum transaction.
+
+**Invariants/failures:** no mixed digest, duplicate/unknown/wrong epoch/key,
+malformed/high-s/reordered signature authority; relay has no exclusive role,
+keys, domain files or trusted ordering; q never lowers.
+
+**Fork impact:** measurement transaction only until arming.
+
+**Reuse/non-goals:** reuse public RPC transaction/finality clients and protocol
+verifier. Do not add private executor injection, central calculator, relay key
+or second evidence transaction.
+
+**Test first:** `OCM-CRT-001` positive q=3 and complete signer/result mutation
+matrix.
+
+**Evidence/CI:** `OCM-INT`; announcement groups, selected indexes, certificate/
+calldata bytes and rejection codes.
+
+**Observable acceptance:** three matching domains form one canonical
+certificate; one mismatch forms groups below threshold and no transaction.
+
+**Risks:** relay silently chooses a majority result. Mitigation: exact byte
+grouping and node-side full verification.
+
+**DoD:** `G4` certificate/relay tests pass, relay is replaceable/unprivileged and
+cannot produce authority from invalid evidence.
+
+### OCM-17 — Implement the Lysis structural verifier and private apply authority
+
+**Depends on:** `OCM-01`, `OCM-04`, `OCM-05`.
+
+**Outcome:** consensus can verify a complete typed Lysis result and create one
+runtime-only apply capability without executing Lysis or reading business
+inputs.
+
+**Files/symbols:**
+
+- `crates/core/lysis/src/activation_v1/{verify,apply_plan,receipts}.rs`;
+- `crates/blockchain/primitives/src/storage/{lysis_activation,handle}.rs`;
+- the existing `PrecompileStorageProvider` capability seam;
+- compile-fail/dependency boundary tests.
+
+**Changes:** reconstruct result/action IDs, order, roots, counts, totals,
+activation preconditions, arithmetic/event summaries; produce a closed
+four-owner apply
+plan; add the non-Clone/non-codec `CertifiedLysisActivation` token and one-shot
+`StorageHandle::with_lysis_activation_frame` closure. The token carries only a
+raw `B256` call/binding identity, so `outbe-primitives` never depends on the
+wire crate; the provider default denies frame creation.
+
+**Invariants/failures:** verifier is storage-free and bounded; no Fidelity/
+Oracle/Lysis call; capability has no public constructor/generic supertype;
+owner cursor order fixed; only verified receipts produce terminal permit.
+
+**Fork impact:** none until Metadosis activation dispatch.
+
+**Reuse/non-goals:** reuse pure Lysis equations and protocol types. Do not
+recompute economics, access `StorageHandle`, invent a generic capability/action
+stream or call owners from the structural verifier. Do not add a capability
+crate or make owner crates depend on Lysis/Metadosis.
+
+**Test first:** `OCM-APL-001` structural/receipt/conservation mutation vectors
+and `OCM-BND-002` dependency/callsite boundary.
+
+**Evidence/CI:** `OCM-FAST`; result/vector mutations, dependency report and
+compile-fail fixtures.
+
+**Observable acceptance:** valid bytes yield one typed plan plus the exact
+binding input later consumed by the frame closure; every mutation rejects
+before owner access; mutating Lysis/Fidelity/Oracle dependencies are absent.
+
+**Risks:** making capability constructible in tests/other crates. Mitigation:
+private fields/factory, execution-frame lease and compile-fail/callsite scans.
+
+**DoD:** both ledger tests pass, verifier is pure/bounded and no raw/generic
+effect authority is exposed.
+
+### OCM-18 — Add NodFactory certified batch issuance
+
+**Depends on:** `OCM-05`, `OCM-17`.
+
+**Outcome:** the Nod owner applies the exact bounded Nod action batch once and
+returns `NodBatchReceiptV1`.
+
+**Files/symbols:**
+
+- `crates/core/nodfactory/src/certified.rs`;
+- existing Nod identity/item/bucket/CE mutation and event helpers;
+- owner receipt projection/hash tests.
+
+**Changes:** private capability-gated batch method, target-precondition/generation
+checks, explicit request `logical_evaluation_time`, checked totals/root and one
+canonical receipt/event projection.
+
+**Invariants/failures:** one Nod per consumed Tribute; exact IDs/order/root/
+amount/Gratis; no current block timestamp in semantic fields; namespace
+generation compare-and-set; no public issuance selector.
+
+**Fork impact:** private method unreachable except certified activation.
+
+**Reuse/non-goals:** reuse current Nod construction and CE helpers. Do not call
+legacy Lysis, expose public batch API or write contributor/Tribute state.
+
+**Task-local tests:** cap-1/cap actions, wrong precondition/time/root/order,
+mid-batch storage/event failure rollback and receipt hash.
+
+**Evidence/CI:** `OCM-FAST` owner tests, `OCM-INT` capability integration;
+enables `OCM-APL-002`.
+
+**Observable acceptance:** a valid capability produces the exact Nod root/count/
+totals and receipt; every failure leaves namespace/CE/events unchanged.
+
+**Risks:** helper reads current timestamp. Mitigation: explicit logical time in
+the only certified construction path.
+
+**DoD:** method is private/capability-gated, owner tests pass and no alternate
+post-fork raw issuance callsite exists.
+
+### OCM-19 — Add Intex certified contributor batch
+
+**Depends on:** `OCM-05`, `OCM-17`.
+
+**Outcome:** Intex writes the exact included contributor series with checked
+totals and returns `ContributorReceiptV1`.
+
+**Files/symbols:**
+
+- `crates/core/intex/src/certified.rs`;
+- existing contributor state/event helpers;
+- series version/root/count tests.
+
+**Changes:** strict capability-gated batch method, absent/version-0 series
+precondition, checked additions, exclusion rule, canonical ordering/root and
+event projection.
+
+**Invariants/failures:** excluded Tributes still count in Lysis/Nod but never
+enter contributor series; no overwrite; exact included count/nominal/root;
+duplicate/overflow/order mismatch rolls back.
+
+**Fork impact:** private certified path only.
+
+**Reuse/non-goals:** reuse current contributor schema and reads. Do not reuse
+unchecked overwrite/`+=`, add generic batch write or alter exclusion economics.
+
+**Task-local tests:** included/excluded mix, duplicate/order/version/overflow,
+event/storage failure and receipt mutation.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; enables `OCM-APL-002`.
+
+**Observable acceptance:** contributor public state equals exact included
+population while Nod count still equals all consumed Tributes.
+
+**Risks:** silently reusing overwrite semantics. Mitigation: new strict method
+with absent/version compare-and-set.
+
+**DoD:** checked method and receipt tests pass, legacy API remains unchanged and
+only certified activation can call it post-fork.
+
+### OCM-20 — Add Tribute certified consume and logical retirement
+
+**Depends on:** `OCM-05`, `OCM-17`.
+
+**Outcome:** the authenticated sealed Tribute generation is consumed exactly
+once, logically retired and represented by `TributeReceiptV1`.
+
+**Files/symbols:**
+
+- `crates/core/tribute/src/certified.rs`;
+- current consume/CE retirement helpers and events;
+- retained projection/source release integration.
+
+**Changes:** capability-gated root/count/nominal verification, generation
+`0 -> 1` retirement, collection visibility transition and canonical receipt/
+event projection. Physical body deletion remains retention-coordinator owned.
+
+**Invariants/failures:** exact sealed root/count/nominal; no per-record partial
+delete; old generation cannot become active; retry cannot consume twice; source
+bodies remain through terminal+64 finalized blocks.
+
+**Fork impact:** populated post-fork certified path only; empty compatibility
+retirement remains pinned.
+
+**Reuse/non-goals:** reuse collection consume/retire and CE mutation primitives.
+Do not trust Mongo, synchronously delete bodies or add production GC.
+
+**Task-local tests:** exact/wrong root/count/nominal/generation, retirement
+event/CE failure rollback and retention non-deletion.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; enables `OCM-APL-002` and public retired
+partition proof.
+
+**Observable acceptance:** active collection is retired atomically with exact
+receipt while retained source remains readable until node-owned release.
+
+**Risks:** conflating logical retirement with local GC. Mitigation: separate
+owners and explicit retention evidence.
+
+**DoD:** consume/retire is capability-gated/atomic, receipt tests pass and no
+certified path issues physical projection deletion.
+
+### OCM-21 — Consume carry-over into the next unformed day limit
+
+**Depends on:** `OCM-05`, `OCM-08`.
+
+**Outcome:** `PromisLimit.total_unallocated` has explicit forward semantics:
+the next not-yet-formed day limit atomically takes the available carry-over.
+
+**Files/symbols:**
+
+- `crates/core/{promislimit,metadosis}/src/`;
+- existing day-limit formation path;
+- carry-over add/take and replay tests.
+
+**Changes:** add a checked atomic take during limit formation; bind the taken
+amount into the day-limit receipt/state; leave later credits for the following
+unformed day.
+
+**Invariants/failures:** no double take; add/take conservation; a formed day is
+immutable; retry never consumes or credits again; overflow/failure rolls back.
+
+**Fork impact:** active PoC day-limit formation only; pre-fork behavior is
+unchanged.
+
+**Reuse/non-goals:** reuse current `total_unallocated` storage and limit
+formation. Do not top up a live auction or add per-job Promis reservations.
+
+**Task-local tests:** zero/non-zero carry-over, credit before/after formation,
+restart/replay, checked overflow and two consecutive days.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; contributes `OCM-REQ-001` and
+`OCM-TIM-001`.
+
+**Observable acceptance:** a credited remainder appears exactly once in the next
+unformed day limit; a late credit waits for the following day.
+
+**Risks:** implicit read-without-clear duplicates value. Mitigation: one
+transactional take primitive and conservation assertions.
+
+**DoD:** two-day integration passes, existing accumulated value has one explicit
+consumer and no auction top-up path exists.
+
+### OCM-22 — Add PromisLimit certified unused-Lysis credit
+
+**Depends on:** `OCM-05`, `OCM-17`.
+
+**Outcome:** activation credits exact signed `unused_lysis` with checked
+arithmetic and returns `CarryOverReceiptV1`.
+
+**Files/symbols:**
+
+- `crates/core/promislimit/src/certified.rs`;
+- existing checked add/storage/event helpers;
+- carry-over receipt tests.
+
+**Changes:** capability-gated exact `unused_lysis` validation, actual current
+before-value read, checked add, canonical event projection and receipt.
+
+**Invariants/failures:** `lysis_budget = consumed + unused_lysis`; unrelated
+commutative adds do not conflict; `before + unused_lysis = after`; overflow or
+event/storage failure rolls back.
+
+**Fork impact:** private certified path only.
+
+**Reuse/non-goals:** reuse the OCM-05 checked accumulator update. Do not reserve
+a mutable value, overwrite unrelated additions or expose generic accumulator
+operations.
+
+**Task-local tests:** zero/non-zero `unused_lysis`, unrelated prior add, wrong
+budget/conservation, overflow and receipt/event rollback.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; enables `OCM-APL-002`.
+
+**Observable acceptance:** receipt reports actual before/delta/after and valid
+unrelated additions remain compatible.
+
+**Risks:** crediting `auction_base` again at activation. Mitigation: result type
+contains only `unused_lysis` and conservation tests pin both equations.
+
+**DoD:** certified carry-over tests pass, method is private/capability-gated and
+both budget conservation equations are independently verified.
+
+### OCM-23 — Wire normal public activation and atomic terminal commit
+
+**Depends on:** `OCM-07`, `OCM-08`, `OCM-16`, `OCM-17`, `OCM-18`,
+`OCM-19`, `OCM-20`, `OCM-21`, `OCM-22`.
+
+**Outcome:** one normal paid `activateLysis(bytes)` transaction verifies the
+live job/evidence/result and commits four activation owner effects, active
+generation, receipts and `COMPLETED` or nothing.
+
+**Files/symbols:**
+
+- `crates/core/metadosis/src/ocomp/{activation,state,views}.rs`;
+- existing Metadosis precompile/interface and `outbe_ctx_dispatch`;
+- `crates/blockchain/evm/src/{precompiles,executor}.rs`;
+- `crates/blockchain/evm/src/storage/ctx_provider.rs`;
+- `crates/blockchain/txpool/src/lib.rs` only for normal size/admission parity;
+- `contracts/precompiles/src/IMetadosis.sol`.
+
+**Changes:** bounded ABI preflight/meter, exact verification order, execution-
+frame entitlement recorded from the exact Metadosis selector/value/static
+context, one-shot capability closure, owner cursor/receipt verification,
+APPLIED/conflict/retry/rejection semantics, aggregate receipt/active generation,
+three views and frozen logs/errors.
+
+**Invariants/failures:** at most one activation attempt/block; completed exact
+retry does no crypto/owner/event work; conflict only after valid evidence;
+owner/receipt failure reverts outer checkpoint; fatal corruption rejects block;
+no ZeroFee/public owner/raw path.
+
+**Fork impact:** selector exists only under active measurement/final profile;
+pre-fork dispatch unchanged. Public activation is a normal Ethereum transaction.
+
+**Reuse/non-goals:** reuse `StorageHandle::with_checkpoint`, precompile dispatch,
+owner methods and public transaction path. Do not add custom RPC, transaction
+type, generic dispatcher/write set or on-chain Lysis.
+
+**Test first:** `OCM-BND-001` factory/raw-path/compile-fail scan,
+`OCM-APL-002` table-driven four-owner/four-receipt rollback/conflict/retry and
+`OCM-TIM-001` logical time.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; calldata/receipt/event bytes, capability
+callsite report and exact pre/post owner/job/CE state.
+
+**Observable acceptance:** valid q=3 activation yields the frozen public
+receipt/views and every owner effect; a named late failure leaves the pending
+job and all state/CE/events unchanged.
+
+**Risks:** Metadosis view-only dispatch lacks execution scope, or a helper
+swallows owner errors. Mitigation: exact selector special-case passes the active
+scope; strict certified methods only.
+
+**DoD:** `G5` activation tests pass, one production capability factory exists,
+all public views/logs/errors match vectors and no post-fork raw/synchronous
+bypass is reachable.
+
+### OCM-24 — Extend the existing harness with OCOMP topology and evidence
+
+**Depends on:** `OCM-11`, `OCM-12`, `OCM-13`, `OCM-14`, `OCM-15`,
+`OCM-16`, `OCM-23`.
+
+**Outcome:** the Rust/Cucumber harness owns all real OCOMP processes/faults and
+can emit one hash-indexed multi-scenario evidence bundle.
+
+**Files/symbols:**
+
+- `crates/testing/e2e-harness/src/world/ocomp.rs`;
+- `crates/testing/e2e-harness/src/world/{mod,state,rpc,mongodb}.rs` and the
+  existing `Localnet` modules;
+- `crates/testing/e2e-harness/src/features/ocomp.rs`, registered by
+  `src/features/mod.rs`;
+- the existing `features/tribute_projection.feature` and
+  `src/features/tribute_projection.rs` as the executable public-Tribute
+  baseline;
+- OCOMP process/CAS guards, event drop/corruption/schedule/bundle/failpoint
+  controls;
+- OCOMP scenario evidence/run manifest and closure verifier integration;
+- structured calculation-boundary markers/traces in exact production call
+  owners.
+
+**Changes:** add four domain handles, supervisor-only stop/restart, worker
+activator, exporter/CAS/Mongo faults, untrusted relay, exact-block OCOMP views/
+proofs, process/topology inventory and correlation across delay variants.
+OCOMP steps reuse `Rpc::tribute_offer*`, the Mongo projection readers, the CE
+point-read verifier and the existing fixture state instead of adding a second
+Tribute sender, database reader or shell path. If step-neutral orchestration is
+factored, it lives behind the typed `World` handles; one Cucumber step never
+calls another step.
+
+**Invariants/failures:** harness cannot inject jobs/results/state or emulate
+worker/CAS logic; every process is owned/reaped; failure preserves bounded
+diagnostics; pass records exact binaries/configs/chain refs; mock Gramine
+substitutes SGX hardware only.
+
+**Fork impact:** harness generates measurement networks before `OCM-26`; those
+manifests are marked and rejected as final evidence.
+
+**Reuse/non-goals:** extend existing Cucumber World, native Alloy RPC, Mongo
+replica set, CE proof verifier, ChildGuard and per-scenario data/evidence. Do
+not create another harness or production deployment controller.
+
+**Mandatory public-Tribute fixture contract:** `OCM-E2E-001` starts with the
+same production path exercised by `tribute_projection.feature`, while that
+existing feature remains an independent regression test and does not acquire
+an OCOMP dependency. Before the scenario may observe a `JobIntent`, retained
+evidence must prove, in order:
+
+1. the operator submitted the deterministic encrypted Tribute fixture through
+   the public transaction path;
+2. its successful receipt, inclusion and finalized chain reference are bound
+   to the scenario;
+3. all four validators expose the same primary, owner and Worldwide-Day Mongo
+   projection identities and bytes;
+4. each validator's CE point-read package verifies independently at a
+   finalized header, and the present body equals its projected Mongo bytes;
+5. the fixture correlation record binds transaction/block/header, owner/day,
+   raw entity ID, projection digest and CE proof/root to the later snapshot,
+   manifest, `JobIntent`, result and activation evidence.
+
+The next state transition is the production Metadosis request path. Harness
+code cannot provide a Tribute root, snapshot root, manifest, job, result or
+canonical state directly, and it cannot treat Mongo or CAS as outcome
+authority. A source/proof mismatch fails before signing; the already planned
+one-domain Mongo/CAS corruption case proves this fail-closed behavior.
+
+**Task-local tests:** process guard teardown, exact discovery count, fault
+control authorization, manifest atomicity/hash, correlated fixture identity and
+trace coverage completeness, plus a harness-contract test proving the OCOMP
+feature is registered once and has no direct job/result/state injection hook.
+
+**Evidence/CI:** `OCM-INT`; contributes all `OCM-PUB/E2E/ISO/TRC` IDs.
+
+**Observable acceptance:** an unprivileged development run starts four nodes,
+four OCOMP domains and relay with real UDS/Mongo/CE, then stops only a
+supervisor while finality advances.
+
+**Risks:** harness shortcut becoming an alternate product path. Mitigation:
+steps call typed production handles only and closure rejects direct injection.
+
+**DoD:** all OCOMP handles/fault controls use production entrypoints, evidence
+manifest validates, cleanup cannot touch operator/unowned data and no scenario
+can self-declare closure.
+
+### OCM-25 — Run the public fork/activation measurement suite
+
+**Depends on:** `OCM-04`, `OCM-08`, `OCM-09`, `OCM-13`, `OCM-14`,
+`OCM-15`, `OCM-16`, `OCM-23`, `OCM-24`.
+
+**Outcome:** a disposable four-node measurement chain proves the complete
+public ingress/import/replay semantics and supplies measured shapes for final
+capacity generation.
+
+**Files/symbols:**
+
+- `crates/testing/e2e-harness/features/ocomp_public_path.feature`;
+- OCOMP step definitions and exact block/state proof collectors;
+- `mise run ocomp-poc-public-path`;
+- measurement-only network/profile generator inputs.
+
+**Changes:** add pre-fork/fork/post-fork phase scenarios; result/job/order/signer
+mutations; before/at deadline; exact/different completed retry; provisional
+cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs.
+
+**Invariants/failures:** no direct executor/state injection; each failed
+activation proves scoped public pre/post equality; proposer/import/replay
+produce equal state/receipt/header/CE roots; deadline expiry precedes tx order.
+
+**Fork impact:** only disposable measurement manifest is active. No checked-in
+canonical fresh-devnet schedule changes.
+
+**Reuse/non-goals:** reuse the new harness/public APIs. Do not claim final cap,
+final bundle identity or PoC completion.
+
+**Test first:** close `OCM-PUB-002`, `OCM-PUB-003`, `OCM-PUB-004`; execute
+provisional `OCM-PUB-001` measurements consumed by `OCM-26`.
+
+**Evidence/CI:** `OCM-PUBLIC`; exact transactions/blocks/finality/state proofs,
+work counters, machine profile and replay results.
+
+**Observable acceptance:** every public mutation/deadline/retry oracle is green,
+and cap behavior is measured consistently enough for the generator to select a
+lower/equal final candidate.
+
+**Risks:** accidentally treating measurement chain as canonical. Mitigation:
+manifest classification, different run namespace and closure verifier rejection.
+
+**DoD:** `G6` public tests pass with no skip/retry, full measurement evidence is
+retained and no canonical network artifact is modified.
+
+### OCM-26 — Generate final capacity/bundle/genesis and arm the PoC fork
+
+**Depends on:** `OCM-25`.
+
+**Outcome:** the actual implementation determines the final bounded profile,
+regenerates every chain-bound artifact and is activated only on the canonical
+fresh four-validator devnet.
+
+**Files/symbols:**
+
+- production capacity generator in `outbe-ocomp-protocol`;
+- final `OcompPocLimitsV1`, correctness/capacity profiles and Rust constants;
+- fresh base genesis, network binding, static committee/key registrations/PoPs,
+  final chain manifest and fork height 32;
+- final bundle/genesis/cap golden vectors;
+- genesis/network/profile consumers and `mise` capacity command.
+
+**Changes:** start at candidate `T<=256`, construct maximum shape, run real
+cap-1/cap/cap+1, run the five cold measurements on the frozen
+`OcompPocDevnetMachineV1` class, lower until the worst run has at least 20%
+headroom, bind benchmark/machine evidence, regenerate bundle/genesis/committee
+in the frozen two-stage order and remove all provisional acceptance.
+
+**Invariants/failures:** smallest bound across every interface wins; compiled/
+genesis/network constants equal; cap+1 rejects before unbounded work; final
+public path/replay parity; no zero/missing field; no provisional manifest or
+key accepted.
+
+**Fork impact:** this is the only task allowed to check in/arm the canonical PoC
+fork. No supported-network rollout occurs.
+
+**Reuse/non-goals:** use real production encoders/path and existing genesis/
+keygen tools. Do not tune for billion records, claim production SLO/headroom,
+raise documented ceilings or alter schema semantics.
+
+**Test first:** `OCM-CAP-001`, final `OCM-PUB-001`, all final
+`OCM-BYT-001/002` chain-bound vectors and H-1/H/H+1 fork replay.
+
+**Evidence/CI:** `OCM-FAST`, `OCM-PUBLIC`; generator inputs/outputs, exact
+machine measurements, final artifact hashes and independent vector result.
+
+**Observable acceptance:** cap-1/cap succeeds and cap+1 rejects identically on
+the final profile through RPC/txpool/P2P/proposal/import/replay; canonical
+fresh-devnet starts at pre-fork height and activates at 32. All five cold runs
+meet the exact machine/headroom rule with no retry.
+
+**Risks:** final lower cap invalidates assumptions or golden vectors. Mitigation:
+all runtime dimensions derive from generated constants and every dependent test
+reruns after regeneration.
+
+**DoD:** `G7` final artifacts are reproducible/clean, no provisional identity
+remains reachable, final public cap/fork tests pass and the closure verifier
+accepts their identities as eligible (not yet complete).
+
+### OCM-27 — Execute the exact PoC closure
+
+**Depends on:** `OCM-26`.
+
+**Outcome:** one exact clean revision/artifact set passes the thirteen-step
+story, every required PFS/POC/ADR mapping, real isolation and independent
+closure verification.
+
+**Files/symbols:**
+
+- `crates/testing/e2e-harness/features/{ocomp_poc,ocomp_isolation}.feature`;
+- `crates/testing/e2e-harness/src/features/ocomp.rs` and its single
+  `src/features/mod.rs` registration;
+- OCOMP scenario steps and evidence correlation, including the mandatory
+  public-Tribute prefix frozen by `OCM-24`;
+- final `mise run ocomp-poc-{e2e,isolation,evidence-verify,closure}`;
+- CI closure workflows/artifact retention.
+
+**Changes:** implement all stable Gherkin scenarios/tags, final mock-Gramine
+encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
+1/2/4-worker schedules, sign-once/restart, q=3/q<3, delays, owner failure,
+bundle mismatch, generation replay, compatibility branches and forbidden-call
+trace.
+
+**Invariants/failures:** real four node/OCOMP domains; real UDS/Mongo/CE/
+checkpoints/public path; no central calculator, direct state/handler injection,
+trusted local outcome or synchronous fallback; `--all` plus exact discovery;
+automatic retries zero. `OCM-E2E-001` cannot advance to `JobIntent` evidence
+until the public Tribute receipt/finality, four-validator Mongo projection
+parity and independently verified CE/Mongo byte equality are present. The job,
+manifest and Tribute root must then be observed from production components, not
+constructed by a step.
+
+**Fork impact:** uses only the final canonical fresh-devnet manifest from
+`OCM-26`; no other network changes.
+
+**Reuse/non-goals:** reuse existing localnet/Mongo/Gramine/process/evidence
+harness. Do not add real-SGX claims, exhaustive CE crash matrix, backlog policy,
+production release gate, TargetLarge or second program.
+
+**Test first/owned IDs:**
+
+- `OCM-E2E-001..008`;
+- `OCM-ISO-001`;
+- `OCM-TRC-001`;
+- rerun every mandatory fast/integration/public ID on exact final artifacts.
+
+**Evidence/CI:** `OCM-E2E`, `OCM-ISO`, `OCM-VERIFY`; publish one atomic
+hash-indexed bundle, deterministic `closure-report.json/.md` and report SHA-256.
+
+**Observable acceptance:** public Tribute -> finalized JobIntent -> three
+independent results/signatures -> public activation -> finalized Nod/effects/
+proofs succeeds, with one correlation chain from the original encrypted
+Tribute transaction and verified projection/CE package through every later
+artifact; q<3 expires with no Nod; all negative cases leave exact expected
+state; forbidden counters are zero.
+
+**Risks:** environment skip/flakiness or report trusting scenario status.
+Mitigation: exact discovery, no automatic retry, retained first failure,
+independent recomputation and systemd runner requirement.
+
+**DoD:** `G8` verifier reports PASS for all 34 OCM ADR invariants,
+`POC-01..26`, every non-deferred `PFS-002` row and story `1..13`; only
+`PFS-002-07/-08` are DEFERRED; no mandatory status is missing/skipped/todo/
+quarantined/retried-away.
+
+## 7. Stable commands and CI ownership
+
+`mise run ocomp-poc-task -- OCM-NN` is the incremental merge gate described in
+section 2. The following commands are the final lane surfaces; unqualified
+execution has closure semantics and cannot ignore future `MISSING` IDs.
+
+| Command | First made real by | Required result |
+|---|---:|---|
+| `mise run ocomp-poc-fast` | `OCM-00`; populated through `OCM-04/17` | exact discovery, byte/reference/model/boundary PASS |
+| `mise run ocomp-poc-integration` | `OCM-00`; populated through `OCM-23` | real backend/process/owner seams PASS |
+| `mise run ocomp-poc-public-path` | `OCM-25` | public mutation/deadline/retry and cap measurement PASS |
+| `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | `OCM-27` | four-domain scenario set PASS |
+| `mise run ocomp-poc-isolation -- --evidence-dir <dir>` | `OCM-27` | systemd/cgroup topology and failure isolation PASS |
+| `mise run ocomp-poc-evidence-verify -- <manifest>` | `OCM-00`; final in `OCM-27` | independent closure PASS |
+| `mise run ocomp-poc-closure -- --evidence-dir <dir>` | `OCM-27` | all exact-artifact lanes plus report PASS |
+
+The task-progress wrapper runs relevant `OCM-FAST`, `OCM-INT` and
+`OCM-PUBLIC` tests as they appear and requires every discovered test plus the
+named task's owned tests. Unqualified full lanes run on closure candidates;
+full E2E also runs on scheduled main, and a scheduled failure blocks closure.
+Isolation is mandatory for closure. Timeouts and zero-retry rules are those
+frozen in the evidence ledger.
+
+## 8. Test/evidence ownership and bidirectional traceability
+
+The machine-readable ledger owns:
+
+```text
+ADR/PFS/POC/story requirement
+  -> stable test ID
+  -> layer and allowed oracle
+  -> planned source and production entrypoint
+  -> real/substituted components
+  -> CI command/lane
+  -> evidence artifacts
+```
+
+This plan adds:
+
+```text
+test ID -> closing OCM task
+OCM task -> dependencies/files/interfaces/tests/evidence/DoD
+```
+
+No task may cite a downstream test as its own completed evidence. It may state
+that it “contributes” to the test; closure remains owned by the task listed in
+the task index and verified only in `OCM-27`.
+
+The final reverse audit recorded in
+[`off-chain-poc-implementation-audit.md`](off-chain-poc-implementation-audit.md)
+mechanically proved:
+
+- every ledger test has exactly one closing task;
+- every task has task-local tests and a downstream observable;
+- every normative requirement reaches a non-deferred test/task/command/oracle;
+- every task dependency exists and the graph is acyclic;
+- no file/authority owner is duplicated or absent;
+- all fork/byte/cap dependencies pass through `G1` and `G7`;
+- no DoD requires deferred/non-goal work; the closure DoD names the two
+  deferred PFS rows only to exclude them.
+
+## 9. PoC to BoundedMVP evolution
+
+The following core remains unchanged:
+
+- finalized JobIntent/finality binding and authenticated manifest;
+- deterministic Lysis V1 plan/result;
+- q=3/4 execute-and-attest and sign-once subject;
+- normal public activation and exclusive deadline;
+- request split receipt, private capability, four activation receipts and
+  atomic generation switch;
+- begin expiry -> users -> CE seal -> terminal request order;
+- public active-generation/terminal authority.
+
+BoundedMVP may replace demo key custody, one-entry journals, local CAS, worker
+service hardening, retention/GC, pause/revocation, recovery, observability and
+deployment operations under a new governed bundle. It does not require changing
+the core protocol above. TargetLarge proof/DA and a second typed program remain
+separate protocol work.
+
+## 10. Plan completion boundary
+
+This plan is complete and ready to start at `OCM-00`; decision ticket #11
+resolved every audit finding. Neither this plan nor green planning-file
+validation claims the PoC implementation exists. Actual PoC completion remains
+strictly `OCM-27` plus a PASS from the exact-artifact closure verifier.

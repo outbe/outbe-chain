@@ -5,8 +5,7 @@ use crate::{
     error::ProtocolError,
     hash::hash_framed,
     intent::{
-        ContributorSeriesReservationV1, DesisBriefReservationV1, NodNamespaceReservationV1,
-        PromisDeltaReservationV1, TributePartitionReservationV1,
+        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     registry::HashDomain,
     schema::{
@@ -20,8 +19,14 @@ wire_enum_u8! {
         Nod = 1,
         Contributor = 2,
         Tribute = 3,
-        Desis = 4,
-        Promis = 5,
+        CarryOver = 4,
+    }
+}
+
+wire_enum_u8! {
+    pub enum BudgetSplitDestination {
+        DesisAuction = 1,
+        CarryOver = 2,
     }
 }
 
@@ -39,7 +44,7 @@ wire_struct! {
         pub attempt: u32,
         pub protocol_bundle_hash: B256,
         pub result_digest: B256,
-        pub reservation_set_hash: B256,
+        pub activation_preconditions_hash: B256,
         pub activation_call_id: B256,
     }
 }
@@ -47,7 +52,7 @@ wire_struct! {
 wire_struct! {
     pub struct NodBatchReceiptV1 {
         pub binding: EffectBindingV1,
-        pub nod_namespace_reservation: NodNamespaceReservationV1,
+        pub nod_target_precondition: NodTargetPreconditionV1,
         pub nod_count: u32,
         pub nod_root: B256,
         pub nod_amount_total: U256,
@@ -61,7 +66,7 @@ impl_top_level_codec!(NodBatchReceiptV1, NodBatchReceiptV1);
 wire_struct! {
     pub struct ContributorReceiptV1 {
         pub binding: EffectBindingV1,
-        pub contributor_series_reservation: ContributorSeriesReservationV1,
+        pub contributor_target_precondition: ContributorTargetPreconditionV1,
         pub contributor_count: u32,
         pub contributor_root: B256,
         pub eligible_nominal_total: U256,
@@ -73,7 +78,7 @@ impl_top_level_codec!(ContributorReceiptV1, ContributorReceiptV1);
 wire_struct! {
     pub struct TributeReceiptV1 {
         pub binding: EffectBindingV1,
-        pub tribute_partition_reservation: TributePartitionReservationV1,
+        pub tribute_input_binding: TributeInputBindingV1,
         pub sealed_collection_root: B256,
         pub consumed_count: u32,
         pub consumed_nominal_total: U256,
@@ -84,29 +89,36 @@ wire_struct! {
 impl_top_level_codec!(TributeReceiptV1, TributeReceiptV1);
 
 wire_struct! {
-    pub struct DesisReceiptV1 {
-        pub binding: EffectBindingV1,
-        pub desis_reservation: DesisBriefReservationV1,
-        pub brief_hash: B256,
+    pub struct RequestBudgetSplitReceiptV1 {
+        pub protocol_bundle_hash: B256,
+        pub wwd: u32,
+        pub pending_nonce: u64,
+        pub day_type: DayType,
+        pub day_limit: U256,
+        pub lysis_budget: U256,
+        pub auction_base: U256,
+        pub destination: BudgetSplitDestination,
+        pub desis_brief_hash: Option<B256>,
+        pub carry_over_credit: U256,
+        pub auction_entry_price: U256,
         pub logical_anchor: u64,
-        pub accepted_brief_count: u8,
-        pub state_event_digest: B256,
     }
+    validate = validate_request_budget_split_receipt;
 }
-impl_top_level_codec!(DesisReceiptV1, DesisReceiptV1);
+impl_top_level_codec!(RequestBudgetSplitReceiptV1, RequestBudgetSplitReceiptV1);
 
 wire_struct! {
-    pub struct PromisReceiptV1 {
+    pub struct CarryOverReceiptV1 {
         pub binding: EffectBindingV1,
-        pub promis_reservation: PromisDeltaReservationV1,
-        pub accumulator_key: B256,
+        pub source_wwd: u32,
         pub before_value: U256,
-        pub applied_delta: U256,
+        pub credited_unused_lysis: U256,
         pub after_value: U256,
         pub state_event_digest: B256,
     }
+    validate = validate_carry_over_receipt;
 }
-impl_top_level_codec!(PromisReceiptV1, PromisReceiptV1);
+impl_top_level_codec!(CarryOverReceiptV1, CarryOverReceiptV1);
 
 wire_struct! {
     pub struct NodStateEventProjectionV1 {
@@ -144,23 +156,10 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct DesisStateEventProjectionV1 {
-        pub wwd: u32,
-        pub state_version_before: u64,
-        pub state_version_after: u64,
-        pub brief_hash: B256,
-        pub auction_entry_price: U256,
-        pub logical_anchor: u64,
-        pub accepted_brief_count: u8,
-    }
-}
-
-wire_struct! {
-    pub struct PromisStateEventProjectionV1 {
-        pub accumulator_key: B256,
-        pub operation_state_version: u64,
+    pub struct CarryOverStateEventProjectionV1 {
+        pub source_wwd: u32,
         pub before_value: U256,
-        pub applied_delta: U256,
+        pub credited_unused_lysis: U256,
         pub after_value: U256,
     }
 }
@@ -172,8 +171,8 @@ wire_struct! {
         pub nod_receipt_hash: Option<B256>,
         pub contributor_receipt_hash: Option<B256>,
         pub tribute_receipt_hash: Option<B256>,
-        pub desis_receipt_hash: Option<B256>,
-        pub promis_receipt_hash: Option<B256>,
+        pub carry_over_receipt_hash: Option<B256>,
+        pub request_budget_split_receipt_hash: B256,
         pub active_generation_hash: Option<B256>,
         pub effect_commitment: B256,
         pub event_summary_hash: B256,
@@ -196,7 +195,7 @@ impl EffectBindingV1 {
                 && self.attempt == call.attempt
                 && self.protocol_bundle_hash == call.protocol_bundle_hash
                 && self.result_digest == call.result_digest
-                && self.reservation_set_hash == call.reservation_set_hash
+                && self.activation_preconditions_hash == call.activation_preconditions_hash
                 && self.activation_call_id == call.activation_call_id(limits)?,
             "effect binding activation call",
         )
@@ -235,8 +234,12 @@ macro_rules! receipt_hash {
 receipt_hash!(NodBatchReceiptV1, receipt_hash, NodReceipt);
 receipt_hash!(ContributorReceiptV1, receipt_hash, ContributorReceipt);
 receipt_hash!(TributeReceiptV1, receipt_hash, TributeReceipt);
-receipt_hash!(DesisReceiptV1, receipt_hash, DesisReceipt);
-receipt_hash!(PromisReceiptV1, receipt_hash, PromisReceipt);
+receipt_hash!(
+    RequestBudgetSplitReceiptV1,
+    receipt_hash,
+    BudgetSplitReceipt
+);
+receipt_hash!(CarryOverReceiptV1, receipt_hash, CarryOverReceipt);
 
 macro_rules! validate_projection_digest {
     ($receipt:ty, $projection:ty, $owner:ident) => {
@@ -268,22 +271,23 @@ validate_projection_digest!(
     Contributor
 );
 validate_projection_digest!(TributeReceiptV1, TributeStateEventProjectionV1, Tribute);
-validate_projection_digest!(DesisReceiptV1, DesisStateEventProjectionV1, Desis);
-validate_projection_digest!(PromisReceiptV1, PromisStateEventProjectionV1, Promis);
+validate_projection_digest!(
+    CarryOverReceiptV1,
+    CarryOverStateEventProjectionV1,
+    CarryOver
+);
 
 impl AggregateActivationReceiptV1 {
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         let all_present = self.nod_receipt_hash.is_some()
             && self.contributor_receipt_hash.is_some()
             && self.tribute_receipt_hash.is_some()
-            && self.desis_receipt_hash.is_some()
-            && self.promis_receipt_hash.is_some()
+            && self.carry_over_receipt_hash.is_some()
             && self.active_generation_hash.is_some();
         let all_absent = self.nod_receipt_hash.is_none()
             && self.contributor_receipt_hash.is_none()
             && self.tribute_receipt_hash.is_none()
-            && self.desis_receipt_hash.is_none()
-            && self.promis_receipt_hash.is_none()
+            && self.carry_over_receipt_hash.is_none()
             && self.active_generation_hash.is_none();
         require(
             (self.outcome == ActivationOutcome::Applied && all_present)
@@ -291,23 +295,21 @@ impl AggregateActivationReceiptV1 {
             "aggregate receipt outcome shape",
         )?;
         let expected = if self.outcome == ActivationOutcome::Applied {
-            let (Some(nod), Some(contributor), Some(tribute), Some(desis), Some(promis)) = (
+            let (Some(nod), Some(contributor), Some(tribute), Some(carry_over)) = (
                 self.nod_receipt_hash,
                 self.contributor_receipt_hash,
                 self.tribute_receipt_hash,
-                self.desis_receipt_hash,
-                self.promis_receipt_hash,
+                self.carry_over_receipt_hash,
             ) else {
                 return Err(ProtocolError::InvalidInvariant(
                     "aggregate receipt effect hashes",
                 ));
             };
-            let mut payload = Vec::with_capacity(160);
+            let mut payload = Vec::with_capacity(128);
             payload.extend_from_slice(nod.as_slice());
             payload.extend_from_slice(contributor.as_slice());
             payload.extend_from_slice(tribute.as_slice());
-            payload.extend_from_slice(desis.as_slice());
-            payload.extend_from_slice(promis.as_slice());
+            payload.extend_from_slice(carry_over.as_slice());
             hash_framed(HashDomain::Effects, &payload)?
         } else {
             hash_framed(HashDomain::Effects, &[])?
@@ -321,12 +323,52 @@ impl AggregateActivationReceiptV1 {
     }
 }
 
-pub fn apply_event_summary_hash(owner_digests: [B256; 5]) -> Result<B256, ProtocolError> {
-    let mut payload = Vec::with_capacity(160);
+pub fn apply_event_summary_hash(owner_digests: [B256; 4]) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(128);
     for digest in owner_digests {
         payload.extend_from_slice(digest.as_slice());
     }
     hash_framed(HashDomain::ApplyEventSummary, &payload)
+}
+
+impl RequestBudgetSplitReceiptV1 {
+    pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
+        let split_total = self.lysis_budget.checked_add(self.auction_base).ok_or(
+            ProtocolError::IntegerOverflow {
+                what: "request budget split",
+            },
+        )?;
+        require(split_total == self.day_limit, "request budget split")?;
+        let green = self.day_type == DayType::Green
+            && self.destination == BudgetSplitDestination::DesisAuction
+            && self.desis_brief_hash.is_some()
+            && self.carry_over_credit == U256::ZERO;
+        let red = self.day_type == DayType::Red
+            && self.destination == BudgetSplitDestination::CarryOver
+            && self.desis_brief_hash.is_none()
+            && self.carry_over_credit == self.auction_base;
+        require(green || red, "request budget split destination")
+    }
+}
+
+fn validate_request_budget_split_receipt(
+    receipt: &RequestBudgetSplitReceiptV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    receipt.validate_semantics()
+}
+
+fn validate_carry_over_receipt(
+    receipt: &CarryOverReceiptV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    let expected = receipt
+        .before_value
+        .checked_add(receipt.credited_unused_lysis)
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "carry-over receipt",
+        })?;
+    require(expected == receipt.after_value, "carry-over receipt")
 }
 
 fn validate_aggregate_receipt(

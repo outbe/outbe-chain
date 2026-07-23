@@ -23,7 +23,7 @@ documentation-only are requirements, not claims of executable coverage.
 
 | Test owner | Evidence supplied | PFS relationship |
 |---|---|---|
-| `crates/core/e2e/tests/wwd_lysis_nod_gratis.rs` | WWD to Lysis, Nod and Gratis state transitions | Partial PFS-002 |
+| `crates/core/e2e/tests/wwd_lysis_nod_gratis.rs` | Current synchronous WWD to Lysis, Nod and Gratis state transitions | Historical component evidence for ADR-C-MET-001/ADR-C-LYS-001; it does not satisfy the OCOMP PFS-002 |
 | `crates/core/e2e/tests/wwd_auction_clearing.rs` | Auction day across Metadosis, Desis, IntexFactory, Lysis and Intex: green clearing with creator payout, red cancellation, fan-in deadline skip | PFS-009-01 through -03 |
 | `crates/core/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
 | `crates/core/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
@@ -35,6 +35,14 @@ documentation-only are requirements, not claims of executable coverage.
 Run these with their owning Cargo packages. They compose production modules in
 one process, so they cannot prove networking, finality, restart, projection or
 multi-node convergence unless a matrix row explicitly says otherwise.
+
+## Declared OCOMP gap
+
+No current live multi-node feature implements PFS-002's
+request→finality→export→independent execution→q-certificate→public activation
+path. The future harness feature must use four separate validator domains and
+map its scenario tags to PFS-002 and `POC-01..POC-26`; the existing synchronous
+in-process test cannot be relabeled as that evidence.
 
 ## Foundry contract suites
 

@@ -64,7 +64,7 @@ wire_struct! {
         pub attempt: u32,
         pub protocol_bundle_hash: B256,
         pub result_digest: B256,
-        pub reservation_set_hash: B256,
+        pub activation_preconditions_hash: B256,
         pub terminal_pending_nonce: u64,
     }
 }

@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Outbe OCOMP Kernel + Lysis V1 — PoC One Pager</title>
+  <style>
+    :root {
+      --ink: #f6f8fc;
+      --muted: #aab5c8;
+      --canvas: #071018;
+      --panel: #0d1924;
+      --panel-2: #111f2c;
+      --line: #26384a;
+      --cyan: #54d6ff;
+      --lime: #b7f36b;
+      --amber: #ffbd66;
+      --red: #ff7474;
+      --violet: #b8a1ff;
+      --white-08: rgba(255, 255, 255, 0.08);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.26);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--canvas);
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 8% 0%, rgba(84, 214, 255, 0.11), transparent 26rem),
+        radial-gradient(circle at 92% 8%, rgba(183, 243, 107, 0.08), transparent 28rem),
+        var(--canvas);
+      font-family:
+        Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      line-height: 1.35;
+    }
+
+    .poster {
+      width: min(1600px, calc(100% - 40px));
+      margin: 20px auto;
+      padding: 34px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.025), transparent 38%),
+        rgba(7, 16, 24, 0.88);
+      box-shadow: var(--shadow);
+    }
+
+    .topline,
+    .section-head,
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .eyebrow,
+    .section-index,
+    .micro-label,
+    .badge {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow {
+      color: var(--cyan);
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--lime);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .status::before {
+      width: 8px;
+      height: 8px;
+      border-radius: 99px;
+      background: var(--lime);
+      box-shadow: 0 0 18px rgba(183, 243, 107, 0.75);
+      content: "";
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin-top: 0;
+    }
+
+    h1 {
+      max-width: 1050px;
+      margin-bottom: 12px;
+      font-size: clamp(44px, 5vw, 78px);
+      line-height: 0.96;
+      letter-spacing: -0.045em;
+    }
+
+    h1 span {
+      color: var(--cyan);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.55fr);
+      gap: 28px;
+      align-items: end;
+      padding: 34px 0 30px;
+    }
+
+    .lede {
+      max-width: 940px;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .badge {
+      padding: 8px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: #dce5f1;
+      background: rgba(255, 255, 255, 0.025);
+      letter-spacing: 0.08em;
+    }
+
+    .badge strong {
+      color: var(--lime);
+    }
+
+    .north-star {
+      padding: 20px;
+      border: 1px solid rgba(84, 214, 255, 0.34);
+      border-radius: 18px;
+      background: linear-gradient(145deg, rgba(84, 214, 255, 0.11), rgba(84, 214, 255, 0.025));
+    }
+
+    .north-star .micro-label {
+      margin-bottom: 8px;
+      color: var(--cyan);
+    }
+
+    .north-star strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 20px;
+    }
+
+    .north-star p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      padding: 24px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .section-head {
+      margin-bottom: 17px;
+    }
+
+    .section-title {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -0.02em;
+    }
+
+    .section-index {
+      color: var(--cyan);
+    }
+
+    .section-note {
+      max-width: 580px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+    }
+
+    .arch {
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) 62px minmax(0, 0.8fr);
+      gap: 12px;
+      align-items: stretch;
+    }
+
+    .domain {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(260px, 0.8fr) 52px minmax(420px, 1.2fr);
+      gap: 12px;
+      min-height: 250px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: var(--panel);
+    }
+
+    .domain::after {
+      position: absolute;
+      top: 14px;
+      right: 16px;
+      padding: 5px 8px;
+      border: 1px solid rgba(184, 161, 255, 0.35);
+      border-radius: 999px;
+      color: var(--violet);
+      background: rgba(184, 161, 255, 0.08);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      content: "× 4 INDEPENDENT DOMAINS";
+    }
+
+    .node-box,
+    .compute-box,
+    .relay-box,
+    .apply-box {
+      padding: 18px;
+      border-radius: 16px;
+    }
+
+    .node-box {
+      border: 1px solid rgba(84, 214, 255, 0.4);
+      background: rgba(84, 214, 255, 0.06);
+    }
+
+    .compute-box {
+      border: 1px solid rgba(183, 243, 107, 0.32);
+      background: rgba(183, 243, 107, 0.05);
+    }
+
+    .box-title {
+      margin-bottom: 12px;
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .box-title small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .mini-list {
+      display: grid;
+      gap: 7px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .mini-list li {
+      position: relative;
+      padding-left: 14px;
+    }
+
+    .mini-list li::before {
+      position: absolute;
+      top: 0.58em;
+      left: 0;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .boundary {
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-align: center;
+      text-transform: uppercase;
+    }
+
+    .boundary::before,
+    .boundary::after {
+      width: 1px;
+      height: 55px;
+      background: linear-gradient(transparent, var(--line), transparent);
+      content: "";
+    }
+
+    .compute-stack {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .component {
+      min-height: 76px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: rgba(255, 255, 255, 0.025);
+    }
+
+    .component strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+
+    .component span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .connector {
+      display: grid;
+      place-items: center;
+      color: var(--cyan);
+      font-size: 30px;
+      font-weight: 300;
+    }
+
+    .certificate {
+      display: grid;
+      gap: 12px;
+      align-content: center;
+    }
+
+    .relay-box {
+      border: 1px solid rgba(255, 189, 102, 0.38);
+      background: rgba(255, 189, 102, 0.06);
+    }
+
+    .relay-box .box-title {
+      color: var(--amber);
+    }
+
+    .apply-box {
+      border: 1px solid rgba(84, 214, 255, 0.38);
+      background: rgba(84, 214, 255, 0.06);
+    }
+
+    .q-chip {
+      justify-self: start;
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: #071018;
+      background: var(--lime);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(125px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 190px;
+      padding: 16px 14px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+    }
+
+    .step:not(:last-child)::after {
+      position: absolute;
+      z-index: 3;
+      top: 50%;
+      right: -13px;
+      display: grid;
+      width: 18px;
+      height: 24px;
+      place-items: center;
+      color: var(--cyan);
+      background: var(--canvas);
+      font-size: 18px;
+      content: "›";
+      transform: translateY(-50%);
+    }
+
+    .step-no {
+      display: inline-grid;
+      width: 27px;
+      height: 27px;
+      margin-bottom: 14px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 900;
+    }
+
+    .step h3 {
+      min-height: 40px;
+      margin-bottom: 9px;
+      font-size: 15px;
+      line-height: 1.18;
+    }
+
+    .step p {
+      margin-bottom: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .step.onchain {
+      border-top: 3px solid var(--cyan);
+    }
+
+    .step.offchain {
+      border-top: 3px solid var(--lime);
+    }
+
+    .step.committee {
+      border-top: 3px solid var(--violet);
+    }
+
+    .lane-key {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .lane-key span::before {
+      display: inline-block;
+      width: 16px;
+      height: 3px;
+      margin-right: 6px;
+      vertical-align: middle;
+      background: var(--key-color);
+      content: "";
+    }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 0.85fr;
+      gap: 12px;
+    }
+
+    .decision {
+      padding: 17px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--panel);
+    }
+
+    .decision.good {
+      border-color: rgba(183, 243, 107, 0.28);
+    }
+
+    .decision.not {
+      border-color: rgba(255, 116, 116, 0.3);
+    }
+
+    .decision.fail {
+      border-color: rgba(255, 189, 102, 0.3);
+    }
+
+    .decision h3 {
+      margin-bottom: 12px;
+      font-size: 15px;
+    }
+
+    .decision.good h3 {
+      color: var(--lime);
+    }
+
+    .decision.not h3 {
+      color: var(--red);
+    }
+
+    .decision.fail h3 {
+      color: var(--amber);
+    }
+
+    .invariants {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 9px;
+      margin-top: 12px;
+    }
+
+    .invariant {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-2);
+    }
+
+    .invariant strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--cyan);
+      font-size: 12px;
+    }
+
+    .invariant span {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    code {
+      color: #d8e8f7;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.94em;
+    }
+
+    .footer {
+      padding-top: 17px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .footer strong {
+      color: var(--ink);
+    }
+
+    .footer a {
+      color: var(--cyan);
+      text-decoration: none;
+    }
+
+    .footer-code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 9px;
+      text-align: right;
+    }
+
+    @media (max-width: 1100px) {
+      .poster {
+        width: min(100% - 20px, 920px);
+        padding: 22px;
+      }
+
+      .hero,
+      .decision-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .arch {
+        grid-template-columns: 1fr;
+      }
+
+      .domain {
+        grid-template-columns: 1fr;
+      }
+
+      .boundary {
+        grid-template-columns: 1fr auto 1fr;
+      }
+
+      .boundary::before,
+      .boundary::after {
+        width: 100%;
+        height: 1px;
+      }
+
+      .connector {
+        transform: rotate(90deg);
+      }
+
+      .flow {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .step:not(:last-child)::after {
+        display: none;
+      }
+
+      .invariants {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 620px) {
+      .topline,
+      .section-head,
+      .footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .section-note,
+      .footer-code {
+        text-align: left;
+      }
+
+      .flow,
+      .compute-stack,
+      .invariants {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 44px;
+      }
+    }
+
+    @page {
+      size: A3 landscape;
+      margin: 8mm;
+    }
+
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      html,
+      body {
+        background: #071018;
+      }
+
+      .poster {
+        width: 131.58%;
+        margin: 0;
+        padding: 18px;
+        border-radius: 0;
+        box-shadow: none;
+        zoom: 0.76;
+      }
+
+      section {
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="poster">
+    <div class="topline">
+      <div class="eyebrow">Outbe / Off-chain computation / PoC</div>
+      <div class="status">Ready for implementation planning</div>
+    </div>
+
+    <header class="hero">
+      <div>
+        <h1>OCOMP — общий <span>kernel</span>.<br>Lysis V1 — первая typed program.</h1>
+        <p class="lede">
+          PoC показывает один реальный bounded vertical slice: общий operational
+          lifecycle несёт закрытый Lysis V1 protocol. Четыре независимых validator
+          domains считают job, три совпавших результата разрешают одну atomic activation.
+        </p>
+        <div class="badges" aria-label="Ключевые параметры PoC">
+          <div class="badge"><strong>T ≤ generated cap</strong> candidate 256</div>
+          <div class="badge"><strong>n = 4</strong> domains</div>
+          <div class="badge"><strong>q = 3</strong> signatures</div>
+          <div class="badge"><strong>1</strong> activation tx</div>
+          <div class="badge"><strong>1</strong> typed program: Lysis V1</div>
+          <div class="badge"><strong>0</strong> on-chain Lysis</div>
+          <div class="badge"><strong>64</strong> block deadline</div>
+        </div>
+      </div>
+      <aside class="north-star">
+        <div class="micro-label">Главный инвариант</div>
+        <strong>Kernel проверяет lifecycle/evidence; Lysis владеет semantics/effects.</strong>
+        <p>
+          Он не перечисляет Tribute, не вызывает <code>fidelity::league</code>,
+          не читает Oracle и не пересчитывает FI / Gratis / Nod.
+        </p>
+      </aside>
+    </header>
+
+    <section aria-labelledby="architecture-title">
+      <div class="section-head">
+        <h2 class="section-title" id="architecture-title">
+          <span class="section-index">01</span>
+          Архитектура и границы отказа
+        </h2>
+        <p class="section-note">
+          Каждый из четырёх domains имеет собственные node, supervisor, exporter,
+          workers и CAS. Много workers внутри одного domain всё равно дают только одну подпись.
+        </p>
+      </div>
+
+      <div class="arch" role="img" aria-label="Архитектурная схема одного из четырёх независимых validator domains и activation path">
+        <div class="domain">
+          <article class="node-box">
+            <div class="box-title">
+              outbe-chain / OCOMP kernel
+              <small>protected consensus process</small>
+            </div>
+            <ul class="mini-list">
+              <li>finality + <code>JobIntent</code> FSM</li>
+              <li>budget split / expiry / preconditions</li>
+              <li>bounded <code>OcompControl</code> UDS</li>
+              <li>OCOMP key + sign-once gate</li>
+              <li>certificate/result verifier</li>
+              <li>typed atomic apply</li>
+            </ul>
+          </article>
+
+          <div class="boundary">
+            <span>bounded UDS<br>no bulk data</span>
+          </div>
+
+          <article class="compute-box">
+            <div class="box-title">
+              Independent compute plane
+              <small>separate UIDs / processes / quotas</small>
+            </div>
+            <div class="compute-stack">
+              <div class="component">
+                <strong>Supervisor</strong>
+                <span>finalized cursor, planner, scheduler, reducer, journal</span>
+              </div>
+              <div class="component">
+                <strong>Snapshot exporter</strong>
+                <span>immutable checkpoint, root-bound full fold</span>
+              </div>
+              <div class="component">
+                <strong>Workers 1…4</strong>
+                <span>immutable UnitId, no keys, no node DB, no network</span>
+              </div>
+              <div class="component">
+                <strong>Local CAS</strong>
+                <span>content-addressed input, units and result artifacts</span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="connector" aria-hidden="true">→</div>
+
+        <div class="certificate">
+          <article class="relay-box">
+            <div class="q-chip">q = 3 matching digests</div>
+            <div class="box-title">
+              Untrusted relay
+              <small>replaceable / owns no key</small>
+            </div>
+            <ul class="mini-list">
+              <li>groups exact <code>ResultDigest</code></li>
+              <li>deduplicates validator indexes</li>
+              <li>builds one certificate</li>
+              <li>submits ordinary transaction</li>
+            </ul>
+          </article>
+          <article class="apply-box">
+            <div class="box-title">
+              <code>activateLysis</code>
+              <small>normal RPC → txpool → P2P → block → replay</small>
+            </div>
+            <ul class="mini-list">
+              <li>finality proof + typed result + q certificate</li>
+              <li>private <code>CertifiedLysisActivation</code></li>
+              <li>all domain receipts commit or all roll back</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="flow-title">
+      <div class="section-head">
+        <h2 class="section-title" id="flow-title">
+          <span class="section-index">02</span>
+          Сквозная схема решения
+        </h2>
+        <div class="lane-key" aria-label="Легенда">
+          <span style="--key-color: var(--cyan)">on-chain</span>
+          <span style="--key-color: var(--lime)">off-chain</span>
+          <span style="--key-color: var(--violet)">threshold evidence</span>
+        </div>
+      </div>
+
+      <div class="flow">
+        <article class="step onchain">
+          <div class="step-no">1</div>
+          <h3>Tribute → sealed root</h3>
+          <p>
+            CE end-block: body commitment → 16 shards → WWD collection →
+            CE catalog → EVM slot → finalized state root.
+          </p>
+        </article>
+
+        <article class="step onchain">
+          <div class="step-no">2</div>
+          <h3>Metadosis делит budget</h3>
+          <p>
+            <code>day_limit = lysis_budget + auction_base</code>. GREEN сразу
+            отправляет auction_base в Desis; RED — в carry-over. Затем сохраняются
+            <code>JobIntent(lysis_budget)</code>, expiry и <code>OFFCHAIN_PENDING</code>.
+          </p>
+        </article>
+
+        <article class="step onchain">
+          <div class="step-no">3</div>
+          <h3>Finality фиксирует input</h3>
+          <p>
+            <code>JobId</code> связывает intent с request block/state root.
+            Exporter получает read-only immutable checkpoint.
+          </p>
+        </article>
+
+        <article class="step offchain">
+          <div class="step-no">4</div>
+          <h3>Deterministic execution</h3>
+          <p>
+            Полный CE fold, Fidelity/Oracle openings, fixed <code>UnitId</code>,
+            Map/Reduce. 1, 2 и 4 workers дают одинаковые bytes.
+          </p>
+        </article>
+
+        <article class="step committee">
+          <div class="step-no">5</div>
+          <h3>q=3 attestations</h3>
+          <p>
+            Каждый domain сам вычисляет весь job. Node подписывает ровно один
+            canonical <code>ResultDigest</code> отдельным OCOMP key.
+          </p>
+        </article>
+
+        <article class="step onchain">
+          <div class="step-no">6</div>
+          <h3>One activation tx</h3>
+          <p>
+            Consensus проверяет finality, committee, signatures, hashes, caps,
+            ordering, counts, totals и live preconditions — но не Lysis.
+          </p>
+        </article>
+
+        <article class="step onchain">
+          <div class="step-no">7</div>
+          <h3>Atomic domain effects</h3>
+          <p>
+            Nod + contributors + Tribute retirement + unused-Lysis carry-over +
+            Metadosis COMPLETED + <code>ActiveGenerationV1</code>. Desis здесь
+            не вызывается.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="decision-title">
+      <div class="section-head">
+        <h2 class="section-title" id="decision-title">
+          <span class="section-index">03</span>
+          Что именно доказывает PoC
+        </h2>
+        <p class="section-note">
+          Это проверка core-механики, а не заявление о production readiness или масштабе.
+        </p>
+      </div>
+
+      <div class="decision-grid">
+        <article class="decision good">
+          <h3>PoC доказывает</h3>
+          <ul class="mini-list">
+            <li>finalized/authenticated input</li>
+            <li>deterministic parallel execution</li>
+            <li>3-of-4 independent result threshold</li>
+            <li>sign-once и exact result binding</li>
+            <li>one-tx atomic typed apply</li>
+            <li>supervisor failure не убивает node</li>
+          </ul>
+        </article>
+
+        <article class="decision not">
+          <h3>PoC сознательно не включает</h3>
+          <ul class="mini-list">
+            <li>1B / TargetLarge / scale claim</li>
+            <li>recursive proof и counted range tree</li>
+            <li>DA, custody, witness state, claims</li>
+            <li>HSM, mTLS и production launch broker</li>
+            <li>supported-network migration/upgrade</li>
+            <li>production SLO / chaos / recovery gate</li>
+            <li>generic registry/envelopes и второй program</li>
+          </ul>
+        </article>
+
+        <article class="decision fail">
+          <h3>Failure semantics</h3>
+          <ul class="mini-list">
+            <li><strong>1 domain offline:</strong> q=3 работает</li>
+            <li><strong>2 domains offline:</strong> job expires</li>
+            <li><strong>bad result:</strong> reject, no state change</li>
+            <li><strong>write conflict:</strong> CONFLICTED → READY</li>
+            <li><strong>no supervisors:</strong> expiry всё равно on-chain</li>
+            <li><strong>никогда:</strong> synchronous fallback</li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="invariants" aria-label="Ключевые инварианты">
+        <div class="invariant">
+          <strong>Input authority</strong>
+          <span>finality → state root → CE root → complete collection → bodies/openings</span>
+        </div>
+        <div class="invariant">
+          <strong>Computation authority</strong>
+          <span>four domains execute; worker count never increases Byzantine weight</span>
+        </div>
+        <div class="invariant">
+          <strong>Activation authority</strong>
+          <span>only the verifier creates the private move-only capability</span>
+        </div>
+        <div class="invariant">
+          <strong>Time authority</strong>
+          <span>economics use request logical time; only activation metadata uses current block</span>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <div>
+        <strong>Acceptance:</strong>
+        exact 13-step story in
+        <a href="off-chain-poc.md#13-acceptance-demonstration">off-chain-poc.md §13</a>.
+        Protocol flow:
+        <a href="docs/flows/002-off-chain-poc-protocol-flow.md">PFS-002</a>.
+        Scope audit:
+        <a href="outbe-plan/off-chain-poc-scope-audit.md">PASS</a>.
+      </div>
+      <div class="footer-code">
+        Parent SHA 5bc67987…79834<br>
+        PoC SHA fe9d14a6…534ce · bounded devnet / no on-chain Lysis / no fallback
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

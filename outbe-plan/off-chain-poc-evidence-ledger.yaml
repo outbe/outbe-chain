@@ -313,7 +313,7 @@ tests:
     evidence:
       - generated_sequence_seed_and_operations
       - legal_illegal_transition_results
-      - index_reservation_invariant_results
+      - index_budget_precondition_invariant_results
   OCM-APL-001:
     status: planned
     layer: PURE
@@ -336,7 +336,7 @@ tests:
     layer: MODULE
     lane: OCM-FAST
     planned_path: crates/core/lysis/tests/certified_boundary.rs
-    production_entrypoint: CertifiedLysisActivation and five owner APIs
+    production_entrypoint: CertifiedLysisActivation and four activation owner APIs
     real_components:
       - production_capability_type
       - production_owner_signatures
@@ -582,7 +582,8 @@ tests:
     real_components:
       - production_metadosis_dispatch
       - production_capability
-      - five_production_owner_apis
+      - four_production_activation_owner_apis
+      - production_request_budget_split_receipt
       - production_checkpoint
     substitutions:
       - named_test_only_owner_and_receipt_failpoints
@@ -595,8 +596,8 @@ tests:
       - STATE_ROOT_DIFF
       - PUBLIC_TX_RECEIPT
     evidence:
-      - five_owner_failure_matrix
-      - five_receipt_mutation_matrix
+      - four_activation_owner_failure_matrix
+      - four_activation_receipt_and_request_split_mutation_matrix
       - exact_retry_and_conflict_results
   OCM-TIM-001:
     status: planned

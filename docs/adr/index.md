@@ -78,6 +78,7 @@ or crate names, and cross-module runtime sagas remain PFS documents.
 | S | `GOV` | Governance, voting and protocol activation |
 | S | `FEE` | Fee waiver and sponsorship policy |
 | S | `ZKP` | ZK verification and proof hash profile |
+| S | `OCM` | Off-chain computation lifecycle, evidence and certified activation |
 | C | `TRB` | Tribute ledger and offer admission |
 | C | `NOD` | Nod ledger, issuance and qualification |
 | C | `GRT` | Gratis ledger, workflows and shielded pool |
@@ -189,6 +190,10 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-S-FEE-001](system/ADR-S-FEE-001-zero-fee-policy.md) | Zero-fee/sponsorship policy | zerofee | Proposed |
 | [ADR-S-ZKP-001](system/ADR-S-ZKP-001-versioned-zk-verifier-registry-and-crs-trust.md) | Circuit/VK registry and CRS trust | zkproof verifier | Proposed |
 | [ADR-S-ZKP-002](system/ADR-S-ZKP-002-poseidon-bn254-hash-contract.md) | Poseidon BN254 hash profile | zkproof Poseidon | Proposed |
+| [ADR-S-OCM-001](system/ADR-S-OCM-001-ocomp-kernel-and-typed-program-boundary.md) | OCOMP kernel and typed-program boundary | OCOMP lifecycle/process authority | Proposed |
+| [ADR-S-OCM-002](system/ADR-S-OCM-002-finalized-input-export-and-content-addressed-artifacts.md) | Finalized authenticated input export | checkpoint/export/CAS trust boundary | Proposed |
+| [ADR-S-OCM-003](system/ADR-S-OCM-003-deterministic-execution-and-quorum-evidence.md) | Deterministic execution and quorum evidence | planner/workers/attestation/relay | Proposed |
+| [ADR-S-OCM-004](system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md) | Certified activation, job FSM and versioning | consensus OCOMP state/apply | Proposed |
 
 ## Core Space
 

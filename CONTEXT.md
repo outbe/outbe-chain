@@ -33,3 +33,44 @@ authorities. It references ADRs but does not own or redefine their local state.
 stable three-letter architectural-owner code registered in `docs/adr/index.md`, and
 sequence is dense in dependency/evolution order within that `(space, module)` pair.
 The number is not global and does not imply nonexistent ADRs in other modules.
+
+## Off-chain Computation
+
+### OCOMP Operational Kernel
+
+The network-wide mechanism that owns finalized computation-job lifecycle,
+process/evidence boundaries and certified dispatch without owning a domain
+program's business semantics or effects.
+_Avoid_: Lysis framework, arbitrary task runner
+
+### Typed Program
+
+A closed, fork-pinned domain computation with its own authenticated input,
+deterministic semantics, typed result verifier and private effect authority.
+_Avoid_: plugin, uploaded job, task adapter
+
+### Job Intent
+
+The consensus record that fixes one computation request, its authenticated input
+commitments, attempt, request budget split, activation preconditions, protocol
+interpretation and deadline before off-chain execution begins.
+_Avoid_: event, worker job, scheduler task
+
+### Authenticated Input Bundle
+
+A content-addressed export whose canonical manifest and objects reconstruct the
+finalized commitments named by one Job Intent.
+_Avoid_: database dump, trusted Mongo snapshot
+
+### Validator Domain
+
+One Byzantine evidence identity comprising a validator's node, OCOMP services,
+workers and local artifacts, regardless of worker or process count.
+_Avoid_: worker vote, process validator
+
+### Certified Activation
+
+The atomic consensus transition that verifies evidence for one exact typed
+result, derives a private program-scoped capability and commits the owning domain
+effects or none.
+_Avoid_: generic write batch, result import

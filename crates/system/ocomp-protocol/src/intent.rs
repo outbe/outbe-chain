@@ -23,18 +23,6 @@ wire_enum_u8! {
 }
 
 wire_enum_u8! {
-    pub enum DesisExpectedStage {
-        None = 0,
-    }
-}
-
-wire_enum_u8! {
-    pub enum PromisOperation {
-        CheckedCommutativeAdd = 1,
-    }
-}
-
-wire_enum_u8! {
     pub enum MetadosisExpectedStatus {
         OffchainPending = 1,
     }
@@ -80,45 +68,41 @@ impl_top_level_codec!(PreAdmissionEnvelopeV1, PreAdmissionEnvelopeV1);
 wire_struct! {
     pub struct FrozenMetadosisValuesV1 {
         pub day_type: DayType,
-        pub metadosis_limit: U256,
+        pub day_limit: U256,
         pub previous_vwap: U256,
         pub current_vwap: U256,
         pub gratis_demand: U256,
         pub gratis_supply: U256,
-        pub gratis_allocation: U256,
-        pub allocation_limit_remainder: U256,
+        pub lysis_budget: U256,
+        pub auction_base: U256,
         pub auction_entry_price: U256,
+        pub request_budget_split_receipt_hash: B256,
     }
 }
 
 wire_struct! {
-    pub struct TributePartitionReservationV1 {
+    pub struct TributeInputBindingV1 {
         pub wwd: u32,
-        pub pending_nonce: u64,
         pub source_generation: u64,
         pub collection_key: B256,
         pub sealed_collection_root: B256,
         pub exact_count: u32,
         pub exact_nominal_total: U256,
-        pub state_version: u64,
     }
 }
 
 wire_struct! {
-    pub struct NodNamespaceReservationV1 {
+    pub struct NodTargetPreconditionV1 {
         pub wwd: u32,
-        pub pending_nonce: u64,
         pub target_generation: u64,
         pub namespace_root_before: B256,
         pub max_nod_count: u32,
-        pub state_version: u64,
     }
 }
 
 wire_struct! {
-    pub struct ContributorSeriesReservationV1 {
+    pub struct ContributorTargetPreconditionV1 {
         pub series_id: u32,
-        pub pending_nonce: u64,
         pub expected_series_version: u64,
         pub max_contributor_count: u32,
         pub max_eligible_nominal_total: U256,
@@ -126,28 +110,7 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct DesisBriefReservationV1 {
-        pub wwd: u32,
-        pub pending_nonce: u64,
-        pub expected_stage: DesisExpectedStage,
-        pub expected_state_version: u64,
-        pub logical_anchor: u64,
-        pub max_supply: U256,
-    }
-}
-
-wire_struct! {
-    pub struct PromisDeltaReservationV1 {
-        pub accumulator_key: B256,
-        pub pending_nonce: u64,
-        pub operation: PromisOperation,
-        pub max_delta: U256,
-        pub state_version: u64,
-    }
-}
-
-wire_struct! {
-    pub struct MetadosisReservationV1 {
+    pub struct MetadosisAttemptPreconditionV1 {
         pub wwd: u32,
         pub pending_nonce: u64,
         pub expected_status: MetadosisExpectedStatus,
@@ -156,16 +119,14 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct TargetReservationSetV1 {
-        pub tribute: TributePartitionReservationV1,
-        pub nod: NodNamespaceReservationV1,
-        pub contributors: ContributorSeriesReservationV1,
-        pub desis: DesisBriefReservationV1,
-        pub promis: PromisDeltaReservationV1,
-        pub metadosis: MetadosisReservationV1,
+    pub struct ActivationPreconditionsV1 {
+        pub tribute: TributeInputBindingV1,
+        pub nod: NodTargetPreconditionV1,
+        pub contributors: ContributorTargetPreconditionV1,
+        pub metadosis: MetadosisAttemptPreconditionV1,
     }
 }
-impl_top_level_codec!(TargetReservationSetV1, TargetReservationSetV1);
+impl_top_level_codec!(ActivationPreconditionsV1, ActivationPreconditionsV1);
 
 wire_struct! {
     pub struct JobIntentV1 {
@@ -186,7 +147,7 @@ wire_struct! {
         pub frozen_metadosis_values: FrozenMetadosisValuesV1,
         pub logical_evaluation_height: u64,
         pub logical_evaluation_time: u64,
-        pub target_reservations: TargetReservationSetV1,
+        pub activation_preconditions: ActivationPreconditionsV1,
         pub result_committee_snapshot_hash: B256,
         pub custody_committee_epoch_hash: Option<B256>,
         pub deadline_height: u64,
@@ -235,41 +196,38 @@ impl PreAdmissionEnvelopeV1 {
     }
 }
 
-impl TargetReservationSetV1 {
-    pub fn reservation_set_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        hash_framed(HashDomain::ReservationSet, &self.encode_canonical(limits)?)
+impl ActivationPreconditionsV1 {
+    pub fn activation_preconditions_hash(
+        &self,
+        limits: &SchemaLimits,
+    ) -> Result<B256, ProtocolError> {
+        hash_framed(
+            HashDomain::ActivationPreconditions,
+            &self.encode_canonical(limits)?,
+        )
     }
 
     pub fn validate_for_intent(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
         require(
             self.tribute.wwd == intent.wwd
                 && self.nod.wwd == intent.wwd
-                && self.desis.wwd == intent.wwd
                 && self.metadosis.wwd == intent.wwd
                 && self.contributors.series_id == intent.wwd,
-            "reservation owner day binding",
+            "activation precondition day binding",
         )?;
         require(
-            self.tribute.pending_nonce == intent.pending_nonce
-                && self.nod.pending_nonce == intent.pending_nonce
-                && self.contributors.pending_nonce == intent.pending_nonce
-                && self.desis.pending_nonce == intent.pending_nonce
-                && self.promis.pending_nonce == intent.pending_nonce
-                && self.metadosis.pending_nonce == intent.pending_nonce,
-            "reservation nonce binding",
+            self.metadosis.pending_nonce == intent.pending_nonce,
+            "activation precondition nonce binding",
         )?;
         require(
             self.tribute.exact_count == intent.authenticated_day_count
                 && self.tribute.exact_nominal_total == intent.authenticated_day_nominal
+                && self.tribute.collection_key == intent.sealed_tribute_collection_key
+                && self.tribute.sealed_collection_root == intent.sealed_tribute_collection_root
                 && self.nod.max_nod_count == self.tribute.exact_count
                 && self.contributors.max_contributor_count == self.tribute.exact_count
                 && self.contributors.max_eligible_nominal_total == self.tribute.exact_nominal_total,
-            "reservation source bounds",
-        )?;
-        require(
-            self.desis.max_supply <= intent.frozen_metadosis_values.metadosis_limit
-                && self.promis.max_delta <= intent.frozen_metadosis_values.metadosis_limit,
-            "reservation monetary bounds",
+            "activation precondition source bounds",
         )
     }
 }
@@ -289,7 +247,18 @@ impl JobIntentV1 {
             self.deadline_height > self.logical_evaluation_height,
             "deadline follows logical evaluation height",
         )?;
-        self.target_reservations.validate_for_intent(self)
+        let split_total = self
+            .frozen_metadosis_values
+            .lysis_budget
+            .checked_add(self.frozen_metadosis_values.auction_base)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "Metadosis budget split",
+            })?;
+        require(
+            split_total == self.frozen_metadosis_values.day_limit,
+            "Metadosis budget split",
+        )?;
+        self.activation_preconditions.validate_for_intent(self)
     }
 
     pub fn job_id(

@@ -24,23 +24,22 @@ use outbe_ocomp_protocol::{
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
     intent::{
-        CertifiedParentAccountingMetadataV2, ContributorSeriesReservationV1, DayType,
-        DesisBriefReservationV1, DesisExpectedStage, FinalizedIntentProofV1,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisExpectedStatus, MetadosisReservationV1,
-        NodNamespaceReservationV1, ParentProofKind, PreAdmissionEnvelopeV1,
-        PromisDeltaReservationV1, PromisOperation, TargetReservationSetV1,
-        TributePartitionReservationV1,
+        ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
+        ContributorTargetPreconditionV1, DayType, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, ParentProofKind, PreAdmissionEnvelopeV1, TributeInputBindingV1,
     },
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
-        ActivationOutcome, AggregateActivationReceiptV1, ContributorReceiptV1, DesisReceiptV1,
-        EffectBindingV1, NodBatchReceiptV1, PromisReceiptV1, TributeReceiptV1,
+        ActivationOutcome, AggregateActivationReceiptV1, BudgetSplitDestination,
+        CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1, NodBatchReceiptV1,
+        RequestBudgetSplitReceiptV1, TributeReceiptV1,
     },
     registry::{HashDomain, ObjectKind},
     result::{
-        ActionStreamV1, ActivationPayloadV1, AuctionBriefActionV1, BoundedLysisResultV1,
-        CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
-        MetadosisCompletionSummaryV1, PromisDeltaActionV1, ResultRootsV1,
+        ActionStreamV1, ActivationPayloadV1, BoundedLysisResultV1, CarryOverCreditActionV1,
+        CarryOverReason, CompletionStatus, ConservationTotalsV1, ExactCountsV1,
+        LysisArithmeticSummaryV1, MetadosisCompletionSummaryV1, ResultRootsV1,
     },
     state::{
         ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1,
@@ -105,49 +104,29 @@ fn bundle() -> ProtocolBundleV1 {
     }
 }
 
-fn reservations() -> TargetReservationSetV1 {
-    TargetReservationSetV1 {
-        tribute: TributePartitionReservationV1 {
+fn preconditions() -> ActivationPreconditionsV1 {
+    ActivationPreconditionsV1 {
+        tribute: TributeInputBindingV1 {
             wwd: 7,
-            pending_nonce: 1,
             source_generation: 3,
             collection_key: hash(30),
             sealed_collection_root: hash(31),
             exact_count: 0,
             exact_nominal_total: U256::ZERO,
-            state_version: 4,
         },
-        nod: NodNamespaceReservationV1 {
+        nod: NodTargetPreconditionV1 {
             wwd: 7,
-            pending_nonce: 1,
             target_generation: 5,
             namespace_root_before: hash(32),
             max_nod_count: 0,
-            state_version: 6,
         },
-        contributors: ContributorSeriesReservationV1 {
+        contributors: ContributorTargetPreconditionV1 {
             series_id: 7,
-            pending_nonce: 1,
             expected_series_version: 8,
             max_contributor_count: 0,
             max_eligible_nominal_total: U256::ZERO,
         },
-        desis: DesisBriefReservationV1 {
-            wwd: 7,
-            pending_nonce: 1,
-            expected_stage: DesisExpectedStage::None,
-            expected_state_version: 9,
-            logical_anchor: 10,
-            max_supply: U256::ZERO,
-        },
-        promis: PromisDeltaReservationV1 {
-            accumulator_key: hash(33),
-            pending_nonce: 1,
-            operation: PromisOperation::CheckedCommutativeAdd,
-            max_delta: U256::ZERO,
-            state_version: 11,
-        },
-        metadosis: MetadosisReservationV1 {
+        metadosis: MetadosisAttemptPreconditionV1 {
             wwd: 7,
             pending_nonce: 1,
             expected_status: MetadosisExpectedStatus::OffchainPending,
@@ -174,18 +153,19 @@ fn intent() -> JobIntentV1 {
         source_availability_policy_id: hash(44),
         frozen_metadosis_values: FrozenMetadosisValuesV1 {
             day_type: DayType::Green,
-            metadosis_limit: U256::ZERO,
+            day_limit: U256::ZERO,
             previous_vwap: U256::ZERO,
             current_vwap: U256::ZERO,
             gratis_demand: U256::ZERO,
             gratis_supply: U256::ZERO,
-            gratis_allocation: U256::ZERO,
-            allocation_limit_remainder: U256::ZERO,
+            lysis_budget: U256::ZERO,
+            auction_base: U256::ZERO,
             auction_entry_price: U256::ZERO,
+            request_budget_split_receipt_hash: hash(113),
         },
         logical_evaluation_height: 100,
         logical_evaluation_time: 1_000,
-        target_reservations: reservations(),
+        activation_preconditions: preconditions(),
         result_committee_snapshot_hash: hash(45),
         custody_committee_epoch_hash: None,
         deadline_height: 110,
@@ -226,31 +206,24 @@ fn result() -> BoundedLysisResultV1 {
     let action_stream = ActionStreamV1 {
         ordered_nod_actions: Vec::new(),
         ordered_eligible_contributors: Vec::new(),
-        auction_brief_action: AuctionBriefActionV1 {
-            wwd: 7,
-            supply: U256::ZERO,
-            entry_price: U256::ZERO,
-            is_green: true,
-            logical_anchor: 10,
-            expected_accepted: false,
-        },
-        promis_delta: PromisDeltaActionV1 {
-            accumulator_key: hash(33),
-            operation: PromisOperation::CheckedCommutativeAdd,
-            applied_delta: U256::ZERO,
+        carry_over_credit: CarryOverCreditActionV1 {
+            source_wwd: 7,
+            reason: CarryOverReason::UnusedLysis,
+            amount: U256::ZERO,
         },
         metadosis_completion_summary: MetadosisCompletionSummaryV1 {
             wwd: 7,
             pending_nonce: 1,
             day_type: DayType::Green,
             tribute_nominal_total: U256::ZERO,
+            day_limit: U256::ZERO,
             gratis_demand: U256::ZERO,
             gratis_supply: U256::ZERO,
-            gratis_allocation: U256::ZERO,
-            remaining_gratis: U256::ZERO,
-            net_gratis_allocation: U256::ZERO,
-            post_lysis_remainder: U256::ZERO,
-            promis_delta: U256::ZERO,
+            lysis_budget: U256::ZERO,
+            auction_base: U256::ZERO,
+            nod_gratis_consumed: U256::ZERO,
+            unused_lysis: U256::ZERO,
+            carry_over_credit: U256::ZERO,
             status: CompletionStatus::Completed,
             logical_evaluation_height: 100,
             logical_evaluation_time: 1_000,
@@ -272,16 +245,14 @@ fn result() -> BoundedLysisResultV1 {
     let conservation = ConservationTotalsV1 {
         tribute_nominal_total: U256::ZERO,
         eligible_nominal_total: U256::ZERO,
-        metadosis_limit: U256::ZERO,
+        day_limit: U256::ZERO,
         gratis_demand: U256::ZERO,
         gratis_supply: U256::ZERO,
-        gratis_allocation: U256::ZERO,
+        lysis_budget: U256::ZERO,
+        auction_base: U256::ZERO,
         nod_gratis_consumed: U256::ZERO,
-        remaining_gratis: U256::ZERO,
-        allocation_limit_remainder: U256::ZERO,
-        post_lysis_remainder: U256::ZERO,
-        desis_supply: U256::ZERO,
-        promis_delta: U256::ZERO,
+        unused_lysis: U256::ZERO,
+        carry_over_credit: U256::ZERO,
         nod_cost_total: U256::ZERO,
     };
     let summary = LysisArithmeticSummaryV1 {
@@ -312,7 +283,7 @@ fn result() -> BoundedLysisResultV1 {
         action_stream,
         tribute_count: 0,
         tribute_nominal_total: U256::ZERO,
-        remaining_gratis: U256::ZERO,
+        unused_lysis: U256::ZERO,
         roots,
         counts,
         conservation,
@@ -409,7 +380,7 @@ fn binding() -> EffectBindingV1 {
         attempt: 1,
         protocol_bundle_hash: hash(41),
         result_digest: hash(81),
-        reservation_set_hash: hash(82),
+        activation_preconditions_hash: hash(82),
         activation_call_id: hash(83),
     }
 }
@@ -421,8 +392,8 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         nod_receipt_hash: None,
         contributor_receipt_hash: None,
         tribute_receipt_hash: None,
-        desis_receipt_hash: None,
-        promis_receipt_hash: None,
+        carry_over_receipt_hash: None,
+        request_budget_split_receipt_hash: hash(113),
         active_generation_hash: None,
         effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
         event_summary_hash: hash(84),
@@ -607,12 +578,12 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         attempt: result.attempt,
         protocol_bundle_hash: result.protocol_bundle_hash,
         result_digest,
-        reservation_set_hash: hash(82),
+        activation_preconditions_hash: hash(82),
         terminal_pending_nonce: 1,
     };
     let nod_receipt = NodBatchReceiptV1 {
         binding: binding(),
-        nod_namespace_reservation: reservations().nod,
+        nod_target_precondition: preconditions().nod,
         nod_count: 0,
         nod_root: result.roots.nod_root,
         nod_amount_total: U256::ZERO,
@@ -622,7 +593,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     };
     let contributor_receipt = ContributorReceiptV1 {
         binding: binding(),
-        contributor_series_reservation: reservations().contributors,
+        contributor_target_precondition: preconditions().contributors,
         contributor_count: 0,
         contributor_root: result.roots.contributor_root,
         eligible_nominal_total: U256::ZERO,
@@ -630,27 +601,32 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     };
     let tribute_receipt = TributeReceiptV1 {
         binding: binding(),
-        tribute_partition_reservation: reservations().tribute,
+        tribute_input_binding: preconditions().tribute,
         sealed_collection_root: hash(31),
         consumed_count: 0,
         consumed_nominal_total: U256::ZERO,
         retired_generation: 3,
         state_event_digest: hash(112),
     };
-    let desis_receipt = DesisReceiptV1 {
-        binding: binding(),
-        desis_reservation: reservations().desis,
-        brief_hash: hash(113),
+    let request_budget_split_receipt = RequestBudgetSplitReceiptV1 {
+        protocol_bundle_hash: hash(41),
+        wwd: 7,
+        pending_nonce: 1,
+        day_type: DayType::Green,
+        day_limit: U256::ZERO,
+        lysis_budget: U256::ZERO,
+        auction_base: U256::ZERO,
+        destination: BudgetSplitDestination::DesisAuction,
+        desis_brief_hash: Some(hash(113)),
+        carry_over_credit: U256::ZERO,
+        auction_entry_price: U256::ZERO,
         logical_anchor: 10,
-        accepted_brief_count: 0,
-        state_event_digest: hash(114),
     };
-    let promis_receipt = PromisReceiptV1 {
+    let carry_over_receipt = CarryOverReceiptV1 {
         binding: binding(),
-        promis_reservation: reservations().promis,
-        accumulator_key: hash(33),
+        source_wwd: 7,
         before_value: U256::ZERO,
-        applied_delta: U256::ZERO,
+        credited_unused_lysis: U256::ZERO,
         after_value: U256::ZERO,
         state_event_digest: hash(115),
     };
@@ -687,9 +663,9 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         PreAdmissionEnvelopeV1
     );
     assert_round_trip!(
-        reservations(),
-        TargetReservationSetV1,
-        TargetReservationSetV1
+        preconditions(),
+        ActivationPreconditionsV1,
+        ActivationPreconditionsV1
     );
     assert_round_trip!(intent(), JobIntentV1, JobIntentV1);
     assert_round_trip!(proof, FinalizedIntentProofV1, FinalizedIntentProofV1);
@@ -725,8 +701,12 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         ContributorReceiptV1
     );
     assert_round_trip!(tribute_receipt, TributeReceiptV1, TributeReceiptV1);
-    assert_round_trip!(desis_receipt, DesisReceiptV1, DesisReceiptV1);
-    assert_round_trip!(promis_receipt, PromisReceiptV1, PromisReceiptV1);
+    assert_round_trip!(
+        request_budget_split_receipt,
+        RequestBudgetSplitReceiptV1,
+        RequestBudgetSplitReceiptV1
+    );
+    assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
     assert_round_trip!(candidate, CandidateAnnouncementV1, CandidateAnnouncementV1);
     assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
     assert_round_trip!(activation_call, ActivationCallCoreV1, ActivationCallCoreV1);
@@ -810,6 +790,98 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
     assert!(matches!(
         invalid_result.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("result exact counts"))
+    ));
+}
+
+#[test]
+fn split_budget_and_carry_over_invariants_fail_closed() {
+    let mut invalid_intent = intent();
+    invalid_intent.frozen_metadosis_values.day_limit = U256::from(1);
+    assert!(matches!(
+        invalid_intent.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("Metadosis budget split"))
+    ));
+
+    let green_split = RequestBudgetSplitReceiptV1 {
+        protocol_bundle_hash: hash(41),
+        wwd: 7,
+        pending_nonce: 1,
+        day_type: DayType::Green,
+        day_limit: U256::from(10),
+        lysis_budget: U256::from(4),
+        auction_base: U256::from(6),
+        destination: BudgetSplitDestination::DesisAuction,
+        desis_brief_hash: Some(hash(113)),
+        carry_over_credit: U256::ZERO,
+        auction_entry_price: U256::from(2),
+        logical_anchor: 10,
+    };
+    green_split.encode_canonical(&LIMITS).unwrap();
+
+    let mut green_to_carry_over = green_split.clone();
+    green_to_carry_over.destination = BudgetSplitDestination::CarryOver;
+    green_to_carry_over.desis_brief_hash = None;
+    green_to_carry_over.carry_over_credit = green_to_carry_over.auction_base;
+    assert!(matches!(
+        green_to_carry_over.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "request budget split destination"
+        ))
+    ));
+
+    let mut red_split = green_split;
+    red_split.day_type = DayType::Red;
+    red_split.destination = BudgetSplitDestination::CarryOver;
+    red_split.desis_brief_hash = None;
+    red_split.carry_over_credit = red_split.auction_base;
+    red_split.encode_canonical(&LIMITS).unwrap();
+
+    let mut red_to_desis = red_split;
+    red_to_desis.destination = BudgetSplitDestination::DesisAuction;
+    red_to_desis.desis_brief_hash = Some(hash(113));
+    red_to_desis.carry_over_credit = U256::ZERO;
+    assert!(matches!(
+        red_to_desis.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "request budget split destination"
+        ))
+    ));
+
+    let mut invalid_lysis_conservation = result();
+    invalid_lysis_conservation.conservation.day_limit = U256::from(1);
+    invalid_lysis_conservation.conservation.lysis_budget = U256::from(1);
+    assert!(matches!(
+        invalid_lysis_conservation.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("Lysis budget conservation"))
+    ));
+
+    let mut invalid_carry_over = result();
+    invalid_carry_over.conservation.carry_over_credit = U256::from(1);
+    assert!(matches!(
+        invalid_carry_over.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("carry-over conservation"))
+    ));
+
+    let invalid_receipt = CarryOverReceiptV1 {
+        binding: binding(),
+        source_wwd: 7,
+        before_value: U256::from(3),
+        credited_unused_lysis: U256::from(4),
+        after_value: U256::from(8),
+        state_event_digest: hash(115),
+    };
+    assert!(matches!(
+        invalid_receipt.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant("carry-over receipt"))
+    ));
+
+    let mut partial_conflict = conflict_receipt();
+    partial_conflict.nod_receipt_hash = Some(hash(110));
+    assert!(matches!(
+        partial_conflict.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "aggregate receipt outcome shape"
+        ))
     ));
 }
 

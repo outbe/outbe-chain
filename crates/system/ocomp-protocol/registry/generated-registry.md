@@ -9,7 +9,7 @@
 | `0x0002` | `CorrectnessProfileV1` | `CorrectnessProfileV1` |
 | `0x0003` | `CapacityProfileV1` | `CapacityProfileV1` |
 | `0x0004` | `PreAdmissionEnvelopeV1` | `PreAdmissionEnvelopeV1` |
-| `0x0005` | `TargetReservationSetV1` | `TargetReservationSetV1` |
+| `0x0005` | `ActivationPreconditionsV1` | `ActivationPreconditionsV1` |
 | `0x0006` | `JobIntentV1` | `JobIntentV1` |
 | `0x0007` | `FinalizedIntentProofV1` | `FinalizedIntentProofV1` |
 | `0x0008` | `InputManifestV1` | `InputManifestV1` |
@@ -28,8 +28,8 @@
 | `0x0015` | `NodBatchReceiptV1` | `NodBatchReceiptV1` |
 | `0x0016` | `ContributorReceiptV1` | `ContributorReceiptV1` |
 | `0x0017` | `TributeReceiptV1` | `TributeReceiptV1` |
-| `0x0018` | `DesisReceiptV1` | `DesisReceiptV1` |
-| `0x0019` | `PromisReceiptV1` | `PromisReceiptV1` |
+| `0x0018` | `RequestBudgetSplitReceiptV1` | `RequestBudgetSplitReceiptV1` |
+| `0x0019` | `CarryOverReceiptV1` | `CarryOverReceiptV1` |
 | `0x001a` | `CandidateAnnouncementV1` | `CandidateAnnouncementV1` |
 | `0x001b` | `SignOnceRecordV1` | `SignOnceRecordV1` |
 | `0x001c` | `ActivationCallCoreV1` | `ActivationCallCoreV1` |
@@ -42,7 +42,7 @@
 |---:|---|---|
 | — | `ProtocolBundle` | `OUTBE_OCOMP_PROTOCOL_BUNDLE_V1` |
 | — | `PreAdmission` | `OUTBE_OCOMP_PRE_ADMISSION_V1` |
-| — | `ReservationSet` | `OUTBE_OCOMP_RESERVATION_SET_V1` |
+| — | `ActivationPreconditions` | `OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1` |
 | — | `Intent` | `OUTBE_OCOMP_INTENT_V1` |
 | — | `IntentSlot` | `OUTBE_OCOMP_INTENT_SLOT_V1` |
 | — | `Job` | `OUTBE_OCOMP_JOB_V1` |
@@ -69,8 +69,8 @@
 | — | `NodReceipt` | `OUTBE_OCOMP_NOD_RECEIPT_V1` |
 | — | `ContributorReceipt` | `OUTBE_OCOMP_CONTRIBUTOR_RECEIPT_V1` |
 | — | `TributeReceipt` | `OUTBE_OCOMP_TRIBUTE_RECEIPT_V1` |
-| — | `DesisReceipt` | `OUTBE_OCOMP_DESIS_RECEIPT_V1` |
-| — | `PromisReceipt` | `OUTBE_OCOMP_PROMIS_RECEIPT_V1` |
+| — | `BudgetSplitReceipt` | `OUTBE_OCOMP_BUDGET_SPLIT_RECEIPT_V1` |
+| — | `CarryOverReceipt` | `OUTBE_OCOMP_CARRY_OVER_RECEIPT_V1` |
 | — | `ActiveGeneration` | `OUTBE_OCOMP_ACTIVE_GENERATION_V1` |
 | — | `JobRecord` | `OUTBE_OCOMP_JOB_RECORD_V1` |
 | — | `StateEvents` | `OUTBE_OCOMP_STATE_EVENTS_V1` |
