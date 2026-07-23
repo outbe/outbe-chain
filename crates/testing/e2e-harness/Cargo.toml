@@ -24,6 +24,7 @@ tokio.workspace = true
 eyre.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+serde_yaml_ng.workspace = true
 sha2.workspace = true
 walkdir.workspace = true
 mongodb.workspace = true
@@ -60,6 +61,13 @@ path = "src/main.rs"
 [[bin]]
 name = "outbe-release-sgx-e2e"
 path = "src/bin/outbe-release-sgx-e2e.rs"
+
+[[bin]]
+name = "outbe-e2e-evidence"
+path = "src/bin/outbe-e2e-evidence.rs"
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

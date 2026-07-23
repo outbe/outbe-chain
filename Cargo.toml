@@ -241,6 +241,7 @@ ark-ff = { version = "0.6", features = ["std"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml_ng = "0.10"
 # Compact binary serde format for the node<->enclave wire (postcard): the offer
 # ciphertext rides as length-prefixed raw bytes (1x) instead of a JSON number
 # array (~4x), and alloy U256/Address/B256 serialize as bytes, not hex strings.

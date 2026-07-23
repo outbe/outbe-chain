@@ -1,0 +1,73 @@
+name: OCOMP PoC
+
+on:
+  pull_request:
+    paths:
+      - "outbe-plan/**"
+      - "crates/testing/e2e-harness/**"
+      - "scripts/ocomp-poc-task.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - ".github/workflows/ocomp-poc.yml"
+  push:
+    branches: ["main", "feat/ocomp-poc"]
+    paths:
+      - "outbe-plan/**"
+      - "crates/testing/e2e-harness/**"
+      - "scripts/ocomp-poc-task.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "mise.toml"
+      - ".github/workflows/ocomp-poc.yml"
+  workflow_dispatch:
+    inputs:
+      run_closure:
+        description: "Run the fail-closed full closure gate"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ocm-00-task-progress:
+    name: OCM-00 task progress
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - run: mise run ocomp-poc-task -- OCM-00
+
+  poc-closure:
+    name: PoC closure (fail closed)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_closure
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libc++-dev libc++abi-dev
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Verify exact-artifact closure
+        run: mise run ocomp-poc-closure -- --evidence-dir "$RUNNER_TEMP/ocomp-evidence"

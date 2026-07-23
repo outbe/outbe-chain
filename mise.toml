@@ -270,6 +270,47 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --al
 description = "Alias for the Rust/Cucumber e2e suite"
 depends = ["e2e"]
 
+# ─── Off-chain Computation PoC ─────────────────────────────────────── #
+#
+# These names are the stable surfaces frozen by the OCOMP PoC plan. OCM-00
+# intentionally leaves future lanes fail-closed: only the named task-progress
+# command may pass while later stable IDs are still reported as MISSING.
+
+[tasks.ocomp-poc-task]
+description = "Run one OCOMP implementation task merge gate without claiming PoC closure"
+run = "bash ./scripts/ocomp-poc-task.sh"
+
+[tasks.ocomp-poc-fast]
+description = "Run the OCOMP fast lane; fails while any planned fast evidence is missing"
+run = """
+cargo test --locked -p outbe-e2e-harness --test ocomp_evidence_verifier
+cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-FAST
+"""
+
+[tasks.ocomp-poc-integration]
+description = "Run the OCOMP process/integration lane; currently fail-closed on MISSING"
+run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-INT"
+
+[tasks.ocomp-poc-public-path]
+description = "Run the OCOMP public execution lane; currently fail-closed on MISSING"
+run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-PUBLIC"
+
+[tasks.ocomp-poc-e2e]
+description = "Run the four-domain OCOMP E2E lane; currently fail-closed on MISSING"
+run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-E2E"
+
+[tasks.ocomp-poc-isolation]
+description = "Run the OCOMP systemd/cgroup isolation lane; currently fail-closed on MISSING"
+run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-ISO"
+
+[tasks.ocomp-poc-evidence-verify]
+description = "Independently verify one OCOMP run-manifest.json"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- verify "$@"'
+
+[tasks.ocomp-poc-closure]
+description = "Verify complete exact-artifact OCOMP PoC evidence; missing evidence is failure"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- closure "$@"'
+
 # The hardware lane must be distinct from `e2e`: the default suite intentionally
 # uses gramine-direct/mock so it runs on developer machines. This task builds the
 # real enclave binary and makes the harness request gramine-sgx containers.
