@@ -148,6 +148,7 @@ impl TributeContract<'_> {
         }
 
         self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
+        self.update_pre_admission_for_tribute(tribute, true)?;
 
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -209,6 +210,7 @@ impl TributeContract<'_> {
         let LoadedTribute { body, current } = loaded;
         let tribute = body;
         self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
+        self.update_pre_admission_for_tribute(&tribute, false)?;
 
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -263,6 +265,9 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
+        if self.pre_admission_projection(day)?.is_sealed {
+            return Err(TributeError::PreAdmissionSealed.into());
+        }
         let mut totals = self.get_day_totals(day)?;
         totals.initialized = true;
         totals.is_sealed = false;
@@ -272,5 +277,42 @@ impl TributeContract<'_> {
             isSealed: false,
         })?;
         Ok(())
+    }
+
+    /// Freezes the bounded Tribute projection after the WWD and its CE
+    /// collection have both been sealed. The root must come from the
+    /// terminal CE lifecycle; callers cannot replace an already sealed value.
+    pub fn seal_pre_admission(
+        &mut self,
+        day: WorldwideDay,
+        sealed_collection_root: alloy_primitives::B256,
+    ) -> Result<crate::TributePreAdmissionProjection> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            if !self.ocomp_profile_ready.read()? {
+                return Err(TributeError::OcompProfileNotReady.into());
+            }
+            if sealed_collection_root.is_zero() {
+                return Err(TributeError::InvalidSealedCollectionRoot.into());
+            }
+            let totals = self.get_day_totals(day)?;
+            if !totals.initialized || !totals.is_sealed {
+                return Err(TributeError::WorldwideDaySealed.into());
+            }
+            let mut admission = self
+                .day_pre_admission
+                .get(day)?
+                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            if admission.is_sealed {
+                return Err(TributeError::PreAdmissionSealed.into());
+            }
+            admission.initialized = true;
+            admission.is_sealed = true;
+            admission.sealed_collection_root = sealed_collection_root;
+            admission.sealed_tribute_count = totals.tribute_count;
+            admission.sealed_tribute_nominal_amount = totals.tribute_nominal_amount;
+            self.store_day_pre_admission(&admission)?;
+            self.pre_admission_projection(day)
+        })
     }
 }

@@ -11,7 +11,8 @@ pub use repository::{
     TributeRepositoryReader, TributeRepositoryWriter,
 };
 pub use runtime::LoadedTribute;
-pub use schema::{DayTotals, TributeContract, TributeData};
+pub use schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
+pub use state::TributePreAdmissionProjection;
 
 #[cfg(test)]
 mod tests;

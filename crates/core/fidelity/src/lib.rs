@@ -4,6 +4,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 
+pub use runtime::{FidelityOcompProjection, OCOMP_POC_MAX_COHORTS_PER_OWNER};
 pub use schema::FidelityContract;
 
 #[cfg(test)]

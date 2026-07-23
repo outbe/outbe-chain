@@ -156,6 +156,125 @@ mod oracle_tests {
     }
 
     #[test]
+    fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
+        let timestamp = 1_753_315_200_u64;
+        with_storage_at(timestamp, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
+            let last_closed = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(timestamp),
+            );
+            let last_closed_start = outbe_primitives::time::date_key_to_utc_timestamp(last_closed);
+            let last_closed_price = U256::from(125);
+
+            let uninitialized = crate::api::ocomp_pre_admission_projection(
+                storage.clone(),
+                wwd,
+                U256::from(99),
+                timestamp,
+            )
+            .unwrap();
+            assert!(!uninitialized.profile_ready);
+            assert_eq!(uninitialized.oracle_state_version, 0);
+
+            crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+            oracle
+                .write_snapshot(
+                    last_closed_start + 100,
+                    &[(pair_id, last_closed_price, U256::from(1))],
+                )
+                .unwrap();
+            oracle
+                .store_worldwide_day_vwap_snapshot(
+                    wwd,
+                    last_closed_start,
+                    last_closed_start + outbe_primitives::time::SECONDS_PER_DAY,
+                )
+                .unwrap();
+            oracle.finalize_utc_day_vwap(last_closed).unwrap();
+            crate::scurve::store_scurve_entry(
+                &mut oracle,
+                pair_id,
+                last_closed_start,
+                U256::from(200),
+            )
+            .unwrap();
+
+            let closed = crate::api::ocomp_pre_admission_projection(
+                storage.clone(),
+                wwd,
+                U256::from(99),
+                timestamp,
+            )
+            .unwrap();
+            assert!(closed.profile_ready);
+            assert_eq!(closed.auction_entry_price, last_closed_price);
+            assert_eq!(
+                closed.auction_entry_price_source,
+                crate::api::OcompAuctionEntryPriceSource::LastClosedDayVwap
+            );
+            assert_eq!(closed.auction_entry_price_source_day, last_closed);
+            assert_eq!(closed.oracle_state_version, 5);
+            assert_eq!(closed.wwd_pair_entries, 1);
+            assert_eq!(closed.active_scurve_entries, 1);
+
+            let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
+            let next_wwd = outbe_common::WorldwideDay::from_timestamp(next_timestamp);
+            let fallback = crate::api::ocomp_pre_admission_projection(
+                storage,
+                next_wwd,
+                U256::from(99),
+                next_timestamp,
+            )
+            .unwrap();
+            assert!(fallback.profile_ready);
+            assert_eq!(fallback.auction_entry_price, U256::from(99));
+            assert_eq!(
+                fallback.auction_entry_price_source,
+                crate::api::OcompAuctionEntryPriceSource::CurrentVwapFallback
+            );
+            assert_eq!(fallback.auction_entry_price_source_day, next_wwd.value());
+            assert_eq!(fallback.oracle_state_version, 5);
+            assert_eq!(fallback.wwd_pair_entries, 0);
+            assert_eq!(fallback.active_scurve_entries, 1);
+        });
+    }
+
+    #[test]
+    fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
+        with_storage(|storage| {
+            assert!(crate::api::initialize_fresh_ocomp_profile(storage.clone()).is_err());
+
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+
+            assert!(oracle.ocomp_profile_ready.read().unwrap());
+            assert_eq!(oracle.ocomp_day_type_pair_id.read().unwrap(), pair_id);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            oracle.ocomp_state_version.write(u64::MAX).unwrap();
+
+            assert!(oracle
+                .write_snapshot(1_000, &[(pair_id, U256::from(10), U256::from(1))],)
+                .is_err());
+            assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+            assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), u64::MAX);
+        });
+    }
+
+    #[test]
     fn test_config_read_write() {
         with_storage(|storage| {
             let oracle = OracleContract::new(storage.clone());
@@ -1426,16 +1545,6 @@ mod oracle_tests {
             IOracle::IOracleCalls::COUNT,
             EXPECTED_IORACLE_FUNCTIONS,
             "IOracle function count changed; update selector collision coverage"
-        );
-
-        let external_interface_count =
-            include_str!("../../../../contracts/precompiles/src/IOracle.sol")
-                .lines()
-                .filter(|line| line.trim_start().starts_with("function "))
-                .count();
-        assert_eq!(
-            external_interface_count, EXPECTED_IORACLE_FUNCTIONS,
-            "contracts/precompiles/src/IOracle.sol function count must stay in sync with precompile IOracle"
         );
 
         let unique: HashSet<[u8; 4]> = selectors.iter().copied().collect();

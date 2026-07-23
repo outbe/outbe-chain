@@ -3,7 +3,18 @@ use crate::schema::{
     active_cohort_key, sold_cohort_key, ActiveCohort, FidelityContract, SoldCohort,
 };
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+
+/// Fork-fixed PoC ceiling for one owner's complete Fidelity opening.
+pub const OCOMP_POC_MAX_COHORTS_PER_OWNER: u16 = 64;
+
+/// Bounded authenticated Fidelity values consumed by OCOMP pre-admission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FidelityOcompProjection {
+    pub profile_ready: bool,
+    pub max_cohorts_per_owner: u16,
+    pub max_cohorts_observed: u16,
+}
 
 /// Lowest league id (1-based). Assigned to the bottom slot and to accounts with
 /// no retention / before any account has qualified.
@@ -12,14 +23,67 @@ pub(crate) const MIN_LEAGUE: u16 = 1;
 pub(crate) const MAX_LEAGUE: u16 = 4096;
 
 impl FidelityContract<'_> {
+    /// Initializes the OCOMP profile only for the fresh-devnet empty Fidelity
+    /// state. The later fork handler owns the sole production call site.
+    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<FidelityOcompProjection> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            if self.ocomp_profile_ready.read()? {
+                let projection = self.ocomp_projection()?;
+                if projection.max_cohorts_per_owner != OCOMP_POC_MAX_COHORTS_PER_OWNER {
+                    return Err(PrecompileError::Fatal(
+                        "Fidelity OCOMP profile cap mismatch".into(),
+                    ));
+                }
+                return Ok(projection);
+            }
+            if self.first_qualified_start.read()? != 0
+                || self.ocomp_max_cohorts_observed.read()? != 0
+                || self.ocomp_max_cohorts_per_owner.read()? != 0
+            {
+                return Err(PrecompileError::Fatal(
+                    "Fidelity OCOMP fresh profile requires empty state".into(),
+                ));
+            }
+            self.ocomp_max_cohorts_per_owner
+                .write(OCOMP_POC_MAX_COHORTS_PER_OWNER)?;
+            self.ocomp_max_cohorts_observed.write(0)?;
+            self.ocomp_profile_ready.write(true)?;
+            self.ocomp_projection()
+        })
+    }
+
+    pub fn ocomp_projection(&self) -> Result<FidelityOcompProjection> {
+        Ok(FidelityOcompProjection {
+            profile_ready: self.ocomp_profile_ready.read()?,
+            max_cohorts_per_owner: self.ocomp_max_cohorts_per_owner.read()?,
+            max_cohorts_observed: self.ocomp_max_cohorts_observed.read()?,
+        })
+    }
+
+    pub fn owner_cohort_count(&self, account: Address) -> Result<u32> {
+        self.active_count
+            .read(&account)?
+            .checked_add(self.sold_count.read(&account)?)
+            .ok_or_else(|| {
+                PrecompileError::BodyReadCorruption("Fidelity owner cohort count overflow".into())
+            })
+    }
+
     /// ACQUISITION hook ("mine Gratis from nod"): records a new active cohort.
     ///
     /// `timestamp` is the block timestamp in seconds, passed by the caller. No-op on a
     /// zero amount.
     pub fn cohort_in(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| self.cohort_in_inner(account, amount, timestamp))
+    }
+
+    fn cohort_in_inner(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
         if amount.is_zero() {
             return Ok(());
         }
+        self.ensure_owner_capacity(account, 1)?;
         // First acquisition establishes the qualified start date (proof-of-life
         // v1). A real chain timestamp is never 0, so 0 is a safe "unset" sentinel.
         if self.qualified_start.read(&account)? == 0 {
@@ -32,6 +96,7 @@ impl FidelityContract<'_> {
             self.first_qualified_start.write(timestamp)?;
         }
         self.push_active(account, amount, timestamp)?;
+        self.observe_owner_cohorts(account)?;
         Ok(())
     }
 
@@ -41,6 +106,11 @@ impl FidelityContract<'_> {
     /// is split proportionally — the sold slice keeps the ORIGINAL `acquired_at`
     /// and the remainder stays active.
     pub fn cohort_out(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| self.cohort_out_inner(account, amount, timestamp))
+    }
+
+    fn cohort_out_inner(&mut self, account: Address, amount: U256, timestamp: u64) -> Result<()> {
         if amount.is_zero() {
             return Ok(());
         }
@@ -63,6 +133,7 @@ impl FidelityContract<'_> {
             } else {
                 // Partial: record the sold slice, shrink the active remainder in
                 // place (same index/acquired_at → stays the youngest tail).
+                self.ensure_owner_capacity(account, 1)?;
                 self.push_sold(account, remaining, cohort.acquired_at, timestamp)?;
                 self.active_cohorts.update(&ActiveCohort {
                     slot_key: key,
@@ -72,6 +143,7 @@ impl FidelityContract<'_> {
                 remaining = U256::ZERO;
             }
         }
+        self.observe_owner_cohorts(account)?;
         Ok(())
     }
 
@@ -82,7 +154,12 @@ impl FidelityContract<'_> {
             size: amount,
             acquired_at,
         })?;
-        self.active_count.write(&account, idx + 1)?;
+        self.active_count.write(
+            &account,
+            idx.checked_add(1).ok_or_else(|| {
+                PrecompileError::BodyReadCorruption("Fidelity active cohort count overflow".into())
+            })?,
+        )?;
         Ok(())
     }
 
@@ -100,7 +177,51 @@ impl FidelityContract<'_> {
             acquired_at,
             sold_at,
         })?;
-        self.sold_count.write(&account, sidx + 1)?;
+        self.sold_count.write(
+            &account,
+            sidx.checked_add(1).ok_or_else(|| {
+                PrecompileError::BodyReadCorruption("Fidelity sold cohort count overflow".into())
+            })?,
+        )?;
+        Ok(())
+    }
+
+    fn ensure_owner_capacity(&self, account: Address, additional: u32) -> Result<()> {
+        if !self.ocomp_profile_ready.read()? {
+            return Ok(());
+        }
+        let next = self
+            .owner_cohort_count(account)?
+            .checked_add(additional)
+            .ok_or_else(|| {
+                PrecompileError::BodyReadCorruption("Fidelity owner cohort count overflow".into())
+            })?;
+        let cap = u32::from(self.ocomp_max_cohorts_per_owner.read()?);
+        if cap == 0 || next > cap {
+            return Err(PrecompileError::Revert(
+                "Fidelity OCOMP cohort cap exceeded".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn observe_owner_cohorts(&mut self, account: Address) -> Result<()> {
+        if !self.ocomp_profile_ready.read()? {
+            return Ok(());
+        }
+        let count = self.owner_cohort_count(account)?;
+        let cap = self.ocomp_max_cohorts_per_owner.read()?;
+        let count = u16::try_from(count).map_err(|_| {
+            PrecompileError::BodyReadCorruption("Fidelity bounded cohort count exceeds u16".into())
+        })?;
+        if cap == 0 || count > cap {
+            return Err(PrecompileError::BodyReadCorruption(
+                "Fidelity bounded cohort count exceeds profile cap".into(),
+            ));
+        }
+        if count > self.ocomp_max_cohorts_observed.read()? {
+            self.ocomp_max_cohorts_observed.write(count)?;
+        }
         Ok(())
     }
 

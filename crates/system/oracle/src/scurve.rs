@@ -320,12 +320,13 @@ pub fn store_scurve_entry(
     peak_day: u64,
     peak_price: U256,
 ) -> Result<()> {
+    let next_ocomp_version = oracle.next_ocomp_state_version()?;
     let idx = oracle.scurve_count.read()?;
     oracle.scurve_pair_id.write(&idx, pair_id)?;
     oracle.scurve_peak_day.write(&idx, peak_day)?;
     oracle.scurve_peak_price.write(&idx, peak_price)?;
     oracle.scurve_count.write(idx + 1)?;
-    Ok(())
+    oracle.commit_ocomp_state_version(next_ocomp_version)
 }
 
 /// Evicts expired S-curve entries (older than 128 days).
@@ -344,7 +345,9 @@ pub fn evict_expired_scurves(oracle: &mut OracleContract, current_timestamp: u64
     }
 
     if new_oldest != oldest {
+        let next_ocomp_version = oracle.next_ocomp_state_version()?;
         oracle.scurve_oldest_idx.write(new_oldest)?;
+        oracle.commit_ocomp_state_version(next_ocomp_version)?;
     }
 
     Ok(())

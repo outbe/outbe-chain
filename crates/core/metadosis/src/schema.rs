@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
@@ -58,6 +58,26 @@ pub struct WorldwideDay {
     pub current_vwap: U256,
 }
 
+/// Fork-initialized OCOMP state owned by Metadosis for one WorldwideDay.
+///
+/// The detailed pre-admission values remain owned by Tribute, Fidelity and
+/// Oracle. Metadosis commits their terminal canonical envelope and advances a
+/// version used by later activation preconditions.
+#[storage_record(exists_field = initialized)]
+pub struct OcompPreAdmissionState {
+    #[key]
+    pub wwd: WorldwideDayKey,
+
+    #[attribute(order = 0)]
+    pub initialized: bool,
+
+    #[attribute(order = 1)]
+    pub state_version: u64,
+
+    #[attribute(order = 2, default = B256::ZERO)]
+    pub envelope_hash: B256,
+}
+
 /// EVM storage layout for the Metadosis orchestrator contract.
 ///
 /// Manages worldwide day lifecycle and daily emission accumulation.
@@ -81,4 +101,9 @@ pub struct MetadosisContract {
     /// the cap, the oldest is popped from the front and its record deleted.
     #[attribute(order = 4)]
     pub closed_wwd: outbe_primitives::storage::dsl::Deque<WorldwideDayKey>,
+
+    /// Inert before the OCOMP fresh-devnet fork initializes an entry.
+    #[attribute(order = 5)]
+    pub ocomp_pre_admission:
+        outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
 }

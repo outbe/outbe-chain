@@ -140,4 +140,5 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
 
 mod lifecycle;
 mod ocomp_budget;
+mod pre_admission;
 mod state;
