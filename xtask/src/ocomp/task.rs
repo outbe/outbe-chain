@@ -393,6 +393,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 )?;
             }
             for test in [
+                "ethereum_post_execution_copy_matches_upstream_behavior_matrix",
                 "active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions",
                 "active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts",
             ] {
@@ -412,17 +413,15 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "consensus_stateless",
                 ],
             )?;
-            cargo(
-                repository_root,
-                &[
-                    "test",
-                    "--locked",
-                    "-p",
-                    "outbe-node",
-                    "--lib",
-                    "active_payload_builder_preserves_terminal_reservation_and_replays_exactly",
-                ],
-            )?;
+            for test in [
+                "active_payload_builder_preserves_terminal_reservation_and_replays_exactly",
+                "active_payload_builder_rejects_a_user_that_spends_one_unit_of_terminal_reserve",
+            ] {
+                cargo(
+                    repository_root,
+                    &["test", "--locked", "-p", "outbe-node", "--lib", test],
+                )?;
+            }
             cargo(
                 repository_root,
                 &["test", "--locked", "-p", "outbe-node", "--lib"],

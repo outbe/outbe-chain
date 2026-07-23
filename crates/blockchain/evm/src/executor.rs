@@ -3940,7 +3940,9 @@ mod tests {
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
     };
-    use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
+    use alloy_primitives::{
+        address, keccak256, Address, Bytes, Log, Signature, TxKind, B256, U256,
+    };
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
@@ -3971,9 +3973,9 @@ mod tests {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
-    use reth_ethereum::chainspec::ChainSpec;
-    use reth_ethereum::chainspec::MAINNET;
+    use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_ethereum::evm::revm::db::State;
+    use reth_ethereum::{evm::RethReceiptBuilder, Receipt};
     use reth_evm::{block::BlockExecutor, execute::ProviderError, ConfigureEvm, EvmEnv};
     use reth_primitives_traits::SignedTransaction as _;
     use revm::{
@@ -4002,6 +4004,16 @@ mod tests {
 
     const CHAIN_ID: u64 = 1;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+    alloy_sol_types::sol! {
+        event DepositEvent(
+            bytes pubkey,
+            bytes withdrawal_credentials,
+            bytes amount,
+            bytes signature,
+            bytes index
+        );
+    }
 
     fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
         let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
@@ -5132,6 +5144,239 @@ mod tests {
             visible_system_gas + user_gas.tx_gas_used(),
             "block header gas_used must include visible system envelope gas"
         );
+    }
+
+    #[test]
+    fn ethereum_post_execution_copy_matches_upstream_behavior_matrix() {
+        use alloy_eips::{
+            eip4895::Withdrawal,
+            eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
+        };
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        const DAO_BALANCE: u128 = 37;
+        const WITHDRAWAL_AMOUNT_GWEI: u64 = 2;
+        const CUMULATIVE_TX_GAS: u64 = 11;
+        const REGULAR_GAS: u64 = 17;
+        const STATE_GAS: u64 = 23;
+
+        struct Case {
+            name: &'static str,
+            chain_spec: Arc<ChainSpec<OutbeHeader>>,
+            spec_id: SpecId,
+            include_deposit: bool,
+            expected_gas_used: u64,
+        }
+
+        fn fixture_receipt(include_deposit: bool) -> Receipt {
+            let logs = if include_deposit {
+                let event = DepositEvent {
+                    pubkey: Bytes::from(vec![0x11; 48]),
+                    withdrawal_credentials: Bytes::from(vec![0x22; 32]),
+                    amount: Bytes::from(vec![0x33; 8]),
+                    signature: Bytes::from(vec![0x44; 96]),
+                    index: Bytes::from(vec![0x55; 8]),
+                };
+                vec![Log {
+                    address: MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+                    data: event.encode_log_data(),
+                }]
+            } else {
+                Vec::new()
+            };
+            Receipt {
+                tx_type: reth_ethereum::TxType::Legacy,
+                success: true,
+                cumulative_gas_used: CUMULATIVE_TX_GAS,
+                logs,
+            }
+        }
+
+        fn fixture_state() -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+            let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            database.insert_account_info(
+                alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                AccountInfo {
+                    balance: U256::from(DAO_BALANCE),
+                    ..Default::default()
+                },
+            );
+            State::builder()
+                .with_database(database)
+                .with_bundle_update()
+                .build()
+        }
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        fn balance(
+            state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+            address: Address,
+        ) -> U256 {
+            state
+                .basic(address)
+                .expect("post-execution balance is readable")
+                .map_or(U256::ZERO, |account| account.balance)
+        }
+
+        let chain_spec = |activate: fn(ChainSpecBuilder) -> ChainSpecBuilder| {
+            Arc::new(
+                activate(ChainSpecBuilder::from(&*MAINNET))
+                    .build()
+                    .map_header(OutbeHeader::new),
+            )
+        };
+        let cases = [
+            Case {
+                name: "shanghai-withdrawals-and-dao",
+                chain_spec: chain_spec(ChainSpecBuilder::shanghai_activated),
+                spec_id: SpecId::SHANGHAI,
+                include_deposit: false,
+                expected_gas_used: CUMULATIVE_TX_GAS,
+            },
+            Case {
+                name: "prague-deposit-and-system-requests",
+                chain_spec: chain_spec(ChainSpecBuilder::prague_activated),
+                spec_id: SpecId::PRAGUE,
+                include_deposit: true,
+                expected_gas_used: CUMULATIVE_TX_GAS,
+            },
+            Case {
+                name: "amsterdam-state-gas",
+                chain_spec: chain_spec(ChainSpecBuilder::amsterdam_activated),
+                spec_id: SpecId::AMSTERDAM,
+                include_deposit: false,
+                expected_gas_used: STATE_GAS,
+            },
+        ];
+
+        for case in cases {
+            let run = |copy: bool| {
+                let mut state = fixture_state();
+                let config = OutbeEvmConfig::new(case.chain_spec.clone())
+                    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0));
+                let evm_env = EvmEnv {
+                    cfg_env: CfgEnv::new()
+                        .with_chain_id(case.chain_spec.chain().id())
+                        .with_spec_and_mainnet_gas_params(case.spec_id),
+                    block_env: BlockEnv {
+                        number: U256::ZERO,
+                        gas_limit: 30_000_000,
+                        beneficiary: REWARDS_ADDRESS,
+                        timestamp: U256::ZERO,
+                        ..Default::default()
+                    },
+                };
+                let evm = config.evm_with_env(&mut state, evm_env);
+                let mut ctx = execution_ctx(Some(1), Bytes::new());
+                ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Withdrawal {
+                    index: 0,
+                    validator_index: 0,
+                    address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                    amount: WITHDRAWAL_AMOUNT_GWEI,
+                }]));
+
+                let result = if copy {
+                    let mut executor = config.create_executor(evm, ctx);
+                    executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
+                    executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
+                    executor.inner.block_regular_gas_used = REGULAR_GAS;
+                    executor.inner.block_state_gas_used = STATE_GAS;
+                    executor.inner.blob_gas_used = 5;
+                    executor.ocomp_lifecycle_active = true;
+                    executor.ocomp_terminal_request_consumed = true;
+                    executor.validate_execution_summary = false;
+                    executor
+                        .apply_ethereum_post_execution_before_ocomp_terminal()
+                        .expect("copied post-execution phase succeeds");
+                    let (evm, result) = executor.finish().expect("copied result assembly succeeds");
+                    drop(evm);
+                    result
+                } else {
+                    let receipt_builder = RethReceiptBuilder::default();
+                    let mut executor =
+                        EthBlockExecutor::new(evm, ctx.inner, &case.chain_spec, &receipt_builder);
+                    executor.receipts = vec![fixture_receipt(case.include_deposit)];
+                    executor.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
+                    executor.block_regular_gas_used = REGULAR_GAS;
+                    executor.block_state_gas_used = STATE_GAS;
+                    executor.blob_gas_used = 5;
+                    let (evm, result) = executor.finish().expect("upstream finish succeeds");
+                    drop(evm);
+                    result
+                };
+
+                let root = post_state_root(&state.bundle_state);
+                let dao_source_balance = balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                );
+                let dao_beneficiary_balance = balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY,
+                );
+                let withdrawal_balance = balance(
+                    &mut state,
+                    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                );
+                (
+                    result,
+                    root,
+                    dao_source_balance,
+                    dao_beneficiary_balance,
+                    withdrawal_balance,
+                )
+            };
+
+            let copied = run(true);
+            let upstream = run(false);
+            assert_eq!(
+                copied, upstream,
+                "{}: copied phase must remain byte/state equivalent to EthBlockExecutor::finish",
+                case.name
+            );
+            assert_eq!(copied.0.gas_used, case.expected_gas_used, "{}", case.name);
+            assert_eq!(copied.2, U256::ZERO, "{}: DAO source drains", case.name);
+            assert_eq!(
+                copied.3,
+                U256::from(DAO_BALANCE),
+                "{}: DAO beneficiary receives the drained balance",
+                case.name
+            );
+            assert_eq!(
+                copied.4,
+                U256::from(WITHDRAWAL_AMOUNT_GWEI) * U256::from(1_000_000_000u64),
+                "{}: withdrawal balance increment executes",
+                case.name
+            );
+            assert_eq!(
+                copied
+                    .0
+                    .requests
+                    .iter()
+                    .any(|request| request.first() == Some(&DEPOSIT_REQUEST_TYPE)),
+                case.include_deposit,
+                "{}: Prague deposit request branch is observable",
+                case.name
+            );
+        }
     }
 
     #[test]

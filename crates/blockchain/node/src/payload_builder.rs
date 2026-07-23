@@ -697,7 +697,11 @@ fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, time::Instant};
+    use std::{
+        collections::BTreeMap,
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Instant,
+    };
 
     use super::*;
     use alloy_consensus::{SignableTransaction as _, TxEip1559};
@@ -743,12 +747,17 @@ mod tests {
 
     struct TestBestTransactions {
         transactions: std::vec::IntoIter<Arc<ValidPoolTransaction<EthPooledTransaction>>>,
+        rejected: Arc<AtomicUsize>,
     }
 
     impl TestBestTransactions {
-        fn one(transaction: Arc<ValidPoolTransaction<EthPooledTransaction>>) -> Self {
+        fn one(
+            transaction: Arc<ValidPoolTransaction<EthPooledTransaction>>,
+            rejected: Arc<AtomicUsize>,
+        ) -> Self {
             Self {
                 transactions: vec![transaction].into_iter(),
+                rejected,
             }
         }
     }
@@ -763,7 +772,11 @@ mod tests {
 
     impl BestTransactions for TestBestTransactions {
         fn mark_invalid(&mut self, _transaction: &Self::Item, kind: &InvalidPoolTransactionError) {
-            panic!("boundary transaction unexpectedly rejected: {kind}");
+            assert!(
+                matches!(kind, InvalidPoolTransactionError::ExceedsGasLimit(_, _)),
+                "boundary transaction must only be rejected by the gas reservation: {kind}"
+            );
+            self.rejected.fetch_add(1, Ordering::Relaxed);
         }
 
         fn no_updates(&mut self) {}
@@ -911,11 +924,21 @@ mod tests {
         provider
     }
 
-    #[test]
-    fn active_payload_builder_preserves_terminal_reservation_and_replays_exactly() {
-        const BLOCK_GAS_LIMIT: u64 = 30_000_000;
-        const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
+    const ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+    const ACTIVE_PAYLOAD_BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
+    struct ActivePayloadCase {
+        payload: OutbeBuiltPayload,
+        evm_config: OutbeEvmConfig,
+        provider: TestProvider,
+        user_hash: B256,
+        admission_boundary_gas: u64,
+        candidate_gas_limit: u64,
+        terminal_reserved_gas: u64,
+        rejected: Arc<AtomicUsize>,
+    }
+
+    fn build_active_payload_case(user_gas_over_boundary: u64) -> ActivePayloadCase {
         let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
             .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
             .build()
@@ -936,8 +959,8 @@ mod tests {
         let parent = Arc::new(SealedHeader::seal_slow(OutbeHeader::new(
             alloy_consensus::Header {
                 number: 0,
-                gas_limit: BLOCK_GAS_LIMIT,
-                timestamp: BLOCK_TIMESTAMP - 1,
+                gas_limit: ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT,
+                timestamp: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP - 1,
                 base_fee_per_gas: Some(1_000_000_000),
                 ..Default::default()
             },
@@ -947,7 +970,7 @@ mod tests {
             .build_begin_system_txs(
                 1,
                 chain_spec.chain().id(),
-                BLOCK_GAS_LIMIT,
+                ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT,
                 parent.hash(),
                 &prefinal_extra_data,
                 None,
@@ -968,15 +991,18 @@ mod tests {
             })
             .sum::<u64>();
         let terminal_reserved_gas = end[0].tx().gas_limit();
-        let user_gas_limit = BLOCK_GAS_LIMIT
+        let admission_boundary_gas = ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT
             .checked_sub(begin_visible_gas)
             .and_then(|remaining| remaining.checked_sub(terminal_reserved_gas))
             .expect("system zones fit inside the block gas limit");
+        let candidate_gas_limit = admission_boundary_gas
+            .checked_add(user_gas_over_boundary)
+            .expect("test boundary delta fits u64");
 
         let user_tx: reth_ethereum::TransactionSigned = TxEip1559 {
             chain_id: chain_spec.chain().id(),
             nonce: 0,
-            gas_limit: user_gas_limit,
+            gas_limit: candidate_gas_limit,
             max_fee_per_gas: 2_000_000_000,
             max_priority_fee_per_gas: 1,
             to: TxKind::Call(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")),
@@ -1006,11 +1032,11 @@ mod tests {
             provider.clone(),
             TestPool::new(),
             evm_config.clone(),
-            EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
+            EthereumBuilderConfig::new().with_gas_limit(ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
         );
         let attributes = OutbePayloadAttributes::new(
             REWARDS_ADDRESS,
-            BLOCK_TIMESTAMP * 1000,
+            ACTIVE_PAYLOAD_BLOCK_TIMESTAMP * 1000,
             B256::repeat_byte(0x44),
             None,
             prefinal_extra_data,
@@ -1019,6 +1045,8 @@ mod tests {
         )
         .with_execution_read_budget(ExecutionReadBudget::new());
         let payload_config = PayloadConfig::new(parent, attributes, PayloadId::new([0x07; 8]));
+        let rejected = Arc::new(AtomicUsize::new(0));
+        let rejected_by_builder = rejected.clone();
         let outcome = payload_builder
             .build_payload(
                 BuildArguments::new(
@@ -1029,12 +1057,29 @@ mod tests {
                     Default::default(),
                     None,
                 ),
-                |_| TestBestTransactions::one(pooled_user),
+                |_| TestBestTransactions::one(pooled_user, rejected_by_builder),
             )
             .expect("production payload builder succeeds");
         let payload = outcome
             .into_payload()
             .expect("production payload builder returns a payload");
+
+        ActivePayloadCase {
+            payload,
+            evm_config,
+            provider,
+            user_hash,
+            admission_boundary_gas,
+            candidate_gas_limit,
+            terminal_reserved_gas,
+            rejected,
+        }
+    }
+
+    #[test]
+    fn active_payload_builder_preserves_terminal_reservation_and_replays_exactly() {
+        let case = build_active_payload_case(0);
+        let payload = &case.payload;
         let body = &payload.block().body().transactions;
         let layout = split_system_layout(body).expect("built payload has canonical system layout");
 
@@ -1049,7 +1094,7 @@ mod tests {
             ]
         );
         assert_eq!(layout.user.len(), 1);
-        assert_eq!(*layout.user[0].tx_hash(), user_hash);
+        assert_eq!(*layout.user[0].tx_hash(), case.user_hash);
         assert_eq!(layout.end.len(), 1);
         assert_eq!(
             layout.end_block_kinds().expect("terminal input decodes"),
@@ -1064,11 +1109,12 @@ mod tests {
         assert_eq!(
             receipts[layout.begin.len() - 1]
                 .cumulative_gas_used
-                .checked_add(user_gas_limit)
-                .and_then(|used| used.checked_add(terminal_reserved_gas)),
-            Some(BLOCK_GAS_LIMIT),
+                .checked_add(case.admission_boundary_gas)
+                .and_then(|used| used.checked_add(case.terminal_reserved_gas)),
+            Some(ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
             "the user transaction is admitted exactly at the OSR2 reservation boundary"
         );
+        assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
         assert!(
             decode_outbe_block_artifacts(payload.block().header().extra_data().as_ref())
                 .expect("built header artifacts decode")
@@ -1077,13 +1123,62 @@ mod tests {
             "the active payload publishes the CE seal committed before OSR2"
         );
 
-        let replay = evm_config
-            .executor(StateProviderDatabase::new(&provider))
+        let replay = case
+            .evm_config
+            .executor(StateProviderDatabase::new(&case.provider))
             .execute(executed.recovered_block.as_ref())
             .expect("validator replay succeeds");
         assert_eq!(
             replay, *executed.execution_output,
             "proposer and validator replay must produce identical receipts, gas, requests, and state"
+        );
+    }
+
+    #[test]
+    fn active_payload_builder_rejects_a_user_that_spends_one_unit_of_terminal_reserve() {
+        let case = build_active_payload_case(1);
+        let payload = &case.payload;
+        let body = &payload.block().body().transactions;
+        let layout = split_system_layout(body).expect("built payload has canonical system layout");
+
+        assert!(
+            layout.user.is_empty(),
+            "the candidate that consumes one unit of OSR2 reserve must not enter the block"
+        );
+        assert_eq!(
+            layout.end_block_kinds().expect("terminal input decodes"),
+            vec![SystemTxKind::OcompTerminalRequest],
+            "rejecting the user must preserve the sole terminal request"
+        );
+        assert_eq!(case.rejected.load(Ordering::Relaxed), 1);
+
+        let executed = payload
+            .executed_block()
+            .expect("builder exposes the exact executed payload");
+        let receipts = &executed.execution_output.result.receipts;
+        let begin_cumulative_gas = receipts[layout.begin.len() - 1].cumulative_gas_used;
+        assert!(
+            begin_cumulative_gas
+                .checked_add(case.candidate_gas_limit)
+                .is_some_and(|used| used <= ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
+            "the candidate would fit if the builder forgot the terminal reservation"
+        );
+        assert!(
+            begin_cumulative_gas
+                .checked_add(case.candidate_gas_limit)
+                .and_then(|used| used.checked_add(case.terminal_reserved_gas))
+                .is_some_and(|used| used > ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT),
+            "the candidate must cross the block limit only when OSR2 gas is reserved"
+        );
+
+        let replay = case
+            .evm_config
+            .executor(StateProviderDatabase::new(&case.provider))
+            .execute(executed.recovered_block.as_ref())
+            .expect("validator replay succeeds");
+        assert_eq!(
+            replay, *executed.execution_output,
+            "the block that rejected the boundary+1 user must replay exactly"
         );
     }
 
