@@ -48,7 +48,6 @@ impl TributeFactoryContract<'_> {
             zk_merkle_root,
             signature,
         } = input;
-        check_currency(reference_currency)?;
 
         // When the caller is a registered L2 operator with ZK verification
         // enabled, the offer must carry a valid BLS MinPk signature over
@@ -61,7 +60,7 @@ impl TributeFactoryContract<'_> {
             signature,
         )?;
 
-        // Current USDC/COEN rate at this block. There is a single active OFFERING
+        // Current rate at this block. There is a single active OFFERING
         // day, so its committed oracle price is the current rate (identical on
         // every validator).
         let metadosis = MetadosisContract::new(self.storage.clone());
@@ -170,16 +169,6 @@ impl TributeFactoryContract<'_> {
 
         Ok(tribute_id)
     }
-}
-
-// TODO implement mature checks
-fn check_currency(currency: u16) -> Result<()> {
-    if currency != 840 {
-        return Err(PrecompileError::Revert(format!(
-            "iso_code {currency} is not a valid currency"
-        )));
-    }
-    Ok(())
 }
 
 fn parse_su_hashes(su_hashes: &[String]) -> Result<Vec<B256>> {
