@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -13,15 +13,15 @@ use outbe_tribute::{TributeContract, TributeData};
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
 
-pub(crate) struct OfferTributeInput<'a> {
+pub(crate) struct OfferTributeInput {
     pub caller: Address,
-    pub cipher_text: &'a [u8],
-    pub nonce: &'a [u8],
+    pub cipher_text: Bytes,
+    pub nonce: Bytes,
     pub ephemeral_pubkey: U256,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
-    pub zk_merkle_root: &'a [u8],
-    pub signature: &'a [u8],
+    pub zk_merkle_root: Bytes,
+    pub signature: Bytes,
 }
 
 impl TributeFactoryContract<'_> {
@@ -36,7 +36,7 @@ impl TributeFactoryContract<'_> {
         &mut self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        input: OfferTributeInput<'_>,
+        input: OfferTributeInput,
     ) -> Result<EntityId36> {
         let OfferTributeInput {
             caller,
@@ -48,7 +48,6 @@ impl TributeFactoryContract<'_> {
             zk_merkle_root,
             signature,
         } = input;
-        check_currency(reference_currency)?;
 
         // When the caller is a registered L2 operator with ZK verification
         // enabled, the offer must carry a valid BLS MinPk signature over
@@ -57,11 +56,11 @@ impl TributeFactoryContract<'_> {
         outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
-            zk_merkle_root,
-            signature,
+            &zk_merkle_root,
+            &signature,
         )?;
 
-        // Current USDC/COEN rate at this block. There is a single active OFFERING
+        // Current rate at this block. There is a single active OFFERING
         // day, so its committed oracle price is the current rate (identical on
         // every validator).
         let metadosis = MetadosisContract::new(self.storage.clone());
@@ -170,16 +169,6 @@ impl TributeFactoryContract<'_> {
 
         Ok(tribute_id)
     }
-}
-
-// TODO implement mature checks
-fn check_currency(currency: u16) -> Result<()> {
-    if currency != 840 {
-        return Err(PrecompileError::Revert(format!(
-            "iso_code {currency} is not a valid currency"
-        )));
-    }
-    Ok(())
 }
 
 fn parse_su_hashes(su_hashes: &[String]) -> Result<Vec<B256>> {
