@@ -54,7 +54,8 @@ use crate::{
     signer::SharedOutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, split_system_layout,
-        validate_active_system_tx_set, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        validate_system_tx_set_for_activation, OcompLifecycleActivation, SystemTxInputV2,
+        SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
 
@@ -390,6 +391,7 @@ pub struct OutbeEvmConfig {
     evm_signer: Option<SharedOutbeEvmSigner>,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     compressed_tree_service: Option<Arc<CompressedTreeService>>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -410,6 +412,10 @@ impl std::fmt::Debug for OutbeEvmConfig {
             .field(
                 "compressed_tree_service",
                 &self.compressed_tree_service.is_some(),
+            )
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
             )
             .finish()
     }
@@ -456,6 +462,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: None,
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -477,6 +484,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -497,6 +505,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: None,
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -518,6 +527,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -541,6 +551,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: None,
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -561,6 +572,7 @@ impl OutbeEvmConfig {
             evm_signer: None,
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -573,6 +585,23 @@ impl OutbeEvmConfig {
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
         self
+    }
+
+    /// Installs structural OCOMP lifecycle activation. The default remains
+    /// disabled until OCM-26 supplies the canonical fresh-devnet schedule.
+    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+
+    #[must_use]
+    pub const fn ocomp_lifecycle_activation(&self) -> OcompLifecycleActivation {
+        self.ocomp_lifecycle_activation
+    }
+
+    #[must_use]
+    pub const fn ocomp_lifecycle_active_at(&self, block_number: u64) -> bool {
+        self.ocomp_lifecycle_activation.is_active_at(block_number)
     }
 
     /// Installs the explicitly owned CE tree service used by every block scope
@@ -684,6 +713,9 @@ impl OutbeEvmConfig {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
         }
+        if self.ocomp_lifecycle_active_at(block_number) {
+            inputs.push(SystemTxInputV2::OcompLifecycleBegin);
+        }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::CycleTick);
         }
@@ -722,8 +754,22 @@ impl OutbeEvmConfig {
                 Ok((kind, calldata))
             })
             .collect::<Result<Vec<_>, BlockExecutionError>>()?;
+        let mut gas_plan_inputs = encoded_inputs.clone();
+        if self.ocomp_lifecycle_active_at(block_number) {
+            let terminal = SystemTxInputV2::OcompTerminalRequest;
+            gas_plan_inputs.push((
+                terminal.kind(),
+                terminal.encode().map_err(|error| {
+                    BlockExecutionError::Internal(
+                        alloy_evm::block::InternalBlockExecutionError::Other(
+                            format!("encode terminal system tx input: {error}").into(),
+                        ),
+                    )
+                })?,
+            ));
+        }
         let gas_plan =
-            SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs).map_err(|error| {
+            SystemTxVisibleGasPlan::new(block_gas_limit, &gas_plan_inputs).map_err(|error| {
                 BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
                     format!("plan visible system tx gas: {error}").into(),
                 ))
@@ -805,6 +851,67 @@ impl OutbeEvmConfig {
                 Ok(Recovered::new_unchecked(signed, proposer))
             })
             .collect()
+    }
+
+    pub fn build_end_system_txs(
+        &self,
+        block_number: u64,
+        chain_id: u64,
+        begin_system_tx_count: usize,
+        proposer_evm_address: Option<Address>,
+    ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
+        if !self.ocomp_lifecycle_active_at(block_number) {
+            return Ok(Vec::new());
+        }
+
+        let signer = self.evm_signer.as_ref().ok_or_else(|| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                "missing EVM signer for proposer terminal system tx".into(),
+            ))
+        })?;
+        let proposer = proposer_evm_address.unwrap_or_else(|| signer.address());
+        if signer.address() != proposer {
+            return Err(BlockExecutionError::Internal(
+                alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!(
+                        "configured EVM signer {} does not match proposer {proposer}",
+                        signer.address()
+                    )
+                    .into(),
+                ),
+            ));
+        }
+
+        let input = SystemTxInputV2::OcompTerminalRequest;
+        let calldata = input.encode().map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("encode terminal system tx input: {error}").into(),
+            ))
+        })?;
+        let ordinal = begin_system_tx_count.try_into().map_err(|_| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("terminal system tx ordinal {begin_system_tx_count} exceeds u8 range")
+                    .into(),
+            ))
+        })?;
+        let unsigned = build_unsigned_system_tx(
+            SystemTxKind::OcompTerminalRequest,
+            ordinal,
+            block_number,
+            chain_id,
+            calldata,
+        )
+        .map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("build terminal system tx: {error}").into(),
+            ))
+        })?;
+        let signed = signer.sign_unsigned(unsigned).map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("sign terminal system tx: {error}").into(),
+            ))
+        })?;
+        Ok(vec![Recovered::new_unchecked(signed, proposer)])
     }
 
     /// build and sign a single Phase 1 (`CertifiedParentAccounting`)
@@ -902,7 +1009,10 @@ type SystemTxExpectations = (
     Option<Address>,
 );
 
-fn system_tx_expectations_for_block(block: &SealedBlock<OutbeBlock>) -> SystemTxExpectations {
+fn system_tx_expectations_for_block(
+    block: &SealedBlock<OutbeBlock>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+) -> SystemTxExpectations {
     let has_boundary_outcome =
         match decode_outbe_block_artifacts(block.header().extra_data().as_ref()) {
             Ok(artifacts) => matches!(
@@ -927,11 +1037,12 @@ fn system_tx_expectations_for_block(block: &SealedBlock<OutbeBlock>) -> SystemTx
     };
 
     let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
-    if let Err(error) = validate_active_system_tx_set(
+    if let Err(error) = validate_system_tx_set_for_activation(
         &layout,
         block.header().number(),
         has_boundary_outcome,
         has_tee_bootstrap,
+        ocomp_lifecycle_activation,
     ) {
         return (Vec::new(), Vec::new(), Some(error.to_string()), None);
     }
@@ -1065,6 +1176,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         .with_compressed_tree_service(self.compressed_tree_service.clone())
         .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
         .with_pending_tee_bootstrap(pending_tee_bootstrap)
+        .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number))
     }
 }
 
@@ -1135,7 +1247,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             expected_end_system_txs,
             system_layout_error,
             recovered_proposer,
-        ) = system_tx_expectations_for_block(block);
+        ) = system_tx_expectations_for_block(block, self.ocomp_lifecycle_activation);
 
         Ok(OutbeBlockExecutionCtx {
             inner: EthBlockExecutionCtx {
@@ -1275,7 +1387,8 @@ impl ConfigureEvm for OutbeEvmConfig {
             .with_compressed_entities_scope(compressed_entities_scope)
             .with_compressed_tree_service(self.compressed_tree_service.clone())
             .with_runtime_body_readers(runtime_body_readers, ctx.execution_read_budget.clone())
-            .with_pending_tee_bootstrap(pending_tee_bootstrap),
+            .with_pending_tee_bootstrap(pending_tee_bootstrap)
+            .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number)),
             ctx,
             self.bridge.clone(),
             self.block_assembler(),
@@ -1336,6 +1449,8 @@ pub struct OutbeExecutorBuilder {
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
     /// Explicit CE tree owner; mandatory for live execution.
     pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
+    /// Inert until the canonical OCM-26 devnet schedule is supplied.
+    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1351,6 +1466,10 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "compressed_tree_service",
                 &self.compressed_tree_service.is_some(),
             )
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
+            )
             .finish()
     }
 }
@@ -1363,6 +1482,7 @@ impl OutbeExecutorBuilder {
             evm_signer: None,
             runtime_body_readers: None,
             compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -1379,6 +1499,11 @@ impl OutbeExecutorBuilder {
 
     pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
         self.compressed_tree_service = Some(service);
+        self
+    }
+
+    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.ocomp_lifecycle_activation = activation;
         self
     }
 }
@@ -1426,7 +1551,9 @@ where
             ),
         };
 
-        let config = config.with_compressed_tree_service(compressed_tree_service);
+        let config = config
+            .with_compressed_tree_service(compressed_tree_service)
+            .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,

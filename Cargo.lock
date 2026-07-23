@@ -8058,6 +8058,7 @@ dependencies = [
  "commonware-p2p",
  "hex",
  "k256 0.13.4",
+ "outbe-ocomp-protocol",
  "proptest",
  "reth-codecs",
  "reth-ethereum",

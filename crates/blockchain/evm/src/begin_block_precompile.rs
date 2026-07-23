@@ -134,6 +134,10 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_late_finalize_credits(&ctx, &artifact)?;
         }
+        SystemTxInputV2::OcompLifecycleBegin => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_ocomp_lifecycle_begin(&ctx)?;
+        }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             match body_readers {
@@ -158,6 +162,10 @@ fn dispatch_inner(
         SystemTxInputV2::HookEvents => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_hook_events(&ctx)?;
+        }
+        SystemTxInputV2::OcompTerminalRequest => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_ocomp_terminal_request(&ctx)?;
         }
     }
 
@@ -956,6 +964,18 @@ pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
 /// attached to this phase's receipt by the executor without re-running hooks.
 pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
+    Ok(())
+}
+
+/// Reserved OCOMP expiry/reset slot. OCM-08 wires the bounded Metadosis
+/// lifecycle handler into this already receipt-visible phase.
+pub(crate) fn run_ocomp_lifecycle_begin(_ctx: &BlockRuntimeContext) -> Result<()> {
+    Ok(())
+}
+
+/// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
+/// creation here without changing block ordering or the system-tx ABI.
+pub(crate) fn run_ocomp_terminal_request(_ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 

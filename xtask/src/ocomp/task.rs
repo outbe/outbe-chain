@@ -366,6 +366,83 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-07" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-primitives"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-evm",
+                    "--test",
+                    "system_tx_layout",
+                ],
+            )?;
+            for test in [
+                "active_terminal_request_seals_ce_once_and_rejects_later_transactions",
+                "active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts",
+            ] {
+                cargo(
+                    repository_root,
+                    &["test", "--locked", "-p", "outbe-evm", "--lib", test],
+                )?;
+            }
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-node",
+                    "--test",
+                    "consensus_stateless",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-node", "--lib"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-primitives",
+                    "-p",
+                    "outbe-evm",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

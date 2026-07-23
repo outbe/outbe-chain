@@ -48,8 +48,9 @@ use crate::{
     signer::SharedOutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-        expected_begin_block_kinds, is_reserved_system_tx, validate_phase1_witness_against,
-        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        expected_begin_block_kinds_for_activation, is_reserved_system_tx,
+        validate_phase1_witness_against, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
+        SystemTxVisibleGasPlan,
     },
 };
 use reth_ethereum::chainspec::ChainSpec;
@@ -824,8 +825,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
     expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
-    #[allow(dead_code)]
     expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
+    ocomp_lifecycle_active: bool,
+    ocomp_terminal_request_consumed: bool,
     system_layout_error: Option<String>,
     parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     proposer_evm_address: Option<Address>,
@@ -937,6 +939,8 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             evm_signer,
             expected_begin_system_txs,
             expected_end_system_txs,
+            ocomp_lifecycle_active: false,
+            ocomp_terminal_request_consumed: false,
             system_layout_error,
             parent_consensus_metadata,
             proposer_evm_address,
@@ -966,6 +970,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
         self.compressed_entities_scope = scope;
+        self
+    }
+
+    pub(crate) fn with_ocomp_lifecycle_active(mut self, active: bool) -> Self {
+        self.ocomp_lifecycle_active = active;
         self
     }
 
@@ -1400,6 +1409,135 @@ where
         Ok(())
     }
 
+    fn execute_ocomp_terminal_request<R>(
+        &mut self,
+        recovered: R,
+        commit: impl FnOnce(&EthTxResult<E::HaltReason, alloy_consensus::TxType>) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError>
+    where
+        R: RecoveredTx<TransactionSigned>,
+    {
+        if !self.ocomp_lifecycle_active {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request is not active for this block",
+            ));
+        }
+        if self.system_tx_phase_cursor != crate::system_tx::SystemTxPhase::UserTxs {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request arrived before the begin zone completed",
+            ));
+        }
+        if self.expected_end_system_txs.len() > 1 {
+            return Err(BlockExecutionError::msg(
+                "OCOMP lifecycle permits exactly one end-zone system transaction",
+            ));
+        }
+
+        let tx = recovered.tx();
+        if let Some(expected) = self.expected_end_system_txs.first() {
+            if expected.tx().tx_hash() != tx.tx_hash() {
+                return Err(BlockExecutionError::msg(
+                    "terminal system transaction differs from the validated block suffix",
+                ));
+            }
+        }
+        let input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
+            BlockExecutionError::msg(format!("decode terminal system tx input: {error}"))
+        })?;
+        if input != SystemTxInputV2::OcompTerminalRequest {
+            return Err(BlockExecutionError::msg(
+                "end-zone system transaction is not OcompTerminalRequest",
+            ));
+        }
+
+        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+        let begin_count = self
+            .begin_block_system_tx_inputs(block_number, &block_artifacts)?
+            .len();
+        let ordinal = begin_count.try_into().map_err(|_| {
+            BlockExecutionError::msg(format!(
+                "terminal system tx ordinal {begin_count} exceeds u8 range"
+            ))
+        })?;
+        let unsigned = build_unsigned_system_tx(
+            SystemTxKind::OcompTerminalRequest,
+            ordinal,
+            block_number,
+            self.inner.evm.chain_id(),
+            tx.input().clone(),
+        )
+        .map_err(|error| {
+            BlockExecutionError::msg(format!("build expected terminal system tx: {error}"))
+        })?;
+        if tx.signature_hash() != unsigned.signature_hash() {
+            return Err(BlockExecutionError::msg(
+                "terminal system tx signature hash mismatch",
+            ));
+        }
+        let proposer = self
+            .begin_zone_proposer(block_number)?
+            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+        let signer = *recovered.signer();
+        if signer != proposer {
+            return Err(BlockExecutionError::msg(format!(
+                "terminal system tx signer mismatch: expected proposer {proposer}, got {signer}"
+            )));
+        }
+
+        let tx_type = tx.tx_type();
+        let signed_gas_limit = tx.gas_limit();
+        let intrinsic_gas = crate::system_tx::system_tx_intrinsic_gas(tx.input().as_ref())
+            .map_err(|error| {
+                BlockExecutionError::msg(format!("terminal system tx intrinsic gas: {error}"))
+            })?;
+
+        // This is the ordering boundary: all ordinary transactions have
+        // finished, the final CE root is committed, and only then may the
+        // terminal request handler inspect sealed state.
+        self.finalize_compressed_entities()?;
+
+        let phase_context = PreloadedSystemTxContext {
+            proposer,
+            finalized_summary: None,
+            allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
+            canonical_vrf_proof_hash: B256::ZERO,
+        };
+        let result = with_preloaded_system_tx_context(phase_context, || {
+            self.inner.evm.transact_system_call(
+                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                tx.input().clone(),
+            )
+        })
+        .map_err(|error| {
+            BlockExecutionError::msg(format!(
+                "terminal system tx execution failed at block {block_number}: {error}"
+            ))
+        })?;
+        if !result.result.is_success() {
+            return Err(BlockExecutionError::msg(format!(
+                "critical terminal system tx did not succeed at block {block_number}: {:?}",
+                result.result
+            )));
+        }
+
+        let output = EthTxResult {
+            result,
+            blob_gas_used: 0,
+            tx_type,
+        };
+        if !commit(&output).should_commit() {
+            return Err(BlockExecutionError::msg(
+                "terminal system transaction cannot execute without commit",
+            ));
+        }
+        let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
+        self.ocomp_terminal_request_consumed = true;
+        Ok(Some(gas))
+    }
+
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
@@ -1823,6 +1961,24 @@ where
             ordinal += 1;
         }
 
+        if self.ocomp_lifecycle_active {
+            let input = if verifier_mode {
+                self.expected_begin_input(ordinal)?
+            } else {
+                SystemTxInputV2::OcompLifecycleBegin
+            };
+            if !matches!(input, SystemTxInputV2::OcompLifecycleBegin) {
+                return Err(BlockExecutionError::Internal(
+                    InternalBlockExecutionError::Other(
+                        format!("expected OcompLifecycleBegin system tx at ordinal {ordinal}")
+                            .into(),
+                    ),
+                ));
+            }
+            system_txs.push((SystemTxKind::OcompLifecycleBegin, input, None));
+            ordinal += 1;
+        }
+
         if block_number >= 1 {
             let input = if verifier_mode {
                 self.expected_begin_input(ordinal)?
@@ -1955,7 +2111,7 @@ where
         BlockExecutionError,
     > {
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let gas_inputs = system_txs
+        let mut gas_inputs = system_txs
             .iter()
             .map(|(kind, input, _)| {
                 input
@@ -1968,6 +2124,17 @@ where
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if self.ocomp_lifecycle_active {
+            let terminal = SystemTxInputV2::OcompTerminalRequest;
+            gas_inputs.push((
+                terminal.kind(),
+                terminal.encode().map_err(|error| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("encode terminal system tx for visible gas plan: {error}").into(),
+                    ))
+                })?,
+            ));
+        }
         let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
             .map_err(|error| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -1995,10 +2162,16 @@ where
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
             );
             let has_tee_bootstrap = self.block_has_tee_bootstrap();
-            let expected = expected_begin_block_kinds(
+            let ocomp_activation = if self.ocomp_lifecycle_active {
+                OcompLifecycleActivation::at_block(0)
+            } else {
+                OcompLifecycleActivation::Disabled
+            };
+            let expected = expected_begin_block_kinds_for_activation(
                 block_number,
                 has_boundary_outcome,
                 has_tee_bootstrap,
+                ocomp_activation,
             );
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!(
@@ -2598,9 +2771,10 @@ where
         // a zero placeholder tx_hash that the Phase 1 preflight (Batch 3)
         // overwrites once `verify_v2_proof` returns Ok and the system tx
         // is committed in pre-execution.
-        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
+        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block_with_ocomp(
             block_number,
             crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
+            self.ocomp_lifecycle_active,
         );
         if block_number > 0 && beneficiary != outbe_primitives::addresses::REWARDS_ADDRESS {
             return Err(BlockExecutionError::Internal(
@@ -2857,6 +3031,21 @@ where
         tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let (mut tx_env, recovered) = tx.into_parts();
+        if self.ocomp_terminal_request_consumed {
+            return Err(BlockExecutionError::msg(
+                "transaction follows the terminal OCOMP system transaction",
+            ));
+        }
+        let is_ocomp_terminal_request = is_reserved_system_tx(recovered.tx())
+            && matches!(
+                SystemTxInputV2::decode(recovered.tx().input().as_ref()),
+                Ok(SystemTxInputV2::OcompTerminalRequest)
+            );
+        if is_ocomp_terminal_request {
+            return self.execute_ocomp_terminal_request(recovered, f);
+        }
+
         let ce_scope = self.compressed_entities_scope.clone();
         let ce_checkpoint = ce_scope
             .ce_work_checkpoint()
@@ -2865,7 +3054,6 @@ where
             .begin_ce_work_transaction()
             .map_err(BlockExecutionError::other)?;
         let outcome = (|| {
-            let (mut tx_env, recovered) = tx.into_parts();
             let tx = recovered.tx();
             let signer = *recovered.signer();
 
@@ -2903,9 +3091,12 @@ where
                             Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
                         );
                         let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                        self.system_tx_phase_cursor = self
-                            .system_tx_phase_cursor
-                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                        self.system_tx_phase_cursor =
+                            self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                                has_boundary_outcome,
+                                has_tee_bootstrap,
+                                self.ocomp_lifecycle_active,
+                            );
                         // Ok(None) signals "no further commit" — pre-exec already
                         // pushed receipt[0] and committed state. The block builder
                         // still keeps this validated witness in body[0].
@@ -3011,9 +3202,12 @@ where
                         .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
                         .map(Some);
                     if commit_outcome.is_ok() {
-                        self.system_tx_phase_cursor = self
-                            .system_tx_phase_cursor
-                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                        self.system_tx_phase_cursor =
+                            self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                                has_boundary_outcome,
+                                has_tee_bootstrap,
+                                self.ocomp_lifecycle_active,
+                            );
                     }
                     return commit_outcome;
                 }
@@ -3162,9 +3356,12 @@ where
                             signed_gas_limit: visible_gas_limit,
                             internal_gas_used: result.result.tx_gas_used(),
                         })?;
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    self.system_tx_phase_cursor =
+                        self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                            has_boundary_outcome,
+                            has_tee_bootstrap,
+                            self.ocomp_lifecycle_active,
+                        );
                     return Ok(Some(gas_output));
                 }
 
@@ -3187,9 +3384,12 @@ where
                     )
                     .map(Some);
                 if commit_outcome.is_ok() {
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    self.system_tx_phase_cursor =
+                        self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                            has_boundary_outcome,
+                            has_tee_bootstrap,
+                            self.ocomp_lifecycle_active,
+                        );
                 }
                 return commit_outcome;
             }
@@ -3542,7 +3742,15 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
-        self.finalize_compressed_entities()?;
+        if self.ocomp_lifecycle_active {
+            if !self.ocomp_terminal_request_consumed {
+                return Err(BlockExecutionError::msg(
+                    "active OCOMP block is missing its terminal system transaction",
+                ));
+            }
+        } else {
+            self.finalize_compressed_entities()?;
+        }
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
@@ -3668,7 +3876,8 @@ mod tests {
         signer::OutbeEvmSigner,
         system_tx::{
             build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-            system_tx_intrinsic_gas, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+            system_tx_intrinsic_gas, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
+            SystemTxVisibleGasPlan,
         },
     };
 
@@ -4804,6 +5013,177 @@ mod tests {
             visible_system_gas + user_gas.tx_gas_used(),
             "block header gas_used must include visible system envelope gas"
         );
+    }
+
+    #[test]
+    fn active_terminal_request_seals_ce_once_and_rejects_later_transactions() {
+        use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
+
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let chain_spec = test_chain_spec();
+        let config = OutbeEvmConfig::new(chain_spec)
+            .with_evm_signer(signer)
+            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(Some(5), Bytes::new()));
+
+        let ce_seals = Arc::new(Mutex::new(0usize));
+        let observed_ce_seals = ce_seals.clone();
+        executor.set_state_hook(Some(Box::new(
+            move |source, _changes: &revm::state::EvmState| {
+                if matches!(
+                    source,
+                    StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
+                        "compressed_entities_end_block"
+                    ))
+                ) {
+                    *observed_ce_seals.lock().unwrap() += 1;
+                }
+            },
+        )));
+
+        executor
+            .apply_pre_execution_changes()
+            .expect("active block pre-execution succeeds");
+        let begin =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        assert_eq!(
+            begin
+                .iter()
+                .map(|tx| SystemTxInputV2::decode(tx.tx().input().as_ref())
+                    .unwrap()
+                    .kind())
+                .collect::<Vec<_>>(),
+            vec![
+                SystemTxKind::OcompLifecycleBegin,
+                SystemTxKind::CycleTick,
+                SystemTxKind::OracleSlashWindow,
+                SystemTxKind::HookEvents,
+            ]
+        );
+        for tx in begin.iter().cloned() {
+            executor
+                .execute_transaction(tx)
+                .expect("begin system tx executes");
+        }
+
+        let end = config
+            .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+            .expect("terminal system tx builds");
+        assert_eq!(end.len(), 1);
+        executor
+            .execute_transaction(end.into_iter().next().unwrap())
+            .expect("terminal system tx executes after CE seal");
+
+        assert_eq!(*ce_seals.lock().unwrap(), 1);
+        assert!(executor.compressed_entities_seal_output().is_some());
+        let receipt_count = executor.receipts().len();
+        let later_user = test_regular_tx()
+            .try_into_recovered()
+            .expect("regular tx signer recovers");
+        assert!(executor.execute_transaction(later_user).is_err());
+        assert_eq!(executor.receipts().len(), receipt_count);
+        assert_eq!(*ce_seals.lock().unwrap(), 1);
+
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("sealed CE root enters final header");
+        let (_evm, result) = executor.finish().expect("active executor finishes");
+        assert_eq!(result.receipts.len(), 5);
+        assert_eq!(*ce_seals.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        let run = |replay: bool| {
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let user = test_regular_tx()
+                .try_into_recovered()
+                .expect("regular tx signer recovers");
+            let user_sender = Address(*user.signer());
+            let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
+            let config = OutbeEvmConfig::new(test_chain_spec())
+                .with_evm_signer(signer)
+                .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+            let begin =
+                begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+            let end = config
+                .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+                .expect("terminal system tx builds");
+
+            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut ctx = execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
+            ctx.proposer_evm_address = Some(proposer);
+            if replay {
+                ctx.expected_begin_system_txs = begin.clone();
+                ctx.expected_end_system_txs = end.clone();
+            }
+            let mut executor = config.create_executor(evm, ctx);
+
+            executor
+                .apply_pre_execution_changes()
+                .expect("active pre-execution succeeds");
+            for tx in begin {
+                executor
+                    .execute_transaction(tx)
+                    .expect("begin system tx executes");
+            }
+            executor
+                .execute_transaction(user)
+                .expect("ordinary tx executes before CE sealing");
+            executor
+                .execute_transaction(end.into_iter().next().unwrap())
+                .expect("terminal request executes after ordinary txs");
+
+            let ce_root = executor
+                .compressed_entities_seal_output()
+                .expect("terminal request seals compressed entities")
+                .new_root;
+            executor
+                .prepare_final_header_artifacts(0)
+                .expect("final header artifacts encode");
+            let final_extra_data = executor.final_extra_data.clone();
+            let (evm, result) = executor.finish().expect("active block finishes");
+            drop(evm);
+            let state_root = post_state_root(&state.bundle_state);
+
+            (
+                result.receipts,
+                result.gas_used,
+                ce_root,
+                final_extra_data,
+                state_root,
+            )
+        };
+
+        let proposer = run(false);
+        let replay = run(true);
+        assert_eq!(proposer, replay);
+        assert_eq!(proposer.0.len(), 6);
     }
 
     #[test]

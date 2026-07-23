@@ -21,7 +21,7 @@ use reth_errors::{BlockExecutionError, BlockValidationError, ConsensusError};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{
     execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput, BlockExecutor},
-    ConfigureEvm, Evm, NextBlockEnvAttributes,
+    ConfigureEvm, Evm, NextBlockEnvAttributes, RecoveredTx,
 };
 use reth_payload_builder::{BlobSidecars, EthBuiltPayload};
 use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
@@ -322,6 +322,35 @@ where
                 warn!(target: "payload_builder", %err, "failed to build begin system transactions");
                 PayloadBuilderError::Internal(err.into())
             })?;
+        let begin_system_tx_count = begin_system_txs.len();
+        let end_system_txs = self
+            .evm_config
+            .build_end_system_txs(
+                block_number,
+                chain_spec.chain().id(),
+                begin_system_tx_count,
+                attributes.proposer_evm_address(),
+            )
+            .map_err(|err| {
+                warn!(target: "payload_builder", %err, "failed to build end system transactions");
+                PayloadBuilderError::Internal(err.into())
+            })?;
+        let reserved_end_gas = end_system_txs
+            .iter()
+            .try_fold(0u64, |total, tx| total.checked_add(tx.tx().gas_limit()))
+            .ok_or_else(|| {
+                PayloadBuilderError::other(std::io::Error::other(
+                    "end system transaction gas overflow",
+                ))
+            })?;
+        let reserved_end_rlp_length = end_system_txs
+            .iter()
+            .try_fold(0usize, |total, tx| total.checked_add(tx.inner().length()))
+            .ok_or_else(|| {
+                PayloadBuilderError::other(std::io::Error::other(
+                    "end system transaction size overflow",
+                ))
+            })?;
         for tx in begin_system_txs {
             if cancel.is_cancelled() {
                 return Ok(BuildOutcome::Cancelled);
@@ -344,7 +373,11 @@ where
         }
 
         while let Some(pool_tx) = best_txs.next() {
-            if cumulative_gas_used.saturating_add(pool_tx.gas_limit()) > block_gas_limit {
+            if cumulative_gas_used
+                .saturating_add(pool_tx.gas_limit())
+                .saturating_add(reserved_end_gas)
+                > block_gas_limit
+            {
                 best_txs.mark_invalid(
                     &pool_tx,
                     &InvalidPoolTransactionError::ExceedsGasLimit(
@@ -361,8 +394,11 @@ where
 
             let tx = pool_tx.to_consensus();
             let tx_rlp_len = tx.inner().length();
-            let estimated_block_size =
-                block_transactions_rlp_length + tx_rlp_len + withdrawals_rlp_length + 1024;
+            let estimated_block_size = block_transactions_rlp_length
+                + tx_rlp_len
+                + reserved_end_rlp_length
+                + withdrawals_rlp_length
+                + 1024;
 
             if is_osaka && estimated_block_size > MAX_RLP_BLOCK_SIZE {
                 best_txs.mark_invalid(
@@ -510,14 +546,35 @@ where
             });
         }
 
+        for tx in end_system_txs {
+            if cancel.is_cancelled() {
+                return Ok(BuildOutcome::Cancelled);
+            }
+            let gas_used = builder
+                .execute_transaction(tx)
+                .map_err(|err| {
+                    warn!(target: "payload_builder", %err, "failed to execute end system transaction");
+                    PayloadBuilderError::Internal(err.into())
+                })?
+                .tx_gas_used();
+            cumulative_gas_used = cumulative_gas_used.saturating_add(gas_used);
+            trace!(
+                target: "payload_builder",
+                gas_used,
+                "included end system transaction"
+            );
+        }
+
         let outcome = if let Some(mut handle) = trie_handle {
             // CE end-block cleanup is consensus state. Deliver its zeroing
             // changes to the parallel trie task before detaching the hook and
             // freezing the precomputed root.
-            builder
-                .executor_mut()
-                .finalize_compressed_entities()
-                .map_err(PayloadBuilderError::evm)?;
+            if !self.evm_config.ocomp_lifecycle_active_at(block_number) {
+                builder
+                    .executor_mut()
+                    .finalize_compressed_entities()
+                    .map_err(PayloadBuilderError::evm)?;
+            }
             builder
                 .executor_mut()
                 .prepare_final_header_artifacts(attributes.timestamp_millis_part())
