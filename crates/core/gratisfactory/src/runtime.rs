@@ -16,6 +16,7 @@ use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_promis::Promis;
 
 /// Pledge `amount` gratis from `caller` into a pending pledge-lock ticket (authorized
 /// by the caller's modify key). Returns the confidential pledge handle to present at
@@ -65,18 +66,22 @@ pub fn mint(
     Ok(())
 }
 
-/// Mint `amount` gratis to `account` WITHOUT recording a Fidelity acquisition
-/// cohort (unlike [`mint`]). Used by the promis→gratis conversion, where the
-/// original promis acquisition cohort is preserved so loyalty aging carries over.
-/// Authorized by the account owner's modify key; the `GratisMinted` event is
-/// emitted by [`outbe_gratis::api::mint`].
-pub fn mint_from_promis(
+/// Burn `amount` public promis from `account` and mint the matching Gratis 1:1.
+/// The gratis mint is authorized by the account owner's Gratis modify key
+/// (`auth`): the confidential mint runs inside the enclave, so the caller must
+/// supply a valid `mac`/`opNonce` bound to their current gratis op-nonce.
+pub fn mine_from_promis(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<()> {
-    gratis::mint(storage, account, amount, auth)
+) -> Result<U256> {
+    let mut promis = Promis::new(storage.clone());
+    promis.burn(account, amount)?;
+
+    gratis::mint(storage, account, amount, auth)?;
+
+    Ok(amount)
 }
 
 pub fn mine_coen(

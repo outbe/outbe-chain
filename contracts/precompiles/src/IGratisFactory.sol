@@ -21,19 +21,24 @@ interface IGratisFactory {
     ///         op-nonce (fetch via `outbe_deriveGratisKeys` + the gratis op-nonce).
     /// @return pledgeHandle The confidential pledge record id. Hand it (and the
     ///         derived pledge secret) to the CCA to request credis.
-    function pledgeGratis(uint256 amount, bytes32 mac, uint64 opNonce)
-        external
-        returns (bytes32 pledgeHandle);
+    function pledgeGratis(uint256 amount, bytes32 mac, uint64 opNonce) external returns (bytes32 pledgeHandle);
 
     /// @notice Directly unpledge an UNSPENT pledge (e.g. credis rejected),
     ///         releasing the full collateral back to `msg.sender`. Authorized by
     ///         the caller's modify key.
-    function unpledgeGratis(uint256 amount, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce)
-        external;
+    function unpledgeGratis(uint256 amount, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce) external;
 
     /// @notice Convert `amount` gratis to native COEN at 1:1 (burns gratis).
     ///         Authorized by the caller's modify key.
     function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
+
+    /// @notice Convert `amount` promis to confidential Gratis at 1:1 (burns the
+    ///         caller's public promis, mints gratis). The gratis mint runs inside
+    ///         the enclave and is authorized by the caller's Gratis modify key:
+    ///         `mac = HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
+    ///         caller's current on-chain gratis op-nonce (fetch via
+    ///         `outbe_deriveGratisKeys` + the gratis op-nonce).
+    function mineFromPromis(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

@@ -1,9 +1,9 @@
 import { ethers, Wallet } from "ethers";
-import { IGratis__factory, IPromis__factory, IPromisFactory__factory } from "./contracts/index.js";
+import { IGratis__factory, IGratisFactory__factory, IPromis__factory } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
+  DEFAULT_GRATIS_FACTORY_ADDRESS,
   DEFAULT_PROMIS_ADDRESS,
-  DEFAULT_PROMIS_FACTORY_ADDRESS,
   formatToken,
   formatTokenDiff,
   fetchTokenMeta,
@@ -27,14 +27,14 @@ const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
 const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const promisAddress = process.env["PROMIS_ADDRESS"] || DEFAULT_PROMIS_ADDRESS;
-const promisFactoryAddress = process.env["PROMIS_FACTORY_ADDRESS"] || DEFAULT_PROMIS_FACTORY_ADDRESS;
+const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new Wallet(userPrivateKey, provider);
   const gratis = IGratis__factory.connect(gratisAddress, wallet);
   const promis = IPromis__factory.connect(promisAddress, wallet);
-  const promisFactory = IPromisFactory__factory.connect(promisFactoryAddress, wallet);
+  const gratisFactory = IGratisFactory__factory.connect(gratisFactoryAddress, wallet);
 
   const gratisMeta = await fetchTokenMeta(gratis);
   const promisMeta = await fetchTokenMeta(promis);
@@ -55,7 +55,7 @@ async function main() {
   console.log(`RPC:            ${rpcUrl}`);
   console.log(`User:           ${userAddress}`);
   console.log(`Promis:         ${promisAddress} (${promisMeta.symbol})`);
-  console.log(`PromisFactory:  ${promisFactoryAddress}`);
+  console.log(`GratisFactory:  ${gratisFactoryAddress}`);
   console.log(`Gratis:         ${gratisAddress} (${gratisMeta.symbol})`);
   console.log(`Amount:         ${formatToken(amount, promisMeta.decimals, promisMeta.symbol)}`);
   console.log(`Op-nonce:       ${opNonce}`);
@@ -74,15 +74,15 @@ async function main() {
   }
 
   // Authorize the confidential Gratis mint with the modify key, bound to the
-  // current op-nonce. convertToGratis burns Promis and mints Gratis via the
+  // current op-nonce. mineFromPromis burns Promis and mints Gratis via the
   // enclave's `mine` op, so the MAC uses GratisOp.Mine.
   const mac = modifyMac(keys.modifyKey, userAddress, GratisOp.Mine, amount, opNonce, chainId);
 
-  console.log("\nSending convertToGratis(amount, mac, opNonce)...");
-  const tx = await promisFactory.convertToGratis(amount, mac, opNonce);
+  console.log("\nSending mineFromPromis(amount, mac, opNonce)...");
+  const tx = await gratisFactory.mineFromPromis(amount, mac, opNonce);
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
-  if (!receipt) throw new Error("convertToGratis tx receipt missing");
+  if (!receipt) throw new Error("mineFromPromis tx receipt missing");
   console.log(`  Block:   ${receipt.blockNumber}`);
 
   const promisAfter = await promis.balanceOf(userAddress);

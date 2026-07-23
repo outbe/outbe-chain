@@ -181,7 +181,7 @@ npx tsx src/0-setup-native.ts
 npx tsx src/0-setup-erc20.ts
 # Convert the user's genesis-seeded Promis into confidential Gratis. Gratis is
 # TEE-encrypted at rest, so it can't be plaintext-seeded at genesis — the user
-# gets it by burning public Promis 1:1 via IPromisFactory.convertToGratis.
+# gets it by burning public Promis 1:1 via IGratisFactory.mineFromPromis.
 npx tsx src/0-setup-gratis.ts                          # converts 1000 Promis by default
 
 # User pledges 77 Gratis with a random commitment
