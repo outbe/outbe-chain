@@ -164,16 +164,22 @@ fn immutable_manifest_cannot_be_republished() {
 }
 
 #[test]
-fn ocm_00_task_progress_is_narrow_and_future_ids_stay_missing() {
+fn task_progress_passes_all_discovered_ids_and_leaves_future_ids_missing() {
     let ledger = PlanningLedger::parse(&planning_ledger_path()).expect("ledger");
     let discovery = discover(&repository_root(), &ledger).expect("repository discovery");
-    let report = task_progress_report(&ledger, "OCM-00", discovery, &["OCM-EVD-001".to_owned()])
-        .expect("OCM-00 task progress");
+    let passed = discovery.discovered.clone();
+    assert!(passed.contains(&"OCM-EVD-001".to_owned()));
+    assert!(passed.contains(&"OCM-SEM-001".to_owned()));
+    let report =
+        task_progress_report(&ledger, "OCM-01", discovery, &passed).expect("OCM-01 task progress");
     assert!(report.passed());
     assert_eq!(report.mode, "task_progress");
-    assert_eq!(report.task_id.as_deref(), Some("OCM-00"));
-    assert_eq!(report.passed_test_ids, ["OCM-EVD-001"]);
-    assert_eq!(report.missing_test_ids.len(), ledger.tests.len() - 1);
+    assert_eq!(report.task_id.as_deref(), Some("OCM-01"));
+    assert_eq!(report.passed_test_ids, passed);
+    assert_eq!(
+        report.missing_test_ids.len(),
+        ledger.tests.len() - report.passed_test_ids.len()
+    );
 }
 
 fn assert_error_contains<T: std::fmt::Debug>(result: eyre::Result<T>, needle: &str) {

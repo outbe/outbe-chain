@@ -139,12 +139,12 @@ pub fn task_progress_report(
         .collect::<BTreeSet<_>>();
     let owned_set = owned.iter().cloned().collect::<BTreeSet<_>>();
     ensure!(
-        passed_set == owned_set,
-        "task {task_id} must pass exactly its owned IDs: expected {owned_set:?}, got {passed_set:?}"
+        owned_set.is_subset(&passed_set),
+        "task {task_id} did not pass every owned ID: expected at least {owned_set:?}, got {passed_set:?}"
     );
     ensure!(
-        passed_set.is_subset(&discovered),
-        "task {task_id} claims an undiscovered stable test"
+        passed_set == discovered,
+        "task {task_id} must pass every stable test discovered at this revision: expected {discovered:?}, got {passed_set:?}"
     );
 
     let mut missing = ledger

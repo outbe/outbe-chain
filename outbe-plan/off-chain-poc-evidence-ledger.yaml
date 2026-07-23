@@ -263,7 +263,7 @@ tests:
     layer: PURE
     lane: OCM-FAST
     planned_path: crates/core/lysis/tests/program_v1_reference.rs
-    production_entrypoint: storage-independent execute_lysis V1
+    production_entrypoint: outbe_lysis::program_v1::execute
     real_components:
       - native_lysis_program
       - independent_python_reference

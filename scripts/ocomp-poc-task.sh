@@ -10,8 +10,18 @@ task="$1"
 case "$task" in
   OCM-00)
     cargo test --locked -p outbe-e2e-harness --test ocomp_evidence_verifier
+    python3 -m unittest scripts/reference/tests/test_lysis_v1.py
+    cargo test --locked -p outbe-lysis --test program_v1_reference
     cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- \
-      task-progress OCM-00 --passed OCM-EVD-001
+      task-progress OCM-00 --passed OCM-EVD-001 --passed OCM-SEM-001
+    ;;
+  OCM-01)
+    cargo test --locked -p outbe-e2e-harness --test ocomp_evidence_verifier
+    python3 -m unittest scripts/reference/tests/test_lysis_v1.py
+    cargo test --locked -p outbe-lysis
+    cargo clippy --locked -p outbe-lysis --all-targets -- -D warnings
+    cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- \
+      task-progress OCM-01 --passed OCM-EVD-001 --passed OCM-SEM-001
     ;;
   *)
     cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- discover

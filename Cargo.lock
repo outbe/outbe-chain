@@ -7822,6 +7822,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "hex",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-fidelity",
@@ -7832,6 +7833,8 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
