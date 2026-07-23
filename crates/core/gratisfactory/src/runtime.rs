@@ -66,30 +66,7 @@ pub fn mint(
     Ok(())
 }
 
-/// Mint `amount` gratis to `account` WITHOUT recording a Fidelity acquisition
-/// cohort (unlike [`mint`]). Used by the promis→gratis conversion, where the
-/// original promis acquisition cohort is preserved so loyalty aging carries over.
-/// Authorized by the account owner's modify key; the `GratisMinted` event is
-/// emitted by [`outbe_gratis::api::mint`].
-pub fn mint_from_promis(
-    storage: StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    auth: ModifyAuth,
-) -> Result<()> {
-    gratis::mint(storage, account, amount, auth)
-}
-
 /// Burn `amount` public promis from `account` and mint the matching Gratis 1:1.
-/// The `PromisBurned` event is emitted by [`outbe_promis::Promis::burn`].
-///
-/// Unlike [`mine_coen`], this touches no Fidelity cohort: the original promis
-/// acquisition cohort stays intact and carries over to the gratis, so loyalty
-/// aging is preserved (the mint goes through [`mint_from_promis`], the no-cohort
-/// path). Amount/balance validation is delegated to [`outbe_promis::Promis::burn`];
-/// atomic revert guarantees no partial burn if the gratis mint fails. Returns the
-/// minted gratis amount.
-///
 /// The gratis mint is authorized by the account owner's Gratis modify key
 /// (`auth`): the confidential mint runs inside the enclave, so the caller must
 /// supply a valid `mac`/`opNonce` bound to their current gratis op-nonce.
@@ -102,7 +79,7 @@ pub fn mine_from_promis(
     let mut promis = Promis::new(storage.clone());
     promis.burn(account, amount)?;
 
-    mint_from_promis(storage, account, amount, auth)?;
+    gratis::mint(storage, account, amount, auth)?;
 
     Ok(amount)
 }
