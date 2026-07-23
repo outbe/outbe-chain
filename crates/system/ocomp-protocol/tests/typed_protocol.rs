@@ -31,9 +31,9 @@ use outbe_ocomp_protocol::{
     },
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
-        ActivationOutcome, AggregateActivationReceiptV1, BudgetSplitDestination,
-        CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1, NodBatchReceiptV1,
-        RequestBudgetSplitReceiptV1, TributeReceiptV1,
+        desis_request_brief_hash, ActivationOutcome, AggregateActivationReceiptV1,
+        BudgetSplitDestination, CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1,
+        NodBatchReceiptV1, RequestBudgetSplitReceiptV1, TributeReceiptV1,
     },
     registry::{HashDomain, ObjectKind},
     result::{
@@ -883,6 +883,79 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
             "aggregate receipt outcome shape"
         ))
     ));
+}
+
+#[test]
+fn desis_request_brief_hash_commits_every_frozen_request_field() {
+    let protocol_bundle_hash = hash(41);
+    let wwd = 7_u32;
+    let auction_base = U256::from(6);
+    let auction_entry_price = U256::from(2);
+    let logical_anchor = 10_u64;
+
+    let digest = desis_request_brief_hash(
+        protocol_bundle_hash,
+        wwd,
+        auction_base,
+        auction_entry_price,
+        logical_anchor,
+    )
+    .unwrap();
+    let mut preimage = Vec::with_capacity(108);
+    preimage.extend_from_slice(protocol_bundle_hash.as_slice());
+    preimage.extend_from_slice(&wwd.to_be_bytes());
+    preimage.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    preimage.extend_from_slice(&auction_entry_price.to_be_bytes::<32>());
+    preimage.extend_from_slice(&logical_anchor.to_be_bytes());
+    assert_eq!(
+        digest,
+        hash_framed(HashDomain::DesisRequestBrief, &preimage).unwrap()
+    );
+
+    for changed in [
+        desis_request_brief_hash(
+            hash(42),
+            wwd,
+            auction_base,
+            auction_entry_price,
+            logical_anchor,
+        )
+        .unwrap(),
+        desis_request_brief_hash(
+            protocol_bundle_hash,
+            wwd + 1,
+            auction_base,
+            auction_entry_price,
+            logical_anchor,
+        )
+        .unwrap(),
+        desis_request_brief_hash(
+            protocol_bundle_hash,
+            wwd,
+            auction_base + U256::from(1),
+            auction_entry_price,
+            logical_anchor,
+        )
+        .unwrap(),
+        desis_request_brief_hash(
+            protocol_bundle_hash,
+            wwd,
+            auction_base,
+            auction_entry_price + U256::from(1),
+            logical_anchor,
+        )
+        .unwrap(),
+        desis_request_brief_hash(
+            protocol_bundle_hash,
+            wwd,
+            auction_base,
+            auction_entry_price,
+            logical_anchor + 1,
+        )
+        .unwrap(),
+    ] {
+        assert_ne!(changed, digest);
+    }
 }
 
 #[test]

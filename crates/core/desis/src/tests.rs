@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -172,6 +172,94 @@ fn dispatch_auction_brief_records_a_red_day() {
             AuctionStage::Briefed
         );
         assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 0);
+    });
+}
+
+#[test]
+fn strict_request_auction_base_commits_the_exact_green_brief() {
+    with_storage(|s| {
+        let digest = crate::ocomp_budget::apply_request_auction_base(
+            s.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::from(7 * PROMIS_LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            NOW,
+        )
+        .expect("strict request brief");
+
+        assert_ne!(digest, B256::ZERO);
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Briefed
+        );
+        assert_eq!(
+            contract.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
+            U256::from(7 * PROMIS_LOAD_MINOR)
+        );
+        assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(
+            contract
+                .read_auction_config(WORLDWIDE_DAY)
+                .unwrap()
+                .entry_price_minor,
+            U256::from(ENTRY_PRICE)
+        );
+    });
+}
+
+#[test]
+fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() {
+    with_storage(|s| {
+        crate::ocomp_budget::apply_request_auction_base(
+            s.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::from(7 * PROMIS_LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            NOW,
+        )
+        .unwrap();
+
+        assert!(crate::ocomp_budget::apply_request_auction_base(
+            s.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::from(9 * PROMIS_LOAD_MINOR),
+            U256::from(ENTRY_PRICE),
+            NOW,
+        )
+        .is_err());
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.pending_supply_promis.read(&WORLDWIDE_DAY).unwrap(),
+            U256::from(7 * PROMIS_LOAD_MINOR)
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 1);
+    });
+}
+
+#[test]
+fn strict_request_auction_base_rejects_oversized_supply_without_state() {
+    with_storage(|s| {
+        assert!(crate::ocomp_budget::apply_request_auction_base(
+            s.clone(),
+            B256::repeat_byte(0x41),
+            WORLDWIDE_DAY,
+            U256::MAX,
+            U256::from(ENTRY_PRICE),
+            NOW,
+        )
+        .is_err());
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::None
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
     });
 }
 

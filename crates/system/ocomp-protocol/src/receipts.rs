@@ -331,6 +331,22 @@ pub fn apply_event_summary_hash(owner_digests: [B256; 4]) -> Result<B256, Protoc
     hash_framed(HashDomain::ApplyEventSummary, &payload)
 }
 
+pub fn desis_request_brief_hash(
+    protocol_bundle_hash: B256,
+    wwd: u32,
+    auction_base: U256,
+    auction_entry_price: U256,
+    logical_anchor: u64,
+) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(108);
+    payload.extend_from_slice(protocol_bundle_hash.as_slice());
+    payload.extend_from_slice(&wwd.to_be_bytes());
+    payload.extend_from_slice(&auction_base.to_be_bytes::<32>());
+    payload.extend_from_slice(&auction_entry_price.to_be_bytes::<32>());
+    payload.extend_from_slice(&logical_anchor.to_be_bytes());
+    hash_framed(HashDomain::DesisRequestBrief, &payload)
+}
+
 impl RequestBudgetSplitReceiptV1 {
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         let split_total = self.lysis_budget.checked_add(self.auction_base).ok_or(

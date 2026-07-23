@@ -374,6 +374,7 @@ Registered domains are:
 | `OUTBE_OCOMP_NOD_RECEIPT_V1` | canonical `NodBatchReceiptV1` |
 | `OUTBE_OCOMP_CONTRIBUTOR_RECEIPT_V1` | canonical `ContributorReceiptV1` |
 | `OUTBE_OCOMP_TRIBUTE_RECEIPT_V1` | canonical `TributeReceiptV1` |
+| `OUTBE_OCOMP_DESIS_REQUEST_BRIEF_V1` | protocol bundle, WWD, auction base, entry price and request logical anchor |
 | `OUTBE_OCOMP_BUDGET_SPLIT_RECEIPT_V1` | canonical `RequestBudgetSplitReceiptV1` |
 | `OUTBE_OCOMP_CARRY_OVER_RECEIPT_V1` | canonical `CarryOverReceiptV1` |
 | `OUTBE_OCOMP_ACTIVE_GENERATION_V1` | canonical `ActiveGenerationV1` |
@@ -510,6 +511,15 @@ ContributorReceiptHash = H(
 TributeReceiptHash = H(
   "OUTBE_OCOMP_TRIBUTE_RECEIPT_V1",
   canonical(TributeReceiptV1)
+)
+
+DesisRequestBriefHash = H(
+  "OUTBE_OCOMP_DESIS_REQUEST_BRIEF_V1",
+  protocol_bundle_hash
+  || u32_be(wwd)
+  || u256_be(auction_base)
+  || u256_be(auction_entry_price)
+  || u64_be(logical_anchor)
 )
 
 RequestBudgetSplitReceiptHash = H(

@@ -5,6 +5,9 @@ on:
     paths:
       - "outbe-plan/**"
       - "crates/core/lysis/**"
+      - "crates/core/desis/**"
+      - "crates/core/metadosis/**"
+      - "crates/core/promislimit/**"
       - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
       - "crates/testing/lysis-v1-reference/**"
@@ -18,6 +21,9 @@ on:
     paths:
       - "outbe-plan/**"
       - "crates/core/lysis/**"
+      - "crates/core/desis/**"
+      - "crates/core/metadosis/**"
+      - "crates/core/promislimit/**"
       - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
       - "crates/testing/lysis-v1-reference/**"
@@ -57,7 +63,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - run: mise run ocomp-poc-task -- OCM-04
+      - run: mise run ocomp-poc-task -- OCM-05
 
   poc-closure:
     name: PoC closure (fail closed)

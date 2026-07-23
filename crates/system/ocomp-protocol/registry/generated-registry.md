@@ -69,6 +69,7 @@
 | — | `NodReceipt` | `OUTBE_OCOMP_NOD_RECEIPT_V1` |
 | — | `ContributorReceipt` | `OUTBE_OCOMP_CONTRIBUTOR_RECEIPT_V1` |
 | — | `TributeReceipt` | `OUTBE_OCOMP_TRIBUTE_RECEIPT_V1` |
+| — | `DesisRequestBrief` | `OUTBE_OCOMP_DESIS_REQUEST_BRIEF_V1` |
 | — | `BudgetSplitReceipt` | `OUTBE_OCOMP_BUDGET_SPLIT_RECEIPT_V1` |
 | — | `CarryOverReceipt` | `OUTBE_OCOMP_CARRY_OVER_RECEIPT_V1` |
 | — | `ActiveGeneration` | `OUTBE_OCOMP_ACTIVE_GENERATION_V1` |

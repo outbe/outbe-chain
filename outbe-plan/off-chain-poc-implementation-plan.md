@@ -502,9 +502,10 @@ No owner receives OCOMP reservation state.
 - protocol split/precondition/receipt types only.
 
 **Changes:** add checked `day_limit = lysis_budget + auction_base`; strict
-request-phase Desis apply; checked carry-over add/take; read-only Tribute/Nod/
-contributor/Metadosis activation-precondition projections; canonical
-`RequestBudgetSplitReceiptV1`.
+request-phase Desis apply; checked carry-over add/take; canonical
+`RequestBudgetSplitReceiptV1`. Reuse the frozen activation-precondition types,
+but add each read-only owner projection only with the state it projects in
+`OCM-06`/`OCM-08`; do not fabricate placeholder counters in this task.
 
 **Invariants/failures:** exactly one request effect per day split; GREEN brief
 supply is `auction_base`; RED has no brief and credits `auction_base`; checked
@@ -519,7 +520,8 @@ adapter, generic lease or auction top-up.
 
 **Task-local tests:** checked split boundaries; GREEN/RED exact effects;
 strict-Desis failure; carry-over overflow/add/take; retry idempotence; compile/
-schema assertions that no owner reservation record exists.
+ABI assertions for the unchanged public surface. Absence of owner reservation
+state is verified by storage-layout review, not by source-text inspection.
 
 **Evidence/CI:** `OCM-FAST` owner tests and `OCM-INT` checkpoint integration;
 pre/post typed state snapshots and storage-schema diff.
@@ -551,7 +553,9 @@ without enumerating Tribute, Fidelity or Oracle.
 **Changes:** maintain sealed root/count/nominal/body bytes, distinct owner/
 currency counts, Fidelity cohort maximum, Oracle WWD/S-curve counts, encoded
 upper bounds, auction price/source/day and Oracle state version. Store envelope
-hash and increment `state_version` with relevant updates.
+hash and increment `state_version` with relevant updates. Expose the
+corresponding immutable read-only owner projections consumed by activation
+preconditions.
 
 **Invariants/failures:** accumulator updates use checked arithmetic and exact
 canonical identity; the sealed envelope equals later full export; cap+1 marks
@@ -645,7 +649,8 @@ without executing Lysis.
 **Changes:** append `OFFCHAIN_PENDING=8`; add nonce/state/envelope fields;
 job/live/READY/expiry/terminal indexes; exact request checkpoint; exclusive
 deadline; one-block retry; terminal cap; empty/ineligible direct compatibility
-branches.
+branches. Assemble the complete activation-precondition snapshot through the
+read-only projections owned here and in `OCM-06`.
 
 **Invariants/failures:** status/index/budget equivalences; initial nonce zero and
 `attempt=checked_u32(nonce)`; expiry increments once; no scan; no `RUNNING`;
