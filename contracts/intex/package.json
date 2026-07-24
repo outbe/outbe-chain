@@ -3,14 +3,8 @@
   "version": "0.1.0",
   "packageManager": "yarn@4.9.3",
   "type": "module",
-  "description": "Outbe Intex smart contracts - ABIs, TypeChain types, and deployment addresses",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Outbe Intex smart contracts and ABIs",
   "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    },
     "./abi/*": "./abi-export/*.json",
     "./addresses/*": "./dist/addresses/*.json"
   },
