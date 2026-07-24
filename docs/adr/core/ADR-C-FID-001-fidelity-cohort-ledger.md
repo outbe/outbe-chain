@@ -40,6 +40,10 @@ RCFI is calculated on demand from persisted history:
 The global earliest qualification supplies the synthetic maximum. Public ABI is
 read-only. Mutation is an internal protocol hook whose callers must be enumerated.
 
+Only Gratis mutates cohorts. Promis is fidelity-neutral: promis mint/burn record
+nothing. A Promis-to-Gratis conversion is a genuine Gratis acquisition and calls
+`cohort_in` for a fresh cohort dated at conversion time.
+
 ## Persistent state and invariants
 
 - Active slots are dense in `[0, active_count)` and every slot has positive size.
@@ -48,8 +52,8 @@ read-only. Mutation is an internal protocol hook whose callers must be enumerate
 - `qualified_start` is the first acquisition time and never moves forward.
 - `first_qualified_start` is the minimum nonzero qualification time globally.
 - A `cohort_out` consumes exactly the requested quantity or fails atomically.
-- Active quantity reconciles with the tracked economic holdings after accounting
-  for explicitly age-preserving Promis-to-Gratis conversion.
+- Active quantity reconciles with tracked Gratis holdings; a Promis-to-Gratis
+  conversion adds a fresh cohort rather than preserving prior age.
 - RCFI lies between zero and the synthetic maximum; league lies in `1..=4096`.
 
 Missing dense slots, impossible timestamps or insufficient active quantity are
@@ -57,11 +61,13 @@ invariant failures, not reasons to clamp a calculation.
 
 ## Authority, atomicity and replay
 
-Gratisfactory and PromisFactory are the intended acquisition/disposal workflow
-owners. Direct internal calls are privileged. A structural test must enumerate all
-callers and the matching economic mutation.
+Gratisfactory is the intended acquisition/disposal workflow owner (direct Gratis
+mint/burn and the Promis-to-Gratis conversion); Credisfactory disposes pledged
+Gratis on expiry. PromisFactory is fidelity-neutral. Direct internal calls are
+privileged. A structural test must enumerate all callers and the matching economic
+mutation.
 
-Cohort mutation and the corresponding Gratis/Promis mint, burn or conversion must
+Cohort mutation and the corresponding Gratis mint, burn or conversion must
 share one EVM rollback domain. Fidelity has no independent replay key; the owning
 workflow supplies it. Callers may not supply wall time—only canonical execution
 time is accepted at the boundary.
@@ -93,7 +99,9 @@ import a typed league or index rather than reimplementing retention calculations
 
 - **Use current balance only:** acquisition age and sold-history penalty disappear.
 - **FIFO disposal:** it changes the intended retention economics.
-- **Reset age on Promis-to-Gratis conversion:** conversion would game loyalty.
+- **Promis participates in fidelity:** loyalty should measure retained Gratis only;
+  the transient pre-conversion Promis leg is excluded, so conversion (not promis
+  acquisition) is what mints the fidelity cohort.
 - **Silently skip missing cohorts:** corrupt state would yield plausible rankings.
 
 ## Open questions and technical debt
@@ -106,9 +114,9 @@ import a typed league or index rather than reimplementing retention calculations
 4. Timestamp subtraction uses saturation. Impossible future acquisition/sale times
    must fail instead of appearing age zero.
 5. Add a structural caller/effect test pairing every cohort mutation with its exact
-   Gratis or Promis economic mutation.
-6. Define and test active-quantity reconciliation when value converts between
-   Promis and Gratis without cohort mutation.
+   Gratis economic mutation.
+6. Define and test active-quantity reconciliation when Promis converts to Gratis,
+   given the conversion now records a fresh cohort.
 7. Sold history grows forever and reads are linear. Specify maximum cohorts,
    safe aggregation/compaction, pagination and gas limits.
 8. `first_qualified_start` assumes monotonic timestamps and first write is global

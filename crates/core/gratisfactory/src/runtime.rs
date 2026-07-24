@@ -5,7 +5,9 @@
 //! escrow; `mine`/`mine_coen` own the mint/burn plus Fidelity cohort bookkeeping.
 //! `mine` wraps `outbe_gratis::api::mine` and records the acquisition cohort
 //! (`cohort_in`); `mine_coen` wraps `outbe_gratis::api::burn`, records the sale
-//! cohort (`cohort_out`), and mints native COEN 1:1.
+//! cohort (`cohort_out`), and mints native COEN 1:1. `mine_from_promis` burns
+//! public promis and mints the matching Gratis, recording a fresh acquisition
+//! cohort (promis itself is fidelity-neutral).
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -70,6 +72,10 @@ pub fn mint(
 /// The gratis mint is authorized by the account owner's Gratis modify key
 /// (`auth`): the confidential mint runs inside the enclave, so the caller must
 /// supply a valid `mac`/`opNonce` bound to their current gratis op-nonce.
+///
+/// Promis is fidelity-neutral; the resulting Gratis is not. Converting therefore
+/// records a fresh Fidelity acquisition cohort dated at conversion time (via the
+/// shared [`mint`] path), so loyalty aging starts when the Gratis is minted.
 pub fn mine_from_promis(
     storage: StorageHandle<'_>,
     account: Address,
@@ -79,7 +85,8 @@ pub fn mine_from_promis(
     let mut promis = Promis::new(storage.clone());
     promis.burn(account, amount)?;
 
-    gratis::mint(storage, account, amount, auth)?;
+    // Reuse `mint`: gratis mint + fresh Fidelity cohort at the current block time.
+    mint(storage, account, amount, auth)?;
 
     Ok(amount)
 }

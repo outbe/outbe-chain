@@ -8065,7 +8065,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-fidelity",
  "outbe-primitives",
  "outbe-promis",
 ]

@@ -331,26 +331,21 @@ fn mine_coen_rejects_insufficient_balance() {
 }
 
 #[test]
-fn mine_from_promis_burns_promis_mints_gratis_preserving_fidelity() {
+fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
     with_env(|storage| {
         let amount = U256::from(1_000u64);
 
-        // Seed promis to convert plus an active Fidelity cohort of the SAME size
-        // acquired a year ago, so it has positive RCFI now. Converting to gratis
-        // must leave this cohort untouched (aging preserved).
+        // Seed only promis to convert — no Fidelity cohort yet. Promis is
+        // fidelity-neutral, so the aged RCFI a year out is zero up front; the
+        // post-conversion `> 0` check then proves the conversion recorded a fresh
+        // gratis cohort (rather than it having pre-existed).
         Promis::new(storage.clone()).mint(alice(), amount).unwrap();
-        outbe_fidelity::api::cohort_in(
-            storage.clone(),
-            alice(),
-            amount,
-            CREATED_AT - ONE_YEAR_SECS,
-        )
-        .unwrap();
+        let later = CREATED_AT + ONE_YEAR_SECS;
         let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
+            .compute_fidelity_index(alice(), later)
             .unwrap();
-        assert!(rcfi_before > U256::ZERO);
+        assert_eq!(rcfi_before, U256::ZERO);
 
         // mineFromPromis on the gratisfactory precompile. The confidential gratis
         // mint is authorized by alice's modify key at her current op-nonce (0).
@@ -380,12 +375,13 @@ fn mine_from_promis_burns_promis_mints_gratis_preserving_fidelity() {
             amount
         );
 
-        // Fidelity untouched: no cohort_out (promis burn) and no cohort_in (gratis
-        // mint), so RCFI is unchanged. If either hook crept in, this would move.
+        // A fresh gratis acquisition cohort was recorded at conversion time
+        // (CREATED_AT), so the aged RCFI a year later is now positive. If
+        // `mine_from_promis` stopped recording the cohort, this would stay zero.
         let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
+            .compute_fidelity_index(alice(), later)
             .unwrap();
-        assert_eq!(rcfi_after, rcfi_before);
+        assert!(rcfi_after > U256::ZERO);
     });
 }
 

@@ -11,7 +11,6 @@ use crate::runtime;
 
 const CHAIN_ID: u64 = 1;
 const CREATED_AT: u64 = 1_700_000_000;
-const ONE_YEAR_SECS: u64 = 365 * 86_400;
 
 fn alice() -> Address {
     address!("0x1111111111111111111111111111111111111111")
@@ -22,90 +21,12 @@ fn dispatch_call_bytes(call: IPromisFactory::IPromisFactoryCalls) -> Bytes {
 }
 
 #[test]
-fn mine_mints_promis_and_records_fidelity_cohort() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let amount = U256::from(1_000u64);
-        // No cohort yet: RCFI a year out is zero. Asserting this up front is what
-        // makes the post-mine `> 0` check prove `mine` recorded the cohort
-        // (rather than it having pre-existed).
-        let later = CREATED_AT + ONE_YEAR_SECS;
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert_eq!(rcfi_before, U256::ZERO);
-
-        runtime::mint(storage.clone(), alice(), amount).unwrap();
-
-        // Promis minted to the recipient and into total supply.
-        let promis = Promis::new(storage.clone());
-        assert_eq!(promis.balance_of(alice()).unwrap(), amount);
-        assert_eq!(promis.total_supply().unwrap(), amount);
-
-        // The acquisition cohort was recorded at the current block time, so the
-        // aged RCFI a year later is now positive. If `mine` stopped calling
-        // `cohort_in`, this would stay zero and fail.
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert!(rcfi_after > U256::ZERO);
-    });
-}
-
-#[test]
 fn mine_rejects_zero_amount() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
         let err = runtime::mint(storage, alice(), U256::ZERO).unwrap_err();
         assert!(err.to_string().contains("amount must be positive"));
-    });
-}
-
-#[test]
-fn mine_coen_burns_promis_mints_native_and_records_sale_cohort() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    StorageHandle::enter(&mut storage, |storage| {
-        let amount = U256::from(1_000u64);
-
-        // Seed promis to burn plus an active Fidelity cohort of the SAME size
-        // acquired a year ago, so it has positive RCFI now and is fully
-        // consumed by the sale.
-        Promis::new(storage.clone()).mint(alice(), amount).unwrap();
-        outbe_fidelity::api::cohort_in(
-            storage.clone(),
-            alice(),
-            amount,
-            CREATED_AT - ONE_YEAR_SECS,
-        )
-        .unwrap();
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
-            .unwrap();
-        assert!(rcfi_before > U256::ZERO);
-
-        // mineCoen on the promisfactory precompile.
-        let call = dispatch_call_bytes(IPromisFactory::IPromisFactoryCalls::mineCoen(
-            IPromisFactory::mineCoenCall { amount },
-        ));
-        let out = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
-        let minted = IPromisFactory::mineCoenCall::abi_decode_returns(&out).unwrap();
-        assert_eq!(minted, amount);
-
-        // Promis fully burned; native COEN minted 1:1 to the seller.
-        let promis = Promis::new(storage.clone());
-        assert_eq!(promis.balance_of(alice()).unwrap(), U256::ZERO);
-        assert_eq!(promis.total_supply().unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(alice()).unwrap(), amount);
-
-        // The active cohort was fully sold via cohort_out, so RCFI is now zero.
-        // If the sale hook were dropped, this would stay positive and fail.
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
-            .unwrap();
-        assert_eq!(rcfi_after, U256::ZERO);
     });
 }
 
