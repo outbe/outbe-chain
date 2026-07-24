@@ -203,6 +203,7 @@ use crate::{
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
     hybrid::{election::HybridElectorConfigProvider, HybridSchemeProvider},
+    ocomp_retention::{after_durable_candidate, OcompRetentionHook},
     validators::ValidatorSet,
     vrf_safety::VrfSafetyGate,
 };
@@ -249,6 +250,7 @@ enum ProposeOutcome {
     EpochStale,
     BoundaryUnavailable,
     ProjectionUnavailable,
+    RetentionUnavailable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,6 +467,10 @@ pub(crate) struct ApplicationShared {
     /// effort, process-local — the resulting artifact is re-verified by every
     /// validator, so it never affects determinism.
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+
+    /// Node-local durable OCOMP candidate retention. It may forfeit this
+    /// validator's proposal/vote but never changes block validity.
+    ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 /// Named dependencies for [`ApplicationHandler::new`].
@@ -499,6 +505,7 @@ pub struct ApplicationDeps {
     pub proposer_evm_address: Option<Address>,
     pub trust_el_head: bool,
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+    pub ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 impl ApplicationHandler {
@@ -538,6 +545,7 @@ impl ApplicationHandler {
             proposer_evm_address,
             trust_el_head,
             late_sig_store,
+            ocomp_retention,
         } = deps;
         Self {
             rx,
@@ -569,6 +577,7 @@ impl ApplicationHandler {
                 finalization_selector,
                 trust_el_head,
                 late_sig_store,
+                ocomp_retention,
             },
         }
     }
@@ -667,6 +676,11 @@ impl ApplicationHandler {
                                         "proposal task completed without response: exact parent is not projected"
                                     );
                                 }
+                                Ok(ProposeOutcome::RetentionUnavailable) => {
+                                    debug!(
+                                        "proposal task completed without response: OCOMP tentative pin is not durable"
+                                    );
+                                }
                                 Err(error) => {
                                     if let Some(suppressed_since_last) =
                                         shared.proposal_failure_log_limiter.check()
@@ -728,6 +742,37 @@ enum PayloadVerification {
     /// The single-shot verify response channel closed while waiting; the caller
     /// returns without side effects.
     ChannelClosed,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum BuiltCandidatePreparationError {
+    #[error("locally built payload was not accepted by execution: {0}")]
+    Execution(String),
+    #[error("node-local OCOMP retention is unavailable: {0}")]
+    Retention(#[from] crate::ocomp_retention::OcompRetentionHookError),
+}
+
+/// Import a locally built candidate into Reth before its retention source reads
+/// receipts and exact post-state by block hash.
+async fn prepare_built_candidate(
+    engine: &EngineHandle,
+    retention: &dyn OcompRetentionHook,
+    block: &ConsensusBlock,
+    execution_read_budget: ExecutionReadBudget,
+) -> Result<(), BuiltCandidatePreparationError> {
+    let execution_data = OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()))
+        .with_execution_read_budget(execution_read_budget);
+    let status = engine
+        .new_payload(execution_data)
+        .await
+        .map_err(|error| BuiltCandidatePreparationError::Execution(error.to_string()))?;
+    if !status.is_valid() {
+        return Err(BuiltCandidatePreparationError::Execution(format!(
+            "{status:?}"
+        )));
+    }
+    retention.prepare_candidate(block)?;
+    Ok(())
 }
 
 impl ApplicationShared {
@@ -983,6 +1028,7 @@ impl ApplicationShared {
         // Uses FCU-based flow: canonicalize_and_build sends
         // FCU with payload attributes so the engine starts building a payload
         // on the correct canonical state with access to the txpool.
+        let candidate_execution_budget = execution_read_budget.clone();
         match self
             .build_block(
                 clock,
@@ -997,6 +1043,18 @@ impl ApplicationShared {
             .await
         {
             Ok(BuildBlockOutcome::Built(digest, block)) => {
+                if let Err(error) = self
+                    .prepare_built_candidate(&block, candidate_execution_budget)
+                    .await
+                {
+                    warn!(
+                        %round,
+                        digest = %digest.0,
+                        %error,
+                        "withholding proposal because its execution-valid OCOMP source is not durable"
+                    );
+                    return Ok(ProposeOutcome::RetentionUnavailable);
+                }
                 // Cache the proposed block into marshal NOW, at propose time, so
                 // the proposer can always SERVE it on demand (verifiers pull via
                 // subscribe_by_digest) — independent of whether the later
@@ -1032,6 +1090,20 @@ impl ApplicationShared {
             Ok(BuildBlockOutcome::BoundaryUnavailable) => Ok(ProposeOutcome::BoundaryUnavailable),
             Err(e) => Err(eyre::eyre!("failed to build block for proposal: {e}")),
         }
+    }
+
+    async fn prepare_built_candidate(
+        &self,
+        block: &ConsensusBlock,
+        execution_read_budget: ExecutionReadBudget,
+    ) -> Result<(), BuiltCandidatePreparationError> {
+        prepare_built_candidate(
+            &self.engine,
+            self.ocomp_retention.as_ref(),
+            block,
+            execution_read_budget,
+        )
+        .await
     }
 
     /// Canonicalize parent and build a block on top of it.
@@ -1912,7 +1984,24 @@ impl ApplicationShared {
             );
             return Ok(());
         }
-        if response.send(true).is_err() {
+        let positive_vote = match after_durable_candidate(
+            self.ocomp_retention.as_ref(),
+            &block,
+            || response.send(true),
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                warn!(
+                    %round,
+                    digest = %payload_digest.0,
+                    block_number = block.number(),
+                    %error,
+                    "withholding local positive vote because the OCOMP tentative pin is not durable"
+                );
+                return Ok(());
+            }
+        };
+        if positive_vote.is_err() {
             debug!(
                 digest = %payload_digest.0,
                 "verify response receiver dropped before execution-valid side effects"

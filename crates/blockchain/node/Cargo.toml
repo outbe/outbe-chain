@@ -13,6 +13,9 @@ outbe-primitives.workspace = true
 outbe-txpool.workspace = true
 outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
+outbe-consensus.workspace = true
+outbe-metadosis.workspace = true
+outbe-ocomp-protocol.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -34,6 +37,7 @@ reth-primitives-traits.workspace = true
 reth-revm.workspace = true
 reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
+reth-trie.workspace = true
 revm.workspace = true
 
 # Utilities
@@ -42,6 +46,7 @@ alloy-genesis.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
+alloy-sol-types.workspace = true
 either.workspace = true
 eyre.workspace = true
 tokio.workspace = true

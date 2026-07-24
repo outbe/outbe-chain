@@ -148,6 +148,7 @@ outbe-common = { path = "crates/core/common" }
 alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-sol-types = { version = "=1.5.7", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
+alloy-trie = { version = "0.9.5" }
 
 # Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
 alloy-consensus = { version = "2.0.4", default-features = false }

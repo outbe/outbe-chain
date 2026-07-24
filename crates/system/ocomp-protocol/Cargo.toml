@@ -10,6 +10,24 @@ alloy-primitives = { workspace = true, features = ["std"] }
 k256.workspace = true
 
 [dev-dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-rlp.workspace = true
+alloy-trie.workspace = true
+commonware-codec.workspace = true
+commonware-consensus.workspace = true
+commonware-cryptography.workspace = true
+commonware-utils.workspace = true
+outbe-consensus.workspace = true
+outbe-metadosis.workspace = true
+outbe-node.workspace = true
+outbe-primitives.workspace = true
+rand.workspace = true
+reth-chainspec.workspace = true
+reth-primitives-traits.workspace = true
+reth-storage-api.workspace = true
+reth-trie.workspace = true
+revm.workspace = true
 serde_json.workspace = true
 
 [lints]

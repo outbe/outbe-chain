@@ -290,6 +290,69 @@ async fn proof_store_get_best_parent_proof_finalization_first_across_restart() {
 }
 
 #[test]
+fn finalizations_for_block_returns_every_exact_record_across_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("certified_parent_proof_records");
+    let exact_hash = B256::with_last_byte(0xa1);
+    let other_hash = B256::with_last_byte(0xb2);
+
+    {
+        let store = FinalizedParentCertStore::open(&dir).unwrap();
+        for finalized_view in [7, 9] {
+            store
+                .put_finalization(CertifiedParentProofRecord {
+                    kind: ProofKind::Finalization {
+                        finalized_block_number: 42,
+                    },
+                    finalized_epoch: 3,
+                    finalized_view,
+                    finalized_block_hash: exact_hash,
+                    stored_at_height: 42,
+                    ..CertifiedParentProofRecord::default()
+                })
+                .unwrap();
+        }
+        store
+            .put_finalization(CertifiedParentProofRecord {
+                kind: ProofKind::Finalization {
+                    finalized_block_number: 42,
+                },
+                finalized_epoch: 3,
+                finalized_view: 8,
+                finalized_block_hash: other_hash,
+                stored_at_height: 42,
+                ..CertifiedParentProofRecord::default()
+            })
+            .unwrap();
+    }
+
+    let reopened = FinalizedParentCertStore::open(&dir).unwrap();
+    let exact = reopened.finalizations_for_block(42, exact_hash);
+    assert_eq!(
+        exact
+            .iter()
+            .map(|record| record.finalized_view)
+            .collect::<Vec<_>>(),
+        vec![7, 9],
+        "the caller must see every exact proof and reject ambiguity itself"
+    );
+    assert!(reopened
+        .finalizations_for_block(42, B256::with_last_byte(0xcc))
+        .is_empty());
+    assert!(reopened.finalizations_for_block(41, exact_hash).is_empty());
+    assert_eq!(
+        reopened
+            .finalizations_at_height(42)
+            .into_iter()
+            .map(|record| (record.finalized_view, record.finalized_block_hash))
+            .collect::<Vec<_>>(),
+        vec![(7, exact_hash), (8, other_hash), (9, exact_hash)],
+        "restart reconciliation must observe the complete candidate-height authority set"
+    );
+    assert!(reopened.finalizations_at_height(41).is_empty());
+}
+
+#[test]
 #[allow(clippy::assertions_on_constants)]
 fn proof_retention_depth_is_at_least_block_cache_keep_depth() {
     // Const invariant: the parent-cert keep depth must be at least as deep

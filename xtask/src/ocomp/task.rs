@@ -539,6 +539,90 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-09" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-ocomp-protocol"],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-compressed-entities"],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-metadosis"],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-evm", "--lib"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-evm",
+                    "--test",
+                    "ocomp_request_lifecycle",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-consensus"],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-node", "ocm_pin_001"],
+            )?;
+            cargo(repository_root, &["test", "--locked", "-p", "outbe-engine"])?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-compressed-entities",
+                    "-p",
+                    "outbe-metadosis",
+                    "-p",
+                    "outbe-evm",
+                    "-p",
+                    "outbe-consensus",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-engine",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

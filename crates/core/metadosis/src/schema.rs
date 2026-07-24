@@ -4,6 +4,14 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, StorageBytes, StorageVec};
 
+/// EVM base slot of `MetadosisContract::ocomp_job_records`.
+///
+/// Earlier DSL collections occupy more than one slot, so this is deliberately
+/// not the field's `order = 8`. OCM finality proof construction and verification
+/// use this fixed consensus path; the storage behavior test pins it to the
+/// macro-generated contract layout.
+pub const OCOMP_JOB_RECORDS_BASE_SLOT: u64 = 21;
+
 /// WorldwideDay status values stored as u8.
 pub mod status {
     pub const FORMING: u8 = 0;
@@ -119,7 +127,8 @@ pub struct MetadosisContract {
     #[attribute(order = 7)]
     pub ocomp_scheduler: outbe_primitives::storage::types::StorageBytes,
 
-    /// Canonical OCB1 `OcompJobRecordV1`, keyed by `IntentId`.
+    /// Canonical OCB1 `OcompJobRecordV1`, keyed by
+    /// `IntentStorageKeyV1 = H("OUTBE_OCOMP_INTENT_SLOT_V1", IntentId)`.
     #[attribute(order = 8)]
     pub ocomp_job_records: outbe_primitives::storage::types::Mapping<
         B256,

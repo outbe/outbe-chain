@@ -3,7 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     codec::CodecLimits,
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    intent::{JobIntentV1, PreAdmissionEnvelopeV1},
+    intent::{intent_storage_key, JobIntentV1, PreAdmissionEnvelopeV1},
     profile::CapacityProfileV1,
     receipts::RequestBudgetSplitReceiptV1,
     state::{OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1, OcompTerminalOutcome},
@@ -371,7 +371,9 @@ impl MetadosisContract<'_> {
             let intent_id = intent
                 .intent_id(schema_limits)
                 .map_err(|error| fatal(format!("hash OCOMP intent: {error}")))?;
-            if !self.ocomp_job_records.get_bytes(&intent_id).is_empty()? {
+            let storage_key = intent_storage_key(intent_id)
+                .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
+            if !self.ocomp_job_records.get_bytes(&storage_key).is_empty()? {
                 return Err(fatal("OCOMP IntentId already has a job record"));
             }
             state
@@ -524,7 +526,9 @@ impl MetadosisContract<'_> {
         intent_id: B256,
         limits: &SchemaLimits,
     ) -> Result<Option<OcompJobRecordV1>> {
-        let bytes = self.ocomp_job_records.get_bytes(&intent_id);
+        let storage_key = intent_storage_key(intent_id)
+            .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
+        let bytes = self.ocomp_job_records.get_bytes(&storage_key);
         let record = read_canonical_optional(
             &bytes,
             max_canonical_object_bytes(limits)?,
@@ -737,7 +741,11 @@ impl MetadosisContract<'_> {
         let encoded = record
             .encode_canonical(limits)
             .map_err(|error| fatal(format!("encode OCOMP job record: {error}")))?;
-        self.ocomp_job_records.get_bytes(&intent_id).write(&encoded)
+        let storage_key = intent_storage_key(intent_id)
+            .map_err(|error| fatal(format!("derive OCOMP intent storage key: {error}")))?;
+        self.ocomp_job_records
+            .get_bytes(&storage_key)
+            .write(&encoded)
     }
 
     fn write_ocomp_state(&self, state: &JobFsmState) -> Result<()> {

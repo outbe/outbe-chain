@@ -2,13 +2,17 @@ use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
+        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::CapacityProfileV1,
     receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
-    state::{OcompJobStatus, OcompTerminalOutcome},
+    state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
+};
+use outbe_primitives::{
+    addresses::METADOSIS_ADDRESS,
+    storage::{hashmap::HashMapStorageProvider, types::StorageKey, StorageHandle},
 };
 use outbe_promislimit::schema::PromisLimitContract;
 
@@ -19,7 +23,7 @@ use crate::{
     },
     schema::{
         day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
-        WorldwideDayEntryExt,
+        WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT,
     },
 };
 
@@ -284,6 +288,108 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
         assert_eq!(terminal.next_pending_nonce, Some(1));
         assert_eq!(terminal.completed_binding, None);
+    });
+}
+
+#[test]
+fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
+    let limits = poc_schema_limits();
+    let fsm_limits = JobFsmLimits {
+        max_terminal_records: 2,
+    };
+    let receipt = receipt();
+    let receipt_hash = receipt.receipt_hash(&limits).unwrap();
+    let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+    let intent_id = requested.intent_id(&limits).unwrap();
+    let protocol_key = intent_storage_key(intent_id).unwrap();
+    let records_base_slot = U256::from(OCOMP_JOB_RECORDS_BASE_SLOT);
+    let protocol_slot = protocol_key.mapping_slot(records_base_slot);
+    let raw_intent_slot = intent_id.mapping_slot(records_base_slot);
+    assert_ne!(protocol_slot, raw_intent_slot);
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut contract = MetadosisContract::new(storage.clone());
+        assert_eq!(contract.ocomp_job_records.base_slot(), records_base_slot);
+        create_ready_day(&mut contract, WWD);
+        contract
+            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
+            .unwrap();
+        contract
+            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .unwrap();
+
+        assert_eq!(
+            contract.ocomp_job_record(intent_id, &limits).unwrap(),
+            Some(outbe_ocomp_protocol::state::OcompJobRecordV1 {
+                intent: requested.clone(),
+                status: OcompJobStatus::OffchainPending,
+                terminal: None,
+            })
+        );
+    });
+
+    assert!(
+        provider
+            .storage
+            .get(&(METADOSIS_ADDRESS, protocol_slot))
+            .is_some_and(|word| !word.is_zero()),
+        "the canonical job record must occupy the protocol-derived slot"
+    );
+    assert!(
+        provider
+            .storage
+            .get(&(METADOSIS_ADDRESS, raw_intent_slot))
+            .is_none_or(U256::is_zero),
+        "raw IntentId must not be an authoritative storage key"
+    );
+}
+
+#[test]
+fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let fsm_limits = JobFsmLimits {
+            max_terminal_records: 2,
+        };
+        let receipt = receipt();
+        let receipt_hash = receipt.receipt_hash(&limits).unwrap();
+        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
+        let intent_id = requested.intent_id(&limits).unwrap();
+        let protocol_key = intent_storage_key(intent_id).unwrap();
+        let original = OcompJobRecordV1 {
+            intent: requested.clone(),
+            status: OcompJobStatus::OffchainPending,
+            terminal: None,
+        };
+        let original_bytes = original.encode_canonical(&limits).unwrap();
+
+        let mut contract = MetadosisContract::new(storage);
+        create_ready_day(&mut contract, WWD);
+        contract
+            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
+            .unwrap();
+        contract
+            .ocomp_job_records
+            .get_bytes(&protocol_key)
+            .write(&original_bytes)
+            .unwrap();
+
+        assert!(contract
+            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .is_err());
+        assert_eq!(
+            contract
+                .ocomp_job_records
+                .get_bytes(&protocol_key)
+                .read()
+                .unwrap(),
+            original_bytes
+        );
+        assert_eq!(
+            contract.ocomp_job_record(intent_id, &limits).unwrap(),
+            Some(original)
+        );
     });
 }
 

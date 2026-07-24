@@ -275,9 +275,133 @@ impl JobIntentV1 {
     }
 }
 
+/// Fixed logical storage key for one canonical intent record.
+///
+/// The EVM owner may place this key inside its own fixed mapping layout, but
+/// proofs and callers must never substitute the raw [`JobIntentV1::intent_id`]
+/// as the logical key.
+pub fn intent_storage_key(intent_id: B256) -> Result<B256, ProtocolError> {
+    hash_framed(HashDomain::IntentSlot, intent_id.as_slice())
+}
+
 fn validate_job_intent(intent: &JobIntentV1, _limits: &SchemaLimits) -> Result<(), ProtocolError> {
     intent.validate_semantics()
 }
+
+/// Fork/profile authority expected by a finalized-intent verifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExpectedFinalizedIntentBindingV1 {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub fork_id: B256,
+    pub protocol_bundle_hash: B256,
+}
+
+/// Header identity returned only after the authority adapter has verified the
+/// canonical request header and its consensus finalization.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FinalizedRequestBindingV1 {
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub state_root: B256,
+}
+
+/// Result of verifying one complete finalized-intent proof.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedFinalizedIntentV1 {
+    pub intent: JobIntentV1,
+    pub intent_id: B256,
+    pub intent_storage_key: B256,
+    pub job_id: B256,
+    pub request: FinalizedRequestBindingV1,
+}
+
+/// Stable failure classes returned by the external authority adapter.
+///
+/// Concrete consensus/trie errors stay behind the adapter seam so the protocol
+/// crate does not duplicate Commonware or Ethereum proof implementations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FinalizedIntentAuthorityError {
+    CanonicalHeader,
+    HistoricalCommittee,
+    ConsensusFinality,
+    IntentAccountProof,
+    IntentStorageProof,
+}
+
+/// Authenticated operations the protocol codec cannot perform by itself.
+///
+/// Implementations must derive the request state root from the canonical
+/// header, resolve committee material from authenticated history, verify the
+/// finalization certificate, and verify the fixed intent storage path.
+pub trait FinalizedIntentProofAuthority {
+    fn verify_finalized_request(
+        &self,
+        proof: &FinalizedIntentProofV1,
+        limits: &SchemaLimits,
+    ) -> Result<FinalizedRequestBindingV1, FinalizedIntentAuthorityError>;
+
+    fn verify_intent_inclusion(
+        &self,
+        proof: &FinalizedIntentProofV1,
+        intent: &JobIntentV1,
+        intent_id: B256,
+        intent_storage_key: B256,
+        request_state_root: B256,
+        limits: &SchemaLimits,
+    ) -> Result<(), FinalizedIntentAuthorityError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FinalizedIntentVerificationError {
+    Protocol(ProtocolError),
+    WrongChain,
+    WrongGenesis,
+    WrongFork,
+    WrongProtocolBundle,
+    WrongProofKind,
+    NonEmptyMissedProposers,
+    FinalizedHeaderMetadataMismatch,
+    Authority(FinalizedIntentAuthorityError),
+}
+
+impl From<ProtocolError> for FinalizedIntentVerificationError {
+    fn from(error: ProtocolError) -> Self {
+        Self::Protocol(error)
+    }
+}
+
+impl From<FinalizedIntentAuthorityError> for FinalizedIntentVerificationError {
+    fn from(error: FinalizedIntentAuthorityError) -> Self {
+        Self::Authority(error)
+    }
+}
+
+impl core::fmt::Display for FinalizedIntentVerificationError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Protocol(error) => write!(formatter, "{error}"),
+            Self::WrongChain => formatter.write_str("wrong finalized-intent chain"),
+            Self::WrongGenesis => formatter.write_str("wrong finalized-intent genesis"),
+            Self::WrongFork => formatter.write_str("wrong finalized-intent fork"),
+            Self::WrongProtocolBundle => {
+                formatter.write_str("wrong finalized-intent protocol bundle")
+            }
+            Self::WrongProofKind => {
+                formatter.write_str("finalized intent requires a finalization proof")
+            }
+            Self::NonEmptyMissedProposers => {
+                formatter.write_str("finalized intent proof has missed proposers")
+            }
+            Self::FinalizedHeaderMetadataMismatch => {
+                formatter.write_str("finalized header does not match parent metadata")
+            }
+            Self::Authority(error) => write!(formatter, "finalized intent authority: {error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for FinalizedIntentVerificationError {}
 
 impl FinalizedIntentProofV1 {
     pub fn decoded_intent(&self, limits: &SchemaLimits) -> Result<JobIntentV1, ProtocolError> {
@@ -299,5 +423,64 @@ impl FinalizedIntentProofV1 {
             "finality proof bundle binding",
         )?;
         Ok(intent)
+    }
+
+    /// Verifies the complete authority chain and derives the one signable
+    /// [`JobIntentV1::job_id`].
+    ///
+    /// Caller-supplied events, committee bytes and storage keys are never
+    /// authority: the adapter must authenticate them against finalized chain
+    /// state, while this method closes all protocol-level bindings.
+    pub fn verify(
+        &self,
+        expected: ExpectedFinalizedIntentBindingV1,
+        authority: &impl FinalizedIntentProofAuthority,
+        limits: &SchemaLimits,
+    ) -> Result<VerifiedFinalizedIntentV1, FinalizedIntentVerificationError> {
+        if self.chain_id != expected.chain_id {
+            return Err(FinalizedIntentVerificationError::WrongChain);
+        }
+        if self.genesis_hash != expected.genesis_hash {
+            return Err(FinalizedIntentVerificationError::WrongGenesis);
+        }
+        if self.fork_id != expected.fork_id {
+            return Err(FinalizedIntentVerificationError::WrongFork);
+        }
+        if self.protocol_bundle_hash != expected.protocol_bundle_hash {
+            return Err(FinalizedIntentVerificationError::WrongProtocolBundle);
+        }
+        if self.parent_accounting.proof_kind != ParentProofKind::Finalization {
+            return Err(FinalizedIntentVerificationError::WrongProofKind);
+        }
+        if !self.parent_accounting.missed_proposers.is_empty() {
+            return Err(FinalizedIntentVerificationError::NonEmptyMissedProposers);
+        }
+
+        let intent = self.decoded_intent(limits)?;
+        let intent_id = intent.intent_id(limits)?;
+        let intent_storage_key = intent_storage_key(intent_id)?;
+        let request = authority.verify_finalized_request(self, limits)?;
+        if request.block_number != self.parent_accounting.finalized_block_number
+            || request.block_hash != self.parent_accounting.finalized_block_hash
+        {
+            return Err(FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch);
+        }
+        authority.verify_intent_inclusion(
+            self,
+            &intent,
+            intent_id,
+            intent_storage_key,
+            request.state_root,
+            limits,
+        )?;
+        let job_id = intent.job_id(request.block_hash, request.state_root, limits)?;
+
+        Ok(VerifiedFinalizedIntentV1 {
+            intent,
+            intent_id,
+            intent_storage_key,
+            job_id,
+            request,
+        })
     }
 }
