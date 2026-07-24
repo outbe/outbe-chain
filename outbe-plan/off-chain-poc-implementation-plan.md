@@ -443,6 +443,9 @@ chunk/unit/result catalogs by count/root, while `UnitSpecV1` and
 `ResultChunkV1` are bounded worker/artifact objects. The final registry entry
 is the Lysis-specific `ShuffleRunArtifactV1`: owner/bucket leaves contain at
 most 256 records and canonical internal nodes contain two CAS child references.
+Leaf ordered-record roots use the frozen ordered-list construction; internal
+ordered-record roots use `OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1` over the node
+summary and two child roots, so every root is recomputed from bounded content.
 It does not introduce a generic artifact or program extension surface.
 
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
@@ -977,7 +980,8 @@ Shuffle workers embed one bounded `ShuffleRunArtifactV1` root in their
 `UnitArtifactV1` and stage every bounded descendant by content digest. The
 supervisor adopts descendants only after verifying their OCB1 kind, digest,
 exact job/unit/run binding, canonical binary page split, adjacency, counts,
-sort order, ordered-record root and source coverage. No control frame or unit
+sort order, and recomputed leaf/internal ordered-record root before source
+coverage is admitted. No control frame or unit
 artifact carries all page references.
 
 **Invariants/failures:** topological canonical UnitSpec order; stable UnitId;

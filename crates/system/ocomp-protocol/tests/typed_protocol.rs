@@ -684,9 +684,11 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         record_count: 0,
         source_coverage_root: hash(118),
         source_coverage_count: 1,
-        ordered_record_root: hash(119),
+        ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
-    };
+    }
+    .with_recomputed_ordered_record_root(&LIMITS)
+    .unwrap();
 
     assert_round_trip!(bundle(), ProtocolBundleV1, ProtocolBundleV1);
     assert_round_trip!(correctness, CorrectnessProfileV1, CorrectnessProfileV1);

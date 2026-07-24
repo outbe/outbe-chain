@@ -1185,7 +1185,13 @@ For `OWNER_SHUFFLE` and `BUCKET_SHUFFLE`,
 contain exactly two content-addressed child references; an odd last subtree is
 promoted unchanged. Page spans start at zero for a root, are adjacent, and use
 the unique largest-power-of-two canonical split. Child summaries bind page
-span, first record ordinal, record count and ordered-record root. Every child
+span, first record ordinal, record count and ordered-record root. A leaf
+`ordered_record_root` is the frozen ordered-list root for its canonical owner
+or bucket records. A node `ordered_record_root` is
+`H(OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1,
+canonical(kind,page_span,first_record_ordinal,record_count,
+left_ordered_record_root,right_ordered_record_root))`; it is recomputed during
+decode/adoption rather than trusted as metadata. Every child
 object repeats the exact bundle/job/attempt/UnitId/kind/run/source-coverage
 binding of its root. The consumer traverses and verifies the complete tree
 before admitting the producer artifact. This keeps every OCB1 object bounded

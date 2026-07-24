@@ -91,7 +91,11 @@ which makes the tree independent of worker count and completion order.
 Descendants are individually bounded OCB1 objects in validator-local CAS.
 Consumers verify every referenced object's digest, OCB1 kind, job/unit/run
 binding, canonical split, page and record adjacency, exact count, order,
-ordered-record root and source coverage before using the stream. No unit
+ordered-record root and source coverage before using the stream. Leaf roots
+use the frozen ordered-list construction; every internal root is recomputed
+with `OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1` from its kind, interval/count summary and
+two child roots. The tree commitment is therefore composable and verifiable in
+one bounded-memory traversal rather than a trusted field. No unit
 contains a population-sized page-reference vector or merged run.
 
 A unit may run zero or many times. Only a digest-valid artifact for its exact

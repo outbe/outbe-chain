@@ -13,9 +13,14 @@ use crate::{
     common::EntityId36,
     control::CasObjectRefV1,
     error::ProtocolError,
-    registry::ObjectKind,
+    hash::hash_framed,
+    list::StreamingOrderedListRoot,
+    registry::{HashDomain, ListKind, ObjectKind},
     result::ContributorActionV1,
-    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
+    schema::{
+        encode_nested_value, impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec,
+        SchemaLimits,
+    },
     unit::CanonicalRunSpan,
 };
 
@@ -145,6 +150,59 @@ wire_struct! {
 impl_top_level_codec!(ShuffleRunArtifactV1, ShuffleRunArtifactV1);
 
 impl ShuffleRunArtifactV1 {
+    /// Binds the canonical leaf-list or binary-node commitment after all other
+    /// fields and child summaries have been selected.
+    pub fn with_recomputed_ordered_record_root(
+        mut self,
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        self.ordered_record_root = self.recompute_ordered_record_root(limits)?;
+        Ok(self)
+    }
+
+    pub fn recompute_ordered_record_root(
+        &self,
+        limits: &SchemaLimits,
+    ) -> Result<B256, ProtocolError> {
+        match &self.payload {
+            ShuffleRunPayloadV1::OwnerLeaf(records) => {
+                validate_owner_records(records, limits)?;
+                ordered_leaf_root(
+                    ListKind::ContributorActions,
+                    records
+                        .iter()
+                        .map(|record| encode_nested_value(record, limits)),
+                    records.len(),
+                    limits,
+                )
+            }
+            ShuffleRunPayloadV1::BucketLeaf(records) => {
+                validate_bucket_records(records, limits)?;
+                ordered_leaf_root(
+                    ListKind::BucketRecords,
+                    records
+                        .iter()
+                        .map(|record| encode_nested_value(record, limits)),
+                    records.len(),
+                    limits,
+                )
+            }
+            ShuffleRunPayloadV1::Node { left, right } => {
+                left.validate(limits)?;
+                right.validate(limits)?;
+                let mut payload = CanonicalWriter::new(limits.codec);
+                payload.write_u8(self.kind as u8)?;
+                payload.write_u32(self.page_span.start_page)?;
+                payload.write_u32(self.page_span.end_page)?;
+                payload.write_u32(self.first_record_ordinal)?;
+                payload.write_u32(self.record_count)?;
+                payload.write_b256(left.ordered_record_root)?;
+                payload.write_b256(right.ordered_record_root)?;
+                hash_framed(HashDomain::ShuffleRunNode, payload.as_slice())
+            }
+        }
+    }
+
     /// Validates one root embedded by a producing `UnitArtifactV1`.
     pub fn validate_root_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         self.validate_semantics(limits)?;
@@ -190,7 +248,7 @@ fn validate_child(child: &ShuffleRunChildV1, _limits: &SchemaLimits) -> Result<(
 
 fn validate_shuffle_run_artifact(
     artifact: &ShuffleRunArtifactV1,
-    _limits: &SchemaLimits,
+    limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     require(
         !artifact.protocol_bundle_hash.is_zero()
@@ -272,7 +330,11 @@ fn validate_shuffle_run_artifact(
                 "shuffle node record count",
             )
         }
-    }
+    }?;
+    require(
+        artifact.ordered_record_root == artifact.recompute_ordered_record_root(limits)?,
+        "shuffle ordered record root",
+    )
 }
 
 fn validate_leaf_shape(
@@ -363,4 +425,21 @@ fn checked_record_end(start: u32, count: u32) -> Result<u32, ProtocolError> {
         .ok_or(ProtocolError::IntegerOverflow {
             what: "shuffle record interval",
         })
+}
+
+fn ordered_leaf_root(
+    kind: ListKind,
+    records: impl IntoIterator<Item = Result<Vec<u8>, ProtocolError>>,
+    record_count: usize,
+    limits: &SchemaLimits,
+) -> Result<B256, ProtocolError> {
+    let expected_count =
+        u32::try_from(record_count).map_err(|_| ProtocolError::IntegerOverflow {
+            what: "shuffle leaf record count",
+        })?;
+    let mut root = StreamingOrderedListRoot::new(kind, expected_count)?;
+    for record in records {
+        root.push(&record?, limits.max_bounded_bytes)?;
+    }
+    root.finish()
 }

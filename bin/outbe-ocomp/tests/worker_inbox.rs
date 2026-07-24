@@ -32,9 +32,11 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
         record_count: 0,
         source_coverage_root: B256::repeat_byte(4),
         source_coverage_count: 256,
-        ordered_record_root: B256::repeat_byte(5),
+        ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
     }
+    .with_recomputed_ordered_record_root(&poc_schema_limits())
+    .expect("bind shuffle leaf root")
     .encode_canonical(&poc_schema_limits())
     .expect("canonical shuffle leaf")
 }

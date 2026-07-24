@@ -50,7 +50,7 @@ fn contributor(index: u32) -> ContributorActionV1 {
 }
 
 fn owner_leaf(record_count: usize) -> ShuffleRunArtifactV1 {
-    ShuffleRunArtifactV1 {
+    let artifact = ShuffleRunArtifactV1 {
         protocol_bundle_hash: hash(1),
         job_id: hash(2),
         attempt: 1,
@@ -68,12 +68,19 @@ fn owner_leaf(record_count: usize) -> ShuffleRunArtifactV1 {
         record_count: u32::try_from(record_count).unwrap(),
         source_coverage_root: hash(4),
         source_coverage_count: 300,
-        ordered_record_root: hash(5),
+        ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::OwnerLeaf(
             (0..u32::try_from(record_count).unwrap())
                 .map(contributor)
                 .collect(),
         ),
+    };
+    if record_count <= MAX_SHUFFLE_LEAF_RECORDS {
+        artifact
+            .with_recomputed_ordered_record_root(&LIMITS)
+            .unwrap()
+    } else {
+        artifact
     }
 }
 
@@ -196,12 +203,14 @@ fn node_requires_the_canonical_adjacent_page_and_record_split() {
         record_count: 600,
         source_coverage_root: hash(4),
         source_coverage_count: 1_024,
-        ordered_record_root: hash(5),
+        ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::Node {
             left: child(10, 0, 2, 0, 512),
             right: child(11, 2, 3, 512, 88),
         },
-    };
+    }
+    .with_recomputed_ordered_record_root(&LIMITS)
+    .unwrap();
     let encoded = valid.encode_canonical(&LIMITS).unwrap();
     assert_eq!(
         ShuffleRunArtifactV1::decode_canonical(&encoded, &LIMITS).unwrap(),
@@ -269,16 +278,66 @@ fn owner_tree_can_prove_an_empty_contributor_stream_without_dropping_source_cove
         record_count: 0,
         source_coverage_root: hash(4),
         source_coverage_count: 512,
-        ordered_record_root: hash(5),
+        ordered_record_root: B256::ZERO,
         payload: ShuffleRunPayloadV1::Node {
             left: child(10, 0, 1, 0, 0),
             right: child(11, 1, 2, 0, 0),
         },
-    };
+    }
+    .with_recomputed_ordered_record_root(&LIMITS)
+    .unwrap();
     let encoded = artifact.encode_canonical(&LIMITS).unwrap();
     assert_eq!(
         ShuffleRunArtifactV1::decode_canonical(&encoded, &LIMITS).unwrap(),
         artifact
+    );
+}
+
+#[test]
+fn ordered_record_root_is_computed_from_leaf_records_and_child_summaries() {
+    let mut leaf = owner_leaf(2);
+    leaf.ordered_record_root = hash(99);
+    assert_eq!(
+        leaf.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "shuffle ordered record root"
+        ))
+    );
+
+    let mut node = ShuffleRunArtifactV1 {
+        protocol_bundle_hash: hash(1),
+        job_id: hash(2),
+        attempt: 1,
+        unit_id: hash(3),
+        kind: ShuffleRunKindV1::Owner,
+        run_span: CanonicalRunSpan {
+            start_run: 0,
+            end_run: 2,
+        },
+        page_span: ShufflePageSpanV1 {
+            start_page: 0,
+            end_page: 2,
+        },
+        first_record_ordinal: 0,
+        record_count: 2,
+        source_coverage_root: hash(4),
+        source_coverage_count: 512,
+        ordered_record_root: B256::ZERO,
+        payload: ShuffleRunPayloadV1::Node {
+            left: child(10, 0, 1, 0, 1),
+            right: child(11, 1, 2, 1, 1),
+        },
+    }
+    .with_recomputed_ordered_record_root(&LIMITS)
+    .unwrap();
+    if let ShuffleRunPayloadV1::Node { right, .. } = &mut node.payload {
+        right.ordered_record_root = hash(98);
+    }
+    assert_eq!(
+        node.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "shuffle ordered record root"
+        ))
     );
 }
 
