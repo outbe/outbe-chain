@@ -43,6 +43,7 @@ pub enum PlannerErrorV1 {
         ordinal: u32,
         total_unit_count: u32,
     },
+    ProducerMembershipMismatch,
     IntegerOverflow,
     Protocol(ProtocolError),
 }
@@ -82,6 +83,9 @@ impl fmt::Display for PlannerErrorV1 {
                 ordinal,
                 total_unit_count,
             } => write!(formatter, "plan unit {ordinal} is outside 0..{total_unit_count}"),
+            Self::ProducerMembershipMismatch => {
+                formatter.write_str("unit producer list is not the exact derived list")
+            }
             Self::IntegerOverflow => formatter.write_str("planner integer overflow"),
             Self::Protocol(error) => write!(formatter, "planner protocol binding: {error}"),
         }
@@ -157,7 +161,7 @@ pub struct LysisPlannerV1 {
     primary_tree: PaddedBinaryTreeV1,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PlannedUnitPositionV1 {
     Primary {
         phase: UnitPhase,
@@ -174,6 +178,15 @@ pub enum PlannedUnitPositionV1 {
         index: u32,
         start_run: u32,
         end_run: u32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum PlannedProducerV1 {
+    Unit(PlannedUnitPositionV1),
+    CanonicalEmpty {
+        purpose: InputPurpose,
+        padded_ordinal: u32,
     },
 }
 
@@ -556,6 +569,340 @@ impl LysisPlanTopologyV1 {
                 }
             }
         }
+    }
+
+    pub fn required_producers(
+        self,
+        consumer: PlannedUnitPositionV1,
+    ) -> Result<Vec<PlannedProducerV1>, PlannerErrorV1> {
+        let primary = self.tree.primary_leaf_count;
+        match consumer {
+            PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::Enumerate,
+                ..
+            } => Ok(Vec::new()),
+            PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::FidelityMap,
+                ordinal,
+            } if ordinal < primary => Ok(vec![PlannedProducerV1::Unit(
+                PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::Enumerate,
+                    ordinal,
+                },
+            )]),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level,
+                index,
+            } => self.binary_children(
+                UnitPhase::FixedReduce,
+                UnitPhase::FidelityMap,
+                InputPurpose::FidelityPartials,
+                level,
+                index,
+                true,
+            ),
+            PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::AmountMap,
+                ordinal,
+            } if ordinal < primary => Ok(vec![
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::Enumerate,
+                    ordinal,
+                }),
+                PlannedProducerV1::Unit(self.fixed_reduce_root()),
+            ]),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 0,
+                index,
+            } if index < primary => Ok(vec![PlannedProducerV1::Unit(
+                PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::AmountMap,
+                    ordinal: index,
+                },
+            )]),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level,
+                index,
+            } => self.binary_children(
+                UnitPhase::GratisPrefix,
+                UnitPhase::GratisPrefix,
+                InputPurpose::GratisPrefixTable,
+                level,
+                index,
+                false,
+            ),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
+                level,
+                index,
+            } => {
+                let prefix = PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::GratisPrefix,
+                    level,
+                    index,
+                });
+                if level == self.tree.height && index == 0 {
+                    Ok(vec![prefix])
+                } else if level < self.tree.height {
+                    Ok(vec![
+                        PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                            phase: UnitPhase::GratisPrefixDown,
+                            level: level + 1,
+                            index: index / 2,
+                        }),
+                        prefix,
+                    ])
+                } else {
+                    Err(PlannerErrorV1::ProducerMembershipMismatch)
+                }
+            }
+            PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::OutputFinalize,
+                ordinal,
+            } if ordinal < primary => Ok(vec![
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::AmountMap,
+                    ordinal,
+                }),
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::GratisPrefixDown,
+                    level: 0,
+                    index: ordinal,
+                }),
+            ]),
+            PlannedUnitPositionV1::RunSpan {
+                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                level: 0,
+                index,
+                start_run,
+                end_run,
+            } if index < primary && start_run == index && end_run == index + 1 => {
+                Ok(vec![PlannedProducerV1::Unit(
+                    PlannedUnitPositionV1::Primary {
+                        phase: UnitPhase::OutputFinalize,
+                        ordinal: index,
+                    },
+                )])
+            }
+            PlannedUnitPositionV1::RunSpan {
+                phase,
+                level,
+                index,
+                start_run,
+                end_run,
+            } if matches!(phase, UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle)
+                && level > 0 =>
+            {
+                let expected = self.run_span_position(phase, level, index)?;
+                if expected
+                    != (PlannedUnitPositionV1::RunSpan {
+                        phase,
+                        level,
+                        index,
+                        start_run,
+                        end_run,
+                    })
+                {
+                    return Err(PlannerErrorV1::ProducerMembershipMismatch);
+                }
+                let purpose = if phase == UnitPhase::OwnerShuffle {
+                    InputPurpose::OwnerOrderedRecords
+                } else {
+                    InputPurpose::BucketOrderedRecords
+                };
+                self.run_children(phase, purpose, level, index)
+            }
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::RootReduce,
+                level: 0,
+                index,
+            } if index < primary => Ok(vec![
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::OutputFinalize,
+                    ordinal: index,
+                }),
+                PlannedProducerV1::Unit(self.shuffle_root(UnitPhase::OwnerShuffle)?),
+                PlannedProducerV1::Unit(self.shuffle_root(UnitPhase::BucketShuffle)?),
+            ]),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::RootReduce,
+                level,
+                index,
+            } => self.binary_children(
+                UnitPhase::RootReduce,
+                UnitPhase::RootReduce,
+                InputPurpose::RootSummary,
+                level,
+                index,
+                true,
+            ),
+            _ => Err(PlannerErrorV1::ProducerMembershipMismatch),
+        }
+    }
+
+    pub fn validate_exact_producers(
+        self,
+        consumer: PlannedUnitPositionV1,
+        actual: &[PlannedProducerV1],
+    ) -> Result<(), PlannerErrorV1> {
+        if self.required_producers(consumer)? == actual {
+            Ok(())
+        } else {
+            Err(PlannerErrorV1::ProducerMembershipMismatch)
+        }
+    }
+
+    fn fixed_reduce_root(self) -> PlannedUnitPositionV1 {
+        PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::FixedReduce,
+            level: self.tree.height,
+            index: 0,
+        }
+    }
+
+    fn shuffle_root(
+        self,
+        phase: UnitPhase,
+    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        self.run_span_position(phase, self.tree.height, 0)
+    }
+
+    fn run_span_position(
+        self,
+        phase: UnitPhase,
+        level: u16,
+        index: u32,
+    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        let width = 1_u32
+            .checked_shl(u32::from(level))
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let start_run = index
+            .checked_mul(width)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let end_run = start_run
+            .saturating_add(width)
+            .min(self.tree.primary_leaf_count);
+        if start_run >= end_run {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        Ok(PlannedUnitPositionV1::RunSpan {
+            phase,
+            level,
+            index,
+            start_run,
+            end_run,
+        })
+    }
+
+    fn binary_children(
+        self,
+        phase: UnitPhase,
+        leaf_phase: UnitPhase,
+        purpose: InputPurpose,
+        level: u16,
+        index: u32,
+        full_tree: bool,
+    ) -> Result<Vec<PlannedProducerV1>, PlannerErrorV1> {
+        if level == 0 || level > self.tree.height {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let width = if full_tree {
+            self.tree.padded_leaf_count >> level
+        } else {
+            self.tree.primary_leaf_count.div_ceil(1_u32 << level)
+        };
+        if index >= width {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let first = index
+            .checked_mul(2)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        Ok(vec![
+            self.binary_child(phase, leaf_phase, purpose, level, first, full_tree),
+            self.binary_child(phase, leaf_phase, purpose, level, first + 1, full_tree),
+        ])
+    }
+
+    fn binary_child(
+        self,
+        phase: UnitPhase,
+        leaf_phase: UnitPhase,
+        purpose: InputPurpose,
+        parent_level: u16,
+        child_index: u32,
+        full_tree: bool,
+    ) -> PlannedProducerV1 {
+        let child_level = parent_level - 1;
+        let child_count = if child_level == 0 {
+            self.tree.primary_leaf_count
+        } else if full_tree {
+            self.tree.padded_leaf_count >> child_level
+        } else {
+            self.tree
+                .primary_leaf_count
+                .div_ceil(1_u32 << child_level)
+        };
+        if child_index >= child_count {
+            return PlannedProducerV1::CanonicalEmpty {
+                purpose,
+                padded_ordinal: child_index,
+            };
+        }
+        let position = if child_level == 0 && leaf_phase != phase {
+            PlannedUnitPositionV1::Primary {
+                phase: leaf_phase,
+                ordinal: child_index,
+            }
+        } else {
+            PlannedUnitPositionV1::TreeNode {
+                phase,
+                level: child_level,
+                index: child_index,
+            }
+        };
+        PlannedProducerV1::Unit(position)
+    }
+
+    fn run_children(
+        self,
+        phase: UnitPhase,
+        purpose: InputPurpose,
+        level: u16,
+        index: u32,
+    ) -> Result<Vec<PlannedProducerV1>, PlannerErrorV1> {
+        if level == 0 {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let first = index
+            .checked_mul(2)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let child_level = level - 1;
+        let child_count = if child_level == 0 {
+            self.tree.primary_leaf_count
+        } else {
+            self.tree
+                .primary_leaf_count
+                .div_ceil(1_u32 << child_level)
+        };
+        let mut inputs = Vec::with_capacity(2);
+        for child_index in [first, first + 1] {
+            if child_index < child_count {
+                inputs.push(PlannedProducerV1::Unit(self.run_span_position(
+                    phase,
+                    child_level,
+                    child_index,
+                )?));
+            } else {
+                inputs.push(PlannedProducerV1::CanonicalEmpty {
+                    purpose,
+                    padded_ordinal: child_index,
+                });
+            }
+        }
+        Ok(inputs)
     }
 
     fn active_internal_node_count(self) -> u32 {

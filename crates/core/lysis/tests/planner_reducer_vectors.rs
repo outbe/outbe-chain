@@ -1,7 +1,7 @@
 use outbe_lysis::program_v1::planner::{
     primary_work_unit_count, LysisPlannerBindingsV1, LysisPlannerV1, PaddedBinaryTreeV1,
-    PlannedUnitPositionV1, PlannerErrorV1, ReducerInputV1, LysisPlanTopologyV1,
-    PRIMARY_WORK_SHARD_SIZE,
+    LysisPlanTopologyV1, PlannedProducerV1, PlannedUnitPositionV1, PlannerErrorV1,
+    ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_ocomp_protocol::{
     common::EntityId36,
@@ -294,6 +294,68 @@ fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
             UnitPhase::RootReduce,
         ]
     );
+}
+
+#[test]
+fn every_derived_producer_is_an_earlier_exact_plan_member() {
+    for primary_count in 1..=8 {
+        let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
+        let positions = (0..topology.total_unit_count())
+            .map(|ordinal| topology.plan_position_at(ordinal).unwrap())
+            .collect::<Vec<_>>();
+
+        for (consumer_ordinal, consumer) in positions.iter().copied().enumerate() {
+            let producers = topology.required_producers(consumer).unwrap();
+            assert!(producers.len() <= 3);
+            for producer in producers {
+                let PlannedProducerV1::Unit(producer) = producer else {
+                    continue;
+                };
+                let producer_ordinal = positions
+                    .iter()
+                    .position(|candidate| *candidate == producer)
+                    .expect("producer is an exact member of the same plan");
+                assert!(
+                    producer_ordinal < consumer_ordinal,
+                    "{producer:?} must precede {consumer:?}"
+                );
+                assert_ne!(producer, consumer, "a UnitId cannot depend on itself");
+            }
+        }
+    }
+}
+
+#[test]
+fn producer_membership_rejects_missing_duplicate_and_replaced_inputs() {
+    let topology = LysisPlanTopologyV1::new(3).unwrap();
+    let consumer = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::FixedReduce,
+        level: 1,
+        index: 0,
+    };
+    let expected = topology.required_producers(consumer).unwrap();
+    assert_eq!(expected.len(), 2);
+    assert!(topology
+        .validate_exact_producers(consumer, &expected)
+        .is_ok());
+    assert!(topology
+        .validate_exact_producers(consumer, &expected[..1])
+        .is_err());
+    assert!(topology
+        .validate_exact_producers(consumer, &[expected[0], expected[0]])
+        .is_err());
+    assert!(topology
+        .validate_exact_producers(
+            consumer,
+            &[
+                expected[0],
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::Enumerate,
+                    ordinal: 2,
+                }),
+            ],
+        )
+        .is_err());
 }
 
 fn entity_id(ordinal: u32) -> EntityId36 {
