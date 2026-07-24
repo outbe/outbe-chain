@@ -14,6 +14,7 @@ const SCHEMA_LIMITS: SchemaLimits = SchemaLimits {
     codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
     max_bounded_bytes: 262_144,
     max_proof_bytes: 262_144,
+    max_opening_bytes: 262_144,
     max_collection_items: 4_096,
     max_action_items: 4_096,
     max_chunk_items: 4_096,
@@ -24,8 +25,7 @@ const SCHEMA_LIMITS: SchemaLimits = SchemaLimits {
 fn capacity() -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: B256::repeat_byte(0x44),
-        max_poc_tributes: 256,
-        unit_tributes: 32,
+        max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
         max_pending_jobs: 1,
         max_intents_per_block: 1,
@@ -67,7 +67,6 @@ fn inputs() -> PreAdmissionInputs {
             canonical_body_bytes: 40_000,
             distinct_owner_count: 256,
             distinct_reference_currency_count: 16,
-            capacity_exceeded: false,
         },
         fidelity: FidelityOcompProjection {
             profile_ready: true,
@@ -87,7 +86,7 @@ fn inputs() -> PreAdmissionInputs {
 }
 
 #[test]
-fn pre_admission_accepts_exact_caps_and_defers_every_cap_plus_one() {
+fn pre_admission_never_turns_the_work_shard_size_into_a_total_tribute_cap() {
     let accepted = evaluate_pre_admission(&context(), &inputs()).unwrap();
     let PreAdmissionDecision::Eligible(envelope) = accepted else {
         panic!("exact capacity boundary must be eligible");
@@ -99,21 +98,25 @@ fn pre_admission_accepts_exact_caps_and_defers_every_cap_plus_one() {
 
     let mut over_tributes = inputs();
     over_tributes.tribute.tribute_count = 257;
-    assert!(matches!(
-        evaluate_pre_admission(&context(), &over_tributes).unwrap(),
-        PreAdmissionDecision::Deferred(PreAdmissionDeferredReason::TributeCountExceeded { .. })
-    ));
+    over_tributes.tribute.distinct_owner_count = 257;
+    let PreAdmissionDecision::Eligible(envelope) =
+        evaluate_pre_admission(&context(), &over_tributes).unwrap()
+    else {
+        panic!("work-shard cap plus one must start another shard");
+    };
+    assert_eq!(envelope.sealed_tribute_count, 257);
 
-    let mut latched_tributes = inputs();
-    latched_tributes.tribute.capacity_exceeded = true;
-    latched_tributes.tribute.tribute_count = 1;
-    assert_eq!(
-        evaluate_pre_admission(&context(), &latched_tributes).unwrap(),
-        PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeAccumulatorCapacityExceeded
-        ),
-        "the terminal accumulator latch must not recover after the live count falls below the cap"
-    );
+    let mut ten_thousand = inputs();
+    ten_thousand.tribute.tribute_count = 10_000;
+    ten_thousand.tribute.distinct_owner_count = 10_000;
+    ten_thousand.tribute.canonical_body_bytes = 1_600_000;
+    let PreAdmissionDecision::Eligible(envelope) =
+        evaluate_pre_admission(&context(), &ten_thousand).unwrap()
+    else {
+        panic!("total Tribute population must not be bounded by work-shard capacity");
+    };
+    assert_eq!(envelope.sealed_tribute_count, 10_000);
+    assert_eq!(envelope.fidelity_opening_upper_bound, 10_000);
 
     let mut over_fidelity = inputs();
     over_fidelity.fidelity.max_cohorts_observed = 65;

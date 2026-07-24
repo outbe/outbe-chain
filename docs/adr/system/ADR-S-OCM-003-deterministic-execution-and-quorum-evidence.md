@@ -17,7 +17,7 @@ executor ran the same function. The PoC must replace that guarantee without
 running Lysis on-chain and without equating worker count with Byzantine
 independence.
 
-A single prover implementation is premature for the bounded PoC. The selected
+A single prover implementation is premature for this PoC. The selected
 mechanism is independent execute-and-attest by four validator domains, with a
 three-signature threshold and a separate deterministic reference corpus.
 
@@ -31,11 +31,15 @@ finalized `JobIntentV1`, authenticated input manifest and
 
 ```text
 JobId + authenticated input
-  -> canonical ordered UnitSpecV1 set
-  -> stable UnitId for every unit
+  -> canonical partition of all N Tribute
+  -> X = ceil(N / max_tributes_per_work_shard) primary work shards
+  -> PlanCommitmentV1(X, primary_work_unit_root)
+  -> canonical UnitSpecV1 derived lazily by ordinal
+  -> stable UnitId for every derived unit
   -> retryable pure unit artifacts
-  -> fixed reduction tree/order
-  -> BoundedLysisResultV1
+  -> fixed streaming reduction tree/order
+  -> bounded ResultChunkV1 objects
+  -> LysisResultV1(result_chunk_count, result_chunk_list_root)
   -> ActivationPayloadV1 / ResultDigest
 ```
 
@@ -43,6 +47,18 @@ The planner, Lysis phase/range rules, codecs, arithmetic, logical time, sort
 keys, reducer and hash domains are consensus semantics. Scheduler order,
 worker identity, host count, completion order, retry count, wall time, locale,
 filesystem order, network response and local configuration are excluded.
+
+A full primary range never terminates the plan. The next authenticated Tribute
+starts the next range, and the planner proves that the ordered ranges are
+adjacent, non-overlapping and cover the manifest count exactly once. The
+generated PoC profile bounds an individual work shard and the demonstrated
+chunk/concurrency envelope. It never bounds the parent Tribute population.
+
+`PlanCommitmentV1` is constant-size. A supervisor does not materialize all
+`UnitSpecV1` values in memory or persist them inside the plan hash: it derives a
+unit from `(PlanCommitment, ordinal)`, verifies membership against the committed
+root and advances bounded cursors. The deterministic reduction hierarchy is
+derived from the committed unit count and is likewise scheduled lazily.
 
 A unit may run zero or many times. Only a digest-valid artifact for its exact
 `UnitId` and plan membership participates in reduction. One, two and four
@@ -80,9 +96,12 @@ subject is refused after restart as well as in one process.
 
 ### Certificate and relay
 
-Any relay may collect announcements and submit the complete typed result plus
-`ExecutionCertificateV1`. The relay has no signing key, exclusivity or trusted
-ordering role. Every node verifies:
+Any relay may collect announcements and submit the constant-size
+`LysisResultV1` commitment plus `ExecutionCertificateV1`. Result chunks remain
+authenticated content-addressed artifacts. Every signing validator must have
+validated complete chunk coverage and reduction before signing; no chunk has
+independent evidence weight. The relay has no signing key, exclusivity or
+trusted ordering role. Every node verifies:
 
 - exact `ResultDigest` reconstruction;
 - distinct eligible committee indexes from the job-pinned snapshot;
@@ -108,6 +127,8 @@ Three signatures over different result bytes do not form evidence.
 ## Invariants
 
 - Equal finalized inputs and bundle produce byte-identical units and result.
+- `N` authenticated Tribute produce exactly the canonical shard/range set; a
+  shard boundary never drops or rejects a valid next Tribute.
 - Worker/scheduler count cannot change result bytes or evidence weight.
 - One validator index contributes at most one matching signature.
 - The OCOMP key is distinct from the consensus key and unavailable to compute
@@ -120,7 +141,9 @@ Three signatures over different result bytes do not form evidence.
 
 ## Atomicity, replay and failure
 
-Local unit/reducer work is content-addressed and freely replayable. The
+Local unit/reducer work is content-addressed and freely replayable. Completion
+of a proper subset of work shards is not a result and is never signable or
+activatable. The
 sign-once journal update is write-before-sign and crash-safe: an uncertain write
 disables signing until reconciled. A worker/supervisor crash cannot corrupt
 consensus state.
@@ -132,10 +155,13 @@ rewrites the job.
 
 ## Determinism and bounds
 
-All unit/result/certificate counts, bytes, signatures and cryptographic work are
-checked against the generated PoC capacity profile before large allocation or
-verification. Unit artifacts do not enter activation state individually. The
-complete bounded typed result is carried once in the activation transaction.
+Per-shard/per-chunk counts and bytes, live workers, signatures and activation
+cryptographic work are checked against the generated PoC capacity profile
+before allocation or verification. Total Tribute, unit and result-chunk counts
+are checked for arithmetic validity and exact committed coverage, not capped by
+the PoC. Unit and result-chunk artifacts do not enter activation state
+individually. One constant-size complete-result commitment is carried in the
+activation transaction.
 
 ## Compatibility and migration
 
@@ -152,17 +178,21 @@ evidence semantics and cannot be presented as PoC completion.
 ## Production-interface verification evidence
 
 No OCOMP planner, workers, signer, sign-once journal, certificate or relay path
-exists. Required evidence includes independent full executions by four real
-validator domains, 1/2/4-worker equality, randomized order/retry, restart-safe
-sign-once refusal, wrong/duplicate signer rejection, one-byte/ordering/JobId
-mutation rejection and comparison with a separate reference corpus.
+exists. Required evidence includes a boundary fixture whose Tribute count is
+one greater than a full work shard, synthetic plan derivations for 10,000 and
+1,000,000,000 Tribute without proportional plan allocation, independent full
+executions of the bounded fixture by four real validator domains, 1/2/4-worker
+equality, randomized order/retry, restart-safe sign-once refusal,
+wrong/duplicate signer rejection, one-byte/ordering/JobId mutation rejection
+and comparison with a separate reference corpus.
 
 ## Consequences
 
-The PoC establishes decentralised bounded correctness without on-chain Lysis,
-but accepts that three implementations can share one semantic bug. The reference
-corpus, adversarial vectors and later implementation diversity remain required;
-quorum is not an excuse to skip specification testing.
+The PoC establishes decentralised correctness through bounded work without
+on-chain Lysis or a total Tribute cap, but accepts that three implementations
+can share one semantic bug. The reference corpus, adversarial vectors and later
+implementation diversity remain required; quorum is not an excuse to skip
+specification testing.
 
 ## Rejected alternatives
 

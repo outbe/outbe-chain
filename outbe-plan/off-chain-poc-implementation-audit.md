@@ -13,8 +13,13 @@ evidence already exists.
 
 ## 1. Verdict
 
-The plan is **READY_FOR_IMPLEMENTATION** for the bounded fresh-devnet Lysis V1
-PoC.
+The plan is **READY_FOR_IMPLEMENTATION** for the fresh-devnet Lysis V1 PoC over
+bounded work units and constant-size commitments, with no total Tribute cap.
+
+The 2026-07-24 amendment review confirmed that this remains true after removing
+the mistaken complete-job ceiling: the task graph now treats shard capacity as
+a per-unit bound, requires population-independent lazy planning and keeps
+activation constant-size.
 
 - The complete public Tribute -> Metadosis -> JobIntent -> finalized export ->
   independent Lysis -> q=3/4 -> public activation -> Nod path has task owners.
@@ -38,7 +43,7 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | current production seams and gaps | [current-code map](off-chain-poc-current-code-map.md), rechecked against current CodeGraph source | covered |
 | four OCOMP ADRs | 34 source-derived invariant IDs in the [ledger](off-chain-poc-evidence-ledger.yaml) | covered |
 | `POC-01..POC-26` | all 26 exact IDs map to non-empty planned test sets | covered |
-| `PFS-002-01..24` | 22 required rows map to tests; only 07/08 are exact `DEFERRED` records | covered |
+| `PFS-002-01..25` | 23 required rows map to tests; only 07/08 are exact `DEFERRED` records | covered |
 | exact thirteen-step story | steps `1..13` each map to tests and an allowed oracle; `OCM-E2E-001` owns the correlated full story | covered |
 | existing Tribute E2E integration | `OCM-24/27` reuse the current public transaction, four-validator Mongo projection and independently verified CE path before observing `JobIntent`; `OCM-E2E-001/004` retain the correlation evidence | covered |
 | section 17 PoC deliverables | protocol/runtime/semantic/evidence owners listed below | covered |
@@ -50,8 +55,8 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | # | Required decision | Frozen asset | First implementation owner |
 |---:|---|---|---|
 | 1 | fork/version/bundle/genesis | [protocol freeze](off-chain-poc-protocol-freeze.md), two-stage final identity | `OCM-04`, final `OCM-26` |
-| 2 | generated Tribute/action/evidence/block caps | protocol freeze, public measurement gate | `OCM-25`, `OCM-26` |
-| 3 | admission/split/precondition/action/result/generation/receipt fields | protocol freeze and [activation decision](off-chain-poc-activation-and-atomic-apply.md) | `OCM-03..05`, `OCM-17..23` |
+| 2 | generated per-shard/per-chunk/evidence/activation/block caps; no total Tribute cap | protocol freeze, public measurement gate | `OCM-25`, `OCM-26` |
+| 3 | admission/split/precondition/result-chunk/result/generation/receipt fields | protocol freeze and [activation decision](off-chain-poc-activation-and-atomic-apply.md) | `OCM-03..05`, `OCM-17..23` |
 | 4 | codec/hash/signature/golden format | protocol freeze, OCB1 registry | `OCM-02..04` |
 | 5 | legacy Lysis semantics/corpus | [semantic baseline](off-chain-poc-lysis-v1-semantics.md) | `OCM-01` |
 | 6 | finalized-intent proof/history source | [finalized export decision](off-chain-poc-finalized-input-export.md) | `OCM-09` |

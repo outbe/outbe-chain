@@ -24,6 +24,7 @@ use outbe_ocomp_protocol::{
         FinalizedIntentVerificationError, FinalizedRequestBindingV1, JobIntentV1, ParentProofKind,
         VerifiedFinalizedIntentV1,
     },
+    opening::{RawContractOpeningProofV1, RawStorageSlotV1},
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
@@ -227,6 +228,8 @@ pub enum FinalizedIntentProofBuildError {
     Trie(String),
     #[error("constructed finalized-intent proof failed verification: {0}")]
     Verification(#[from] FinalizedIntentVerificationError),
+    #[error("constructed raw opening proof failed verification: {0}")]
+    RawOpeningVerification(#[source] FinalizedIntentVerifierError),
 }
 
 /// Reth-backed proof builder bound to the consensus-owned finalization store.
@@ -851,6 +854,138 @@ fn slot_keys(slots: &[(U256, U256)]) -> Vec<B256> {
         .iter()
         .map(|(slot, _)| B256::new(slot.to_be_bytes::<32>()))
         .collect()
+}
+
+pub(crate) fn build_verified_raw_contract_opening(
+    state: &dyn StateProvider,
+    state_root: B256,
+    contract_address: Address,
+    ordered_slots: &[B256],
+    limits: &SchemaLimits,
+) -> Result<RawContractOpeningProofV1, FinalizedIntentProofBuildError> {
+    if ordered_slots.is_empty() || ordered_slots.len() > limits.max_collection_items {
+        return Err(FinalizedIntentProofBuildError::Trie(
+            "raw opening slot count is outside the bounded profile".to_owned(),
+        ));
+    }
+    let expected_slots = ordered_slots
+        .iter()
+        .copied()
+        .map(|slot| {
+            state
+                .storage(contract_address, slot)
+                .map(|value| (U256::from_be_bytes(slot.0), value.unwrap_or_default()))
+                .map_err(|error| {
+                    FinalizedIntentProofBuildError::State(format!(
+                        "read raw opening slot {slot}: {error}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let proof = state
+        .proof(TrieInput::default(), contract_address, ordered_slots)
+        .map_err(|error| {
+            FinalizedIntentProofBuildError::Trie(format!(
+                "build raw opening proof for {contract_address}: {error}"
+            ))
+        })?;
+    let opening = RawContractOpeningProofV1 {
+        contract_address,
+        state_root,
+        ordered_slots: expected_slots
+            .iter()
+            .map(|(slot, value)| RawStorageSlotV1 {
+                slot: B256::new(slot.to_be_bytes()),
+                value: *value,
+            })
+            .collect(),
+        account_proof: ProofBytes(encode_account_witness(&proof, contract_address)?),
+        storage_proof: ProofBytes(encode_storage_witness(&proof, &expected_slots)?),
+    };
+    verify_raw_contract_opening(
+        &opening,
+        contract_address,
+        state_root,
+        ordered_slots,
+        limits,
+    )
+    .map_err(FinalizedIntentProofBuildError::RawOpeningVerification)?;
+    Ok(opening)
+}
+
+pub fn verify_raw_contract_opening(
+    opening: &RawContractOpeningProofV1,
+    expected_address: Address,
+    expected_state_root: B256,
+    expected_slots: &[B256],
+    limits: &SchemaLimits,
+) -> Result<(), FinalizedIntentVerifierError> {
+    if opening.contract_address != expected_address
+        || opening.state_root != expected_state_root
+        || opening.ordered_slots.len() != expected_slots.len()
+        || opening
+            .ordered_slots
+            .iter()
+            .zip(expected_slots)
+            .any(|(actual, expected)| actual.slot != *expected)
+    {
+        return Err(FinalizedIntentVerifierError::WitnessMalformed {
+            kind: "raw opening",
+            reason: "contract, root, or ordered slot binding",
+        });
+    }
+    ensure_witness_cap(
+        "account",
+        opening.account_proof.0.len(),
+        limits.max_proof_bytes,
+    )?;
+    ensure_witness_cap(
+        "storage",
+        opening.storage_proof.0.len(),
+        limits.max_proof_bytes,
+    )?;
+
+    let account = AccountWitness::decode(&opening.account_proof.0, limits)?;
+    let account_info = Account {
+        nonce: account.nonce,
+        balance: account.balance,
+        bytecode_hash: Some(account.code_hash),
+    };
+    AccountProof {
+        address: expected_address,
+        info: Some(account_info),
+        proof: account.nodes,
+        storage_root: account.storage_root,
+        storage_proofs: Vec::new(),
+    }
+    .verify(expected_state_root)
+    .map_err(|error| FinalizedIntentVerifierError::AccountProof(error.to_string()))?;
+
+    let storage = StorageWitness::decode(
+        &opening.storage_proof.0,
+        limits,
+        opening.ordered_slots.len(),
+    )?;
+    if storage.proofs.len() != opening.ordered_slots.len() {
+        return Err(FinalizedIntentVerifierError::StorageProofCount {
+            expected: opening.ordered_slots.len(),
+            actual: storage.proofs.len(),
+        });
+    }
+    for (index, (raw, nodes)) in opening.ordered_slots.iter().zip(storage.proofs).enumerate() {
+        StorageProof {
+            key: raw.slot,
+            value: raw.value,
+            ..StorageProof::new(raw.slot)
+        }
+        .with_proof(nodes)
+        .verify(account.storage_root)
+        .map_err(|error| FinalizedIntentVerifierError::StorageProof {
+            index,
+            reason: error.to_string(),
+        })?;
+    }
+    Ok(())
 }
 
 fn encode_account_witness(

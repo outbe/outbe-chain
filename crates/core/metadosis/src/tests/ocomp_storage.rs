@@ -41,8 +41,7 @@ const AUCTION_ENTRY_PRICE: U256 = U256::from_limbs([55, 0, 0, 0]);
 pub(super) fn capacity_profile() -> CapacityProfileV1 {
     CapacityProfileV1 {
         profile_id: B256::repeat_byte(0x22),
-        max_poc_tributes: 256,
-        unit_tributes: 32,
+        max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
         max_pending_jobs: 1,
         max_intents_per_block: 1,

@@ -1,6 +1,6 @@
 # Off-chain PoC implementation-planning decision map
 
-Status: **COMPLETE — READY_FOR_IMPLEMENTATION**
+Status: **COMPLETE — MULTI-SHARD AMENDMENT VERIFIED; READY_TO_RESUME**
 
 Normative inputs:
 
@@ -28,7 +28,7 @@ What must the implementation plan produce, and what must it explicitly exclude?
 
 Resolved by the source documents and goal:
 
-- plan one bounded fresh-devnet Lysis V1 vertical slice;
+- plan one fresh-devnet Lysis V1 vertical slice over bounded work units;
 - preserve the OCOMP-kernel/typed-program boundary and PoC-to-BoundedMVP core;
 - require `POC-01..POC-26`, non-deferred `PFS-002` scenarios and the exact
   thirteen-step demonstration;
@@ -102,7 +102,7 @@ Type: Discuss
 ### Question
 
 What are the exact fork/profile identity, canonical codecs, hash/signature
-domains, IDs, intent/split/precondition/result/action/receipt schemas, deadlines and
+domains, IDs, intent/split/precondition/result/chunk/receipt schemas, deadlines and
 generated cap values?
 
 ### Answer
@@ -112,7 +112,7 @@ Resolved. See the
 
 PoC now has one exact fork/profile identity, OCB1 canonical grammar and object
 registry, public `activateLysis(bytes)` ABI, hash/root/signature contracts,
-closed intent/input/unit/action/result/certificate/precondition/receipt schemas,
+closed intent/input/unit/result-chunk/result/certificate/precondition/receipt schemas,
 exclusive 64-block deadline and fixed phase behavior. Candidate limits are
 upper bounds. Ticket #10 removed a dependency cycle by splitting the gate:
 `P0-PROTOCOL-SHAPE-FREEZE` freezes schemas/domains/registries and non-armable
@@ -131,8 +131,15 @@ active S-curve bounds plus the already-required 64-finalized-block terminal
 evidence window. These are bounded-profile closure, not new behavior; generation
 may only reduce the data-dependent caps.
 
-No product choice remained for grilling, and the existing ubiquitous language
-did not change.
+The 2026-07-24 correction separated the complete parent job from worker-sized
+work: one `JobIntentV1` covers arbitrary `N`, while constant-size
+`PlanCommitmentV1` commits
+`ceil(N / max_tributes_per_work_shard)` ordered work shards by count/root.
+There is no complete-job Tribute ceiling. The candidate
+`max_tributes_per_work_shard=256` bounds one invocation only; the 257th Tribute
+starts shard 2, 10,000 produce 40 shards and 1,000,000,000 produce 3,906,250.
+Final generation may lower the per-shard value but cannot create a total
+population cap.
 
 ## #5: How is finalized authenticated input retained and exported?
 
@@ -221,20 +228,23 @@ byte-identical execution and one vote per validator domain?
 Resolved. See the
 [`deterministic execution and quorum decision`](off-chain-poc-deterministic-execution-and-quorum.md).
 
-Every domain now derives one complete producer-bound plan before execution:
-fixed 32-Tribute ranges, a padded Fidelity reducer, bounded prefix scan,
-per-range output finalization, one bounded owner/bucket shuffle and one final
-root reducer. One, two or four socket-activated workers only schedule immutable
-`UnitId`s; they never alter plan bytes or evidence weight. Phase verifiers
-recompute outputs and coverage before CAS adoption, and an independent corpus
-remains mandatory.
+Every domain now derives one constant-size producer-bound plan commitment before
+execution. Work units and reducer nodes are derived lazily by ordinal from
+fixed profile-bounded work-shard ranges; external sort, prefix, shuffle and
+reduction use bounded runs/cursors for arbitrary unit count. One, two or four
+socket-activated workers schedule immutable `UnitId`s; they never alter plan
+bytes or evidence weight. Phase verifiers recompute outputs and exact
+no-gap/no-overlap coverage before CAS adoption, and an independent corpus
+remains mandatory. The `S+1` fixture must place its last Tribute in shard 2; a
+missing shard or result chunk prevents reduction and signing.
 
-The node reloads finalized job/export state, validates the complete result and
-derives `ResultDigest` itself. A node-only epoch-1 OCOMP key writes an immutable
+The node reloads finalized job/export state, validates every bounded
+`ResultChunkV1` plus the constant-size `LysisResultV1`, and derives
+`ResultDigest` itself. A node-only epoch-1 OCOMP key writes an immutable
 OCB1 sign-once record with file fsync, no-clobber hard-link publication and
 directory fsync before releasing its deterministic low-`s` signature. Existing
 best-effort JSON journals are explicitly not reused. The relay accepts bounded
-OCB1 announcements, groups exact result bytes, verifies indexed signatures,
+OCB1 announcements, groups exact result commitments, verifies indexed signatures,
 selects exactly three distinct indexes and builds finality/state proof from
 existing public exact-block RPC.
 
@@ -322,7 +332,7 @@ machine-readable
 PoC proof is split into byte/pure/model, production-seam integration,
 public fork/execution, four-domain E2E and privileged isolation layers. The
 ledger defines 37 stable planned test IDs and maps all 34 invariants from
-ADR-S-OCM-001..004, `POC-01..POC-26`, `PFS-002-01..24` and story steps 1..13.
+ADR-S-OCM-001..004, `POC-01..POC-26`, `PFS-002-01..25` and story steps 1..13.
 Only `PFS-002-07/-08` are DEFERRED.
 
 The existing Rust/Cucumber harness remains the single orchestration owner. It

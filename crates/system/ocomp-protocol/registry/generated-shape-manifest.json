@@ -2,9 +2,9 @@
   "armable": false,
   "classification": "measurement_only",
   "generator": {
-    "input_set_sha256": "988a733cb23f674f99cb5a1433499a79a9c7c671885c75a3ad34a64868f218a7",
+    "input_set_sha256": "eeff8362a394fa1da44d8116b09c03c6fd16ff2fcc06ba10db1087c8f4c6fe16",
     "invocation": "cargo xtask ocomp shape",
-    "source_sha256": "8368ca65e2d1e644af2bdb456ca78842b3e4b51becf7ad9650a7c61c4aff0e4d"
+    "source_sha256": "d1d0ac43a328fe51a9c689718b5e0fb0952c31900903f71263a9ffa70b25bd9d"
   },
   "independent_verification": {
     "method": "generated envelope vectors are independently reconstructed and decoded by OCM-BYT-001",
@@ -20,16 +20,16 @@
   },
   "profiles": {
     "bundle_template_sha256": "3d2d5400c66e176987b7b6e522df77e699d953de37d7c6d852171d820827754c",
-    "candidate_compile_ceiling_sha256": "e52febadeeee298a8d13311bfad3502ff0acb98ee46f05e359e43ea3aed9d281",
+    "candidate_compile_ceiling_sha256": "a48c9f7fca72a9515e256af811a436fc3b81c97f0ddc5e8c3bf9ba43ff1eecdb",
     "correctness_profile_sha256": "3b5bbce51a931113f56bffae5767454c8b51008588a6020388465cd9d72edd74",
     "headroom_policy_sha256": "ec384d6b098771d4f7dc95f23cbe0995af7aeeae67539cc34151c67023a0516a",
     "minimum_devnet_hardware_profile_sha256": "335e5f46dbb86ff41a5dcbd164fd681eb79a8a3e3f4880a1af2e42166d824144"
   },
   "registries": {
-    "canonical_schema_sha256": "126f15a88574949d1d60f4eca902ffa1727d874b41d2a1cb9cc32be6cd1f5718",
-    "domain_preimage_sha256": "7425c92aa6738ea6676ace426ab7ca7973f6a5f1a549e65c053856e625676d19",
+    "canonical_schema_sha256": "c1c8bb2e35e4146eb4acb74b8c20fcbb5267d91e1883ce794ba9fffabca49baf",
+    "domain_preimage_sha256": "96d880537514a2c321198913a9e545a218525c2ceb478a6c0e5e4e3ebd529746",
     "object_count": 30,
-    "object_domain_list_sha256": "f0e17b5ed14fa68c10c5926628428627b7478e39c7784558f14114f05676f370"
+    "object_domain_list_sha256": "9bb057b46f0ad786bbb9917acf7ed98a14b3e8b65027560cf74aca6af0bee6e4"
   },
   "schema_version": 1
 }

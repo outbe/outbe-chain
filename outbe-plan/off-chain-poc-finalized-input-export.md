@@ -440,7 +440,10 @@ entry to the retained namespace before deleting the current record and current
 day-index entry. The retained record is immutable; a different byte sequence
 for the same key is corruption. The active job journal is the only PoC
 retention selector. Release GC deletes only that exact job namespace and index
-after the node-owned release rule.
+after the node-owned release rule. Deletion is cursor/page bounded across the
+parent job namespace: reaching the end of one worker-shard-sized page continues
+with the next page. It is never interpreted as “too many Tribute for this job”
+and never causes partial deletion on a failed page.
 
 The exporter may read current or retained bytes. A concurrent atomic move is
 safe because either copy must decode to the same identity and commitment.
@@ -654,7 +657,9 @@ implemented:
   header, epoch/view/hash, committee, bitmap, VRF and storage-proof binding;
 - `projection_contains` behind/exact/ahead/conflict cases without changing
   execution readiness behavior;
-- atomic current-to-retained body move and exact release GC;
+- atomic current-to-retained body move and restart-safe paged release GC,
+  including `max_tributes_per_work_shard + 1` records with the final record
+  removed only as part of complete parent-job release;
 - Mongo omitted/duplicate/reordered/wrong-day/changed-body cases all fail root
   closure;
 - Fidelity count `0`, `64`, `65` and raw-slot omission/mutation;

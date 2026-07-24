@@ -44,18 +44,14 @@ pub(crate) enum PreAdmissionDeferredReason {
     TributeProfileNotReady,
     TributeNotSealed,
     EmptyTributeDay,
-    TributeAccumulatorCapacityExceeded,
-    TributeCountExceeded { actual: u32, limit: u32 },
     ReferenceCurrencyCountExceeded { actual: u16, limit: u16 },
     FidelityProfileNotReady,
     FidelityProfileCapMismatch { actual: u16, expected: u16 },
-    FidelityOpeningCountExceeded { actual: u32, limit: u32 },
     FidelityCohortCapExceeded { actual: u16, limit: u16 },
     OracleProfileNotReady,
     OracleOpeningCountExceeded { actual: u16, limit: u16 },
     OracleWwdPairEntriesExceeded { actual: u32, limit: u32 },
     ActiveScurveEntriesExceeded { actual: u32, limit: u32 },
-    CanonicalBodyBytesExceeded { actual: u64, limit: u64 },
     ArithmeticOverflow,
 }
 
@@ -86,46 +82,6 @@ pub(crate) fn evaluate_pre_admission(
             PreAdmissionDeferredReason::EmptyTributeDay,
         ));
     }
-    if tribute.capacity_exceeded {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeAccumulatorCapacityExceeded,
-        ));
-    }
-
-    let Some(candidate_tribute_limit) = u32::try_from(candidate.max_poc_tributes).ok() else {
-        return Ok(arithmetic_overflow());
-    };
-    let tribute_limit = context
-        .capacity_profile
-        .max_poc_tributes
-        .min(candidate_tribute_limit);
-    if tribute.tribute_count > tribute_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeCountExceeded {
-                actual: tribute.tribute_count,
-                limit: tribute_limit,
-            },
-        ));
-    }
-    let Some(nod_limit) = u32::try_from(candidate.max_nod_actions).ok() else {
-        return Ok(arithmetic_overflow());
-    };
-    let Some(contributor_limit) = u32::try_from(candidate.max_contributor_actions).ok() else {
-        return Ok(arithmetic_overflow());
-    };
-    let Some(bucket_limit) = u32::try_from(candidate.max_bucket_records).ok() else {
-        return Ok(arithmetic_overflow());
-    };
-    let result_count_limit = nod_limit.min(contributor_limit).min(bucket_limit);
-    if tribute.tribute_count > result_count_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::TributeCountExceeded {
-                actual: tribute.tribute_count,
-                limit: result_count_limit,
-            },
-        ));
-    }
-
     let reference_currency_limit = context
         .capacity_profile
         .max_reference_currencies
@@ -159,18 +115,6 @@ pub(crate) fn evaluate_pre_admission(
             },
         ));
     }
-    let Some(fidelity_opening_limit) = u32::try_from(candidate.max_fidelity_openings).ok() else {
-        return Ok(arithmetic_overflow());
-    };
-    if tribute.distinct_owner_count > fidelity_opening_limit {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityOpeningCountExceeded {
-                actual: tribute.distinct_owner_count,
-                limit: fidelity_opening_limit,
-            },
-        ));
-    }
-
     if !oracle.profile_ready {
         return Ok(PreAdmissionDecision::Deferred(
             PreAdmissionDeferredReason::OracleProfileNotReady,
@@ -221,22 +165,9 @@ pub(crate) fn evaluate_pre_admission(
         ));
     }
 
-    let Some(chunk_capacity) = candidate
-        .max_input_chunks
-        .checked_mul(candidate.max_input_chunk_bytes)
-    else {
-        return Ok(arithmetic_overflow());
-    };
-    if tribute.canonical_body_bytes > chunk_capacity {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::CanonicalBodyBytesExceeded {
-                actual: tribute.canonical_body_bytes,
-                limit: chunk_capacity,
-            },
-        ));
-    }
-    let Some(input_encoded_bytes_upper_bound) =
-        chunk_capacity.checked_add(candidate.max_input_manifest_bytes)
+    let Some(input_encoded_bytes_upper_bound) = tribute
+        .canonical_body_bytes
+        .checked_add(candidate.max_input_manifest_bytes)
     else {
         return Ok(arithmetic_overflow());
     };
@@ -244,7 +175,7 @@ pub(crate) fn evaluate_pre_admission(
         return Ok(arithmetic_overflow());
     };
     let Some(retained_bytes_upper_bound) = input_encoded_bytes_upper_bound
-        .checked_add(candidate.max_bounded_result_bytes)
+        .checked_add(candidate.max_result_summary_bytes)
         .and_then(|value| value.checked_add(candidate.max_activation_ocb1_bytes))
         .and_then(|value| value.checked_add(candidate.max_finalized_intent_proof_bytes))
         .and_then(|value| value.checked_add(candidate.max_execution_certificate_bytes))
@@ -282,7 +213,7 @@ pub(crate) fn evaluate_pre_admission(
             oracle_opening_upper_bound: u32::from(tribute.distinct_reference_currency_count),
             input_encoded_bytes_upper_bound,
             output_record_upper_bound,
-            action_stream_bytes_upper_bound: candidate.max_action_stream_bytes,
+            result_chunk_bytes_upper_bound: candidate.max_result_chunk_bytes,
             activation_bytes_upper_bound: candidate.max_activation_ocb1_bytes,
             retained_bytes_upper_bound,
             correctness_profile_id: context.correctness_profile_id,

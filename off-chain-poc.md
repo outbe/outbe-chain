@@ -7,7 +7,7 @@ The protocol values in section 22 must be frozen by explicit tasks before the
 corresponding consensus codecs or state transitions are implemented.
 
 Source: [`off-chain-computation.md`](off-chain-computation.md), SHA-256
-`5bc67987f36a0dd0e5da4c66ce44b1e11ab479f9921350a055dccc6cd0779834`
+`21f0664c80f1e32afda83ca749a0ce2811668af47c21f2c04e7db80c99b89a99`
 
 Visual summary: [`off-chain-poc-one-pager.html`](off-chain-poc-one-pager.html)
 
@@ -113,9 +113,9 @@ Tribute is issued
   -> four validator domains independently read and execute Lysis off-chain
   -> any relayer collects q=3 matching result signatures
   -> one ordinary activation transaction carries proof of finality,
-     certificate and complete typed result
-  -> consensus verifies evidence but does not execute Lysis
-  -> Nod/contributor/Tribute/carry-over/Metadosis effects commit atomically
+     certificate and constant-size complete-result commitment
+  -> consensus verifies evidence but does not execute Lysis or iterate outputs
+  -> Nod/contributor roots and Tribute/carry-over/Metadosis effects commit atomically
   -> Metadosis is COMPLETED and the Tribute partition is logically retired
 ```
 
@@ -129,12 +129,12 @@ The central architectural seam is:
 ```text
 off-chain:
   execute_lysis(JobSpec, AuthenticatedInputBundle)
-    -> BoundedLysisResultV1
+    -> ResultChunkV1 catalog + LysisResultV1
 
 on-chain:
-  apply_certified_lysis(JobIntentV1, BoundedLysisResultV1,
+  apply_certified_lysis(JobIntentV1, LysisResultV1,
                         ExecutionCertificateV1)
-    -> one atomic typed domain transition
+    -> one atomic typed root transition
 ```
 
 `apply_certified_lysis` is not a generic transaction interpreter. It accepts
@@ -160,7 +160,7 @@ CertifiedLysisApply
 The implementation must preserve those module/authority boundaries. The PoC
 still has exactly one activation entrypoint, `activateLysis`, and its
 `JobIntentV1`, `UnitSpecV1`, `ActivationPayloadV1`,
-`BoundedLysisResultV1` and `ProtocolBundleV1` are Lysis-specific even where the
+`LysisResultV1` and `ProtocolBundleV1` are Lysis-specific even where the
 names look generic. A consensus program registry, common program envelopes,
 public adapter and second domain program are not PoC deliverables.
 
@@ -198,13 +198,13 @@ public adapter and second domain program are not PoC deliverables.
 | chain state | `JobIntentV1`, `OFFCHAIN_PENDING`, expiry and terminal receipt are consensus state |
 | input | exact finalized request block, state root, CE root and sealed WWD root |
 | processes | node, supervisor, snapshot exporter and workers are separate OS processes |
-| execution | each of four validator domains executes the complete bounded job |
+| execution | each of four validator domains executes the complete job through bounded work |
 | parallelism | deterministic units and fixed reduction, exercised with 1, 2 and 4 workers |
 | correctness | exactly three distinct signatures over one canonical `ResultDigest` |
 | keys | separate OCOMP key per validator; the supervisor never receives it |
-| evidence | finality proof, complete typed result and certificate in one activation transaction |
+| evidence | finality proof, constant-size complete-result commitment and certificate in one activation transaction |
 | activation | submitted through public RPC, txpool, gossip, proposal, import and replay |
-| apply | private capability, closed batch APIs, typed receipts and one outer checkpoint |
+| apply | private capability, closed root-transition APIs, typed receipts and one outer checkpoint |
 | failure | no quorum means deterministic expiry, preserved budget, no repeated auction and no Nod |
 | output | the request split and all observable Nod/contributor/Tribute/carry-over/Metadosis effects are real |
 
@@ -329,10 +329,12 @@ These are the proposed fork constants:
 | result validators | `n=4` |
 | tolerated faulty/offline validator domains | `f=1` |
 | required matching signatures | `q=3` |
-| `MAX_POC_TRIBUTES` | `256` |
-| unit size | `32 Tribute` |
+| `MAX_TRIBUTES_PER_WORK_SHARD` | `256` |
 | workers per validator | `1..4` |
-| candidate `MAX_ACTION_STREAM_BYTES` | `<=512 KiB`, generated before fork |
+| `MAX_RECORDS_PER_INPUT_CHUNK` | `768` |
+| candidate `MAX_INPUT_CHUNK_BYTES` | `1 MiB`, generated before fork |
+| candidate `MAX_RESULT_CHUNK_BYTES` | `512 KiB`, generated before fork |
+| candidate `MAX_RESULT_SUMMARY_BYTES` | `1 MiB`, generated before fork |
 | `MAX_PENDING_JOBS` | `1` |
 | intents per block | `1` |
 | activations per block | `1` |
@@ -343,8 +345,8 @@ These are the proposed fork constants:
 The table is a starting envelope, not a capacity claim. Before the fork is
 enabled, a generator must construct the maximum-shaped:
 
-- `ActionStreamV1`;
-- activation payload and result;
+- input and result chunks;
+- constant-size activation payload and `LysisResultV1`;
 - three-signature certificate;
 - finality and storage proof;
 - activation transaction;
@@ -363,10 +365,19 @@ public JSON-RPC
 -> replay
 ```
 
-The selected cap is the largest value that fits transaction bytes, the complete
-RLP block, gas/internal-work, CE mutation and finality budgets with measured
-headroom on the declared minimum devnet machine. If `256` does not fit, the fork
-lowers the cap. Local configuration may never raise it.
+There is no batch Tribute cap. A parent `JobIntent` covers all `N` records; the
+planner commits `ceil(N / MAX_TRIBUTES_PER_WORK_SHARD)` ordered worker shards
+without materializing their complete vector. The 257th Tribute starts shard 2,
+the 10,000th belongs to one of 40 shards, and one billion Tribute imply
+3,906,250 shards. No record is rejected because the parent crosses a shard,
+chunk or fixture boundary.
+
+Generated caps bound one chunk/work invocation, the live worker pool and the
+constant-size activation transaction. The selected values must fit transaction
+bytes, the complete RLP block, gas/internal-work, root-transition work and
+finality budgets with measured headroom on the declared minimum devnet machine.
+Local configuration may never raise these per-interface bounds or reinterpret
+them as a total population ceiling.
 
 An immutable PoC build/deployment manifest records the tested node, supervisor,
 exporter, worker and relay artifacts. A PoC network manifest records every
@@ -403,8 +414,8 @@ could change Fidelity or Oracle after the supposed snapshot.
 
 For one eligible non-empty sealed WWD, terminal Metadosis:
 
-1. validates the day, profile cap, sealed totals and authenticated
-   pre-admission envelope;
+1. validates the day, sealed totals and authenticated pre-admission envelope,
+   including per-interface shape bounds but no total Tribute cap;
 2. derives a checked split:
 
    `day_limit = lysis_budget + auction_base`;
@@ -743,10 +754,12 @@ The API never accepts:
 - a database/path/query;
 - an unbounded body.
 
-For PoC, `AttestationCandidateV1` includes the complete bounded typed result.
-The node independently reloads the finalized job, derives the sign-once key,
-rehashes the result and validates its structure and caps. It does not rerun
-Lysis.
+For PoC, `AttestationCandidateV1` includes constant-size `LysisResultV1`. The
+separate compute plane has already validated complete result-chunk coverage.
+The node independently reloads the finalized job, derives the closed signing
+purpose and sign-once key, rehashes the result commitment and validates its
+constant-size structure/equations. It neither reads result chunks nor reruns
+Lysis, so bulk work cannot enter the consensus process failure boundary.
 
 Remote mTLS is DEFERRED to MVP and must implement the same logical interface.
 
@@ -800,12 +813,13 @@ Ranges are fixed-width, start-inclusive and end-exclusive. The bundle fixes
 vector order, optional/empty encoding and valid phase/interval combinations.
 Unknown combinations, duplicates, non-minimal fields and trailing bytes reject.
 
-For the bounded PoC:
+For the PoC, every invocation is bounded while the parent population is not:
 
 1. verify the complete CE fold;
 2. external-sort verified records by raw 36-byte `EntityId`, matching current
    Lysis order;
-3. cut fixed intervals of at most 32 Tribute and bounded bytes;
+3. cut fixed intervals of at most `max_tributes_per_work_shard` Tribute and
+   bounded bytes;
 4. keep one owner’s Fidelity history in one unit;
 5. use a fixed binary reduction tree.
 
@@ -911,37 +925,38 @@ comparison by calling on-chain Lysis.
 Each validator domain produces:
 
 ```text
-ActionStreamV1 {
-  ordered_nod_actions,
-  ordered_eligible_contributors,
-  carry_over_credit_action,
-  metadosis_completion_summary
+ResultChunkV1 {
+  protocol_bundle_hash, JobId, attempt,
+  chunk_ordinal, first_nod_ordinal,
+  bounded ordered_nod_actions,
+  bounded ordered_eligible_contributors
 }
 
-BoundedLysisResultV1 {
+LysisResultV1 {
   protocol_bundle_hash, JobId, attempt,
-  ActionStreamV1,
+  result_chunk_count, result_chunk_list_root,
   tribute_count, tribute_nominal_total,
   unused_lysis,
   exact roots,
   conservation totals,
-  event summary
+  arithmetic commitment,
+  carry_over_credit,
+  metadosis_completion_summary
 }
 ```
 
 The canonical signed preimage is:
 
 ```text
-ActionStreamHash =
-  H("OUTBE_BOUNDED_LYSIS_ACTIONS_V1", canonical(ActionStreamV1))
+ResultChunkHash =
+  H("OUTBE_OCOMP_RESULT_CHUNK_V1", canonical(ResultChunkV1))
 
 ActivationPayloadV1 {
   protocol_bundle_hash, JobId, attempt,
-  action_stream_hash_or_none,
+  result_chunk_count, result_chunk_list_root,
   nod_root, bucket_root, contributor_root, output_manifest_root,
   exact_input_and_output_counts,
-  conservation_totals, arithmetic_commitment, event_summary_hash,
-  da_encoding_commitment_or_none
+  conservation_totals, arithmetic_commitment, event_summary_hash
 }
 
 ResultDigest =
@@ -955,9 +970,14 @@ ExecutionCertificateV1 {
 }
 ```
 
-For PoC, the action stream is present and the DA fields use their canonical
-`none` representation. Every validator decodes it and recomputes roots, counts,
-totals, arithmetic commitment and event summary before apply.
+Every validator domain's separate compute process independently reads every
+authenticated result chunk, proves gap-free complete catalog coverage, and
+recomputes roots, counts, totals, arithmetic commitment and event summary
+before requesting its node's attestation. The node verifies the constant-size
+closed signing subject and never scans those chunks. The activation carries
+only `LysisResultV1`; result-chunk bodies remain content-addressed artifacts for
+projection, availability and proof serving. No chunk is separately signable or
+activatable.
 
 ### 9.1 Committee and threshold
 
@@ -1016,7 +1036,7 @@ The PoC relay receives:
 ```text
 CandidateAnnouncement(
   JobId,
-  BoundedLysisResultV1,
+  LysisResultV1,
   validator_index,
   signature
 )
@@ -1046,7 +1066,7 @@ PoCActivationV1 {
   IntentId,
   FinalizedIntentProofV1,
   ActivationPayloadV1,
-  BoundedLysisResultV1,
+  LysisResultV1,
   ExecutionCertificateV1
 }
 ```
@@ -1057,12 +1077,14 @@ Every node:
 2. verifies the exact live intent, attempt, bundle and exclusive deadline;
 3. loads the pinned historical OCOMP committee snapshot;
 4. verifies three distinct signatures over one `ResultDigest`;
-5. decodes the result and recomputes `ActionStreamHash`;
-6. recomputes every root, count, conservation total, arithmetic commitment and
-   event summary;
-7. verifies caps, canonical ordering, uniqueness and live target preconditions;
+5. decodes the constant-size result and binds its result-chunk count/root;
+6. verifies committed roots, counts, conservation totals, arithmetic commitment
+   and event summary;
+7. verifies activation byte/crypto caps and live old-root/generation
+   preconditions;
 8. constructs a private `CertifiedLysisActivation`;
-9. executes the typed apply in the same transaction checkpoint.
+9. installs the certified root transition and scalar effects in the same
+   transaction checkpoint.
 
 It does not:
 
@@ -1070,14 +1092,17 @@ It does not:
 - call `fidelity::league`;
 - read Oracle;
 - calculate FI fractions, prices, Gratis distribution or Nod bodies;
+- iterate over `N` Nod/contributor actions;
 - rerun any phase of Lysis.
 
-Hashing, decoding, signature verification, structural checks and writing
-precomputed typed effects are verification/apply work, not Lysis computation.
+Hashing, decoding, signature verification, constant-size structural checks and
+installing precomputed authenticated roots are verification/apply work, not
+Lysis computation.
 
-The complete action bytes occur once in the activation transaction body.
-Consensus state retains only terminal hashes, counts, certificate hash and
-receipt. Canonical block data supplies the original bytes for replay.
+The complete action bytes do not occur in the activation transaction.
+Consensus state retains the active roots/generation, terminal hashes, counts,
+certificate hash and receipt. Result chunks supply bodies to projection and
+proof-serving paths but never become consensus authority by location alone.
 
 ### 10.1 Capacity admission
 
@@ -1112,18 +1137,25 @@ inside one outer executor checkpoint.
 The activation module calls only:
 
 ```text
-NodFactory::issue_certified_batch(capability, actions)
+NodFactory::install_certified_generation(
+  capability, old_generation, nod_root, bucket_root, counts, totals)
   -> NodBatchReceipt
 
-Intex::record_certified_contributors(capability, plan)
+Intex::install_certified_contributor_root(
+  capability, old_generation, contributor_root, count, total)
   -> ContributorReceipt
 
-Tribute::consume_certified_partition(capability, totals)
+Tribute::retire_certified_partition(
+  capability, sealed_generation, root, count, totals)
   -> TributeReceipt
 
 PromisLimit::credit_certified_carry_over(capability, unused_lysis)
   -> CarryOverReceipt
 ```
+
+Despite its historical name, `NodBatchReceipt` acknowledges one constant-size
+generation/root installation; activation does not submit or loop over a Nod
+batch proportional to the Tribute population.
 
 Each effect owner is the only constructor of its receipt:
 
@@ -1204,10 +1236,12 @@ ActiveGenerationV1 {
 }
 ```
 
-For PoC, `result_evidence_hash` binds the transaction-carried result and
-certificate, while `availability_certificate_hash` uses the bundle's canonical
-`none` value because the complete bounded result is block data. A supervisor
-database can never select the active output.
+For PoC, `result_evidence_hash` binds the transaction-carried result commitment
+and certificate. `availability_certificate_hash` uses the bundle's canonical
+`none` value: the PoC relies on all three signing domains having verified and
+retained the authenticated result chunks, but does not claim an independent
+data-availability protocol. The active roots remain consensus authority; a
+supervisor database or artifact location can never select the active output.
 
 ### 10.3 Carry-over
 
@@ -1340,13 +1374,13 @@ MVP replaces the operational implementations around these interfaces:
 | committee | static four members | historical epoch changes and handover |
 | keys | protected local key and journal | HSM/remote signer, rotation/recovery/revocation |
 | checkpoint | one pinned export; recompute allowed | crash-safe pin/export/pruning/restore FSM |
-| scheduling | one job; retry whole work | bounded fair queues and resumable journals |
+| scheduling | one parent job, deterministic multi-shard queue and shard retry | bounded fair multi-job queues and resumable journals |
 | worker launch | fixed unprivileged template | audited broker and aggregate lease accounting |
 | isolation | separate processes/basic cgroups | hardened identities, policies and quotas |
 | storage | local CAS | production retention/bootstrap policy |
 | reliability | selected failures | exhaustive crash/disk/OOM/Byzantine chaos |
 | operations | logs/demo metrics | SLOs, alerts, dashboards and runbooks |
-| capacity | no claim beyond fixed PoC cap | cold benchmark and frozen measured cap |
+| capacity | no claim beyond the generated bounded multi-shard PoC envelope | cold benchmark and frozen measured cap |
 
 The PoC chain history is disposable. “Evolutionary” means reusing the protocol
 and implementation seams, not promoting PoC state into a production network.
@@ -1397,8 +1431,8 @@ issuance through public Nod reads on a four-validator devnet:
 4. stop one validator’s supervisor;
 5. show the other three domains independently rebuild the same input root and
    produce the same `ResultDigest`;
-6. submit their certificate and exact typed result in one activation transaction
-   through the untrusted relay;
+6. submit their certificate and exact `LysisResultV1` commitment in one
+   activation transaction through the untrusted relay;
 7. finalize it and query every expected Nod, contributor total, Metadosis state,
    request-phase Desis brief, carry-over credit and retired Tribute partition;
 8. compare the result with an offline reference/golden corpus, never an on-chain
@@ -1442,7 +1476,7 @@ version matrices remain BoundedMVP work under parent section 15.
 | POC-04 | CORE | finality authority | positive and parent-required adversarial `FinalizedIntentProofV1` vectors |
 | POC-05 | CORE | event is not authority | one lost subscription followed by cursor discovery |
 | POC-06 | DEMO | input completeness | full-fold root/count/nominal and state-opening verification |
-| POC-07 | CORE | deterministic plan | frozen bytes/hashes for every PoC `UnitSpecV1` variant |
+| POC-07 | CORE | deterministic plan | frozen bytes/hashes for every PoC `UnitSpecV1` variant; 10,000 and 1,000,000,000 counts derive exact `ceil(N/S)` unit counts without proportional plan allocation |
 | POC-08 | DEMO | worker independence | 1/2/4 workers and randomized retries/orders yield identical bytes |
 | POC-09 | DEMO | validator independence | four separate node/supervisor/exporter/CAS domains |
 | POC-10 | DEMO | one domain unavailable | remaining three form exactly one valid certificate |
@@ -1455,8 +1489,8 @@ version matrices remain BoundedMVP work under parent section 15.
 | POC-17 | DEMO | logical time | activation delay changes only explicit activation metadata |
 | POC-18 | CORE | exclusive deadline | activation before the deadline succeeds and activation at the deadline sees expiry |
 | POC-19 | DEMO | process isolation | stop the supervisors required by section 13 without stopping block finality |
-| POC-20 | CORE | bounded interfaces | one over-limit UDS message and CAS artifact reject before unbounded allocation |
-| POC-21 | FORK-GATE | public wire path | cap-1/cap/cap+1 through RPC/txpool/P2P/import/replay |
+| POC-20 | CORE | bounded interfaces | one over-limit UDS message/chunk rejects before unbounded allocation; crossing a work-shard boundary creates another unit rather than rejecting the parent |
+| POC-21 | FORK-GATE | public wire path | activation-byte cap-1/cap/cap+1 through RPC/txpool/P2P/import/replay |
 | POC-22 | DEMO | public output | Nod and all domain effects verified through public read interfaces |
 | POC-23 | CORE | tentative pin | pin is durable before vote/prune; one orphan releases it and cannot be signed |
 | POC-24 | CORE | version isolation | one incompatible node/supervisor handshake refuses OCOMP while blocks continue |
@@ -1489,7 +1523,8 @@ This is an inventory for the next planning step, not a task breakdown.
   execution, reduction and typed result verification;
 - storage-independent `execute_lysis`;
 - canonical authenticated input bundle;
-- `ActionStreamV1` and `BoundedLysisResultV1`;
+- `PlanCommitmentV1`, bounded `ResultChunkV1` and constant-size
+  `LysisResultV1`;
 - offline independent reference implementation/golden corpus;
 - conservation and arithmetic checks.
 
@@ -1576,7 +1611,7 @@ consensus blocks and public APIs.
 
 - [ ] pure `execute_lysis`;
 - [ ] independent reference/golden implementation;
-- [ ] typed bounded result;
+- [ ] bounded result chunks plus constant-size typed result commitment;
 - [ ] certified activation module;
 - [ ] one request split receipt and four typed activation receipts;
 - [ ] logical Tribute retirement.
@@ -1615,7 +1650,7 @@ At the source revision:
   for OCOMP;
 - there is no separate OCOMP key registry or anti-equivocation store;
 - current CE has exact 16-shard CKB roots but no counted range tree; the latter
-  is not needed for bounded PoC full-fold;
+  is not needed for the PoC full-fold over bounded pages;
 - Fidelity has per-owner counts but no enforced profile cohort ceiling;
 - current Lysis materializes the complete WWD and reads Fidelity twice per
   Tribute ([runtime.rs](crates/core/lysis/src/runtime.rs#L31));
@@ -1714,12 +1749,12 @@ Outbe protocol definitions.
 | 6 planner/units | bounded rules PoC-MUST; counted ranges deferred | 8 |
 | 7 Lysis Map/Reduce | PoC-MUST | 8 |
 | 8.1 input authenticity | PoC-MUST full fold | 6 |
-| 8.2 bounded correctness | PoC-MUST | 9 |
+| 8.2 independent correctness through bounded work | PoC-MUST | 9 |
 | 8.3 proof execution | DEFERRED TargetLarge | 19.2 |
 | 8.4 anti-equivocation | result-signature subset PoC-MUST | 9.2 |
 | 9 availability | bounded block/source retention subset | 6, 10 |
 | 10 state machine | PoC-MUST; governed cancel is scaffold | 5 |
-| 11 admission | bounded PoC subset | 4, 5.1 |
+| 11 admission | PoC per-interface-bounds subset; no population cap | 4, 5.1 |
 | 12 failure behavior | selected PoC failures | 12, 14 |
 | 13 trust boundaries | PoC-MUST | 3, 7, 9 |
 | 14 profiles | boundary | 11, 19 |
@@ -1739,10 +1774,12 @@ The implementation plan must create an explicit decision/freeze task for each
 applicable item before any dependent consensus or runtime task starts:
 
 1. exact PoC fork ID, protocol version, bundle hash and genesis;
-2. generated final Tribute/action/evidence/block byte caps;
+2. generated final per-shard/per-chunk/evidence/activation/block byte and work
+   caps, with no total Tribute cap;
 3. exact canonical fields and precondition/budget formulas for
-   `PreAdmissionEnvelopeV1`, activation preconditions, `ActionStreamV1`,
-   `BoundedLysisResultV1`, `ActiveGenerationV1` and terminal receipts;
+   `PreAdmissionEnvelopeV1`, activation preconditions, `PlanCommitmentV1`,
+   `ResultChunkV1`, `LysisResultV1`, `ActiveGenerationV1` and terminal
+   receipts;
 4. canonical codec library, hash/signature preimages and golden-vector format;
 5. exact legacy Lysis arithmetic/state/event semantics and authoritative golden
    corpus;

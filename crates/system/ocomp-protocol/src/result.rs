@@ -79,15 +79,21 @@ wire_struct! {
 }
 
 wire_struct! {
-    pub struct ActionStreamV1 {
+    /// One bounded, independently retrievable chunk of the complete Lysis
+    /// effect set. The full result commits an ordered list root of these chunks;
+    /// it never embeds all actions in one consensus object.
+    pub struct ResultChunkV1 {
+        pub protocol_bundle_hash: B256,
+        pub job_id: B256,
+        pub attempt: u32,
+        pub chunk_ordinal: u32,
+        pub first_nod_ordinal: u32,
         pub ordered_nod_actions: Vec<NodActionV1>,
         pub ordered_eligible_contributors: Vec<ContributorActionV1>,
-        pub carry_over_credit: CarryOverCreditActionV1,
-        pub metadosis_completion_summary: MetadosisCompletionSummaryV1,
     }
-    validate = validate_action_stream;
+    validate = validate_result_chunk;
 }
-impl_top_level_codec!(ActionStreamV1, ActionStreamV1);
+impl_top_level_codec!(ResultChunkV1, ResultChunkV1);
 
 wire_struct! {
     pub struct ExactCountsV1 {
@@ -140,7 +146,7 @@ wire_struct! {
 impl_top_level_codec!(LysisArithmeticSummaryV1, LysisArithmeticSummaryV1);
 
 wire_struct! {
-    pub struct BoundedLysisResultV1 {
+    pub struct LysisResultV1 {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
         pub attempt: u32,
@@ -149,7 +155,10 @@ wire_struct! {
         pub unit_artifact_root: B256,
         pub fidelity_fraction_root: B256,
         pub gratis_prefix_root: B256,
-        pub action_stream: ActionStreamV1,
+        pub result_chunk_count: u32,
+        pub result_chunk_list_root: B256,
+        pub carry_over_credit: CarryOverCreditActionV1,
+        pub metadosis_completion_summary: MetadosisCompletionSummaryV1,
         pub tribute_count: u32,
         pub tribute_nominal_total: U256,
         pub unused_lysis: U256,
@@ -159,28 +168,28 @@ wire_struct! {
         pub arithmetic_commitment: B256,
         pub event_summary_hash: B256,
     }
-    validate = validate_bounded_result;
+    validate = validate_lysis_result;
 }
-impl_top_level_codec!(BoundedLysisResultV1, BoundedLysisResultV1);
+impl_top_level_codec!(LysisResultV1, LysisResultV1);
 
 wire_struct! {
     pub struct ActivationPayloadV1 {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
         pub attempt: u32,
-        pub action_stream_hash: Option<B256>,
+        pub result_chunk_count: u32,
+        pub result_chunk_list_root: B256,
         pub roots: ResultRootsV1,
         pub counts: ExactCountsV1,
         pub conservation: ConservationTotalsV1,
         pub arithmetic_commitment: B256,
         pub event_summary_hash: B256,
-        pub da_encoding_commitment: Option<B256>,
     }
     validate = validate_activation_payload;
 }
 impl_top_level_codec!(ActivationPayloadV1, ActivationPayloadV1);
 
-impl ActionStreamV1 {
+impl ResultChunkV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
             self.ordered_nod_actions.len() <= limits.max_action_items
@@ -191,9 +200,19 @@ impl ActionStreamV1 {
         let mut nod_ids = BTreeSet::new();
         let mut owners = BTreeSet::new();
         for (index, action) in self.ordered_nod_actions.iter().enumerate() {
+            let expected_ordinal = self
+                .first_nod_ordinal
+                .checked_add(
+                    u32::try_from(index).map_err(|_| ProtocolError::IntegerOverflow {
+                        what: "result chunk local Nod ordinal",
+                    })?,
+                )
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "result chunk Nod ordinal",
+                })?;
             require(
-                usize::try_from(action.raw_ordinal).ok() == Some(index),
-                "nod raw ordinals gap-free from zero",
+                action.raw_ordinal == expected_ordinal,
+                "result chunk Nod ordinals gap-free",
             )?;
             require(tribute_ids.insert(action.tribute_id), "unique tribute id")?;
             require(nod_ids.insert(action.nod_id), "unique nod id")?;
@@ -219,16 +238,13 @@ impl ActionStreamV1 {
         Ok(())
     }
 
-    pub fn action_stream_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
+    pub fn result_chunk_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         self.validate_semantics(limits)?;
-        hash_framed(
-            HashDomain::BoundedLysisActions,
-            &self.encode_canonical(limits)?,
-        )
+        hash_framed(HashDomain::ResultChunk, &self.encode_canonical(limits)?)
     }
 }
 
-impl BoundedLysisResultV1 {
+impl LysisResultV1 {
     #[must_use]
     pub fn arithmetic_summary(&self) -> LysisArithmeticSummaryV1 {
         LysisArithmeticSummaryV1 {
@@ -245,24 +261,14 @@ impl BoundedLysisResultV1 {
     }
 
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        self.action_stream.validate_semantics(limits)?;
-        let nod_count =
-            u32::try_from(self.action_stream.ordered_nod_actions.len()).map_err(|_| {
-                ProtocolError::IntegerOverflow {
-                    what: "nod action count",
-                }
-            })?;
-        let contributor_count = u32::try_from(
-            self.action_stream.ordered_eligible_contributors.len(),
-        )
-        .map_err(|_| ProtocolError::IntegerOverflow {
-            what: "contributor action count",
-        })?;
         require(
-            self.tribute_count == self.counts.tribute_count
+            self.result_chunk_count > 0 && !self.result_chunk_list_root.is_zero(),
+            "result committed chunk population",
+        )?;
+        require(
+            self.tribute_count > 0
+                && self.tribute_count == self.counts.tribute_count
                 && self.tribute_count == self.counts.nod_count
-                && nod_count == self.counts.nod_count
-                && contributor_count == self.counts.contributor_count
                 && self.counts.contributor_count <= self.tribute_count
                 && self.counts.bucket_count <= self.tribute_count,
             "result exact counts",
@@ -296,13 +302,12 @@ impl BoundedLysisResultV1 {
         )?;
         require(
             self.conservation.carry_over_credit == self.unused_lysis
-                && self.action_stream.carry_over_credit.reason == CarryOverReason::UnusedLysis
-                && self.action_stream.carry_over_credit.amount == self.unused_lysis
-                && self.action_stream.carry_over_credit.source_wwd
-                    == self.action_stream.metadosis_completion_summary.wwd,
+                && self.carry_over_credit.reason == CarryOverReason::UnusedLysis
+                && self.carry_over_credit.amount == self.unused_lysis
+                && self.carry_over_credit.source_wwd == self.metadosis_completion_summary.wwd,
             "carry-over conservation",
         )?;
-        let completion = &self.action_stream.metadosis_completion_summary;
+        let completion = &self.metadosis_completion_summary;
         require(
             completion.tribute_nominal_total == self.tribute_nominal_total
                 && completion.day_limit == self.conservation.day_limit
@@ -335,13 +340,13 @@ impl BoundedLysisResultV1 {
             protocol_bundle_hash: self.protocol_bundle_hash,
             job_id: self.job_id,
             attempt: self.attempt,
-            action_stream_hash: Some(self.action_stream.action_stream_hash(limits)?),
+            result_chunk_count: self.result_chunk_count,
+            result_chunk_list_root: self.result_chunk_list_root,
             roots: self.roots.clone(),
             counts: self.counts.clone(),
             conservation: self.conservation.clone(),
             arithmetic_commitment: self.arithmetic_commitment,
             event_summary_hash: self.event_summary_hash,
-            da_encoding_commitment: None,
         })
     }
 }
@@ -349,26 +354,22 @@ impl BoundedLysisResultV1 {
 impl ActivationPayloadV1 {
     pub fn result_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         require(
-            self.action_stream_hash.is_some(),
-            "PoC action stream commitment present",
-        )?;
-        require(
-            self.da_encoding_commitment.is_none(),
-            "PoC DA commitment absent",
+            self.result_chunk_count > 0 && !self.result_chunk_list_root.is_zero(),
+            "activation committed result chunks",
         )?;
         hash_framed(HashDomain::Result, &self.encode_canonical(limits)?)
     }
 }
 
-fn validate_action_stream(
-    stream: &ActionStreamV1,
+fn validate_result_chunk(
+    chunk: &ResultChunkV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
-    stream.validate_semantics(limits)
+    chunk.validate_semantics(limits)
 }
 
-fn validate_bounded_result(
-    result: &BoundedLysisResultV1,
+fn validate_lysis_result(
+    result: &LysisResultV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     result.validate_semantics(limits)
@@ -379,11 +380,7 @@ fn validate_activation_payload(
     _limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     require(
-        payload.action_stream_hash.is_some(),
-        "PoC action stream commitment present",
-    )?;
-    require(
-        payload.da_encoding_commitment.is_none(),
-        "PoC DA commitment absent",
+        payload.result_chunk_count > 0 && !payload.result_chunk_list_root.is_zero(),
+        "activation committed result chunks",
     )
 }

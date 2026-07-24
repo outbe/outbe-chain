@@ -20,7 +20,8 @@ use outbe_nod::{
 };
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
-    ProjectionError, ProjectionOutcome, ProjectionSource, PROJECTION_STATE_NAMESPACE,
+    ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState,
+    TributeRetentionSelector, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, Key, MemoryStorage, Namespace, ScanPage, ScanRequest,
@@ -28,7 +29,9 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_tribute::{
-    canonical_body, precompile::ITribute, TributeData, TributePageRequest, TributeRepositoryReader,
+    canonical_body, precompile::ITribute, RetainedTributePin, RetainedTributeReader, TributeData,
+    TributePageRequest, TributeRepositoryReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
+    OCOMP_RETAINED_TRIBUTES_NAMESPACE,
 };
 
 #[derive(Default)]
@@ -95,6 +98,47 @@ fn config(start_block: u64) -> ProjectionConfig {
 
 fn open(storage: &Arc<RecordingStorage>, start_block: u64) -> OffchainDataProjection {
     OffchainDataProjection::open(config(start_block), storage.clone(), storage.clone()).unwrap()
+}
+
+#[test]
+fn pre_ocomp_projection_schema_cannot_open_the_retained_namespace_layout() {
+    let storage = Arc::new(MemoryStorage::new());
+    let legacy = ProjectionState {
+        chain_id: 91,
+        genesis_hash: B256::repeat_byte(0x91),
+        storage_schema_version: 1,
+        start_block: 7,
+        checkpoint: None,
+    };
+    storage
+        .put(
+            Namespace::new(PROJECTION_STATE_NAMESPACE).unwrap(),
+            &Key::new(PROJECTION_STATE_KEY.to_vec()).unwrap(),
+            &outbe_offchain_storage::Value::new(postcard::to_stdvec(&legacy).unwrap()).unwrap(),
+        )
+        .unwrap();
+
+    assert!(matches!(
+        OffchainDataProjection::open(config(7), storage.clone(), storage),
+        Err(ProjectionError::ProjectionSchemaMismatch {
+            expected: 2,
+            actual: 1
+        })
+    ));
+}
+
+#[derive(Clone, Copy)]
+struct FixedRetentionSelector {
+    pin: RetainedTributePin,
+}
+
+impl TributeRetentionSelector for FixedRetentionSelector {
+    fn active_pin_for(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<RetainedTributePin>, String> {
+        Ok((self.pin.worldwide_day == worldwide_day).then_some(self.pin))
+    }
 }
 
 fn receipt(index: u64, hash_byte: u8, logs: Vec<FinalizedLog>) -> FinalizedReceipt {
@@ -412,6 +456,76 @@ fn tribute_partition_retirement_atomically_deletes_only_the_selected_day() {
         projection.project_block(&retirement).unwrap(),
         ProjectionOutcome::AlreadyApplied(_)
     ));
+}
+
+#[test]
+fn pinned_tribute_partition_retirement_atomically_moves_exact_body_to_job_retention() {
+    let storage = Arc::new(RecordingStorage::default());
+    let day = 20260715;
+    let pin = RetainedTributePin {
+        job_id: B256::repeat_byte(0x51),
+        worldwide_day: WorldwideDay::new(day),
+    };
+    let selector = Arc::new(FixedRetentionSelector { pin });
+    let mut projection = OffchainDataProjection::open_with_retention_selector(
+        config(10),
+        storage.clone(),
+        storage.clone(),
+        selector,
+    )
+    .unwrap();
+    let owner = Address::repeat_byte(0x52);
+    let tribute_id = poseidon_entity(owner, day);
+    let body = tribute_body(tribute_id, owner, day);
+
+    projection
+        .project_block(&FinalizedBlock {
+            number: 10,
+            hash: B256::repeat_byte(0x53),
+            receipts: vec![receipt(
+                0,
+                0x54,
+                vec![log(
+                    0,
+                    TRIBUTE_ADDRESS,
+                    tribute_stored_body_after(&body, B256::ZERO),
+                )],
+            )],
+        })
+        .unwrap();
+    projection
+        .project_block(&FinalizedBlock {
+            number: 11,
+            hash: B256::repeat_byte(0x55),
+            receipts: vec![receipt(
+                0,
+                0x56,
+                vec![log(0, TRIBUTE_ADDRESS, tribute_partition_retired(day))],
+            )],
+        })
+        .unwrap();
+
+    assert!(TributeRepositoryReader::new(storage.clone())
+        .get(tribute_id)
+        .unwrap()
+        .is_none());
+    let retained = RetainedTributeReader::new(storage.clone())
+        .get_current_or_retained(pin, tribute_id, tribute_commitment(&body))
+        .unwrap()
+        .unwrap();
+    let payload = encode_tribute_v1(&canonical_body(&body)).unwrap();
+    assert_eq!(
+        retained.encode(),
+        StoredBody::new_v1(payload).unwrap().encode()
+    );
+
+    let batches = storage.batches();
+    let retirement_batch = batches.last().unwrap();
+    assert!(retirement_batch.contains(&OCOMP_RETAINED_TRIBUTES_NAMESPACE.to_owned()));
+    assert!(retirement_batch.contains(&OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE.to_owned()));
+    assert!(retirement_batch.contains(&"tributes".to_owned()));
+    assert!(retirement_batch.contains(&"tributes_by_day".to_owned()));
+    assert!(retirement_batch.contains(&PROJECTION_STATE_NAMESPACE.to_owned()));
 }
 
 #[test]

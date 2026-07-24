@@ -88,6 +88,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
     max_bounded_bytes: 262_144,
     max_proof_bytes: 262_144,
+    max_opening_bytes: 262_144,
     max_collection_items: 4_096,
     max_action_items: 4_096,
     max_chunk_items: 4_096,
@@ -1163,6 +1164,9 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         block_hash: fixture.header_hash,
         state_root: fixture.state_root,
         intent_id: fixture.intent_id,
+        wwd: fixture.intent.wwd,
+        ce_sealed_root: fixture.intent.ce_sealed_root,
+        protocol_bundle_hash: fixture.intent.protocol_bundle_hash,
         deadline_height: fixture.intent.deadline_height,
     };
     let expected_job_id = fixture

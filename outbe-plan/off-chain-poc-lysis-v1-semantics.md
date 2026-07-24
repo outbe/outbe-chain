@@ -95,7 +95,7 @@ The logical input is one typed job-bound bundle. Exact field encoding is ticket
 Preconditions:
 
 ```text
-0 < T <= active PoC Tribute cap
+0 < T
 U = T
 sealed_count = T
 sealed_nominal = exact checked sum(input nominal)
@@ -480,7 +480,8 @@ Each JSONL case records:
 - expected request split/Desis-or-carry-over receipt,
   Nod/contributor/Tribute/carry-over/Metadosis actions and conservation totals,
   or error class plus first ordinal;
-- later, canonical input/result/action bytes and hashes from ticket #4.
+- later, canonical input/result-chunk/result-commitment bytes and hashes from
+  ticket #4.
 
 JSON is a review and test-vector envelope, not the consensus codec.
 

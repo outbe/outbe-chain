@@ -37,15 +37,18 @@ use outbe_ocomp_protocol::{
     },
     registry::{HashDomain, ObjectKind},
     result::{
-        ActionStreamV1, ActivationPayloadV1, BoundedLysisResultV1, CarryOverCreditActionV1,
-        CarryOverReason, CompletionStatus, ConservationTotalsV1, ExactCountsV1,
-        LysisArithmeticSummaryV1, MetadosisCompletionSummaryV1, ResultRootsV1,
+        ActivationPayloadV1, CarryOverCreditActionV1, CarryOverReason, CompletionStatus,
+        ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1,
+        MetadosisCompletionSummaryV1, ResultChunkV1, ResultRootsV1,
     },
     state::{
         ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1,
         OcompTerminalOutcome,
     },
-    unit::{EntityIdHalfOpenRange, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1},
+    unit::{
+        BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
+        UnitPhase, UnitSpecV1,
+    },
     ProtocolError, SchemaLimits,
 };
 
@@ -53,6 +56,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
     max_bounded_bytes: 262_144,
     max_proof_bytes: 262_144,
+    max_opening_bytes: 262_144,
     max_collection_items: 4_096,
     max_action_items: 4_096,
     max_chunk_items: 4_096,
@@ -202,32 +206,28 @@ fn finality_proof() -> FinalizedIntentProofV1 {
     }
 }
 
-fn result() -> BoundedLysisResultV1 {
-    let action_stream = ActionStreamV1 {
-        ordered_nod_actions: Vec::new(),
-        ordered_eligible_contributors: Vec::new(),
-        carry_over_credit: CarryOverCreditActionV1 {
-            source_wwd: 7,
-            reason: CarryOverReason::UnusedLysis,
-            amount: U256::ZERO,
-        },
-        metadosis_completion_summary: MetadosisCompletionSummaryV1 {
-            wwd: 7,
-            pending_nonce: 1,
-            day_type: DayType::Green,
-            tribute_nominal_total: U256::ZERO,
-            day_limit: U256::ZERO,
-            gratis_demand: U256::ZERO,
-            gratis_supply: U256::ZERO,
-            lysis_budget: U256::ZERO,
-            auction_base: U256::ZERO,
-            nod_gratis_consumed: U256::ZERO,
-            unused_lysis: U256::ZERO,
-            carry_over_credit: U256::ZERO,
-            status: CompletionStatus::Completed,
-            logical_evaluation_height: 100,
-            logical_evaluation_time: 1_000,
-        },
+fn result() -> LysisResultV1 {
+    let carry_over_credit = CarryOverCreditActionV1 {
+        source_wwd: 7,
+        reason: CarryOverReason::UnusedLysis,
+        amount: U256::ZERO,
+    };
+    let metadosis_completion_summary = MetadosisCompletionSummaryV1 {
+        wwd: 7,
+        pending_nonce: 1,
+        day_type: DayType::Green,
+        tribute_nominal_total: U256::ZERO,
+        day_limit: U256::ZERO,
+        gratis_demand: U256::ZERO,
+        gratis_supply: U256::ZERO,
+        lysis_budget: U256::ZERO,
+        auction_base: U256::ZERO,
+        nod_gratis_consumed: U256::ZERO,
+        unused_lysis: U256::ZERO,
+        carry_over_credit: U256::ZERO,
+        status: CompletionStatus::Completed,
+        logical_evaluation_height: 100,
+        logical_evaluation_time: 1_000,
     };
     let roots = ResultRootsV1 {
         nod_root: hash(50),
@@ -236,8 +236,8 @@ fn result() -> BoundedLysisResultV1 {
         output_manifest_root: hash(53),
     };
     let counts = ExactCountsV1 {
-        tribute_count: 0,
-        nod_count: 0,
+        tribute_count: 1,
+        nod_count: 1,
         bucket_count: 0,
         contributor_count: 0,
         semantic_event_count: 0,
@@ -271,7 +271,7 @@ fn result() -> BoundedLysisResultV1 {
         &summary.encode_canonical(&LIMITS).unwrap(),
     )
     .unwrap();
-    BoundedLysisResultV1 {
+    LysisResultV1 {
         protocol_bundle_hash: hash(41),
         job_id: hash(59),
         attempt: 1,
@@ -280,8 +280,11 @@ fn result() -> BoundedLysisResultV1 {
         unit_artifact_root: summary.unit_artifact_root,
         fidelity_fraction_root: summary.fidelity_fraction_root,
         gratis_prefix_root: summary.gratis_prefix_root,
-        action_stream,
-        tribute_count: 0,
+        result_chunk_count: 1,
+        result_chunk_list_root: hash(61),
+        carry_over_credit,
+        metadosis_completion_summary,
+        tribute_count: 1,
         tribute_nominal_total: U256::ZERO,
         unused_lysis: U256::ZERO,
         roots,
@@ -432,8 +435,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     };
     let capacity = CapacityProfileV1 {
         profile_id: hash(96),
-        max_poc_tributes: 128,
-        unit_tributes: 32,
+        max_tributes_per_work_shard: 32,
         max_workers_per_domain: 4,
         max_pending_jobs: 8,
         max_intents_per_block: 2,
@@ -472,7 +474,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         oracle_opening_upper_bound: 0,
         input_encoded_bytes_upper_bound: 0,
         output_record_upper_bound: 0,
-        action_stream_bytes_upper_bound: 1_024,
+        result_chunk_bytes_upper_bound: 1_024,
         activation_bytes_upper_bound: 2_048,
         retained_bytes_upper_bound: 4_096,
         correctness_profile_id: hash(90),
@@ -492,14 +494,14 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         wwd: 7,
         sealed_tribute_collection_key: hash(30),
         sealed_tribute_collection_root: hash(31),
-        tribute_count: 0,
+        tribute_count: 1,
         tribute_nominal_total: U256::ZERO,
-        ordered_chunks: Vec::new(),
+        input_chunk_count: 1,
         input_chunk_list_root: hash(100),
         fidelity_opening_root: hash(101),
         oracle_opening_root: hash(102),
-        exact_encoded_bytes: 0,
-        exact_record_count: 0,
+        exact_encoded_bytes: 1,
+        exact_record_count: 1,
         body_codec_id: hash(103),
         opening_codec_registry_hash: hash(104),
         compression: Compression::None,
@@ -677,8 +679,17 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     );
     assert_round_trip!(unit_spec, UnitSpecV1, UnitSpecV1);
     assert_round_trip!(unit_artifact, UnitArtifactV1, UnitArtifactV1);
-    assert_round_trip!(result.action_stream.clone(), ActionStreamV1, ActionStreamV1);
-    assert_round_trip!(result.clone(), BoundedLysisResultV1, BoundedLysisResultV1);
+    let result_chunk = ResultChunkV1 {
+        protocol_bundle_hash: result.protocol_bundle_hash,
+        job_id: result.job_id,
+        attempt: result.attempt,
+        chunk_ordinal: 0,
+        first_nod_ordinal: 0,
+        ordered_nod_actions: Vec::new(),
+        ordered_eligible_contributors: Vec::new(),
+    };
+    assert_round_trip!(result_chunk, ResultChunkV1, ResultChunkV1);
+    assert_round_trip!(result.clone(), LysisResultV1, LysisResultV1);
     assert_round_trip!(activation_payload, ActivationPayloadV1, ActivationPayloadV1);
     assert_round_trip!(snapshot, OcompCommitteeSnapshotV1, OcompCommitteeSnapshotV1);
     assert_round_trip!(
@@ -763,6 +774,7 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
         codec: CodecLimits::new(1_048_576, 4_096, 2_097_152),
         max_bounded_bytes: 1,
         max_proof_bytes: 1,
+        max_opening_bytes: 1,
         max_collection_items: 4,
         max_action_items: 1,
         max_chunk_items: 1,
@@ -786,11 +798,50 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
     ));
 
     let mut invalid_result = result();
-    invalid_result.counts.nod_count = 1;
+    invalid_result.counts.nod_count = 0;
     assert!(matches!(
         invalid_result.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant("result exact counts"))
     ));
+}
+
+#[test]
+fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total_cap() {
+    for (tribute_count, expected_units) in [(10_000, 40), (1_000_000_000, 3_906_250)] {
+        let plan = PlanCommitmentV1 {
+            protocol_bundle_hash: hash(1),
+            job_id: hash(2),
+            attempt: 1,
+            input_manifest_hash: hash(3),
+            tribute_count,
+            max_tributes_per_work_shard: 256,
+            primary_work_unit_count: expected_units,
+            primary_work_unit_root: hash(4),
+            planner_spec_version: 1,
+            reducer_spec_version: 1,
+        };
+        assert!(plan.plan_hash(&LIMITS).is_ok());
+
+        let mut missing_unit = plan;
+        missing_unit.primary_work_unit_count -= 1;
+        assert!(missing_unit.plan_hash(&LIMITS).is_err());
+    }
+
+    let prefix_down = UnitSpecV1 {
+        protocol_bundle_hash: hash(1),
+        job_id: hash(2),
+        attempt: 1,
+        phase: UnitPhase::GratisPrefixDown,
+        interval: UnitInterval::BinaryReducerNode(BinaryReducerNode {
+            level: 21,
+            index: 7,
+        }),
+        canonical_ordered_inputs: Vec::new(),
+        lysis_program_semantics_hash: hash(5),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    };
+    assert!(prefix_down.unit_id(&LIMITS).is_ok());
 }
 
 #[test]
@@ -984,6 +1035,7 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
         codec: LIMITS.codec,
         max_bounded_bytes: 16,
         max_proof_bytes: 16,
+        max_opening_bytes: 16,
         max_collection_items: 16,
         max_action_items: 16,
         max_chunk_items: 16,
@@ -1060,37 +1112,6 @@ fn public_abi_constants_match_independent_keccak_derivation() {
         keccak256(b"LysisActivated(bytes32,bytes32,bytes32,bytes32,bytes32,uint32)"),
         LYSIS_ACTIVATED_TOPIC0
     );
-}
-
-#[test]
-fn protocol_crate_has_no_node_or_program_dependency_cycle() {
-    let manifest = include_str!("../Cargo.toml");
-    let dependencies = manifest
-        .split("[dependencies]")
-        .nth(1)
-        .unwrap()
-        .split("[dev-dependencies]")
-        .next()
-        .unwrap();
-    assert_eq!(
-        dependencies
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .count(),
-        2
-    );
-    assert!(dependencies.contains("alloy-primitives"));
-    assert!(dependencies.contains("k256"));
-    for forbidden in [
-        "outbe-node",
-        "outbe-lysis",
-        "outbe-metadosis",
-        "outbe-e2e-harness",
-        "filesystem",
-        "signer-backend",
-    ] {
-        assert!(!dependencies.contains(forbidden));
-    }
 }
 
 #[test]

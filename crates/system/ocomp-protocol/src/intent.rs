@@ -56,7 +56,7 @@ wire_struct! {
         pub oracle_opening_upper_bound: u32,
         pub input_encoded_bytes_upper_bound: u64,
         pub output_record_upper_bound: u32,
-        pub action_stream_bytes_upper_bound: u64,
+        pub result_chunk_bytes_upper_bound: u64,
         pub activation_bytes_upper_bound: u64,
         pub retained_bytes_upper_bound: u64,
         pub correctness_profile_id: B256,
@@ -267,12 +267,26 @@ impl JobIntentV1 {
         finalized_request_state_root: B256,
         limits: &SchemaLimits,
     ) -> Result<B256, ProtocolError> {
-        let mut payload = Vec::with_capacity(96);
-        payload.extend_from_slice(self.intent_id(limits)?.as_slice());
-        payload.extend_from_slice(finalized_request_block_hash.as_slice());
-        payload.extend_from_slice(finalized_request_state_root.as_slice());
-        hash_framed(HashDomain::Job, &payload)
+        job_id_from_intent_id(
+            self.intent_id(limits)?,
+            finalized_request_block_hash,
+            finalized_request_state_root,
+        )
     }
+}
+
+/// Derives a finalized JobId from an already-authenticated IntentId and exact
+/// request block identity.
+pub fn job_id_from_intent_id(
+    intent_id: B256,
+    finalized_request_block_hash: B256,
+    finalized_request_state_root: B256,
+) -> Result<B256, ProtocolError> {
+    let mut payload = Vec::with_capacity(96);
+    payload.extend_from_slice(intent_id.as_slice());
+    payload.extend_from_slice(finalized_request_block_hash.as_slice());
+    payload.extend_from_slice(finalized_request_state_root.as_slice());
+    hash_framed(HashDomain::Job, &payload)
 }
 
 /// Fixed logical storage key for one canonical intent record.

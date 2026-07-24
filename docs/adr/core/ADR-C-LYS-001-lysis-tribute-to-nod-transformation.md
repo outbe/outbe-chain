@@ -14,10 +14,11 @@
 
 ## Context
 
-Lysis is a bounded domain transformation: it consumes one sealed WorldwideDay's
-authenticated Tribute population, allocates a supplied Gratis budget, creates the
-surviving Nod representation and records Intex contributor provenance. Its
-all-or-nothing conservation and authenticated-state obligations deserve a separate
+Lysis is a deterministic domain transformation executed through bounded work:
+it consumes one sealed WorldwideDay's complete authenticated Tribute
+population, allocates a supplied Gratis budget, creates the surviving Nod
+representation and records Intex contributor provenance. Its all-or-nothing
+conservation and authenticated-state obligations deserve a separate
 architecture review boundary.
 
 ## Decision
@@ -40,9 +41,9 @@ and, without chain writes:
 7. derives exactly one typed Nod action for each `(owner, day)` identity with
    canonical Oracle prices, floor, league and cost;
 8. derives canonical contributor and Tribute-retirement effects;
-9. builds the bounded canonical action/result roots, counts, totals and
-   conservation commitments; and
-10. returns `BoundedLysisResultV1` plus exact `unused_lysis`.
+9. streams bounded `ResultChunkV1` objects and builds their canonical catalog
+   root, output roots, counts, totals and conservation commitments; and
+10. returns constant-size `LysisResultV1` plus exact `unused_lysis`.
 
 Metadosis splits the daily limit before Lysis:
 
@@ -57,9 +58,9 @@ job starts. A RED day sends no auction supply.
 Desis is not a Lysis input or activation effect. `unused_lysis` is credited to
 Promis carry-over only after certified activation.
 
-On-chain activation does not rerun these steps. The closed Lysis verifier checks
-the typed result structure, bindings, ordering, live target preconditions and
-equations.
+On-chain activation does not rerun these steps or iterate every result action.
+The closed Lysis verifier checks the typed result commitment, bindings, live
+target preconditions, root transition and equations.
 
 Only then may it create private `CertifiedLysisActivation`. Its apply path calls
 domain-owner certified methods inside one outer checkpoint.
@@ -85,7 +86,7 @@ one transaction.
 - Tribute supply/count/nominal are consumed exactly once.
 - Contributor owner/nominal entries match the transformed Tribute set and their
   sum; ordering is canonical.
-- `BoundedLysisResultV1` is bound to one exact `JobId`, attempt, request-time
+- `LysisResultV1` is bound to one exact `JobId`, attempt, request-time
   logical context and protocol bundle.
 - Pure execution has no storage writer, system clock, network or configuration
   input.
@@ -103,9 +104,12 @@ consensus-critical. One, two and four workers plus arbitrary retry/completion
 order must produce byte-identical result bytes. No floating point, wall time,
 database enumeration order, network response or worker identity participates.
 
-The PoC result/action stream is valid only under its generated Tribute, byte,
-memory and activation caps. The billion-record profile requires a different
-proof/availability/witness state contract and is not implied by parallel workers.
+The PoC bounds one work shard, input/result chunks, concurrent workers and the
+constant-size activation envelope; it does not cap total Tribute. Arbitrary `N`
+is represented by committed counts and roots and processed with bounded
+cursors. The PoC proves the architecture on a multi-shard fixture and proves
+non-proportional plan construction for 10,000 and 1,000,000,000 records; it does
+not claim billion-record throughput, storage capacity or operational readiness.
 
 ## Failure and recovery
 
@@ -137,9 +141,10 @@ result verifier, certified apply path or production OCOMP caller closure exists.
 
 ## Consequences
 
-Lysis has one crisp semantic outcome: an exact bounded typed result for one
-authenticated job, followed by either fully conserved certified application or
-no state change. OCOMP can evolve operationally without owning its economics.
+Lysis has one crisp semantic outcome: exact bounded result chunks and one
+constant-size typed result commitment for the complete authenticated job,
+followed by either fully conserved certified root application or no state
+change. OCOMP can evolve operationally without owning its economics.
 
 ## Rejected alternatives
 

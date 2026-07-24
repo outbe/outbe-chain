@@ -1,16 +1,16 @@
 # Off-chain PoC scope and continuity audit
 
-Date: 2026-07-23
+Date: 2026-07-24
 
-Verdict: **PASS — READY_FOR_IMPLEMENTATION_PLANNING**
+Verdict: **PASS — UNBOUNDED-PARENT AMENDMENT VERIFIED; READY TO RESUME IMPLEMENTATION**
 
 Reviewed child:
 [`off-chain-poc.md`](../off-chain-poc.md), SHA-256
-`fe9d14a6a697a3b4acef1e013188a9a82f21d5665664de5b72e374dbfbd534ce`
+`3b04da489c900e494a81e5b944bdddc0316efb8b7869099efb93e9bb7999a9ee`
 
 Pinned parent:
 [`off-chain-computation.md`](../off-chain-computation.md), SHA-256
-`5bc67987f36a0dd0e5da4c66ce44b1e11ab479f9921350a055dccc6cd0779834`
+`21f0664c80f1e32afda83ca749a0ce2811668af47c21f2c04e7db80c99b89a99`
 
 Framework review:
 [`ocomp-framework-review.md`](ocomp-framework-review.md)
@@ -38,8 +38,8 @@ and [`PFS-002`](../docs/flows/002-off-chain-poc-protocol-flow.md).
 |---|---|---|---|
 | 0, 13.1 | internal operational kernel + one Lysis V1 typed protocol; multi-program wire deferred | 1, 15, 19.3 | exact clarification; no new acceptance |
 | proposed ADR-S-OCM-001..004, PFS-002 | owner decisions and test flow formalize existing PoC requirements | links plus unchanged sections 13–15 | traceability only; all remain Proposed/Draft |
-| 1.1–1.4 | real bounded vertical slice; no on-chain Lysis; q=3/4; one typed activation | 1–3, 9–10 | exact |
-| 1.5 | frozen small envelope and cap-1/cap/cap+1 public path | 4, POC-21 | exact |
+| 1.1–1.4 | real vertical slice through bounded work; no on-chain Lysis; q=3/4; one typed root activation | 1–3, 9–10 | exact |
+| 1.5 | frozen per-interface envelope and activation-byte cap-1/cap/cap+1 public path; no total Tribute cap | 4, POC-07, POC-20..21 | exact |
 | 1.6 | thirteen-step system demonstration | 13 | exact |
 | 1.7 | PoC/MVP operational boundary; crypto/finality/atomicity/process split are not deferred | 2, 11, 19 | exact |
 | 1.8 | six implementation slices | 16 | exact |
@@ -49,12 +49,12 @@ and [`PFS-002`](../docs/flows/002-off-chain-poc-protocol-flow.md).
 | 3 | canonical CE root chain and untrusted body transport | 6.1 | exact |
 | 4 | sibling processes and nonfatal OCOMP failure boundary | 3, 12 | exact PoC subset |
 | 5 | bounded UDS control and local filesystem CAS | 7 | exact PoC adapters |
-| 6 | deterministic planner, `UnitSpecV1`, fixed units/reducer | 8 | exact bounded subset |
-| 7 | deterministic current-Lysis Map/Reduce semantics | 8 | exact bounded subset |
+| 6 | deterministic planner, constant-size `PlanCommitmentV1`, lazily derived `UnitSpecV1`, fixed streaming reducer | 8 | exact PoC subset |
+| 7 | deterministic current-Lysis Map/Reduce semantics | 8 | exact PoC subset |
 | 8.1 | finality-to-body/opening input authenticity and full CE fold | 6 | exact |
 | 8.2 | full independent execution, one canonical digest and q certificate | 9 | exact |
 | 8.4 | separate OCOMP key and result sign-once rule | 9.1–9.2 | exact result subset |
-| 9 | bounded source retention and result bytes in canonical block data | 6.2, 10 | exact bounded subset |
+| 9 | bounded-page source/result retention and result-root activation | 6.2, 9–10 | exact PoC subset; production custody deferred |
 | 10 | consensus FSM, expiry index, no intermediate result state | 5 | exact |
 | 11 | authenticated protocol admission and local abstention | 4, 5.1, 6.2 | exact bounded subset |
 | 12–13 | failure and trust boundaries | 3.1–3.2, 12 | exact selected PoC failures |
@@ -74,12 +74,15 @@ The active child profile remains:
 
 ```text
 fresh disposable devnet
-+ T <= generated bound, proposed 256
++ no artificial total Tribute bound
++ deterministic worker shards <= candidate 256 Tribute
++ shard-cap+1 accepted as the next shard, never dropped
++ constant-size input/plan/result commitments over counted chunk/unit roots
 + four validator domains
 + q = 3 independent full executions
-+ complete typed result in one normal activation transaction
++ complete typed result commitment in one normal activation transaction
 + on-chain evidence/structure verification only
-+ real atomic domain effects
++ real atomic root/scalar domain effects without an N-action loop
 + no synchronous fallback
 ```
 
@@ -136,6 +139,10 @@ MVP chaos stories.
 6. Formalized the existing architecture as four owner ADRs and replaced the
    obsolete synchronous PFS-002 sequence with the PoC flow. This adds
    traceability/test orchestration, not runtime behavior.
+7. Removed the mistaken complete-job `T<=512` admission rule. `JobIntentV1`
+   covers arbitrary `N`; only pages, chunks, work units, the live worker pool
+   and constant-size activation interfaces are bounded. Added root/count
+   commitments and synthetic 10,000/1,000,000,000 planning evidence.
 
 ## 6. Logical continuity
 
@@ -147,7 +154,7 @@ off-chain-computation.md
         |
         v
 off-chain-poc.md
-  narrows that architecture to the real bounded PoC
+  narrows that architecture to the real PoC over bounded work
   and defines its planning/evidence boundary
         |
         +-> ADR-S-OCM-001..004
@@ -157,9 +164,9 @@ off-chain-poc.md
         |     owns the cross-module protocol/test flow
         |
         v
-future implementation plan
-  resolves section 22 parameters first,
-  then decomposes the six vertical slices
+outbe-plan/off-chain-poc-implementation-plan.md
+  resolves section 22 parameters in dependency order
+  and decomposes the six vertical slices
 ```
 
 The child does not override the parent. A parent SHA change invalidates this
@@ -172,13 +179,30 @@ hash domain, test ID or thirteen-step acceptance action was added or changed.
 
 ## 7. Readiness decision
 
-`off-chain-poc.md` may be used now to create the implementation dependency graph
-and task set.
+`off-chain-poc.md` and the existing implementation dependency graph may now be
+used to resume implementation. The amendment preserves the core architecture:
+one complete parent job, any number of bounded work units, bounded local queues
+and chunks, one constant-size result commitment and one constant-size
+activation.
 
-It is not yet a byte-complete protocol specification. The implementation plan
-must place each child section 22 decision ahead of dependent consensus/runtime
-work. This is normal first-wave planning work and is not an unresolved
-architectural choice.
+This verdict does not claim that the PoC is implemented or that
+measurement-only capacity/network values are armed. Those remain explicit
+implementation-plan gates.
+
+Verification completed on 2026-07-24:
+
+- `cargo fmt --all -- --check`;
+- `cargo test -p outbe-ocomp-protocol`;
+- `cargo test -p outbe-metadosis -p outbe-tribute`;
+- `cargo test --locked -p outbe-e2e-harness --test ocomp_evidence_verifier`;
+- `cargo check --workspace --all-targets`;
+- `git diff --check`.
+
+The behavioral tests prove that a full shard plus one starts the next shard,
+larger populations cross multiple shards, and synthetic populations of 10,000
+and 1,000,000,000 derive 40 and 3,906,250 primary work units without a
+population-sized plan allocation. Tests do not inspect Rust source text to
+claim behavior.
 
 PoC completion remains:
 

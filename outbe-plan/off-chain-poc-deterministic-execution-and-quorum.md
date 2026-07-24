@@ -22,11 +22,13 @@ For each validator domain independently:
 
 ```text
 finalized JobId + verified InputManifestV1
-  -> LysisPlannerV1 creates every UnitSpecV1 and UnitId before execution
-  -> local scheduler runs those immutable units in any order allowed by the DAG
+  -> LysisPlannerV1 commits the primary work-unit count/root in PlanCommitmentV1
+  -> bounded cursors derive immutable UnitSpecV1/UnitId values by ordinal
+  -> local scheduler runs them in any order allowed by the derived DAG
   -> phase verifier accepts only exact producer-bound artifacts
-  -> fixed ROOT_REDUCE produces BoundedLysisResultV1
-  -> supervisor sends the complete result, never a digest-only request
+  -> fixed streaming reducers publish bounded ResultChunkV1 objects
+  -> ROOT_REDUCE produces constant-size LysisResultV1
+  -> supervisor sends the result commitment with constant-size chunk count/root
   -> node reloads the finalized job/export binding and reconstructs ResultDigest
   -> node durably installs one SignOnceRecordV1
   -> node releases one validator-index signature
@@ -75,24 +77,26 @@ The exporter has already authenticated and sorted Tribute by raw 36-byte
 requires byte equality with exporter order. This is a concrete Lysis-specific
 sort, not a reusable distributed-sort framework:
 
-- run size: exactly 32 Tribute except the last;
+- primary work-shard size: exactly 256 Tribute except the last;
 - comparison key: raw `EntityId36`;
 - duplicate key: reject;
 - merge: stable two-way merge, lower run ordinal first only for an impossible
   equal-key diagnostic;
 - compression: none;
-- at most 8 runs for the candidate 256-Tribute cap;
-- all run bytes/counts are bounded before allocation/spill.
+- any number of bounded runs;
+- all individual run bytes/counts and simultaneously open merge readers are
+  bounded before allocation/spill.
 
 The second sort is deliberate defense against depending on Mongo/chunk order.
-Because it is capped at eight runs, no configurable fan-in, generic shuffle
-engine or external service is required.
+The deterministic merge hierarchy uses fixed binary fan-in and ascending
+run ordinals. It is derived lazily from the committed run count; no generic
+shuffle engine or external service is required.
 
-For sorted IDs `id[0..T)` and `K = ceil(T/32)`, range `j` is:
+For sorted IDs `id[0..T)` and `K = ceil(T/256)`, range `j` is:
 
 ```text
-start = id[32*j]
-end   = id[min(32*(j+1), T)] when another record exists, else none
+start = id[256*j]
+end   = id[min(256*(j+1), T)] when another record exists, else none
 ```
 
 Ranges are non-empty, start-inclusive, end-exclusive, adjacent and cover the
@@ -111,8 +115,10 @@ generated capacity constants
 ```
 
 It performs no CAS discovery, wall-clock read, randomness, network request,
-worker-count query or local tuning. It emits every `UnitSpecV1` before the first
-worker runs.
+worker-count query or local tuning. It emits constant-size
+`PlanCommitmentV1` before the first worker runs. A unit spec is a pure
+derivation from that commitment and its ordinal, so the supervisor never
+allocates or persists a vector proportional to `K`.
 
 The protocol-freeze amendment replaces the unusable “future semantic root”
 input with a producer binding:
@@ -132,14 +138,18 @@ FIDELITY_MAP
 FIXED_REDUCE levels bottom-up, index ascending
 AMOUNT_MAP
 GRATIS_PREFIX
+GRATIS_PREFIX_DOWN
 OUTPUT_FINALIZE
 OWNER_SHUFFLE
 BUCKET_SHUFFLE
 ROOT_REDUCE
 ```
 
-`PlanHash` commits the complete ordered vector. Scheduler order is not plan
-order and has no semantic effect.
+`PlanHash` hashes `PlanCommitmentV1`, which commits the exact primary work-unit
+count and ordered primary work-unit root. Scheduler order is not plan order and
+has no semantic effect. A primary unit is verified against that root; every
+secondary phase unit is verified against the frozen derivation rule and its
+position-bound producer commitments.
 
 ### 3.3 Exact DAG
 
@@ -150,11 +160,13 @@ K x ENUMERATE
   -> K x FIDELITY_MAP
   -> padded binary FIXED_REDUCE tree
   -> K x AMOUNT_MAP
-  -> 1 x GRATIS_PREFIX
+  -> padded binary GRATIS_PREFIX summary tree
+  -> padded binary GRATIS_PREFIX_DOWN propagation tree
   -> K x OUTPUT_FINALIZE
-  -> 1 x OWNER_SHUFFLE
-  -> 1 x BUCKET_SHUFFLE
-  -> 1 x ROOT_REDUCE
+  -> bounded OWNER_SHUFFLE run/merge tree
+  -> bounded BUCKET_SHUFFLE run/merge tree
+  -> padded binary ROOT_REDUCE tree
+  -> LysisResultV1
 ```
 
 The Fidelity tree uses:
@@ -171,28 +183,28 @@ root = (level=log2(P), index=0)
 Thus a one-range job still has one explicit reducer/root unit and fraction-table
 production. No data-dependent tree shape or “reduce as completed” path exists.
 
-`GRATIS_PREFIX` and `ROOT_REDUCE` each use one
-`BinaryReducerNode{level=log2(max(2,next_power_of_two(K))), index=0}` unit.
-Their ordered producer-input vectors are padded with the purpose-specific
-canonical empty reference from `K` to `P`. Internally they use the same fixed
-padded binary tree; one bounded unit keeps the PoC simple while still fixing
-the prefix/root algorithm. TargetLarge may introduce more units under a new
-planner/bundle, not reinterpret this plan.
+`GRATIS_PREFIX` is the bottom-up half of a deterministic parallel scan. Every
+unit combines at most two child segment summaries. `GRATIS_PREFIX_DOWN` is the
+top-down half: every unit receives one bounded parent prefix plus at most two
+child summaries and emits child prefixes. Leaves therefore learn their exact
+incoming remaining Gratis without any unit reading all `K` segments.
 
-`OWNER_SHUFFLE` and `BUCKET_SHUFFLE` each use the single exact
-`CanonicalRunSpan{start_run=0,end_run=K}`. With at most 256 records, a second
-distributed shuffle layer would add machinery without proving a PoC
-requirement.
+`ROOT_REDUCE` uses the same fixed padded binary topology. Each unit consumes at
+most two child commitments; only the final root unit emits
+`LysisResultV1`. No input vector grows with `K`.
 
-For the maximum candidate `K=8`, the graph has 43 units:
+`OWNER_SHUFFLE` and `BUCKET_SHUFFLE` first emit one bounded sorted run per
+primary range, then merge adjacent run spans in a fixed binary hierarchy.
+Every merge consumes at most two runs and produces bounded output chunks plus a
+catalog commitment. Run count may be arbitrary; open readers, output chunk
+bytes and resident memory remain bounded.
 
-```text
-8 enumerate + 8 Fidelity map + 7 fixed reduce +
-8 amount map + 1 prefix + 8 finalize + 1 owner + 1 bucket + 1 root
-```
-
-The generated capacity profile may lower the Tribute cap, but cannot change
-unit size, graph formulas or phase semantics without a new bundle.
+The primary unit catalog is committed by count/root. The remaining phase units
+are a pure function of that commitment, `K`, planner version and reducer
+version; they are enumerated through bounded cursors and are never stored as
+one vector. `unit_artifact_root` in the final result commits the executed
+artifact catalog. Generated capacity may lower a per-unit/per-chunk bound but
+cannot add a complete-job cap or change graph formulas without a new bundle.
 
 ## 4. Phase contracts
 
@@ -258,8 +270,8 @@ One owner's complete opening is consumed by one unit. Current Tribute identity
 makes owner unique within WWD, but the verifier enforces this rule rather than
 assuming it from chunk boundaries.
 
-Its interval is `FidelityIndexHalfOpenRange{start=32*j,
-end=min(32*(j+1),T)}`. The canonical Fidelity opening index is the
+Its interval is `FidelityIndexHalfOpenRange{start=256*j,
+end=min(256*(j+1),T)}`. The canonical Fidelity opening index is the
 `raw_ordinal` of the unique Tribute obtained after mapping each owner opening
 back to its Tribute. The planner and verifier reject missing, duplicate or
 non-gap-free indexes; worker chunking or database order never defines them.
@@ -326,24 +338,38 @@ live `get_pair_id`, VWAP or S-curve call.
 
 ### 4.5 `GRATIS_PREFIX`
 
-Inputs are all `AMOUNT_RECORDS/UNIT_OUTPUT` refs in range order followed by
-canonical empty refs up to the fixed tree width.
-
-The unit runs an upsweep/downsweep over checked segment totals and then records
-the incoming remaining Gratis for each segment. It scans records only to select
-the lowest raw ordinal whose load is zero or exceeds the remaining amount:
+Leaf units read one `AMOUNT_RECORDS/UNIT_OUTPUT`. Internal units read at most
+two child summaries in fixed left/right order:
 
 ```text
-GratisPrefixTableV1 {
-  ordered_segment_incoming_remaining: Vec<U256>,
-  final_remaining: U256,
+GratisSegmentSummaryV1 {
+  checked_segment_gratis_total: U256,
+  first_non_positive_load_ordinal: Option<u32>,
+  coverage_root: Hash
+}
+```
+
+The root summary proves the exact checked total/coverage without reading all
+segments in one unit.
+
+### 4.5.1 `GRATIS_PREFIX_DOWN`
+
+The root starts with the frozen `lysis_budget`. Each top-down unit reads one
+parent prefix and at most two child summaries, then emits the exact incoming
+remaining amount for each child. A leaf emits:
+
+```text
+GratisLeafPrefixV1 {
+  segment_ordinal: u32,
+  incoming_remaining: U256,
+  outgoing_remaining: U256,
   first_error_ordinal: Option<u32>,
-  prefix_tree_root: Hash
+  coverage_root: Hash
 }
 ```
 
 For a successful result `first_error_ordinal` must be `none`. A semantic failure
-is retained as local evidence but produces no `BoundedLysisResultV1` and no
+is retained as local evidence but produces no `LysisResultV1` and no
 signature.
 
 ### 4.6 `OUTPUT_FINALIZE`
@@ -351,7 +377,7 @@ signature.
 Inputs:
 
 1. matching `AMOUNT_RECORDS/UNIT_OUTPUT`;
-2. root `GRATIS_PREFIX_TABLE/UNIT_OUTPUT`.
+2. matching leaf `GRATIS_PREFIX_DOWN/UNIT_OUTPUT`.
 
 Starting from the segment's committed incoming amount, the unit replays the
 legacy sequential consumption and emits:
@@ -389,26 +415,22 @@ Inputs are the same finalized outputs. It stable-sorts bucket records by
 
 ### 4.9 `ROOT_REDUCE`
 
-Inputs, in exact positions:
+Leaf units consume one finalized-output/result chunk plus the matching
+owner/bucket commitments. Internal units consume at most two child root
+artifacts. All inputs are position-bound by the derived `UnitSpecV1`.
 
-1. every finalized-output unit in range order, then
-   `FINALIZED_OUTPUT_RECORDS/CANONICAL_EMPTY` refs from `K` to `P`;
-2. owner-ordered artifact;
-3. bucket-ordered artifact;
-4. FI fraction-table root artifact;
-5. Gratis prefix-table artifact.
+Across the fixed tree the phase:
 
-It:
-
-- verifies every producer artifact from its `UnitSpecV1`;
-- constructs the ordered unit-artifact root over all prior plan units;
-- constructs action/list roots, counts and conservation totals;
+- verifies producer artifacts and gap-free source/output coverage;
+- streams the ordered unit-artifact and result-chunk catalog roots;
+- constructs output roots, counts and conservation totals;
 - reconstructs the semantic event summary;
 - computes the arithmetic commitment;
-- emits the complete canonical `BoundedLysisResultV1`.
+- emits the constant-size canonical `LysisResultV1` only at the root.
 
 The result's `unit_artifact_root` excludes the final `ROOT_REDUCE` carrier to
-avoid a self-reference. `PlanHash` still commits its specification.
+avoid a self-reference. `PlanHash` still commits its derivation rule and primary
+unit catalog.
 
 ## 5. Scheduler and local verification
 
@@ -423,8 +445,8 @@ PENDING -> LEASED(slot, lease_generation) -> VERIFIED
 
 It may choose any ready unit, run 1, 2 or 4 workers, kill a worker and retry the
 same `UnitId`, or consume an already present artifact. It may never create a
-new spec after `PlanHash`, split a unit, merge units opportunistically or mark a
-different unit complete.
+spec not derived from `PlanCommitmentV1`, split a unit, merge units
+opportunistically or mark a different unit complete.
 
 Before a producer artifact becomes ready, the supervisor verifier:
 
@@ -456,8 +478,9 @@ The PoC does not import a MapReduce framework.
 
 ## 6. Result reconstruction at the trust boundary
 
-The supervisor cannot choose the signed bytes. It sends
-`RequestAttestationV1` with the complete bounded `BoundedLysisResultV1`.
+The supervisor cannot choose an arbitrary digest or signing purpose. After its
+compute domain has verified complete chunk coverage, it sends
+`RequestAttestationV1` with constant-size `LysisResultV1`.
 
 The node `OcompAttestationGate` independently:
 
@@ -470,16 +493,20 @@ The node `OcompAttestationGate` independently:
 6. checks bundle and job-pinned committee snapshot;
 7. reloads the durable `EXPORTED` binding and requires
    `input_manifest_hash` equality;
-8. canonical-decodes the complete result and re-encodes byte-identically;
-9. checks `PlanHash`, structure, ordering, caps, exact equations, roots,
-   counts, conservation and arithmetic/event commitments;
-10. reconstructs `ActionStreamHash`, `ActivationPayloadV1` and
-    `ResultDigest`;
+8. canonical-decodes and re-encodes the constant-size result commitment;
+9. verifies `PlanHash`, non-empty result-chunk count/root, exact summary
+   equations, job bindings, conservation and arithmetic/event commitments;
+10. reconstructs `ActivationPayloadV1` and `ResultDigest`;
 11. derives the one sign-once key from canonical state;
 12. invokes the closed result signer/store operation.
 
-Steps 8–10 are bounded typed verification, not Lysis execution. The gate never
-reads Fidelity/Oracle, schedules work or recomputes leagues/prices/allocation.
+Steps 8–10 are constant-size typed verification, not Lysis execution. The node
+does not traverse result chunks: doing so would move bulk compute I/O back into
+the consensus failure boundary. Complete chunk/input execution belongs to the
+validator domain's separate compute plane; a compromised compute plane can
+contribute at most that domain's one signature, and `q=3/4` supplies the
+cross-domain correctness threshold. The gate never reads Fidelity/Oracle,
+schedules work or recomputes leagues/prices/allocation.
 
 The request has no arbitrary digest, purpose, domain, key selector, path or
 message bytes. A claimed `ResultDigest`, if present for diagnostics, must equal
@@ -686,18 +713,18 @@ body: exact OCB1 CandidateAnnouncementV1
 GET /healthz
 ```
 
-The generated activation cap also bounds the candidate HTTP body before
+The generated constant-size candidate cap bounds the HTTP body before
 allocation. Success is `202`; exact duplicate is idempotent `200`; malformed,
 unauthorized-chain, over-cap or invalid-signature input is rejected. HTTP status
 has no protocol authority.
 
 For each announcement the relay:
 
-1. canonical-decodes the complete result and recomputes payload/digest;
+1. canonical-decodes `LysisResultV1` and recomputes payload/digest;
 2. loads the exact public job/committee snapshot;
 3. verifies validator index, epoch and signature;
 4. groups by `(protocol_bundle_hash, JobId, attempt, ResultDigest,
-   exact canonical result bytes)`;
+   exact canonical result-commitment bytes)`;
 5. deduplicates validator index;
 6. at three valid matches, selects indexes ascending and builds the certificate;
 7. independently builds the finalized intent proof;
@@ -734,9 +761,14 @@ The protocol-freeze generator must add:
 
 - every valid phase/interval/input-purpose combination;
 - invalid phase/interval and input-position combinations;
-- `T=1,31,32,33,255,cap` source partitions;
-- Fidelity reducer `K=1..8`, including every padded-empty shape;
-- exact all-phase `PlanHash` and every `UnitId`;
+- `T=1,255,256,257` source partitions, with `257` proving that the first
+  record after a full shard belongs to shard 2;
+- synthetic `T=10,000` and `T=1,000,000,000` commitments deriving exactly 40
+  and 3,906,250 primary units without allocating proportional vectors;
+- Fidelity/prefix/root reducer `K=1..8`, including every padded-empty shape and
+  both prefix scan directions;
+- exact `PlanHash`, primary work-unit root and sampled/boundary `UnitId`s from
+  every derived phase;
 - every work-output nested schema, empty/non-empty subset and maximum shape;
 - duplicate/gap/out-of-range raw ordinal;
 - missing/duplicate/replaced producer `UnitId`;
@@ -762,15 +794,15 @@ For one exact manifest:
 - retry on a different slot/process;
 - restart supervisor with verified CAS artifacts.
 
-Every run must produce identical plan bytes, ordered unit digests,
-`BoundedLysisResultV1`, action bytes and `ResultDigest`. A retry count or PID
-must not appear in semantic bytes.
+Every run must produce identical plan bytes, ordered unit/result-chunk roots,
+`LysisResultV1` and `ResultDigest`. A retry count or PID must not appear in
+semantic bytes.
 
 ### 11.3 Attestation/store vectors
 
 - nonfinal, orphaned, wrong attempt, completed, expired and wrong-bundle job;
 - missing/wrong exported manifest binding;
-- malformed/cap+1 result before key use;
+- malformed/activation-summary-cap+1 result before key use;
 - digest-only/generic-purpose request is structurally impossible;
 - exact request twice returns byte-identical signature;
 - concurrent exact requests create one final inode/record;

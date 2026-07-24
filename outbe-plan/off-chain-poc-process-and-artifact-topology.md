@@ -184,7 +184,7 @@ cap for this mode. See
 
 The supervisor:
 
-1. selects an already frozen `UnitSpecV1`;
+1. selects an already frozen `UnitSpecV1` from the complete parent-job plan;
 2. opens one connection to the fixed socket;
 3. completes the worker handshake;
 4. sends exactly one bounded `RunUnitV1`;
@@ -200,6 +200,14 @@ The worker:
 4. executes exactly that unit;
 5. writes exactly one staged `UnitArtifactV1`;
 6. returns its digest/length/status and exits.
+
+The queue contains only a bounded window of ready unit ordinals. Canonical
+`UnitSpecV1` values are derived lazily from `PlanCommitmentV1`; the supervisor
+never materializes every unit. Completing a full shard never terminates
+discovery: the next authenticated Tribute starts the next shard and its ordinal
+is reached normally. A supervisor may use successive worker invocations for
+arbitrarily many units, but each invocation receives exactly one immutable
+unit.
 
 A second run request, different `UnitId`, arbitrary path, executable, shell
 command or resource override is rejected. Connection loss cancels the result;
@@ -291,8 +299,9 @@ session generation. Capability bits are intersected with the fixed
 peer-UID role; a caller cannot self-assign capabilities.
 
 Every job method includes the session generation and exact bundle/`JobId`.
-`RequestAttestationV1` includes the complete bounded typed result; it never
-accepts a digest-only or generic signing request.
+`RequestAttestationV1` includes constant-size `LysisResultV1`; it never accepts
+a digest-only or generic signing request. Bulk result chunks remain outside the
+node control plane.
 
 `ErrorV1` contains only:
 
@@ -328,7 +337,8 @@ attempt
 PlanHash
 unit_index
 canonical UnitSpecV1 OCB1 bytes
-transport reference to the complete local plan file
+canonical PlanCommitmentV1 bytes
+primary-unit membership witness or deterministic secondary-unit derivation inputs
 transport reference to InputManifestV1
 strictly ordered input object transport references
 ```
@@ -343,9 +353,11 @@ CasObjectRefV1 {
 }
 ```
 
-The worker recomputes the complete `PlanHash`, not just the selected unit's
-membership, then recomputes `UnitId` and validates input semantic roots/counts.
-It cannot use a plan or input supplied only in the request as authority.
+The worker recomputes constant-size `PlanHash`, derives the selected
+`UnitSpecV1` from its ordinal (or verifies its catalog membership), then
+recomputes `UnitId` and validates input semantic roots/counts. It never reads a
+complete plan file and cannot use a plan or input supplied only in the request
+as authority.
 
 `UnitFinishedV1` returns `UnitId`, status, exact staged byte count and transport
 digest. A success does not make the artifact trusted: the supervisor opens the

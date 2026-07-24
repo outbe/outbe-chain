@@ -963,6 +963,11 @@ impl AuthenticatedCatalogView {
         self.catalog_root
     }
 
+    #[must_use]
+    pub const fn identity(&self) -> ExactParentIdentity {
+        self.identity
+    }
+
     pub fn tree_root(&self, namespace: TreeNamespace) -> Result<Option<B256>, StagingError> {
         self.snapshot
             .lock()

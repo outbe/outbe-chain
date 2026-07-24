@@ -15,6 +15,7 @@ use std::{
 use alloy_consensus::{BlockHeader as _, TxReceipt as _};
 use alloy_primitives::{keccak256, B256, U256};
 use alloy_sol_types::SolEvent as _;
+use outbe_common::WorldwideDay;
 use outbe_consensus::{
     block::ConsensusBlock,
     finalization::parent_cert_store::FinalizedParentCertStore,
@@ -24,22 +25,26 @@ use outbe_metadosis::{
     ocomp::schema::poc_schema_limits, precompile::IMetadosis, schema::OCOMP_JOB_RECORDS_BASE_SLOT,
 };
 use outbe_ocomp_protocol::{
-    intent::{intent_storage_key, JobIntentV1},
+    intent::{intent_storage_key, job_id_from_intent_id, FinalizedIntentProofV1, JobIntentV1},
+    opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
+use outbe_offchain_data::TributeRetentionSelector;
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS, storage::types::StorageKey as _, OutbeHeader, OutbeReceipt,
 };
+use outbe_tribute::{RetainedTributePin, RetainedTributeWriter};
 use reth_provider::{HeaderProvider, ReceiptProvider, StateProviderFactory};
 
 use super::finality::RethFinalizedIntentProofBuilder;
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPIN1";
-const JOURNAL_VERSION: u16 = 1;
+const JOURNAL_VERSION: u16 = 2;
 const JOURNAL_MAX_BYTES: usize = 512;
 const JOURNAL_FILENAME: &str = "pin.v1";
 const JOURNAL_TEMP_FILENAME: &str = "pin.v1.tmp";
+const RETAINED_EVIDENCE_WINDOW_BLOCKS: u64 = 64;
 
 type PendingCandidateReceipts = Option<(B256, Vec<OutbeReceipt>)>;
 type PendingCandidateReceiptReader =
@@ -52,6 +57,9 @@ pub struct CandidatePinV1 {
     pub block_hash: B256,
     pub state_root: B256,
     pub intent_id: B256,
+    pub wwd: u32,
+    pub ce_sealed_root: B256,
+    pub protocol_bundle_hash: B256,
     pub deadline_height: u64,
 }
 
@@ -63,6 +71,9 @@ pub struct FinalizedJobPinV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// The PoC owns at most one candidate. Keeping its authenticated identity inline
+// avoids an otherwise unnecessary heap allocation on the finality path.
+#[allow(clippy::large_enum_variant)]
 pub enum CandidateFinalityV1 {
     Finalized(FinalizedJobPinV1),
     Orphaned,
@@ -110,6 +121,9 @@ pub struct PinRecordV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+// This is the single-entry coordinator state, not a collection element. Inline
+// storage keeps journal transitions allocation-free except for quarantine text.
+#[allow(clippy::large_enum_variant)]
 pub enum RetentionStatus {
     Empty,
     Ready(PinRecordV1),
@@ -153,6 +167,10 @@ pub enum RetentionError {
     InvalidTransition(&'static str),
     #[error("finalized input source failed: {0}")]
     Source(String),
+    #[error("retained Tribute storage is not configured")]
+    RetainedTributeStorageUnavailable,
+    #[error("retained Tribute garbage collection failed: {0}")]
+    RetainedTributeGc(String),
 }
 
 /// Typed exact-block source used by the retention coordinator.
@@ -176,15 +194,34 @@ pub trait FinalizedInputProofSource: Send + Sync {
         &self,
         candidate: CandidatePinV1,
     ) -> Result<CandidateFinalityV1, RetentionError>;
+
+    fn build_finalized_intent_proof(
+        &self,
+        _candidate: CandidatePinV1,
+    ) -> Result<FinalizedIntentProofV1, RetentionError> {
+        Err(RetentionError::Source(
+            "finalized-intent proof construction is unavailable".to_owned(),
+        ))
+    }
+
+    fn build_lysis_openings(
+        &self,
+        _candidate: CandidatePinV1,
+        _subjects: OpeningSubjectsV1,
+    ) -> Result<LysisOpeningsProofV1, RetentionError> {
+        Err(RetentionError::Source(
+            "Lysis opening construction is unavailable".to_owned(),
+        ))
+    }
 }
 
 /// Reth-backed typed state source. Request events are locators, never authority.
 pub struct RethFinalizedInputProofSource<P> {
-    provider: P,
+    pub(super) provider: P,
     parent_proofs: FinalizedParentCertStore,
-    proof_builder: RethFinalizedIntentProofBuilder<P>,
+    pub(super) proof_builder: RethFinalizedIntentProofBuilder<P>,
     pending_receipts: Arc<PendingCandidateReceiptReader>,
-    limits: SchemaLimits,
+    pub(super) limits: SchemaLimits,
 }
 
 impl<P: Clone> RethFinalizedInputProofSource<P> {
@@ -306,6 +343,9 @@ where
             block_hash: block.block_hash(),
             state_root: block.header().state_root(),
             intent_id: request.data.intentId,
+            wwd: record.intent.wwd,
+            ce_sealed_root: record.intent.ce_sealed_root,
+            protocol_bundle_hash: record.intent.protocol_bundle_hash,
             deadline_height: record.intent.deadline_height,
         }))
     }
@@ -376,15 +416,62 @@ where
                 "verified finalized intent differs from tentative source identity".to_owned(),
             ));
         }
-        if verified.intent.deadline_height != candidate.deadline_height {
+        if verified.intent.wwd != candidate.wwd
+            || verified.intent.ce_sealed_root != candidate.ce_sealed_root
+            || verified.intent.protocol_bundle_hash != candidate.protocol_bundle_hash
+            || verified.intent.deadline_height != candidate.deadline_height
+            || job_id_from_intent_id(
+                candidate.intent_id,
+                candidate.block_hash,
+                candidate.state_root,
+            )
+            .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))?
+                != verified.job_id
+        {
             return Err(RetentionError::Source(
-                "finalized intent deadline differs from tentative pin".to_owned(),
+                "finalized intent differs from tentative pin".to_owned(),
             ));
         }
         Ok(CandidateFinalityV1::Finalized(FinalizedJobPinV1 {
             candidate,
             job_id: verified.job_id,
         }))
+    }
+
+    fn build_finalized_intent_proof(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<FinalizedIntentProofV1, RetentionError> {
+        let (proof, verified) = self
+            .proof_builder
+            .build_and_verify_header(
+                self.provider
+                    .sealed_header_by_hash(candidate.block_hash)
+                    .map_err(|error| {
+                        RetentionError::Source(format!("load finalized opening header: {error}"))
+                    })?
+                    .ok_or_else(|| {
+                        RetentionError::Source("finalized opening header is unavailable".to_owned())
+                    })?
+                    .header(),
+                candidate.block_hash,
+                candidate.intent_id,
+            )
+            .map_err(|error| RetentionError::Source(error.to_string()))?;
+        if verified.job_id != candidate_job_id(candidate)? {
+            return Err(RetentionError::Source(
+                "finalized-intent proof opens a different JobId".to_owned(),
+            ));
+        }
+        Ok(proof)
+    }
+
+    fn build_lysis_openings(
+        &self,
+        candidate: CandidatePinV1,
+        subjects: OpeningSubjectsV1,
+    ) -> Result<LysisOpeningsProofV1, RetentionError> {
+        super::openings::build_lysis_openings(&self.provider, &self.limits, candidate, subjects)
     }
 }
 
@@ -576,6 +663,7 @@ pub struct OcompRetentionCoordinator {
     store: JournalStore,
     inner: Mutex<CoordinatorInner>,
     source: Arc<dyn FinalizedInputProofSource>,
+    retained_tributes: Option<Arc<RetainedTributeWriter>>,
 }
 
 const FINALITY_NOTIFICATION_CAPACITY: usize = 256;
@@ -655,12 +743,34 @@ impl OcompRetentionCoordinator {
         Self::open_with_durability(root, source, Arc::new(OsJournalDurability))
     }
 
+    pub fn open_with_retained_tributes(
+        root: impl Into<PathBuf>,
+        source: Arc<dyn FinalizedInputProofSource>,
+        retained_tributes: Arc<RetainedTributeWriter>,
+    ) -> Self {
+        Self::open_inner(
+            root.into(),
+            source,
+            Arc::new(OsJournalDurability),
+            Some(retained_tributes),
+        )
+    }
+
     pub(crate) fn open_with_durability(
         root: impl Into<PathBuf>,
         source: Arc<dyn FinalizedInputProofSource>,
         durability: Arc<dyn JournalDurability>,
     ) -> Self {
-        let store = JournalStore::new(root.into(), durability);
+        Self::open_inner(root.into(), source, durability, None)
+    }
+
+    fn open_inner(
+        root: PathBuf,
+        source: Arc<dyn FinalizedInputProofSource>,
+        durability: Arc<dyn JournalDurability>,
+        retained_tributes: Option<Arc<RetainedTributeWriter>>,
+    ) -> Self {
+        let store = JournalStore::new(root, durability);
         let status = match store.initialize() {
             Ok(Some(record)) => RetentionStatus::Ready(record),
             Ok(None) => RetentionStatus::Empty,
@@ -672,6 +782,7 @@ impl OcompRetentionCoordinator {
             store,
             inner: Mutex::new(CoordinatorInner { status }),
             source,
+            retained_tributes,
         }
     }
 
@@ -837,18 +948,69 @@ impl OcompRetentionCoordinator {
         )
     }
 
+    pub fn build_finalized_intent_proof(
+        &self,
+        job_id: B256,
+    ) -> Result<FinalizedIntentProofV1, RetentionError> {
+        let candidate = self.live_candidate(job_id)?;
+        let proof = self.source.build_finalized_intent_proof(candidate)?;
+        let limits = poc_schema_limits();
+        let intent = proof
+            .decoded_intent(&limits)
+            .map_err(|error| RetentionError::Source(format!("decode finalized intent: {error}")))?;
+        let proof_intent_id = intent
+            .intent_id(&limits)
+            .map_err(|error| RetentionError::Source(format!("derive proof IntentId: {error}")))?;
+        let proof_job_id = intent
+            .job_id(candidate.block_hash, candidate.state_root, &limits)
+            .map_err(|error| RetentionError::Source(format!("derive proof JobId: {error}")))?;
+        if proof_job_id != job_id
+            || proof_intent_id != candidate.intent_id
+            || proof.protocol_bundle_hash != candidate.protocol_bundle_hash
+            || proof.parent_accounting.finalized_block_number != candidate.block_number
+            || proof.parent_accounting.finalized_block_hash != candidate.block_hash
+            || intent.wwd != candidate.wwd
+            || intent.ce_sealed_root != candidate.ce_sealed_root
+            || intent.deadline_height != candidate.deadline_height
+        {
+            return Err(RetentionError::Source(
+                "finalized-intent proof differs from the exact live pin".to_owned(),
+            ));
+        }
+        Ok(proof)
+    }
+
+    pub fn build_lysis_openings(
+        &self,
+        job_id: B256,
+        subjects: OpeningSubjectsV1,
+    ) -> Result<LysisOpeningsProofV1, RetentionError> {
+        let candidate = self.live_candidate(job_id)?;
+        let proof = self.source.build_lysis_openings(candidate, subjects)?;
+        if proof.job_id != job_id
+            || proof.protocol_bundle_hash != candidate.protocol_bundle_hash
+            || proof.finalized_block_hash != candidate.block_hash
+            || proof.finalized_state_root != candidate.state_root
+            || proof.wwd != candidate.wwd
+        {
+            return Err(RetentionError::Source(
+                "Lysis openings differ from the exact live pin".to_owned(),
+            ));
+        }
+        Ok(proof)
+    }
+
     pub fn observe_terminal(
         &self,
         job_id: B256,
         expected_generation: u64,
         terminal_height: u64,
-        release_height: u64,
     ) -> Result<DurablePinAck, RetentionError> {
-        if release_height < terminal_height {
-            return Err(RetentionError::InvalidTransition(
-                "release height precedes terminal finality",
-            ));
-        }
+        let release_height = terminal_height
+            .checked_add(RETAINED_EVIDENCE_WINDOW_BLOCKS)
+            .ok_or(RetentionError::InvalidTransition(
+                "terminal release height overflows",
+            ))?;
         let mut inner = self.lock()?;
         let record = ready_record(&inner.status)?;
         ensure_generation(record, expected_generation)?;
@@ -916,6 +1078,15 @@ impl OcompRetentionCoordinator {
         if finalized_height < release_height {
             return Ok(None);
         }
+        let complete = self
+            .retained_tributes
+            .as_ref()
+            .ok_or(RetentionError::RetainedTributeStorageUnavailable)?
+            .release_job_page(job_id)
+            .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?;
+        if !complete {
+            return Ok(None);
+        }
         self.persist_next(
             &mut inner,
             record,
@@ -949,6 +1120,25 @@ impl OcompRetentionCoordinator {
 
     pub fn is_exportable(&self, job_id: B256) -> bool {
         self.is_signable(job_id)
+    }
+
+    fn live_candidate(&self, job_id: B256) -> Result<CandidatePinV1, RetentionError> {
+        let inner = self.lock()?;
+        let record = ready_record(&inner.status)?;
+        match record.state {
+            PinStateV1::Finalized {
+                candidate,
+                job_id: current,
+            }
+            | PinStateV1::Exported {
+                candidate,
+                job_id: current,
+                ..
+            } if current == job_id => Ok(candidate),
+            _ => Err(RetentionError::InvalidTransition(
+                "proof construction requires the exact live finalized job",
+            )),
+        }
     }
 
     fn finalize_exact(
@@ -989,17 +1179,9 @@ impl OcompRetentionCoordinator {
         let mut inner = self.lock()?;
         let record = ready_record(&inner.status)?;
         match record.state {
-            PinStateV1::Tentative { candidate: current } if current == candidate => self
-                .persist_next(
-                    &mut inner,
-                    record,
-                    PinStateV1::Released {
-                        candidate,
-                        job_id: None,
-                        reason: PinReleaseReason::Orphaned,
-                        observed_height,
-                    },
-                ),
+            PinStateV1::Tentative { candidate: current } if current == candidate => {
+                self.release_orphan_locked(&mut inner, record, candidate, observed_height)
+            }
             PinStateV1::Released {
                 candidate: current,
                 reason: PinReleaseReason::Orphaned,
@@ -1009,6 +1191,33 @@ impl OcompRetentionCoordinator {
                 "orphan release does not match the tentative candidate",
             )),
         }
+    }
+
+    fn release_orphan_locked(
+        &self,
+        inner: &mut CoordinatorInner,
+        record: PinRecordV1,
+        candidate: CandidatePinV1,
+        observed_height: u64,
+    ) -> Result<DurablePinAck, RetentionError> {
+        if let Some(retained_tributes) = &self.retained_tributes {
+            let complete = retained_tributes
+                .release_job_page(candidate_job_id(candidate)?)
+                .map_err(|error| RetentionError::RetainedTributeGc(error.to_string()))?;
+            if !complete {
+                return Ok(ack_for(record));
+            }
+        }
+        self.persist_next(
+            inner,
+            record,
+            PinStateV1::Released {
+                candidate,
+                job_id: None,
+                reason: PinReleaseReason::Orphaned,
+                observed_height,
+            },
+        )
     }
 
     fn persist_next(
@@ -1045,6 +1254,44 @@ impl OcompRetentionCoordinator {
 
     fn lock(&self) -> Result<MutexGuard<'_, CoordinatorInner>, RetentionError> {
         self.inner.lock().map_err(|_| RetentionError::Poisoned)
+    }
+}
+
+impl TributeRetentionSelector for OcompRetentionCoordinator {
+    fn active_pin_for(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<RetainedTributePin>, String> {
+        if self.retained_tributes.is_none() {
+            return Err(RetentionError::RetainedTributeStorageUnavailable.to_string());
+        }
+        let inner = self.lock().map_err(|error| error.to_string())?;
+        let selected = match &inner.status {
+            RetentionStatus::Empty => None,
+            RetentionStatus::Quarantined { reason } => {
+                return Err(RetentionError::Quarantined(reason.clone()).to_string());
+            }
+            RetentionStatus::Ready(record) => match record.state {
+                PinStateV1::Tentative { candidate } if candidate.wwd == worldwide_day.value() => {
+                    Some(RetainedTributePin {
+                        job_id: candidate_job_id(candidate).map_err(|error| error.to_string())?,
+                        worldwide_day,
+                    })
+                }
+                PinStateV1::Finalized { candidate, job_id }
+                | PinStateV1::Exported {
+                    candidate, job_id, ..
+                }
+                | PinStateV1::Terminal {
+                    candidate, job_id, ..
+                } if candidate.wwd == worldwide_day.value() => Some(RetainedTributePin {
+                    job_id,
+                    worldwide_day,
+                }),
+                _ => None,
+            },
+        };
+        Ok(selected)
     }
 }
 
@@ -1094,6 +1341,15 @@ fn ack_for(record: PinRecordV1) -> DurablePinAck {
         generation: record.generation,
         record_hash: keccak256(encode_record(record)),
     }
+}
+
+fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {
+    job_id_from_intent_id(
+        candidate.intent_id,
+        candidate.block_hash,
+        candidate.state_root,
+    )
+    .map_err(|error| RetentionError::Source(format!("derive tentative JobId: {error}")))
 }
 
 fn encode_record(record: PinRecordV1) -> Vec<u8> {
@@ -1167,6 +1423,9 @@ fn encode_candidate(encoded: &mut Vec<u8>, candidate: CandidatePinV1) {
     encoded.extend_from_slice(candidate.block_hash.as_slice());
     encoded.extend_from_slice(candidate.state_root.as_slice());
     encoded.extend_from_slice(candidate.intent_id.as_slice());
+    encoded.extend_from_slice(&candidate.wwd.to_be_bytes());
+    encoded.extend_from_slice(candidate.ce_sealed_root.as_slice());
+    encoded.extend_from_slice(candidate.protocol_bundle_hash.as_slice());
     encoded.extend_from_slice(&candidate.deadline_height.to_be_bytes());
 }
 
@@ -1208,9 +1467,10 @@ fn decode_record(encoded: &[u8]) -> Result<PinRecordV1, RetentionError> {
             let job_id = B256::new(reader.take::<32>()?);
             let terminal_height = u64::from_be_bytes(reader.take::<8>()?);
             let release_height = u64::from_be_bytes(reader.take::<8>()?);
-            if release_height < terminal_height {
+            if terminal_height.checked_add(RETAINED_EVIDENCE_WINDOW_BLOCKS) != Some(release_height)
+            {
                 return Err(RetentionError::MalformedJournal(
-                    "release precedes terminal height",
+                    "release height is not terminal finality plus evidence window",
                 ));
             }
             PinStateV1::Terminal {
@@ -1250,6 +1510,9 @@ fn decode_candidate(reader: &mut JournalReader<'_>) -> Result<CandidatePinV1, Re
         block_hash: B256::new(reader.take::<32>()?),
         state_root: B256::new(reader.take::<32>()?),
         intent_id: B256::new(reader.take::<32>()?),
+        wwd: u32::from_be_bytes(reader.take::<4>()?),
+        ce_sealed_root: B256::new(reader.take::<32>()?),
+        protocol_bundle_hash: B256::new(reader.take::<32>()?),
         deadline_height: u64::from_be_bytes(reader.take::<8>()?),
     })
 }

@@ -5,6 +5,19 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+ocomp-integration = [
+    "dep:alloy-consensus",
+    "dep:outbe-node",
+    "dep:outbe-offchain-data",
+    "dep:outbe-offchain-storage",
+    "dep:outbe-primitives",
+    "dep:reth-chainspec",
+    "dep:reth-ethereum",
+    "dep:reth-provider",
+]
+
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
 # code behind them drives the `world/` handles. Chain reads/sends are native
 # (alloy provider + `sol!`); the committee validators, joiner, followers, and
@@ -30,6 +43,13 @@ walkdir.workspace = true
 mongodb.workspace = true
 hex.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-node = { workspace = true, optional = true }
+outbe-offchain-data = { workspace = true, optional = true }
+outbe-offchain-storage = { workspace = true, optional = true }
+outbe-primitives = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+reth-ethereum = { workspace = true, optional = true }
+reth-provider = { workspace = true, features = ["test-utils"], optional = true }
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting"] }
 
@@ -37,6 +57,7 @@ time = { workspace = true, features = ["formatting"] }
 # Mirrors the canonical provider client in `bin/outbe-feeder`.
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
+alloy-consensus = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-signer.workspace = true
@@ -65,6 +86,11 @@ path = "src/bin/outbe-release-sgx-e2e.rs"
 [[bin]]
 name = "outbe-e2e-evidence"
 path = "src/bin/outbe-e2e-evidence.rs"
+
+[[test]]
+name = "ocomp_checkpoint_handoff"
+path = "tests/ocomp_checkpoint_handoff.rs"
+required-features = ["ocomp-integration"]
 
 [dev-dependencies]
 tempfile.workspace = true

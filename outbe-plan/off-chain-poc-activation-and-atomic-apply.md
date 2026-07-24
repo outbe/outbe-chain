@@ -386,9 +386,12 @@ Before ABI allocation or cryptography:
 5. each nested vector checks its byte/count cap before allocation.
 
 Txpool shape admission is not semantic authority. Every proposer/import/replay
-path repeats consensus caps. A second activation or cap+1 input rejects before
-large decode/signature work. Proposer selection skips it; a received block must
-produce the same deterministic outcome under the frozen block policy.
+path repeats activation byte/crypto consensus caps. A second activation or
+activation-byte cap+1 input rejects before large decode/signature work.
+Worker-shard-cap+1 is not such a rejection: it has already produced another
+canonical work shard. Proposer selection skips invalid activation input; a
+received block must produce the same deterministic outcome under the frozen
+block policy.
 
 No activation-specific fee waiver or transaction class is introduced.
 
@@ -408,8 +411,9 @@ After bounded canonical decode:
    `ResultEvidenceHash`;
 7. verify the pinned OCOMP committee snapshot and exact 3-of-4 certificate;
 8. call `outbe_lysis::activation_v1::verify_result`, which checks only typed
-   structure, IDs, ordering, roots, counts, totals, arithmetic/event
-   commitments and activation-precondition membership;
+   constant-size structure, result-chunk count/root, output roots, counts,
+   totals, arithmetic/event commitments and activation-precondition
+   membership;
 9. compare all current target pre-states with the frozen preconditions;
 10. choose certified conflict or certified apply.
 
@@ -465,9 +469,9 @@ Inside one outer `StorageHandle::with_checkpoint`, the verified apply plan and
 capability permit exactly:
 
 ```text
-1 NodFactory::issue_certified_batch
-2 Intex::record_certified_contributors
-3 Tribute::consume_certified_partition
+1 NodFactory::install_certified_generation
+2 Intex::install_certified_contributor_root
+3 Tribute::retire_certified_partition
 4 PromisLimit::credit_certified_carry_over
 5 aggregate receipt verification and terminal commit
 ```
@@ -480,31 +484,28 @@ binding or after frame exit fails. Raw storage keys/calls are never inputs.
 
 #### NodFactory
 
-Refactor the existing private issuance core to accept explicit `issued_at`.
-Legacy pre-fork `issue_nod` supplies `storage.timestamp()`; certified batch
-supplies only request `logical_evaluation_time`.
+Add one generation/root installation path. It checks the frozen old
+generation/root precondition and installs the certified Nod, bucket and output
+manifest roots plus exact counts/totals and request logical time. It performs no
+loop over `NodActionV1` and returns constant-size `NodBatchReceiptV1` (the
+historical receipt name does not imply an inline batch).
 
-For each ordered `NodActionV1`, the owner:
-
-- rederives Nod ID and bucket key;
-- checks the frozen WWD/generation precondition and current absence;
-- reuses the existing Nod item/bucket CE mutation helpers and event order;
-- checked-accumulates counts, amount, Gratis and root inputs;
-- returns `NodBatchReceiptV1`.
+Legacy pre-fork `issue_nod` remains unchanged. Post-fork Nod body/proof reads
+resolve against the active generation root and authenticated result chunks.
 
 There is still no public Nod issuance selector.
 
 #### Intex
 
-The current `write_contributors` can overwrite and uses unchecked aggregate
-addition. The certified method is a new strict owner path:
+The certified method is a new strict root-installation path:
 
-- requires the exact frozen absent series/version;
-- validates order/uniqueness and max count;
-- checked-aggregates owner nominals;
-- writes the existing dense contributor representation;
-- records the owner transition event;
+- requires the exact frozen absent/old series version;
+- installs the contributor root, count and eligible nominal total;
+- records the constant-size owner transition event;
 - returns `ContributorReceiptV1`.
+
+It does not write a dense per-owner representation during activation.
+Contributor bodies/proofs are served from authenticated result chunks.
 
 The legacy helper remains reachable only from pre-fork Lysis/tests.
 
@@ -553,8 +554,9 @@ At and after the fork:
 - certified owner methods require the frame capability;
 - legacy owner helpers remain only for pre-fork, empty/ineligible compatibility
   or existing non-OCOMP domain flows;
-- static callgraph/allowlist tests fail if active activation reaches legacy
-  Lysis, Fidelity league, Oracle calculation or a raw write bypass.
+- crate dependency/visibility checks make those imports/capability constructors
+  unavailable, and runtime call traces fail if active activation reaches
+  legacy Lysis, Fidelity league, Oracle calculation or a raw write bypass.
 
 No production test helper can construct a success capability.
 
@@ -564,9 +566,9 @@ No production test helper can construct a success capability.
 
 Each owner receipt hash uses its frozen domain over canonical receipt bytes.
 `state_event_digest` is not an opaque owner claim: it is recomputed from the
-exact binding plus the owner-specific action/pre/post projection frozen in the
-protocol manifest. ABI log parity is generated from the same projection and
-tested separately.
+exact binding plus the owner-specific old-root/new-root or scalar pre/post
+projection frozen in the protocol manifest. ABI log parity is generated from
+the same projection and tested separately.
 
 After all four activation calls,
 `outbe_lysis::activation_v1::verify_receipts` consumes those receipts and the
@@ -597,8 +599,10 @@ Using the terminal permit, Metadosis in the same checkpoint:
 6. removes it from active/READY indexes without deleting OCOMP evidence;
 7. emits the frozen `MetadosisExecuted` fields and `LysisActivated`.
 
-The complete result remains once in canonical transaction bytes. Consensus
-state stores only the intent, binding, active generation, receipt and hashes.
+Only constant-size `LysisResultV1` remains in canonical transaction bytes.
+Consensus state stores the intent, binding, active generation roots/counts,
+receipt and hashes. Authenticated result chunks are retained outside the block
+by the signing domains for PoC projection/proof serving.
 
 ### 8.3 Certified conflict
 
@@ -745,13 +749,14 @@ implemented without evidence for at least:
 10. Nod uses request logical time; delayed activation never repeats Desis;
 11. Promis carry-over add/take is checked, and next-day consumption is atomic;
 12. public RPC -> txpool -> P2P -> proposal -> import -> replay carries the exact
-    activation; cap+1/second activation rejects before expensive work;
+    activation; activation-byte cap+1/second activation rejects before
+    expensive work while work-shard-cap+1 is covered by another shard;
 13. final public job/generation/receipt, Nod/effect reads and CE absence proof
     agree after finality and replay;
 14. static and runtime traces contain no active-fork call to Lysis execution,
     Fidelity league or Oracle calculation;
-15. callsite scanning finds one production capability-construction path and no
-    public/raw effect bypass.
+15. compile-fail visibility tests plus behavioral provider-denial/runtime-trace
+    tests prove no external capability construction or public/raw effect bypass.
 
 Direct handler invocation can be a focused unit/component test but cannot close
 the public-path or four-validator E2E gate.

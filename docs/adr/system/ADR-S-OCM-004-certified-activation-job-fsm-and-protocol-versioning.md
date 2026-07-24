@@ -50,6 +50,9 @@ state root and finality proof. A pre-finality reorg makes that candidate and all
 derived work non-signable.
 
 Consensus state contains no `RUNNING`; that is local supervisor progress.
+It also contains no state per worker shard. One `JobIntentV1` covers the complete
+authenticated WWD input; all shard progress is replaceable local execution
+state.
 
 ```text
 READY
@@ -92,10 +95,16 @@ cryptographic work, the executor checks byte/count/crypto caps. It then:
 5. verifies the `q=3/4` execution certificate;
 6. invokes the closed Lysis structural/result verifier without executing Lysis;
 7. constructs a private unforgeable `CertifiedLysisActivation`;
-8. calls only certified domain-owner batch methods and verifies their typed
-   receipts/conservation bindings; and
+8. verifies and installs only the certified old-root-to-new-root generation
+   transition, plus constant-size scalar effects, through closed domain-owner
+   methods and typed receipts; and
 9. commits all domain effects, active generation, terminal receipt and
    `COMPLETED` inside one outer checkpoint.
+
+The activated result covers the complete parent Job Intent. A shard artifact,
+prefix of completed shards or per-shard certificate cannot enter activation.
+If any required shard is absent, the job remains pending or expires; it never
+creates a partial set of Nod.
 
 The capability has no public constructor, codec or generic supertype that grants
 effect authority. Effect owners accept only the exact Lysis-scoped capability or
@@ -103,14 +112,20 @@ an owner-scoped derivative created inside the certified path.
 
 ### Atomic effect contract
 
-The Lysis apply sequence includes Nod, contributor, Tribute retirement,
-`unused_lysis` carry-over and Metadosis completion.
+The Lysis apply sequence installs the certified Nod/contributor/output
+collection roots, logically retires the exact sealed Tribute generation, credits
+the scalar `unused_lysis` carry-over and marks Metadosis complete. It does not
+iterate over `N` Nod or contributor actions on-chain. Bounded
+`ResultChunkV1` bodies are authenticated by `result_chunk_list_root` and feed
+projection, availability and proof-serving paths; they are not independent
+activation transactions.
 
 Desis is absent because its exact `auction_base` brief committed before compute.
 PromisLimit receives only a checked additive carry-over credit.
 
-Each activation owner returns a receipt bound to the call and `JobId`. Counts,
-roots, totals and both budget equations are checked before terminal commit.
+Each activation owner returns a constant-size receipt bound to the call and
+`JobId`. Old roots/generations, new roots, counts, totals and both budget
+equations are checked before terminal commit.
 
 Any owner error or receipt mismatch reverts every activation effect.
 
@@ -154,6 +169,8 @@ planner, result or apply contract is a new protocol, not operational hardening.
 - Intex has no reservation state; contributors are created only at activation.
 - Promis has no reservation state; carry-over uses checked commutative addition.
 - Only a finalized live exact attempt can be signed or activated.
+- Worker-shard completion is never a consensus terminal state and cannot be
+  activated independently.
 - Activation at or after the exclusive deadline cannot race expiry.
 - Evidence verification does not execute Lysis.
 - Only the private typed capability reaches effect methods.
@@ -176,20 +193,23 @@ Invalid evidence rejects with no activation state change.
 
 ## Determinism and bounds
 
-Activation cost is bounded by the generated PoC maximum typed result and fixed
-signature threshold. Caps are checked before unbounded decode/allocation and
-expensive crypto. Semantic time comes from the request's frozen logical context;
-activation height/time affects only fields explicitly defined as activation
-metadata.
+Activation cost is bounded by a constant-size typed result commitment, closed
+root-transition receipts and the fixed signature threshold; it is independent
+of total Tribute count. Per-transaction bytes and crypto caps are checked before
+decode/allocation and expensive crypto. Result chunks and work shards have
+their own bounded interfaces but no activation authority. Semantic time comes
+from the request's frozen logical context; activation height/time affects only
+fields explicitly defined as activation metadata.
 
 ## Production-interface verification evidence
 
 No job FSM, activation transaction, certified capability or receipt path exists.
 The production current path still invokes Lysis synchronously from Metadosis.
 Required evidence includes the complete PFS-002 public transaction path,
-cap-1/cap/cap+1 admission through proposer/import/replay, finality mutations,
-deadline boundary, exact retry, wrong binding, representative owner rollback,
-receipt mutation, delayed activation equivalence and public output/proof reads.
+activation-byte cap-1/cap/cap+1 through proposer/import/replay, a Tribute
+population crossing a work-shard boundary, finality mutations, deadline
+boundary, exact retry, wrong binding, representative owner rollback, receipt
+mutation, delayed activation equivalence and public output/proof reads.
 
 ## Consequences
 

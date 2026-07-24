@@ -49,6 +49,9 @@ wire_enum_u8! {
         OwnerShuffle = 7,
         BucketShuffle = 8,
         RootReduce = 9,
+        // Top-down half of the deterministic parallel Gratis prefix scan.
+        // `GratisPrefix` keeps its frozen tag as the bottom-up summary phase.
+        GratisPrefixDown = 10,
     }
 }
 
@@ -186,6 +189,26 @@ wire_struct! {
 impl_top_level_codec!(UnitSpecV1, UnitSpecV1);
 
 wire_struct! {
+    /// Constant-size commitment to a lazily materialized deterministic plan.
+    ///
+    /// The complete Tribute population is never embedded as a vector here.
+    /// Primary unit specifications are committed by an ordered root and may be
+    /// generated or verified independently by ordinal.
+    pub struct PlanCommitmentV1 {
+        pub protocol_bundle_hash: B256,
+        pub job_id: B256,
+        pub attempt: u32,
+        pub input_manifest_hash: B256,
+        pub tribute_count: u32,
+        pub max_tributes_per_work_shard: u32,
+        pub primary_work_unit_count: u32,
+        pub primary_work_unit_root: B256,
+        pub planner_spec_version: u16,
+        pub reducer_spec_version: u16,
+    }
+}
+
+wire_struct! {
     pub struct UnitArtifactV1 {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
@@ -231,7 +254,10 @@ impl UnitSpecV1 {
                 UnitInterval::EntityIdRange(_)
             ) | (UnitPhase::FidelityMap, UnitInterval::FidelityIndexRange(_))
                 | (
-                    UnitPhase::FixedReduce | UnitPhase::GratisPrefix | UnitPhase::RootReduce,
+                    UnitPhase::FixedReduce
+                        | UnitPhase::GratisPrefix
+                        | UnitPhase::GratisPrefixDown
+                        | UnitPhase::RootReduce,
                     UnitInterval::BinaryReducerNode(_)
                 )
                 | (
@@ -315,16 +341,30 @@ impl UnitArtifactV1 {
     }
 }
 
-pub fn plan_hash(units: &[UnitSpecV1], limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-    let count = u32::try_from(units.len()).map_err(|_| ProtocolError::IntegerOverflow {
-        what: "plan unit count",
-    })?;
-    let mut payload = count.to_be_bytes().to_vec();
-    for unit in units {
-        unit.validate_semantics(limits)?;
-        payload.extend_from_slice(&unit.encode_canonical(limits)?);
+impl PlanCommitmentV1 {
+    pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
+        require(
+            self.tribute_count > 0
+                && self.max_tributes_per_work_shard > 0
+                && !self.primary_work_unit_root.is_zero(),
+            "plan committed population",
+        )?;
+        let rounded = self
+            .tribute_count
+            .checked_add(self.max_tributes_per_work_shard - 1)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "primary work unit count",
+            })?;
+        require(
+            self.primary_work_unit_count == rounded / self.max_tributes_per_work_shard,
+            "plan exact primary work unit count",
+        )
     }
-    hash_framed(HashDomain::Plan, &payload)
+
+    pub fn plan_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
+        self.validate_semantics()?;
+        hash_framed(HashDomain::Plan, &encode_nested_value(self, limits)?)
+    }
 }
 
 pub fn empty_unit_input_id(purpose: InputPurpose) -> Result<B256, ProtocolError> {

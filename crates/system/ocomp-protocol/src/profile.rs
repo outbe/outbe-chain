@@ -30,8 +30,7 @@ impl_top_level_codec!(CorrectnessProfileV1, CorrectnessProfileV1);
 wire_struct! {
     pub struct CapacityProfileV1 {
         pub profile_id: B256,
-        pub max_poc_tributes: u32,
-        pub unit_tributes: u32,
+        pub max_tributes_per_work_shard: u32,
         pub max_workers_per_domain: u8,
         pub max_pending_jobs: u8,
         pub max_intents_per_block: u8,

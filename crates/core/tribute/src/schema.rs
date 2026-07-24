@@ -86,13 +86,6 @@ pub struct DayPreAdmission {
     #[attribute(order = 7, default = 0)]
     pub distinct_reference_currency_count: u16,
 
-    /// Latched when the live day first crosses an OCOMP profile bound. The
-    /// underlying Tribute remains valid, but this day can never be admitted
-    /// by the bounded PoC profile and no further per-identity OCOMP state is
-    /// allocated for it.
-    #[attribute(order = 8, default = false)]
-    pub capacity_exceeded: bool,
-
     /// Certified source generation. A sealed, unconsumed Tribute partition is
     /// generation 0; OCM-20 advances it exactly once on logical retirement.
     /// This is owner state, not an OCOMP reservation.
@@ -111,9 +104,6 @@ pub struct TributeContract {
 
     #[attribute(order = 3)]
     pub day_pre_admission: outbe_primitives::storage::dsl::Map<WorldwideDay, DayPreAdmission>,
-
-    #[attribute(order = 4)]
-    pub day_owner_refcount: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     #[attribute(order = 5)]
     pub day_reference_currency_refcount: outbe_primitives::storage::dsl::Map<B256, u32>,

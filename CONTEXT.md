@@ -51,10 +51,19 @@ _Avoid_: plugin, uploaded job, task adapter
 
 ### Job Intent
 
-The consensus record that fixes one computation request, its authenticated input
-commitments, attempt, request budget split, activation preconditions, protocol
-interpretation and deadline before off-chain execution begins.
+The consensus record that fixes one complete logical computation, its authenticated
+input commitments, attempt, request budget split, activation preconditions,
+protocol interpretation and deadline before off-chain execution begins. It is
+the parent of all local work shards, not one worker-sized slice. Its population
+is committed by counts/roots and has no artificial PoC total-size ceiling.
 _Avoid_: event, worker job, scheduler task
+
+### Work Shard
+
+A deterministic bounded slice of one Job Intent that workers may execute and
+retry independently before the complete result is reduced. Reaching the shard
+capacity creates the next shard; it never rejects the next valid input.
+_Avoid_: Job Intent, partial activation, validator vote
 
 ### Authenticated Input Bundle
 
@@ -71,6 +80,7 @@ _Avoid_: worker vote, process validator
 ### Certified Activation
 
 The atomic consensus transition that verifies evidence for one exact typed
-result, derives a private program-scoped capability and commits the owning domain
-effects or none.
+result of the complete Job Intent, derives a private program-scoped capability
+and commits the owning domain effects or none. A Work Shard is never activated
+independently.
 _Avoid_: generic write batch, result import

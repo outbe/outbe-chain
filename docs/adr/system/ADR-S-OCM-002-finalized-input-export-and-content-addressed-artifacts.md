@@ -75,7 +75,8 @@ InputManifestV1 {
   JobId,
   finalized checkpoint identity,
   protocol bundle,
-  ordered chunk digests and lengths,
+  input_chunk_count,
+  input_chunk_list_root,
   authenticated range/count/nominal commitments,
   Fidelity/Oracle opening commitments,
   manifest codec and caps
@@ -91,6 +92,13 @@ filesystem immutability: a worker hashes the exact byte stream it consumes and
 checks the expected digest, canonical length and manifest membership. A
 separate “check then reopen” is insufficient because it creates a
 time-of-check/time-of-use gap.
+
+The closed manifest covers the complete parent `JobId`. Work-shard range
+descriptors are derived from that manifest's canonical Tribute order; they do
+not create smaller competing snapshots. For `N` records and shard capacity
+`S`, descriptors cover exactly `[0,N)` as `ceil(N/S)` adjacent, non-overlapping
+ranges. Record `S` (the first record after a full first shard) belongs to shard
+one rather than being rejected.
 
 ## Authoritative interfaces
 
@@ -112,20 +120,27 @@ time-of-check/time-of-use gap.
 - Traversal reconstructs the exact pinned collection root, count and nominal.
 - Fidelity and Oracle values are bound to the job's logical evaluation context.
 - A manifest names one `JobId` and one protocol bundle only.
+- Work-shard ranges are adjacent, non-overlapping and cover the manifest count
+  exactly once; shard scheduling cannot select or omit input.
 - Workers consume only digest-verified manifest members.
 - A fork-orphaned input is never signable.
 - Export/pin ambiguity causes abstention, never best-effort live-state reads.
 
 ## Determinism and bounds
 
-PoC uses a generated Tribute cap and one bounded full fold. Page sizes, chunk
-sizes, total bytes, object counts, opening counts, checkpoint leases and disk
-quota are protocol/profile bounded before allocation. Database enumeration order
-is normalized to the program's canonical key order.
+PoC uses bounded pages, chunks and work shards while closing one complete
+manifest. Page/shard size, records per chunk, bytes per chunk, concurrently open
+objects, checkpoint leases and local disk quota are profile bounded before
+allocation. Total Tribute count, total input bytes, chunk count and opening
+count are committed counters/roots, not a protocol admission ceiling. Chunk
+catalog construction is streaming and root accumulation is constant-space or
+bounded-page. Database enumeration order is normalized to the program's
+canonical key order. The PoC must cross at least one work-shard boundary; a
+one-shard fixture is not evidence that partitioning works.
 
-TargetLarge may stream counted ranges into shared object storage, but it retains
-the same authority rule: a result is not signable until the complete authenticated
-manifest is closed. TargetLarge mechanisms are not PoC evidence.
+Any population may stream more counted ranges into shared object storage while
+retaining the same authority rule: a result is not signable until the complete
+authenticated manifest is closed.
 
 ## Atomicity, replay and failure
 
@@ -135,9 +150,12 @@ object is rejected and may be rebuilt from retained sources. If the source,
 checkpoint or disk is unavailable, that validator abstains while consensus
 continues.
 
-The node releases the retention pin only after terminal finality and the
-applicable evidence/recovery window. Worker or supervisor shutdown cannot release
-it. An input export cannot mutate canonical chain, Mongo projection or CE state.
+The node releases retained input only after terminal finality and the applicable
+evidence/recovery window. Release is restart-safe and cursor/page bounded across
+the parent job; finding another page continues GC instead of treating the first
+record beyond one shard as corruption. Worker or supervisor shutdown cannot
+release it. An input export cannot mutate canonical chain, Mongo projection or
+CE state.
 
 ## Compatibility and migration
 

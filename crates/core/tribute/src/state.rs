@@ -22,7 +22,6 @@ pub struct TributePreAdmissionProjection {
     pub canonical_body_bytes: u64,
     pub distinct_owner_count: u32,
     pub distinct_reference_currency_count: u16,
-    pub capacity_exceeded: bool,
 }
 
 impl TributeContract<'_> {
@@ -153,7 +152,6 @@ impl TributeContract<'_> {
             canonical_body_bytes: admission.canonical_body_bytes,
             distinct_owner_count: admission.distinct_owner_count,
             distinct_reference_currency_count: admission.distinct_reference_currency_count,
-            capacity_exceeded: admission.capacity_exceeded,
         })
     }
 
@@ -241,27 +239,6 @@ impl TributeContract<'_> {
         if admission.is_sealed {
             return Err(TributeError::PreAdmissionSealed.into());
         }
-        if admission.capacity_exceeded {
-            return Ok(());
-        }
-
-        if is_add {
-            let totals = self.get_day_totals(day)?;
-            let max_tributes = u32::try_from(
-                outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
-                    .max_poc_tributes,
-            )
-            .map_err(|_| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "OCOMP Tribute cap exceeds u32".into(),
-                )
-            })?;
-            if totals.tribute_count > max_tributes {
-                admission.initialized = true;
-                admission.capacity_exceeded = true;
-                return self.store_day_pre_admission(&admission);
-            }
-        }
 
         let body_bytes = outbe_compressed_entities::encode_tribute_v1(
             &crate::repository::canonical_body(tribute),
@@ -275,12 +252,10 @@ impl TributeContract<'_> {
                 "Tribute canonical body length exceeds u64".into(),
             )
         })?;
-        let owner_key = owner_refcount_key(day, tribute.owner);
         let currency_key = reference_currency_refcount_key(day, tribute.reference_currency);
-        let owner_refcount = self.day_owner_refcount.read(&owner_key)?;
         let currency_refcount = self.day_reference_currency_refcount.read(&currency_key)?;
 
-        let (next_owner_refcount, next_currency_refcount) = if is_add {
+        let next_currency_refcount = if is_add {
             admission.canonical_body_bytes = admission
                 .canonical_body_bytes
                 .checked_add(body_bytes)
@@ -289,16 +264,6 @@ impl TributeContract<'_> {
                         "Tribute canonical body byte total overflow".into(),
                     )
                 })?;
-            if owner_refcount == 0 {
-                admission.distinct_owner_count = admission
-                    .distinct_owner_count
-                    .checked_add(1)
-                    .ok_or_else(|| {
-                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                            "Tribute distinct owner count overflow".into(),
-                        )
-                    })?;
-            }
             if currency_refcount == 0 {
                 admission.distinct_reference_currency_count = admission
                     .distinct_reference_currency_count
@@ -309,18 +274,11 @@ impl TributeContract<'_> {
                         )
                     })?;
             }
-            (
-                owner_refcount.checked_add(1).ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "Tribute owner membership refcount overflow".into(),
-                    )
-                })?,
-                currency_refcount.checked_add(1).ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                        "Tribute reference currency membership refcount overflow".into(),
-                    )
-                })?,
-            )
+            currency_refcount.checked_add(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute reference currency membership refcount overflow".into(),
+                )
+            })?
         } else {
             admission.canonical_body_bytes = admission
                 .canonical_body_bytes
@@ -330,26 +288,11 @@ impl TributeContract<'_> {
                         "Tribute canonical body byte total underflow".into(),
                     )
                 })?;
-            let next_owner = owner_refcount.checked_sub(1).ok_or_else(|| {
-                outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                    "Tribute owner membership refcount underflow".into(),
-                )
-            })?;
             let next_currency = currency_refcount.checked_sub(1).ok_or_else(|| {
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(
                     "Tribute reference currency membership refcount underflow".into(),
                 )
             })?;
-            if next_owner == 0 {
-                admission.distinct_owner_count = admission
-                    .distinct_owner_count
-                    .checked_sub(1)
-                    .ok_or_else(|| {
-                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
-                            "Tribute distinct owner count underflow".into(),
-                        )
-                    })?;
-            }
             if next_currency == 0 {
                 admission.distinct_reference_currency_count = admission
                     .distinct_reference_currency_count
@@ -360,12 +303,11 @@ impl TributeContract<'_> {
                         )
                     })?;
             }
-            (next_owner, next_currency)
+            next_currency
         };
 
         admission.initialized = true;
-        self.day_owner_refcount
-            .write(&owner_key, next_owner_refcount)?;
+        admission.distinct_owner_count = self.get_day_totals(day)?.tribute_count;
         self.day_reference_currency_refcount
             .write(&currency_key, next_currency_refcount)?;
         self.store_day_pre_admission(&admission)
@@ -468,13 +410,6 @@ impl TributeContract<'_> {
             after = Some(next);
         }
     }
-}
-
-fn owner_refcount_key(day: WorldwideDay, owner: Address) -> B256 {
-    let mut preimage = [0_u8; 24];
-    preimage[..4].copy_from_slice(&day.value().to_be_bytes());
-    preimage[4..].copy_from_slice(owner.as_slice());
-    keccak256(preimage)
 }
 
 fn reference_currency_refcount_key(day: WorldwideDay, currency: u16) -> B256 {

@@ -17,6 +17,7 @@ pub mod hash;
 pub mod input;
 pub mod intent;
 pub mod list;
+pub mod opening;
 pub mod profile;
 pub mod receipts;
 pub mod registry;

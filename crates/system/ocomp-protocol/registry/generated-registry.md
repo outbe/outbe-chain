@@ -16,8 +16,8 @@
 | `0x0009` | `AuthenticatedInputChunkV1` | `AuthenticatedInputChunkV1` |
 | `0x000a` | `UnitSpecV1` | `UnitSpecV1` |
 | `0x000b` | `UnitArtifactV1` | `UnitArtifactV1` |
-| `0x000c` | `ActionStreamV1` | `ActionStreamV1` |
-| `0x000d` | `BoundedLysisResultV1` | `BoundedLysisResultV1` |
+| `0x000c` | `ResultChunkV1` | `ResultChunkV1` |
+| `0x000d` | `LysisResultV1` | `LysisResultV1` |
 | `0x000e` | `ActivationPayloadV1` | `ActivationPayloadV1` |
 | `0x000f` | `OcompCommitteeSnapshotV1` | `OcompCommitteeSnapshotV1` |
 | `0x0010` | `OcompKeyRegistrationV1` | `OcompKeyRegistrationV1` |
@@ -56,7 +56,7 @@
 | — | `UnitOutput` | `OUTBE_OCOMP_UNIT_OUTPUT_V1` |
 | — | `UnitCoverage` | `OUTBE_OCOMP_UNIT_COVERAGE_V1` |
 | — | `UnitArtifact` | `OUTBE_OCOMP_UNIT_ARTIFACT_V1` |
-| — | `BoundedLysisActions` | `OUTBE_BOUNDED_LYSIS_ACTIONS_V1` |
+| — | `ResultChunk` | `OUTBE_OCOMP_RESULT_CHUNK_V1` |
 | — | `Result` | `OUTBE_OCOMP_RESULT_V1` |
 | — | `ValidatorIdentity` | `OUTBE_OCOMP_VALIDATOR_IDENTITY_V1` |
 | — | `Committee` | `OUTBE_OCOMP_COMMITTEE_V1` |

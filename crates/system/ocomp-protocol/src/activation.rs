@@ -7,7 +7,7 @@ use crate::{
     hash::hash_framed,
     intent::FinalizedIntentProofV1,
     registry::HashDomain,
-    result::{ActivationPayloadV1, BoundedLysisResultV1},
+    result::{ActivationPayloadV1, LysisResultV1},
     schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, SchemaLimits},
 };
 
@@ -22,7 +22,7 @@ wire_struct! {
         pub intent_id: B256,
         pub finalized_intent_proof: FinalizedIntentProofV1,
         pub activation_payload: ActivationPayloadV1,
-        pub result: BoundedLysisResultV1,
+        pub result: LysisResultV1,
         pub certificate: ExecutionCertificateV1,
     }
 }
@@ -33,7 +33,7 @@ wire_struct! {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
         pub attempt: u32,
-        pub result: BoundedLysisResultV1,
+        pub result: LysisResultV1,
         pub result_digest: B256,
         pub validator_index: u8,
         pub key_epoch: u64,

@@ -23,10 +23,11 @@
 One sealed non-empty WorldwideDay becomes one finalized OCOMP job. Four
 validator domains independently reconstruct and execute the same Lysis V1
 program off-chain. Any relay may submit three matching attestations and the
-complete bounded typed result. Consensus verifies evidence and structure without
-executing Lysis, then atomically commits the exact Nod/contributor/Tribute/
-carry-over/Metadosis activation effects. Desis is already committed in the
-GREEN request phase.
+constant-size complete-result commitment. Consensus verifies evidence and
+structure without executing Lysis or iterating the output population, then
+atomically installs the exact Nod/contributor/output roots and commits the
+Tribute-retirement/carry-over/Metadosis scalar effects. Desis is already
+committed in the GREEN request phase.
 
 No quorum means exclusive-deadline expiry, preserved Lysis budget, no repeated
 auction and no Nod. There is no synchronous fallback.
@@ -50,8 +51,9 @@ auction and no Nod. There is no synchronous fallback.
   domain apply and public outcome reads.
 - **Expected response:** One `COMPLETED` job/day, exact terminal receipt and
   active generation; expected Nods, contributor totals, Tribute retirement,
-  request-phase Desis brief and carry-over credits; byte-identical results across independent
-  domains and worker schedules.
+  request-phase Desis brief and carry-over credits; multiple bounded work shards
+  when the Tribute population crosses a shard boundary; byte-identical results
+  across independent domains and worker schedules.
 - **Response measures:** Exact 13-step demonstration passes; all
   `POC-01..POC-26` requirements have evidence at their declared layer; no
   direct state/executor injection or on-chain Lysis trace occurs.
@@ -68,7 +70,7 @@ auction and no Nod. There is no synchronous fallback.
 | complete Tribute population | sealed CE/WWD collection root, traversal, count and nominal | Mongo query/page count |
 | raw body bytes | canonical body that verifies against its committed leaf | Mongo/CAS location |
 | Lysis semantics | job-pinned `ProtocolBundleV1` | worker binary label or negotiation |
-| unit membership/order | canonical plan and `UnitId` | scheduler/worker completion order |
+| shard/unit membership/order | complete manifest count plus canonical plan and `UnitId` | scheduler/worker completion order |
 | one validator vote | one eligible validator index and OCOMP key epoch | process/worker count |
 | result equality | exact canonical `ResultDigest` | “equivalent” JSON or relay choice |
 | activation authority | verified certificate plus private `CertifiedLysisActivation` | relay or generic writes |
@@ -88,13 +90,36 @@ Metadosis READY
 `RUNNING`, `EXPORTING`, `PLANNED` and worker progress never become consensus
 states.
 
+### Parent job and local work shards
+
+One `JobIntentV1`/`JobId` covers the complete authenticated Tribute population
+for the WWD. It is not one worker-sized job. The planner deterministically
+creates:
+
+```text
+N authenticated Tribute
+  -> X = ceil(N / max_tributes_per_work_shard) adjacent primary work shards
+  -> PlanCommitmentV1(X, primary_work_unit_root)
+  -> UnitSpecV1 derived lazily by ordinal and executed by a bounded pool
+  -> bounded ResultChunkV1 objects
+  -> one LysisResultV1(result_chunk_count, result_chunk_list_root)
+```
+
+The supervisor queues unit ordinals through bounded cursors; it does not keep
+the complete unit vector in memory. Workers derive and consume as many units as
+needed. When the first shard is full, the next Tribute becomes the first member
+of the next shard; it is not rejected. There is no total Tribute ceiling. All
+four validator domains independently derive and execute the complete shard set.
+No shard or result chunk has an on-chain FSM, signature weight or independent
+activation.
+
 ### Local validator-domain state
 
 ```text
 DISCOVERED
   -> PINNED_FINALIZED
   -> EXPORTED(InputManifestHash)
-  -> PLANNED(PlanHash)
+  -> PLANNED(PlanCommitmentHash)
   -> EXECUTED(ResultDigest)
   -> ATTESTED(SignOnceSubject)
   -> TERMINAL_OBSERVED
@@ -109,9 +134,9 @@ This journal is restart/reconciliation evidence, not chain authority.
 | tentative/finalized retention pin | node/checkpoint manager | candidate/finalized block, roots, IntentId/JobId |
 | `JobIntentV1` and job FSM | canonical chain state | pending nonce, budget split, activation preconditions, deadline, bundle |
 | canonical input chunks | validator-local CAS | digest, length, manifest membership |
-| `InputManifestV1` | exporter/CAS | JobId, checkpoint, roots, count/totals, openings |
-| `UnitSpecV1`/unit artifacts | supervisor/workers/CAS | JobId, plan, program semantics, UnitId |
-| reducer/result artifact | supervisor/CAS | exact typed result and ResultDigest |
+| `InputManifestV1` | exporter/CAS | JobId, checkpoint, input chunk count/root, source roots, count/totals, openings |
+| `PlanCommitmentV1`, derived `UnitSpecV1`/artifacts | supervisor/workers/CAS | JobId, unit count/root, program semantics, UnitId |
+| `ResultChunkV1` catalog and `LysisResultV1` | supervisor/CAS | exact chunk count/root, typed result and ResultDigest |
 | sign-once record | node attestation gate | key epoch, JobId, attempt, purpose, digest |
 | activation transaction/receipt | canonical block data | finality proof, typed result, certificate |
 | active generation/terminal receipt | canonical state | JobId, result/effect commitments |
@@ -120,8 +145,8 @@ This journal is restart/reconciliation evidence, not chain authority.
 
 1. The PoC fork/profile and one exact `ProtocolBundleV1` are active on a fresh
    disposable devnet.
-2. The generated WWD input fits the frozen Tribute, artifact, activation and
-   block caps.
+2. Every generated page, work shard, chunk, control message and activation
+   summary fits its frozen interface cap; total Tribute count is not capped.
 3. Four result-validator identities and their separate OCOMP keys are registered;
    `n=4`, `q=3`.
 4. The day is READY, its Tribute collection is sealed and non-empty, and the
@@ -135,18 +160,18 @@ This journal is restart/reconciliation evidence, not chain authority.
 
 | Step | Owner | Message/transition | Durable output | Observable test oracle | PoC requirements |
 |---:|---|---|---|---|---|
-| 1 | client/Tribute | issue bounded heterogeneous Tributes through public transactions | canonical Tribute/CE state and receipts | successful finalized receipts; public bodies/proofs show leagues/currencies/exclusion fixtures | POC-01, POC-22 |
+| 1 | client/Tribute | issue a bounded heterogeneous population that crosses at least one work-shard boundary through public transactions | canonical Tribute/CE state and receipts | successful finalized receipts; public bodies/proofs show every Tribute, including the first record of shard 2, plus leagues/currencies/exclusion fixtures | POC-01, POC-22 |
 | 2 | CE/Metadosis | seal WWD; split `day_limit`; GREEN dispatches `auction_base` to Desis or RED credits it to carry-over; create an intent for `lysis_budget` without Lysis | split receipt, `JobIntentV1`, expiry index, request event, tentative pin | finalized diff proves the request-phase effect happened once and shows zero new Nod/contributor/Tribute-consume/unused-Lysis carry-over effect | POC-02, POC-03, POC-23 |
 | 3 | consensus/node | finalize request block and derive exact `JobId`/finality proof | finalized cursor entry and finalized pin | all four nodes report the same canonical job binding; adversarial proof vectors reject | POC-04 |
 | 4 | supervisor | discover by finalized cursor; event may only reduce latency | local `DISCOVERED` journal | dropping the request subscription still discovers exactly one job | POC-05 |
 | 5 | node/exporter | open read-only checkpoint lease; full-fold CE; verify raw bodies/openings; publish manifest/chunks | finalized pin, `InputManifestV1`, CAS objects | every domain independently reconstructs exact root/count/nominal/opening commitments; Mongo/CAS mutation rejects | POC-06, POC-09, POC-20 |
-| 6 | supervisor/planner | derive canonical plan and all `UnitSpecV1`/`UnitId`s | `PlanHash`, unit objects | frozen bytes/hashes match golden vectors in all domains | POC-07 |
-| 7 | workers/reducer | execute immutable units, retry freely and reduce in fixed order | unit artifacts and `BoundedLysisResultV1` | 1/2/4 workers and randomized completion/retry yield byte-identical result; reference corpus matches | POC-01, POC-08 |
+| 6 | supervisor/planner | partition the complete manifest into adjacent bounded work shards; commit count/root and derive `UnitSpecV1`/`UnitId` lazily by ordinal | `PlanCommitmentV1`, bounded queue cursor and unit artifacts | shard capacity + 1 creates the next shard; 10,000 and 1,000,000,000 counts produce exact unit counts without proportional plan allocation; frozen bytes/hashes match golden vectors | POC-07 |
+| 7 | workers/reducer | execute immutable units from the bounded local queue, retry freely, reduce the complete set in fixed streaming order and publish bounded result chunks | unit artifacts, `ResultChunkV1` catalog and one `LysisResultV1` | missing any shard/chunk cannot produce/sign a result; 1/2/4 workers and randomized completion/retry yield byte-identical roots/result; reference corpus matches | POC-01, POC-08 |
 | 8 | node attestation gate | reload job, verify candidate/caps and durably sign one exact digest | sign-once journal plus one signature/domain | exact retry returns same signature; second digest refuses after restart | POC-12 |
 | 9 | untrusted relay | group three distinct matching signatures and build activation transaction | public transaction bytes | stopped fourth supervisor is not used; duplicate/wrong/mixed signer sets reject | POC-10, POC-13, POC-19 |
-| 10 | RPC/txpool/P2P/proposer/import | submit and include one bounded `activateLysis` transaction | canonical transaction/receipt candidate | cap-1/cap succeeds under profile; cap+1 rejects consistently across public path/replay | POC-20, POC-21 |
+| 10 | RPC/txpool/P2P/proposer/import | submit and include one constant-size complete-result `activateLysis` transaction | canonical transaction/receipt candidate | activation-byte cap-1/cap succeeds and cap+1 rejects consistently across public path/replay; increasing total Tribute does not increase activation bytes | POC-20, POC-21 |
 | 11 | OCOMP/Lysis verifier | verify terminal/live job, finality, bundle, deadline, certificate, typed result and activation preconditions without Lysis execution | private `CertifiedLysisActivation` in execution frame only | one-byte, JobId, order, root/count, precondition and deadline mutations reject with no state diff; trace contains no Lysis/Fidelity/Oracle calculation | POC-03, POC-14, POC-18 |
-| 12 | certified domain owners | apply Nod/contributor/Tribute/carry-over/Metadosis effects and verify four activation receipts plus the request split receipt in one checkpoint | `COMPLETED`, active generation and terminal/effect receipts | representative owner failure or receipt mutation rolls back activation effects; Desis is untouched; delayed activation changes only activation metadata | POC-15, POC-16, POC-17, POC-25 |
+| 12 | certified domain owners | install certified Nod/contributor/output root transitions, retire the sealed Tribute generation, apply carry-over/Metadosis scalars and verify constant-size receipts in one checkpoint | `COMPLETED`, active generation and terminal/effect receipts | no `N`-action on-chain loop; representative owner failure or receipt mutation rolls back activation effects; Desis is untouched; delayed activation changes only activation metadata | POC-15, POC-16, POC-17, POC-25 |
 | 13 | consensus/client | finalize activation and verify outputs through public interfaces | finalized state, receipts, CE roots/proofs | every expected effect and conservation equation verifies; old Tribute partition is logically retired; no supervisor/CAS read is used as outcome authority | POC-22 |
 
 ## Exact PoC acceptance choreography
@@ -154,16 +179,17 @@ This journal is restart/reconciliation evidence, not chain authority.
 The PoC is complete only when this exact story passes from public Tribute
 issuance through public Nod reads on a four-validator devnet:
 
-1. issue a bounded WWD with different Fidelity leagues, currencies and at least
-   one `exclude_from_intex_issuance` Tribute;
+1. issue a bounded WWD with at least `max_tributes_per_work_shard + 1` Tribute, different
+   Fidelity leagues, currencies and at least one
+   `exclude_from_intex_issuance` Tribute;
 2. seal the WWD and reach terminal Metadosis;
 3. inspect the finalized split and `JobIntent`; prove the request-phase effect
    happened once and there are zero new Nod/contributor/Tribute-consume effects;
 4. stop one validator’s supervisor;
-5. show the other three domains independently rebuild the same input root and
-   produce the same `ResultDigest`;
-6. submit their certificate and exact typed result in one activation transaction
-   through the untrusted relay;
+5. show the other three domains independently rebuild the same input root,
+   derive the same multi-shard plan and produce the same `ResultDigest`;
+6. submit their certificate and exact `LysisResultV1` commitment in one
+   activation transaction through the untrusted relay;
 7. finalize it and query every expected Nod, contributor total, Metadosis state,
    request-phase Desis brief, carry-over credit and retired Tribute partition;
 8. compare the result with an offline reference/golden corpus, never an on-chain
@@ -203,7 +229,7 @@ scenario identity but are not PoC acceptance requirements.
 | PFS-002-09 | lost request event | Given a finalized request and dropped subscription event, when supervisor resumes its finalized cursor, then it discovers the exact job once | one real validator domain, repeated across four; UDS | cursor/journal plus canonical job read | POC-05 |
 | PFS-002-10 | orphaned request and tentative pin | Given a tentative pin/local prework, when the request candidate reorgs before finality, then work is non-signable and the pin releases | finalizing/reorg-capable four-node harness | canonical hash mismatch, pin journal, attestation refusal | POC-23 |
 | PFS-002-11 | CAS corruption and TOCTOU | Given an exported manifest, when a chunk is truncated/reordered/changed before or during worker consumption, then stream digest/membership fails or the chunk is rebuilt and no bad result is signed | one real exporter/worker/CAS domain | expected/actual digest and unchanged sign journal | POC-06, POC-20 |
-| PFS-002-12 | deterministic worker schedules | Given one exact job, when it runs with 1, 2 and 4 workers plus random kills/retries/order, then plan/result bytes remain identical | one domain is sufficient for schedule variants; compare all four domains | golden plan/unit/result hashes | POC-07, POC-08 |
+| PFS-002-12 | deterministic multi-shard worker schedules | Given one exact parent job containing `max_tributes_per_work_shard + 1` Tribute, when its complete shard/unit DAG runs with 1, 2 and 4 workers plus random kills/retries/order, then the last Tribute is in shard 2 and plan/result bytes remain identical | one domain is sufficient for schedule variants; compare all four domains | golden shard/range/plan/unit/result hashes and exact coverage bitmap | POC-07, POC-08 |
 | PFS-002-13 | one validator domain unavailable | Given one stopped supervisor and four live nodes, when remaining domains execute, then three distinct matching signatures activate while finality continues | four nodes, three compute domains | process health, certificate indexes and finalized output | POC-09, POC-10, POC-19 |
 | PFS-002-14 | two validator domains unavailable | Given two stopped supervisors, when the exclusive deadline arrives, then begin-zone expiry advances the attempt with the same Lysis budget, no repeated auction and no Nod | four nodes, two compute domains | finalized FSM/budget/state diff | POC-11, POC-18, POC-19 |
 | PFS-002-15 | sign-once equivocation/restart | Given one durable signature subject, when a different digest is requested before and after node restart, then the gate refuses and retains the first binding | one real node attestation gate and durable journal | signature/journal bytes and typed refusal | POC-12 |
@@ -212,10 +238,11 @@ scenario identity but are not PoC acceptance requirements.
 | PFS-002-18 | effect receipt mutation | Given valid owner effects in a focused candidate, when one receipt carries a wrong job/count/root, then aggregate verification reverts the outer checkpoint | execution integration through real owner APIs | mutated receipt and full canonical state diff | POC-16 |
 | PFS-002-19 | logical-time delay | Given identical jobs/results activated at different valid heights, when both finalize, then semantic outputs match and only declared activation metadata differs | repeatable four-node fresh-devnet fixtures | public record/receipt byte comparison | POC-17 |
 | PFS-002-20 | exclusive deadline boundary | Given otherwise valid activation before and at deadline, when block ordering executes, then the former may succeed and the latter observes prior expiry | four nodes with controlled block height | block trace, receipt and FSM records | POC-18 |
-| PFS-002-21 | bounded interface/public cap | Given cap-1/cap/cap+1 UDS, CAS and activation fixtures, when they enter their real interfaces, then allowed shapes behave consistently and cap+1 rejects before unbounded work | one local control domain plus four-node public path | decoder/resource assertions and proposer/import/replay parity | POC-20, POC-21 |
+| PFS-002-21 | bounded interface/public cap | Given worker-shard-cap+1 and activation-byte cap-1/cap/cap+1 fixtures, when they enter their real interfaces, then shard-cap+1 creates another canonical shard without loss while only an oversized transaction/chunk/control frame rejects before unbounded work | one local control domain plus four-node public path | exact shard coverage, decoder/resource assertions and proposer/import/replay parity | POC-20, POC-21 |
 | PFS-002-22 | protocol bundle mismatch | Given one supervisor without the active bundle, when handshake/discovery runs, then only local OCOMP readiness refuses and its node continues finality | four nodes; one incompatible supervisor | `ocomp_ready=false`, unchanged consensus readiness/blocks | POC-24 |
 | PFS-002-23 | finalized generation replay | Given completed activation, when nodes and compute processes restart/replay, then public outcome selects the same generation/result without CAS authority | four nodes and preserved datadirs | finalized state/receipt/proof reads | POC-25 |
 | PFS-002-24 | no on-chain computation trace | Given request and activation blocks, when their complete execution traces are inspected, then no on-chain call reaches Lysis, Fidelity league or Oracle calculation | proposer/import/replay trace on four nodes | registered call-boundary/static trace assertion | POC-03 |
+| PFS-002-25 | population-independent planning | Given synthetic manifests for 10,000 and 1,000,000,000 Tribute, when the planner commits the job, then it derives exactly `ceil(N/S)` primary work units through bounded cursors without allocating a vector proportional to `N` | one supervisor/planner process; no billion-record body fixture required | exact count derivation, bounded-allocation instrumentation and deterministic sampled/boundary `UnitSpecV1` vectors | POC-07, POC-20 |
 
 ## POC requirement coverage
 

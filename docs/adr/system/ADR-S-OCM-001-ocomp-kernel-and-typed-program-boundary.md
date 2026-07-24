@@ -53,7 +53,7 @@ The kernel and program own different truths:
 For the PoC the kernel is implemented as internal deep modules wired directly to
 one concrete `LysisProgramV1`. The persisted and wire-visible
 `JobIntentV1`, `UnitSpecV1`, `ActivationPayloadV1`,
-`BoundedLysisResultV1`, `ProtocolBundleV1`, `activateLysis` and
+`LysisResultV1`, `ProtocolBundleV1`, `activateLysis` and
 `CertifiedLysisActivation` remain Lysis-specific even where a historical name
 looks generic.
 
@@ -78,6 +78,29 @@ The service manager starts node and compute services independently. The node
 never spawns workers or depends on supervisor lifetime for consensus progress.
 Many workers under one supervisor remain one Byzantine validator domain.
 
+### Logical job and worker-shard boundary
+
+`JobIntentV1` names the complete Lysis computation for one WWD. It is not sized
+to one worker invocation. The Lysis planner deterministically partitions its
+complete authenticated Tribute stream into bounded `UnitSpecV1` work shards:
+
+```text
+one finalized JobIntent / JobId over N Tribute
+  -> InputManifestV1 commits N and the input-chunk catalog root
+  -> PlanCommitmentV1 commits X = ceil(N / S) and the work-unit root
+  -> bounded local worker pool lazily derives and executes every shard
+  -> fixed streaming reducer commits bounded ResultChunkV1 objects
+  -> LysisResultV1 commits the complete result-chunk catalog root
+```
+
+Crossing a shard boundary never rejects or drops a Tribute: the next canonical
+Tribute starts the next shard. Shards are local retryable artifacts, not
+consensus jobs, validator votes or independently activatable results. Every
+validator domain derives and executes the complete shard set independently.
+`N` has no artificial PoC or protocol ceiling. Only one work shard, one
+input/result chunk, the live worker pool and constant-size protocol summaries
+are bounded.
+
 ## Authoritative interfaces
 
 | Responsibility | Authority |
@@ -95,6 +118,13 @@ Many workers under one supervisor remain one Byzantine validator domain.
 - OCOMP failure cannot stop consensus or mutate domain state.
 - A supervisor, exporter, worker, CAS or relay owns no consensus authority.
 - Worker count never increases evidence weight.
+- A worker-shard capacity limits one invocation, not the Tribute population
+  covered by the parent Job Intent.
+- `JobIntentV1`, `InputManifestV1`, `PlanCommitmentV1` and `LysisResultV1`
+  commit arbitrary-size populations by count and root; they never inline a
+  vector proportional to `N`.
+- Every authenticated Tribute belongs to exactly one canonical work shard and
+  every shard belongs to exactly one parent Job Intent.
 - The kernel cannot enumerate or interpret Tribute, Fidelity, Oracle, Nod or Gem
   business state.
 - A typed program cannot choose consensus semantics through local configuration
@@ -116,11 +146,13 @@ continues and on-chain expiry remains available without any compute process.
 
 ## Determinism and bounds
 
-Every control message, persisted object, artifact and activation input has
-fork-pinned codecs and byte/count/work caps. The control API accepts no database
-query, path, command, executable, private key or arbitrary signing payload.
-Scheduling order and worker identity are operational facts, never semantic
-inputs.
+Every control message, individual chunk/work artifact and activation summary
+has fork-pinned byte/count/work caps. Total job size is a committed `u64`
+population, not an admission cap. Enumeration, scheduling, reduction and GC are
+cursor/page bounded so resident memory and per-step work do not grow with `N`.
+The control API accepts no database query, path, command, executable, private
+key or arbitrary signing payload. Scheduling order and worker identity are
+operational facts, never semantic inputs.
 
 ## Compatibility and extension
 

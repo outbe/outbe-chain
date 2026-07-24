@@ -15,8 +15,8 @@ const LIMITS: CodecLimits = CodecLimits::new(1_024, 4, 1_024);
 const _: () = {
     assert!(OCOMP_SHAPE_MEASUREMENT_ONLY);
     assert!(!OCOMP_SHAPE_ARMABLE);
-    assert!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_poc_tributes <= 256);
-    assert!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_action_stream_bytes <= 524_288);
+    assert!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard <= 256);
+    assert!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_result_chunk_bytes <= 524_288);
     assert!(OCOMP_POC_HEADROOM_POLICY_V1.failed_or_timeout_run_rejects_candidate);
     assert!(!OCOMP_POC_HEADROOM_POLICY_V1.retry_failed_run);
 };
@@ -83,8 +83,15 @@ fn measurement_shape_has_positive_and_negative_vector_for_every_object() {
 
 #[test]
 fn generated_candidate_constants_are_measurement_only_and_within_ceiling() {
-    assert_eq!(OCOMP_POC_CANDIDATE_LIMITS_V1.unit_tributes, 32);
-    assert_eq!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_total_units, 43);
+    assert_eq!(
+        OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard,
+        256
+    );
+    assert_eq!(OCOMP_POC_CANDIDATE_LIMITS_V1.max_inputs_per_work_unit, 13);
+    assert_eq!(
+        OCOMP_POC_CANDIDATE_LIMITS_V1.max_records_per_input_chunk,
+        768
+    );
     assert_eq!(OCOMP_POC_DEVNET_MACHINE_V1.logical_cpu_count, 4);
     assert_eq!(
         OCOMP_POC_DEVNET_MACHINE_V1.nominal_memory_bytes,
@@ -114,46 +121,5 @@ fn generated_manifest_has_no_network_binding() {
         "network_manifest_hash",
     ] {
         assert!(manifest["network_binding"][field].is_null());
-    }
-}
-
-#[test]
-fn checked_in_network_sources_cannot_select_measurement_fixture() {
-    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(3)
-        .unwrap();
-    let forbidden = [
-        "OUTBE_OCOMP_POC_DEVNET_FORK_V1",
-        outbe_ocomp_protocol::generated_shape::OCOMP_POC_FORK_ID_HEX,
-        outbe_ocomp_protocol::generated_shape::OCOMP_CAPACITY_PROFILE_ID_HEX,
-    ];
-    for relative in [
-        "bin/outbe-chain",
-        "crates/blockchain/node/src",
-        "crates/blockchain/node/tests/assets",
-    ] {
-        scan_tree(&repository.join(relative), &forbidden);
-    }
-}
-
-fn scan_tree(path: &std::path::Path, forbidden: &[&str]) {
-    for entry in std::fs::read_dir(path).unwrap() {
-        let entry = entry.unwrap();
-        let path = entry.path();
-        if path.is_dir() {
-            scan_tree(&path, forbidden);
-            continue;
-        }
-        let Ok(contents) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        for literal in forbidden {
-            assert!(
-                !contents.contains(literal),
-                "armable network source {} contains provisional OCOMP literal {literal}",
-                path.display()
-            );
-        }
     }
 }

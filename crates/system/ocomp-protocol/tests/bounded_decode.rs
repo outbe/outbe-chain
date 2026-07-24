@@ -12,6 +12,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     codec: CODEC,
     max_bounded_bytes: 8,
     max_proof_bytes: 8,
+    max_opening_bytes: 8,
     max_collection_items: 4,
     max_action_items: 4,
     max_chunk_items: 4,

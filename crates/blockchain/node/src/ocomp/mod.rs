@@ -5,6 +5,7 @@
 //! export, execute, or sign one PoC job.
 
 pub mod finality;
+mod openings;
 pub mod retention;
 
 #[cfg(test)]

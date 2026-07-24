@@ -33,7 +33,7 @@ OCOMP lifecycle kernel
   + one strict OCOMP canonical binary codec
   + one normal Ethereum activateLysis transaction
   + one static 3-of-4 secp256k1 result committee
-  + complete transaction-carried bounded result
+  + constant-size transaction-carried result commitment
 ```
 
 There are two different classes of values:
@@ -83,10 +83,10 @@ The semantic profile constants are:
 | result validators `n` | `4` |
 | tolerated faulty/offline domains `f` | `1` |
 | matching signatures `q` | `3` |
-| candidate Tribute ceiling | `256` |
-| planner unit size | `32` Tribute |
+| complete-job Tribute ceiling | **none** |
+| maximum Tribute per worker shard | `256` |
 | workers per validator domain | `1..4` |
-| pending jobs | `1` |
+| pending parent jobs | `1` |
 | intents per block | `1` |
 | activations per block | `1` |
 | READY inspections per block | `1` |
@@ -99,13 +99,17 @@ The semantic profile constants are:
 | active Oracle S-curve entries | candidate `256` |
 | result deadline delta | `64` blocks |
 | source evidence retention after terminal | `64` finalized blocks |
-| action-stream candidate ceiling | `524288` bytes |
-| action data availability | complete bytes in the activation transaction |
+| result-chunk candidate ceiling | `524288` bytes |
+| result-summary candidate ceiling | `1048576` bytes |
+| action data availability | authenticated result chunks retained by the three signing domains; no independent PoC custody claim |
 | proof system | canonical `none` |
 | external DA system | canonical `none` |
 
-The final Tribute, Oracle-range and byte ceilings may only stay the same or
-decrease after capacity generation. They may never be raised by configuration.
+Worker-shard, chunk, concurrency, Oracle-range and byte ceilings may only stay
+the same or decrease after capacity generation. Capacity generation must
+preserve an accepted multi-shard boundary case and synthetic 10,000/1,000,000,000
+unit-count derivation. No generated or configured field may impose a total
+Tribute ceiling.
 
 ## 3. OCOMP Canonical Binary V1
 
@@ -177,8 +181,8 @@ The following `u16` tags are permanent for the PoC history:
 | `0x0009` | `AuthenticatedInputChunkV1` |
 | `0x000a` | `UnitSpecV1` |
 | `0x000b` | `UnitArtifactV1` |
-| `0x000c` | `ActionStreamV1` |
-| `0x000d` | `BoundedLysisResultV1` |
+| `0x000c` | `ResultChunkV1` |
+| `0x000d` | `LysisResultV1` |
 | `0x000e` | `ActivationPayloadV1` |
 | `0x000f` | `OcompCommitteeSnapshotV1` |
 | `0x0010` | `OcompKeyRegistrationV1` |
@@ -353,7 +357,7 @@ Registered domains are:
 | `OUTBE_OCOMP_JOB_V1` | `IntentId || finalized_block_hash || finalized_state_root` |
 | `OUTBE_OCOMP_INPUT_CHUNK_V1` | canonical `AuthenticatedInputChunkV1` |
 | `OUTBE_OCOMP_INPUT_MANIFEST_V1` | canonical `InputManifestV1` |
-| `OUTBE_OCOMP_PLAN_V1` | ordered canonical `UnitSpecV1` vector |
+| `OUTBE_OCOMP_PLAN_V1` | canonical nested `PlanCommitmentV1` |
 | `OUTBE_OCOMP_UNIT_V1` | canonical `UnitSpecV1` |
 | `OUTBE_OCOMP_UNIT_INTERVAL_V1` | phase and canonical nested interval |
 | `OUTBE_OCOMP_UNIT_INPUTS_V1` | ordered canonical nested `CanonicalInputRefV1` vector |
@@ -361,7 +365,7 @@ Registered domains are:
 | `OUTBE_OCOMP_UNIT_OUTPUT_V1` | unit identity and exact phase output bytes |
 | `OUTBE_OCOMP_UNIT_COVERAGE_V1` | phase, interval and work-output coverage header |
 | `OUTBE_OCOMP_UNIT_ARTIFACT_V1` | canonical `UnitArtifactV1` |
-| `OUTBE_BOUNDED_LYSIS_ACTIONS_V1` | canonical `ActionStreamV1` |
+| `OUTBE_OCOMP_RESULT_CHUNK_V1` | canonical `ResultChunkV1` |
 | `OUTBE_OCOMP_RESULT_V1` | canonical `ActivationPayloadV1` |
 | `OUTBE_OCOMP_VALIDATOR_IDENTITY_V1` | index, validator address and canonical consensus public key |
 | `OUTBE_OCOMP_COMMITTEE_V1` | canonical `OcompCommitteeSnapshotV1` |
@@ -421,7 +425,7 @@ JobId = H(
 
 PlanHash = H(
   "OUTBE_OCOMP_PLAN_V1",
-  u32_be(unit_count) || canonical(UnitSpecV1_0) || ... || canonical(UnitSpecV1_n)
+  canonical_nested(PlanCommitmentV1)
 )
 
 UnitId = H("OUTBE_OCOMP_UNIT_V1", canonical(UnitSpecV1))
@@ -455,9 +459,9 @@ UnitCoverageCommitment = H(
   u32_be(source_coverage_count) || u32_be(output_coverage_count)
 )
 
-ActionStreamHash = H(
-  "OUTBE_BOUNDED_LYSIS_ACTIONS_V1",
-  canonical(ActionStreamV1)
+ResultChunkHash = H(
+  "OUTBE_OCOMP_RESULT_CHUNK_V1",
+  canonical(ResultChunkV1)
 )
 
 ResultDigest =
@@ -725,8 +729,7 @@ CorrectnessProfileV1 {
 
 CapacityProfileV1 {
   profile_id: Hash,
-  max_poc_tributes: u32,
-  unit_tributes: u32,
+  max_tributes_per_work_shard: u32,
   max_workers_per_domain: u8,
   max_pending_jobs: u8,
   max_intents_per_block: u8,
@@ -992,7 +995,7 @@ InputManifestV1 {
   sealed_tribute_collection_root: Hash,
   tribute_count: u32,
   tribute_nominal_total: U256,
-  ordered_chunks: Vec<InputChunkRefV1>,
+  input_chunk_count: u32,
   input_chunk_list_root: Hash,
   fidelity_opening_root: Hash,
   oracle_opening_root: Hash,
@@ -1038,6 +1041,19 @@ FidelityIndexHalfOpenRange { start: u32, end: u32 }
 CanonicalRunSpan { start_run: u32, end_run: u32 }
 BinaryReducerNode { level: u16, index: u32 }
 
+PlanCommitmentV1 {
+  protocol_bundle_hash: Hash,
+  JobId: Hash,
+  attempt: u32,
+  input_manifest_hash: Hash,
+  tribute_count: u32,
+  max_tributes_per_work_shard: u32,
+  primary_work_unit_count: u32,
+  primary_work_unit_root: Hash,
+  planner_spec_version: u16,
+  reducer_spec_version: u16
+}
+
 UnitSpecV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
@@ -1045,7 +1061,8 @@ UnitSpecV1 {
   phase: enum u8 =
     ENUMERATE(1) | FIDELITY_MAP(2) | FIXED_REDUCE(3) |
     AMOUNT_MAP(4) | GRATIS_PREFIX(5) | OUTPUT_FINALIZE(6) |
-    OWNER_SHUFFLE(7) | BUCKET_SHUFFLE(8) | ROOT_REDUCE(9),
+    OWNER_SHUFFLE(7) | BUCKET_SHUFFLE(8) | ROOT_REDUCE(9) |
+    GRATIS_PREFIX_DOWN(10),
   interval: closed tagged union =
     ENTITY_ID_RANGE(1, EntityIdHalfOpenRange) |
     FIDELITY_INDEX_RANGE(2, FidelityIndexHalfOpenRange) |
@@ -1086,7 +1103,7 @@ The phase fixes the interval tag:
 |---|---|
 | `ENUMERATE`, `AMOUNT_MAP`, `OUTPUT_FINALIZE` | `EntityIdHalfOpenRange` |
 | `FIDELITY_MAP` | `FidelityIndexHalfOpenRange` |
-| `FIXED_REDUCE`, `GRATIS_PREFIX`, `ROOT_REDUCE` | `BinaryReducerNode` |
+| `FIXED_REDUCE`, `GRATIS_PREFIX`, `GRATIS_PREFIX_DOWN`, `ROOT_REDUCE` | `BinaryReducerNode` |
 | `OWNER_SHUFFLE`, `BUCKET_SHUFFLE` | `CanonicalRunSpan` |
 
 For `FIDELITY_MAP`, the canonical Fidelity opening index is the raw Tribute
@@ -1094,9 +1111,10 @@ ordinal after the opening owner is mapped to its unique Tribute. Range `j` is
 `[32*j, min(32*(j+1), T))`; missing, duplicate or non-gap-free indexes are
 invalid. Storage/chunk order is never an index.
 
-Unit specifications are in topological phase order, then by interval
-`(start,end)` or `(level,index)`, and are unique. Each phase has an exact
-positional input-purpose grammar; the vector is not a caller-defined bag.
+Unit specifications are uniquely derived in topological phase order, then by
+interval `(start,end)` or `(level,index)`. They are enumerated by bounded cursor
+and committed by roots/counts; no caller supplies or materializes the complete
+vector. Each phase has an exact positional input-purpose grammar.
 
 Every `canonical_output_bytes` starts with the nested common header:
 
@@ -1125,7 +1143,7 @@ work-output schema manifest. The artifact fields must equal
 `UnitIntervalCommitment`, `UnitInputRoot`, `UnitOutputSemanticDigest` and
 `UnitCoverageCommitment` recomputed from the specification and decoded output.
 
-`unit_artifact_root` in `BoundedLysisResultV1` is list-kind `7` over
+`unit_artifact_root` in `LysisResultV1` is list-kind `7` over
 `UnitArtifactDigest` values for every plan unit except the final
 `ROOT_REDUCE` unit, in exact plan order. Excluding that final carrier avoids a
 self-referential result/artifact digest. The `ROOT_REDUCE` specification is
@@ -1182,18 +1200,23 @@ MetadosisCompletionSummaryV1 {
   logical_evaluation_time: u64
 }
 
-ActionStreamV1 {
+ResultChunkV1 {
+  protocol_bundle_hash: Hash,
+  JobId: Hash,
+  attempt: u32,
+  chunk_ordinal: u32,
+  first_nod_ordinal: u32,
   ordered_nod_actions: Vec<NodActionV1>,
-  ordered_eligible_contributors: Vec<ContributorActionV1>,
-  carry_over_credit: CarryOverCreditActionV1,
-  metadosis_completion_summary: MetadosisCompletionSummaryV1
+  ordered_eligible_contributors: Vec<ContributorActionV1>
 }
 ```
 
-Nod actions are strictly ordered by `(raw_ordinal, tribute_id)`, ordinals are
-gap-free from zero, and IDs/owners are unique. Contributors are strictly
-ordered by `(owner, source_tribute_id)`. The bucket list used for `bucket_root`
-is derived from Nod actions and sorted by `(bucket_key, raw_ordinal)`.
+Within each result chunk, Nod actions are strictly ordered by
+`(raw_ordinal, tribute_id)`, ordinals are gap-free from
+`first_nod_ordinal`, and IDs/owners are unique. Contributors are strictly
+ordered by `(owner, source_tribute_id)`. The ordered chunk catalog proves global
+gap-free coverage and ordering. The bucket list used for `bucket_root` is
+derived from Nod actions and sorted by `(bucket_key, raw_ordinal)`.
 
 ```text
 ExactCountsV1 {
@@ -1237,7 +1260,7 @@ ResultRootsV1 {
   output_manifest_root: Hash
 }
 
-BoundedLysisResultV1 {
+LysisResultV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
   attempt: u32,
@@ -1246,7 +1269,10 @@ BoundedLysisResultV1 {
   unit_artifact_root: Hash,
   fidelity_fraction_root: Hash,
   gratis_prefix_root: Hash,
-  action_stream: ActionStreamV1,
+  result_chunk_count: u32,
+  result_chunk_list_root: Hash,
+  carry_over_credit: CarryOverCreditActionV1,
+  metadosis_completion_summary: MetadosisCompletionSummaryV1,
   tribute_count: u32,
   tribute_nominal_total: U256,
   unused_lysis: U256,
@@ -1261,19 +1287,19 @@ ActivationPayloadV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
   attempt: u32,
-  action_stream_hash: Option<Hash>,
+  result_chunk_count: u32,
+  result_chunk_list_root: Hash,
   roots: ResultRootsV1,
   counts: ExactCountsV1,
   conservation: ConservationTotalsV1,
   arithmetic_commitment: Hash,
-  event_summary_hash: Hash,
-  da_encoding_commitment: Option<Hash>
+  event_summary_hash: Hash
 }
 ```
 
-For PoC, `action_stream_hash` is `some(ActionStreamHash)` and the DA commitment
-is `none`. `ActivationPayloadV1` is reconstructed from the result; it is never
-an independently trusted tuple.
+`ActivationPayloadV1` is reconstructed from the result; it is never an
+independently trusted tuple. The result-chunk count/root commit all action bytes
+without placing them in the activation transaction.
 
 For a successful result, `first_error_ordinal` is `none` and:
 
@@ -1286,7 +1312,7 @@ arithmetic_commitment = H(
 
 The summary is reconstructed from the explicit result fields. A local failed
 execution is never signed or activated and therefore has no
-`BoundedLysisResultV1`.
+`LysisResultV1`.
 
 ### 5.6 Committee, certificate and activation
 
@@ -1347,7 +1373,7 @@ PoCActivationV1 {
   IntentId: Hash,
   finalized_intent_proof: FinalizedIntentProofV1,
   activation_payload: ActivationPayloadV1,
-  result: BoundedLysisResultV1,
+  result: LysisResultV1,
   certificate: ExecutionCertificateV1
 }
 
@@ -1355,7 +1381,7 @@ CandidateAnnouncementV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
   attempt: u32,
-  result: BoundedLysisResultV1,
+  result: LysisResultV1,
   ResultDigest: Hash,
   validator_index: u8,
   key_epoch: u64,
@@ -1751,11 +1777,12 @@ and ineligible cases retain their pre-fork semantics.
 
 ### 8.1 Why the final numbers are generated
 
-The final safe Tribute cap and byte caps depend on the actual activation
-encoding, finality/storage proof, receipt/log shape, gas schedule, block
-envelope and declared minimum devnet machine. A handwritten `256` or `512 KiB`
-does not prove that RPC, txpool, P2P, proposal, import and replay all accept the
-same maximum object.
+The final safe per-shard/per-chunk and activation byte/work caps depend on the
+actual encoding, finality/storage proof, receipt/log shape, gas schedule, block
+envelope and declared minimum devnet machine. A handwritten `256` per shard or
+`512 KiB` per result chunk does not prove that each relevant interface safely
+accepts its maximum object. Total Tribute count is not a generated admission
+constant.
 
 Therefore the candidate constants are upper bounds, not release claims.
 
@@ -1811,12 +1838,11 @@ The checked-in `OcompPocLimitsV1` manifest must contain exact literals for at
 least:
 
 ```text
-max_poc_tributes
-unit_tributes
-max_units_per_phase
-max_total_units
-max_action_stream_bytes
-max_bounded_result_bytes
+max_tributes_per_work_shard
+max_inputs_per_work_unit
+max_records_per_input_chunk
+max_result_chunk_bytes
+max_result_summary_bytes
 max_activation_payload_bytes
 max_finalized_intent_proof_bytes
 max_execution_certificate_bytes
@@ -1828,22 +1854,22 @@ max_log_count
 max_log_bytes
 max_input_manifest_bytes
 max_input_chunk_bytes
-max_input_chunks
-max_fidelity_openings
+max_fidelity_openings_per_work_shard
 max_oracle_openings
 max_oracle_wwd_pair_entries
 max_active_scurve_entries
 max_opening_bytes
-max_nod_actions
-max_contributor_actions
-max_bucket_records
-max_storage_reads
-max_storage_writes
-max_ce_mutations
+max_nod_actions_per_result_chunk
+max_contributor_actions_per_result_chunk
+max_bucket_records_per_result_chunk
+max_protocol_collection_items
+max_activation_storage_reads
+max_activation_storage_writes
+max_activation_root_transitions
 max_signature_verifications
 activation_base_gas
 activation_per_input_byte_gas
-activation_per_action_gas
+activation_per_root_transition_gas
 activation_per_opening_or_proof_byte_gas
 activation_per_signature_gas
 max_activation_gas
@@ -1863,19 +1889,25 @@ txpool, P2P, block, gas, CE and replay becomes the protocol value.
 
 The generator:
 
-1. starts at `T=256` and constructs a maximum-shaped WWD/result, including the
-   worst permitted currencies, Fidelity openings, complete maximum permitted
-   Oracle WWD/S-curve ranges, one bucket per Nod, contributors, events,
+1. starts with work-shard capacity `S=256` and constructs maximum-shaped
+   individual input/result chunks plus a maximum-shaped constant-size
+   activation summary, including the worst permitted Oracle ranges, receipts,
    finality/storage proof and three signatures;
-2. derives every object and transaction size from production encoders;
-3. runs `cap-1`, `cap` and `cap+1` through the public four-node path;
-4. performs the five required cold runs and records CPU/block-processing time,
+2. proves the planner maps `S-1`, `S` and `S+1` inputs to complete canonical
+   shard sets, with `S+1` producing a second shard and no rejection or
+   omission; it also derives exact unit counts for 10,000 and 1,000,000,000
+   without proportional plan allocation;
+3. derives every object and transaction size from production encoders;
+4. runs activation-byte `cap-1`, `cap` and `cap+1` through the public
+   four-node path;
+5. performs the five required cold runs and records CPU/block-processing time,
    peak memory, disk writes, network bytes, gas and finality latency on the
    declared minimum machine;
-5. lowers `T` until the worst run satisfies the exact 20% headroom rule at
-   every layer and `cap+1` is rejected at the intended earliest bound;
-6. emits the limits manifest, Rust constants, network manifest and evidence;
-7. reruns the maximum block on proposer, validator/import and historical replay.
+6. lowers per-interface bounds when necessary until the worst run satisfies the
+   exact 20% headroom rule at every layer; activation/chunk `cap+1` rejects at
+   the intended earliest bound while `S+1` remains an accepted two-shard job;
+7. emits the limits manifest, Rust constants, network manifest and evidence;
+8. reruns the maximum block on proposer, validator/import and historical replay.
 
 The fork cannot activate if:
 
@@ -1883,7 +1915,8 @@ The fork cannot activate if:
   from the compiled constants;
 - any layer accepts a larger semantic object than consensus can replay;
 - cap behavior differs between RPC, txpool, P2P, proposal, import or replay;
-- `T` exceeds 256 or the action stream exceeds 524288 bytes;
+- `S` exceeds 256, any bounded chunk/summary exceeds its generated cap, or any
+  generated field introduces a total Tribute/unit/chunk-count ceiling;
 - the benchmark/environment/evidence hash is missing.
 
 Local supervisor/worker quotas may be smaller and cause abstention. They cannot
@@ -1994,9 +2027,10 @@ This freeze deliberately selects:
   of a new generic execution address;
 - no compression, proof system, external DA or aggregate signature;
 - one static committee/key epoch;
-- complete bounded action bytes in the transaction;
-- typed activation preconditions, actions and receipts rather than maps or
-  generic write sets;
+- bounded authenticated result chunks outside the transaction and their
+  constant-size count/root inside it;
+- typed activation preconditions, result chunks, root transitions and receipts
+  rather than maps or generic write sets;
 - one request-phase budget split and no live-auction top-up.
 
 It does not add:

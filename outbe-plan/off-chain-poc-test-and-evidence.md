@@ -86,7 +86,7 @@ Allowed oracle types are closed:
 | `DURABLE_JOURNAL` | exact persisted pin/sign-once bytes verified after process restart |
 | `DIGESTED_ARTIFACT` | same-descriptor length/digest/manifest-membership verification |
 | `RESOURCE_COUNTER` | decoder/allocation/crypto/work counters at a real bounded interface |
-| `STATIC_BOUNDARY` | compile-fail, dependency and allowlisted callsite/capability scan |
+| `STATIC_BOUNDARY` | compile-fail, dependency and compiler/type-system-enforced capability boundary checks; never source-text matching |
 | `RUNTIME_BOUNDARY_TRACE` | structured proposer/import/replay boundary trace tied to exact blocks |
 
 The following may not close a claim:
@@ -148,13 +148,13 @@ The planning ledger is the machine authority for mappings. Every test below is
 | `OCM-EVD-001` | independent evidence/coverage verifier | complete synthetic bundle passes; missing, mixed-revision, skipped, retried-away, stale and hash-corrupt bundles fail closed |
 | `OCM-BYT-001` | OCB1 registry and every top-level type | production versus independent encode/decode; positive, truncation, trailing, enum/order/cap mutations; exact golden files |
 | `OCM-BYT-002` | SystemTx kinds, ABI selectors, errors, events and hash-domain registry | Alloy/Foundry-independent selector/topic parity, collision scan, request/end-zone envelope bytes |
-| `OCM-CAP-001` | generated `CapacityProfileV1` and maximum fixtures | reproducible cap manifest; cap-1/cap/cap+1 bytes; checked worst-case work bill; exact machine facts and five cold runs leave at least 20% headroom; generated constants match genesis/Rust |
+| `OCM-CAP-001` | generated `CapacityProfileV1` and maximum fixtures | no total Tribute cap; reproducible per-shard/per-chunk/concurrency caps; shard-cap+1 is accepted and covered by two shards; 10,000/1,000,000,000 derive exact unit counts without proportional plan allocation; activation-byte cap-1/cap/cap+1; checked worst-case per-interface work bill; exact machine facts and five cold runs leave at least 20% headroom; generated constants match genesis/Rust |
 | `OCM-FIN-001` | `FinalizedIntentProofV1` | valid proof and wrong hash/root/height/committee/bitmap/certificate mutations |
 | `OCM-SEM-001` | storage-independent Lysis V1 | native/reference JSONL differential including zero, rounding, overflow, league/currency/exclusion and first-error corpus |
-| `OCM-SEM-002` | planner, units, coverage and reducers | every phase/range/padded tree vector; producer membership; deterministic roots and no self-reference |
+| `OCM-SEM-002` | planner, units, coverage and reducers | every phase/range/padded tree vector, including both prefix-scan directions and bounded shuffle merges; `S-1/S/S+1` partitions with `S+1` in shard 2; 10,000/1,000,000,000 count derivation; exact no-gap/no-overlap coverage; producer membership; deterministic roots and no self-reference |
 | `OCM-FSM-001` | request/expiry/conflict/completion model | arbitrary legal/illegal sequences, exact indexes/budget split, nonce/attempt, exclusive deadline, retry backoff and terminal cap |
-| `OCM-APL-001` | result/receipt/conservation verifier | action/root/count/total/order/event/receipt mutations and GREEN/RED equations |
-| `OCM-BND-001` | certified capability and owner boundary | compile-fail constructors, one production factory callsite, four-call cursor, no raw/generic write bypass |
+| `OCM-APL-001` | result/receipt/conservation verifier | result-chunk catalog/root/count/total/event/receipt mutations, old-root-to-new-root binding and GREEN/RED equations |
+| `OCM-BND-001` | certified capability and owner boundary | compile-fail external constructors, module-private factory, behavioral four-call cursor and denial by every non-activation provider; no raw/generic write bypass |
 | `OCM-BND-002` | post-fork no-compute dependency boundary | activation/request crates cannot import or call mutating Lysis/Fidelity/Oracle calculation modules |
 | `OCM-BND-003` | bounded decoders and checked work | cap+1 rejection precedes proportional allocation, hashing and signature verification; arithmetic cannot wrap |
 
@@ -175,10 +175,10 @@ crates/testing/e2e-harness/tests/ocomp_evidence_verifier.rs
 | `OCM-REQ-001` | payload builder -> begin/user/CE-seal/end executor -> Metadosis | split, exact GREEN Desis or RED carry-over, intent/index/event commit together; final CE root is bound; no Nod/contributor/Tribute-consume effect; retry does not repeat the early effect |
 | `OCM-PIN-001` | consensus proposal/finality -> node pin coordinator | tentative record durable before positive vote; finalize/export transition; orphan release; restart; orphan cannot sign |
 | `OCM-DIS-001` | finalized cursor -> real UDS supervisor | dropped event still discovers one job; duplicate/restart remains exactly once |
-| `OCM-EXP-001` | retained CE MDBX + real Mongo + historical openings -> exporter | complete fold/root/count/nominal; body omission/change, opening mutation, source-ahead/behind and exporter restart yield exact export or abstention |
+| `OCM-EXP-001` | retained CE MDBX + real Mongo + historical openings -> exporter | complete fold/root/count/nominal; parent-job retention and cursor GC across at least `S+1` Tribute; body omission/change, opening mutation, source-ahead/behind and exporter restart yield exact export or abstention |
 | `OCM-CAS-001` | exporter/supervisor/worker filesystem CAS | atomic publish, same-descriptor verify, membership/order/length; truncate/change/reorder/TOCTOU/quota faults never reach signing |
 | `OCM-CTL-001` | node/supervisor/exporter/worker UDS | exact frames, peer credentials, method ACL, incompatible bundle, stale generation and cap+1; blocks continue while OCOMP readiness is false |
-| `OCM-DET-001` | real worker processes and reducer | 1/2/4 workers, randomized completion, kill/retry and cache hit/miss produce byte-identical plan/result/digest |
+| `OCM-DET-001` | real worker processes and reducer | one `S+1` parent job produces two primary shards; 1/2/4 workers, randomized completion, kill/retry and cache hit/miss produce byte-identical plan commitment/result roots/digest; removing either shard prevents reduction/signing |
 | `OCM-SIG-001` | node attestation gate + real sign-once filesystem | file/directory fsync-before-release, fault at each persistence boundary, exact retry, different digest refusal before/after restart |
 | `OCM-CRT-001` | relay builder + production certificate verifier | exactly three distinct matching indexes; duplicate, unknown, wrong epoch/key, malformed, mixed result and reordered signatures reject |
 | `OCM-APL-002` | normal activation dispatch -> outer checkpoint -> four certified activation owners plus the stored request split receipt | table-driven failure after each owner and mutation of each activation/request receipt; full rollback; exact retry; certified conflict only after valid evidence |
@@ -322,7 +322,7 @@ Oracle calculation entry
 ```
 
 The production functions expose those markers at every allowlisted caller.
-`OCM-BND-002` checks dependency/callsite closure. During the request and
+`OCM-BND-002` checks compiler dependency closure and runtime call traces. During the request and
 activation blocks, proposer, each importer and historical replay emit a
 structured block-scoped boundary trace. `OCM-TRC-001` requires zero entries for
 all three markers and proves the trace covered the exact transaction/system
@@ -489,8 +489,8 @@ Rules:
   retain bounded logs and the exact reproduction command.
 
 No performance/SLO claim is made. `OCM-CAP-001` and `OCM-PUBLIC` prove only that
-the generated bounded PoC profile is enforced and executable with the frozen
-PoC headroom on the declared test machine.
+the generated per-interface PoC bounds are enforced and executable with the
+frozen PoC headroom on the declared test machine.
 
 ## 8. PFS and compatibility closure
 

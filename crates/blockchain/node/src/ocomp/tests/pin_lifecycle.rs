@@ -13,6 +13,8 @@ use std::{
 
 use alloy_primitives::{b256, keccak256, Bytes, Log, B256, U256};
 use alloy_sol_types::SolEvent as _;
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::EntityId36;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
     ocomp_retention::OcompRetentionHook,
@@ -21,16 +23,25 @@ use outbe_metadosis::{
     ocomp::schema::poc_schema_limits, precompile::IMetadosis, schema::OCOMP_JOB_RECORDS_BASE_SLOT,
 };
 use outbe_ocomp_protocol::{
+    common::{BoundedBytes, ProofBytes},
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        intent_storage_key, job_id_from_intent_id, ActivationPreconditionsV1,
+        CertifiedParentAccountingMetadataV2, ContributorTargetPreconditionV1, DayType,
+        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        ParentProofKind, TributeInputBindingV1,
     },
     state::{OcompJobRecordV1, OcompJobStatus},
 };
+use outbe_offchain_data::TributeRetentionSelector;
+use outbe_offchain_storage::{MemoryStorage, StorageWriter as _};
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS, storage::types::StorageKey as _, OutbeExecutionData, OutbeHeader,
     OutbePayloadTypes, OutbePrimitives,
+};
+use outbe_tribute::{
+    RetainedTributePin, RetainedTributeReader, RetainedTributeWriter, TributeData,
+    TributeRepositoryWriter,
 };
 use reth_chainspec::{ChainSpec, ChainSpecBuilder};
 use reth_ethereum::{primitives::SealedBlock, Block, Receipt, TxType};
@@ -128,6 +139,35 @@ impl FinalizedInputProofSource for DeterministicProofSource {
     }
 }
 
+#[derive(Clone)]
+struct ProofReturningSource {
+    inner: DeterministicProofSource,
+    proof: FinalizedIntentProofV1,
+}
+
+impl FinalizedInputProofSource for ProofReturningSource {
+    fn candidate_for_block(
+        &self,
+        block: &ConsensusBlock,
+    ) -> Result<Option<CandidatePinV1>, RetentionError> {
+        self.inner.candidate_for_block(block)
+    }
+
+    fn resolve_finality(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<CandidateFinalityV1, RetentionError> {
+        self.inner.resolve_finality(candidate)
+    }
+
+    fn build_finalized_intent_proof(
+        &self,
+        _candidate: CandidatePinV1,
+    ) -> Result<FinalizedIntentProofV1, RetentionError> {
+        Ok(self.proof.clone())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum VoteOutcome {
     Positive,
@@ -175,6 +215,9 @@ fn candidate(block: &ConsensusBlock, intent_id: B256) -> CandidatePinV1 {
         block_hash: block.block_hash(),
         state_root: block.header().inner.state_root,
         intent_id,
+        wwd: 7,
+        ce_sealed_root: B256::repeat_byte(4),
+        protocol_bundle_hash: B256::repeat_byte(3),
         deadline_height: block.number() + 10,
     }
 }
@@ -337,6 +380,9 @@ fn production_candidate_source() -> ProductionCandidateFixture {
         block_hash: request.block_hash(),
         state_root: request.header().inner.state_root,
         intent_id,
+        wwd: intent.wwd,
+        ce_sealed_root: intent.ce_sealed_root,
+        protocol_bundle_hash: intent.protocol_bundle_hash,
         deadline_height: intent.deadline_height,
     };
     let receipt_reader = pending_receipts.clone();
@@ -355,6 +401,40 @@ fn production_candidate_source() -> ProductionCandidateFixture {
         candidate: expected,
         source,
         pending_receipts,
+    }
+}
+
+fn unverified_proof(candidate: CandidatePinV1, intent: &JobIntentV1) -> FinalizedIntentProofV1 {
+    let limits = poc_schema_limits();
+    FinalizedIntentProofV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        fork_id: intent.fork_id,
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+        canonical_request_header_rlp: ProofBytes(Vec::new()),
+        parent_accounting: CertifiedParentAccountingMetadataV2 {
+            finalized_block_number: candidate.block_number,
+            finalized_block_hash: candidate.block_hash,
+            finalized_epoch: 0,
+            finalized_view: 0,
+            parent_view: 0,
+            ordered_committee: Vec::new(),
+            signer_bitmap: BoundedBytes(Vec::new()),
+            canonical_commonware_finalization_proof: ProofBytes(Vec::new()),
+            committee_set_hash: B256::ZERO,
+            vrf_material_version: 0,
+            vrf_group_public_key_hash: B256::ZERO,
+            proof_kind: ParentProofKind::Finalization,
+            missed_proposers: Vec::new(),
+        },
+        historical_committee_membership_proof: ProofBytes(Vec::new()),
+        canonical_job_intent: BoundedBytes(
+            intent
+                .encode_canonical(&limits)
+                .expect("fixture intent must encode"),
+        ),
+        intent_account_proof: ProofBytes(Vec::new()),
+        intent_storage_proof: ProofBytes(Vec::new()),
     }
 }
 
@@ -457,6 +537,39 @@ fn ocm_pin_001_production_source_opens_typed_post_state_before_four_positive_vot
         );
         assert!(root.path().join("pin.v1").is_file());
     }
+}
+
+#[test]
+fn finalized_intent_export_rejects_a_proof_for_a_different_intent() {
+    let request = block(100, B256::repeat_byte(0x7a), 0x7b);
+    let intended = production_intent(request.number());
+    let limits = poc_schema_limits();
+    let intent_id = intended.intent_id(&limits).expect("fixture IntentId");
+    let candidate = candidate(&request, intent_id);
+    let job_id = job_id_from_intent_id(intent_id, candidate.block_hash, candidate.state_root)
+        .expect("fixture JobId");
+
+    let mut different = intended;
+    different.pending_nonce += 1;
+    different.attempt += 1;
+    different.activation_preconditions.metadosis.pending_nonce = different.pending_nonce;
+    let inner = DeterministicProofSource::with_jobs([(candidate, job_id)]);
+    let source = Arc::new(ProofReturningSource {
+        inner: inner.clone(),
+        proof: unverified_proof(candidate, &different),
+    });
+    let root = tempfile::tempdir().expect("validator journal root");
+    let coordinator = OcompRetentionCoordinator::open(root.path(), source);
+
+    coordinator
+        .prepare_candidate(&request)
+        .expect("candidate pin must become durable");
+    DeterministicConsensusDriver::finalize(&inner, &coordinator, &request);
+
+    assert!(
+        coordinator.build_finalized_intent_proof(job_id).is_err(),
+        "the exact live JobId must not export another intent's proof"
+    );
 }
 
 #[tokio::test]
@@ -684,6 +797,83 @@ fn ocm_pin_001_orphan_releases_and_remains_non_signable_after_restart() {
     }
 }
 
+#[test]
+fn tentative_pin_selects_exact_day_and_orphan_finality_garbage_collects_its_retained_body() {
+    let request = block(100, B256::repeat_byte(0x62), 0x63);
+    let canonical = block(100, B256::repeat_byte(0x64), 0x65);
+    let candidate = candidate(&request, B256::repeat_byte(0x66));
+    let job_id = job_id_from_intent_id(
+        candidate.intent_id,
+        candidate.block_hash,
+        candidate.state_root,
+    )
+    .expect("fixture tentative JobId");
+    let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
+    let root = tempfile::tempdir().expect("validator journal root");
+    let storage = Arc::new(MemoryStorage::default());
+    let retained_writer = Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone()));
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        retained_writer,
+    );
+
+    assert_eq!(
+        DeterministicConsensusDriver::vote(&coordinator, &request),
+        VoteOutcome::Positive
+    );
+    let day = WorldwideDay::new(candidate.wwd);
+    let pin = RetainedTributePin {
+        job_id,
+        worldwide_day: day,
+    };
+    assert_eq!(
+        TributeRetentionSelector::active_pin_for(&coordinator, day).unwrap(),
+        Some(pin)
+    );
+
+    let tribute_id = EntityId36::new(day, [0x67; 32]);
+    let tribute = TributeData {
+        tribute_id,
+        owner: alloy_primitives::Address::repeat_byte(0x68),
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: true,
+    };
+    let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
+    repository.put(&tribute).expect("fixture current Tribute");
+    let retained_reader = RetainedTributeReader::new(storage.clone());
+    let retain = retained_reader
+        .plan_retain_current(pin, tribute_id)
+        .expect("tentative retained copy");
+    storage
+        .apply_atomic(&retain)
+        .expect("tentative retained transaction");
+    repository
+        .delete(tribute_id)
+        .expect("fixture current retirement");
+
+    DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &canonical);
+    assert!(retained_reader
+        .list_by_day(pin, None, 10)
+        .expect("orphan retained source")
+        .records
+        .is_empty());
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Released {
+            candidate: released,
+            job_id: None,
+            reason: PinReleaseReason::Orphaned,
+            ..
+        } if released == candidate
+    ));
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FailSync {
     File,
@@ -818,13 +1008,60 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     let job_id = B256::repeat_byte(0x55);
     let source = Arc::new(DeterministicProofSource::with_jobs([(candidate, job_id)]));
     let root = tempfile::tempdir().expect("journal root");
-    let coordinator = OcompRetentionCoordinator::open(root.path(), source.clone());
+    let storage = Arc::new(MemoryStorage::default());
+    let day = WorldwideDay::new(candidate.wwd);
+    let tribute_id = EntityId36::new(day, [0x57; 32]);
+    let tribute = TributeData {
+        tribute_id,
+        owner: alloy_primitives::Address::repeat_byte(0x58),
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(10),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(11),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(12),
+        exclude_from_intex_issuance: true,
+    };
+    let repository = TributeRepositoryWriter::new(storage.clone(), storage.clone());
+    repository.put(&tribute).expect("fixture current Tribute");
+    let pin = RetainedTributePin {
+        job_id,
+        worldwide_day: day,
+    };
+    let retained_reader = RetainedTributeReader::new(storage.clone());
+    let retain = retained_reader
+        .plan_retain_current(pin, tribute_id)
+        .expect("fixture retained copy");
+    storage
+        .apply_atomic(&retain)
+        .expect("fixture retained transaction");
+    repository
+        .delete(tribute_id)
+        .expect("fixture current retirement");
+    let retained_writer = Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone()));
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        retained_writer,
+    );
 
     assert_eq!(
         DeterministicConsensusDriver::vote(&coordinator, &request),
         VoteOutcome::Positive
     );
     DeterministicConsensusDriver::finalize(source.as_ref(), &coordinator, &request);
+    assert_eq!(
+        TributeRetentionSelector::active_pin_for(&coordinator, day).unwrap(),
+        Some(pin)
+    );
+    assert_eq!(
+        retained_reader
+            .list_by_day(pin, None, 10)
+            .expect("retained source before release")
+            .records
+            .len(),
+        1
+    );
     let finalized = ready_record(&coordinator);
     assert!(matches!(
         coordinator.record_exported(job_id, finalized.generation - 1, 9, B256::repeat_byte(0x65),),
@@ -835,8 +1072,16 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         .expect("exact exporter CAS");
     assert!(coordinator.is_signable(job_id));
     let terminal = coordinator
-        .observe_terminal(job_id, exported.generation, 120, 184)
+        .observe_terminal(job_id, exported.generation, 120)
         .expect("terminal finality");
+    assert!(matches!(
+        ready_record(&coordinator).state,
+        PinStateV1::Terminal {
+            terminal_height: 120,
+            release_height: 184,
+            ..
+        }
+    ));
     assert!(!coordinator.is_signable(job_id));
     assert_eq!(coordinator.release_due(183).unwrap(), None);
     let released = coordinator
@@ -844,6 +1089,11 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         .expect("release transition")
         .expect("release is due");
     assert_eq!(released.generation, terminal.generation + 1);
+    assert!(retained_reader
+        .list_by_day(pin, None, 10)
+        .expect("exact job retained source after release")
+        .records
+        .is_empty());
     drop(coordinator);
 
     let restarted = OcompRetentionCoordinator::open(root.path(), source);
@@ -874,14 +1124,14 @@ fn ocm_pin_001_journal_bytes_are_stable_and_corruption_quarantines() {
     let bytes = fs::read(root.path().join("pin.v1")).unwrap();
     assert_eq!(
         keccak256_for_test(&bytes),
-        b256!("d633aa7e6876c26f584a282da1536bb1d885795ed1d0550e63554fcbbe5a8836"),
+        b256!("9e8eeda64ca36bd5c10e15fc5d060a00e5385b0b7a5cc1304ce3a3e1cb3cb1ef"),
         "update only when the intentional journal wire format changes"
     );
     assert_eq!(record.generation, 1);
     drop(coordinator);
 
     let mut unsupported = bytes;
-    unsupported[8..10].copy_from_slice(&2_u16.to_be_bytes());
+    unsupported[8..10].copy_from_slice(&3_u16.to_be_bytes());
     let body_len = unsupported.len() - 32;
     let checksum = alloy_primitives::keccak256(&unsupported[..body_len]);
     unsupported[body_len..].copy_from_slice(checksum.as_slice());

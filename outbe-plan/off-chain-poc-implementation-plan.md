@@ -2,7 +2,8 @@
 
 Status: **READY_FOR_IMPLEMENTATION — planning audit passed**
 
-This is the canonical plan for the bounded fresh-devnet Lysis V1 PoC. It plans
+This is the canonical plan for the fresh-devnet Lysis V1 PoC over bounded
+work units and constant-size commitments, with no total Tribute cap. It plans
 implementation but does not claim that any new OCOMP production surface, test
 or evidence currently exists.
 
@@ -126,7 +127,7 @@ flowchart TD
   T15[OCM-15 attestation sign-once]
   T16[OCM-16 relay certificate]
   T17[OCM-17 activation verifier]
-  T18[OCM-18 Nod certified owner]
+  T18[OCM-18 Nod generation-root owner]
   T19[OCM-19 Intex certified owner]
   T20[OCM-20 Tribute certified owner]
   T21[OCM-21 next-day carry-over]
@@ -239,8 +240,8 @@ Parallelizable groups:
 | `OCM-15` | node attestation and sign-once | `04,09,14` | `OCM-SIG-001` |
 | `OCM-16` | relay and q=3 certificate | `04,15` | `OCM-CRT-001` |
 | `OCM-17` | structural verifier/capability/equations | `01,04,05` | `OCM-APL-001`, `OCM-BND-002` |
-| `OCM-18` | Nod certified batch | `05,17` | contributes `OCM-APL-002` |
-| `OCM-19` | Intex certified batch | `05,17` | contributes `OCM-APL-002` |
+| `OCM-18` | Nod certified generation-root install | `05,17` | contributes `OCM-APL-002` |
+| `OCM-19` | Intex certified contributor-root install | `05,17` | contributes `OCM-APL-002` |
 | `OCM-20` | Tribute consume/retire | `05,17` | contributes `OCM-APL-002` |
 | `OCM-21` | consume carry-over into the next unformed day limit | `05,08` | contributes `OCM-REQ-001`, `OCM-TIM-001` |
 | `OCM-22` | Promis certified `unused_lysis` credit | `05,17` | contributes `OCM-APL-002` |
@@ -400,8 +401,9 @@ is byte-reproducible and unregistered domains/tags fail CI.
 
 **Depends on:** `OCM-01`, `OCM-02`.
 
-**Outcome:** every durable/wire/hashed PoC object has one bounded canonical type
-and pure validation contract.
+**Outcome:** every durable/wire/hashed PoC object has one canonical type and
+pure validation contract; objects that carry bodies are individually bounded,
+while population-wide objects use constant-size count/root commitments.
 
 **Files/symbols:**
 
@@ -411,11 +413,16 @@ and pure validation contract.
 
 **Changes:** implement the complete object registry `0x0001..0x001e`, nested
 types, exact IDs/hashes/signature rules, Job/attempt/deadline bindings, local
-control frames, receipts/job record and public ABI constants.
+control frames, receipts/job record and public ABI constants. The capacity
+profile contains no total Tribute cap. `JobIntentV1` binds the complete
+population; `InputManifestV1`, `PlanCommitmentV1` and `LysisResultV1` commit
+chunk/unit/result catalogs by count/root, while `UnitSpecV1` and
+`ResultChunkV1` are bounded worker/artifact objects.
 
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
-bundle/job; q=3 distinct signers; high-s/invalid keys reject; fixed owner order;
-no opaque target/call/write bytes.
+bundle/parent job; complete canonical shard coverage; q=3 distinct signers;
+high-s/invalid keys reject; fixed owner order; no opaque target/call/write
+bytes.
 
 **Fork impact:** defines bytes only; no checked-in schedule selects them.
 
@@ -461,8 +468,10 @@ verification result, machine/headroom policy hash and explicit
 schedule may reference the fixture.
 
 **Invariants/failures:** regeneration without inputs is byte-identical;
-candidate limits never exceed documented ceilings; provisional bundle/genesis/
-committee values cannot be accepted as final closure identities.
+candidate per-interface limits never exceed documented ceilings; `S+1`
+creates two shards and synthetic 10,000/1,000,000,000 counts derive exact unit
+counts without proportional allocation; provisional bundle/genesis/committee
+values cannot be accepted as final closure identities.
 
 **Fork impact:** OCOMP remains unreachable on every checked-in network.
 
@@ -560,9 +569,10 @@ corresponding immutable read-only owner projections consumed by activation
 preconditions.
 
 **Invariants/failures:** accumulator updates use checked arithmetic and exact
-canonical identity; the sealed envelope equals later full export; cap+1 marks
-the WWD ineligible/deferred before allocation; request/activation never call
-Oracle calculation.
+canonical identity; the sealed envelope equals later full export; admission
+never rejects a job because its Tribute population is large;
+worker-shard-cap+1 remains eligible and creates another shard;
+request/activation never call Oracle calculation.
 
 **Fork impact:** new state fields are initialized by the fresh-devnet fork
 handler; pre-fork semantics and existing status values are unchanged.
@@ -637,7 +647,7 @@ mutations reject and pre-fork blocks remain byte-compatible.
 
 **Depends on:** `OCM-05`, `OCM-06`, `OCM-07`.
 
-**Outcome:** an eligible non-empty READY WWD creates one bounded JobIntent and
+**Outcome:** an eligible non-empty READY WWD creates one complete JobIntent and
 one request-phase budget effect, then expires/requeues with the same budget and
 without executing Lysis.
 
@@ -748,7 +758,9 @@ window without receiving writer or arbitrary query authority.
 
 **Changes:** implement opaque lease generation, bounded open timeout, exact block
 hash/state/CE marker identity, typed raw proof set and terminal+64-finalized-block
-release ownership.
+release ownership. Retained Tribute release is cursor/page bounded across the
+parent JobId; finding more than one worker shard continues GC and is not an
+invariant violation.
 
 **Invariants/failures:** CE marker ahead/missed lease, pruned state, Mongo lag,
 wrong containment/proof or opening cap makes that validator abstain; exporter
@@ -762,6 +774,7 @@ and current proof types. Do not add historical CE query service, second
 projection DB or long-horizon production recovery.
 
 **Task-local tests:** lease generation/stale handle, marker race, raw retention,
+multi-page release with `max_tributes_per_work_shard + 1` retained Tribute,
 Mongo behind/ahead containment and Fidelity/Oracle proof mutation. Contributes
 `OCM-EXP-001`.
 
@@ -914,8 +927,9 @@ pass with real backends and no trusted Mongo/CAS assertion exists.
 
 **Depends on:** `OCM-01`, `OCM-04`, `OCM-11`, `OCM-13`.
 
-**Outcome:** one finalized manifest deterministically produces one
-`BoundedLysisResultV1` independent of worker count, order and retries.
+**Outcome:** one finalized manifest deterministically produces bounded
+`ResultChunkV1` objects and one constant-size `LysisResultV1`, independent of
+worker count, order and retries.
 
 **Files/symbols:**
 
@@ -923,14 +937,19 @@ pass with real backends and no trusted Mongo/CAS assertion exists.
 - `bin/outbe-ocomp` supervisor scheduler, worker runner and artifact adoption;
 - plan/unit/result protocol types and vector fixtures.
 
-**Changes:** implement fixed 32-Tribute source ranges, padded Fidelity tree,
-fixed prefix scan, output finalization, owner/bucket shuffle and root reducer;
-verify producer membership/coverage before CAS adoption.
+**Changes:** implement fixed bounded source ranges from
+`max_tributes_per_work_shard`, constant-size `PlanCommitmentV1`, lazy unit
+derivation, padded Fidelity tree, two-direction parallel prefix scan,
+bounded-run owner/bucket merge trees, result chunks and root reducer; verify
+producer membership/coverage before CAS adoption. No phase may collapse all
+`K` ranges into one unit or input vector.
 
 **Invariants/failures:** topological canonical UnitSpec order; stable UnitId;
-zero/many executions allowed; only exact plan member participates; two
-different valid-looking artifacts cause abstention; no reduce-as-completed;
-worker identity/wall time/filesystem order are irrelevant.
+zero/many executions allowed; ranges are adjacent/non-overlapping and cover all
+`N` manifest records exactly once; shard-cap+1 starts a second shard; only exact
+plan member participates; two different valid-looking artifacts cause
+abstention; no reduce-as-completed; worker identity/wall time/filesystem order
+are irrelevant.
 
 **Fork impact:** none; pure/local work.
 
@@ -938,14 +957,17 @@ worker identity/wall time/filesystem order are irrelevant.
 entrypoint. Do not copy semantics into process code, count workers as voters or
 add generic DAG/program interfaces.
 
-**Test first:** `OCM-SEM-002` complete plan/reducer vectors and `OCM-DET-001`
-real 1/2/4-worker randomized kill/retry/order runs.
+**Test first:** `OCM-SEM-002` plan-commitment/lazy-reducer vectors including
+`S-1/S/S+1` shard boundaries plus synthetic 10,000/1,000,000,000 unit counts,
+and `OCM-DET-001` real 1/2/4-worker randomized kill/retry/order runs over the
+`S+1` multi-shard fixture.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; seed/operation schedule, UnitSpecs,
 artifacts, coverage roots, result bytes and digest equality.
 
-**Observable acceptance:** the same JobId under 1, 2 and 4 workers produces
-byte-identical plan/result/digest and matches the independent Lysis corpus.
+**Observable acceptance:** the same `S+1`-Tribute JobId places the last Tribute
+in shard 2 and under 1, 2 and 4 workers produces byte-identical
+plan/result/digest matching the independent Lysis corpus.
 
 **Risks:** hidden completion-order or hash self-reference.
 Mitigation: fixed tree width/order, producer UnitIds and final root carrier
@@ -1060,10 +1082,10 @@ inputs.
 - the existing `PrecompileStorageProvider` capability seam;
 - compile-fail/dependency boundary tests.
 
-**Changes:** reconstruct result/action IDs, order, roots, counts, totals,
-activation preconditions, arithmetic/event summaries; produce a closed
-four-owner apply
-plan; add the non-Clone/non-codec `CertifiedLysisActivation` token and one-shot
+**Changes:** reconstruct result-chunk count/root, output roots, counts, totals,
+activation preconditions and arithmetic/event summaries; produce a closed
+constant-size four-owner root-transition apply plan; add the
+non-Clone/non-codec `CertifiedLysisActivation` token and one-shot
 `StorageHandle::with_lysis_activation_frame` closure. The token carries only a
 raw `B256` call/binding identity, so `outbe-primitives` never depends on the
 wire crate; the provider default denies frame creation.
@@ -1080,7 +1102,7 @@ stream or call owners from the structural verifier. Do not add a capability
 crate or make owner crates depend on Lysis/Metadosis.
 
 **Test first:** `OCM-APL-001` structural/receipt/conservation mutation vectors
-and `OCM-BND-002` dependency/callsite boundary.
+and `OCM-BND-002` compiler dependency/runtime-trace boundary.
 
 **Evidence/CI:** `OCM-FAST`; result/vector mutations, dependency report and
 compile-fail fixtures.
@@ -1090,39 +1112,42 @@ binding input later consumed by the frame closure; every mutation rejects
 before owner access; mutating Lysis/Fidelity/Oracle dependencies are absent.
 
 **Risks:** making capability constructible in tests/other crates. Mitigation:
-private fields/factory, execution-frame lease and compile-fail/callsite scans.
+private fields/factory, execution-frame lease, compile-fail visibility tests and
+behavioral provider-denial/runtime-trace tests.
 
 **DoD:** both ledger tests pass, verifier is pure/bounded and no raw/generic
 effect authority is exposed.
 
-### OCM-18 — Add NodFactory certified batch issuance
+### OCM-18 — Add NodFactory certified generation-root installation
 
 **Depends on:** `OCM-05`, `OCM-17`.
 
-**Outcome:** the Nod owner applies the exact bounded Nod action batch once and
-returns `NodBatchReceiptV1`.
+**Outcome:** the Nod owner installs one certified Nod/bucket/output generation
+root transition and returns constant-size `NodBatchReceiptV1`.
 
 **Files/symbols:**
 
 - `crates/core/nodfactory/src/certified.rs`;
-- existing Nod identity/item/bucket/CE mutation and event helpers;
+- active Nod generation/root state, proof-backed reads and event helpers;
 - owner receipt projection/hash tests.
 
-**Changes:** private capability-gated batch method, target-precondition/generation
-checks, explicit request `logical_evaluation_time`, checked totals/root and one
-canonical receipt/event projection.
+**Changes:** private capability-gated generation-install method,
+target-precondition/generation checks, explicit request
+`logical_evaluation_time`, certified roots/counts/totals and one canonical
+receipt/event projection. Activation never iterates `NodActionV1`.
 
-**Invariants/failures:** one Nod per consumed Tribute; exact IDs/order/root/
-amount/Gratis; no current block timestamp in semantic fields; namespace
-generation compare-and-set; no public issuance selector.
+**Invariants/failures:** certified count equals consumed Tribute count; exact
+old/new roots and amount/Gratis totals; no current block timestamp in semantic
+fields; namespace generation compare-and-set; no public issuance selector.
 
 **Fork impact:** private method unreachable except certified activation.
 
-**Reuse/non-goals:** reuse current Nod construction and CE helpers. Do not call
-legacy Lysis, expose public batch API or write contributor/Tribute state.
+**Reuse/non-goals:** reuse generation/CE root and proof-read helpers. Do not
+call legacy Lysis, expose public root install, inline action batches or write
+contributor/Tribute state.
 
-**Task-local tests:** cap-1/cap actions, wrong precondition/time/root/order,
-mid-batch storage/event failure rollback and receipt hash.
+**Task-local tests:** exact/wrong old generation, time/root/count/totals,
+storage/event failure rollback, idempotent terminal retry and receipt hash.
 
 **Evidence/CI:** `OCM-FAST` owner tests, `OCM-INT` capability integration;
 enables `OCM-APL-002`.
@@ -1134,41 +1159,42 @@ totals and receipt; every failure leaves namespace/CE/events unchanged.
 the only certified construction path.
 
 **DoD:** method is private/capability-gated, owner tests pass and no alternate
-post-fork raw issuance callsite exists.
+post-fork raw issuance path is reachable in behavioral execution.
 
-### OCM-19 — Add Intex certified contributor batch
+### OCM-19 — Add Intex certified contributor-root installation
 
 **Depends on:** `OCM-05`, `OCM-17`.
 
-**Outcome:** Intex writes the exact included contributor series with checked
-totals and returns `ContributorReceiptV1`.
+**Outcome:** Intex installs the exact certified contributor root/count/totals
+without per-owner activation writes and returns `ContributorReceiptV1`.
 
 **Files/symbols:**
 
 - `crates/core/intex/src/certified.rs`;
-- existing contributor state/event helpers;
+- contributor generation/root state, proof-backed reads and event helpers;
 - series version/root/count tests.
 
-**Changes:** strict capability-gated batch method, absent/version-0 series
-precondition, checked additions, exclusion rule, canonical ordering/root and
+**Changes:** strict capability-gated root-install method, absent/version-0
+series precondition, certified count/eligible nominal/root and constant-size
 event projection.
 
-**Invariants/failures:** excluded Tributes still count in Lysis/Nod but never
-enter contributor series; no overwrite; exact included count/nominal/root;
-duplicate/overflow/order mismatch rolls back.
+**Invariants/failures:** excluded Tributes still count in Lysis/Nod but not in
+the committed contributor count/root; no overwrite; exact included
+count/nominal/root; wrong old generation or totals roll back.
 
 **Fork impact:** private certified path only.
 
-**Reuse/non-goals:** reuse current contributor schema and reads. Do not reuse
-unchecked overwrite/`+=`, add generic batch write or alter exclusion economics.
+**Reuse/non-goals:** preserve contributor semantics and add proof-backed reads.
+Do not reuse unchecked overwrite/`+=`, add generic batch writes, iterate owners
+on-chain or alter exclusion economics.
 
-**Task-local tests:** included/excluded mix, duplicate/order/version/overflow,
-event/storage failure and receipt mutation.
+**Task-local tests:** included/excluded commitment fixture, wrong
+version/root/count/nominal, event/storage failure and receipt mutation.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; enables `OCM-APL-002`.
 
-**Observable acceptance:** contributor public state equals exact included
-population while Nod count still equals all consumed Tributes.
+**Observable acceptance:** contributor public proof reads resolve against the
+exact active root while Nod count still equals all consumed Tributes.
 
 **Risks:** silently reusing overwrite semantics. Mitigation: new strict method
 with absent/version compare-and-set.
@@ -1340,7 +1366,7 @@ type, generic dispatcher/write set or on-chain Lysis.
 `OCM-TIM-001` logical time.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; calldata/receipt/event bytes, capability
-callsite report and exact pre/post owner/job/CE state.
+capability-denial/runtime-trace report and exact pre/post owner/job/CE state.
 
 **Observable acceptance:** valid q=3 activation yields the frozen public
 receipt/views and every owner effect; a named late failure leaves the pending
@@ -1459,7 +1485,9 @@ capacity generation.
 
 **Changes:** add pre-fork/fork/post-fork phase scenarios; result/job/order/signer
 mutations; before/at deadline; exact/different completed retry; provisional
-cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs.
+activation-byte cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs;
+also prove worker-shard-cap+1 succeeds as a multi-shard parent job and synthetic
+large counts do not allocate proportional plans.
 
 **Invariants/failures:** no direct executor/state injection; each failed
 activation proves scoped public pre/post equality; proposer/import/replay
@@ -1491,7 +1519,8 @@ retained and no canonical network artifact is modified.
 
 **Depends on:** `OCM-25`.
 
-**Outcome:** the actual implementation determines the final bounded profile,
+**Outcome:** the actual implementation determines the final per-interface
+profile,
 regenerates every chain-bound artifact and is activated only on the canonical
 fresh four-validator devnet.
 
@@ -1504,11 +1533,14 @@ fresh four-validator devnet.
 - final bundle/genesis/cap golden vectors;
 - genesis/network/profile consumers and `mise` capacity command.
 
-**Changes:** start at candidate `T<=256`, construct maximum shape, run real
-cap-1/cap/cap+1, run the five cold measurements on the frozen
-`OcompPocDevnetMachineV1` class, lower until the worst run has at least 20%
-headroom, bind benchmark/machine evidence, regenerate bundle/genesis/committee
-in the frozen two-stage order and remove all provisional acceptance.
+**Changes:** start with worker-shard `S<=256`, construct maximum-shaped
+individual chunks and constant-size activation, prove `S-1/S/S+1` partition
+coverage plus exact 10,000/1,000,000,000 unit-count derivation, run real
+activation-byte cap-1/cap/cap+1, run the five cold measurements on the frozen
+`OcompPocDevnetMachineV1` class, lower per-interface bounds until the worst run
+has at least 20% headroom, bind benchmark/machine evidence, regenerate
+bundle/genesis/committee in the frozen two-stage order and remove all
+provisional acceptance. It must not generate a total Tribute ceiling.
 
 **Invariants/failures:** smallest bound across every interface wins; compiled/
 genesis/network constants equal; cap+1 rejects before unbounded work; final
@@ -1528,7 +1560,8 @@ raise documented ceilings or alter schema semantics.
 **Evidence/CI:** `OCM-FAST`, `OCM-PUBLIC`; generator inputs/outputs, exact
 machine measurements, final artifact hashes and independent vector result.
 
-**Observable acceptance:** cap-1/cap succeeds and cap+1 rejects identically on
+**Observable acceptance:** worker-shard-cap+1 succeeds with complete two-shard
+coverage; activation-byte cap-1/cap succeeds and cap+1 rejects identically on
 the final profile through RPC/txpool/P2P/proposal/import/replay; canonical
 fresh-devnet starts at pre-fork height and activates at 32. All five cold runs
 meet the exact machine/headroom rule with no retry.
@@ -1561,7 +1594,7 @@ closure verification.
 
 **Changes:** implement all stable Gherkin scenarios/tags, final mock-Gramine
 encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
-1/2/4-worker schedules, sign-once/restart, q=3/q<3, delays, owner failure,
+`S+1` multi-shard 1/2/4-worker schedules, sign-once/restart, q=3/q<3, delays, owner failure,
 bundle mismatch, generation replay, compatibility branches and forbidden-call
 trace.
 

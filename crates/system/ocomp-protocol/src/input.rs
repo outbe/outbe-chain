@@ -85,7 +85,7 @@ wire_struct! {
         pub sealed_tribute_collection_root: B256,
         pub tribute_count: u32,
         pub tribute_nominal_total: U256,
-        pub ordered_chunks: Vec<InputChunkRefV1>,
+        pub input_chunk_count: u32,
         pub input_chunk_list_root: B256,
         pub fidelity_opening_root: B256,
         pub oracle_opening_root: B256,
@@ -112,37 +112,15 @@ impl AuthenticatedInputChunkV1 {
 impl InputManifestV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
-            self.ordered_chunks.len() <= limits.max_collection_items,
-            "input chunk reference cap",
+            self.tribute_count > 0
+                && self.input_chunk_count > 0
+                && self.exact_record_count >= self.tribute_count
+                && self.exact_encoded_bytes > 0
+                && !self.input_chunk_list_root.is_zero(),
+            "input manifest committed population",
         )?;
-        let mut previous: Option<(u8, u32)> = None;
-        let mut encoded_bytes = 0_u64;
-        let mut record_count = 0_u32;
-        for chunk in &self.ordered_chunks {
-            let key = (chunk.kind as u8, chunk.ordinal);
-            if let Some(last) = previous {
-                require(last < key, "input chunks strictly ordered and unique")?;
-            }
-            previous = Some(key);
-            encoded_bytes = encoded_bytes.checked_add(chunk.encoded_bytes).ok_or(
-                ProtocolError::IntegerOverflow {
-                    what: "manifest encoded byte total",
-                },
-            )?;
-            record_count = record_count.checked_add(chunk.record_count).ok_or(
-                ProtocolError::IntegerOverflow {
-                    what: "manifest record count",
-                },
-            )?;
-        }
-        require(
-            encoded_bytes == self.exact_encoded_bytes,
-            "manifest exact encoded bytes",
-        )?;
-        require(
-            record_count == self.exact_record_count,
-            "manifest exact record count",
-        )
+        let _ = limits;
+        Ok(())
     }
 
     pub fn manifest_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {

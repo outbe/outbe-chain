@@ -623,6 +623,96 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-10" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-ocomp-protocol"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-compressed-entities",
+                    "-p",
+                    "outbe-tribute",
+                    "-p",
+                    "outbe-fidelity",
+                    "-p",
+                    "outbe-oracle",
+                    "-p",
+                    "outbe-offchain-data",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-node", "--lib"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--test",
+                    "ocomp_checkpoint_handoff",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-compressed-entities",
+                    "-p",
+                    "outbe-tribute",
+                    "-p",
+                    "outbe-fidelity",
+                    "-p",
+                    "outbe-oracle",
+                    "-p",
+                    "outbe-offchain-data",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--features",
+                    "outbe-e2e-harness/ocomp-integration",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

@@ -11,7 +11,7 @@ scope:
   validator_domains: 4
   quorum: 3
   required_poc_ids: POC-01..POC-26
-  required_pfs_ids: PFS-002-01..PFS-002-24
+  required_pfs_ids: PFS-002-01..PFS-002-25
   story_steps: 1..13
   forbidden_shortcuts:
     - direct_activation_or_lysis_handler_for_public_claim
@@ -238,7 +238,9 @@ tests:
       - RESOURCE_COUNTER
     evidence:
       - reproducible_profile_manifest
-      - cap_minus_one_cap_cap_plus_one_fixtures
+      - separate_batch_and_work_shard_caps
+      - shard_cap_plus_one_two_shard_coverage
+      - whole_activation_cap_minus_one_cap_cap_plus_one_fixtures
       - generated_constant_parity
       - observed_minimum_machine_profile
       - five_cold_run_twenty_percent_headroom_report
@@ -466,6 +468,7 @@ tests:
       - DIGESTED_ARTIFACT
     evidence:
       - full_fold_root_count_nominal
+      - parent_job_multi_page_retention_release
       - body_and_opening_mutation_matrix
       - source_lag_ahead_and_restart_results
       - absent_sign_record_on_failure
@@ -524,8 +527,10 @@ tests:
       - CANONICAL_BYTES
       - PROCESS_BOUNDARY
     evidence:
+      - shard_minus_one_shard_shard_plus_one_coverage
       - worker_count_and_schedule_records
       - plan_result_digest_equality
+      - missing_shard_prevents_result_and_signature
   OCM-SIG-001:
     status: planned
     layer: PROCESS
@@ -996,7 +1001,7 @@ requirements:
       text: Export ambiguity abstains rather than reading best-effort live state.
       tests: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-01":
-      text: Equal finalized inputs and bundle produce byte-identical units and result.
+      text: Equal finalized inputs and bundle produce complete byte-identical shard/unit sets and result; crossing a shard boundary loses no input.
       tests: [OCM-SEM-002, OCM-DET-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-02":
       text: Worker scheduling changes neither result nor evidence weight.
@@ -1151,6 +1156,9 @@ requirements:
     PFS-002-24:
       status: required
       tests: [OCM-BND-002, OCM-TRC-001]
+    PFS-002-25:
+      status: required
+      tests: [OCM-CAP-001, OCM-SEM-002]
 
   story:
     "1":

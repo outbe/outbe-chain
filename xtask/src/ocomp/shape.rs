@@ -146,13 +146,14 @@ fn validate_input(input: &Value) -> Result<()> {
         "crypto profile must remain n=4/f=1/q=3, epoch=1, low-s, no recovery"
     );
     let limits = required(input, "candidate_limits")?;
+    let max_tributes_per_work_shard = u64_field(limits, "max_tributes_per_work_shard")?;
     ensure!(
-        u64_field(limits, "max_poc_tributes")? <= 256,
-        "candidate Tribute ceiling exceeds 256"
+        max_tributes_per_work_shard <= 256,
+        "candidate work-shard Tribute ceiling exceeds 256"
     );
     ensure!(
-        u64_field(limits, "max_action_stream_bytes")? <= 524_288,
-        "candidate action-stream ceiling exceeds 524288"
+        u64_field(limits, "max_result_chunk_bytes")? <= 524_288,
+        "candidate result-chunk ceiling exceeds 524288"
     );
     for (name, value) in limits
         .as_object()

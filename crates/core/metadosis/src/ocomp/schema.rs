@@ -95,8 +95,8 @@ pub fn poc_schema_limits() -> SchemaLimits {
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let max_body_bytes = usize::try_from(candidate.max_activation_ocb1_bytes)
         .expect("generated body cap fits usize");
-    let max_collection_items =
-        usize::try_from(candidate.max_ce_mutations).expect("generated item cap fits usize");
+    let max_collection_items = usize::try_from(candidate.max_protocol_collection_items)
+        .expect("generated item cap fits usize");
     SchemaLimits {
         codec: CodecLimits::new(
             max_body_bytes,
@@ -107,12 +107,19 @@ pub fn poc_schema_limits() -> SchemaLimits {
         max_bounded_bytes: max_body_bytes,
         max_proof_bytes: usize::try_from(candidate.max_finalized_intent_proof_bytes)
             .expect("generated proof cap fits usize"),
+        max_opening_bytes: usize::try_from(candidate.max_opening_bytes)
+            .expect("generated opening cap fits usize"),
         max_collection_items,
-        max_action_items: max_collection_items,
-        max_chunk_items: usize::try_from(candidate.max_input_chunks)
-            .expect("generated chunk cap fits usize"),
-        max_unit_inputs: usize::try_from(candidate.max_total_units)
-            .expect("generated unit cap fits usize"),
+        max_action_items: usize::try_from(
+            candidate
+                .max_nod_actions_per_result_chunk
+                .min(candidate.max_contributor_actions_per_result_chunk),
+        )
+        .expect("generated per-result-chunk action cap fits usize"),
+        max_chunk_items: usize::try_from(candidate.max_records_per_input_chunk)
+            .expect("generated per-chunk record cap fits usize"),
+        max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
+            .expect("generated per-unit input cap fits usize"),
         max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
             .expect("generated control cap fits usize"),
     }
@@ -1052,9 +1059,7 @@ fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
     }
 
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let max_poc_tributes = u32::try_from(candidate.max_poc_tributes)
-        .map_err(|_| fatal("generated Tribute cap exceeds u32"))?;
-    let unit_tributes = u32::try_from(candidate.unit_tributes)
+    let max_tributes_per_work_shard = u32::try_from(candidate.max_tributes_per_work_shard)
         .map_err(|_| fatal("generated unit size exceeds u32"))?;
     let max_reference_currencies = u16::try_from(candidate.max_oracle_openings)
         .map_err(|_| fatal("generated reference-currency cap exceeds u16"))?;
@@ -1063,10 +1068,7 @@ fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
     let max_active_scurve_entries = u32::try_from(candidate.max_active_scurve_entries)
         .map_err(|_| fatal("generated S-curve entry cap exceeds u32"))?;
 
-    if capacity.max_poc_tributes == 0
-        || capacity.max_poc_tributes > max_poc_tributes
-        || capacity.unit_tributes != unit_tributes
-        || capacity.unit_tributes > capacity.max_poc_tributes
+    if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
         || capacity.max_workers_per_domain != 4
         || capacity.max_pending_jobs != 1
         || capacity.max_intents_per_block != 1

@@ -268,7 +268,7 @@ A repository-wide exact-name survey found no implementation definitions for:
 - `JobIntentV1`;
 - `InputManifestV1`;
 - `UnitSpecV1`;
-- `BoundedLysisResultV1`;
+- `LysisResultV1`;
 - `ExecutionCertificateV1`;
 - `CertifiedLysisActivation`;
 - `ActiveGenerationV1`;

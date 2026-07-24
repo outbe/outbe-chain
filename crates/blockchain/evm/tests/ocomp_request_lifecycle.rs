@@ -1071,8 +1071,7 @@ fn request_profile() -> OcompRequestProfile {
         correctness_profile_id: B256::repeat_byte(0x24),
         capacity_profile: CapacityProfileV1 {
             profile_id: B256::repeat_byte(0x22),
-            max_poc_tributes: 256,
-            unit_tributes: 32,
+            max_tributes_per_work_shard: 256,
             max_workers_per_domain: 4,
             max_pending_jobs: 1,
             max_intents_per_block: 1,

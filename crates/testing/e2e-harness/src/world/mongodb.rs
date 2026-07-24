@@ -1,7 +1,5 @@
 //! Projection MongoDB owned by a scenario unless the caller supplies a URI.
 
-use std::net::TcpListener;
-use std::process::Stdio;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,9 +10,9 @@ use outbe_compressed_entities::decode_stored_tribute_v1;
 
 use crate::env::Environment;
 use crate::internal::config::Config;
-use crate::internal::proc::{base_cmd, docker_rm, wait_tcp, DockerGuard};
+use crate::internal::proc::{base_cmd, docker_rm};
+use crate::mongo_fixture::ManagedMongoReplicaSet;
 
-const MANAGED_MONGO_IMAGE: &str = "mongo:7.0";
 const COLLECTIONS: [&str; 3] = ["tributes", "tributes_by_owner", "tributes_by_day"];
 
 /// Scenario-scoped projection store and its managed-container lifetime guard.
@@ -25,7 +23,7 @@ pub struct MongoDb {
     scenario: usize,
     validators: usize,
     #[allow(dead_code)]
-    guard: Option<DockerGuard>,
+    guard: Option<ManagedMongoReplicaSet>,
 }
 
 /// Exact primary projection value needed to verify one compressed Tribute.
@@ -45,8 +43,9 @@ impl MongoDb {
     /// Use the configured URI, or replace `auto` with an owned replica set.
     pub(crate) fn connect_or_start(cfg: &mut Config) -> Result<Self> {
         let guard = if cfg.projection_mongodb_uri == "auto" {
-            let (uri, guard) = start_replica_set(cfg)?;
-            cfg.projection_mongodb_uri = uri;
+            let name = format!("outbe-e2e-mongodb-{}-s{}", cfg.run_tag, cfg.scenario);
+            let guard = ManagedMongoReplicaSet::start_named(&name, cfg.sudo)?;
+            cfg.projection_mongodb_uri = guard.uri().to_owned();
             Some(guard)
         } else {
             None
@@ -349,74 +348,4 @@ fn exact_index_document(
             "{database_name}.{collection_name} index value must be empty binary, found {other:?}"
         )),
     }
-}
-
-fn start_replica_set(cfg: &Config) -> Result<(String, DockerGuard)> {
-    let port = free_tcp_port()?;
-    let name = format!("outbe-e2e-mongodb-{}-s{}", cfg.run_tag, cfg.scenario);
-    docker_rm(&name, cfg.sudo);
-
-    let output = base_cmd("docker", cfg.sudo)
-        .args([
-            "run",
-            "-d",
-            "--name",
-            &name,
-            "--network",
-            "host",
-            MANAGED_MONGO_IMAGE,
-            "--replSet",
-            "rs0",
-            "--bind_ip",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .output()
-        .wrap_err("start managed MongoDB container")?;
-    if !output.status.success() {
-        bail!(
-            "start managed MongoDB container: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let guard = DockerGuard::new(&name, cfg.sudo);
-    if !wait_tcp(port, 200) {
-        bail!("managed MongoDB did not listen on 127.0.0.1:{port}");
-    }
-
-    let init = format!("rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}})");
-    let mut ready = false;
-    for _ in 0..60 {
-        let status = base_cmd("docker", cfg.sudo)
-            .args([
-                "exec",
-                &name,
-                "mongosh",
-                "--quiet",
-                "--port",
-                &port.to_string(),
-                "--eval",
-                &init,
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if status.is_ok_and(|status| status.success()) {
-            ready = true;
-            break;
-        }
-        sleep(Duration::from_millis(250));
-    }
-    if !ready {
-        bail!("managed MongoDB replica set initialization failed");
-    }
-
-    let uri = format!("mongodb://127.0.0.1:{port}/?replicaSet=rs0&directConnection=true");
-    Ok((uri, guard))
-}
-
-fn free_tcp_port() -> Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).wrap_err("reserve MongoDB port")?;
-    Ok(listener.local_addr()?.port())
 }

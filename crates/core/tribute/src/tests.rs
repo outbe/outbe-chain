@@ -453,7 +453,6 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
                 canonical_body_bytes: u64::MAX,
                 distinct_owner_count: 0,
                 distinct_reference_currency_count: 0,
-                capacity_exceeded: false,
                 source_generation: 0,
             })
             .unwrap();
@@ -474,8 +473,7 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
 }
 
 #[test]
-fn cap_plus_one_latches_ineligibility_without_rejecting_tribute_or_allocating_more_identity_state()
-{
+fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
     with_tribute(|tc| {
         tc.initialize_fresh_ocomp_profile().unwrap();
         let day = 20241220u32.into();
@@ -490,25 +488,37 @@ fn cap_plus_one_latches_ineligibility_without_rejecting_tribute_or_allocating_mo
             tc.issue(&tribute).unwrap();
         }
 
-        let exceeded = tc.pre_admission_projection(day).unwrap();
-        assert!(exceeded.capacity_exceeded);
-        assert_eq!(exceeded.tribute_count, 257);
-        assert_eq!(exceeded.distinct_owner_count, 256);
+        let second_shard = tc.pre_admission_projection(day).unwrap();
+        assert_eq!(second_shard.tribute_count, 257);
+        assert_eq!(second_shard.distinct_owner_count, 257);
         assert_eq!(tc.total_supply().unwrap(), 257);
+
+        for seed in 258_u16..=513 {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&seed.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute.reference_currency = 840 + (seed % 3);
+            tc.issue(&tribute).unwrap();
+        }
+
+        let third_shard = tc.pre_admission_projection(day).unwrap();
+        assert_eq!(third_shard.tribute_count, 513);
+        assert_eq!(third_shard.distinct_owner_count, 513);
+        assert_eq!(tc.total_supply().unwrap(), 513);
 
         let last = {
             let mut tribute = sample_tribute();
             let mut owner = [0_u8; 20];
-            owner[18..].copy_from_slice(&257_u16.to_be_bytes());
+            owner[18..].copy_from_slice(&513_u16.to_be_bytes());
             set_owner(&mut tribute, alloy_primitives::Address::from(owner));
             tribute
         };
         tc.burn(last.tribute_id).unwrap();
 
         let after_burn = tc.pre_admission_projection(day).unwrap();
-        assert!(after_burn.capacity_exceeded);
-        assert_eq!(after_burn.tribute_count, 256);
-        assert_eq!(after_burn.distinct_owner_count, 256);
+        assert_eq!(after_burn.tribute_count, 512);
+        assert_eq!(after_burn.distinct_owner_count, 512);
     });
 }
 

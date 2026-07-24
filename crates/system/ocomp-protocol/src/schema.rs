@@ -17,6 +17,7 @@ pub struct SchemaLimits {
     pub codec: CodecLimits,
     pub max_bounded_bytes: usize,
     pub max_proof_bytes: usize,
+    pub max_opening_bytes: usize,
     pub max_collection_items: usize,
     pub max_action_items: usize,
     pub max_chunk_items: usize,

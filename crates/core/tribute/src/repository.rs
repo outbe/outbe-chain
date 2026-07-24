@@ -1,10 +1,11 @@
 //! Typed off-chain persistence boundary for Tribute bodies and indexes.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityId36, EntityRef, IdPage,
-    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
+    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityId36, EntityIdError,
+    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
+    StoredBody, TributeBodyV1,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -99,6 +100,73 @@ pub enum TributeRepositoryError {
     /// A projection session may mutate only identities loaded into its repository snapshot.
     #[error("Tribute projection identity {tribute_id} was not loaded")]
     UntrackedProjectionIdentity { tribute_id: EntityId36 },
+    /// A retained copy can only be made while the current canonical body exists.
+    #[error("current Tribute body {tribute_id} is missing during OCOMP retention")]
+    MissingCurrentBodyForRetention { tribute_id: EntityId36 },
+    /// The node-selected retained day and body identity disagree.
+    #[error("OCOMP retained job {job_id} day {worldwide_day} does not match Tribute {tribute_id}")]
+    RetainedDayMismatch {
+        job_id: B256,
+        tribute_id: EntityId36,
+        worldwide_day: WorldwideDay,
+    },
+    /// Retained keys must carry one exact 36-byte entity identity.
+    #[error("invalid retained Tribute entity identity")]
+    RetainedIdentity(#[from] EntityIdError),
+    /// CES1 commitment construction failed for a retained body.
+    #[error("failed to derive retained Tribute commitment: {0}")]
+    RetainedCommitment(String),
+    /// One job/entity identity resolved to different retained bytes or commitments.
+    #[error("OCOMP retained job {job_id} has conflicting bytes for Tribute {tribute_id}")]
+    ConflictingRetainedBody {
+        job_id: B256,
+        tribute_id: EntityId36,
+    },
+    /// A retained body did not reproduce its key commitment.
+    #[error("OCOMP retained job {job_id} commitment mismatch for Tribute {tribute_id}")]
+    RetainedCommitmentMismatch {
+        job_id: B256,
+        tribute_id: EntityId36,
+    },
+    /// Retained bodies never carry mutable projection provenance.
+    #[error("OCOMP retained job {job_id} body {tribute_id} unexpectedly carries metadata")]
+    RetainedMetadata {
+        job_id: B256,
+        tribute_id: EntityId36,
+    },
+    /// The retained day index exists without its exact body.
+    #[error("OCOMP retained job {job_id} has a dangling index for Tribute {tribute_id}")]
+    DanglingRetainedIndex {
+        job_id: B256,
+        tribute_id: EntityId36,
+    },
+    /// The retained body exists without its exact day-index entry.
+    #[error("OCOMP retained job {job_id} has no index for Tribute {tribute_id}")]
+    MissingRetainedIndex {
+        job_id: B256,
+        tribute_id: EntityId36,
+    },
+    /// Retained paging must remain strictly ordered and contain one commitment per identity.
+    #[error("OCOMP retained job {job_id} day {worldwide_day} page is not strictly ascending")]
+    NonAscendingRetainedPage {
+        job_id: B256,
+        worldwide_day: WorldwideDay,
+    },
+    /// The retained cursor must belong to the selected job/day.
+    #[error("OCOMP retained cursor does not belong to job {job_id} day {worldwide_day}")]
+    InvalidRetainedCursor {
+        job_id: B256,
+        worldwide_day: WorldwideDay,
+    },
+    /// The backend returned a malformed retained page continuation.
+    #[error("OCOMP retained job {job_id} day {worldwide_day} continuation is invalid")]
+    InvalidRetainedContinuation {
+        job_id: B256,
+        worldwide_day: WorldwideDay,
+    },
+    /// Exact job GC requires body and index key sets to agree.
+    #[error("OCOMP retained job {job_id} body/index namespaces disagree")]
+    RetainedNamespaceMismatch { job_id: B256 },
 }
 
 /// Cloneable read authority for Tribute bodies and typed indexes.
@@ -184,11 +252,15 @@ impl TributeRepositoryReader {
         &self,
         tribute_ids: &[EntityId36],
     ) -> Result<crate::projection::TributeProjectionSession, TributeRepositoryError> {
-        let records = self.get_many_with_metadata(tribute_ids)?;
-        Ok(crate::projection::TributeProjectionSession::from_records(
-            tribute_ids,
-            records,
-        ))
+        let keys = tribute_ids
+            .iter()
+            .copied()
+            .map(primary_key)
+            .collect::<Result<Vec<_>, _>>()?;
+        let records = self
+            .storage
+            .get_records(namespace(TRIBUTES_NAMESPACE)?, &keys)?;
+        crate::projection::TributeProjectionSession::from_records(tribute_ids, records)
     }
 
     /// Lists one owner's Tributes in ascending ID order.

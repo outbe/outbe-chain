@@ -49,9 +49,10 @@ pub use errors::ParentBodySourceError;
 pub use identity::{EntityId36, EntityIdError};
 pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, SealOutput};
 pub use persistence::{
-    classify_restart, ApplyOutcome, CeMdbx, CeRetentionCursor, DurableFinalizedCheckpoint,
-    EnvironmentIdentity, ExactParentIdentity, FinalizationStage, FinalizedMarker, PersistenceError,
-    RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
+    classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
+    DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,
+    FinalizedMarker, PersistenceError, RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 pub use proof::{
     verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1, PointProofCommonV1,
@@ -70,11 +71,15 @@ pub use replay::{
 };
 pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES};
 pub use staging::{
-    CandidateCache, CandidateCacheLimits, CollectionBatch, CollectionOperation,
-    ProvisionalCatalogBatch, ProvisionalShardBatch, ProvisionalShardSetBatch, ProvisionalTreeBatch,
-    PublicationOutcome, RetirementBatch, StagedTreeBatch, StagingError, TreeChange,
+    AuthenticatedCatalogView, CandidateCache, CandidateCacheLimits, CollectionBatch,
+    CollectionOperation, ProvisionalCatalogBatch, ProvisionalShardBatch, ProvisionalShardSetBatch,
+    ProvisionalTreeBatch, PublicationOutcome, RetirementBatch, StagedTreeBatch, StagingError,
+    TreeChange,
 };
-pub use tree_manager::{CompressedTreeService, FinalizedCandidateOutcome, TreeServiceError};
+pub use tree_manager::{
+    CompressedTreeService, ExportLeaseOffer, ExportLeaseOpenAck, ExportLeaseStatus,
+    FinalizedCandidateOutcome, TreeServiceError, DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT,
+};
 pub use tree_service::MdbxAuthenticatedTree;
 
 #[cfg(test)]
