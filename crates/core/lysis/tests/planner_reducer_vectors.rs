@@ -5,7 +5,8 @@ use outbe_lysis::program_v1::planner::{
 };
 use outbe_lysis::program_v1::phases::{
     fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
-    FidelityReduceValueV1,
+    finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
+    FidelityReduceValueV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::{
     execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
@@ -512,6 +513,84 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
         assert_eq!(root.start_ordinal, 0);
         assert_eq!(root.end_ordinal, primary_count);
     }
+}
+
+#[test]
+fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
+    let first_loads = vec![U256::from(1_u8); 256];
+    let second_loads = vec![U256::from(1_u8)];
+    let first = gratis_summary(0, &first_loads).unwrap();
+    let second = gratis_summary(256, &second_loads).unwrap();
+    let root = gratis_summary_reduce_pair(
+        GratisSummaryValueV1::Summary(first.clone()),
+        GratisSummaryValueV1::Summary(second.clone()),
+    )
+    .unwrap();
+    let GratisSummaryValueV1::Summary(root) = root else {
+        panic!("non-empty Gratis tree has a summary");
+    };
+    assert_eq!(root.checked_segment_gratis_total, U256::from(257_u16));
+
+    let exact = gratis_prefix_down(
+        Some(U256::from(257_u16)),
+        GratisSummaryValueV1::Summary(first.clone()),
+        GratisSummaryValueV1::Summary(second.clone()),
+    )
+    .unwrap();
+    assert_eq!(exact[0].as_ref().unwrap().incoming_remaining, Some(U256::from(257_u16)));
+    assert_eq!(exact[1].as_ref().unwrap().incoming_remaining, Some(U256::from(1_u8)));
+    let first_leaf =
+        finalize_gratis_leaf(exact[0].as_ref().unwrap().incoming_remaining, 0, &first_loads)
+            .unwrap();
+    let second_leaf = finalize_gratis_leaf(
+        exact[1].as_ref().unwrap().incoming_remaining,
+        256,
+        &second_loads,
+    )
+    .unwrap();
+    assert_eq!(first_leaf.outgoing_remaining, U256::from(1_u8));
+    assert_eq!(second_leaf.outgoing_remaining, U256::ZERO);
+    assert_eq!(second_leaf.first_error_ordinal, None);
+
+    let exhausted = gratis_prefix_down(
+        Some(U256::from(256_u16)),
+        GratisSummaryValueV1::Summary(first),
+        GratisSummaryValueV1::Summary(second),
+    )
+    .unwrap();
+    let error = finalize_gratis_leaf(
+        exhausted[1].as_ref().unwrap().incoming_remaining,
+        256,
+        &second_loads,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        outbe_lysis::program_v1::ProgramErrorV1::GratisLoadExceedsRemaining {
+            ordinal: 256
+        }
+    );
+}
+
+#[test]
+fn gratis_prefix_treats_padding_as_identity_not_as_work() {
+    let summary = gratis_summary(0, &[U256::from(9_u8)]).unwrap();
+    let reduced = gratis_summary_reduce_pair(
+        GratisSummaryValueV1::Summary(summary.clone()),
+        GratisSummaryValueV1::Empty,
+    )
+    .unwrap();
+    assert_eq!(reduced, GratisSummaryValueV1::Summary(summary.clone()));
+
+    let children = gratis_prefix_down(
+        Some(U256::from(10_u8)),
+        GratisSummaryValueV1::Summary(summary),
+        GratisSummaryValueV1::Empty,
+    )
+    .unwrap();
+    assert_eq!(children.len(), 2);
+    assert!(children[0].is_some());
+    assert!(children[1].is_none());
 }
 
 fn entity_id(ordinal: u32) -> EntityId36 {

@@ -6,8 +6,8 @@ use alloy_primitives::U256;
 use outbe_compressed_entities::EntityId36;
 
 use super::{
-    execute::compute_fraction_map_from_groups, FidelityPhaseV1, LeagueFractionV1,
-    ObservedTributeV1, ProgramErrorV1,
+    execute::{compute_fraction_map_from_groups, validate_required_gratis},
+    FidelityPhaseV1, LeagueFractionV1, ObservedTributeV1, ProgramErrorV1,
 };
 
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
@@ -47,6 +47,34 @@ pub struct FidelityMapOutputV1 {
 pub enum FidelityReduceValueV1 {
     Empty,
     Aggregate(FidelityAggregateV1),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GratisSegmentSummaryV1 {
+    pub start_ordinal: u32,
+    pub end_ordinal: u32,
+    pub checked_segment_gratis_total: U256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GratisSummaryValueV1 {
+    Empty,
+    Summary(GratisSegmentSummaryV1),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GratisIncomingV1 {
+    pub start_ordinal: u32,
+    pub end_ordinal: u32,
+    pub incoming_remaining: Option<U256>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GratisLeafPrefixV1 {
+    pub segment_ordinal: u32,
+    pub incoming_remaining: U256,
+    pub outgoing_remaining: U256,
+    pub first_error_ordinal: Option<u32>,
 }
 
 pub fn fidelity_map(
@@ -253,5 +281,156 @@ pub fn finalize_fi_fraction_table(
             .into_iter()
             .map(|(league, fraction)| LeagueFractionV1 { league, fraction })
             .collect()
+    })
+}
+
+pub fn gratis_summary(
+    start_ordinal: u32,
+    gratis_loads: &[U256],
+) -> Result<GratisSegmentSummaryV1, ProgramErrorV1> {
+    if gratis_loads.is_empty()
+        || gratis_loads.len()
+            > usize::try_from(PRIMARY_WORK_SHARD_SIZE)
+                .map_err(|_| ProgramErrorV1::OutputCountMismatch)?
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    let count =
+        u32::try_from(gratis_loads.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    let end_ordinal = start_ordinal
+        .checked_add(count)
+        .ok_or(ProgramErrorV1::OutputCountMismatch)?;
+    let mut checked_segment_gratis_total = U256::ZERO;
+    for (local_ordinal, load) in gratis_loads.iter().copied().enumerate() {
+        let raw_ordinal = start_ordinal
+            .checked_add(
+                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            )
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
+        if load.is_zero() {
+            return Err(ProgramErrorV1::ZeroGratisLoad {
+                ordinal: raw_ordinal as usize,
+            });
+        }
+        checked_segment_gratis_total = checked_segment_gratis_total
+            .checked_add(load)
+            .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                message: format!("Gratis total overflow at {raw_ordinal}"),
+            })?;
+    }
+    Ok(GratisSegmentSummaryV1 {
+        start_ordinal,
+        end_ordinal,
+        checked_segment_gratis_total,
+    })
+}
+
+pub fn gratis_summary_reduce_pair(
+    left: GratisSummaryValueV1,
+    right: GratisSummaryValueV1,
+) -> Result<GratisSummaryValueV1, ProgramErrorV1> {
+    match (left, right) {
+        (GratisSummaryValueV1::Empty, GratisSummaryValueV1::Empty) => {
+            Ok(GratisSummaryValueV1::Empty)
+        }
+        (GratisSummaryValueV1::Summary(left), GratisSummaryValueV1::Empty) => {
+            Ok(GratisSummaryValueV1::Summary(left))
+        }
+        (GratisSummaryValueV1::Empty, GratisSummaryValueV1::Summary(_)) => {
+            Err(ProgramErrorV1::OutputCountMismatch)
+        }
+        (
+            GratisSummaryValueV1::Summary(left),
+            GratisSummaryValueV1::Summary(right),
+        ) => {
+            if left.start_ordinal >= left.end_ordinal
+                || right.start_ordinal >= right.end_ordinal
+                || left.end_ordinal != right.start_ordinal
+            {
+                return Err(ProgramErrorV1::OutputCountMismatch);
+            }
+            let total = left
+                .checked_segment_gratis_total
+                .checked_add(right.checked_segment_gratis_total)
+                .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                    message: format!(
+                        "Gratis reducer total overflow at {}",
+                        right.start_ordinal
+                    ),
+                })?;
+            Ok(GratisSummaryValueV1::Summary(
+                GratisSegmentSummaryV1 {
+                    start_ordinal: left.start_ordinal,
+                    end_ordinal: right.end_ordinal,
+                    checked_segment_gratis_total: total,
+                },
+            ))
+        }
+    }
+}
+
+pub fn gratis_prefix_down(
+    parent_incoming: Option<U256>,
+    left: GratisSummaryValueV1,
+    right: GratisSummaryValueV1,
+) -> Result<[Option<GratisIncomingV1>; 2], ProgramErrorV1> {
+    match (left, right) {
+        (GratisSummaryValueV1::Empty, GratisSummaryValueV1::Empty) => Ok([None, None]),
+        (GratisSummaryValueV1::Empty, GratisSummaryValueV1::Summary(_)) => {
+            Err(ProgramErrorV1::OutputCountMismatch)
+        }
+        (GratisSummaryValueV1::Summary(left), right) => {
+            let left_outgoing = parent_incoming
+                .and_then(|remaining| remaining.checked_sub(left.checked_segment_gratis_total));
+            let left_prefix = Some(GratisIncomingV1 {
+                start_ordinal: left.start_ordinal,
+                end_ordinal: left.end_ordinal,
+                incoming_remaining: parent_incoming,
+            });
+            let right_prefix = match right {
+                GratisSummaryValueV1::Empty => None,
+                GratisSummaryValueV1::Summary(right) => {
+                    if left.end_ordinal != right.start_ordinal {
+                        return Err(ProgramErrorV1::OutputCountMismatch);
+                    }
+                    Some(GratisIncomingV1 {
+                        start_ordinal: right.start_ordinal,
+                        end_ordinal: right.end_ordinal,
+                        incoming_remaining: left_outgoing,
+                    })
+                }
+            };
+            Ok([left_prefix, right_prefix])
+        }
+    }
+}
+
+pub fn finalize_gratis_leaf(
+    incoming_remaining: Option<U256>,
+    start_ordinal: u32,
+    gratis_loads: &[U256],
+) -> Result<GratisLeafPrefixV1, ProgramErrorV1> {
+    if gratis_loads.is_empty()
+        || gratis_loads.len()
+            > usize::try_from(PRIMARY_WORK_SHARD_SIZE)
+                .map_err(|_| ProgramErrorV1::OutputCountMismatch)?
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    let incoming_remaining = incoming_remaining.ok_or(ProgramErrorV1::OutputCountMismatch)?;
+    let mut remaining = incoming_remaining;
+    for (local_ordinal, load) in gratis_loads.iter().copied().enumerate() {
+        let raw_ordinal = start_ordinal
+            .checked_add(
+                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            )
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
+        remaining = validate_required_gratis(remaining, load, raw_ordinal as usize)?;
+    }
+    Ok(GratisLeafPrefixV1 {
+        segment_ordinal: start_ordinal / PRIMARY_WORK_SHARD_SIZE,
+        incoming_remaining,
+        outgoing_remaining: remaining,
+        first_error_ordinal: None,
     })
 }
