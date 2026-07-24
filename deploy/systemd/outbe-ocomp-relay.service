@@ -1,0 +1,26 @@
+[Unit]
+Description=Outbe replaceable untrusted OCOMP relay
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=outbe-ocomp-relay
+Group=outbe-ocomp-relay
+ExecStart=/usr/local/bin/outbe-ocomp relay
+Restart=on-failure
+RestartSec=5
+RuntimeMaxSec=3600
+Slice=outbe-ocomp.slice
+MemoryHigh=256M
+MemoryMax=512M
+TasksMax=16
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6

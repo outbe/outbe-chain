@@ -60,6 +60,7 @@ members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
+    "bin/outbe-ocomp",
     "bin/outbe-tee-enclave",
     # testing
     "crates/testing/e2e-harness",
@@ -117,6 +118,7 @@ outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }
 outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
+outbe-ocomp = { path = "bin/outbe-ocomp" }
 outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
@@ -291,6 +293,7 @@ similar = "2"
 thiserror = "2"
 eyre = "0.6"
 hex = "0.4"
+libc = "0.2"
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 parking_lot = "0.12"
@@ -299,6 +302,7 @@ futures = "0.3"
 time = "0.3"
 filetime = "0.2"
 sha2 = "0.10"
+sha3 = "0.10"
 walkdir = "2"
 tar = "0.4"
 

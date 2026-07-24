@@ -1,0 +1,36 @@
+[Unit]
+Description=Outbe OCOMP deterministic supervisor
+After=outbe-validator.service outbe-ocomp-worker.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=outbe-ocomp-supervisor
+Group=outbe-ocomp-supervisor
+ExecStart=/usr/local/bin/outbe-ocomp supervisor
+Restart=on-failure
+RestartSec=5
+Slice=outbe-ocomp.slice
+RuntimeMaxSec=3600
+MemoryHigh=1536M
+MemoryMax=2G
+TasksMax=16
+IOWeight=100
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/objects
+ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/staging/supervisor
+ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/refs
+ReadWritePaths=/var/lib/outbe-ocomp/supervisor-v1
+ReadWritePaths=/var/lib/outbe-ocomp/worker-inbox-v1
+
+[Install]
+WantedBy=outbe-ocomp.target

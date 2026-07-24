@@ -91,6 +91,43 @@ wire_struct! {
     }
 }
 
+wire_enum_u8! {
+    /// Fixed local process roles. This is operational transport metadata, not a
+    /// consensus or fork-extensible registry.
+    pub enum ControlRoleV1 {
+        Node = 1,
+        Supervisor = 2,
+        SnapshotExporter = 3,
+        Worker = 4,
+        Relay = 5,
+    }
+}
+
+wire_struct! {
+    /// First frame of every local control session.
+    pub struct HelloV1 {
+        pub role: ControlRoleV1,
+        pub chain_id: u64,
+        pub genesis_hash: B256,
+        pub process_nonce: B256,
+        pub protocol_bundle_hash: B256,
+        pub capability_bits: u64,
+        pub max_control_body_bytes: u32,
+    }
+}
+
+wire_struct! {
+    /// Server-selected parameters returned after an exact compatible hello.
+    pub struct HelloAckV1 {
+        pub role: ControlRoleV1,
+        pub server_boot_nonce: B256,
+        pub protocol_bundle_hash: B256,
+        pub capability_bits: u64,
+        pub max_control_body_bytes: u32,
+        pub session_generation: u64,
+    }
+}
+
 wire_struct! {
     pub struct CasObjectRefV1 {
         pub transport_digest: B256,
@@ -227,6 +264,33 @@ impl ControlFrameV1 {
         })
     }
 }
+
+macro_rules! impl_control_body_codec {
+    ($type:ty) => {
+        impl $type {
+            pub fn encode_body(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+                let mut output = CanonicalWriter::new(limits.codec);
+                self.encode_nested(&mut output, limits)?;
+                Ok(output.into_bytes())
+            }
+
+            pub fn decode_body(
+                encoded: &[u8],
+                limits: &SchemaLimits,
+            ) -> Result<Self, ProtocolError> {
+                let mut input = CanonicalReader::new(encoded, limits.codec)?;
+                let value = Self::decode_nested(&mut input, limits)?;
+                input.finish()?;
+                Ok(value)
+            }
+        }
+    };
+}
+
+impl_control_body_codec!(HelloV1);
+impl_control_body_codec!(HelloAckV1);
+impl_control_body_codec!(LocalErrorV1);
+impl_control_body_codec!(UnitFinishedV1);
 
 impl RunUnitV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {

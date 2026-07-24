@@ -31,6 +31,7 @@ pub use codec::{
     AllocationStats, CanonicalReader, CanonicalWriter, CodecLimits, DecodedEnvelope,
     OCB1_HEADER_LEN, OCB1_MAGIC, OCB1_SCHEMA_VERSION,
 };
+pub use control::*;
 pub use error::ProtocolError;
 pub use hash::{framed_preimage, hash_framed, verify_framed_hash};
 pub use list::{ordered_list_root, OrderedListLimits};

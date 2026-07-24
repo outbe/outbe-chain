@@ -8009,6 +8009,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-ocomp"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "hex",
+ "libc",
+ "outbe-ocomp-protocol",
+ "sha3",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-ocomp-protocol"
 version = "0.1.0"
 dependencies = [
