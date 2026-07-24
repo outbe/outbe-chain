@@ -10,8 +10,13 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
-use outbe_lysis::program_v1::artifacts::{decode_amount_run, decode_fixed_reduce_output};
-use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1};
+use outbe_lysis::program_v1::artifacts::{
+    decode_amount_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
+    decode_gratis_segment_summary, GratisPrefixDownOutputV1,
+};
+use outbe_lysis::program_v1::planner::{
+    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
+};
 use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
@@ -37,8 +42,8 @@ use outbe_ocomp_protocol::unit::{
     UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
 };
 use outbe_ocomp_protocol::{
-    ordered_list_root, ListKind, ObjectKind, OrderedListLimits, RunUnitV1, UnitFinishedStatus,
-    UnitFinishedV1, WorkerMessageKind,
+    ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
+    SchemaLimits, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
 use tempfile::tempdir;
 
@@ -73,7 +78,7 @@ fn identity(boot: u8) -> EndpointIdentity {
 }
 
 #[test]
-fn real_worker_processes_execute_through_amount_map() {
+fn real_worker_processes_execute_through_gratis_prefix() {
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -306,7 +311,7 @@ fn real_worker_processes_execute_through_amount_map() {
         command
             .args([
                 "--exact",
-                "real_worker_processes_execute_through_amount_map",
+                "real_worker_processes_execute_through_gratis_prefix",
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
@@ -455,7 +460,7 @@ fn real_worker_processes_execute_through_amount_map() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_amount_map",
+            "real_worker_processes_execute_through_gratis_prefix",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -570,7 +575,7 @@ fn real_worker_processes_execute_through_amount_map() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_amount_map",
+            "real_worker_processes_execute_through_gratis_prefix",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -705,7 +710,7 @@ fn real_worker_processes_execute_through_amount_map() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_amount_map",
+            "real_worker_processes_execute_through_gratis_prefix",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -761,14 +766,14 @@ fn real_worker_processes_execute_through_amount_map() {
                         .expect("canonical AmountMap spec"),
                 ),
                 unit_membership_siblings: Vec::new(),
-                plan_ref,
-                input_manifest_ref: published.manifest_ref,
+                plan_ref: plan_ref.clone(),
+                input_manifest_ref: published.manifest_ref.clone(),
                 ordered_input_refs: vec![
-                    producer_ref,
-                    fidelity_producer_ref,
-                    reduce_producer_ref,
-                    tribute_ref,
-                    oracle_ref,
+                    producer_ref.clone(),
+                    fidelity_producer_ref.clone(),
+                    reduce_producer_ref.clone(),
+                    tribute_ref.clone(),
+                    oracle_ref.clone(),
                 ],
             }
             .encode_body(&limits)
@@ -805,6 +810,302 @@ fn real_worker_processes_execute_through_amount_map() {
         .expect("decode AmountMap phase output");
     assert_eq!(amount.ordered_records.len(), 1);
     assert_eq!(amount.ordered_records[0].entry_price_minor, scale * U256::from(2));
+
+    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)
+        .expect("fixture plan topology");
+    let prefix_offset = plan
+        .primary_work_unit_count
+        .checked_mul(3)
+        .and_then(|offset| {
+            offset.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce))
+        })
+        .expect("GratisPrefix offset");
+    let prefix_down_offset = prefix_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix))
+        .expect("GratisPrefixDown offset");
+
+    let mut amount_producer_ref = cas
+        .publish_bytes(
+            &amount_artifact
+                .encode_canonical(&limits)
+                .expect("canonical AmountMap artifact"),
+        )
+        .expect("publish AmountMap producer artifact");
+    amount_producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let prefix_leaf_spec = planner
+        .gratis_prefix_unit_at(0, &[Some(amount_artifact.unit_id)], &limits)
+        .expect("derive GratisPrefix leaf");
+    let prefix_leaf_artifact = execute_real_worker_unit(
+        500,
+        0x91,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &prefix_leaf_spec,
+        prefix_offset,
+        plan_hash,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
+        vec![amount_producer_ref],
+    );
+    prefix_leaf_artifact
+        .validate_against(&prefix_leaf_spec, &limits)
+        .expect("validate GratisPrefix leaf artifact");
+    let leaf_summary = decode_gratis_segment_summary(
+        prefix_leaf_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode GratisPrefix leaf");
+    assert_eq!(
+        leaf_summary.checked_segment_gratis_total,
+        amount.checked_segment_gratis_total
+    );
+
+    let mut prefix_leaf_ref = cas
+        .publish_bytes(
+            &prefix_leaf_artifact
+                .encode_canonical(&limits)
+                .expect("canonical GratisPrefix leaf artifact"),
+        )
+        .expect("publish GratisPrefix leaf artifact");
+    prefix_leaf_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let prefix_root_spec = planner
+        .gratis_prefix_unit_at(1, &[Some(prefix_leaf_artifact.unit_id), None], &limits)
+        .expect("derive GratisPrefix root");
+    let prefix_root_artifact = execute_real_worker_unit(
+        501,
+        0x93,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &prefix_root_spec,
+        prefix_offset + 1,
+        plan_hash,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
+        vec![prefix_leaf_ref.clone()],
+    );
+    prefix_root_artifact
+        .validate_against(&prefix_root_spec, &limits)
+        .expect("validate GratisPrefix root artifact");
+    assert_eq!(
+        decode_gratis_segment_summary(
+            prefix_root_artifact.phase_payload(&limits).unwrap(),
+            &limits,
+        )
+        .expect("decode GratisPrefix root"),
+        leaf_summary
+    );
+
+    let prefix_down_root_spec = planner
+        .gratis_prefix_down_unit_at(0, &[Some(prefix_leaf_artifact.unit_id), None], &limits)
+        .expect("derive GratisPrefixDown root");
+    let prefix_down_root_artifact = execute_real_worker_unit(
+        502,
+        0x95,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &prefix_down_root_spec,
+        prefix_down_offset,
+        plan_hash,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
+        vec![prefix_leaf_ref.clone()],
+    );
+    prefix_down_root_artifact
+        .validate_against(&prefix_down_root_spec, &limits)
+        .expect("validate GratisPrefixDown root artifact");
+    assert!(matches!(
+        decode_gratis_prefix_down_output(
+            prefix_down_root_artifact.phase_payload(&limits).unwrap(),
+            &limits,
+        )
+        .expect("decode GratisPrefixDown root"),
+        GratisPrefixDownOutputV1::Branch([Some(_), None])
+    ));
+
+    let mut prefix_down_root_ref = cas
+        .publish_bytes(
+            &prefix_down_root_artifact
+                .encode_canonical(&limits)
+                .expect("canonical GratisPrefixDown root artifact"),
+        )
+        .expect("publish GratisPrefixDown root artifact");
+    prefix_down_root_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let prefix_down_leaf_spec = planner
+        .gratis_prefix_down_unit_at(
+            1,
+            &[
+                Some(prefix_down_root_artifact.unit_id),
+                Some(prefix_leaf_artifact.unit_id),
+            ],
+            &limits,
+        )
+        .expect("derive GratisPrefixDown leaf");
+    let prefix_down_leaf_artifact = execute_real_worker_unit(
+        503,
+        0x97,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &prefix_down_leaf_spec,
+        prefix_down_offset + 1,
+        plan_hash,
+        plan_ref,
+        published.manifest_ref,
+        vec![prefix_down_root_ref, prefix_leaf_ref],
+    );
+    prefix_down_leaf_artifact
+        .validate_against(&prefix_down_leaf_spec, &limits)
+        .expect("validate GratisPrefixDown leaf artifact");
+    let GratisPrefixDownOutputV1::Leaf(prefix) = decode_gratis_prefix_down_output(
+        prefix_down_leaf_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode GratisPrefixDown leaf")
+    else {
+        panic!("expected GratisPrefixDown leaf output");
+    };
+    assert_eq!(prefix.segment_ordinal, 0);
+    assert_eq!(prefix.incoming_remaining, plan.lysis_budget);
+    assert_eq!(
+        prefix.outgoing_remaining,
+        plan.lysis_budget - amount.checked_segment_gratis_total
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_real_worker_unit(
+    generation: u64,
+    boot: u8,
+    user: &str,
+    uid: u32,
+    cas_root: &std::path::Path,
+    cas_limits: CasLimits,
+    inbox_root: &std::path::Path,
+    inbox_limits: WorkerInboxLimits,
+    limits: SchemaLimits,
+    spec: &UnitSpecV1,
+    unit_index: u32,
+    plan_hash: B256,
+    plan_ref: CasObjectRefV1,
+    input_manifest_ref: CasObjectRefV1,
+    ordered_input_refs: Vec<CasObjectRefV1>,
+) -> UnitArtifactV1 {
+    let (parent_stream, child_stream) = UnixStream::pair().expect("worker socket pair");
+    let child_fd: OwnedFd = child_stream.into();
+    let worker_identity = identity(boot);
+    let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
+    command
+        .args([
+            "--exact",
+            "real_worker_processes_execute_through_gratis_prefix",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env(CHILD_USER, user)
+        .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
+        .env(
+            CHILD_GENESIS,
+            format!("{:#x}", worker_identity.genesis_hash),
+        )
+        .env(
+            CHILD_BOOT_NONCE,
+            format!("{:#x}", worker_identity.boot_nonce),
+        )
+        .env(
+            CHILD_BUNDLE,
+            format!("{:#x}", worker_identity.protocol_bundle_hash),
+        )
+        .env(CHILD_GENERATION, generation.to_string())
+        .env(CHILD_CAS_ROOT, cas_root)
+        .env(
+            CHILD_CAS_OBJECT_CAP,
+            cas_limits.max_object_bytes.to_string(),
+        )
+        .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
+        .env(CHILD_INBOX_ROOT, inbox_root)
+        .stdin(Stdio::from(child_fd))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn production worker");
+    drop(command);
+
+    let client_identity = EndpointIdentity {
+        boot_nonce: B256::repeat_byte(boot.wrapping_add(1)),
+        ..worker_identity
+    };
+    let mut client = ControlClientSession::connect(
+        parent_stream,
+        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
+    )
+    .expect("worker client");
+    client.handshake().expect("worker handshake");
+    client
+        .send_request(
+            WorkerMessageKind::RunUnit as u16,
+            RunUnitV1 {
+                protocol_bundle_hash: spec.protocol_bundle_hash,
+                job_id: spec.job_id,
+                attempt: spec.attempt,
+                plan_hash,
+                unit_index,
+                canonical_unit_spec: BoundedBytes(
+                    spec.encode_canonical(&limits)
+                        .expect("canonical worker unit spec"),
+                ),
+                unit_membership_siblings: Vec::new(),
+                plan_ref,
+                input_manifest_ref,
+                ordered_input_refs,
+            }
+            .encode_body(&limits)
+            .expect("worker RunUnit body"),
+        )
+        .expect("send worker unit");
+    let output = child.wait_with_output().expect("worker exit");
+    assert!(
+        output.status.success(),
+        "worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame = client.receive_response().expect("worker response");
+    let finished = UnitFinishedV1::decode_body(&frame.body, &limits).expect("worker finished body");
+    assert_eq!(finished.status, UnitFinishedStatus::Success);
+    assert_eq!(
+        finished.unit_id,
+        spec.unit_id(&limits).expect("worker UnitId")
+    );
+    let inbox = WorkerInbox::open(inbox_root, inbox_limits).expect("open worker inbox");
+    UnitArtifactV1::decode_canonical(
+        inbox
+            .read_reported(
+                finished.unit_id,
+                finished.exact_staged_bytes,
+                finished.transport_digest,
+            )
+            .expect("read staged worker artifact")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode worker artifact")
 }
 
 fn run_child_worker() {
