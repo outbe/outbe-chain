@@ -1086,6 +1086,7 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
         plan_hash: hash(3),
         unit_index: 0,
         canonical_unit_spec: BoundedBytes(vec![1]),
+        unit_membership_siblings: Vec::new(),
         plan_ref: outbe_ocomp_protocol::control::CasObjectRefV1 {
             transport_digest: hash(4),
             encoded_bytes: 10,
@@ -1100,6 +1101,14 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
     };
     let body = request.encode_body(&LIMITS).unwrap();
     assert_eq!(RunUnitV1::decode_body(&body, &LIMITS).unwrap(), request);
+
+    let mut zero_sibling = request.clone();
+    zero_sibling.unit_membership_siblings = vec![B256::ZERO];
+    assert!(zero_sibling.encode_body(&LIMITS).is_err());
+
+    let mut oversized_proof = request;
+    oversized_proof.unit_membership_siblings = vec![hash(6); 33];
+    assert!(oversized_proof.encode_body(&LIMITS).is_err());
 }
 
 #[test]

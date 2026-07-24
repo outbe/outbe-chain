@@ -35,6 +35,8 @@ pub use codec::{
 pub use control::*;
 pub use error::ProtocolError;
 pub use hash::{framed_preimage, hash_framed, verify_framed_hash};
-pub use list::{ordered_list_root, OrderedListLimits, StreamingOrderedListRoot};
+pub use list::{
+    ordered_list_root, verify_ordered_list_membership, OrderedListLimits, StreamingOrderedListRoot,
+};
 pub use registry::{HashDomain, ListKind, ObjectKind};
 pub use schema::SchemaLimits;

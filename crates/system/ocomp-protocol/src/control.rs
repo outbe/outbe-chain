@@ -411,6 +411,7 @@ wire_struct! {
         pub plan_hash: B256,
         pub unit_index: u32,
         pub canonical_unit_spec: BoundedBytes,
+        pub unit_membership_siblings: Vec<B256>,
         pub plan_ref: CasObjectRefV1,
         pub input_manifest_ref: CasObjectRefV1,
         pub ordered_input_refs: Vec<CasObjectRefV1>,
@@ -585,6 +586,14 @@ impl RunUnitV1 {
         require(
             self.ordered_input_refs.len() <= limits.max_unit_inputs,
             "worker input reference cap",
+        )?;
+        require(
+            self.unit_membership_siblings.len() <= u32::BITS as usize
+                && self
+                    .unit_membership_siblings
+                    .iter()
+                    .all(|sibling| !sibling.is_zero()),
+            "worker unit membership proof",
         )?;
         let mut digests = BTreeSet::new();
         require(

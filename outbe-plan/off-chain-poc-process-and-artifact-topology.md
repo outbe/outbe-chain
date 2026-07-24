@@ -337,11 +337,18 @@ attempt
 PlanHash
 unit_index
 canonical UnitSpecV1 OCB1 bytes
+unit_membership_siblings (bottom-up B256 list, at most 32)
 canonical PlanCommitmentV1 bytes
-primary-unit membership witness or deterministic secondary-unit derivation inputs
 transport reference to InputManifestV1
 strictly ordered input object transport references
 ```
+
+A primary unit is accepted only when the canonical `UnitSpecV1` leaf, exact
+`unit_index`, `primary_work_unit_count` and bottom-up sibling list reconstruct
+`PlanCommitmentV1.primary_work_unit_root`. A one-unit plan has an empty sibling
+list; even the maximum `u32` population needs at most 32 siblings. Secondary
+units use deterministic derivation from their exact producer UnitIds instead
+of this primary-catalog witness.
 
 A transport reference is local-only:
 

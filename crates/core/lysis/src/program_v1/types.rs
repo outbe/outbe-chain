@@ -4,7 +4,7 @@ use std::fmt;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{EntityId36, TributeBodyV1};
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +17,21 @@ pub struct TributeInputV1 {
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
     pub exclude_from_intex_issuance: bool,
+}
+
+impl From<&TributeBodyV1> for TributeInputV1 {
+    fn from(body: &TributeBodyV1) -> Self {
+        Self {
+            tribute_id: body.tribute_id,
+            owner: body.owner,
+            worldwide_day: body.worldwide_day,
+            issuance_currency: body.issuance_currency,
+            nominal_amount_minor: body.nominal_amount_minor,
+            reference_currency: body.reference_currency,
+            tribute_price_minor: body.tribute_price_minor,
+            exclude_from_intex_issuance: body.exclude_from_intex_issuance,
+        }
+    }
 }
 
 /// A logical snapshot observation, including a deterministic unavailable value.

@@ -110,6 +110,18 @@ pub fn derive_input_chunk_ref(
     Ok(derive_input_chunk(object, bundle, limits)?.public)
 }
 
+pub fn decode_verified_input_chunk(
+    object: &VerifiedCasObject,
+    bundle: &ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<AuthenticatedInputChunkV1, InputArtifactError> {
+    let _ = derive_input_chunk(object, bundle, limits)?;
+    Ok(AuthenticatedInputChunkV1::decode_canonical(
+        object.bytes(),
+        limits,
+    )?)
+}
+
 pub fn publish_input_artifact_set(
     cas: &FilesystemCas,
     bundle: &ProtocolBundleV1,

@@ -5,10 +5,21 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 use alloy_primitives::B256;
-use outbe_ocomp_protocol::input::{InputChunkKind, InputManifestV1};
-use outbe_ocomp_protocol::unit::{InputPurpose, InputSourceKind, PlanCommitmentV1, UnitSpecV1};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
+use outbe_lysis::program_v1::artifacts::{
+    encode_enumerated_run, enumerate_tributes, LysisArtifactErrorV1,
+};
+use outbe_lysis::program_v1::TributeInputV1;
+use outbe_ocomp_protocol::common::BoundedBytes;
+use outbe_ocomp_protocol::input::{AuthenticatedInputChunkV1, InputChunkKind, InputManifestV1};
+use outbe_ocomp_protocol::unit::{
+    InputPurpose, InputSourceKind, PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase,
+    UnitSpecV1, WorkOutputHeaderV1,
+};
 use outbe_ocomp_protocol::{
-    ObjectKind, RunUnitV1, SchemaLimits, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    verify_ordered_list_membership, ListKind, ObjectKind, RunUnitV1, SchemaLimits,
+    UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
 use thiserror::Error;
 
@@ -18,7 +29,10 @@ use crate::control::{
     poc_schema_limits, require_effective_user, uid_for_user, ControlError, ControlServerSession,
     EndpointIdentity, ServerPolicy,
 };
-use crate::input_artifacts::{derive_input_chunk_ref, InputArtifactError};
+use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
+use crate::input_artifacts::{
+    decode_verified_input_chunk, derive_input_chunk_ref, InputArtifactError,
+};
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
@@ -28,6 +42,8 @@ pub struct WorkerConfig {
     pub session_generation: u64,
     pub cas_root: PathBuf,
     pub cas_limits: CasLimits,
+    pub inbox_root: PathBuf,
+    pub inbox_limits: WorkerInboxLimits,
     pub connection_fd: RawFd,
     pub protocol_bundle: PinnedProtocolBundle,
 }
@@ -70,6 +86,14 @@ pub enum WorkerError {
     BundleIdentityMismatch,
     #[error(transparent)]
     InputArtifact(#[from] InputArtifactError),
+    #[error(transparent)]
+    Inbox(#[from] WorkerInboxError),
+    #[error(transparent)]
+    LysisArtifact(#[from] LysisArtifactErrorV1),
+    #[error(transparent)]
+    CanonicalBody(#[from] CanonicalBodyError),
+    #[error("worker does not yet implement Lysis phase {0:?}")]
+    UnsupportedPhase(UnitPhase),
 }
 
 pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, WorkerError> {
@@ -80,6 +104,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     let expected_supervisor_uid = uid_for_user(&config.expected_supervisor_user)?;
     let stream = duplicate_connected_stream(config.connection_fd)?;
     let reader = FilesystemCasReader::open(&config.cas_root, config.cas_limits)?;
+    let inbox = WorkerInbox::open(&config.inbox_root, config.inbox_limits)?;
     let limits = poc_schema_limits();
     let mut session = ControlServerSession::accept(
         stream,
@@ -136,13 +161,22 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         },
         &limits,
     )?;
+    verify_ordered_list_membership(
+        ListKind::UnitSpecificationsArtifacts,
+        plan.primary_work_unit_count,
+        request.unit_index,
+        &request.canonical_unit_spec.0,
+        &request.unit_membership_siblings,
+        plan.primary_work_unit_root,
+    )?;
     require_authenticated_input(
         &spec,
         InputPurpose::InputManifest,
         manifest_hash,
-        manifest.tribute_count,
+        1,
         request.input_manifest_ref.encoded_bytes,
     )?;
+    let mut tribute_chunk = None;
     for reference in &request.ordered_input_refs {
         if reference.expected_ocb1_kind != Some(ObjectKind::AuthenticatedInputChunkV1.tag()) {
             return Err(WorkerError::UnitBindingMismatch);
@@ -162,16 +196,41 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
             derived.record_count,
             derived.encoded_bytes,
         )?;
+        if derived.kind == InputChunkKind::Tribute {
+            if tribute_chunk.is_some() {
+                return Err(WorkerError::UnitBindingMismatch);
+            }
+            tribute_chunk = Some(decode_verified_input_chunk(
+                &object,
+                config.protocol_bundle.bundle(),
+                &limits,
+            )?);
+        }
     }
 
-    // OCM-11 proves the fixed process/control/CAS boundary. The deterministic
-    // Lysis runner is installed by OCM-14; until then the exact admitted unit is
-    // reported as a bounded failed execution, never as a fabricated artifact.
-    let finished = UnitFinishedV1 {
-        unit_id,
-        status: UnitFinishedStatus::Failed,
-        exact_staged_bytes: 0,
-        transport_digest: B256::ZERO,
+    let finished = match execute_unit(&spec, &manifest, tribute_chunk.as_ref(), &limits)
+        .and_then(|artifact| {
+            artifact
+                .encode_canonical(&limits)
+                .map_err(WorkerError::from)
+        })
+        .and_then(|bytes| inbox.adopt(unit_id, &bytes).map_err(WorkerError::from))
+    {
+        Ok(staged) => {
+            let reference = staged.reference();
+            UnitFinishedV1 {
+                unit_id,
+                status: UnitFinishedStatus::Success,
+                exact_staged_bytes: reference.encoded_bytes,
+                transport_digest: reference.transport_digest,
+            }
+        }
+        Err(_) => UnitFinishedV1 {
+            unit_id,
+            status: UnitFinishedStatus::Failed,
+            exact_staged_bytes: 0,
+            transport_digest: B256::ZERO,
+        },
     };
     session.send_response(
         frame.request_id,
@@ -179,6 +238,63 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         finished.encode_body(&limits)?,
     )?;
     Ok(WorkerOutcome { unit_id })
+}
+
+fn execute_unit(
+    spec: &UnitSpecV1,
+    manifest: &InputManifestV1,
+    tribute_chunk: Option<&AuthenticatedInputChunkV1>,
+    limits: &SchemaLimits,
+) -> Result<UnitArtifactV1, WorkerError> {
+    if spec.phase != UnitPhase::Enumerate {
+        return Err(WorkerError::UnsupportedPhase(spec.phase));
+    }
+    let chunk = tribute_chunk.ok_or(WorkerError::UnitBindingMismatch)?;
+    if chunk.kind != InputChunkKind::Tribute {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let UnitInterval::EntityIdRange(range) = &spec.interval else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    let mut tributes = Vec::new();
+    tributes
+        .try_reserve_exact(chunk.canonical_records_or_openings.len())
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    for record in &chunk.canonical_records_or_openings {
+        let tribute = decode_tribute_v1(&record.0)?;
+        let id = tribute.tribute_id.as_bytes();
+        if id < &range.start.0 || range.end.is_some_and(|end| id >= &end.0) {
+            return Err(WorkerError::UnitBindingMismatch);
+        }
+        tributes.push(TributeInputV1::from(&tribute));
+    }
+    if tributes
+        .first()
+        .map(|tribute| tribute.tribute_id.as_bytes())
+        != Some(&range.start.0)
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let start_ordinal = chunk
+        .ordinal
+        .checked_mul(256)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let run = enumerate_tributes(start_ordinal, WorldwideDay::new(manifest.wwd), &tributes)?;
+    let coverage_root = run.coverage_root()?;
+    let output_count =
+        u32::try_from(run.ordered_records.len()).map_err(|_| WorkerError::UnitBindingMismatch)?;
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: output_count,
+            output_coverage_count: output_count,
+        },
+        BoundedBytes(encode_enumerated_run(&run, limits)?),
+        limits,
+    )
+    .map_err(WorkerError::from)
 }
 
 fn require_plan_binding(

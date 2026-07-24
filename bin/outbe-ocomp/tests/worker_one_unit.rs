@@ -15,12 +15,13 @@ use outbe_ocomp::control::{
     effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
     EndpointIdentity,
 };
+use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxLimits};
 use outbe_ocomp::input_artifacts::{
     derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
     InputArtifactContents, InputArtifactIdentity,
 };
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
-use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36, ProofBytes};
+use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
     materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind,
 };
@@ -29,9 +30,12 @@ use outbe_ocomp_protocol::opening::{
 };
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
-    UnitInterval, UnitPhase, UnitSpecV1,
+    UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
 };
-use outbe_ocomp_protocol::{RunUnitV1, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind};
+use outbe_ocomp_protocol::{
+    ordered_list_root, ListKind, OrderedListLimits, RunUnitV1, UnitFinishedStatus, UnitFinishedV1,
+    WorkerMessageKind,
+};
 use tempfile::tempdir;
 
 struct RunningWorker {
@@ -50,6 +54,7 @@ const CHILD_GENERATION: &str = "OUTBE_OCOMP_TEST_GENERATION";
 const CHILD_CAS_ROOT: &str = "OUTBE_OCOMP_TEST_CAS_ROOT";
 const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_TEST_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_TEST_CAS_TOTAL_CAP";
+const CHILD_INBOX_ROOT: &str = "OUTBE_OCOMP_TEST_INBOX_ROOT";
 
 fn identity(boot: u8) -> EndpointIdentity {
     let limits = poc_schema_limits();
@@ -77,6 +82,11 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
     };
     let cas = FilesystemCas::open(directory.path(), CasWriterRole::Supervisor, cas_limits)
         .expect("open CAS");
+    let inbox_root = directory.path().join("worker-inbox");
+    let inbox_limits = WorkerInboxLimits {
+        max_artifact_bytes: 1024 * 1024,
+        max_total_bytes: 4 * 1024 * 1024,
+    };
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
     let job_id = B256::repeat_byte(0x31);
@@ -152,10 +162,68 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         poc_input_list_limits(),
     )
     .expect("publish worker fixture inputs");
+    let tribute_ref = published
+        .ordered_chunk_refs
+        .iter()
+        .find(|reference| {
+            cas.read_verified(reference)
+                .ok()
+                .and_then(|object| derive_input_chunk_ref(&object, &bundle, &limits).ok())
+                .is_some_and(|derived| derived.reference.kind == InputChunkKind::Tribute)
+        })
+        .cloned()
+        .expect("fixture Tribute input reference");
+    let tribute_object = cas
+        .read_verified(&tribute_ref)
+        .expect("read fixture Tribute chunk");
+    let derived_tribute = derive_input_chunk_ref(&tribute_object, &bundle, &limits)
+        .expect("derive fixture Tribute reference")
+        .reference;
+    let canonical_inputs = vec![
+        CanonicalInputRefV1 {
+            purpose: InputPurpose::InputManifest,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: published.manifest_hash,
+            record_count_limit: 1,
+            max_encoded_bytes: published.manifest_ref.encoded_bytes,
+            max_decoded_bytes: published.manifest_ref.encoded_bytes,
+        },
+        CanonicalInputRefV1 {
+            purpose: InputPurpose::TributeStream,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: derived_tribute.semantic_digest,
+            record_count_limit: derived_tribute.record_count,
+            max_encoded_bytes: derived_tribute.encoded_bytes,
+            max_decoded_bytes: derived_tribute.encoded_bytes,
+        },
+    ];
+    let protocol_bundle_hash = bundle
+        .protocol_bundle_hash(&limits)
+        .expect("fixture bundle hash");
+    let interval_start = outbe_ocomp_protocol::common::EntityId36(*tribute.tribute_id.as_bytes());
+    let spec = UnitSpecV1 {
+        protocol_bundle_hash,
+        job_id,
+        attempt: 1,
+        phase: UnitPhase::Enumerate,
+        interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
+            start: interval_start,
+            end: None,
+        }),
+        canonical_ordered_inputs: canonical_inputs,
+        lysis_program_semantics_hash: B256::repeat_byte(0x71),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    };
+    let canonical_spec = spec.encode_canonical(&limits).expect("canonical unit spec");
+    let primary_work_unit_root = ordered_list_root(
+        ListKind::UnitSpecificationsArtifacts,
+        std::slice::from_ref(&canonical_spec),
+        OrderedListLimits::new(1, limits.codec.max_body_bytes, 32),
+    )
+    .expect("primary unit root");
     let plan = PlanCommitmentV1 {
-        protocol_bundle_hash: bundle
-            .protocol_bundle_hash(&limits)
-            .expect("fixture bundle hash"),
+        protocol_bundle_hash,
         job_id,
         attempt: 1,
         input_manifest_hash: published.manifest_hash,
@@ -165,7 +233,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         tribute_count: published.tribute_count,
         max_tributes_per_work_shard: 256,
         primary_work_unit_count: 1,
-        primary_work_unit_root: B256::repeat_byte(0x72),
+        primary_work_unit_root,
         planner_spec_version: 1,
         reducer_spec_version: 1,
     };
@@ -177,34 +245,6 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
                 .expect("canonical plan commitment"),
         )
         .expect("plan object");
-    let mut canonical_inputs = vec![CanonicalInputRefV1 {
-        purpose: InputPurpose::InputManifest,
-        source_kind: InputSourceKind::AuthenticatedRoot,
-        source_id: published.manifest_hash,
-        record_count_limit: published.tribute_count,
-        max_encoded_bytes: published.manifest_ref.encoded_bytes,
-        max_decoded_bytes: published.manifest_ref.encoded_bytes,
-    }];
-    for reference in &published.ordered_chunk_refs {
-        let object = cas
-            .read_verified(reference)
-            .expect("read fixture input chunk");
-        let derived = derive_input_chunk_ref(&object, &bundle, &limits)
-            .expect("derive fixture input reference")
-            .reference;
-        canonical_inputs.push(CanonicalInputRefV1 {
-            purpose: match derived.kind {
-                InputChunkKind::Tribute => InputPurpose::TributeStream,
-                InputChunkKind::Fidelity => InputPurpose::FidelityOpenings,
-                InputChunkKind::Oracle => InputPurpose::OracleOpenings,
-            },
-            source_kind: InputSourceKind::AuthenticatedRoot,
-            source_id: derived.semantic_digest,
-            record_count_limit: derived.record_count,
-            max_encoded_bytes: derived.encoded_bytes,
-            max_decoded_bytes: derived.encoded_bytes,
-        });
-    }
     let user = effective_user_name().expect("effective user");
     let uid = effective_uid().expect("effective uid");
 
@@ -242,6 +282,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
                 cas_limits.max_object_bytes.to_string(),
             )
             .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
+            .env(CHILD_INBOX_ROOT, &inbox_root)
             .stdin(Stdio::from(child_fd))
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
@@ -258,33 +299,18 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         .expect("worker client");
         client.handshake().expect("worker handshake");
 
-        let spec = UnitSpecV1 {
-            protocol_bundle_hash: worker_identity.protocol_bundle_hash,
-            job_id,
-            attempt: 1,
-            phase: UnitPhase::Enumerate,
-            interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
-                start: EntityId36([index; 36]),
-                end: Some(EntityId36([index + 1; 36])),
-            }),
-            canonical_ordered_inputs: canonical_inputs.clone(),
-            lysis_program_semantics_hash: B256::repeat_byte(0x71),
-            planner_spec_version: 1,
-            reducer_spec_version: 1,
-        };
         let unit_id = spec.unit_id(&limits).expect("unit id");
         let request = RunUnitV1 {
             protocol_bundle_hash: spec.protocol_bundle_hash,
             job_id: spec.job_id,
             attempt: spec.attempt,
             plan_hash,
-            unit_index: u32::from(index),
-            canonical_unit_spec: BoundedBytes(
-                spec.encode_canonical(&limits).expect("unit spec bytes"),
-            ),
+            unit_index: 0,
+            canonical_unit_spec: BoundedBytes(canonical_spec.clone()),
+            unit_membership_siblings: Vec::new(),
             plan_ref: plan_ref.clone(),
             input_manifest_ref: published.manifest_ref.clone(),
-            ordered_input_refs: published.ordered_chunk_refs.clone(),
+            ordered_input_refs: vec![tribute_ref.clone()],
         };
         client
             .send_request(
@@ -299,14 +325,16 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         });
     }
 
+    let mut finished_reports = Vec::new();
     for mut worker in workers {
         let frame = worker.client.receive_response().expect("worker response");
         assert_eq!(frame.message_kind, WorkerMessageKind::UnitFinished as u16);
         let finished = UnitFinishedV1::decode_body(&frame.body, &limits).expect("finished body");
         assert_eq!(finished.unit_id, worker.unit_id);
-        assert_eq!(finished.status, UnitFinishedStatus::Failed);
-        assert_eq!(finished.exact_staged_bytes, 0);
-        assert_eq!(finished.transport_digest, B256::ZERO);
+        assert_eq!(finished.status, UnitFinishedStatus::Success);
+        assert!(finished.exact_staged_bytes > 0);
+        assert_ne!(finished.transport_digest, B256::ZERO);
+        finished_reports.push(finished);
         let output = worker.child.wait_with_output().expect("worker exit");
         assert!(
             output.status.success(),
@@ -314,6 +342,19 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    assert!(finished_reports.windows(2).all(|pair| pair[0] == pair[1]));
+    let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open worker inbox");
+    assert_eq!(inbox.artifact_count().unwrap(), 1);
+    let verified = inbox
+        .read_reported(
+            finished_reports[0].unit_id,
+            finished_reports[0].exact_staged_bytes,
+            finished_reports[0].transport_digest,
+        )
+        .expect("read staged unit artifact");
+    let artifact = UnitArtifactV1::decode_canonical(verified.bytes(), &limits)
+        .expect("decode staged unit artifact");
+    artifact.validate_against(&spec, &limits).unwrap();
 }
 
 fn run_child_worker() {
@@ -349,6 +390,11 @@ fn run_child_worker() {
         cas_limits: CasLimits {
             max_object_bytes: parse_u64(CHILD_CAS_OBJECT_CAP),
             max_total_bytes: parse_u64(CHILD_CAS_TOTAL_CAP),
+        },
+        inbox_root: PathBuf::from(env::var_os(CHILD_INBOX_ROOT).expect("worker child inbox root")),
+        inbox_limits: WorkerInboxLimits {
+            max_artifact_bytes: 1024 * 1024,
+            max_total_bytes: 4 * 1024 * 1024,
         },
         connection_fd: 0,
         protocol_bundle: PinnedProtocolBundle::decode(

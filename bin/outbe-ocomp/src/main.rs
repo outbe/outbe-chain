@@ -9,6 +9,7 @@ use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{
     poc_schema_limits, require_effective_user, uid_for_user, EndpointIdentity,
 };
+use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::supervisor::{SupervisorDiscovery, SupervisorDiscoveryConfig};
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 
@@ -49,6 +50,9 @@ const RELAY_USER: &str = "outbe-ocomp-relay";
 const CAS_ROOT: &str = "/var/lib/outbe-ocomp/cas-v1";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const CAS_MAX_TOTAL_BYTES: u64 = 8_589_934_592;
+const WORKER_INBOX_ROOT: &str = "/var/lib/outbe-ocomp/worker-inbox-v1";
+const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
+const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const SOCKET_ACTIVATION_FD: i32 = 0;
 const NODE_USER: &str = "outbe";
 const NODE_CONTROL_SOCKET: &str = "/run/outbe-ocomp/node.sock";
@@ -80,6 +84,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cas_limits: CasLimits {
                     max_object_bytes: CAS_MAX_OBJECT_BYTES,
                     max_total_bytes: CAS_MAX_TOTAL_BYTES,
+                },
+                inbox_root: PathBuf::from(WORKER_INBOX_ROOT),
+                inbox_limits: WorkerInboxLimits {
+                    max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
+                    max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
                 },
                 connection_fd: SOCKET_ACTIVATION_FD,
                 protocol_bundle,

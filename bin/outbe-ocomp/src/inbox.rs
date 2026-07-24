@@ -58,6 +58,8 @@ pub enum WorkerInboxError {
     DigestMismatch { expected: B256, actual: B256 },
     #[error("worker artifact changed while the same descriptor was being verified")]
     ArtifactChanged,
+    #[error("worker completion report contains a zero identity, length or digest")]
+    InvalidReport,
     #[error("worker inbox byte count does not fit this host")]
     LengthOverflow,
 }
@@ -276,6 +278,25 @@ impl WorkerInbox {
         Ok(VerifiedWorkerArtifact {
             staged: staged.clone(),
             bytes,
+        })
+    }
+
+    pub fn read_reported(
+        &self,
+        unit_id: B256,
+        exact_staged_bytes: u64,
+        transport_digest: B256,
+    ) -> Result<VerifiedWorkerArtifact, WorkerInboxError> {
+        if unit_id.is_zero() || exact_staged_bytes == 0 || transport_digest.is_zero() {
+            return Err(WorkerInboxError::InvalidReport);
+        }
+        self.read_verified(&StagedWorkerArtifact {
+            unit_id,
+            reference: CasObjectRefV1 {
+                transport_digest,
+                encoded_bytes: exact_staged_bytes,
+                expected_ocb1_kind: None,
+            },
         })
     }
 

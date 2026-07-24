@@ -16,6 +16,7 @@ hex.workspace = true
 libc.workspace = true
 outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-lysis.workspace = true
 outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-offchain-data.workspace = true
