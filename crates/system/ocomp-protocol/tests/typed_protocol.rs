@@ -1439,6 +1439,19 @@ fn unit_artifact_constructor_binds_spec_output_and_coverage() {
     )
     .unwrap();
     artifact.validate_against(&spec, &LIMITS).unwrap();
+    assert_eq!(artifact.phase_payload(&LIMITS).unwrap(), [0x11, 0x22]);
+    assert!(UnitArtifactV1::from_canonical_output(
+        &spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: hash(108),
+            output_coverage_root: hash(109),
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(Vec::new()),
+        &LIMITS,
+    )
+    .is_err());
 
     let mut changed_bytes = artifact.clone();
     changed_bytes.canonical_output_bytes.0[0] ^= 1;

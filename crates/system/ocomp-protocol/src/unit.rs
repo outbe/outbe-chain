@@ -370,6 +370,22 @@ impl UnitArtifactV1 {
         Ok(header)
     }
 
+    pub fn phase_payload<'a>(
+        &'a self,
+        limits: &SchemaLimits,
+    ) -> Result<&'a [u8], ProtocolError> {
+        let mut reader = CanonicalReader::new(&self.canonical_output_bytes.0, limits.codec)?;
+        let header = WorkOutputHeaderV1::decode_nested(&mut reader, limits)?;
+        <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;
+        require_output_header_semantics(&header)?;
+        let payload_offset = reader.offset();
+        require(
+            payload_offset < self.canonical_output_bytes.0.len(),
+            "unit phase payload is non-empty",
+        )?;
+        Ok(&self.canonical_output_bytes.0[payload_offset..])
+    }
+
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
             !self.protocol_bundle_hash.is_zero()
@@ -383,6 +399,7 @@ impl UnitArtifactV1 {
             "unit artifact committed fields",
         )?;
         let header = self.output_header(limits)?;
+        let _ = self.phase_payload(limits)?;
         require(
             self.output_record_count == header.output_coverage_count
                 && self.coverage_or_permutation_commitment == header.output_coverage_root,
