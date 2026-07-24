@@ -55,7 +55,7 @@ use outbe_ocomp_protocol::{
     },
     unit::{
         BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
-        UnitPhase, UnitSpecV1,
+        UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
     ProtocolError, SchemaLimits,
 };
@@ -538,19 +538,18 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         planner_spec_version: 1,
         reducer_spec_version: 1,
     };
-    let unit_artifact = UnitArtifactV1 {
-        protocol_bundle_hash: hash(41),
-        job_id: hash(59),
-        attempt: 1,
-        unit_id: hash(105),
-        phase: UnitPhase::Enumerate,
-        interval_commitment: hash(106),
-        input_root: hash(107),
-        output_record_count: 0,
-        canonical_output_bytes: BoundedBytes(Vec::new()),
-        output_semantic_digest: hash(108),
-        coverage_or_permutation_commitment: hash(109),
-    };
+    let unit_artifact = UnitArtifactV1::from_canonical_output(
+        &unit_spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: hash(108),
+            output_coverage_root: hash(109),
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(vec![0xa5]),
+        &LIMITS,
+    )
+    .unwrap();
     let result = result();
     let activation_payload = result.activation_payload(&LIMITS).unwrap();
     let result_digest = activation_payload.result_digest(&LIMITS).unwrap();
@@ -1400,6 +1399,49 @@ fn public_abi_constants_match_independent_keccak_derivation() {
         keccak256(b"LysisActivated(bytes32,bytes32,bytes32,bytes32,bytes32,uint32)"),
         LYSIS_ACTIVATED_TOPIC0
     );
+}
+
+#[test]
+fn unit_artifact_constructor_binds_spec_output_and_coverage() {
+    let spec = UnitSpecV1 {
+        protocol_bundle_hash: hash(41),
+        job_id: hash(59),
+        attempt: 1,
+        phase: UnitPhase::Enumerate,
+        interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
+            start: EntityId36([0; 36]),
+            end: Some(EntityId36([1; 36])),
+        }),
+        canonical_ordered_inputs: Vec::new(),
+        lysis_program_semantics_hash: hash(8),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    };
+    let artifact = UnitArtifactV1::from_canonical_output(
+        &spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: hash(108),
+            output_coverage_root: hash(109),
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(vec![0x11, 0x22]),
+        &LIMITS,
+    )
+    .unwrap();
+    artifact.validate_against(&spec, &LIMITS).unwrap();
+
+    let mut changed_bytes = artifact.clone();
+    changed_bytes.canonical_output_bytes.0[0] ^= 1;
+    assert!(changed_bytes.validate_against(&spec, &LIMITS).is_err());
+
+    let mut changed_coverage = artifact.clone();
+    changed_coverage.coverage_or_permutation_commitment = hash(110);
+    assert!(changed_coverage.validate_against(&spec, &LIMITS).is_err());
+
+    let mut changed_count = artifact;
+    changed_count.output_record_count += 1;
+    assert!(changed_count.validate_against(&spec, &LIMITS).is_err());
 }
 
 #[test]

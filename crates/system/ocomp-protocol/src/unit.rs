@@ -226,6 +226,7 @@ wire_struct! {
         pub output_semantic_digest: B256,
         pub coverage_or_permutation_commitment: B256,
     }
+    validate = validate_unit_artifact;
 }
 impl_top_level_codec!(UnitArtifactV1, UnitArtifactV1);
 
@@ -312,11 +313,93 @@ fn validate_unit_spec(spec: &UnitSpecV1, limits: &SchemaLimits) -> Result<(), Pr
 }
 
 impl UnitArtifactV1 {
+    pub fn from_canonical_output(
+        spec: &UnitSpecV1,
+        header: WorkOutputHeaderV1,
+        phase_payload: BoundedBytes,
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;
+        require_output_header_semantics(&header)?;
+        phase_payload.validate(limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        header.encode_nested(&mut writer, limits)?;
+        let mut canonical_output = writer.into_bytes();
+        let total_bytes = canonical_output
+            .len()
+            .checked_add(phase_payload.0.len())
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "unit canonical output bytes",
+            })?;
+        require(
+            total_bytes <= limits.max_bounded_bytes,
+            "unit canonical output byte cap",
+        )?;
+        canonical_output.extend_from_slice(&phase_payload.0);
+        let mut artifact = Self {
+            protocol_bundle_hash: spec.protocol_bundle_hash,
+            job_id: spec.job_id,
+            attempt: spec.attempt,
+            unit_id: spec.unit_id(limits)?,
+            phase: spec.phase,
+            interval_commitment: spec.interval_commitment(limits)?,
+            input_root: spec.input_root(limits)?,
+            output_record_count: header.output_coverage_count,
+            canonical_output_bytes: BoundedBytes(canonical_output),
+            output_semantic_digest: B256::ZERO,
+            coverage_or_permutation_commitment: header.output_coverage_root,
+        };
+        artifact.output_semantic_digest = unit_output_semantic_digest(&artifact, limits)?;
+        artifact.validate_against(spec, limits)?;
+        Ok(artifact)
+    }
+
+    pub fn output_header(
+        &self,
+        limits: &SchemaLimits,
+    ) -> Result<WorkOutputHeaderV1, ProtocolError> {
+        let mut reader = CanonicalReader::new(&self.canonical_output_bytes.0, limits.codec)?;
+        let header = WorkOutputHeaderV1::decode_nested(&mut reader, limits)?;
+        <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;
+        require_output_header_semantics(&header)?;
+        let encoded_header = encode_nested_value(&header, limits)?;
+        require_canonical_reencoding(
+            &self.canonical_output_bytes.0[..reader.offset()],
+            &encoded_header,
+        )?;
+        Ok(header)
+    }
+
+    pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
+        require(
+            !self.protocol_bundle_hash.is_zero()
+                && !self.job_id.is_zero()
+                && !self.unit_id.is_zero()
+                && !self.interval_commitment.is_zero()
+                && !self.input_root.is_zero()
+                && !self.canonical_output_bytes.0.is_empty()
+                && !self.output_semantic_digest.is_zero()
+                && !self.coverage_or_permutation_commitment.is_zero(),
+            "unit artifact committed fields",
+        )?;
+        let header = self.output_header(limits)?;
+        require(
+            self.output_record_count == header.output_coverage_count
+                && self.coverage_or_permutation_commitment == header.output_coverage_root,
+            "unit artifact output header binding",
+        )?;
+        require(
+            self.output_semantic_digest == unit_output_semantic_digest(self, limits)?,
+            "unit output semantic digest",
+        )
+    }
+
     pub fn validate_against(
         &self,
         spec: &UnitSpecV1,
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
+        self.validate_semantics(limits)?;
         require(
             self.protocol_bundle_hash == spec.protocol_bundle_hash
                 && self.job_id == spec.job_id
@@ -343,6 +426,22 @@ impl UnitArtifactV1 {
     pub fn artifact_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         hash_framed(HashDomain::UnitArtifact, &self.encode_canonical(limits)?)
     }
+}
+
+fn require_output_header_semantics(header: &WorkOutputHeaderV1) -> Result<(), ProtocolError> {
+    require(
+        !header.source_coverage_root.is_zero()
+            && !header.output_coverage_root.is_zero()
+            && header.source_coverage_count > 0,
+        "work output coverage header",
+    )
+}
+
+fn validate_unit_artifact(
+    artifact: &UnitArtifactV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    artifact.validate_semantics(limits)
 }
 
 impl PlanCommitmentV1 {
