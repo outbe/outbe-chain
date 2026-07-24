@@ -34,6 +34,7 @@ pub enum ObjectKind {
     ActivationCallCoreV1 = 0x001c,
     LysisArithmeticSummaryV1 = 0x001d,
     OcompJobRecordV1 = 0x001e,
+    ShuffleRunArtifactV1 = 0x001f,
 }
 
 impl ObjectKind {
@@ -68,6 +69,7 @@ impl ObjectKind {
         Self::ActivationCallCoreV1,
         Self::LysisArithmeticSummaryV1,
         Self::OcompJobRecordV1,
+        Self::ShuffleRunArtifactV1,
     ];
 
     #[must_use]
@@ -108,6 +110,7 @@ impl ObjectKind {
             Self::ActivationCallCoreV1 => "ActivationCallCoreV1",
             Self::LysisArithmeticSummaryV1 => "LysisArithmeticSummaryV1",
             Self::OcompJobRecordV1 => "OcompJobRecordV1",
+            Self::ShuffleRunArtifactV1 => "ShuffleRunArtifactV1",
         }
     }
 }
@@ -147,6 +150,7 @@ impl TryFrom<u16> for ObjectKind {
             0x001c => Ok(Self::ActivationCallCoreV1),
             0x001d => Ok(Self::LysisArithmeticSummaryV1),
             0x001e => Ok(Self::OcompJobRecordV1),
+            0x001f => Ok(Self::ShuffleRunArtifactV1),
             value => Err(crate::error::ProtocolError::UnknownObjectKind(value)),
         }
     }

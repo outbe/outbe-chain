@@ -434,13 +434,16 @@ while population-wide objects use constant-size count/root commitments.
 - ABI/system-transaction/event/error registries;
 - golden vector semantic fixtures.
 
-**Changes:** implement the complete object registry `0x0001..0x001e`, nested
+**Changes:** implement the complete object registry `0x0001..0x001f`, nested
 types, exact IDs/hashes/signature rules, Job/attempt/deadline bindings, local
 control frames, receipts/job record and public ABI constants. The capacity
 profile contains no total Tribute cap. `JobIntentV1` binds the complete
 population; `InputManifestV1`, `PlanCommitmentV1` and `LysisResultV1` commit
 chunk/unit/result catalogs by count/root, while `UnitSpecV1` and
-`ResultChunkV1` are bounded worker/artifact objects.
+`ResultChunkV1` are bounded worker/artifact objects. The final registry entry
+is the Lysis-specific `ShuffleRunArtifactV1`: owner/bucket leaves contain at
+most 256 records and canonical internal nodes contain two CAS child references.
+It does not introduce a generic artifact or program extension surface.
 
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
 bundle/parent job; complete canonical shard coverage; q=3 distinct signers;
@@ -969,6 +972,13 @@ derivation, padded Fidelity tree, two-direction parallel prefix scan,
 bounded-run owner/bucket merge trees, result chunks and root reducer; verify
 producer membership/coverage before CAS adoption. No phase may collapse all
 `K` ranges into one unit or input vector.
+
+Shuffle workers embed one bounded `ShuffleRunArtifactV1` root in their
+`UnitArtifactV1` and stage every bounded descendant by content digest. The
+supervisor adopts descendants only after verifying their OCB1 kind, digest,
+exact job/unit/run binding, canonical binary page split, adjacency, counts,
+sort order, ordered-record root and source coverage. No control frame or unit
+artifact carries all page references.
 
 **Invariants/failures:** topological canonical UnitSpec order; stable UnitId;
 zero/many executions allowed; ranges are adjacent/non-overlapping and cover all

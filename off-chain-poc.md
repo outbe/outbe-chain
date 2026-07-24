@@ -871,6 +871,14 @@ Phase F — fixed root/conservation reduce
   -> roots, exact counts, totals and event summary
 ```
 
+Both shuffle phases emit a Lysis-specific `ShuffleRunArtifactV1` tree. A leaf
+contains at most 256 ordered records; a node contains exactly two verified CAS
+child references. The bounded root is carried by the producing
+`UnitArtifactV1`, while descendants stay as bounded content-addressed objects.
+Canonical page spans and splits make the same input produce byte-identical
+trees under any worker count. The tree grows with the number of Tribute; the
+protocol does not reject or truncate a 257th, 10,000th or billionth Tribute.
+
 Sort run limits, merge fan-in, file count, spill bytes, compression ratio and
 tie-breaking are fixed. Even though the PoC is small, no result may depend on a
 language hash-map iteration order or worker completion timing.

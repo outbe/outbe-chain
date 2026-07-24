@@ -49,6 +49,7 @@ use outbe_ocomp_protocol::{
         ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1,
         MetadosisCompletionSummaryV1, ResultChunkV1, ResultRootsV1,
     },
+    shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
         ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1,
         OcompTerminalOutcome,
@@ -665,6 +666,27 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
             completed_binding: None,
         }),
     };
+    let shuffle_run = ShuffleRunArtifactV1 {
+        protocol_bundle_hash: hash(41),
+        job_id: hash(59),
+        attempt: 1,
+        unit_id: hash(117),
+        kind: ShuffleRunKindV1::Owner,
+        run_span: outbe_ocomp_protocol::unit::CanonicalRunSpan {
+            start_run: 0,
+            end_run: 1,
+        },
+        page_span: ShufflePageSpanV1 {
+            start_page: 0,
+            end_page: 1,
+        },
+        first_record_ordinal: 0,
+        record_count: 0,
+        source_coverage_root: hash(118),
+        source_coverage_count: 1,
+        ordered_record_root: hash(119),
+        payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
+    };
 
     assert_round_trip!(bundle(), ProtocolBundleV1, ProtocolBundleV1);
     assert_round_trip!(correctness, CorrectnessProfileV1, CorrectnessProfileV1);
@@ -737,6 +759,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         LysisArithmeticSummaryV1
     );
     assert_round_trip!(job_record, OcompJobRecordV1, OcompJobRecordV1);
+    assert_round_trip!(shuffle_run, ShuffleRunArtifactV1, ShuffleRunArtifactV1);
 }
 
 #[test]

@@ -29,6 +29,7 @@ object	0x001b	SignOnceRecordV1	SignOnceRecordV1
 object	0x001c	ActivationCallCoreV1	ActivationCallCoreV1
 object	0x001d	LysisArithmeticSummaryV1	LysisArithmeticSummaryV1
 object	0x001e	OcompJobRecordV1	OcompJobRecordV1
+object	0x001f	ShuffleRunArtifactV1	ShuffleRunArtifactV1
 domain		ProtocolBundle	OUTBE_OCOMP_PROTOCOL_BUNDLE_V1
 domain		PreAdmission	OUTBE_OCOMP_PRE_ADMISSION_V1
 domain		ActivationPreconditions	OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1

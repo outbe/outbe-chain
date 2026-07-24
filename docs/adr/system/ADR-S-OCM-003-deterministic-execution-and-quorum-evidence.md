@@ -37,6 +37,7 @@ JobId + authenticated input
   -> canonical UnitSpecV1 derived lazily by ordinal
   -> stable UnitId for every derived unit
   -> retryable pure unit artifacts
+  -> bounded ShuffleRunArtifactV1 trees for owner/bucket runs
   -> fixed streaming reduction tree/order
   -> bounded ResultChunkV1 objects
   -> LysisResultV1(result_chunk_count, result_chunk_list_root)
@@ -78,6 +79,20 @@ them once into their parent carrier. Only the root carrier receives the frozen
 ordered-list root wrapper using the manifest Tribute count, and that root must
 equal the canonical complete raw coverage commitment. Reducers therefore never
 materialize or re-read the complete Tribute population.
+
+Owner and bucket shuffle outputs use the Lysis-specific
+`ShuffleRunArtifactV1`; this is not a generic artifact framework. Its root
+object is embedded as the bounded `canonical_output_bytes` of the producing
+`UnitArtifactV1`. A leaf carries at most 256 canonically ordered owner or bucket
+records. A node carries exactly two content-addressed child references plus
+their adjacent page/record summaries. Odd subtrees are promoted unchanged, so
+there are no unary nodes. The split for every non-leaf page span is canonical,
+which makes the tree independent of worker count and completion order.
+Descendants are individually bounded OCB1 objects in validator-local CAS.
+Consumers verify every referenced object's digest, OCB1 kind, job/unit/run
+binding, canonical split, page and record adjacency, exact count, order,
+ordered-record root and source coverage before using the stream. No unit
+contains a population-sized page-reference vector or merged run.
 
 A unit may run zero or many times. Only a digest-valid artifact for its exact
 `UnitId` and plan membership participates in reduction. One, two and four
@@ -180,7 +195,9 @@ before allocation or verification. Total Tribute, unit and result-chunk counts
 are checked for arithmetic validity and exact committed coverage, not capped by
 the PoC. Unit and result-chunk artifacts do not enter activation state
 individually. One constant-size complete-result commitment is carried in the
-activation transaction.
+activation transaction. `ShuffleRunArtifactV1` bounds each leaf to 256 records
+and each internal node to two child references; the number of leaves and nodes
+is derived from the uncapped Tribute population and is never a consensus cap.
 
 ## Compatibility and migration
 

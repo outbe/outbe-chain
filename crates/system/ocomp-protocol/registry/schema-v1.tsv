@@ -29,3 +29,4 @@ kind	type	fields_in_canonical_order
 0x001c	ActivationCallCoreV1	IntentId:Hash,JobId:Hash,attempt:u32,protocol_bundle_hash:Hash,ResultDigest:Hash,activation_preconditions_hash:Hash,terminal_pending_nonce:u64
 0x001d	LysisArithmeticSummaryV1	input_manifest_hash:Hash,PlanHash:Hash,unit_artifact_root:Hash,fidelity_fraction_root:Hash,gratis_prefix_root:Hash,roots:ResultRootsV1,counts:ExactCountsV1,conservation:ConservationTotalsV1,first_error_ordinal:Option<u32>
 0x001e	OcompJobRecordV1	intent:JobIntentV1,status:u8,terminal:Option<OcompJobTerminalV1>
+0x001f	ShuffleRunArtifactV1	protocol_bundle_hash:Hash,JobId:Hash,attempt:u32,UnitId:Hash,kind:u8,run_span:CanonicalRunSpan,page_span:ShufflePageSpanV1,first_record_ordinal:u32,record_count:u32,source_coverage_root:Hash,source_coverage_count:u32,ordered_record_root:Hash,payload:ShuffleRunPayloadV1

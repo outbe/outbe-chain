@@ -310,7 +310,7 @@ fn load_objects(repository_root: &Path) -> Result<Vec<ObjectRow>> {
             name: fields[3].to_owned(),
         });
     }
-    ensure!(objects.len() == 30, "OCOMP V1 must have exactly 30 objects");
+    ensure!(objects.len() == 31, "OCOMP V1 must have exactly 31 objects");
     for (index, object) in objects.iter().enumerate() {
         ensure!(
             usize::from(object.tag) == index + 1,

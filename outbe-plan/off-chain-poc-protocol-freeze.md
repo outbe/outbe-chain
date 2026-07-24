@@ -200,6 +200,7 @@ The following `u16` tags are permanent for the PoC history:
 | `0x001c` | `ActivationCallCoreV1` |
 | `0x001d` | `LysisArithmeticSummaryV1` |
 | `0x001e` | `OcompJobRecordV1` |
+| `0x001f` | `ShuffleRunArtifactV1` |
 
 The implementation task creates one machine-readable registry and generates
 Rust constants, docs and collision tests from it. Handwritten duplicate tag,
@@ -1149,6 +1150,25 @@ UnitArtifactV1 {
   output_semantic_digest: Hash,
   coverage_or_permutation_commitment: Hash
 }
+
+ShuffleRunArtifactV1 {
+  protocol_bundle_hash: Hash,
+  JobId: Hash,
+  attempt: u32,
+  UnitId: Hash,
+  kind: OWNER(1) | BUCKET(2),
+  run_span: CanonicalRunSpan,
+  page_span: ShufflePageSpanV1,
+  first_record_ordinal: u32,
+  record_count: u32,
+  source_coverage_root: Hash,
+  source_coverage_count: u32,
+  ordered_record_root: Hash,
+  payload: closed tagged union =
+    OWNER_LEAF(1, Vec<ContributorActionV1>) |
+    BUCKET_LEAF(2, Vec<ShuffleBucketRecordV1>) |
+    NODE(3, left: ShuffleRunChildV1, right: ShuffleRunChildV1)
+}
 ```
 
 For `AUTHENTICATED_ROOT`, `source_id` is the exact authenticated semantic root
@@ -1158,6 +1178,19 @@ fully verify that producer artifact. For `CANONICAL_EMPTY`, `source_id` must
 equal `EmptyUnitInputId(purpose)` and the count is zero. This producer binding
 allows the complete plan and every `UnitId` to be derived before execution;
 an unknown future output digest is never represented by a zero or placeholder.
+
+For `OWNER_SHUFFLE` and `BUCKET_SHUFFLE`,
+`UnitArtifactV1.canonical_output_bytes` is exactly one canonical
+`ShuffleRunArtifactV1` root. Each leaf has at most 256 records. Internal nodes
+contain exactly two content-addressed child references; an odd last subtree is
+promoted unchanged. Page spans start at zero for a root, are adjacent, and use
+the unique largest-power-of-two canonical split. Child summaries bind page
+span, first record ordinal, record count and ordered-record root. Every child
+object repeats the exact bundle/job/attempt/UnitId/kind/run/source-coverage
+binding of its root. The consumer traverses and verifies the complete tree
+before admitting the producer artifact. This keeps every OCB1 object bounded
+without imposing any limit on the parent Tribute population and without an
+unbounded vector of CAS references.
 
 The phase fixes the interval tag:
 

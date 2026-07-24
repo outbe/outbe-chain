@@ -23,6 +23,7 @@ pub mod profile;
 pub mod receipts;
 pub mod registry;
 pub mod result;
+pub mod shuffle;
 mod schema;
 pub mod state;
 pub mod unit;

@@ -35,6 +35,7 @@
 | `0x001c` | `ActivationCallCoreV1` | `ActivationCallCoreV1` |
 | `0x001d` | `LysisArithmeticSummaryV1` | `LysisArithmeticSummaryV1` |
 | `0x001e` | `OcompJobRecordV1` | `OcompJobRecordV1` |
+| `0x001f` | `ShuffleRunArtifactV1` | `ShuffleRunArtifactV1` |
 
 ## Hash domains
 
