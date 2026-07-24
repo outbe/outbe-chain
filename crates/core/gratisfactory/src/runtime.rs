@@ -72,10 +72,6 @@ pub fn mint(
 /// The gratis mint is authorized by the account owner's Gratis modify key
 /// (`auth`): the confidential mint runs inside the enclave, so the caller must
 /// supply a valid `mac`/`opNonce` bound to their current gratis op-nonce.
-///
-/// Promis is fidelity-neutral; the resulting Gratis is not. Converting therefore
-/// records a fresh Fidelity acquisition cohort dated at conversion time (via the
-/// shared [`mint`] path), so loyalty aging starts when the Gratis is minted.
 pub fn mine_from_promis(
     storage: StorageHandle<'_>,
     account: Address,

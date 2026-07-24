@@ -3,9 +3,7 @@
 //!
 //! Owns the promis mint/burn orchestration. `mine` wraps `Promis::mine`.
 //! `mine_coen` is the symmetric sale path: it wraps `Promis::burn`, mints native
-//! COEN 1:1, and emits `CoenMined`. Promis is fidelity-neutral — only Gratis
-//! mutates the Fidelity cohort ledger — so neither path touches Fidelity. The
-//! `PromisMinted`/`PromisBurned` events are emitted by the Promis token itself.
+//! COEN 1:1, and emits `CoenMined`.
 
 pub mod api;
 pub mod precompile;
