@@ -420,6 +420,37 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
     assert_eq!(actual, expected.league_fractions);
 }
 
+#[test]
+fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
+    let day = WorldwideDay::new(20_260_724);
+    let owner = Address::repeat_byte(9);
+    let mut observed = ObservedTributeV1 {
+        tribute: TributeInputV1 {
+            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            owner,
+            worldwide_day: day,
+            issuance_currency: 978,
+            nominal_amount_minor: SCALE_1E18,
+            reference_currency: 840,
+            tribute_price_minor: U256::ZERO,
+            exclude_from_intex_issuance: false,
+        },
+        first_league: ObservationValueV1::Unavailable,
+        second_league: ObservationValueV1::Value(7),
+        conditional_entry_price_minor: ObservationValueV1::Unavailable,
+        nod_target_available: true,
+    };
+    assert!(fidelity_map(0, &[observed.clone()]).is_err());
+
+    observed.first_league = ObservationValueV1::Value(6);
+    assert!(fidelity_map(0, &[observed.clone()]).is_err());
+
+    observed.first_league = ObservationValueV1::Value(7);
+    let left = fidelity_map(0, &[observed.clone()]).unwrap();
+    let right = fidelity_map(2, &[observed]).unwrap();
+    assert!(fidelity_reduce(&left.aggregate, &right.aggregate).is_err());
+}
+
 fn entity_id(ordinal: u32) -> EntityId36 {
     let mut bytes = [0_u8; 36];
     bytes[32..].copy_from_slice(&ordinal.to_be_bytes());
