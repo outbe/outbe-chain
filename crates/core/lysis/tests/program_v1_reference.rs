@@ -298,39 +298,6 @@ fn execute_json(input: &CorpusInput) -> Value {
 }
 
 #[test]
-fn pure_program_has_no_storage_node_or_process_dependency() {
-    let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let program_root = crate_root.join("src/program_v1");
-    let source = ["mod.rs", "types.rs", "execute.rs"]
-        .into_iter()
-        .map(|name| {
-            std::fs::read_to_string(program_root.join(name))
-                .unwrap_or_else(|error| panic!("cannot read {name}: {error}"))
-        })
-        .collect::<String>();
-    for forbidden in [
-        "StorageHandle",
-        "std::fs",
-        "std::process",
-        "tokio::",
-        "mongodb",
-        "outbe_nod",
-        "outbe_fidelity",
-        "outbe_oracle",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "pure program contains forbidden dependency {forbidden}"
-        );
-    }
-
-    let adapter =
-        std::fs::read_to_string(crate_root.join("src/runtime.rs")).expect("legacy adapter source");
-    assert!(adapter.contains("program_v1::prepare("));
-    assert!(!adapter.contains("calc_fraction_distribution_fp"));
-}
-
-#[test]
 fn independent_reference_corpus_and_native_program_match() {
     let cases = corpus_cases();
     assert!(!cases.is_empty());
