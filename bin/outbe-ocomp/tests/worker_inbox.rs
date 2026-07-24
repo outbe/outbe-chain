@@ -125,6 +125,76 @@ fn worker_inbox_never_overwrites_existing_or_symlinked_unit_artifact() {
 }
 
 #[test]
+fn supervisor_adoption_accepts_exact_reexecution_and_rejects_conflicting_artifact() {
+    let directory = tempdir().expect("worker inbox directory");
+    let inbox = WorkerInbox::open(
+        directory.path(),
+        WorkerInboxLimits {
+            max_artifact_bytes: 64,
+            max_total_bytes: 128,
+        },
+    )
+    .expect("open worker inbox");
+    let unit_id = B256::repeat_byte(0x47);
+
+    let first = inbox
+        .adopt(unit_id, b"canonical artifact")
+        .expect("first execution");
+    let replay = inbox
+        .adopt(unit_id, b"canonical artifact")
+        .expect("byte-identical retry is a cache hit");
+    assert_eq!(first, replay);
+    assert_eq!(inbox.artifact_count().expect("artifact count"), 1);
+
+    assert!(matches!(
+        inbox
+            .adopt(unit_id, b"different valid-looking artifact")
+            .expect_err("same UnitId with different bytes must conflict"),
+        WorkerInboxError::ArtifactConflict {
+            unit_id: conflicting
+        } if conflicting == unit_id
+    ));
+    assert_eq!(
+        inbox.read_verified(&first).expect("original remains").bytes(),
+        b"canonical artifact"
+    );
+}
+
+#[test]
+fn concurrent_identical_reexecutions_adopt_one_immutable_artifact() {
+    let directory = tempdir().expect("worker inbox directory");
+    let inbox = Arc::new(
+        WorkerInbox::open(
+            directory.path(),
+            WorkerInboxLimits {
+                max_artifact_bytes: 64,
+                max_total_bytes: 64,
+            },
+        )
+        .expect("open worker inbox"),
+    );
+    let barrier = Arc::new(Barrier::new(4));
+    let unit_id = B256::repeat_byte(0x48);
+    let handles = (0..4)
+        .map(|_| {
+            let inbox = Arc::clone(&inbox);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                inbox.adopt(unit_id, b"same deterministic bytes")
+            })
+        })
+        .collect::<Vec<_>>();
+    let adopted = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("worker thread").expect("adopt"))
+        .collect::<Vec<_>>();
+
+    assert!(adopted.windows(2).all(|pair| pair[0] == pair[1]));
+    assert_eq!(inbox.artifact_count().expect("artifact count"), 1);
+}
+
+#[test]
 fn concurrent_workers_cannot_race_past_the_total_inbox_quota() {
     let directory = tempdir().expect("worker inbox directory");
     let inbox = Arc::new(

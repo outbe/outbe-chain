@@ -42,6 +42,8 @@ pub enum WorkerInboxError {
     TotalLimitExceeded { limit: u64, attempted: u64 },
     #[error("worker inbox already contains an artifact for UnitId {unit_id}")]
     AlreadyStaged { unit_id: B256 },
+    #[error("worker inbox contains conflicting bytes for UnitId {unit_id}")]
+    ArtifactConflict { unit_id: B256 },
     #[error("worker inbox I/O at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -153,6 +155,64 @@ impl WorkerInbox {
             });
         }
 
+        let staging_path = self.next_staging_path();
+        let result = self.stage_inner(unit_id, bytes, declared, &staging_path);
+        let _ = fs::remove_file(&staging_path);
+        result
+    }
+
+    /// Adopts one deterministic execution result. A byte-identical retry is an
+    /// idempotent cache hit; different bytes for the same UnitId are a
+    /// consensus-safety conflict and are never allowed to replace the original.
+    pub fn adopt(
+        &self,
+        unit_id: B256,
+        bytes: &[u8],
+    ) -> Result<StagedWorkerArtifact, WorkerInboxError> {
+        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
+        if declared > self.limits.max_artifact_bytes {
+            return Err(WorkerInboxError::ArtifactLimitExceeded {
+                limit: self.limits.max_artifact_bytes,
+                actual: declared,
+            });
+        }
+        let candidate = staged_descriptor(unit_id, bytes)?;
+        let _lock = InboxLock::acquire(&self.root)?;
+        let artifact_path = self.artifact_path(unit_id);
+        match fs::symlink_metadata(&artifact_path) {
+            Ok(metadata) if metadata.file_type().is_file() && !metadata.file_type().is_symlink() => {
+                return match self.read_verified(&candidate) {
+                    Ok(_) => Ok(candidate),
+                    Err(
+                        WorkerInboxError::LengthMismatch { .. }
+                        | WorkerInboxError::DigestMismatch { .. },
+                    ) => Err(WorkerInboxError::ArtifactConflict { unit_id }),
+                    Err(error) => Err(error),
+                };
+            }
+            Ok(_) => {
+                return Err(WorkerInboxError::UnsafeArtifact {
+                    path: artifact_path,
+                });
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(WorkerInboxError::Io {
+                    path: artifact_path,
+                    source,
+                });
+            }
+        }
+        let attempted = self
+            .used_bytes()?
+            .checked_add(declared)
+            .ok_or(WorkerInboxError::LengthOverflow)?;
+        if attempted > self.limits.max_total_bytes {
+            return Err(WorkerInboxError::TotalLimitExceeded {
+                limit: self.limits.max_total_bytes,
+                attempted,
+            });
+        }
         let staging_path = self.next_staging_path();
         let result = self.stage_inner(unit_id, bytes, declared, &staging_path);
         let _ = fs::remove_file(&staging_path);
@@ -350,6 +410,24 @@ impl WorkerInbox {
         }
         Ok(total)
     }
+}
+
+fn staged_descriptor(
+    unit_id: B256,
+    bytes: &[u8],
+) -> Result<StagedWorkerArtifact, WorkerInboxError> {
+    let encoded_bytes =
+        u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
+    let mut hasher = Keccak256::new();
+    hasher.update(bytes);
+    Ok(StagedWorkerArtifact {
+        unit_id,
+        reference: CasObjectRefV1 {
+            transport_digest: finalize_digest(hasher),
+            encoded_bytes,
+            expected_ocb1_kind: None,
+        },
+    })
 }
 
 struct InboxLock {
