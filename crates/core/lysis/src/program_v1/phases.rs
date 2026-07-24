@@ -2,12 +2,20 @@
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::U256;
-use outbe_compressed_entities::EntityId36;
+use alloy_primitives::{Address, U256};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_primitives::units::SCALE_1E18;
+
+use crate::constants::calc_floor_price;
 
 use super::{
-    execute::{compute_fraction_map_from_groups, validate_required_gratis},
-    FidelityPhaseV1, LeagueFractionV1, ObservedTributeV1, ProgramErrorV1,
+    execute::{
+        compute_fraction_map_from_groups, nod_bucket_key, validate_entry_price,
+        validate_required_gratis,
+    },
+    ContributorActionV1, FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1,
+    ProgramErrorV1,
 };
 
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
@@ -41,6 +49,46 @@ pub struct FidelityAggregateV1 {
 pub struct FidelityMapOutputV1 {
     pub observations: Vec<FidelityObservationV1>,
     pub aggregate: FidelityAggregateV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AmountRecordV1 {
+    pub raw_ordinal: u32,
+    pub tribute_id: EntityId36,
+    pub owner: Address,
+    pub worldwide_day: WorldwideDay,
+    pub league_id: u16,
+    pub nominal_amount_minor: U256,
+    pub gratis_fraction_fp: U256,
+    pub gratis_load_minor: U256,
+    pub entry_price_minor: U256,
+    pub floor_price_minor: U256,
+    pub cost_amount_minor: U256,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub exclude_from_intex_issuance: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AmountRunV1 {
+    pub start_ordinal: u32,
+    pub end_ordinal: u32,
+    pub ordered_records: Vec<AmountRecordV1>,
+    pub checked_segment_gratis_total: U256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedOutputRecordV1 {
+    pub raw_ordinal: u32,
+    pub nod_action: NodActionV1,
+    pub contributor_action: Option<ContributorActionV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedOutputRunV1 {
+    pub start_ordinal: u32,
+    pub end_ordinal: u32,
+    pub ordered_records: Vec<FinalizedOutputRecordV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -284,6 +332,143 @@ pub fn finalize_fi_fraction_table(
     })
 }
 
+pub fn amount_map(
+    start_ordinal: u32,
+    observed: &[ObservedTributeV1],
+    fidelity_observations: &[FidelityObservationV1],
+    fractions: &[LeagueFractionV1],
+    mandatory_entry_price_840: U256,
+) -> Result<AmountRunV1, ProgramErrorV1> {
+    if observed.is_empty()
+        || observed.len() != fidelity_observations.len()
+        || observed.len()
+            > usize::try_from(PRIMARY_WORK_SHARD_SIZE)
+                .map_err(|_| ProgramErrorV1::OutputCountMismatch)?
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    validate_entry_price(mandatory_entry_price_840, None, 840)?;
+    let mut fraction_by_league = BTreeMap::new();
+    let mut previous_league = None;
+    for fraction in fractions {
+        if previous_league.is_some_and(|previous| previous >= fraction.league) {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        previous_league = Some(fraction.league);
+        fraction_by_league.insert(fraction.league, fraction.fraction);
+    }
+
+    let mut ordered_records = Vec::with_capacity(observed.len());
+    let mut checked_segment_gratis_total = U256::ZERO;
+    for (local_ordinal, (item, fidelity)) in
+        observed.iter().zip(fidelity_observations).enumerate()
+    {
+        let raw_ordinal = start_ordinal
+            .checked_add(
+                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            )
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
+        if fidelity.raw_ordinal != raw_ordinal
+            || fidelity.tribute_id != item.tribute.tribute_id
+            || fidelity.nominal_amount_minor != item.tribute.nominal_amount_minor
+            || fidelity.pre_distribution_league != fidelity.issuance_league
+        {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        let first_league =
+            item.first_league
+                .copied()
+                .ok_or(ProgramErrorV1::FidelityUnavailable {
+                    ordinal: raw_ordinal as usize,
+                    phase: FidelityPhaseV1::First,
+                })?;
+        let second_league =
+            item.second_league
+                .copied()
+                .ok_or(ProgramErrorV1::FidelityUnavailable {
+                    ordinal: raw_ordinal as usize,
+                    phase: FidelityPhaseV1::Second,
+                })?;
+        if first_league != second_league {
+            return Err(ProgramErrorV1::FidelityMismatch {
+                ordinal: raw_ordinal as usize,
+                first: first_league,
+                second: second_league,
+            });
+        }
+        if first_league != fidelity.pre_distribution_league
+            || second_league != fidelity.issuance_league
+        {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        let fraction = fraction_by_league
+            .get(&first_league)
+            .copied()
+            .unwrap_or(U256::ZERO);
+        let gratis_load_minor =
+            item.tribute.nominal_amount_minor * fraction / SCALE_1E18;
+        if gratis_load_minor.is_zero() {
+            return Err(ProgramErrorV1::ZeroGratisLoad {
+                ordinal: raw_ordinal as usize,
+            });
+        }
+        let entry_price_minor = if item.tribute.reference_currency == 840 {
+            mandatory_entry_price_840
+        } else {
+            item.conditional_entry_price_minor.copied().ok_or(
+                ProgramErrorV1::ConditionalOracleUnavailable {
+                    ordinal: raw_ordinal as usize,
+                    currency: item.tribute.reference_currency,
+                },
+            )?
+        };
+        validate_entry_price(
+            entry_price_minor,
+            Some(raw_ordinal as usize),
+            item.tribute.reference_currency,
+        )?;
+        if !item.nod_target_available || item.tribute.owner.is_zero() {
+            return Err(ProgramErrorV1::InvalidNodTarget {
+                ordinal: raw_ordinal as usize,
+            });
+        }
+        let floor_price_minor =
+            calc_floor_price(item.tribute.tribute_price_minor.max(entry_price_minor));
+        let cost_amount_minor = entry_price_minor * gratis_load_minor / SCALE_1E18;
+        checked_segment_gratis_total = checked_segment_gratis_total
+            .checked_add(gratis_load_minor)
+            .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                message: format!("Gratis total overflow at {raw_ordinal}"),
+            })?;
+        ordered_records.push(AmountRecordV1 {
+            raw_ordinal,
+            tribute_id: item.tribute.tribute_id,
+            owner: item.tribute.owner,
+            worldwide_day: item.tribute.worldwide_day,
+            league_id: second_league,
+            nominal_amount_minor: item.tribute.nominal_amount_minor,
+            gratis_fraction_fp: fraction,
+            gratis_load_minor,
+            entry_price_minor,
+            floor_price_minor,
+            cost_amount_minor,
+            issuance_currency: item.tribute.issuance_currency,
+            reference_currency: item.tribute.reference_currency,
+            exclude_from_intex_issuance: item.tribute.exclude_from_intex_issuance,
+        });
+    }
+    let count =
+        u32::try_from(ordered_records.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    Ok(AmountRunV1 {
+        start_ordinal,
+        end_ordinal: start_ordinal
+            .checked_add(count)
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?,
+        ordered_records,
+        checked_segment_gratis_total,
+    })
+}
+
 pub fn gratis_summary(
     start_ordinal: u32,
     gratis_loads: &[U256],
@@ -432,5 +617,86 @@ pub fn finalize_gratis_leaf(
         incoming_remaining,
         outgoing_remaining: remaining,
         first_error_ordinal: None,
+    })
+}
+
+pub fn output_finalize(
+    amounts: &AmountRunV1,
+    prefix: &GratisLeafPrefixV1,
+    logical_evaluation_time: u64,
+) -> Result<FinalizedOutputRunV1, ProgramErrorV1> {
+    if amounts.ordered_records.is_empty()
+        || amounts.start_ordinal / PRIMARY_WORK_SHARD_SIZE != prefix.segment_ordinal
+        || prefix.first_error_ordinal.is_some()
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    let mut remaining = prefix.incoming_remaining;
+    let mut ordered_records = Vec::with_capacity(amounts.ordered_records.len());
+    for amount in &amounts.ordered_records {
+        if amount.raw_ordinal
+            != amounts
+                .start_ordinal
+                .checked_add(
+                    u32::try_from(ordered_records.len())
+                        .map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+                )
+                .ok_or(ProgramErrorV1::OutputCountMismatch)?
+        {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        remaining = validate_required_gratis(
+            remaining,
+            amount.gratis_load_minor,
+            amount.raw_ordinal as usize,
+        )?;
+        let nod_id = derive_poseidon_entity_id(amount.owner, amount.worldwide_day).map_err(
+            |error| ProgramErrorV1::Arithmetic {
+                message: error.to_string(),
+            },
+        )?;
+        let bucket_key = nod_bucket_key(amount.worldwide_day, amount.floor_price_minor);
+        ordered_records.push(FinalizedOutputRecordV1 {
+            raw_ordinal: amount.raw_ordinal,
+            nod_action: NodActionV1 {
+                source_tribute_id: amount.tribute_id,
+                nod_id,
+                owner: amount.owner,
+                worldwide_day: amount.worldwide_day,
+                league_id: amount.league_id,
+                floor_price_minor: amount.floor_price_minor,
+                gratis_load_minor: amount.gratis_load_minor,
+                entry_price_minor: amount.entry_price_minor,
+                cost_amount_minor: amount.cost_amount_minor,
+                issuance_currency: amount.issuance_currency,
+                reference_currency: amount.reference_currency,
+                bucket_key,
+                issued_at: logical_evaluation_time,
+            },
+            contributor_action: (!amount.exclude_from_intex_issuance).then_some(
+                ContributorActionV1 {
+                    owner: amount.owner,
+                    nominal_amount_minor: amount.nominal_amount_minor,
+                },
+            ),
+        });
+    }
+    if prefix.incoming_remaining - remaining != amounts.checked_segment_gratis_total
+        || remaining != prefix.outgoing_remaining
+        || amounts.end_ordinal
+            != amounts
+                .start_ordinal
+                .checked_add(
+                    u32::try_from(ordered_records.len())
+                        .map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+                )
+                .ok_or(ProgramErrorV1::OutputCountMismatch)?
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    Ok(FinalizedOutputRunV1 {
+        start_ordinal: amounts.start_ordinal,
+        end_ordinal: amounts.end_ordinal,
+        ordered_records,
     })
 }

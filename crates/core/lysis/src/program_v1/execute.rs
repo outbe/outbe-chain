@@ -460,7 +460,7 @@ pub(crate) fn checked_nominal_step(
         .ok_or(ProgramErrorV1::TotalNominalOverflow { ordinal })
 }
 
-fn validate_entry_price(
+pub(crate) fn validate_entry_price(
     entry_price_minor: U256,
     ordinal: Option<usize>,
     currency: u16,
@@ -471,7 +471,7 @@ fn validate_entry_price(
     Ok(())
 }
 
-fn nod_bucket_key(worldwide_day: WorldwideDay, floor_price_minor: U256) -> B256 {
+pub(crate) fn nod_bucket_key(worldwide_day: WorldwideDay, floor_price_minor: U256) -> B256 {
     let mut bytes = [0_u8; 36];
     bytes[..4].copy_from_slice(&u32::from(worldwide_day).to_be_bytes());
     bytes[4..].copy_from_slice(&floor_price_minor.to_be_bytes::<32>());

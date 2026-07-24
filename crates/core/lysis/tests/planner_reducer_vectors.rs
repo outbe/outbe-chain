@@ -4,9 +4,9 @@ use outbe_lysis::program_v1::planner::{
     ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_lysis::program_v1::phases::{
-    fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
+    amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    FidelityReduceValueV1, GratisSummaryValueV1,
+    output_finalize, FidelityReduceValueV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::{
     execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
@@ -499,6 +499,158 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
     let left = fidelity_map(0, &[observed.clone()]).unwrap();
     let right = fidelity_map(2, &[observed]).unwrap();
     assert!(fidelity_reduce(&left.aggregate, &right.aggregate).is_err());
+}
+
+#[test]
+fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_one() {
+    let day = WorldwideDay::new(20_260_724);
+    let mut tributes = (0..257_u32)
+        .map(|ordinal| {
+            let mut owner_bytes = [0_u8; 20];
+            owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
+            let owner = Address::from(owner_bytes);
+            ObservedTributeV1 {
+                tribute: TributeInputV1 {
+                    tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                    owner,
+                    worldwide_day: day,
+                    issuance_currency: 978,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E18,
+                    reference_currency: 840,
+                    tribute_price_minor: U256::from(2_u8) * SCALE_1E18,
+                    exclude_from_intex_issuance: ordinal.is_multiple_of(11),
+                },
+                first_league: ObservationValueV1::Value(7),
+                second_league: ObservationValueV1::Value(7),
+                conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                nod_target_available: true,
+            }
+        })
+        .collect::<Vec<_>>();
+    tributes.sort_by_key(|observed| observed.tribute.tribute_id);
+    let total_nominal = tributes
+        .iter()
+        .map(|observed| observed.tribute.nominal_amount_minor)
+        .sum::<U256>();
+    let lysis_budget = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let logical_time = 1_784_765_900;
+    let entry_price = SCALE_1E18;
+    let sequential = execute(ProgramInputV1 {
+        worldwide_day: day,
+        logical_evaluation_time: logical_time,
+        gratis_allocation: lysis_budget,
+        mandatory_entry_price_840: ObservationValueV1::Value(entry_price),
+        tributes: tributes.clone(),
+    })
+    .unwrap();
+
+    let fidelity_left = fidelity_map(0, &tributes[..256]).unwrap();
+    let fidelity_right = fidelity_map(256, &tributes[256..]).unwrap();
+    let fidelity_root =
+        fidelity_reduce(&fidelity_left.aggregate, &fidelity_right.aggregate).unwrap();
+    let fractions = finalize_fi_fraction_table(&fidelity_root, lysis_budget).unwrap();
+    let amount_left = amount_map(
+        0,
+        &tributes[..256],
+        &fidelity_left.observations,
+        &fractions,
+        entry_price,
+    )
+    .unwrap();
+    let amount_right = amount_map(
+        256,
+        &tributes[256..],
+        &fidelity_right.observations,
+        &fractions,
+        entry_price,
+    )
+    .unwrap();
+
+    let left_summary = gratis_summary(
+        0,
+        &amount_left
+            .ordered_records
+            .iter()
+            .map(|record| record.gratis_load_minor)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let right_summary = gratis_summary(
+        256,
+        &amount_right
+            .ordered_records
+            .iter()
+            .map(|record| record.gratis_load_minor)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let prefixes = gratis_prefix_down(
+        Some(lysis_budget),
+        GratisSummaryValueV1::Summary(left_summary),
+        GratisSummaryValueV1::Summary(right_summary),
+    )
+    .unwrap();
+    let left_prefix = finalize_gratis_leaf(
+        prefixes[0].as_ref().unwrap().incoming_remaining,
+        0,
+        &amount_left
+            .ordered_records
+            .iter()
+            .map(|record| record.gratis_load_minor)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let right_prefix = finalize_gratis_leaf(
+        prefixes[1].as_ref().unwrap().incoming_remaining,
+        256,
+        &amount_right
+            .ordered_records
+            .iter()
+            .map(|record| record.gratis_load_minor)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let finalized_left = output_finalize(&amount_left, &left_prefix, logical_time).unwrap();
+    let finalized_right = output_finalize(&amount_right, &right_prefix, logical_time).unwrap();
+    let records = finalized_left
+        .ordered_records
+        .into_iter()
+        .chain(finalized_right.ordered_records)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.nod_action.clone())
+            .collect::<Vec<_>>(),
+        sequential.nod_actions
+    );
+    let mut contributors = records
+        .into_iter()
+        .filter_map(|record| record.contributor_action)
+        .collect::<Vec<_>>();
+    contributors.sort_by_key(|action| action.owner);
+    assert_eq!(contributors, sequential.contributors);
+    assert_eq!(right_prefix.outgoing_remaining, sequential.remaining_gratis);
+
+    let mut wrong_fidelity_leaf = fidelity_left.observations;
+    wrong_fidelity_leaf[0].tribute_id = tributes[256].tribute.tribute_id;
+    assert!(amount_map(
+        0,
+        &tributes[..256],
+        &wrong_fidelity_leaf,
+        &fractions,
+        entry_price,
+    )
+    .is_err());
+
+    let mut wrong_prefix = left_prefix.clone();
+    wrong_prefix.outgoing_remaining += U256::from(1);
+    assert!(output_finalize(&amount_left, &wrong_prefix, logical_time).is_err());
+
+    let mut wrong_amount_summary = amount_left;
+    wrong_amount_summary.checked_segment_gratis_total += U256::from(1);
+    assert!(output_finalize(&wrong_amount_summary, &left_prefix, logical_time).is_err());
 }
 
 #[test]
