@@ -11,17 +11,18 @@ use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
 use outbe_fidelity::{evaluate_fidelity_opening_v1, FidelityOpeningEvaluationError};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
-    decode_fixed_reduce_output, decode_gratis_prefix_down_output,
-    decode_gratis_segment_summary, encode_amount_run, encode_enumerated_run,
-    encode_fidelity_map_output, encode_fixed_reduce_output, encode_gratis_prefix_down_output,
+    decode_finalized_output_run, decode_fixed_reduce_output,
+    decode_gratis_prefix_down_output, decode_gratis_segment_summary, encode_amount_run,
+    encode_enumerated_run, encode_fidelity_map_output, encode_finalized_output_run,
+    encode_fixed_reduce_output, encode_gratis_prefix_down_output,
     encode_gratis_segment_summary, enumerate_tributes, gratis_summary_coverage,
     FixedReduceOutputV1, GratisPrefixDownOutputV1, LysisArtifactErrorV1,
     RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce_pair, finalize_fi_fraction_table,
-    gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair, FidelityReduceValueV1,
-    GratisLeafPrefixV1, GratisSummaryValueV1,
+    gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair, output_finalize,
+    FidelityReduceValueV1, GratisLeafPrefixV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
@@ -304,6 +305,7 @@ fn execute_unit(
         UnitPhase::AmountMap => execute_amount_map_unit(spec, authority),
         UnitPhase::GratisPrefix => execute_gratis_prefix_unit(spec, authority),
         UnitPhase::GratisPrefixDown => execute_gratis_prefix_down_unit(spec, authority),
+        UnitPhase::OutputFinalize => execute_output_finalize_unit(spec, authority),
         phase => Err(WorkerError::UnsupportedPhase(phase)),
     }
 }
@@ -1316,6 +1318,102 @@ fn execute_gratis_prefix_down_unit(
     .map_err(WorkerError::from)
 }
 
+fn execute_output_finalize_unit(
+    spec: &UnitSpecV1,
+    authority: UnitExecutionAuthority<'_>,
+) -> Result<UnitArtifactV1, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        unit_index,
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        bundle,
+        limits,
+    } = authority;
+    if !input_chunks.is_empty() || producer_artifacts.len() != 2 {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
+    let shard_ordinal = unit_index
+        .checked_sub(output_finalize_offset(plan, topology)?)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    if shard_ordinal >= plan.primary_work_unit_count {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let amount_unit_id = exact_unit_output_source(spec, InputPurpose::AmountRecords)?;
+    let prefix_unit_id = exact_unit_output_source(spec, InputPurpose::GratisPrefixTable)?;
+    let planner = planner_from_authority(plan, manifest, bundle, limits)?;
+    planner.validate_output_finalize_unit(
+        shard_ordinal,
+        spec,
+        amount_unit_id,
+        prefix_unit_id,
+        limits,
+    )?;
+
+    let amount_artifact = &producer_artifacts[0];
+    amount_artifact.validate_semantics(limits)?;
+    let mut amount_interval_binding = spec.clone();
+    amount_interval_binding.phase = UnitPhase::AmountMap;
+    if amount_artifact.unit_id != amount_unit_id
+        || amount_artifact.protocol_bundle_hash != spec.protocol_bundle_hash
+        || amount_artifact.job_id != spec.job_id
+        || amount_artifact.attempt != spec.attempt
+        || amount_artifact.phase != UnitPhase::AmountMap
+        || amount_artifact.interval_commitment
+            != amount_interval_binding.interval_commitment(limits)?
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let prefix_artifact = &producer_artifacts[1];
+    validate_scan_artifact(
+        spec,
+        PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::GratisPrefixDown,
+            level: 0,
+            index: shard_ordinal,
+        },
+        prefix_unit_id,
+        prefix_artifact,
+        limits,
+    )?;
+
+    let amount = decode_amount_run(amount_artifact.phase_payload(limits)?, limits)?;
+    let amount_header = amount_artifact.output_header(limits)?;
+    let GratisPrefixDownOutputV1::Leaf(prefix) =
+        decode_gratis_prefix_down_output(prefix_artifact.phase_payload(limits)?, limits)?
+    else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    let prefix_header = prefix_artifact.output_header(limits)?;
+    if amount.start_ordinal / PRIMARY_WORK_SHARD_SIZE != shard_ordinal
+        || amount.coverage_root()? != amount_header.output_coverage_root
+        || amount_header.output_coverage_root != prefix_header.output_coverage_root
+        || amount_header.output_coverage_count != prefix_header.output_coverage_count
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let output = output_finalize(&amount, &prefix, plan.logical_evaluation_time)
+        .map_err(LysisArtifactErrorV1::from)?;
+    let encoded = encode_finalized_output_run(&output, limits)?;
+    if decode_finalized_output_run(&encoded, limits)? != output {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: amount_header.output_coverage_root,
+            output_coverage_root: amount_header.output_coverage_root,
+            source_coverage_count: amount_header.output_coverage_count,
+            output_coverage_count: amount_header.output_coverage_count,
+        },
+        BoundedBytes(encoded),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
 fn gratis_prefix_offset(
     plan: &PlanCommitmentV1,
     topology: LysisPlanTopologyV1,
@@ -1334,6 +1432,15 @@ fn gratis_prefix_down_offset(
 ) -> Result<u32, WorkerError> {
     gratis_prefix_offset(plan, topology)?
         .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix))
+        .ok_or(WorkerError::UnitBindingMismatch)
+}
+
+fn output_finalize_offset(
+    plan: &PlanCommitmentV1,
+    topology: LysisPlanTopologyV1,
+) -> Result<u32, WorkerError> {
+    gratis_prefix_down_offset(plan, topology)?
+        .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown))
         .ok_or(WorkerError::UnitBindingMismatch)
 }
 

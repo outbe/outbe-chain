@@ -11,8 +11,9 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
 use outbe_lysis::program_v1::artifacts::{
-    decode_amount_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
-    decode_gratis_segment_summary, GratisPrefixDownOutputV1,
+    decode_amount_run, decode_finalized_output_run, decode_fixed_reduce_output,
+    decode_gratis_prefix_down_output, decode_gratis_segment_summary,
+    GratisPrefixDownOutputV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
@@ -78,7 +79,7 @@ fn identity(boot: u8) -> EndpointIdentity {
 }
 
 #[test]
-fn real_worker_processes_execute_through_gratis_prefix() {
+fn real_worker_processes_execute_through_output_finalize() {
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -311,7 +312,7 @@ fn real_worker_processes_execute_through_gratis_prefix() {
         command
             .args([
                 "--exact",
-                "real_worker_processes_execute_through_gratis_prefix",
+                "real_worker_processes_execute_through_output_finalize",
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
@@ -460,7 +461,7 @@ fn real_worker_processes_execute_through_gratis_prefix() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_gratis_prefix",
+            "real_worker_processes_execute_through_output_finalize",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -575,7 +576,7 @@ fn real_worker_processes_execute_through_gratis_prefix() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_gratis_prefix",
+            "real_worker_processes_execute_through_output_finalize",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -710,7 +711,7 @@ fn real_worker_processes_execute_through_gratis_prefix() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_gratis_prefix",
+            "real_worker_processes_execute_through_output_finalize",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -968,8 +969,8 @@ fn real_worker_processes_execute_through_gratis_prefix() {
         &prefix_down_leaf_spec,
         prefix_down_offset + 1,
         plan_hash,
-        plan_ref,
-        published.manifest_ref,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
         vec![prefix_down_root_ref, prefix_leaf_ref],
     );
     prefix_down_leaf_artifact
@@ -988,6 +989,70 @@ fn real_worker_processes_execute_through_gratis_prefix() {
     assert_eq!(
         prefix.outgoing_remaining,
         plan.lysis_budget - amount.checked_segment_gratis_total
+    );
+
+    let mut amount_finalize_ref = cas
+        .publish_bytes(
+            &amount_artifact
+                .encode_canonical(&limits)
+                .expect("canonical AmountMap finalize producer"),
+        )
+        .expect("publish AmountMap finalize producer");
+    amount_finalize_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let mut prefix_down_leaf_ref = cas
+        .publish_bytes(
+            &prefix_down_leaf_artifact
+                .encode_canonical(&limits)
+                .expect("canonical GratisPrefixDown leaf producer"),
+        )
+        .expect("publish GratisPrefixDown leaf producer");
+    prefix_down_leaf_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let output_finalize_spec = planner
+        .output_finalize_unit_at(
+            0,
+            &amount_spec,
+            prefix_down_leaf_artifact.unit_id,
+            &limits,
+        )
+        .expect("derive OutputFinalize unit");
+    let output_finalize_offset = prefix_down_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown))
+        .expect("OutputFinalize offset");
+    let output_finalize_artifact = execute_real_worker_unit(
+        504,
+        0x99,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &output_finalize_spec,
+        output_finalize_offset,
+        plan_hash,
+        plan_ref,
+        published.manifest_ref,
+        vec![amount_finalize_ref, prefix_down_leaf_ref],
+    );
+    output_finalize_artifact
+        .validate_against(&output_finalize_spec, &limits)
+        .expect("validate OutputFinalize artifact");
+    let finalized = decode_finalized_output_run(
+        output_finalize_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode OutputFinalize artifact");
+    assert_eq!(finalized.ordered_records.len(), 1);
+    assert_eq!(
+        finalized.ordered_records[0].nod_action.issued_at,
+        plan.logical_evaluation_time
+    );
+    assert_eq!(
+        finalized.ordered_records[0]
+            .nod_action
+            .source_tribute_id,
+        tribute.tribute_id
     );
 }
 
@@ -1016,7 +1081,7 @@ fn execute_real_worker_unit(
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_through_gratis_prefix",
+            "real_worker_processes_execute_through_output_finalize",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
