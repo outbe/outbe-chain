@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_primitives::units::SCALE_1E18;
@@ -14,8 +14,7 @@ use super::{
         compute_fraction_map_from_groups, nod_bucket_key, validate_entry_price,
         validate_required_gratis,
     },
-    ContributorActionV1, FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1,
-    ProgramErrorV1,
+    FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
 
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
@@ -81,7 +80,14 @@ pub struct AmountRunV1 {
 pub struct FinalizedOutputRecordV1 {
     pub raw_ordinal: u32,
     pub nod_action: NodActionV1,
-    pub contributor_action: Option<ContributorActionV1>,
+    pub contributor_action: Option<FinalizedContributorV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FinalizedContributorV1 {
+    pub owner: Address,
+    pub source_tribute_id: EntityId36,
+    pub nominal_amount_minor: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,6 +95,27 @@ pub struct FinalizedOutputRunV1 {
     pub start_ordinal: u32,
     pub end_ordinal: u32,
     pub ordered_records: Vec<FinalizedOutputRecordV1>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnerOrderedRunV1 {
+    pub run_ordinal: u32,
+    pub ordered_contributors: Vec<FinalizedContributorV1>,
+    pub checked_eligible_nominal_total: U256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BucketRecordV1 {
+    pub bucket_key: B256,
+    pub raw_ordinal: u32,
+    pub tribute_id: EntityId36,
+    pub nod_id: EntityId36,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BucketOrderedRunV1 {
+    pub run_ordinal: u32,
+    pub ordered_records: Vec<BucketRecordV1>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -674,8 +701,9 @@ pub fn output_finalize(
                 issued_at: logical_evaluation_time,
             },
             contributor_action: (!amount.exclude_from_intex_issuance).then_some(
-                ContributorActionV1 {
+                FinalizedContributorV1 {
                     owner: amount.owner,
+                    source_tribute_id: amount.tribute_id,
                     nominal_amount_minor: amount.nominal_amount_minor,
                 },
             ),
@@ -697,6 +725,85 @@ pub fn output_finalize(
     Ok(FinalizedOutputRunV1 {
         start_ordinal: amounts.start_ordinal,
         end_ordinal: amounts.end_ordinal,
+        ordered_records,
+    })
+}
+
+fn validate_finalized_leaf(run: &FinalizedOutputRunV1) -> Result<u32, ProgramErrorV1> {
+    let count =
+        u32::try_from(run.ordered_records.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    if count == 0
+        || count > PRIMARY_WORK_SHARD_SIZE
+        || !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
+        || run.end_ordinal
+            != run
+                .start_ordinal
+                .checked_add(count)
+                .ok_or(ProgramErrorV1::OutputCountMismatch)?
+    {
+        return Err(ProgramErrorV1::OutputCountMismatch);
+    }
+    for (local_ordinal, record) in run.ordered_records.iter().enumerate() {
+        let expected = run
+            .start_ordinal
+            .checked_add(
+                u32::try_from(local_ordinal).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            )
+            .ok_or(ProgramErrorV1::OutputCountMismatch)?;
+        if record.raw_ordinal != expected {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+    }
+    Ok(run.start_ordinal / PRIMARY_WORK_SHARD_SIZE)
+}
+
+pub fn shuffle_owners(
+    run: &FinalizedOutputRunV1,
+) -> Result<OwnerOrderedRunV1, ProgramErrorV1> {
+    let run_ordinal = validate_finalized_leaf(run)?;
+    let mut ordered_contributors = run
+        .ordered_records
+        .iter()
+        .filter_map(|record| record.contributor_action.clone())
+        .collect::<Vec<_>>();
+    ordered_contributors.sort_by_key(|action| (action.owner, action.source_tribute_id));
+    let mut previous_owner = None;
+    let mut checked_eligible_nominal_total = U256::ZERO;
+    for contributor in &ordered_contributors {
+        if previous_owner == Some(contributor.owner) {
+            return Err(ProgramErrorV1::OutputCountMismatch);
+        }
+        previous_owner = Some(contributor.owner);
+        checked_eligible_nominal_total = checked_eligible_nominal_total
+            .checked_add(contributor.nominal_amount_minor)
+            .ok_or(ProgramErrorV1::ContributorOverflow {
+                ordinal: run.start_ordinal as usize,
+            })?;
+    }
+    Ok(OwnerOrderedRunV1 {
+        run_ordinal,
+        ordered_contributors,
+        checked_eligible_nominal_total,
+    })
+}
+
+pub fn shuffle_buckets(
+    run: &FinalizedOutputRunV1,
+) -> Result<BucketOrderedRunV1, ProgramErrorV1> {
+    let run_ordinal = validate_finalized_leaf(run)?;
+    let mut ordered_records = run
+        .ordered_records
+        .iter()
+        .map(|record| BucketRecordV1 {
+            bucket_key: record.nod_action.bucket_key,
+            raw_ordinal: record.raw_ordinal,
+            tribute_id: record.nod_action.source_tribute_id,
+            nod_id: record.nod_action.nod_id,
+        })
+        .collect::<Vec<_>>();
+    ordered_records.sort_by_key(|record| (record.bucket_key, record.raw_ordinal));
+    Ok(BucketOrderedRunV1 {
+        run_ordinal,
         ordered_records,
     })
 }

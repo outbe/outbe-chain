@@ -6,7 +6,7 @@ use outbe_lysis::program_v1::planner::{
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    output_finalize, FidelityReduceValueV1, GratisSummaryValueV1,
+    output_finalize, shuffle_buckets, shuffle_owners, FidelityReduceValueV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::{
     execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
@@ -614,8 +614,9 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let finalized_right = output_finalize(&amount_right, &right_prefix, logical_time).unwrap();
     let records = finalized_left
         .ordered_records
-        .into_iter()
-        .chain(finalized_right.ordered_records)
+        .iter()
+        .chain(&finalized_right.ordered_records)
+        .cloned()
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -626,12 +627,80 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         sequential.nod_actions
     );
     let mut contributors = records
-        .into_iter()
-        .filter_map(|record| record.contributor_action)
+        .iter()
+        .filter_map(|record| record.contributor_action.clone())
         .collect::<Vec<_>>();
     contributors.sort_by_key(|action| action.owner);
-    assert_eq!(contributors, sequential.contributors);
+    assert_eq!(
+        contributors
+            .iter()
+            .map(|action| (action.owner, action.nominal_amount_minor))
+            .collect::<Vec<_>>(),
+        sequential
+            .contributors
+            .iter()
+            .map(|action| (action.owner, action.nominal_amount_minor))
+            .collect::<Vec<_>>()
+    );
     assert_eq!(right_prefix.outgoing_remaining, sequential.remaining_gratis);
+
+    let owner_left = shuffle_owners(&finalized_left).unwrap();
+    let owner_right = shuffle_owners(&finalized_right).unwrap();
+    let mut owner_records = owner_left
+        .ordered_contributors
+        .iter()
+        .chain(&owner_right.ordered_contributors)
+        .collect::<Vec<_>>();
+    owner_records.sort_by_key(|action| (action.owner, action.source_tribute_id));
+    assert_eq!(
+        owner_records
+            .iter()
+            .map(|action| (action.owner, action.nominal_amount_minor))
+            .collect::<Vec<_>>(),
+        sequential
+            .contributors
+            .iter()
+            .map(|action| (action.owner, action.nominal_amount_minor))
+            .collect::<Vec<_>>()
+    );
+
+    let bucket_left = shuffle_buckets(&finalized_left).unwrap();
+    let bucket_right = shuffle_buckets(&finalized_right).unwrap();
+    assert!(owner_left.ordered_contributors.len() <= 256);
+    assert!(bucket_left.ordered_records.len() <= 256);
+    let mut bucket_ordinals = bucket_left
+        .ordered_records
+        .iter()
+        .chain(&bucket_right.ordered_records)
+        .map(|record| record.raw_ordinal)
+        .collect::<Vec<_>>();
+    bucket_ordinals.sort_unstable();
+    assert_eq!(bucket_ordinals, (0..257_u32).collect::<Vec<_>>());
+
+    let mut wrong_coverage = finalized_left.clone();
+    wrong_coverage.ordered_records[0].raw_ordinal = 1;
+    assert!(shuffle_owners(&wrong_coverage).is_err());
+    assert!(shuffle_buckets(&wrong_coverage).is_err());
+
+    let mut duplicate_owner = finalized_left.clone();
+    let eligible_indices = duplicate_owner
+        .ordered_records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| record.contributor_action.as_ref().map(|_| index))
+        .take(2)
+        .collect::<Vec<_>>();
+    let first_owner = duplicate_owner.ordered_records[eligible_indices[0]]
+        .contributor_action
+        .as_ref()
+        .unwrap()
+        .owner;
+    duplicate_owner.ordered_records[eligible_indices[1]]
+        .contributor_action
+        .as_mut()
+        .unwrap()
+        .owner = first_owner;
+    assert!(shuffle_owners(&duplicate_owner).is_err());
 
     let mut wrong_fidelity_leaf = fidelity_left.observations;
     wrong_fidelity_leaf[0].tribute_id = tributes[256].tribute.tribute_id;
