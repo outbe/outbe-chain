@@ -34,6 +34,15 @@ pub enum PlannerErrorV1 {
     NonCanonicalEntityOrder {
         ordinal: u32,
     },
+    PhasePositionOutOfRange {
+        phase: UnitPhase,
+        ordinal: u32,
+        phase_unit_count: u32,
+    },
+    PlanPositionOutOfRange {
+        ordinal: u32,
+        total_unit_count: u32,
+    },
     IntegerOverflow,
     Protocol(ProtocolError),
 }
@@ -61,6 +70,18 @@ impl fmt::Display for PlannerErrorV1 {
             Self::NonCanonicalEntityOrder { ordinal } => {
                 write!(formatter, "canonical EntityId stream is not increasing at {ordinal}")
             }
+            Self::PhasePositionOutOfRange {
+                phase,
+                ordinal,
+                phase_unit_count,
+            } => write!(
+                formatter,
+                "{phase:?} unit {ordinal} is outside 0..{phase_unit_count}"
+            ),
+            Self::PlanPositionOutOfRange {
+                ordinal,
+                total_unit_count,
+            } => write!(formatter, "plan unit {ordinal} is outside 0..{total_unit_count}"),
             Self::IntegerOverflow => formatter.write_str("planner integer overflow"),
             Self::Protocol(error) => write!(formatter, "planner protocol binding: {error}"),
         }
@@ -135,6 +156,56 @@ pub struct LysisPlannerV1 {
     bindings: LysisPlannerBindingsV1,
     primary_tree: PaddedBinaryTreeV1,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlannedUnitPositionV1 {
+    Primary {
+        phase: UnitPhase,
+        ordinal: u32,
+    },
+    TreeNode {
+        phase: UnitPhase,
+        level: u16,
+        index: u32,
+    },
+    RunSpan {
+        phase: UnitPhase,
+        level: u16,
+        index: u32,
+        start_run: u32,
+        end_run: u32,
+    },
+}
+
+impl PlannedUnitPositionV1 {
+    #[must_use]
+    pub const fn phase(&self) -> UnitPhase {
+        match self {
+            Self::Primary { phase, .. }
+            | Self::TreeNode { phase, .. }
+            | Self::RunSpan { phase, .. } => *phase,
+        }
+    }
+}
+
+/// Closed Lysis V1 phase topology. It has no runtime registration surface.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LysisPlanTopologyV1 {
+    tree: PaddedBinaryTreeV1,
+}
+
+const LYSIS_PLAN_PHASE_ORDER: [UnitPhase; 10] = [
+    UnitPhase::Enumerate,
+    UnitPhase::FidelityMap,
+    UnitPhase::FixedReduce,
+    UnitPhase::AmountMap,
+    UnitPhase::GratisPrefix,
+    UnitPhase::GratisPrefixDown,
+    UnitPhase::OutputFinalize,
+    UnitPhase::OwnerShuffle,
+    UnitPhase::BucketShuffle,
+    UnitPhase::RootReduce,
+];
 
 #[must_use = "the primary unit count is part of the plan commitment"]
 pub fn primary_work_unit_count(tribute_count: u32) -> Result<u32, PlannerErrorV1> {
@@ -324,6 +395,212 @@ impl LysisPlannerV1 {
         };
         spec.validate_semantics(limits)?;
         Ok(spec)
+    }
+}
+
+impl LysisPlanTopologyV1 {
+    pub fn new(primary_leaf_count: u32) -> Result<Self, PlannerErrorV1> {
+        Ok(Self {
+            tree: PaddedBinaryTreeV1::for_primary_leaf_count(primary_leaf_count)?,
+        })
+    }
+
+    #[must_use]
+    pub const fn tree(self) -> PaddedBinaryTreeV1 {
+        self.tree
+    }
+
+    #[must_use]
+    pub fn phase_unit_count(self, phase: UnitPhase) -> u32 {
+        let primary = self.tree.primary_leaf_count;
+        let full_internal = self.tree.reducer_node_count();
+        let active_internal = self.active_internal_node_count();
+        match phase {
+            UnitPhase::Enumerate
+            | UnitPhase::FidelityMap
+            | UnitPhase::AmountMap
+            | UnitPhase::OutputFinalize => primary,
+            UnitPhase::FixedReduce => full_internal,
+            UnitPhase::GratisPrefix
+            | UnitPhase::GratisPrefixDown
+            | UnitPhase::OwnerShuffle
+            | UnitPhase::BucketShuffle => primary + active_internal,
+            UnitPhase::RootReduce => primary + full_internal,
+        }
+    }
+
+    #[must_use]
+    pub fn total_unit_count(self) -> u32 {
+        LYSIS_PLAN_PHASE_ORDER
+            .into_iter()
+            .map(|phase| self.phase_unit_count(phase))
+            .sum()
+    }
+
+    pub fn plan_position_at(
+        self,
+        ordinal: u32,
+    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        let mut offset = 0_u32;
+        for phase in LYSIS_PLAN_PHASE_ORDER {
+            let count = self.phase_unit_count(phase);
+            if ordinal < offset + count {
+                return self.phase_position_at(phase, ordinal - offset);
+            }
+            offset += count;
+        }
+        Err(PlannerErrorV1::PlanPositionOutOfRange {
+            ordinal,
+            total_unit_count: offset,
+        })
+    }
+
+    pub fn phase_position_at(
+        self,
+        phase: UnitPhase,
+        ordinal: u32,
+    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        let count = self.phase_unit_count(phase);
+        if ordinal >= count {
+            return Err(PlannerErrorV1::PhasePositionOutOfRange {
+                phase,
+                ordinal,
+                phase_unit_count: count,
+            });
+        }
+        let primary = self.tree.primary_leaf_count;
+        match phase {
+            UnitPhase::Enumerate
+            | UnitPhase::FidelityMap
+            | UnitPhase::AmountMap
+            | UnitPhase::OutputFinalize => Ok(PlannedUnitPositionV1::Primary {
+                phase,
+                ordinal,
+            }),
+            UnitPhase::FixedReduce => {
+                let (level, index) = self.full_bottom_up_node_at(ordinal)?;
+                Ok(PlannedUnitPositionV1::TreeNode {
+                    phase,
+                    level,
+                    index,
+                })
+            }
+            UnitPhase::GratisPrefix => {
+                if ordinal < primary {
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level: 0,
+                        index: ordinal,
+                    })
+                } else {
+                    let (level, index) = self.active_bottom_up_node_at(ordinal - primary)?;
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level,
+                        index,
+                    })
+                }
+            }
+            UnitPhase::GratisPrefixDown => {
+                let active_internal = self.active_internal_node_count();
+                if ordinal < active_internal {
+                    let (level, index) = self.active_top_down_node_at(ordinal)?;
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level,
+                        index,
+                    })
+                } else {
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level: 0,
+                        index: ordinal - active_internal,
+                    })
+                }
+            }
+            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => {
+                let (level, index) = if ordinal < primary {
+                    (0, ordinal)
+                } else {
+                    self.active_bottom_up_node_at(ordinal - primary)?
+                };
+                let width = 1_u32
+                    .checked_shl(u32::from(level))
+                    .ok_or(PlannerErrorV1::IntegerOverflow)?;
+                let start_run = index
+                    .checked_mul(width)
+                    .ok_or(PlannerErrorV1::IntegerOverflow)?;
+                let end_run = start_run.saturating_add(width).min(primary);
+                Ok(PlannedUnitPositionV1::RunSpan {
+                    phase,
+                    level,
+                    index,
+                    start_run,
+                    end_run,
+                })
+            }
+            UnitPhase::RootReduce => {
+                if ordinal < primary {
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level: 0,
+                        index: ordinal,
+                    })
+                } else {
+                    let (level, index) = self.full_bottom_up_node_at(ordinal - primary)?;
+                    Ok(PlannedUnitPositionV1::TreeNode {
+                        phase,
+                        level,
+                        index,
+                    })
+                }
+            }
+        }
+    }
+
+    fn active_internal_node_count(self) -> u32 {
+        (1..=self.tree.height)
+            .map(|level| self.tree.primary_leaf_count.div_ceil(1_u32 << level))
+            .sum()
+    }
+
+    fn full_bottom_up_node_at(self, mut ordinal: u32) -> Result<(u16, u32), PlannerErrorV1> {
+        for level in 1..=self.tree.height {
+            let width = self.tree.padded_leaf_count >> level;
+            if ordinal < width {
+                return Ok((level, ordinal));
+            }
+            ordinal -= width;
+        }
+        Err(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn active_bottom_up_node_at(
+        self,
+        mut ordinal: u32,
+    ) -> Result<(u16, u32), PlannerErrorV1> {
+        for level in 1..=self.tree.height {
+            let width = self.tree.primary_leaf_count.div_ceil(1_u32 << level);
+            if ordinal < width {
+                return Ok((level, ordinal));
+            }
+            ordinal -= width;
+        }
+        Err(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn active_top_down_node_at(
+        self,
+        mut ordinal: u32,
+    ) -> Result<(u16, u32), PlannerErrorV1> {
+        for level in (1..=self.tree.height).rev() {
+            let width = self.tree.primary_leaf_count.div_ceil(1_u32 << level);
+            if ordinal < width {
+                return Ok((level, ordinal));
+            }
+            ordinal -= width;
+        }
+        Err(PlannerErrorV1::IntegerOverflow)
     }
 }
 

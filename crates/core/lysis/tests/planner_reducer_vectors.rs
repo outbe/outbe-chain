@@ -1,6 +1,7 @@
 use outbe_lysis::program_v1::planner::{
     primary_work_unit_count, LysisPlannerBindingsV1, LysisPlannerV1, PaddedBinaryTreeV1,
-    PlannerErrorV1, ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
+    PlannedUnitPositionV1, PlannerErrorV1, ReducerInputV1, LysisPlanTopologyV1,
+    PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_ocomp_protocol::{
     common::EntityId36,
@@ -183,6 +184,116 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     assert_eq!(plan.primary_work_unit_count, 2);
     assert_eq!(plan.tribute_count, 257);
     assert_eq!(plan.plan_hash(&limits).unwrap(), replay.plan_hash(&limits).unwrap());
+}
+
+#[test]
+fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
+    for primary_count in 1..=8 {
+        let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
+        let padded = primary_count.next_power_of_two().max(2);
+        let internal = padded - 1;
+        let active_internal = (1..=topology.tree().height())
+            .map(|level| primary_count.div_ceil(1_u32 << level))
+            .sum::<u32>();
+
+        assert_eq!(topology.phase_unit_count(UnitPhase::Enumerate), primary_count);
+        assert_eq!(topology.phase_unit_count(UnitPhase::FidelityMap), primary_count);
+        assert_eq!(topology.phase_unit_count(UnitPhase::FixedReduce), internal);
+        assert_eq!(topology.phase_unit_count(UnitPhase::AmountMap), primary_count);
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::GratisPrefix),
+            primary_count + active_internal
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::GratisPrefixDown),
+            primary_count + active_internal
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::OutputFinalize),
+            primary_count
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::OwnerShuffle),
+            primary_count + active_internal
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::BucketShuffle),
+            primary_count + active_internal
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::RootReduce),
+            primary_count + internal
+        );
+
+        let prefix = topology
+            .phase_position_at(UnitPhase::GratisPrefix, primary_count)
+            .unwrap();
+        assert_eq!(
+            prefix,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 1,
+                index: 0,
+            }
+        );
+        let prefix_down = topology
+            .phase_position_at(UnitPhase::GratisPrefixDown, 0)
+            .unwrap();
+        assert_eq!(
+            prefix_down,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
+                level: topology.tree().height(),
+                index: 0,
+            }
+        );
+        assert_eq!(
+            topology
+                .phase_position_at(
+                    UnitPhase::GratisPrefixDown,
+                    topology.phase_unit_count(UnitPhase::GratisPrefixDown) - 1,
+                )
+                .unwrap(),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
+                level: 0,
+                index: primary_count - 1,
+            }
+        );
+    }
+}
+
+#[test]
+fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
+    let topology = LysisPlanTopologyV1::new(2).unwrap();
+    let positions = (0..topology.total_unit_count())
+        .map(|ordinal| topology.plan_position_at(ordinal).unwrap())
+        .collect::<Vec<_>>();
+    let phases = positions
+        .iter()
+        .map(PlannedUnitPositionV1::phase)
+        .collect::<Vec<_>>();
+    let mut runs = Vec::new();
+    for phase in phases {
+        if runs.last() != Some(&phase) {
+            runs.push(phase);
+        }
+    }
+    assert_eq!(
+        runs,
+        [
+            UnitPhase::Enumerate,
+            UnitPhase::FidelityMap,
+            UnitPhase::FixedReduce,
+            UnitPhase::AmountMap,
+            UnitPhase::GratisPrefix,
+            UnitPhase::GratisPrefixDown,
+            UnitPhase::OutputFinalize,
+            UnitPhase::OwnerShuffle,
+            UnitPhase::BucketShuffle,
+            UnitPhase::RootReduce,
+        ]
+    );
 }
 
 fn entity_id(ordinal: u32) -> EntityId36 {
