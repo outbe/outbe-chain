@@ -2,7 +2,7 @@
   "armable": false,
   "classification": "measurement_only",
   "generator": {
-    "input_set_sha256": "357c610bbc215599e2de7311a65767844b54657f65839f9bda993a6e52fd8bc6",
+    "input_set_sha256": "1f312313b8af12075f97b2ce29530e4b0cd9e7f07d20e0093111202fc1e5fc84",
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "e9a59d3a7944b280a06bb18d9657e936a770680c8b60b55d07802c653b094afe"
   },
@@ -27,11 +27,11 @@
   },
   "registries": {
     "canonical_schema_sha256": "ac0bcf5884c065b1fb70617b6f34abd08b82f490ae4fbdd5a1090e37019f1d4f",
-    "domain_preimage_sha256": "27484c5ef3454a272d666c194f73969f3a6e73177cf109b8c0e19a670154b865",
+    "domain_preimage_sha256": "49e73c3eb5004d40abca71e0e29cac29eb7f353637abe15927197069383c7ea6",
     "fidelity_opening_codec_id": "3d3ac5818fb82e51c3041e24e9ff36cc5fdce8dbdb74da1fbf3978ff0e19de1a",
     "input_codecs_sha256": "27af1b6c7146845b7e5c54cc69804a473332e0931be3e678e98f144f41bcdfac",
     "object_count": 31,
-    "object_domain_list_sha256": "0398932ad8b0de44282e60878146f4e136b2f1e300a17e9983029c063081393a",
+    "object_domain_list_sha256": "f2c332f864239370d70bc335f3339cea4f1181ffb0bece2a0dce930ac99667d3",
     "opening_codec_registry_hash": "487366859c3d4580ccfe8a654818d5e7b014876d8e91bf7a3ce2e69183652e48",
     "oracle_opening_codec_id": "1b2805a4096d29200a86f7bfc5394b1b118d665084b6cbfef9ec41155e949726",
     "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca"

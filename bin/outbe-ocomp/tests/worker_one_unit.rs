@@ -12,13 +12,11 @@ use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, Tr
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_finalized_output_run, decode_fixed_reduce_output,
-    decode_gratis_prefix_down_output, decode_gratis_segment_summary,
-    GratisPrefixDownOutputV1,
+    decode_gratis_prefix_down_output, decode_gratis_segment_summary, GratisPrefixDownOutputV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
-use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -38,6 +36,7 @@ use outbe_ocomp_protocol::input::{
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
+use outbe_ocomp_protocol::shuffle::{ShuffleRunArtifactV1, ShuffleRunKindV1};
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
     UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
@@ -46,6 +45,7 @@ use outbe_ocomp_protocol::{
     ordered_list_root, CasObjectRefV1, ListKind, ObjectKind, OrderedListLimits, RunUnitV1,
     SchemaLimits, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
+use outbe_oracle::oracle_opening_slot_plan_v1;
 use tempfile::tempdir;
 
 struct RunningWorker {
@@ -131,14 +131,9 @@ fn real_worker_processes_execute_through_output_finalize() {
     };
     let usd_pair = keccak256(b"USD/COEN");
     let eur_pair = keccak256(b"EUR/COEN");
-    let oracle_plan = oracle_opening_slot_plan_v1(
-        day,
-        &[(840, usd_pair), (978, eur_pair)],
-        2,
-        0,
-        0,
-    )
-    .expect("fixture Oracle slot plan");
+    let oracle_plan =
+        oracle_opening_slot_plan_v1(day, &[(840, usd_pair), (978, eur_pair)], 2, 0, 0)
+            .expect("fixture Oracle slot plan");
     let scale = U256::from(1_000_000_000_000_000_000_u64);
     let oracle_values = [
         U256::from_be_bytes(keccak256(b"USD").0),
@@ -519,11 +514,7 @@ fn real_worker_processes_execute_through_output_finalize() {
                 unit_membership_siblings: Vec::new(),
                 plan_ref: plan_ref.clone(),
                 input_manifest_ref: published.manifest_ref.clone(),
-                ordered_input_refs: vec![
-                    producer_ref.clone(),
-                    tribute_ref.clone(),
-                    fidelity_ref,
-                ],
+                ordered_input_refs: vec![producer_ref.clone(), tribute_ref.clone(), fidelity_ref],
             }
             .encode_body(&limits)
             .expect("Fidelity RunUnit body"),
@@ -568,8 +559,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .fixed_reduce_unit_at(0, [Some(fidelity_artifact.unit_id), None], &limits)
         .expect("derive FixedReduce unit");
     let reduce_unit_id = reduce_spec.unit_id(&limits).expect("FixedReduce UnitId");
-    let (parent_stream, child_stream) =
-        UnixStream::pair().expect("FixedReduce worker socket pair");
+    let (parent_stream, child_stream) = UnixStream::pair().expect("FixedReduce worker socket pair");
     let child_fd: OwnedFd = child_stream.into();
     let worker_identity = identity(0xE0);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
@@ -703,8 +693,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         })
         .cloned()
         .expect("fixture Oracle input reference");
-    let (parent_stream, child_stream) =
-        UnixStream::pair().expect("AmountMap worker socket pair");
+    let (parent_stream, child_stream) = UnixStream::pair().expect("AmountMap worker socket pair");
     let child_fd: OwnedFd = child_stream.into();
     let worker_identity = identity(0xF0);
     let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
@@ -787,7 +776,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         "AmountMap worker failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let frame = client.receive_response().expect("AmountMap worker response");
+    let frame = client
+        .receive_response()
+        .expect("AmountMap worker response");
     let finished =
         UnitFinishedV1::decode_body(&frame.body, &limits).expect("AmountMap finished body");
     assert_eq!(finished.status, UnitFinishedStatus::Success);
@@ -810,16 +801,17 @@ fn real_worker_processes_execute_through_output_finalize() {
     let amount = decode_amount_run(amount_artifact.phase_payload(&limits).unwrap(), &limits)
         .expect("decode AmountMap phase output");
     assert_eq!(amount.ordered_records.len(), 1);
-    assert_eq!(amount.ordered_records[0].entry_price_minor, scale * U256::from(2));
+    assert_eq!(
+        amount.ordered_records[0].entry_price_minor,
+        scale * U256::from(2)
+    );
 
-    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)
-        .expect("fixture plan topology");
+    let topology =
+        LysisPlanTopologyV1::new(plan.primary_work_unit_count).expect("fixture plan topology");
     let prefix_offset = plan
         .primary_work_unit_count
         .checked_mul(3)
-        .and_then(|offset| {
-            offset.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce))
-        })
+        .and_then(|offset| offset.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce)))
         .expect("GratisPrefix offset");
     let prefix_down_offset = prefix_offset
         .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix))
@@ -980,8 +972,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         prefix_down_leaf_artifact.phase_payload(&limits).unwrap(),
         &limits,
     )
-    .expect("decode GratisPrefixDown leaf")
-    else {
+    .expect("decode GratisPrefixDown leaf") else {
         panic!("expected GratisPrefixDown leaf output");
     };
     assert_eq!(prefix.segment_ordinal, 0);
@@ -1008,12 +999,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("publish GratisPrefixDown leaf producer");
     prefix_down_leaf_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     let output_finalize_spec = planner
-        .output_finalize_unit_at(
-            0,
-            &amount_spec,
-            prefix_down_leaf_artifact.unit_id,
-            &limits,
-        )
+        .output_finalize_unit_at(0, &amount_spec, prefix_down_leaf_artifact.unit_id, &limits)
         .expect("derive OutputFinalize unit");
     let output_finalize_offset = prefix_down_offset
         .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown))
@@ -1031,8 +1017,8 @@ fn real_worker_processes_execute_through_output_finalize() {
         &output_finalize_spec,
         output_finalize_offset,
         plan_hash,
-        plan_ref,
-        published.manifest_ref,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
         vec![amount_finalize_ref, prefix_down_leaf_ref],
     );
     output_finalize_artifact
@@ -1049,11 +1035,104 @@ fn real_worker_processes_execute_through_output_finalize() {
         plan.logical_evaluation_time
     );
     assert_eq!(
-        finalized.ordered_records[0]
-            .nod_action
-            .source_tribute_id,
+        finalized.ordered_records[0].nod_action.source_tribute_id,
         tribute.tribute_id
     );
+
+    let mut finalized_ref = cas
+        .publish_bytes(
+            &output_finalize_artifact
+                .encode_canonical(&limits)
+                .expect("canonical OutputFinalize shuffle producer"),
+        )
+        .expect("publish OutputFinalize shuffle producer");
+    finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let owner_spec = planner
+        .shuffle_unit_at(
+            UnitPhase::OwnerShuffle,
+            0,
+            &[output_finalize_artifact.unit_id],
+            &limits,
+        )
+        .expect("derive OwnerShuffle leaf");
+    let owner_offset = output_finalize_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
+        .expect("OwnerShuffle offset");
+    let owner_artifact = execute_real_worker_unit(
+        505,
+        0x9A,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &owner_spec,
+        owner_offset,
+        plan_hash,
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
+        vec![finalized_ref.clone()],
+    );
+    owner_artifact
+        .validate_against(&owner_spec, &limits)
+        .expect("validate OwnerShuffle artifact");
+    let owner_root = ShuffleRunArtifactV1::decode_canonical(
+        owner_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode OwnerShuffle root");
+    owner_root
+        .validate_root_semantics(&limits)
+        .expect("validate OwnerShuffle root");
+    assert_eq!(owner_root.kind, ShuffleRunKindV1::Owner);
+    assert_eq!(owner_root.record_count, 1);
+
+    let bucket_spec = planner
+        .shuffle_unit_at(
+            UnitPhase::BucketShuffle,
+            0,
+            &[output_finalize_artifact.unit_id],
+            &limits,
+        )
+        .expect("derive BucketShuffle leaf");
+    let bucket_offset = owner_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
+        .expect("BucketShuffle offset");
+    let bucket_artifact = execute_real_worker_unit(
+        506,
+        0x9B,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &bucket_spec,
+        bucket_offset,
+        plan_hash,
+        plan_ref,
+        published.manifest_ref,
+        vec![finalized_ref],
+    );
+    bucket_artifact
+        .validate_against(&bucket_spec, &limits)
+        .expect("validate BucketShuffle artifact");
+    let bucket_root = ShuffleRunArtifactV1::decode_canonical(
+        bucket_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode BucketShuffle root");
+    bucket_root
+        .validate_root_semantics(&limits)
+        .expect("validate BucketShuffle root");
+    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
+    assert_eq!(bucket_root.record_count, 1);
+
+    let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("reopen worker inbox");
+    assert_eq!(inbox.object_count().expect("count shuffle objects"), 2);
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -10,16 +10,13 @@ use outbe_ocomp_protocol::list::{
 };
 use outbe_ocomp_protocol::registry::{HashDomain, ListKind};
 use outbe_ocomp_protocol::unit::UnitPhase;
-use outbe_ocomp_protocol::{
-    hash_framed, CanonicalReader, CanonicalWriter, SchemaLimits,
-};
+use outbe_ocomp_protocol::{hash_framed, CanonicalReader, CanonicalWriter, SchemaLimits};
 
 use super::execute::{nod_bucket_key, validate_canonical_tributes};
 use super::phases::{
-    AmountRecordV1, AmountRunV1, FidelityAggregateV1, FidelityLeaguePartialV1,
-    FidelityMapOutputV1, FidelityObservationV1, FinalizedContributorV1,
-    FinalizedOutputRecordV1, FinalizedOutputRunV1, GratisIncomingV1, GratisLeafPrefixV1,
-    GratisSegmentSummaryV1,
+    AmountRecordV1, AmountRunV1, FidelityAggregateV1, FidelityLeaguePartialV1, FidelityMapOutputV1,
+    FidelityObservationV1, FinalizedContributorV1, FinalizedOutputRecordV1, FinalizedOutputRunV1,
+    GratisIncomingV1, GratisLeafPrefixV1, GratisSegmentSummaryV1,
 };
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
 use super::{LeagueFractionV1, NodActionV1, ProgramErrorV1, TributeInputV1};
@@ -130,9 +127,7 @@ impl RawCoverageCarrierV1 {
             .checked_next_power_of_two()
             .ok_or(LysisArtifactErrorV1::LengthOverflow)?
             .max(2);
-        if primary_ordinal < primary_count
-            || primary_ordinal >= padded_primary_count
-        {
+        if primary_ordinal < primary_count || primary_ordinal >= padded_primary_count {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "raw coverage empty carrier position",
             ));
@@ -262,6 +257,18 @@ impl AmountRunV1 {
                 .iter()
                 .map(|record| (record.raw_ordinal, record.tribute_id.as_bytes())),
         )
+    }
+}
+
+impl FinalizedOutputRunV1 {
+    pub fn coverage_root(&self) -> Result<B256, LysisArtifactErrorV1> {
+        validate_finalized_output_run(self)?;
+        raw_coverage_root(self.ordered_records.iter().map(|record| {
+            (
+                record.raw_ordinal,
+                record.nod_action.source_tribute_id.as_bytes(),
+            )
+        }))
     }
 }
 
@@ -502,17 +509,13 @@ pub fn decode_amount_run(
 ) -> Result<AmountRunV1, LysisArtifactErrorV1> {
     let mut input = CanonicalReader::new(encoded, limits.codec)?;
     if input.read_fixed::<4>()? != AMOUNT_RUN_MAGIC {
-        return Err(LysisArtifactErrorV1::InvalidEncoding(
-            "amount run header",
-        ));
+        return Err(LysisArtifactErrorV1::InvalidEncoding("amount run header"));
     }
     let start_ordinal = input.read_u32()?;
     let end_ordinal = input.read_u32()?;
     let checked_segment_gratis_total = input.read_u256()?;
     let count = input.read_u32()?;
-    validate_shard_size(
-        usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
-    )?;
+    validate_shard_size(usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?)?;
     let mut ordered_records = Vec::new();
     ordered_records
         .try_reserve_exact(
@@ -606,9 +609,10 @@ pub fn encode_gratis_prefix_down_output(
                 encoded.write_option(child.as_ref(), |writer, incoming| {
                     writer.write_u32(incoming.start_ordinal)?;
                     writer.write_u32(incoming.end_ordinal)?;
-                    writer.write_option(incoming.incoming_remaining.as_ref(), |writer, remaining| {
-                        writer.write_u256(*remaining)
-                    })
+                    writer
+                        .write_option(incoming.incoming_remaining.as_ref(), |writer, remaining| {
+                            writer.write_u256(*remaining)
+                        })
                 })?;
             }
         }
@@ -721,9 +725,7 @@ pub fn decode_finalized_output_run(
     let start_ordinal = input.read_u32()?;
     let end_ordinal = input.read_u32()?;
     let count = input.read_u32()?;
-    validate_shard_size(
-        usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
-    )?;
+    validate_shard_size(usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?)?;
     let mut ordered_records = Vec::new();
     ordered_records
         .try_reserve_exact(
@@ -750,14 +752,12 @@ pub fn decode_finalized_output_run(
         let contributor_action = input.read_option(|reader| {
             Ok(FinalizedContributorV1 {
                 owner: reader.read_address20()?,
-                source_tribute_id: EntityId36::try_from(
-                    reader.read_entity_id36()?.as_slice(),
-                )
-                .map_err(|_| {
-                    outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                        "finalized contributor Tribute id",
-                    )
-                })?,
+                source_tribute_id: EntityId36::try_from(reader.read_entity_id36()?.as_slice())
+                    .map_err(|_| {
+                        outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                            "finalized contributor Tribute id",
+                        )
+                    })?,
                 nominal_amount_minor: reader.read_u256()?,
             })
         })?;
@@ -1257,9 +1257,7 @@ fn validate_gratis_prefix_down_output(
     Ok(())
 }
 
-fn validate_finalized_output_run(
-    run: &FinalizedOutputRunV1,
-) -> Result<(), LysisArtifactErrorV1> {
+fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), LysisArtifactErrorV1> {
     validate_shard_size(run.ordered_records.len())?;
     let count = u32::try_from(run.ordered_records.len())
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
@@ -1299,11 +1297,15 @@ fn validate_finalized_output_run(
             ));
         }
         previous_tribute = Some(nod.source_tribute_id);
-        if record.contributor_action.as_ref().is_some_and(|contributor| {
-            contributor.owner != nod.owner
-                || contributor.source_tribute_id != nod.source_tribute_id
-                || contributor.nominal_amount_minor.is_zero()
-        }) {
+        if record
+            .contributor_action
+            .as_ref()
+            .is_some_and(|contributor| {
+                contributor.owner != nod.owner
+                    || contributor.source_tribute_id != nod.source_tribute_id
+                    || contributor.nominal_amount_minor.is_zero()
+            })
+        {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
                 "finalized contributor binding",
             ));
@@ -1327,9 +1329,7 @@ fn validate_raw_coverage_carrier(
     Ok(())
 }
 
-fn validate_fixed_reduce_output(
-    output: &FixedReduceOutputV1,
-) -> Result<(), LysisArtifactErrorV1> {
+fn validate_fixed_reduce_output(output: &FixedReduceOutputV1) -> Result<(), LysisArtifactErrorV1> {
     validate_raw_coverage_carrier(&output.coverage)?;
     let Some(aggregate) = &output.aggregate else {
         if output.coverage.start_ordinal != output.coverage.end_ordinal

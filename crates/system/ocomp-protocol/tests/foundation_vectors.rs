@@ -517,7 +517,7 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 #[test]
 fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 31);
-    assert_eq!(HashDomain::ALL.len(), 45);
+    assert_eq!(HashDomain::ALL.len(), 46);
     assert_eq!(ListKind::ALL.len(), 10);
     assert_eq!(ObjectKind::ProtocolBundleV1.tag(), 0x0001);
     assert_eq!(ObjectKind::OcompJobRecordV1.tag(), 0x001e);

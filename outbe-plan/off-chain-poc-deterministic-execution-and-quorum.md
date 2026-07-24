@@ -433,6 +433,12 @@ the final canonical output is ordered by `(owner, source_tribute_id)`.
 The artifact carries both raw-ordinal coverage and the eligible-subset
 commitment, so omission cannot masquerade as an excluded Tribute.
 
+Leaf source coverage is derived from the exact `OUTPUT_FINALIZE` raw-coverage
+root/count. Every real merge composes the two adjacent producer coverage
+roots/counts under `OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1`; it does not
+generate Merkle padding or invent a promotion unit. Ordered owner records are
+committed independently by the materialized page tree.
+
 For `K` primary runs the phase has `K` bounded leaf units and `K - 1` real
 binary merge units. An odd run is passed directly to the next canonical
 largest-power-of-two merge; there is no shuffle `CanonicalEmpty` or copy-only

@@ -98,6 +98,13 @@ two child roots. The tree commitment is therefore composable and verifiable in
 one bounded-memory traversal rather than a trusted field. No unit
 contains a population-sized page-reference vector or merged run.
 
+Raw source coverage uses the distinct frozen domain
+`OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1`. A shuffle leaf binds its exact
+`OUTPUT_FINALIZE` raw-coverage root/count and run span. A real merge hashes the
+two adjacent producer coverage roots/counts with its parent run span. This
+composition needs neither padding records nor promotion units and is checked
+independently from the ordered output-page commitment.
+
 A shuffle execution DAG is distinct from the page tree stored by one unit.
 For `K` primary runs, each owner/bucket phase contains exactly `K` leaf units
 and `K - 1` real two-input merge units. An odd run is consumed directly by the

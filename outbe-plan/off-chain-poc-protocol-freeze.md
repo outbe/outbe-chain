@@ -1198,6 +1198,28 @@ before admitting the producer artifact. This keeps every OCB1 object bounded
 without imposing any limit on the parent Tribute population and without an
 unbounded vector of CAS references.
 
+`source_coverage_root` is a separate compositional proof, not the structural
+ordered-record root. A leaf binds the exact raw-coverage root/count recomputed
+from its `OUTPUT_FINALIZE` producer:
+
+```text
+H(OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1,
+  1 || run_span || raw_coverage_root || raw_coverage_count)
+```
+
+A real merge accepts only adjacent producer run spans and derives:
+
+```text
+H(OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1,
+  2 || parent_run_span ||
+  left_source_root || left_source_count ||
+  right_source_root || right_source_count)
+```
+
+This proves exact recursive producer coverage without padding or promotion
+jobs. The independently recomputed output page tree remains bound by
+`ordered_record_root`.
+
 The shuffle execution DAG is not the page tree above. If the manifest yields
 `K` primary runs, each shuffle phase has exactly `K` leaf units and `K - 1`
 real merge units. Its canonical largest-power-of-two run-span split promotes

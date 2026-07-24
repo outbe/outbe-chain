@@ -17,6 +17,7 @@ OUTBE_OCOMP_UNIT_EMPTY_V1	u8(purpose)
 OUTBE_OCOMP_UNIT_OUTPUT_V1	protocol_bundle_hash||JobId||attempt||UnitId||phase||interval_commitment||len||bytes
 OUTBE_OCOMP_UNIT_COVERAGE_V1	phase||interval_commitment||coverage_roots||coverage_counts
 OUTBE_OCOMP_UNIT_ARTIFACT_V1	canonical(UnitArtifactV1)
+OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1	u8(leaf_or_node)||canonical(run_span)||leaf(raw_coverage_root,raw_coverage_count)|node(left_root,left_count,right_root,right_count)
 OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1	canonical(kind,page_span,first_record_ordinal,record_count,left_ordered_record_root,right_ordered_record_root)
 OUTBE_OCOMP_RESULT_CHUNK_V1	canonical(ResultChunkV1)
 OUTBE_OCOMP_RESULT_V1	canonical(ActivationPayloadV1)

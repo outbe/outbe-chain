@@ -59,6 +59,7 @@
 | — | `UnitOutput` | `OUTBE_OCOMP_UNIT_OUTPUT_V1` |
 | — | `UnitCoverage` | `OUTBE_OCOMP_UNIT_COVERAGE_V1` |
 | — | `UnitArtifact` | `OUTBE_OCOMP_UNIT_ARTIFACT_V1` |
+| — | `ShuffleSourceCoverage` | `OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1` |
 | — | `ShuffleRunNode` | `OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1` |
 | — | `ResultChunk` | `OUTBE_OCOMP_RESULT_CHUNK_V1` |
 | — | `Result` | `OUTBE_OCOMP_RESULT_V1` |

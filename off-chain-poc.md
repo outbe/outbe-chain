@@ -887,6 +887,13 @@ writes a fresh local page tree under its own `UnitId`; producer roots are not
 reused as pages of the merged result. The valid all-excluded case produces one
 canonical empty owner leaf with complete raw source coverage.
 
+Source coverage and output order are separate commitments. A shuffle leaf
+binds the exact raw-coverage root/count recomputed from its
+`OUTPUT_FINALIZE` producer. A real merge hashes the two adjacent producer
+coverage commitments under `OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1`. The
+materialized page tree independently commits the sorted owner/bucket output.
+This avoids both population-sized padding work and a fictitious promotion job.
+
 Sort run limits, merge fan-in, file count, spill bytes, compression ratio and
 tie-breaking are fixed. Even though the PoC is small, no result may depend on a
 language hash-map iteration order or worker completion timing.

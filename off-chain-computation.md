@@ -1368,6 +1368,12 @@ not install producer roots as pages of a supposedly merged output. This keeps
 per-worker memory bounded while making the binary external-merge
 `Θ((N + E) log K)` I/O cost explicit.
 
+Shuffle source coverage is composed independently from the sorted page-tree
+root. A leaf binds the exact raw root/count of its `OUTPUT_FINALIZE` producer;
+a real merge hashes the adjacent producer coverage roots/counts under
+`OUTBE_OCOMP_SHUFFLE_SOURCE_COVERAGE_V1`. No unit synthesizes a population of
+padding records merely to promote an odd run.
+
 All logical inputs are pinned to the request snapshot: Tribute, Fidelity,
 Oracle, Gratis/Metadosis scalars, time, code and arithmetic version. There is no
 wall clock, floating point, host locale, random iteration order, live RPC read or
