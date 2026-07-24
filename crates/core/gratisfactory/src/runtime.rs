@@ -5,7 +5,9 @@
 //! escrow; `mine`/`mine_coen` own the mint/burn plus Fidelity cohort bookkeeping.
 //! `mine` wraps `outbe_gratis::api::mine` and records the acquisition cohort
 //! (`cohort_in`); `mine_coen` wraps `outbe_gratis::api::burn`, records the sale
-//! cohort (`cohort_out`), and mints native COEN 1:1.
+//! cohort (`cohort_out`), and mints native COEN 1:1. `mine_from_promis` burns
+//! public promis and mints the matching Gratis, recording a fresh acquisition
+//! cohort (promis itself is fidelity-neutral).
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
@@ -79,7 +81,8 @@ pub fn mine_from_promis(
     let mut promis = Promis::new(storage.clone());
     promis.burn(account, amount)?;
 
-    gratis::mint(storage, account, amount, auth)?;
+    // Reuse `mint`: gratis mint + fresh Fidelity cohort at the current block time.
+    mint(storage, account, amount, auth)?;
 
     Ok(amount)
 }
