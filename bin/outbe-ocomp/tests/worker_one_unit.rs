@@ -12,7 +12,11 @@ use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, Tr
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_finalized_output_run, decode_fixed_reduce_output,
-    decode_gratis_prefix_down_output, decode_gratis_segment_summary, GratisPrefixDownOutputV1,
+    decode_gratis_prefix_down_output, decode_gratis_segment_summary, encode_finalized_output_run,
+    GratisPrefixDownOutputV1,
+};
+use outbe_lysis::program_v1::phases::{
+    output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
@@ -28,15 +32,19 @@ use outbe_ocomp::input_artifacts::{
     derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
     InputArtifactContents, InputArtifactIdentity,
 };
+use outbe_ocomp::lysis_shuffle_adoption::adopt_lysis_shuffle_descendants;
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
-    materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
+    materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
+    InputManifestV1,
 };
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
-use outbe_ocomp_protocol::shuffle::{ShuffleRunArtifactV1, ShuffleRunKindV1};
+use outbe_ocomp_protocol::shuffle::{
+    verified_shuffle_run_records, ShuffleRunArtifactV1, ShuffleRunKindV1,
+};
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
     UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
@@ -1133,6 +1141,452 @@ fn real_worker_processes_execute_through_output_finalize() {
 
     let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("reopen worker inbox");
     assert_eq!(inbox.object_count().expect("count shuffle objects"), 2);
+}
+
+#[test]
+fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
+    if env::var_os(CHILD_MODE).is_some() {
+        run_child_worker();
+        return;
+    }
+
+    let directory = tempdir().expect("worker merge fixture");
+    let cas_limits = CasLimits {
+        max_object_bytes: 1024 * 1024,
+        max_total_bytes: 16 * 1024 * 1024,
+    };
+    let cas = FilesystemCas::open(directory.path(), CasWriterRole::Supervisor, cas_limits)
+        .expect("open merge CAS");
+    let inbox_root = directory.path().join("worker-inbox");
+    let inbox_limits = WorkerInboxLimits {
+        max_artifact_bytes: 1024 * 1024,
+        max_total_bytes: 8 * 1024 * 1024,
+    };
+    let limits = poc_schema_limits();
+    let bundle = support::protocol_bundle();
+    let protocol_bundle_hash = bundle
+        .protocol_bundle_hash(&limits)
+        .expect("merge bundle hash");
+    let job_id = B256::repeat_byte(0x71);
+    let attempt = 1;
+    let day = WorldwideDay::new(20_260_725);
+    let tribute_count = 257_u32;
+    let manifest = InputManifestV1 {
+        protocol_bundle_hash,
+        job_id,
+        attempt,
+        checkpoint: CheckpointIdentityV1 {
+            finalized_block_number: 101,
+            finalized_block_hash: B256::repeat_byte(0x72),
+            finalized_state_root: B256::repeat_byte(0x73),
+            finalized_ce_root: B256::repeat_byte(0x74),
+            ce_schema_version: 1,
+        },
+        wwd: day.value(),
+        sealed_tribute_collection_key: B256::repeat_byte(0x75),
+        sealed_tribute_collection_root: B256::repeat_byte(0x76),
+        tribute_count,
+        tribute_nominal_total: U256::from(tribute_count),
+        input_chunk_count: 1,
+        input_chunk_list_root: B256::repeat_byte(0x77),
+        fidelity_opening_root: B256::repeat_byte(0x78),
+        oracle_opening_root: B256::repeat_byte(0x79),
+        exact_encoded_bytes: 1,
+        exact_record_count: tribute_count,
+        body_codec_id: bundle.tribute_body_codec_id,
+        opening_codec_registry_hash: bundle
+            .opening_codec_registry_hash()
+            .expect("merge opening registry"),
+        compression: Compression::None,
+    };
+    let manifest_hash = manifest
+        .manifest_hash(&limits)
+        .expect("merge manifest hash");
+    let mut manifest_ref = cas
+        .publish_bytes(
+            &manifest
+                .encode_canonical(&limits)
+                .expect("canonical merge manifest"),
+        )
+        .expect("publish merge manifest");
+    manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
+
+    let plan = PlanCommitmentV1 {
+        protocol_bundle_hash,
+        job_id,
+        attempt,
+        input_manifest_hash: manifest_hash,
+        wwd: day.value(),
+        lysis_budget: U256::from(10_000),
+        logical_evaluation_time: 2_026_072_500,
+        tribute_count,
+        max_tributes_per_work_shard: 256,
+        primary_work_unit_count: 2,
+        primary_work_unit_root: B256::repeat_byte(0x7a),
+        planner_spec_version: bundle.planner_spec_version,
+        reducer_spec_version: bundle.reducer_spec_version,
+    };
+    let plan_hash = plan.plan_hash(&limits).expect("merge plan hash");
+    let plan_ref = cas
+        .publish_bytes(
+            &plan
+                .encode_canonical_record(&limits)
+                .expect("canonical merge plan"),
+        )
+        .expect("publish merge plan");
+
+    let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
+        protocol_bundle_hash,
+        job_id,
+        attempt,
+        input_manifest_hash: manifest_hash,
+        input_manifest_encoded_bytes: manifest_ref.encoded_bytes,
+        fidelity_opening_root: manifest.fidelity_opening_root,
+        oracle_opening_root: manifest.oracle_opening_root,
+        wwd: day.value(),
+        lysis_budget: plan.lysis_budget,
+        logical_evaluation_time: plan.logical_evaluation_time,
+        tribute_count,
+        lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+        planner_spec_version: bundle.planner_spec_version,
+        reducer_spec_version: bundle.reducer_spec_version,
+    })
+    .expect("merge planner");
+    let topology = LysisPlanTopologyV1::new(2).expect("merge topology");
+
+    let mut identities = (0..tribute_count)
+        .map(|ordinal| {
+            let mut owner_bytes = [0_u8; 20];
+            owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
+            let owner = Address::from(owner_bytes);
+            let tribute_id =
+                derive_poseidon_entity_id(owner, day).expect("merge synthetic Tribute id");
+            (tribute_id, owner)
+        })
+        .collect::<Vec<_>>();
+    identities.sort_by_key(|(tribute_id, _)| *tribute_id);
+
+    let mut finalized_artifacts = Vec::new();
+    for shard_ordinal in 0..2_u32 {
+        let start = shard_ordinal * 256;
+        let end = (start + 256).min(tribute_count);
+        let shard = &identities[start as usize..end as usize];
+        let amount_records = shard
+            .iter()
+            .enumerate()
+            .map(|(offset, (tribute_id, owner))| AmountRecordV1 {
+                raw_ordinal: start + u32::try_from(offset).expect("merge local ordinal"),
+                tribute_id: *tribute_id,
+                owner: *owner,
+                worldwide_day: day,
+                league_id: 1,
+                nominal_amount_minor: U256::from(1),
+                gratis_fraction_fp: U256::ZERO,
+                gratis_load_minor: U256::from(1),
+                entry_price_minor: U256::from(2),
+                floor_price_minor: U256::from(3),
+                cost_amount_minor: U256::from(4),
+                issuance_currency: 840,
+                reference_currency: 978,
+                exclude_from_intex_issuance: false,
+            })
+            .collect::<Vec<_>>();
+        let shard_count = end - start;
+        let incoming_remaining = U256::from(10_000_u64 - u64::from(start));
+        let finalized = output_finalize(
+            &AmountRunV1 {
+                start_ordinal: start,
+                end_ordinal: end,
+                ordered_records: amount_records,
+                checked_segment_gratis_total: U256::from(shard_count),
+            },
+            &GratisLeafPrefixV1 {
+                segment_ordinal: shard_ordinal,
+                incoming_remaining,
+                outgoing_remaining: incoming_remaining - U256::from(shard_count),
+                first_error_ordinal: None,
+            },
+            plan.logical_evaluation_time,
+        )
+        .expect("finalize merge shard");
+        let interval = EntityIdHalfOpenRange {
+            start: outbe_ocomp_protocol::common::EntityId36(*shard[0].0.as_bytes()),
+            end: identities.get(end as usize).map(|(tribute_id, _)| {
+                outbe_ocomp_protocol::common::EntityId36(*tribute_id.as_bytes())
+            }),
+        };
+        let output_spec = UnitSpecV1 {
+            protocol_bundle_hash,
+            job_id,
+            attempt,
+            phase: UnitPhase::OutputFinalize,
+            interval: UnitInterval::EntityIdRange(interval),
+            canonical_ordered_inputs: vec![CanonicalInputRefV1 {
+                purpose: InputPurpose::InputManifest,
+                source_kind: InputSourceKind::AuthenticatedRoot,
+                source_id: manifest_hash,
+                record_count_limit: 1,
+                max_encoded_bytes: manifest_ref.encoded_bytes,
+                max_decoded_bytes: manifest_ref.encoded_bytes,
+            }],
+            lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+            planner_spec_version: bundle.planner_spec_version,
+            reducer_spec_version: bundle.reducer_spec_version,
+        };
+        let coverage_root = finalized.coverage_root().expect("merge shard coverage");
+        let output_artifact = UnitArtifactV1::from_canonical_output(
+            &output_spec,
+            outbe_ocomp_protocol::unit::WorkOutputHeaderV1 {
+                source_coverage_root: coverage_root,
+                output_coverage_root: coverage_root,
+                source_coverage_count: shard_count,
+                output_coverage_count: shard_count,
+            },
+            BoundedBytes(
+                encode_finalized_output_run(&finalized, &limits)
+                    .expect("encode merge finalized shard"),
+            ),
+            &limits,
+        )
+        .expect("build merge finalized artifact");
+        finalized_artifacts.push(output_artifact);
+    }
+
+    let user = effective_user_name().expect("effective user");
+    let uid = effective_uid().expect("effective uid");
+    let output_finalize_offset = topology
+        .phase_unit_count(UnitPhase::Enumerate)
+        .checked_add(topology.phase_unit_count(UnitPhase::FidelityMap))
+        .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce)))
+        .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::AmountMap)))
+        .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix)))
+        .and_then(|value| value.checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown)))
+        .expect("merge OutputFinalize offset");
+    let owner_offset = output_finalize_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
+        .expect("merge OwnerShuffle offset");
+    let mut owner_artifacts = Vec::new();
+    for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
+        let mut producer_ref = cas
+            .publish_bytes(
+                &finalized_artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical merge finalized producer"),
+            )
+            .expect("publish merge finalized producer");
+        producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        let owner_spec = planner
+            .shuffle_unit_at(
+                UnitPhase::OwnerShuffle,
+                u32::try_from(ordinal).expect("merge owner ordinal"),
+                &[finalized_artifact.unit_id],
+                &limits,
+            )
+            .expect("derive merge owner leaf");
+        let artifact = execute_real_worker_unit(
+            700 + u64::try_from(ordinal).expect("merge generation"),
+            0xa0 + u8::try_from(ordinal).expect("merge boot"),
+            &user,
+            uid,
+            directory.path(),
+            cas_limits,
+            &inbox_root,
+            inbox_limits,
+            limits,
+            &owner_spec,
+            owner_offset + u32::try_from(ordinal).expect("merge phase ordinal"),
+            plan_hash,
+            plan_ref.clone(),
+            manifest_ref.clone(),
+            vec![producer_ref],
+        );
+        artifact
+            .validate_against(&owner_spec, &limits)
+            .expect("validate merge owner leaf artifact");
+        owner_artifacts.push(artifact);
+    }
+
+    let mut owner_refs = Vec::new();
+    for artifact in &owner_artifacts {
+        let mut reference = cas
+            .publish_bytes(
+                &artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical owner merge producer"),
+            )
+            .expect("publish owner merge producer");
+        reference.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        owner_refs.push(reference);
+    }
+    let merge_spec = planner
+        .shuffle_unit_at(
+            UnitPhase::OwnerShuffle,
+            2,
+            &[owner_artifacts[0].unit_id, owner_artifacts[1].unit_id],
+            &limits,
+        )
+        .expect("derive owner internal merge");
+    let merged_artifact = execute_real_worker_unit(
+        702,
+        0xa2,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &merge_spec,
+        owner_offset + 2,
+        plan_hash,
+        plan_ref.clone(),
+        manifest_ref.clone(),
+        owner_refs,
+    );
+    merged_artifact
+        .validate_against(&merge_spec, &limits)
+        .expect("validate owner internal merge artifact");
+    let root = ShuffleRunArtifactV1::decode_canonical(
+        merged_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode owner internal merge root");
+    assert_eq!(root.kind, ShuffleRunKindV1::Owner);
+    assert_eq!(root.run_span.start_run, 0);
+    assert_eq!(root.run_span.end_run, 2);
+    assert_eq!(root.source_coverage_count, tribute_count);
+    assert_eq!(root.record_count, tribute_count);
+
+    let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open merge inbox");
+    let adopted = adopt_lysis_shuffle_descendants(root.clone(), &inbox, &cas, &limits)
+        .expect("adopt owner internal merge closure");
+    assert_eq!(adopted.verified_record_count, tribute_count);
+    let records = verified_shuffle_run_records(root, &limits, |reference| {
+        cas.read_verified(reference)
+            .map(|object| object.bytes().to_vec())
+            .map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                    "adopted owner merge descendant",
+                )
+            })
+    })
+    .expect("open adopted owner merge")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("traverse adopted owner merge");
+    assert_eq!(records.len(), tribute_count as usize);
+
+    let bucket_offset = owner_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
+        .expect("merge BucketShuffle offset");
+    let mut bucket_artifacts = Vec::new();
+    for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
+        let mut producer_ref = cas
+            .publish_bytes(
+                &finalized_artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical bucket finalized producer"),
+            )
+            .expect("publish bucket finalized producer");
+        producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        let bucket_spec = planner
+            .shuffle_unit_at(
+                UnitPhase::BucketShuffle,
+                u32::try_from(ordinal).expect("merge bucket ordinal"),
+                &[finalized_artifact.unit_id],
+                &limits,
+            )
+            .expect("derive merge bucket leaf");
+        let artifact = execute_real_worker_unit(
+            703 + u64::try_from(ordinal).expect("bucket generation"),
+            0xa3 + u8::try_from(ordinal).expect("bucket boot"),
+            &user,
+            uid,
+            directory.path(),
+            cas_limits,
+            &inbox_root,
+            inbox_limits,
+            limits,
+            &bucket_spec,
+            bucket_offset + u32::try_from(ordinal).expect("bucket phase ordinal"),
+            plan_hash,
+            plan_ref.clone(),
+            manifest_ref.clone(),
+            vec![producer_ref],
+        );
+        artifact
+            .validate_against(&bucket_spec, &limits)
+            .expect("validate merge bucket leaf artifact");
+        bucket_artifacts.push(artifact);
+    }
+
+    let mut bucket_refs = Vec::new();
+    for artifact in &bucket_artifacts {
+        let mut reference = cas
+            .publish_bytes(
+                &artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical bucket merge producer"),
+            )
+            .expect("publish bucket merge producer");
+        reference.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        bucket_refs.push(reference);
+    }
+    let bucket_merge_spec = planner
+        .shuffle_unit_at(
+            UnitPhase::BucketShuffle,
+            2,
+            &[bucket_artifacts[0].unit_id, bucket_artifacts[1].unit_id],
+            &limits,
+        )
+        .expect("derive bucket internal merge");
+    let merged_bucket_artifact = execute_real_worker_unit(
+        705,
+        0xa5,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &bucket_merge_spec,
+        bucket_offset + 2,
+        plan_hash,
+        plan_ref,
+        manifest_ref,
+        bucket_refs,
+    );
+    merged_bucket_artifact
+        .validate_against(&bucket_merge_spec, &limits)
+        .expect("validate bucket internal merge artifact");
+    let bucket_root = ShuffleRunArtifactV1::decode_canonical(
+        merged_bucket_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode bucket internal merge root");
+    assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
+    assert_eq!(bucket_root.run_span.start_run, 0);
+    assert_eq!(bucket_root.run_span.end_run, 2);
+    assert_eq!(bucket_root.source_coverage_count, tribute_count);
+    assert_eq!(bucket_root.record_count, tribute_count);
+
+    let adopted_bucket =
+        adopt_lysis_shuffle_descendants(bucket_root.clone(), &inbox, &cas, &limits)
+            .expect("adopt bucket internal merge closure");
+    assert_eq!(adopted_bucket.verified_record_count, tribute_count);
+    let bucket_records = verified_shuffle_run_records(bucket_root, &limits, |reference| {
+        cas.read_verified(reference)
+            .map(|object| object.bytes().to_vec())
+            .map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                    "adopted bucket merge descendant",
+                )
+            })
+    })
+    .expect("open adopted bucket merge")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("traverse adopted bucket merge");
+    assert_eq!(bucket_records.len(), tribute_count as usize);
 }
 
 #[allow(clippy::too_many_arguments)]
