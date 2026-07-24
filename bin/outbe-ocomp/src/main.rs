@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use alloy_primitives::B256;
 use clap::{Args, Parser, Subcommand};
+use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{
     poc_schema_limits, require_effective_user, uid_for_user, EndpointIdentity,
@@ -53,10 +54,18 @@ const NODE_USER: &str = "outbe";
 const NODE_CONTROL_SOCKET: &str = "/run/outbe-ocomp/node.sock";
 const SUPERVISOR_JOURNAL_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/discovery";
 const SUPERVISOR_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
+const PROTOCOL_BUNDLE_PATH: &str = "/etc/outbe/ocomp/protocol-bundle-v1.ocb1";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().role {
         Role::Worker(args) => {
+            let limits = poc_schema_limits();
+            let canonical_bundle = std::fs::read(PROTOCOL_BUNDLE_PATH)?;
+            let protocol_bundle = PinnedProtocolBundle::decode(
+                &canonical_bundle,
+                args.protocol_bundle_hash,
+                &limits,
+            )?;
             run_one_from_inherited_fd(WorkerConfig {
                 expected_effective_user: WORKER_USER.to_owned(),
                 expected_supervisor_user: SUPERVISOR_USER.to_owned(),
@@ -73,6 +82,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max_total_bytes: CAS_MAX_TOTAL_BYTES,
                 },
                 connection_fd: SOCKET_ACTIVATION_FD,
+                protocol_bundle,
             })?;
             Ok(())
         }

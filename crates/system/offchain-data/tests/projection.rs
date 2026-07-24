@@ -19,8 +19,8 @@ use outbe_nod::{
     NodPageRequest, NodRepositoryReader,
 };
 use outbe_offchain_data::{
-    FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
-    ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState,
+    read_projection_state, FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection,
+    ProjectionConfig, ProjectionError, ProjectionOutcome, ProjectionSource, ProjectionState,
     TributeRetentionSelector, PROJECTION_STATE_KEY, PROJECTION_STATE_NAMESPACE,
 };
 use outbe_offchain_storage::{
@@ -98,6 +98,19 @@ fn config(start_block: u64) -> ProjectionConfig {
 
 fn open(storage: &Arc<RecordingStorage>, start_block: u64) -> OffchainDataProjection {
     OffchainDataProjection::open(config(start_block), storage.clone(), storage.clone()).unwrap()
+}
+
+#[test]
+fn projection_state_can_be_read_without_a_writer_capability() {
+    let storage = Arc::new(RecordingStorage::default());
+    let projection = open(&storage, 1);
+    let expected = projection.state().clone();
+    let batches_before = storage.batches();
+
+    let actual = read_projection_state(config(1), storage.clone()).unwrap();
+
+    assert_eq!(actual, Some(expected));
+    assert_eq!(storage.batches(), batches_before);
 }
 
 #[test]

@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 const SOURCE_FILES: &[&str] = &[
     "crates/system/ocomp-protocol/registry/ocomp-v1.tsv",
+    "crates/system/ocomp-protocol/registry/input-codecs-v1.tsv",
     "crates/system/ocomp-protocol/registry/schema-v1.tsv",
     "crates/system/ocomp-protocol/registry/preimages-v1.tsv",
     "crates/system/ocomp-protocol/registry/shape-freeze-v1.json",
@@ -16,6 +17,14 @@ const SOURCE_FILES: &[&str] = &[
 struct ObjectRow {
     tag: u16,
     name: String,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct InputCodecIds {
+    tribute: alloy_primitives::B256,
+    fidelity: alloy_primitives::B256,
+    oracle: alloy_primitives::B256,
+    opening_registry: alloy_primitives::B256,
 }
 
 pub fn run(repository_root: &Path, check: bool) -> Result<()> {
@@ -28,6 +37,8 @@ pub fn run(repository_root: &Path, check: bool) -> Result<()> {
     validate_input(&input)?;
 
     let objects = load_objects(repository_root)?;
+    let input_codec_ids = load_input_codec_ids(repository_root)?;
+    validate_input_codec_bundle(&input, input_codec_ids)?;
     validate_schema_and_preimages(repository_root, &objects)?;
 
     let source_hash = hash_sources(repository_root, SOURCE_FILES)?;
@@ -37,6 +48,9 @@ pub fn run(repository_root: &Path, check: bool) -> Result<()> {
     );
     let registry_hash =
         sha256_file(&repository_root.join("crates/system/ocomp-protocol/registry/ocomp-v1.tsv"))?;
+    let input_codec_hash = sha256_file(
+        &repository_root.join("crates/system/ocomp-protocol/registry/input-codecs-v1.tsv"),
+    )?;
     let schema_hash =
         sha256_file(&repository_root.join("crates/system/ocomp-protocol/registry/schema-v1.tsv"))?;
     let preimage_hash = sha256_file(
@@ -59,9 +73,14 @@ pub fn run(repository_root: &Path, check: bool) -> Result<()> {
         },
         "registries": {
             "object_domain_list_sha256": registry_hash,
+            "input_codecs_sha256": input_codec_hash,
             "canonical_schema_sha256": schema_hash,
             "domain_preimage_sha256": preimage_hash,
             "object_count": objects.len(),
+            "tribute_body_codec_id": hex::encode(input_codec_ids.tribute),
+            "fidelity_opening_codec_id": hex::encode(input_codec_ids.fidelity),
+            "oracle_opening_codec_id": hex::encode(input_codec_ids.oracle),
+            "opening_codec_registry_hash": hex::encode(input_codec_ids.opening_registry),
         },
         "profiles": {
             "correctness_profile_sha256": correctness_hash,
@@ -108,6 +127,77 @@ pub fn run(repository_root: &Path, check: bool) -> Result<()> {
         update_or_check(repository_root, &path, contents, check)?;
     }
     Ok(())
+}
+
+fn load_input_codec_ids(repository_root: &Path) -> Result<InputCodecIds> {
+    let contents = std::fs::read_to_string(
+        repository_root.join("crates/system/ocomp-protocol/registry/input-codecs-v1.tsv"),
+    )?;
+    let mut ids = Vec::new();
+    for (index, line) in contents.lines().skip(1).enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        ensure!(fields.len() == 5, "invalid input codec row {}", index + 2);
+        let role: u16 = fields[0].parse()?;
+        let version: u16 = fields[2].parse()?;
+        let descriptor = fields[4].as_bytes();
+        let mut payload = Vec::with_capacity(8 + descriptor.len());
+        payload.extend_from_slice(&role.to_be_bytes());
+        payload.extend_from_slice(&version.to_be_bytes());
+        payload.extend_from_slice(&u32::try_from(descriptor.len())?.to_be_bytes());
+        payload.extend_from_slice(descriptor);
+        ids.push((
+            role,
+            framed_hash("OUTBE_OCOMP_CODEC_DESCRIPTOR_V1", &payload)?,
+        ));
+    }
+    ensure!(
+        ids.iter().map(|(role, _)| *role).eq([1, 2, 3]),
+        "input codecs must be roles 1,2,3"
+    );
+    let tribute = ids[0].1;
+    let fidelity = ids[1].1;
+    let oracle = ids[2].1;
+    let mut registry_payload = Vec::with_capacity(68);
+    registry_payload.extend_from_slice(&2_u16.to_be_bytes());
+    registry_payload.push(1);
+    registry_payload.extend_from_slice(fidelity.as_slice());
+    registry_payload.push(2);
+    registry_payload.extend_from_slice(oracle.as_slice());
+    let opening_registry = framed_hash("OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1", &registry_payload)?;
+    Ok(InputCodecIds {
+        tribute,
+        fidelity,
+        oracle,
+        opening_registry,
+    })
+}
+
+fn validate_input_codec_bundle(input: &Value, ids: InputCodecIds) -> Result<()> {
+    let bundle = required(input, "bundle_template")?;
+    for (field, expected) in [
+        ("tribute_body_codec_id", ids.tribute),
+        ("fidelity_opening_codec_id", ids.fidelity),
+        ("oracle_opening_codec_id", ids.oracle),
+    ] {
+        ensure!(
+            string_field(bundle, field)? == hex::encode(expected),
+            "measurement bundle field {field} does not match generated input codec"
+        );
+    }
+    Ok(())
+}
+
+fn framed_hash(domain: &str, payload: &[u8]) -> Result<alloy_primitives::B256> {
+    let domain = domain.as_bytes();
+    let mut preimage = Vec::with_capacity(6 + domain.len() + payload.len());
+    preimage.extend_from_slice(&u16::try_from(domain.len())?.to_be_bytes());
+    preimage.extend_from_slice(domain);
+    preimage.extend_from_slice(&u32::try_from(payload.len())?.to_be_bytes());
+    preimage.extend_from_slice(payload);
+    Ok(keccak256(preimage))
 }
 
 fn validate_input(input: &Value) -> Result<()> {

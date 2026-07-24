@@ -136,10 +136,12 @@ list of user-selected writes.
 
 Every consensus or durable OCOMP object pins one `ProtocolBundleHash`. For the
 PoC/BoundedMVP Lysis V1 path, the bundle already fixes intent/action/result
-codecs, Lysis semantics, planner/reducer, evidence/signature domain, capacity
-profile, apply semantics, effect/codec registries, historical decoders and
-required handlers. A one-entry `ProgramRegistry` would duplicate this authority
-and is not created.
+codecs, the Tribute body codec, the distinct Fidelity/Oracle opening codecs,
+Lysis semantics, planner/reducer, evidence/signature domain, capacity profile,
+apply semantics, effect/codec registries, historical decoders and required
+handlers. The opening-registry hash is derived from the two bundle fields rather
+than being a second configurable authority. A one-entry `ProgramRegistry` would
+duplicate this authority and is not created.
 
 Compatibility negotiation can make a local validator abstain; it never selects
 job semantics. Live jobs finish or expire under their pinned bundle. New

@@ -357,6 +357,8 @@ Registered domains are:
 | `OUTBE_OCOMP_JOB_V1` | `IntentId || finalized_block_hash || finalized_state_root` |
 | `OUTBE_OCOMP_INPUT_CHUNK_V1` | canonical `AuthenticatedInputChunkV1` |
 | `OUTBE_OCOMP_INPUT_MANIFEST_V1` | canonical `InputManifestV1` |
+| `OUTBE_OCOMP_CODEC_DESCRIPTOR_V1` | role, version and complete canonical schema descriptor |
+| `OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1` | ordered Fidelity/Oracle source-kind and codec-ID pair |
 | `OUTBE_OCOMP_PLAN_V1` | canonical nested `PlanCommitmentV1` |
 | `OUTBE_OCOMP_UNIT_V1` | canonical `UnitSpecV1` |
 | `OUTBE_OCOMP_UNIT_INTERVAL_V1` | phase and canonical nested interval |
@@ -607,6 +609,8 @@ List kinds are:
 | `6` | input chunk references |
 | `7` | unit specifications/artifacts |
 | `8` | raw Tribute coverage `(raw_ordinal, tribute_id)` |
+| `9` | Fidelity authenticated openings |
+| `10` | Oracle authenticated openings |
 
 For list kind `k` and canonical item bytes `item_i`:
 
@@ -752,6 +756,9 @@ ProtocolBundleV1 {
   fork_id: Hash,
   intent_codec_id: Hash,
   finalized_intent_proof_codec_id: Hash,
+  tribute_body_codec_id: Hash,
+  fidelity_opening_codec_id: Hash,
+  oracle_opening_codec_id: Hash,
   result_codec_id: Hash,
   action_codec_id: Hash,
   activation_codec_id: Hash,
@@ -1011,6 +1018,58 @@ Nested Commonware, Ethereum header/account/storage proof, CE body and opening
 bytes retain their existing canonical codecs. Their exact codec IDs and byte
 caps are in `ProtocolBundleV1` and the generated limits manifest. OCB1 does not
 reinterpret those protocols; it length-bounds and binds their exact bytes.
+
+The three nested input codec fields are the only authority for these bytes:
+
+```text
+InputManifestV1.body_codec_id =
+  ProtocolBundleV1.tribute_body_codec_id
+
+OpeningCodecRegistryHash =
+  H(
+    "OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1",
+    u16_be(2) ||
+    u8(FIDELITY=1) || ProtocolBundleV1.fidelity_opening_codec_id ||
+    u8(ORACLE=2)   || ProtocolBundleV1.oracle_opening_codec_id
+  )
+
+InputManifestV1.opening_codec_registry_hash = OpeningCodecRegistryHash
+```
+
+Each codec ID is generated from a checked-in complete descriptor:
+
+```text
+CodecId =
+  H(
+    "OUTBE_OCOMP_CODEC_DESCRIPTOR_V1",
+    u16_be(role) ||
+    u16_be(version) ||
+    u32_be(len(canonical_schema_descriptor)) ||
+    canonical_schema_descriptor
+  )
+```
+
+The descriptor binds the complete byte grammar, strict decoder and canonical
+re-encoding rule, source/contract role, subject grammar, raw-slot semantics,
+proof witness version and applicable caps. Rust type names, source paths and
+free-form labels are not descriptors. Fidelity and Oracle use distinct codec
+IDs even though both contain `RawContractOpeningProofV1`.
+
+The node opening handoff is bounded, not job-capped. Canonically sorted unique
+owners are partitioned into consecutive batches of at most 256 owners. Every
+batch becomes one Fidelity `AuthenticatedOpeningV1`; owner 257 is the first
+owner of the second batch and is never rejected because of total job size.
+Oracle is one job-wide `AuthenticatedOpeningV1` over the complete sorted ISO
+set, including 840. Oracle material repeated by bounded node requests must be
+byte-identical and is published once.
+
+For both sources, `canonical_subject_key` is the frozen typed owner-batch or
+`(WWD, ISO-set)` encoding, `canonical_value` is the canonical ordered
+`(slot,value)` vector, and `canonical_opening` is the canonical nested
+`RawContractOpeningProofV1`. `fidelity_opening_root` and
+`oracle_opening_root` are `ordered_list_root` values over the canonical
+`AuthenticatedOpeningV1` bytes using the distinct registered list kinds
+`FIDELITY_OPENINGS(9)` and `ORACLE_OPENINGS(10)`.
 
 The exact production source of each finality/opening byte sequence is decision
 ticket 5. That research may select an existing adapter or add a narrow read adapter,

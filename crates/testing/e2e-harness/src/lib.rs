@@ -19,6 +19,8 @@ pub mod env;
 pub mod features;
 pub mod mongo_fixture;
 pub mod ocomp_evidence;
+#[cfg(feature = "ocomp-integration")]
+pub mod ocomp_finality_fixture;
 pub mod release_sgx;
 pub mod world;
 

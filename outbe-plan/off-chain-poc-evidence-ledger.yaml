@@ -13,6 +13,22 @@ scope:
   required_poc_ids: POC-01..POC-26
   required_pfs_ids: PFS-002-01..PFS-002-25
   story_steps: 1..13
+  accepted_protocol_corrections:
+    option_a_input_codec_binding:
+      authority: ProtocolBundleV1
+      direct_fields:
+        - tribute_body_codec_id
+        - fidelity_opening_codec_id
+        - oracle_opening_codec_id
+      opening_registry_hash: derived_from_ordered_fidelity_oracle_codec_ids
+      fidelity_owner_batch_max: 256
+      total_tribute_or_owner_cap: none
+      required_boundary_evidence:
+        - owners_255_one_batch
+        - owners_256_one_batch
+        - owners_257_two_batches_without_rejection
+        - source_specific_codec_mismatch_rejected
+        - aggregate_opening_to_authenticated_records_and_roots
   forbidden_shortcuts:
     - direct_activation_or_lysis_handler_for_public_claim
     - direct_consensus_state_injection
@@ -462,6 +478,8 @@ tests:
       - real_mongodb_replica_set
       - production_opening_source
       - exporter_process
+      - production_filesystem_cas
+      - node_owned_export_commit
     substitutions: []
     oracles:
       - FINALITY_PROOF
@@ -472,11 +490,13 @@ tests:
       - body_and_opening_mutation_matrix
       - source_lag_ahead_and_restart_results
       - absent_sign_record_on_failure
+      - bounded_256_owner_request_partition
+      - source_specific_opening_roots_and_manifest_commit
   OCM-CAS-001:
     status: planned
     layer: PROCESS
     lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/cas_integrity.rs
+    planned_path: bin/outbe-ocomp/tests/input_artifact_closure.rs
     production_entrypoint: exporter publish and worker consume
     real_components:
       - production_filesystem_cas
@@ -493,6 +513,8 @@ tests:
       - corruption_toctou_order_membership_matrix
       - quota_rejection
       - unchanged_sign_journal
+      - exact_bytes_kind_codec_and_bundle_binding
+      - four_real_worker_processes_consume_pinned_inputs
   OCM-CTL-001:
     status: planned
     layer: PROCESS

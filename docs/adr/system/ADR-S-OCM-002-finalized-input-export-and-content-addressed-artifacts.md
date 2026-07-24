@@ -165,6 +165,26 @@ objects. BoundedMVP may replace local filesystem CAS and one-entry pin journals
 with production stores/recovery without changing the authenticated input
 meaning.
 
+The worker loads the canonical bundle from the fixed service-owned
+`/etc/outbe/ocomp/protocol-bundle-v1.ocb1` path. Startup fails unless its
+canonical hash equals the endpoint bundle hash; neither a job nor a caller may
+select another bundle file.
+
+For Lysis V1 the bundle directly pins three nested input codecs:
+`tribute_body_codec_id`, `fidelity_opening_codec_id` and
+`oracle_opening_codec_id`. `InputManifestV1.body_codec_id` must equal the first
+field. Its `opening_codec_registry_hash` is deterministically derived from the
+ordered Fidelity/Oracle pair and cannot be configured independently. The
+general `object_codec_registry_hash` continues to bind OCB1 outer objects; it
+does not replace these foreign/nested byte authorities.
+
+The opening handoff is bounded without imposing a total job cap. Sorted owners
+are split into consecutive batches of at most 256, each encoded as one
+Fidelity `AuthenticatedOpeningV1`. Oracle is one job-wide record over the
+complete sorted ISO set. Separate registered list kinds commit the ordered
+Fidelity and Oracle records into the two manifest opening roots. Therefore the
+257th owner starts another opening record instead of being rejected or omitted.
+
 ## Production-interface verification evidence
 
 Existing code provides Mongo `StorageReader`, typed body repositories, CE roots
@@ -194,13 +214,12 @@ the manifest/root closure rather than trusting partial work.
 
 ## Open questions and technical debt
 
-1. Select and prove the real PoC checkpoint/handoff primitive across Reth state,
-   CE MDBX and raw body retention.
-2. Define the exact relation between Mongo projection checkpoint and the retained
-   finalized request block without treating Mongo as authority.
-3. Freeze `InputManifestV1`, chunk codec, caps and golden corruption vectors.
-4. Define crash-safe one-entry PoC pin persistence and orphan release ordering.
-5. Decide whether Fidelity/Oracle openings are exported from the same checkpoint
-   capability or a second authenticated source with an exact binding.
-6. Specify secure file-descriptor/no-follow handling in addition to digest
+1. Complete production evidence for the frozen checkpoint/handoff primitive
+   across Reth state, CE MDBX and raw body retention.
+2. Complete production evidence for the Mongo projection checkpoint relation
+   without treating Mongo as authority.
+3. Generate and independently verify the three nested codec descriptors, bundle
+   fields, opening-registry hash and corruption vectors.
+4. Complete crash-safe one-entry PoC pin persistence and orphan release ordering.
+5. Specify secure file-descriptor/no-follow handling in addition to digest
    verification to reduce local attack surface.

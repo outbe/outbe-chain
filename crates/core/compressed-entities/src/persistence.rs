@@ -1785,6 +1785,10 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
         count_collection_root_records(&self.tx, &self.path, collection)
     }
 
+    fn collection_leaf_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError> {
+        count_collection_leaf_records(&self.tx, &self.path, collection)
+    }
+
     fn read_branch(
         &self,
         namespace: TreeNamespace,
@@ -1932,6 +1936,55 @@ fn count_collection_root_records<T: DbTx>(
             return Err(PersistenceError::NonCanonicalTreeNamespace);
         }
         count = count.saturating_add(1);
+        entry = cursor.next().map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    }
+    Ok(count)
+}
+
+fn count_collection_leaf_records<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    collection: CollectionKey,
+) -> Result<usize, PersistenceError> {
+    const NAMESPACE_BYTES: usize = 1 + 32 + 4;
+    const LEAF_KEY_BYTES: usize = NAMESPACE_BYTES + 32;
+
+    let prefix = collection_prefix(collection);
+    let mut cursor =
+        tx.cursor_read::<tables::CeLeaves>()
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    let mut entry = cursor
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let mut count = 0_usize;
+    while let Some((key, value)) = entry {
+        if !key.starts_with(&prefix) {
+            break;
+        }
+        if key.len() != LEAF_KEY_BYTES {
+            return Err(PersistenceError::MalformedCollectionLeafKey);
+        }
+        let namespace = TreeNamespace::decode(&key[..NAMESPACE_BYTES])?;
+        if !matches!(
+            namespace,
+            TreeNamespace::CollectionShard(actual, _) if actual == collection
+        ) {
+            return Err(PersistenceError::NonCanonicalTreeNamespace);
+        }
+        TreeKey::decode(&key[NAMESPACE_BYTES..])?;
+        LeafValue::decode(&value)?;
+        count = count
+            .checked_add(1)
+            .ok_or(PersistenceError::CollectionLeafCountOverflow)?;
         entry = cursor.next().map_err(|error| PersistenceError::Database {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -2246,6 +2299,10 @@ pub enum PersistenceError {
         expected: usize,
         actual: usize,
     },
+    #[error("persisted collection leaf key is malformed")]
+    MalformedCollectionLeafKey,
+    #[error("persisted collection leaf count overflows usize")]
+    CollectionLeafCountOverflow,
     #[error("recomputed collection root differs from candidate")]
     NewCollectionRootMismatch,
     #[error("persisted shard root count mismatch: expected {expected}, got {actual}")]

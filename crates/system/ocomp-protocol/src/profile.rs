@@ -56,6 +56,9 @@ wire_struct! {
         pub fork_id: B256,
         pub intent_codec_id: B256,
         pub finalized_intent_proof_codec_id: B256,
+        pub tribute_body_codec_id: B256,
+        pub fidelity_opening_codec_id: B256,
+        pub oracle_opening_codec_id: B256,
         pub result_codec_id: B256,
         pub action_codec_id: B256,
         pub activation_codec_id: B256,
@@ -94,5 +97,24 @@ impl_top_level_codec!(ProtocolBundleV1, ProtocolBundleV1);
 impl ProtocolBundleV1 {
     pub fn protocol_bundle_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         hash_framed(HashDomain::ProtocolBundle, &self.encode_canonical(limits)?)
+    }
+
+    pub fn opening_codec_registry_hash(&self) -> Result<B256, ProtocolError> {
+        let mut payload = Vec::with_capacity(68);
+        payload.extend_from_slice(&2_u16.to_be_bytes());
+        payload.push(1);
+        payload.extend_from_slice(self.fidelity_opening_codec_id.as_slice());
+        payload.push(2);
+        payload.extend_from_slice(self.oracle_opening_codec_id.as_slice());
+        hash_framed(HashDomain::OpeningCodecRegistry, &payload)
+    }
+
+    pub fn validate_lysis_v1_input_codecs(&self) -> Result<(), ProtocolError> {
+        crate::schema::require(
+            self.tribute_body_codec_id == crate::registry::TRIBUTE_BODY_CODEC_ID
+                && self.fidelity_opening_codec_id == crate::registry::FIDELITY_OPENING_CODEC_ID
+                && self.oracle_opening_codec_id == crate::registry::ORACLE_OPENING_CODEC_ID,
+            "unsupported Lysis V1 input codec bundle",
+        )
     }
 }

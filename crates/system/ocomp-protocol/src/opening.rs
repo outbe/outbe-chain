@@ -3,10 +3,14 @@ use std::collections::BTreeSet;
 use alloy_primitives::{Address, B256, U256};
 
 use crate::{
+    codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
     common::ProofBytes,
     error::ProtocolError,
     schema::{require, wire_struct, NestedCodec, SchemaLimits},
 };
+
+/// Per-request allocation/proof bound. It is not a total job or Tribute cap.
+pub const MAX_FIDELITY_OWNERS_PER_OPENING: usize = 256;
 
 wire_struct! {
     pub struct OpeningSubjectsV1 {
@@ -54,6 +58,81 @@ impl LysisOpeningsProofV1 {
     pub fn validate_profile(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         <Self as NestedCodec>::validate(self, limits)
     }
+}
+
+impl RawContractOpeningProofV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+
+    pub fn decode_canonical_record(
+        encoded: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+        let opening = Self::decode_nested(&mut reader, limits)?;
+        reader.finish()?;
+        <Self as NestedCodec>::validate(&opening, limits)?;
+        require_canonical_reencoding(encoded, &opening.encode_canonical_record(limits)?)?;
+        Ok(opening)
+    }
+}
+
+/// Partitions one complete canonical owner set into bounded node opening
+/// requests. Every request carries the same complete Oracle ISO subject set;
+/// callers publish one byte-identical Oracle opening after verification.
+pub fn partition_lysis_opening_subjects(
+    owners: &[Address],
+    settlement_isos: &[u16],
+    limits: &SchemaLimits,
+) -> Result<Vec<OpeningSubjectsV1>, ProtocolError> {
+    require(!owners.is_empty(), "opening owner set must not be empty")?;
+    require(
+        owners.windows(2).all(|pair| pair[0] < pair[1]),
+        "opening owners strictly ordered and unique",
+    )?;
+    require(
+        !settlement_isos.is_empty(),
+        "opening settlement ISO set must not be empty",
+    )?;
+    require(
+        settlement_isos.len() <= limits.max_collection_items,
+        "opening settlement ISO cap",
+    )?;
+    require(
+        settlement_isos.windows(2).all(|pair| pair[0] < pair[1]),
+        "opening settlement ISOs strictly ordered and unique",
+    )?;
+    require(
+        settlement_isos.contains(&840),
+        "opening settlement ISOs include mandatory 840",
+    )?;
+
+    let batch_count = owners.len().div_ceil(MAX_FIDELITY_OWNERS_PER_OPENING);
+    let allocation_bytes = batch_count
+        .checked_mul(core::mem::size_of::<OpeningSubjectsV1>())
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "opening request batch allocation bytes",
+        })?;
+    let mut requests = Vec::new();
+    requests
+        .try_reserve_exact(batch_count)
+        .map_err(|_| ProtocolError::AllocationFailed {
+            what: "opening request batches",
+            bytes: allocation_bytes,
+        })?;
+    for batch in owners.chunks(MAX_FIDELITY_OWNERS_PER_OPENING) {
+        let request = OpeningSubjectsV1 {
+            owners: batch.to_vec(),
+            settlement_isos: settlement_isos.to_vec(),
+        };
+        request.validate(limits)?;
+        requests.push(request);
+    }
+    Ok(requests)
 }
 
 fn validate_opening_subjects(

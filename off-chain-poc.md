@@ -1295,6 +1295,7 @@ Every PoC consensus object pins one `ProtocolBundleHash`:
 ProtocolBundleV1 {
   protocol_version, fork_id,
   intent_codec, finalized_intent_proof_codec,
+  tribute_body_codec, fidelity_opening_codec, oracle_opening_codec,
   result_codec, action_codec, activation_codec, evidence_codec,
   request_semantics_version, lysis_program_semantics_hash,
   planner_spec_version, reducer_spec_version,

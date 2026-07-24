@@ -18,8 +18,8 @@ use outbe_ocomp_protocol::local_control::{
 };
 use outbe_ocomp_protocol::{
     FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, ProtocolError, SchemaLimits,
-    MAX_FINALIZED_JOBS_PER_RESPONSE,
+    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
+    SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use thiserror::Error;
 
@@ -132,6 +132,34 @@ impl SupervisorDiscovery {
 
     pub fn current_record(&self) -> Result<Option<DiscoveryRecord>, SupervisorDiscoveryError> {
         Ok(self.lock_journal()?.record().cloned())
+    }
+
+    /// Arms the node-owned finalized snapshot only after the exact job has
+    /// already been discovered and durably journaled.
+    pub fn open_snapshot_lease(
+        &self,
+        job_id: B256,
+    ) -> Result<SnapshotHandoffV1, SupervisorDiscoveryError> {
+        let current = self
+            .current_record()?
+            .ok_or(SupervisorDiscoveryError::SnapshotJobNotDiscovered)?;
+        if current.spec.summary.job_id != job_id {
+            return Err(SupervisorDiscoveryError::SnapshotJobNotDiscovered);
+        }
+        let mut session = self.connect()?;
+        let request = OpenSnapshotLeaseV1 { job_id };
+        session.send_request(
+            NodeMessageKind::OpenSnapshotLease as u16,
+            request.encode_body(&self.config.limits)?,
+        )?;
+        let frame = session.receive_response()?;
+        let body = response_body(
+            frame.message_kind,
+            frame.body,
+            NodeMessageKind::OpenSnapshotLease,
+            &self.config.limits,
+        )?;
+        SnapshotHandoffV1::decode_body(&body, &self.config.limits).map_err(Into::into)
     }
 
     fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {
@@ -520,6 +548,8 @@ pub enum SupervisorDiscoveryError {
     SummaryChanged,
     #[error("node returned a finalized job for a different protocol bundle")]
     BundleChanged,
+    #[error("snapshot lease may only be opened for the durably discovered job")]
+    SnapshotJobNotDiscovered,
     #[error("node returned unexpected OCOMP response kind {0:#06x}")]
     UnexpectedResponseKind(u16),
     #[error(

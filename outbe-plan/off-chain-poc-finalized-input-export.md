@@ -480,9 +480,11 @@ For one `FINALIZED` pin, the exporter performs these steps in order:
     `JobIntentV1`; omission, addition, mutation or wrong-day substitution fails;
 12. derive the canonical distinct owner set and reference-currency set from the
     now-authenticated bodies and enforce their caps;
-13. request typed Fidelity/Oracle state proofs at `BH`, verify the Ethereum
-    proofs against `SR`, verify the complete expected raw slot set, and decode
-    canonical openings;
+13. partition sorted unique owners into consecutive batches of at most 256,
+    request typed Fidelity/Oracle state proofs at `BH` for every batch, verify
+    the Ethereum proofs against `SR`, verify the complete expected raw slot set,
+    and decode canonical openings; owner 257 starts the next batch and no total
+    owner/Tribute admission cap is introduced;
 14. independently reproduce Fidelity/Oracle read semantics at the intent's
     `logical_evaluation_height/time`; no live call or wall clock is allowed;
 15. encode Tribute, Fidelity and Oracle chunks in frozen canonical order;
@@ -522,6 +524,14 @@ duplicate slot. It then invokes the same frozen integer semantics as
 The authenticated value is the raw opening plus its deterministically derived
 league inputs. A node-returned or Mongo-stored “league” is never authority.
 
+Each consecutive owner batch is encoded as one source-specific
+`AuthenticatedOpeningV1`. Its subject is the canonical ordered owner vector,
+its value is the canonical ordered raw `(slot,value)` vector, and its opening
+is the canonical nested `RawContractOpeningProofV1`. The batch size is a
+request/allocation bound only; the complete job may contain any number of
+batches. The manifest Fidelity opening root uses the registered
+`FIDELITY_OPENINGS(9)` ordered-list kind.
+
 ### 8.2 Oracle
 
 For mandatory ISO `840` plus every distinct Tribute reference currency, the
@@ -535,6 +545,12 @@ opening proves:
 
 The exporter proves and scans the same raw arrays as current Oracle logic. It
 does not accept a node-returned final price as authority.
+
+The complete sorted ISO set, including 840, is encoded once as the job-wide
+Oracle `AuthenticatedOpeningV1`. If bounded Fidelity requests repeat the Oracle
+proof, every copy must be byte-identical; disagreement aborts export and the
+single canonical copy is published once. The manifest Oracle opening root uses
+the registered `ORACLE_OPENINGS(10)` ordered-list kind.
 
 Two bounds were missing from the first ticket-4 draft:
 
@@ -568,6 +584,9 @@ integrity rules are already fixed:
 - objects are never modified in place;
 - a consumer opens once, verifies file type/ownership/link policy, and hashes
   the exact stream while decoding it;
+- a worker resolves the canonical `ProtocolBundleV1` only from the fixed
+  service-owned `/etc/outbe/ocomp/protocol-bundle-v1.ocb1` path and requires its
+  hash to equal the control-session bundle hash;
 - “hash, close, reopen, consume” is forbidden;
 - manifest membership, kind, ordinal, semantic digest, transport digest,
   encoded length and record count must all match;

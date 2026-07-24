@@ -13,17 +13,23 @@ use std::sync::{
 use std::time::Duration;
 
 use metrics::{counter, gauge};
+use outbe_compressed_entities::CompressedTreeService;
 use outbe_ocomp_protocol::local_control::{
     ControlError, ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp_protocol::{
-    common::BoundedBytes, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-    ListFinalizedJobsResponseV1, ListFinalizedJobsV1, LocalErrorCode, LocalErrorV1,
-    NodeMessageKind, ProtocolError, SchemaLimits,
+    common::BoundedBytes, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
+    CheckProjectionContainmentV1, CommitSnapshotExportV1, FinalizedJobSpecV1,
+    FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
+    ListFinalizedJobsV1, ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, NodeMessageKind,
+    OpenSnapshotLeaseV1, ProtocolError, RenewSnapshotLeaseV1, SchemaLimits,
 };
 use thiserror::Error;
 
 use super::retention::{FinalizedJobPinV1, OcompRetentionCoordinator, RetentionError};
+use super::snapshot_control::{
+    ProjectionContainmentAuthority, SnapshotExportAuthority, SnapshotExportError,
+};
 
 #[derive(Default)]
 struct ReadinessState {
@@ -91,6 +97,8 @@ pub struct OcompControlServer {
     session_generation: u64,
     limits: SchemaLimits,
     readiness: OcompControlReadiness,
+    snapshot_export: Option<Arc<SnapshotExportAuthority>>,
+    expected_snapshot_exporter_uid: Option<u32>,
 }
 
 impl OcompControlServer {
@@ -111,7 +119,28 @@ impl OcompControlServer {
             session_generation,
             limits,
             readiness: OcompControlReadiness::default(),
+            snapshot_export: None,
+            expected_snapshot_exporter_uid: None,
         })
+    }
+
+    /// Enables the separate fixed-role snapshot-exporter endpoint without
+    /// changing the existing supervisor discovery interface.
+    #[must_use]
+    pub fn with_snapshot_export(
+        mut self,
+        tree: Arc<CompressedTreeService>,
+        projection_containment: Arc<dyn ProjectionContainmentAuthority>,
+        expected_snapshot_exporter_uid: u32,
+    ) -> Self {
+        self.snapshot_export = Some(Arc::new(SnapshotExportAuthority::new(
+            Arc::clone(&self.retention),
+            tree,
+            projection_containment,
+            self.limits,
+        )));
+        self.expected_snapshot_exporter_uid = Some(expected_snapshot_exporter_uid);
+        self
     }
 
     #[must_use]
@@ -123,11 +152,29 @@ impl OcompControlServer {
     /// connection failures are contained and counted; only listener failure is
     /// returned to the owning background task.
     pub fn serve_until(&self, listener: UnixListener, shutdown: &AtomicBool) -> io::Result<()> {
+        self.serve_role_until(listener, shutdown, ControlRole::Supervisor)
+    }
+
+    /// Runs the fixed SnapshotExporter role on its own UDS listener.
+    pub fn serve_snapshot_exporter_until(
+        &self,
+        listener: UnixListener,
+        shutdown: &AtomicBool,
+    ) -> io::Result<()> {
+        self.serve_role_until(listener, shutdown, ControlRole::SnapshotExporter)
+    }
+
+    fn serve_role_until(
+        &self,
+        listener: UnixListener,
+        shutdown: &AtomicBool,
+        peer_role: ControlRole,
+    ) -> io::Result<()> {
         listener.set_nonblocking(true)?;
         while !shutdown.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    if let Err(error) = self.serve_connection(stream) {
+                    if let Err(error) = self.serve_connection_for_role(stream, peer_role) {
                         if !matches!(
                             error,
                             NodeControlError::Control(ControlError::NoCommonBundle)
@@ -146,11 +193,33 @@ impl OcompControlServer {
     }
 
     pub fn serve_connection(&self, stream: UnixStream) -> Result<(), NodeControlError> {
+        self.serve_connection_for_role(stream, ControlRole::Supervisor)
+    }
+
+    pub fn serve_snapshot_exporter_connection(
+        &self,
+        stream: UnixStream,
+    ) -> Result<(), NodeControlError> {
+        self.serve_connection_for_role(stream, ControlRole::SnapshotExporter)
+    }
+
+    fn serve_connection_for_role(
+        &self,
+        stream: UnixStream,
+        peer_role: ControlRole,
+    ) -> Result<(), NodeControlError> {
+        let expected_uid = match peer_role {
+            ControlRole::Supervisor => self.expected_supervisor_uid,
+            ControlRole::SnapshotExporter => self
+                .expected_snapshot_exporter_uid
+                .ok_or(NodeControlError::SnapshotExportUnavailable)?,
+            _ => return Err(NodeControlError::UnsupportedPeerRole(peer_role)),
+        };
         let mut session = ControlServerSession::accept(
             stream,
             ServerPolicy::node(
-                ControlRole::Supervisor,
-                self.expected_supervisor_uid,
+                peer_role,
+                expected_uid,
                 self.identity,
                 self.session_generation,
                 self.limits,
@@ -197,10 +266,66 @@ impl OcompControlServer {
                         Err(error) => return Err(error),
                     }
                 }
+                kind if kind == NodeMessageKind::OpenSnapshotLease as u16 => {
+                    let request = OpenSnapshotLeaseV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .open(request.job_id)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::ListSnapshotHandoffs as u16 => {
+                    let request = ListSnapshotHandoffsV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .list(&request)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::GetSnapshotHandoff as u16 => {
+                    let request = GetSnapshotHandoffV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .get(&request)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::RenewSnapshotLease as u16 => {
+                    let request = RenewSnapshotLeaseV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .acknowledge_open(&request)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::BuildFinalizedIntentProof as u16 => {
+                    let request =
+                        BuildFinalizedIntentProofV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .build_finalized_intent_proof(request.job_id)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::BuildLysisOpenings as u16 => {
+                    let request = BuildLysisOpeningsV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .build_lysis_openings(request.job_id, request.subjects)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::CheckProjectionContainment as u16 => {
+                    let request =
+                        CheckProjectionContainmentV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .check_projection_containment(&request)?
+                        .encode_body(&self.limits)?
+                }
+                kind if kind == NodeMessageKind::CommitSnapshotExport as u16 => {
+                    let request = CommitSnapshotExportV1::decode_body(&frame.body, &self.limits)?;
+                    self.snapshot_export()?
+                        .commit(&request)?
+                        .encode_body(&self.limits)?
+                }
                 actual => return Err(NodeControlError::UnexpectedMethod(actual)),
             };
             session.send_response(frame.request_id, NodeMessageKind::Response as u16, response)?;
         }
+    }
+
+    fn snapshot_export(&self) -> Result<&SnapshotExportAuthority, NodeControlError> {
+        self.snapshot_export
+            .as_deref()
+            .ok_or(NodeControlError::SnapshotExportUnavailable)
     }
 
     fn list_finalized_jobs(
@@ -264,10 +389,16 @@ pub enum NodeControlError {
     Protocol(#[from] ProtocolError),
     #[error(transparent)]
     Retention(#[from] RetentionError),
+    #[error(transparent)]
+    SnapshotExport(#[from] SnapshotExportError),
     #[error("node OCOMP control received unsupported method {0:#06x}")]
     UnexpectedMethod(u16),
     #[error("requested finalized OCOMP job is not live")]
     JobNotFound,
+    #[error("node OCOMP snapshot export control is not configured")]
+    SnapshotExportUnavailable,
+    #[error("node OCOMP control cannot serve peer role {0:?}")]
+    UnsupportedPeerRole(ControlRole),
     #[error("node OCOMP control session generation cannot be zero")]
     ZeroSessionGeneration,
 }

@@ -161,6 +161,8 @@ pub enum HashDomain {
     Job,
     InputChunk,
     InputManifest,
+    CodecDescriptor,
+    OpeningCodecRegistry,
     Plan,
     Unit,
     UnitInterval,
@@ -207,6 +209,8 @@ impl HashDomain {
         Self::Job,
         Self::InputChunk,
         Self::InputManifest,
+        Self::CodecDescriptor,
+        Self::OpeningCodecRegistry,
         Self::Plan,
         Self::Unit,
         Self::UnitInterval,
@@ -254,6 +258,8 @@ impl HashDomain {
             Self::Job => "OUTBE_OCOMP_JOB_V1",
             Self::InputChunk => "OUTBE_OCOMP_INPUT_CHUNK_V1",
             Self::InputManifest => "OUTBE_OCOMP_INPUT_MANIFEST_V1",
+            Self::CodecDescriptor => "OUTBE_OCOMP_CODEC_DESCRIPTOR_V1",
+            Self::OpeningCodecRegistry => "OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1",
             Self::Plan => "OUTBE_OCOMP_PLAN_V1",
             Self::Unit => "OUTBE_OCOMP_UNIT_V1",
             Self::UnitInterval => "OUTBE_OCOMP_UNIT_INTERVAL_V1",
@@ -303,6 +309,8 @@ pub enum ListKind {
     InputChunkReferences = 6,
     UnitSpecificationsArtifacts = 7,
     RawTributeCoverage = 8,
+    FidelityOpenings = 9,
+    OracleOpenings = 10,
 }
 
 impl ListKind {
@@ -315,6 +323,8 @@ impl ListKind {
         Self::InputChunkReferences,
         Self::UnitSpecificationsArtifacts,
         Self::RawTributeCoverage,
+        Self::FidelityOpenings,
+        Self::OracleOpenings,
     ];
 
     #[must_use]
@@ -333,6 +343,8 @@ impl ListKind {
             Self::InputChunkReferences => "input chunk references",
             Self::UnitSpecificationsArtifacts => "unit specifications/artifacts",
             Self::RawTributeCoverage => "raw Tribute coverage (raw_ordinal, tribute_id)",
+            Self::FidelityOpenings => "Fidelity authenticated openings",
+            Self::OracleOpenings => "Oracle authenticated openings",
         }
     }
 }
@@ -350,7 +362,20 @@ impl TryFrom<u16> for ListKind {
             6 => Ok(Self::InputChunkReferences),
             7 => Ok(Self::UnitSpecificationsArtifacts),
             8 => Ok(Self::RawTributeCoverage),
+            9 => Ok(Self::FidelityOpenings),
+            10 => Ok(Self::OracleOpenings),
             value => Err(crate::error::ProtocolError::UnknownListKind(value)),
         }
     }
 }
+
+pub const TRIBUTE_BODY_CODEC_DESCRIPTOR: &str = "role=TRIBUTE_BODY;version=1;wire=canonical-protobuf-payload-only;fields=1:bytes36-tribute_id-required,2:bytes20-owner-required,3:uint32-worldwide_day-omit-zero,4:bytes32-issuance_amount_minor-required-big-endian,5:uint16-issuance_currency-omit-zero,6:bytes32-nominal_amount_minor-required-big-endian,7:uint16-reference_currency-omit-zero,8:bytes32-tribute_price_minor-required-big-endian,9:bool-exclude_from_intex_issuance-omit-false;rules=ascending-unique-fields,minimal-varints,no-unknown-fields,strict-decode-reencode,identity-day-match;commitment=CE_BODY_COMMITMENT_V1(schema_version=1,payload);stored_body_envelope=excluded";
+pub const TRIBUTE_BODY_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([82, 227, 209, 195, 86, 32, 174, 112, 204, 29, 168, 232, 64, 52, 140, 96, 196, 181, 137, 113, 150, 11, 173, 234, 112, 74, 55, 254, 51, 64, 255, 202]);
+
+pub const FIDELITY_OPENING_CODEC_DESCRIPTOR: &str = "role=FIDELITY_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=1,subject,value,codec_id,opening);subject=u32_be(owner_count)||address20*;owner_count=1..256;owners=strict-ascending-unique;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=fidelity_slot_plan_v1(qualified_start_base=0,active_count_base=1,active_cohorts_base=2,sold_count_base=4,sold_cohorts_base=5,first_qualified_start=8,mapping=keccak256(key||slot32),active_count<=64,sold_count<=64);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
+pub const FIDELITY_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([61, 58, 197, 129, 143, 184, 46, 81, 195, 4, 30, 36, 233, 255, 54, 204, 95, 220, 232, 219, 219, 116, 218, 31, 191, 57, 120, 255, 14, 25, 222, 26]);
+
+pub const ORACLE_OPENING_CODEC_DESCRIPTOR: &str = "role=ORACLE_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-and-contains-840;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=oracle_slot_plan_v1(pair_hash_to_id=10,scurve_count=34,scurve_pair_id=35,scurve_peak_day=36,scurve_peak_price=37,scurve_oldest=38,settlement_iso_to_denom=41,settlement_iso_to_pair=42,wwd_vwap_exists=47,wwd_vwap_pair_count=50,wwd_vwap_pair_id=51,wwd_vwap_value=52,mapping=keccak256(key||slot32),wwd_pairs<=256,active_scurve<=256,isos<=256);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode";
+pub const ORACLE_OPENING_CODEC_ID: alloy_primitives::B256 = alloy_primitives::B256::new([27, 40, 5, 164, 9, 109, 41, 32, 10, 134, 247, 191, 197, 57, 75, 27, 17, 141, 102, 80, 132, 182, 203, 254, 249, 236, 65, 21, 94, 148, 151, 38]);
+
+pub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new([72, 115, 102, 133, 156, 61, 69, 128, 204, 254, 138, 101, 72, 24, 213, 231, 176, 20, 135, 109, 142, 145, 191, 122, 60, 226, 230, 145, 131, 101, 46, 72]);

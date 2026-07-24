@@ -19,9 +19,14 @@ use outbe_ocomp_protocol::{
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
-        ControlFrameV1, ControlMagic, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-        ListFinalizedJobsResponseV1, ListFinalizedJobsV1, RunUnitV1, CONTROL_FRAME_HEADER_LEN,
-        MAX_FINALIZED_JOBS_PER_RESPONSE, WORKER_CONTROL_MAGIC,
+        BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
+        CommitSnapshotExportV1, ControlFrameV1, ControlMagic, FinalizedIntentProofResponseV1,
+        FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1,
+        ListFinalizedJobsResponseV1, ListFinalizedJobsV1, ListSnapshotHandoffsResponseV1,
+        ListSnapshotHandoffsV1, OpenSnapshotLeaseV1, ProjectionCheckpointV1, ProjectionContainedV1,
+        RenewSnapshotLeaseV1, RunUnitV1, SnapshotExportCommittedV1, SnapshotHandoffV1,
+        SnapshotLeaseOpenedV1, CONTROL_FRAME_HEADER_LEN, MAX_FINALIZED_JOBS_PER_RESPONSE,
+        MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE, SNAPSHOT_LEASE_WIRE_BYTES, WORKER_CONTROL_MAGIC,
     },
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
@@ -31,6 +36,7 @@ use outbe_ocomp_protocol::{
         JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
         NodTargetPreconditionV1, ParentProofKind, PreAdmissionEnvelopeV1, TributeInputBindingV1,
     },
+    opening::OpeningSubjectsV1,
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
         desis_request_brief_hash, ActivationOutcome, AggregateActivationReceiptV1,
@@ -76,6 +82,9 @@ fn bundle() -> ProtocolBundleV1 {
         fork_id: hash(1),
         intent_codec_id: hash(2),
         finalized_intent_proof_codec_id: hash(3),
+        tribute_body_codec_id: outbe_ocomp_protocol::registry::TRIBUTE_BODY_CODEC_ID,
+        fidelity_opening_codec_id: outbe_ocomp_protocol::registry::FIDELITY_OPENING_CODEC_ID,
+        oracle_opening_codec_id: outbe_ocomp_protocol::registry::ORACLE_OPENING_CODEC_ID,
         result_codec_id: hash(4),
         action_codec_id: hash(5),
         activation_codec_id: hash(6),
@@ -1140,6 +1149,197 @@ fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
         FinalizedJobSpecV1::decode_body(&spec.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
         spec
     );
+}
+
+#[test]
+fn snapshot_export_control_binds_one_job_checkpoint_lease_and_manifest() {
+    let job_id = hash(0xa1);
+    let checkpoint = CheckpointIdentityV1 {
+        finalized_block_number: 100,
+        finalized_block_hash: hash(0xa2),
+        finalized_state_root: hash(0xa3),
+        finalized_ce_root: hash(0xa4),
+        ce_schema_version: 1,
+    };
+    let lease = BoundedBytes(vec![0xa5; SNAPSHOT_LEASE_WIRE_BYTES]);
+
+    let open = OpenSnapshotLeaseV1 { job_id };
+    assert_eq!(
+        OpenSnapshotLeaseV1::decode_body(&open.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        open
+    );
+    let handoff = SnapshotHandoffV1 {
+        job_id,
+        pin_generation: 7,
+        lease_generation: 11,
+        checkpoint,
+        canonical_lease_offer: lease.clone(),
+    };
+    assert_eq!(
+        SnapshotHandoffV1::decode_body(&handoff.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        handoff
+    );
+    let list = ListSnapshotHandoffsV1 {
+        after_lease_generation: 0,
+        limit: MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE,
+    };
+    assert_eq!(
+        ListSnapshotHandoffsV1::decode_body(&list.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        list
+    );
+    let listed = ListSnapshotHandoffsResponseV1 {
+        next_lease_generation: handoff.lease_generation,
+        handoffs: vec![handoff.clone()],
+    };
+    assert_eq!(
+        ListSnapshotHandoffsResponseV1::decode_body(&listed.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        listed
+    );
+    let get = GetSnapshotHandoffV1 {
+        job_id,
+        lease_generation: handoff.lease_generation,
+    };
+    assert_eq!(
+        GetSnapshotHandoffV1::decode_body(&get.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        get
+    );
+    let renew = RenewSnapshotLeaseV1 {
+        job_id,
+        lease_generation: handoff.lease_generation,
+        canonical_open_ack: lease,
+    };
+    assert_eq!(
+        RenewSnapshotLeaseV1::decode_body(&renew.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        renew
+    );
+    let opened = SnapshotLeaseOpenedV1 {
+        job_id,
+        lease_generation: handoff.lease_generation,
+    };
+    assert_eq!(
+        SnapshotLeaseOpenedV1::decode_body(&opened.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        opened
+    );
+
+    let proof_request = BuildFinalizedIntentProofV1 { job_id };
+    assert_eq!(
+        BuildFinalizedIntentProofV1::decode_body(
+            &proof_request.encode_body(&LIMITS).unwrap(),
+            &LIMITS
+        )
+        .unwrap(),
+        proof_request
+    );
+    let proof_response = FinalizedIntentProofResponseV1 {
+        job_id,
+        canonical_proof: BoundedBytes(vec![1]),
+    };
+    assert_eq!(
+        FinalizedIntentProofResponseV1::decode_body(
+            &proof_response.encode_body(&LIMITS).unwrap(),
+            &LIMITS
+        )
+        .unwrap(),
+        proof_response
+    );
+    let openings_request = BuildLysisOpeningsV1 {
+        job_id,
+        subjects: OpeningSubjectsV1 {
+            owners: vec![Address::repeat_byte(0xa6)],
+            settlement_isos: vec![840],
+        },
+    };
+    assert_eq!(
+        BuildLysisOpeningsV1::decode_body(&openings_request.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        openings_request
+    );
+    let projection = ProjectionCheckpointV1 {
+        block_number: handoff.checkpoint.finalized_block_number + 5,
+        block_hash: hash(0xa9),
+    };
+    let containment = CheckProjectionContainmentV1 {
+        job_id,
+        lease_generation: handoff.lease_generation,
+        projection_checkpoint: projection.clone(),
+    };
+    assert_eq!(
+        CheckProjectionContainmentV1::decode_body(
+            &containment.encode_body(&LIMITS).unwrap(),
+            &LIMITS
+        )
+        .unwrap(),
+        containment
+    );
+    let contained = ProjectionContainedV1 {
+        job_id,
+        lease_generation: handoff.lease_generation,
+        projection_checkpoint: projection,
+        required_checkpoint: ProjectionCheckpointV1 {
+            block_number: handoff.checkpoint.finalized_block_number,
+            block_hash: handoff.checkpoint.finalized_block_hash,
+        },
+    };
+    assert_eq!(
+        ProjectionContainedV1::decode_body(&contained.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        contained
+    );
+
+    let commit = CommitSnapshotExportV1 {
+        job_id,
+        pin_generation: handoff.pin_generation,
+        lease_generation: handoff.lease_generation,
+        manifest_hash: hash(0xa7),
+    };
+    assert_eq!(
+        CommitSnapshotExportV1::decode_body(&commit.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        commit
+    );
+    let committed = SnapshotExportCommittedV1 {
+        job_id,
+        pin_generation: handoff.pin_generation + 1,
+        record_hash: hash(0xa8),
+    };
+    assert_eq!(
+        SnapshotExportCommittedV1::decode_body(&committed.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        committed
+    );
+
+    for invalid in [
+        OpenSnapshotLeaseV1 { job_id: B256::ZERO }
+            .encode_body(&LIMITS)
+            .is_err(),
+        SnapshotHandoffV1 {
+            canonical_lease_offer: BoundedBytes(vec![0; SNAPSHOT_LEASE_WIRE_BYTES - 1]),
+            ..handoff.clone()
+        }
+        .encode_body(&LIMITS)
+        .is_err(),
+        ListSnapshotHandoffsV1 {
+            after_lease_generation: 0,
+            limit: 0,
+        }
+        .encode_body(&LIMITS)
+        .is_err(),
+        ListSnapshotHandoffsResponseV1 {
+            next_lease_generation: handoff.lease_generation + 1,
+            handoffs: vec![handoff.clone()],
+        }
+        .encode_body(&LIMITS)
+        .is_err(),
+        CommitSnapshotExportV1 {
+            manifest_hash: B256::ZERO,
+            ..commit
+        }
+        .encode_body(&LIMITS)
+        .is_err(),
+    ] {
+        assert!(invalid);
+    }
 }
 
 fn selector(signature: &str) -> [u8; 4] {

@@ -49,6 +49,7 @@ impl ControlRole {
                     | method_bit(NodeMessageKind::GetSnapshotHandoff as u16)
                     | method_bit(NodeMessageKind::BuildFinalizedIntentProof as u16)
                     | method_bit(NodeMessageKind::BuildLysisOpenings as u16)
+                    | method_bit(NodeMessageKind::CheckProjectionContainment as u16)
                     | method_bit(NodeMessageKind::CommitSnapshotExport as u16)
                     | method_bit(NodeMessageKind::GetOcompHealth as u16)
             }

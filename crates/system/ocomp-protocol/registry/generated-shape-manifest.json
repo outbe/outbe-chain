@@ -2,9 +2,9 @@
   "armable": false,
   "classification": "measurement_only",
   "generator": {
-    "input_set_sha256": "eeff8362a394fa1da44d8116b09c03c6fd16ff2fcc06ba10db1087c8f4c6fe16",
+    "input_set_sha256": "23799a9c9122e2959e53f4c928217da33abbe92ec55a472adc0b8bbe4c1e7705",
     "invocation": "cargo xtask ocomp shape",
-    "source_sha256": "d1d0ac43a328fe51a9c689718b5e0fb0952c31900903f71263a9ffa70b25bd9d"
+    "source_sha256": "00498a5c66d7c281ff08505d10b10ae7a8f612b03a8ae8eba1d84eb52db46769"
   },
   "independent_verification": {
     "method": "generated envelope vectors are independently reconstructed and decoded by OCM-BYT-001",
@@ -19,17 +19,22 @@
     "protocol_bundle_hash": null
   },
   "profiles": {
-    "bundle_template_sha256": "3d2d5400c66e176987b7b6e522df77e699d953de37d7c6d852171d820827754c",
+    "bundle_template_sha256": "eee376f6916b435c9df93ae8455fe8a23ee85786144fa4656bb4963169c0c917",
     "candidate_compile_ceiling_sha256": "a48c9f7fca72a9515e256af811a436fc3b81c97f0ddc5e8c3bf9ba43ff1eecdb",
     "correctness_profile_sha256": "3b5bbce51a931113f56bffae5767454c8b51008588a6020388465cd9d72edd74",
     "headroom_policy_sha256": "ec384d6b098771d4f7dc95f23cbe0995af7aeeae67539cc34151c67023a0516a",
     "minimum_devnet_hardware_profile_sha256": "335e5f46dbb86ff41a5dcbd164fd681eb79a8a3e3f4880a1af2e42166d824144"
   },
   "registries": {
-    "canonical_schema_sha256": "c1c8bb2e35e4146eb4acb74b8c20fcbb5267d91e1883ce794ba9fffabca49baf",
-    "domain_preimage_sha256": "96d880537514a2c321198913a9e545a218525c2ceb478a6c0e5e4e3ebd529746",
+    "canonical_schema_sha256": "7fcd91e7345c24840413cc8b2e199eb6a5764b7a7de162baf456f658c290f1a9",
+    "domain_preimage_sha256": "94fc3820ffb6a54d2db8317b6f5ba71a83e98aef3b0d2adf5f6e21e613902a05",
+    "fidelity_opening_codec_id": "3d3ac5818fb82e51c3041e24e9ff36cc5fdce8dbdb74da1fbf3978ff0e19de1a",
+    "input_codecs_sha256": "27af1b6c7146845b7e5c54cc69804a473332e0931be3e678e98f144f41bcdfac",
     "object_count": 30,
-    "object_domain_list_sha256": "9bb057b46f0ad786bbb9917acf7ed98a14b3e8b65027560cf74aca6af0bee6e4"
+    "object_domain_list_sha256": "bce34ffa5c395f8b0fc1403ab0bd939313061571c55f42cadd21c5908336731f",
+    "opening_codec_registry_hash": "487366859c3d4580ccfe8a654818d5e7b014876d8e91bf7a3ce2e69183652e48",
+    "oracle_opening_codec_id": "1b2805a4096d29200a86f7bfc5394b1b118d665084b6cbfef9ec41155e949726",
+    "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca"
   },
   "schema_version": 1
 }

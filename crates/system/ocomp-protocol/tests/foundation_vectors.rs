@@ -10,7 +10,11 @@ use outbe_ocomp_protocol::{
     },
     hash::{framed_preimage, hash_framed, verify_framed_hash},
     list::{leaf_hash, node_hash, ordered_list_root, pad_hash, root_hash, OrderedListLimits},
-    registry::{HashDomain, ListKind, ObjectKind},
+    registry::{
+        HashDomain, ListKind, ObjectKind, FIDELITY_OPENING_CODEC_DESCRIPTOR,
+        FIDELITY_OPENING_CODEC_ID, OPENING_CODEC_REGISTRY_HASH, ORACLE_OPENING_CODEC_DESCRIPTOR,
+        ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_DESCRIPTOR, TRIBUTE_BODY_CODEC_ID,
+    },
     ProtocolError,
 };
 
@@ -513,12 +517,14 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 #[test]
 fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 30);
-    assert_eq!(HashDomain::ALL.len(), 42);
-    assert_eq!(ListKind::ALL.len(), 8);
+    assert_eq!(HashDomain::ALL.len(), 44);
+    assert_eq!(ListKind::ALL.len(), 10);
     assert_eq!(ObjectKind::ProtocolBundleV1.tag(), 0x0001);
     assert_eq!(ObjectKind::OcompJobRecordV1.tag(), 0x001e);
     assert_eq!(ListKind::NodActions.id(), 1);
     assert_eq!(ListKind::RawTributeCoverage.id(), 8);
+    assert_eq!(ListKind::FidelityOpenings.id(), 9);
+    assert_eq!(ListKind::OracleOpenings.id(), 10);
     assert_eq!(
         ObjectKind::try_from(0xffff),
         Err(ProtocolError::UnknownObjectKind(0xffff))
@@ -526,5 +532,44 @@ fn generated_registry_is_complete_and_unique() {
     assert_eq!(
         ListKind::try_from(0xffff),
         Err(ProtocolError::UnknownListKind(0xffff))
+    );
+}
+
+#[test]
+fn generated_input_codec_ids_match_independent_descriptor_hashes() {
+    fn codec_id(role: u16, version: u16, descriptor: &str) -> B256 {
+        let mut payload = IndependentEncoder::new();
+        payload.u16(role);
+        payload.u16(version);
+        payload.u32(u32::try_from(descriptor.len()).unwrap());
+        payload.fixed(descriptor.as_bytes());
+        independent_hash("OUTBE_OCOMP_CODEC_DESCRIPTOR_V1", &payload.finish())
+    }
+
+    assert_eq!(
+        codec_id(1, 1, TRIBUTE_BODY_CODEC_DESCRIPTOR),
+        TRIBUTE_BODY_CODEC_ID
+    );
+    assert_eq!(
+        codec_id(2, 1, FIDELITY_OPENING_CODEC_DESCRIPTOR),
+        FIDELITY_OPENING_CODEC_ID
+    );
+    assert_eq!(
+        codec_id(3, 1, ORACLE_OPENING_CODEC_DESCRIPTOR),
+        ORACLE_OPENING_CODEC_ID
+    );
+
+    let mut opening_registry = IndependentEncoder::new();
+    opening_registry.u16(2);
+    opening_registry.u8(1);
+    opening_registry.fixed(FIDELITY_OPENING_CODEC_ID.as_slice());
+    opening_registry.u8(2);
+    opening_registry.fixed(ORACLE_OPENING_CODEC_ID.as_slice());
+    assert_eq!(
+        independent_hash(
+            "OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1",
+            &opening_registry.finish()
+        ),
+        OPENING_CODEC_REGISTRY_HASH
     );
 }

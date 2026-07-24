@@ -818,6 +818,86 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-13" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--test",
+                    "input_codec_bindings",
+                ],
+            )?;
+            for integration_test in [
+                "cas_atomicity",
+                "input_artifact_closure",
+                "protocol_bundle",
+                "worker_one_unit",
+                "finalized_export",
+            ] {
+                cargo(
+                    repository_root,
+                    &[
+                        "test",
+                        "--locked",
+                        "-p",
+                        "outbe-ocomp",
+                        "--test",
+                        integration_test,
+                        "--",
+                        "--test-threads=1",
+                    ],
+                )?;
+            }
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-ocomp",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--features",
+                    "outbe-e2e-harness/ocomp-integration",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

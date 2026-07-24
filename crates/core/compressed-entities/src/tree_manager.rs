@@ -405,6 +405,15 @@ impl CompressedTreeService {
         self.export_lease.arm(exact_identity(required))
     }
 
+    /// Returns the fixed identity of the CE environment owned by this service.
+    ///
+    /// Snapshot handoff exposes only the schema number from this identity; it
+    /// never exposes the database path or a writer-capable handle.
+    #[must_use]
+    pub fn environment_identity(&self) -> &crate::persistence::EnvironmentIdentity {
+        self.db.identity()
+    }
+
     pub(crate) fn acknowledge_export_open(
         &self,
         ack: ExportLeaseOpenAck,

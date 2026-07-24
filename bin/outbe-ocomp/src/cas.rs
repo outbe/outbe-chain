@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::B256;
-use outbe_ocomp_protocol::CasObjectRefV1;
+use outbe_ocomp_protocol::{CasObjectRefV1, OCB1_HEADER_LEN, OCB1_MAGIC};
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
 
@@ -69,6 +69,10 @@ pub enum CasError {
     DigestMismatch { expected: B256, actual: B256 },
     #[error("CAS object changed while the same descriptor was being verified")]
     ObjectChanged,
+    #[error("CAS object expected OCB1 kind {expected:#06x} but has no valid OCB1 header")]
+    InvalidOcb1Header { expected: u16 },
+    #[error("CAS object OCB1 kind mismatch: expected {expected:#06x}, actual {actual:#06x}")]
+    Ocb1KindMismatch { expected: u16, actual: u16 },
     #[error("CAS byte count does not fit this host")]
     LengthOverflow,
     #[error("CAS publication lock failed")]
@@ -414,6 +418,15 @@ fn read_verified_object(
             expected: reference.transport_digest,
             actual: actual_digest,
         });
+    }
+    if let Some(expected) = reference.expected_ocb1_kind {
+        if bytes.len() < OCB1_HEADER_LEN || bytes[..4] != OCB1_MAGIC {
+            return Err(CasError::InvalidOcb1Header { expected });
+        }
+        let actual = u16::from_be_bytes([bytes[4], bytes[5]]);
+        if actual != expected {
+            return Err(CasError::Ocb1KindMismatch { expected, actual });
+        }
     }
     Ok(VerifiedCasObject {
         reference: reference.clone(),

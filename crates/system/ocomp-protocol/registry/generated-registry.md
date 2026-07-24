@@ -48,6 +48,8 @@
 | — | `Job` | `OUTBE_OCOMP_JOB_V1` |
 | — | `InputChunk` | `OUTBE_OCOMP_INPUT_CHUNK_V1` |
 | — | `InputManifest` | `OUTBE_OCOMP_INPUT_MANIFEST_V1` |
+| — | `CodecDescriptor` | `OUTBE_OCOMP_CODEC_DESCRIPTOR_V1` |
+| — | `OpeningCodecRegistry` | `OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1` |
 | — | `Plan` | `OUTBE_OCOMP_PLAN_V1` |
 | — | `Unit` | `OUTBE_OCOMP_UNIT_V1` |
 | — | `UnitInterval` | `OUTBE_OCOMP_UNIT_INTERVAL_V1` |
@@ -95,3 +97,13 @@
 | `6` | `InputChunkReferences` | `input chunk references` |
 | `7` | `UnitSpecificationsArtifacts` | `unit specifications/artifacts` |
 | `8` | `RawTributeCoverage` | `raw Tribute coverage (raw_ordinal, tribute_id)` |
+| `9` | `FidelityOpenings` | `Fidelity authenticated openings` |
+| `10` | `OracleOpenings` | `Oracle authenticated openings` |
+
+## Lysis V1 nested input codecs
+
+| Role | Version | Constant | Codec ID | Descriptor |
+|---:|---:|---|---|---|
+| 1 | 1 | `TRIBUTE_BODY_CODEC_ID` | `0x52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca` | `role=TRIBUTE_BODY;version=1;wire=canonical-protobuf-payload-only;fields=1:bytes36-tribute_id-required,2:bytes20-owner-required,3:uint32-worldwide_day-omit-zero,4:bytes32-issuance_amount_minor-required-big-endian,5:uint16-issuance_currency-omit-zero,6:bytes32-nominal_amount_minor-required-big-endian,7:uint16-reference_currency-omit-zero,8:bytes32-tribute_price_minor-required-big-endian,9:bool-exclude_from_intex_issuance-omit-false;rules=ascending-unique-fields,minimal-varints,no-unknown-fields,strict-decode-reencode,identity-day-match;commitment=CE_BODY_COMMITMENT_V1(schema_version=1,payload);stored_body_envelope=excluded` |
+| 2 | 1 | `FIDELITY_OPENING_CODEC_ID` | `0x3d3ac5818fb82e51c3041e24e9ff36cc5fdce8dbdb74da1fbf3978ff0e19de1a` | `role=FIDELITY_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=1,subject,value,codec_id,opening);subject=u32_be(owner_count)||address20*;owner_count=1..256;owners=strict-ascending-unique;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=fidelity_slot_plan_v1(qualified_start_base=0,active_count_base=1,active_cohorts_base=2,sold_count_base=4,sold_cohorts_base=5,first_qualified_start=8,mapping=keccak256(key||slot32),active_count<=64,sold_count<=64);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode` |
+| 3 | 1 | `ORACLE_OPENING_CODEC_ID` | `0x1b2805a4096d29200a86f7bfc5394b1b118d665084b6cbfef9ec41155e949726` | `role=ORACLE_OPENING;version=1;record=AuthenticatedOpeningV1(source_kind=2,subject,value,codec_id,opening);subject=u32_be(wwd)||u16_be(iso_count)||u16_be(iso)*;isos=strict-ascending-unique-and-contains-840;value=u32_be(slot_count)||(slot:B256||value:U256_be)*;slots=oracle_slot_plan_v1(pair_hash_to_id=10,scurve_count=34,scurve_pair_id=35,scurve_peak_day=36,scurve_peak_price=37,scurve_oldest=38,settlement_iso_to_denom=41,settlement_iso_to_pair=42,wwd_vwap_exists=47,wwd_vwap_pair_count=50,wwd_vwap_pair_id=51,wwd_vwap_value=52,mapping=keccak256(key||slot32),wwd_pairs<=256,active_scurve<=256,isos<=256);opening=address20||state_root:B256||u32_be(slot_count)||(slot:B256||value:U256_be)*||u32_be(account_proof_len)||account_proof||u32_be(storage_proof_len)||storage_proof;proof=RETH_ETHEREUM_ACCOUNT_STORAGE_MPT_V1;rules=state_root_equals_checkpoint,exact-contract,exact-slot-plan,strict-decode-reencode` |

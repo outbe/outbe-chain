@@ -9,13 +9,28 @@ publish.workspace = true
 default = []
 ocomp-integration = [
     "dep:alloy-consensus",
+    "dep:alloy-rlp",
+    "dep:alloy-trie",
+    "dep:commonware-consensus",
+    "dep:commonware-utils",
+    "dep:outbe-consensus",
+    "dep:outbe-common",
+    "dep:outbe-fidelity",
+    "dep:outbe-metadosis",
     "dep:outbe-node",
+    "dep:outbe-ocomp-protocol",
     "dep:outbe-offchain-data",
     "dep:outbe-offchain-storage",
+    "dep:outbe-oracle",
     "dep:outbe-primitives",
+    "dep:rand",
     "dep:reth-chainspec",
     "dep:reth-ethereum",
+    "dep:reth-primitives-traits",
     "dep:reth-provider",
+    "dep:reth-storage-api",
+    "dep:reth-trie",
+    "dep:revm",
 ]
 
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
@@ -43,13 +58,24 @@ walkdir.workspace = true
 mongodb.workspace = true
 hex.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-common = { workspace = true, optional = true }
+outbe-consensus = { workspace = true, optional = true }
+outbe-fidelity = { workspace = true, optional = true }
+outbe-metadosis = { workspace = true, optional = true }
 outbe-node = { workspace = true, optional = true }
+outbe-ocomp-protocol = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
 outbe-offchain-storage = { workspace = true, optional = true }
+outbe-oracle = { workspace = true, optional = true }
 outbe-primitives = { workspace = true, optional = true }
+rand = { workspace = true, optional = true }
 reth-chainspec = { workspace = true, optional = true }
 reth-ethereum = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 reth-provider = { workspace = true, features = ["test-utils"], optional = true }
+reth-storage-api = { workspace = true, optional = true }
+reth-trie = { workspace = true, optional = true }
+revm = { workspace = true, optional = true }
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting"] }
 
@@ -58,6 +84,8 @@ time = { workspace = true, features = ["formatting"] }
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-eips.workspace = true
 alloy-consensus = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, optional = true }
+alloy-trie = { workspace = true, optional = true }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-provider.workspace = true
 alloy-signer.workspace = true
@@ -69,8 +97,10 @@ alloy-rpc-types.workspace = true
 # the harness plays the L2 network signing `zkMerkleRoot` with a registered key.
 bytes.workspace = true
 commonware-codec.workspace = true
+commonware-consensus = { workspace = true, optional = true }
 commonware-cryptography.workspace = true
 commonware-math.workspace = true
+commonware-utils = { workspace = true, optional = true }
 rand_core.workspace = true
 
 # The e2e runner is a binary: the CLI defines the environment (validators, TEE

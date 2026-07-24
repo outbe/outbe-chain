@@ -18,6 +18,7 @@ use outbe_consensus::{
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
+    control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
     intent::{
         CertifiedParentAccountingMetadataV2, ExpectedFinalizedIntentBindingV1,
         FinalizedIntentAuthorityError, FinalizedIntentProofAuthority, FinalizedIntentProofV1,
@@ -26,7 +27,7 @@ use outbe_ocomp_protocol::{
     },
     opening::{RawContractOpeningProofV1, RawStorageSlotV1},
     state::{OcompJobRecordV1, OcompJobStatus},
-    SchemaLimits,
+    ProtocolError, SchemaLimits,
 };
 use outbe_primitives::{
     addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
@@ -204,6 +205,58 @@ impl<A> FinalizedIntentVerifier<A> {
             historical_committees,
         }
     }
+}
+
+/// Verifies the self-contained finalized proof and closes every value repeated
+/// by the node-owned snapshot handoff.
+///
+/// The exporter must call this before using the JobIntent's day, collection
+/// root, count or nominal total. A UDS response is transport, not finality
+/// authority.
+pub fn authenticate_snapshot_handoff(
+    handoff: &SnapshotHandoffV1,
+    response: &FinalizedIntentProofResponseV1,
+    expected: ExpectedFinalizedIntentBindingV1,
+    limits: &SchemaLimits,
+) -> Result<VerifiedFinalizedIntentV1, SnapshotHandoffVerificationError> {
+    if response.job_id != handoff.job_id {
+        return Err(SnapshotHandoffVerificationError::ResponseJobId);
+    }
+    let proof = FinalizedIntentProofV1::decode_canonical(&response.canonical_proof.0, limits)?;
+    let verified = proof.verify(
+        expected,
+        &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
+        limits,
+    )?;
+    if verified.job_id != handoff.job_id {
+        return Err(SnapshotHandoffVerificationError::VerifiedJobId);
+    }
+    if verified.request.block_number != handoff.checkpoint.finalized_block_number
+        || verified.request.block_hash != handoff.checkpoint.finalized_block_hash
+        || verified.request.state_root != handoff.checkpoint.finalized_state_root
+    {
+        return Err(SnapshotHandoffVerificationError::Checkpoint);
+    }
+    if verified.intent.ce_sealed_root != handoff.checkpoint.finalized_ce_root {
+        return Err(SnapshotHandoffVerificationError::CeRoot);
+    }
+    Ok(verified)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SnapshotHandoffVerificationError {
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error(transparent)]
+    FinalizedIntent(#[from] FinalizedIntentVerificationError),
+    #[error("snapshot proof response belongs to a different JobId")]
+    ResponseJobId,
+    #[error("verified finalized proof derives a different JobId")]
+    VerifiedJobId,
+    #[error("verified request identity differs from the snapshot checkpoint")]
+    Checkpoint,
+    #[error("verified JobIntent CE root differs from the snapshot checkpoint")]
+    CeRoot,
 }
 
 #[derive(Debug, thiserror::Error)]

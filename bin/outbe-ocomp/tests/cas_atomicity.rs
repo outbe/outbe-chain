@@ -4,6 +4,7 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use outbe_ocomp::cas::{CasError, CasLimits, CasWriterRole, FilesystemCas};
+use outbe_ocomp_protocol::{encode_envelope, CodecLimits, ObjectKind, OCB1_HEADER_LEN};
 use tempfile::tempdir;
 
 fn object_path(root: &std::path::Path, digest: alloy_primitives::B256) -> std::path::PathBuf {
@@ -131,6 +132,37 @@ fn object_and_total_quota_fail_without_partial_publish() {
     );
     assert_eq!(cas.object_count().expect("object count"), 1);
     assert_eq!(cas.staging_count().expect("staging count"), 0);
+}
+
+#[test]
+fn expected_ocb1_kind_is_verified_from_the_consumed_bytes() {
+    let directory = tempdir().expect("CAS directory");
+    let cas = FilesystemCas::open(
+        directory.path(),
+        CasWriterRole::SnapshotExporter,
+        CasLimits {
+            max_object_bytes: 1024,
+            max_total_bytes: 4096,
+        },
+    )
+    .expect("open CAS");
+    let encoded = encode_envelope(
+        ObjectKind::InputManifestV1,
+        b"manifest fixture body",
+        CodecLimits::new(64, 4, OCB1_HEADER_LEN + 64),
+    )
+    .unwrap();
+    let mut reference = cas.publish_bytes(&encoded).unwrap();
+    reference.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
+    cas.read_verified(&reference)
+        .expect("matching OCB1 kind accepted");
+
+    reference.expected_ocb1_kind = Some(ObjectKind::AuthenticatedInputChunkV1.tag());
+    assert!(matches!(
+        cas.read_verified(&reference)
+            .expect_err("wrong semantic object kind rejected"),
+        CasError::Ocb1KindMismatch { .. }
+    ));
 }
 
 #[test]

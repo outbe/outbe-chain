@@ -7,6 +7,8 @@ OUTBE_OCOMP_INTENT_SLOT_V1	IntentId
 OUTBE_OCOMP_JOB_V1	IntentId||finalized_request_block_hash||finalized_request_state_root
 OUTBE_OCOMP_INPUT_CHUNK_V1	canonical(AuthenticatedInputChunkV1)
 OUTBE_OCOMP_INPUT_MANIFEST_V1	canonical(InputManifestV1)
+OUTBE_OCOMP_CODEC_DESCRIPTOR_V1	u16_be(role)||u16_be(version)||u32_be(descriptor_len)||canonical_schema_descriptor
+OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1	u16_be(2)||u8(FIDELITY=1)||fidelity_opening_codec_id||u8(ORACLE=2)||oracle_opening_codec_id
 OUTBE_OCOMP_PLAN_V1	u32_be(unit_count)||canonical(UnitSpecV1)*
 OUTBE_OCOMP_UNIT_V1	canonical(UnitSpecV1)
 OUTBE_OCOMP_UNIT_INTERVAL_V1	phase||canonical_nested(interval)

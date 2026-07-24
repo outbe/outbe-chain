@@ -1,12 +1,12 @@
 //! Exact-block Fidelity and Oracle raw opening construction for LYSIS_V1.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_fidelity::{fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1};
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    intent::job_id_from_intent_id,
+    intent::{job_id_from_intent_id, VerifiedFinalizedIntentV1},
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
@@ -16,11 +16,11 @@ use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
 
 use super::{
-    finality::build_verified_raw_contract_opening,
+    finality::{build_verified_raw_contract_opening, verify_raw_contract_opening},
     retention::{CandidatePinV1, RetentionError},
 };
 
-pub(super) fn build_lysis_openings<P>(
+pub fn build_lysis_openings<P>(
     provider: &P,
     limits: &SchemaLimits,
     candidate: CandidatePinV1,
@@ -77,6 +77,183 @@ where
         .validate_profile(limits)
         .map_err(|error| RetentionError::Source(error.to_string()))?;
     Ok(openings)
+}
+
+/// Verifies the complete historical Fidelity/Oracle input returned by the node.
+///
+/// The first proof pass authenticates every supplied raw value against the
+/// finalized state root. Only then are the count-dependent canonical slot plans
+/// reconstructed and compared with the supplied slot order.
+pub fn verify_lysis_openings(
+    openings: &LysisOpeningsProofV1,
+    finalized: &VerifiedFinalizedIntentV1,
+    expected_subjects: &OpeningSubjectsV1,
+    limits: &SchemaLimits,
+) -> Result<(), RetentionError> {
+    openings
+        .validate_profile(limits)
+        .map_err(|error| RetentionError::Source(error.to_string()))?;
+    if openings.protocol_bundle_hash != finalized.intent.protocol_bundle_hash
+        || openings.job_id != finalized.job_id
+        || openings.finalized_block_hash != finalized.request.block_hash
+        || openings.finalized_state_root != finalized.request.state_root
+        || openings.wwd != finalized.intent.wwd
+        || openings.subjects != *expected_subjects
+    {
+        return Err(RetentionError::Source(
+            "Lysis openings do not bind the authenticated finalized job".to_owned(),
+        ));
+    }
+
+    let supplied_fidelity_slots = openings
+        .fidelity
+        .ordered_slots
+        .iter()
+        .map(|raw| raw.slot)
+        .collect::<Vec<_>>();
+    verify_raw_contract_opening(
+        &openings.fidelity,
+        FIDELITY_ADDRESS,
+        finalized.request.state_root,
+        &supplied_fidelity_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let expected_fidelity_slots =
+        fidelity_slots_from_authenticated_opening(&openings.fidelity, expected_subjects)?;
+    if supplied_fidelity_slots != expected_fidelity_slots {
+        return Err(RetentionError::Source(
+            "Fidelity opening does not match the canonical count-derived slot plan".to_owned(),
+        ));
+    }
+
+    let supplied_oracle_slots = openings
+        .oracle
+        .ordered_slots
+        .iter()
+        .map(|raw| raw.slot)
+        .collect::<Vec<_>>();
+    verify_raw_contract_opening(
+        &openings.oracle,
+        ORACLE_ADDRESS,
+        finalized.request.state_root,
+        &supplied_oracle_slots,
+        limits,
+    )
+    .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let expected_oracle_slots = oracle_slots_from_authenticated_opening(
+        &openings.oracle,
+        finalized.intent.wwd,
+        expected_subjects,
+    )?;
+    if supplied_oracle_slots != expected_oracle_slots {
+        return Err(RetentionError::Source(
+            "Oracle opening does not match the canonical count-derived slot plan".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn fidelity_slots_from_authenticated_opening(
+    opening: &outbe_ocomp_protocol::opening::RawContractOpeningProofV1,
+    subjects: &OpeningSubjectsV1,
+) -> Result<Vec<B256>, RetentionError> {
+    let values = opening
+        .ordered_slots
+        .iter()
+        .map(|raw| (raw.slot, raw.value))
+        .collect::<BTreeMap<_, _>>();
+    let mut slots = Vec::new();
+    let mut unique = BTreeSet::new();
+    for owner in &subjects.owners {
+        let counts = fidelity_count_slot_plan_v1(*owner);
+        let active_count =
+            authenticated_u32(&values, counts.active_count, "Fidelity active_count")?;
+        let sold_count = authenticated_u32(&values, counts.sold_count, "Fidelity sold_count")?;
+        let plan = fidelity_opening_slot_plan_v1(*owner, active_count, sold_count)
+            .map_err(|error| RetentionError::Source(error.to_string()))?;
+        for slot in plan.slots {
+            if unique.insert(slot) {
+                slots.push(slot);
+            }
+        }
+    }
+    Ok(slots)
+}
+
+fn oracle_slots_from_authenticated_opening(
+    opening: &outbe_ocomp_protocol::opening::RawContractOpeningProofV1,
+    wwd: u32,
+    subjects: &OpeningSubjectsV1,
+) -> Result<Vec<B256>, RetentionError> {
+    let values = opening
+        .ordered_slots
+        .iter()
+        .map(|raw| (raw.slot, raw.value))
+        .collect::<BTreeMap<_, _>>();
+    let day = outbe_common::WorldwideDay::new(wwd);
+    let counts = oracle_count_slot_plan_v1(day, &subjects.settlement_isos)
+        .map_err(|error| RetentionError::Source(error.to_string()))?;
+    let settlement_pairs = subjects
+        .settlement_isos
+        .iter()
+        .enumerate()
+        .map(|(index, iso)| {
+            let pair_slot = counts.slots[index * 2 + 1];
+            authenticated_word(&values, pair_slot, "Oracle settlement pair")
+                .map(|word| (*iso, B256::new(word.to_be_bytes())))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let count_base = subjects.settlement_isos.len() * 2;
+    let worldwide_day_pair_count = authenticated_u32(
+        &values,
+        counts.slots[count_base + 1],
+        "Oracle WWD VWAP pair count",
+    )?;
+    let scurve_count = authenticated_u32(
+        &values,
+        counts.slots[count_base + 2],
+        "Oracle S-curve count",
+    )?;
+    let scurve_oldest = authenticated_u32(
+        &values,
+        counts.slots[count_base + 3],
+        "Oracle S-curve oldest",
+    )?;
+    oracle_opening_slot_plan_v1(
+        day,
+        &settlement_pairs,
+        worldwide_day_pair_count,
+        scurve_count,
+        scurve_oldest,
+    )
+    .map(|plan| plan.slots)
+    .map_err(|error| RetentionError::Source(error.to_string()))
+}
+
+fn authenticated_u32(
+    values: &BTreeMap<B256, U256>,
+    slot: B256,
+    field: &'static str,
+) -> Result<u32, RetentionError> {
+    let word = authenticated_word(values, slot, field)?;
+    if word > U256::from(u32::MAX) {
+        return Err(RetentionError::Source(format!(
+            "{field} does not fit canonical u32"
+        )));
+    }
+    Ok(word.to::<u32>())
+}
+
+fn authenticated_word(
+    values: &BTreeMap<B256, U256>,
+    slot: B256,
+    field: &'static str,
+) -> Result<U256, RetentionError> {
+    values
+        .get(&slot)
+        .copied()
+        .ok_or_else(|| RetentionError::Source(format!("{field} opening is missing")))
 }
 
 fn validate_subjects(subjects: &OpeningSubjectsV1) -> Result<(), RetentionError> {

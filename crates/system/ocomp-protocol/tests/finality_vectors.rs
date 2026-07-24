@@ -44,7 +44,8 @@ use outbe_consensus::{
 };
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_node::ocomp::finality::{
-    FinalizedIntentVerifier, RethFinalizedIntentProofBuilder, TrieHistoricalCommitteeAuthority,
+    authenticate_snapshot_handoff, FinalizedIntentVerifier, RethFinalizedIntentProofBuilder,
+    TrieHistoricalCommitteeAuthority,
 };
 use outbe_node::ocomp::retention::{
     CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, RethFinalizedInputProofSource,
@@ -52,6 +53,8 @@ use outbe_node::ocomp::retention::{
 use outbe_ocomp_protocol::{
     codec::CodecLimits,
     common::{BoundedBytes, ProofBytes},
+    control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
+    input::CheckpointIdentityV1,
     intent::{
         intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
         ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
@@ -95,7 +98,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     max_unit_inputs: 64,
     max_control_body_bytes: 262_144,
 };
-const FINALIZED_BLOCK_NUMBER: u64 = 100;
+const FINALIZED_BLOCK_NUMBER: u64 = 1;
 const FINALIZED_EPOCH: u64 = 2;
 const FINALIZED_VIEW: u64 = 3;
 const PARENT_VIEW: u64 = 2;
@@ -864,7 +867,10 @@ impl Fixture {
 }
 
 fn fixture(signer_indices: &[u32]) -> Fixture {
-    let intent = intent();
+    fixture_with_intent(signer_indices, intent())
+}
+
+fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let canonical_job_intent = intent.encode_canonical(&LIMITS).unwrap();
     let intent_id = intent.intent_id(&LIMITS).unwrap();
     let logical_key = intent_storage_key(intent_id).unwrap();
@@ -1129,6 +1135,47 @@ fn ocm_fin_001_four_validators_derive_same_job_from_real_q3_finality_and_mpt() {
         job_ids.push(verified.job_id);
     }
     assert!(job_ids.windows(2).all(|pair| pair[0] == pair[1]));
+}
+
+#[test]
+fn ocm_fin_001_exporter_derives_job_inputs_only_from_verified_handoff_proof() {
+    let baseline = fixture(&[0, 1, 2]);
+    let verified = baseline
+        .verify(&baseline.proof)
+        .expect("baseline finality proof");
+    let response = FinalizedIntentProofResponseV1 {
+        job_id: verified.job_id,
+        canonical_proof: BoundedBytes(
+            baseline
+                .proof
+                .encode_canonical(&LIMITS)
+                .expect("canonical finalized proof"),
+        ),
+    };
+    let handoff = SnapshotHandoffV1 {
+        job_id: verified.job_id,
+        pin_generation: 1,
+        lease_generation: 2,
+        checkpoint: CheckpointIdentityV1 {
+            finalized_block_number: verified.request.block_number,
+            finalized_block_hash: verified.request.block_hash,
+            finalized_state_root: verified.request.state_root,
+            finalized_ce_root: verified.intent.ce_sealed_root,
+            ce_schema_version: 1,
+        },
+        canonical_lease_offer: BoundedBytes(vec![1]),
+    };
+
+    let authenticated =
+        authenticate_snapshot_handoff(&handoff, &response, baseline.expected, &LIMITS)
+            .expect("production exporter verifier closes every handoff binding");
+    assert_eq!(authenticated, verified);
+
+    let mut wrong_ce = handoff;
+    wrong_ce.checkpoint.finalized_ce_root = hash(0xee);
+    assert!(
+        authenticate_snapshot_handoff(&wrong_ce, &response, baseline.expected, &LIMITS).is_err()
+    );
 }
 
 #[test]

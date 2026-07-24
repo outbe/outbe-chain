@@ -281,6 +281,30 @@ pub struct OffchainDataProjection {
     tribute_retention_selector: Option<Arc<dyn TributeRetentionSelector>>,
 }
 
+/// Reads and validates the managed projection state without acquiring a writer.
+///
+/// Snapshot exporters use this narrow surface only as an availability signal.
+/// The checkpoint is never input authority; exported bodies still have to close
+/// against the exact finalized compressed-entity snapshot.
+pub fn read_projection_state(
+    config: ProjectionConfig,
+    reader: StorageReaderHandle,
+) -> Result<Option<ProjectionState>, ProjectionError> {
+    let namespace = state_namespace()?;
+    let key = state_key()?;
+    let Some(record) = reader.get_record(namespace, &key)? else {
+        return Ok(None);
+    };
+    if record.metadata.is_some() {
+        return Err(ProjectionError::CorruptProjectionState(
+            "projection state must not carry metadata".to_owned(),
+        ));
+    }
+    let state = decode_state(record.value.as_bytes())?;
+    validate_state(&state, config)?;
+    Ok(Some(state))
+}
+
 impl OffchainDataProjection {
     /// Opens a managed database or initializes an empty one.
     pub fn open(
@@ -288,19 +312,8 @@ impl OffchainDataProjection {
         reader: StorageReaderHandle,
         writer: StorageWriterHandle,
     ) -> Result<Self, ProjectionError> {
-        let namespace = state_namespace()?;
-        let key = state_key()?;
-        let state = match reader.get_record(namespace, &key)? {
-            Some(record) => {
-                if record.metadata.is_some() {
-                    return Err(ProjectionError::CorruptProjectionState(
-                        "projection state must not carry metadata".to_owned(),
-                    ));
-                }
-                let state = decode_state(record.value.as_bytes())?;
-                validate_state(&state, config)?;
-                state
-            }
+        let state = match read_projection_state(config, reader.clone())? {
+            Some(state) => state,
             None => {
                 if contains_unmanaged_data(&reader)? {
                     return Err(ProjectionError::UnmanagedProjectionData);

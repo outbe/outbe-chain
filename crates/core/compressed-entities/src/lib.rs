@@ -8,6 +8,7 @@ mod api;
 mod collection;
 mod commitment;
 mod errors;
+mod export_view;
 mod identity;
 mod lifecycle;
 mod persistence;
@@ -46,6 +47,7 @@ pub use commitment::{
     TAG_LEAF, TAG_SEALED_ROOT, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO, TAG_TOP_NODE,
 };
 pub use errors::ParentBodySourceError;
+pub use export_view::{AuthenticatedExportView, AuthenticatedTributePartition, ExportViewError};
 pub use identity::{EntityId36, EntityIdError};
 pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, SealOutput};
 pub use persistence::{

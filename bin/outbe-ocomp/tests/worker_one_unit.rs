@@ -1,18 +1,36 @@
+mod support;
+
 use std::env;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
+use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
     effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
     EndpointIdentity,
 };
+use outbe_ocomp::input_artifacts::{
+    derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
+    InputArtifactContents, InputArtifactIdentity,
+};
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
-use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36};
-use outbe_ocomp_protocol::unit::{EntityIdHalfOpenRange, UnitInterval, UnitPhase, UnitSpecV1};
+use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36, ProofBytes};
+use outbe_ocomp_protocol::input::{
+    materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind,
+};
+use outbe_ocomp_protocol::opening::{
+    LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
+};
+use outbe_ocomp_protocol::unit::{
+    CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, UnitInterval,
+    UnitPhase, UnitSpecV1,
+};
 use outbe_ocomp_protocol::{RunUnitV1, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind};
 use tempfile::tempdir;
 
@@ -34,11 +52,14 @@ const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_TEST_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_TEST_CAS_TOTAL_CAP";
 
 fn identity(boot: u8) -> EndpointIdentity {
+    let limits = poc_schema_limits();
     EndpointIdentity {
         chain_id: 41,
         genesis_hash: B256::repeat_byte(0x41),
         boot_nonce: B256::repeat_byte(boot),
-        protocol_bundle_hash: B256::repeat_byte(0x91),
+        protocol_bundle_hash: support::protocol_bundle()
+            .protocol_bundle_hash(&limits)
+            .expect("fixture protocol bundle hash"),
     }
 }
 
@@ -57,13 +78,109 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
     let cas = FilesystemCas::open(directory.path(), CasWriterRole::Supervisor, cas_limits)
         .expect("open CAS");
     let plan_ref = cas.publish_bytes(b"fixed plan bytes").expect("plan object");
-    let manifest_ref = cas
-        .publish_bytes(b"authenticated manifest bytes")
-        .expect("manifest object");
-    let input_ref = cas
-        .publish_bytes(b"authenticated input bytes")
-        .expect("input object");
     let limits = poc_schema_limits();
+    let bundle = support::protocol_bundle();
+    let job_id = B256::repeat_byte(0x31);
+    let day = WorldwideDay::new(20_260_724);
+    let owner = Address::repeat_byte(0x51);
+    let finalized_state_root = B256::repeat_byte(0x52);
+    let tribute = TributeBodyV1 {
+        tribute_id: derive_poseidon_entity_id(owner, day).expect("fixture Tribute id"),
+        owner,
+        worldwide_day: day,
+        issuance_amount_minor: U256::from(9),
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(10),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(2),
+        exclude_from_intex_issuance: false,
+    };
+    let raw = |address, slot| RawContractOpeningProofV1 {
+        contract_address: address,
+        state_root: finalized_state_root,
+        ordered_slots: vec![RawStorageSlotV1 {
+            slot: B256::repeat_byte(slot),
+            value: U256::from(slot),
+        }],
+        account_proof: ProofBytes(vec![0xa1]),
+        storage_proof: ProofBytes(vec![0xb1]),
+    };
+    let materialized = materialize_authenticated_openings(
+        &LysisOpeningsProofV1 {
+            protocol_bundle_hash: bundle
+                .protocol_bundle_hash(&limits)
+                .expect("fixture bundle hash"),
+            job_id,
+            finalized_block_hash: B256::repeat_byte(0x53),
+            finalized_state_root,
+            wwd: day.value(),
+            subjects: OpeningSubjectsV1 {
+                owners: vec![owner],
+                settlement_isos: vec![840, 978],
+            },
+            fidelity: raw(Address::repeat_byte(0x54), 0x55),
+            oracle: raw(Address::repeat_byte(0x56), 0x57),
+        },
+        &bundle,
+        &limits,
+    )
+    .expect("materialize fixture openings");
+    let published = publish_input_artifact_set(
+        &cas,
+        &bundle,
+        InputArtifactContents {
+            identity: InputArtifactIdentity {
+                job_id,
+                attempt: 1,
+                checkpoint: CheckpointIdentityV1 {
+                    finalized_block_number: 90,
+                    finalized_block_hash: B256::repeat_byte(0x53),
+                    finalized_state_root,
+                    finalized_ce_root: B256::repeat_byte(0x58),
+                    ce_schema_version: 1,
+                },
+                wwd: day.value(),
+                sealed_tribute_collection_key: B256::repeat_byte(0x59),
+                sealed_tribute_collection_root: B256::repeat_byte(0x5a),
+            },
+            canonical_tributes: vec![
+                encode_tribute_v1(&tribute).expect("canonical fixture Tribute")
+            ],
+            fidelity_openings: vec![materialized.fidelity],
+            oracle_opening: materialized.oracle,
+        },
+        &limits,
+        poc_input_list_limits(),
+    )
+    .expect("publish worker fixture inputs");
+    let mut canonical_inputs = vec![CanonicalInputRefV1 {
+        purpose: InputPurpose::InputManifest,
+        source_kind: InputSourceKind::AuthenticatedRoot,
+        source_id: published.manifest_hash,
+        record_count_limit: published.tribute_count,
+        max_encoded_bytes: published.manifest_ref.encoded_bytes,
+        max_decoded_bytes: published.manifest_ref.encoded_bytes,
+    }];
+    for reference in &published.ordered_chunk_refs {
+        let object = cas
+            .read_verified(reference)
+            .expect("read fixture input chunk");
+        let derived = derive_input_chunk_ref(&object, &bundle, &limits)
+            .expect("derive fixture input reference")
+            .reference;
+        canonical_inputs.push(CanonicalInputRefV1 {
+            purpose: match derived.kind {
+                InputChunkKind::Tribute => InputPurpose::TributeStream,
+                InputChunkKind::Fidelity => InputPurpose::FidelityOpenings,
+                InputChunkKind::Oracle => InputPurpose::OracleOpenings,
+            },
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: derived.semantic_digest,
+            record_count_limit: derived.record_count,
+            max_encoded_bytes: derived.encoded_bytes,
+            max_decoded_bytes: derived.encoded_bytes,
+        });
+    }
     let user = effective_user_name().expect("effective user");
     let uid = effective_uid().expect("effective uid");
 
@@ -119,14 +236,14 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
 
         let spec = UnitSpecV1 {
             protocol_bundle_hash: worker_identity.protocol_bundle_hash,
-            job_id: B256::repeat_byte(0x31),
+            job_id,
             attempt: 1,
             phase: UnitPhase::Enumerate,
             interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
                 start: EntityId36([index; 36]),
                 end: Some(EntityId36([index + 1; 36])),
             }),
-            canonical_ordered_inputs: Vec::new(),
+            canonical_ordered_inputs: canonical_inputs.clone(),
             lysis_program_semantics_hash: B256::repeat_byte(0x71),
             planner_spec_version: 1,
             reducer_spec_version: 1,
@@ -142,8 +259,8 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
                 spec.encode_canonical(&limits).expect("unit spec bytes"),
             ),
             plan_ref: plan_ref.clone(),
-            input_manifest_ref: manifest_ref.clone(),
-            ordered_input_refs: vec![input_ref.clone()],
+            input_manifest_ref: published.manifest_ref.clone(),
+            ordered_input_refs: published.ordered_chunk_refs.clone(),
         };
         client
             .send_request(
@@ -189,6 +306,11 @@ fn run_child_worker() {
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
     let user = env::var(CHILD_USER).expect("worker child user");
+    let limits = poc_schema_limits();
+    let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
+    let canonical_bundle = support::protocol_bundle()
+        .encode_canonical(&limits)
+        .expect("canonical child protocol bundle");
     run_one_from_inherited_fd(WorkerConfig {
         expected_effective_user: user.clone(),
         expected_supervisor_user: user,
@@ -196,7 +318,7 @@ fn run_child_worker() {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),
             boot_nonce: parse_b256(CHILD_BOOT_NONCE),
-            protocol_bundle_hash: parse_b256(CHILD_BUNDLE),
+            protocol_bundle_hash: expected_bundle_hash,
         },
         session_generation: parse_u64(CHILD_GENERATION),
         cas_root: PathBuf::from(env::var_os(CHILD_CAS_ROOT).expect("worker child CAS root")),
@@ -205,6 +327,12 @@ fn run_child_worker() {
             max_total_bytes: parse_u64(CHILD_CAS_TOTAL_CAP),
         },
         connection_fd: 0,
+        protocol_bundle: PinnedProtocolBundle::decode(
+            &canonical_bundle,
+            expected_bundle_hash,
+            &limits,
+        )
+        .expect("pin child protocol bundle"),
     })
     .expect("production worker function");
 }

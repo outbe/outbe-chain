@@ -37,6 +37,8 @@ domain		IntentSlot	OUTBE_OCOMP_INTENT_SLOT_V1
 domain		Job	OUTBE_OCOMP_JOB_V1
 domain		InputChunk	OUTBE_OCOMP_INPUT_CHUNK_V1
 domain		InputManifest	OUTBE_OCOMP_INPUT_MANIFEST_V1
+domain		CodecDescriptor	OUTBE_OCOMP_CODEC_DESCRIPTOR_V1
+domain		OpeningCodecRegistry	OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1
 domain		Plan	OUTBE_OCOMP_PLAN_V1
 domain		Unit	OUTBE_OCOMP_UNIT_V1
 domain		UnitInterval	OUTBE_OCOMP_UNIT_INTERVAL_V1
@@ -79,3 +81,5 @@ list	5	SemanticEventRecords	semantic event records
 list	6	InputChunkReferences	input chunk references
 list	7	UnitSpecificationsArtifacts	unit specifications/artifacts
 list	8	RawTributeCoverage	raw Tribute coverage (raw_ordinal, tribute_id)
+list	9	FidelityOpenings	Fidelity authenticated openings
+list	10	OracleOpenings	Oracle authenticated openings

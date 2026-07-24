@@ -27,6 +27,29 @@ Normative inputs:
   [planning ledger](off-chain-poc-evidence-ledger.yaml);
 - the final [implementation-plan audit](off-chain-poc-implementation-audit.md).
 
+### Protocol correction accepted during OCM-13
+
+The input-export implementation exposed a freeze omission: the manifest
+contained nested codec identifiers while the bundle schema omitted their
+authoritative values, and the aggregate node opening handoff had no canonical
+record/root mapping. The accepted minimal correction is part of G1 and must be
+regenerated before OCM-13 closes:
+
+- add `tribute_body_codec_id`, `fidelity_opening_codec_id` and
+  `oracle_opening_codec_id` directly to `ProtocolBundleV1`;
+- generate the three IDs from complete checked-in descriptors and derive the
+  opening-registry hash from the ordered Fidelity/Oracle pair;
+- partition sorted owners into node requests of at most 256 without a total
+  owner or Tribute cap;
+- materialize each Fidelity batch and the one job-wide Oracle proof as
+  source-specific `AuthenticatedOpeningV1` records;
+- commit them with distinct Fidelity/Oracle ordered-list kinds and verify every
+  bundle/manifest/chunk/record binding fail-closed.
+
+This correction reopens only the affected OCM-02/03/04 generated artifacts and
+OCM-13 exporter evidence. It does not change Mongo, CE, Fidelity/Oracle storage,
+activation ABI/FSM, owner state, or the fixed Lysis-only scope.
+
 ## 1. Outcome and non-goals
 
 The last task must prove this real path:
@@ -896,7 +919,10 @@ with real processes and no direct node DB access exists.
 
 **Changes:** execute the exact authority chain/full fold, normalize canonical
 order, verify Mongo bodies and state openings, publish chunks/manifest
-atomically and record exported identity only after closure.
+atomically and record exported identity only after closure. Worker startup
+loads the canonical bundle only from the fixed service-owned path; each
+selected manifest/chunk is decoded from the same digest-verified CAS bytes and
+matched to the typed `UnitSpecV1` input binding.
 
 **Invariants/failures:** Mongo/CAS/path are transport only; missing/extra/
 changed/reordered body or opening fails root/count/nominal; worker hashes exact

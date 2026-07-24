@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use alloy_primitives::keccak256;
 use eyre::{bail, ensure, Context, Result};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -40,22 +41,105 @@ struct Row {
     wire: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InputCodecRow {
+    role_id: u16,
+    variant: String,
+    version: u16,
+    constant: String,
+    descriptor: String,
+}
+
 pub fn run(repository_root: &Path, check: bool) -> Result<()> {
     let crate_root = repository_root.join("crates/system/ocomp-protocol");
     let source = crate_root.join("registry/ocomp-v1.tsv");
+    let input_codec_source = crate_root.join("registry/input-codecs-v1.tsv");
     let rows = load_rows(&source)?;
+    let input_codecs = load_input_codecs(&input_codec_source)?;
     let outputs = [
         (
             crate_root.join("src/generated_registry.rs"),
-            render_rust(&rows)?,
+            render_rust(&rows, &input_codecs)?,
         ),
         (
             crate_root.join("registry/generated-registry.md"),
-            render_docs(&rows),
+            render_docs(&rows, &input_codecs),
         ),
     ];
     for (path, output) in outputs {
         update_or_check(repository_root, &path, output, check)?;
+    }
+    Ok(())
+}
+
+fn load_input_codecs(path: &Path) -> Result<Vec<InputCodecRow>> {
+    let contents = std::fs::read_to_string(path)
+        .wrap_err_with(|| format!("failed reading {}", path.display()))?;
+    let mut lines = contents.lines();
+    ensure!(
+        lines.next() == Some("role_id\tvariant\tversion\tconstant\tdescriptor"),
+        "unexpected OCOMP input codec TSV header"
+    );
+    let mut rows = Vec::new();
+    for (index, line) in lines.enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        ensure!(
+            fields.len() == 5,
+            "input codec line {} has {} fields, expected 5",
+            index + 2,
+            fields.len()
+        );
+        rows.push(InputCodecRow {
+            role_id: fields[0]
+                .parse()
+                .wrap_err_with(|| format!("invalid input codec role at line {}", index + 2))?,
+            variant: fields[1].to_owned(),
+            version: fields[2]
+                .parse()
+                .wrap_err_with(|| format!("invalid input codec version at line {}", index + 2))?,
+            constant: fields[3].to_owned(),
+            descriptor: fields[4].to_owned(),
+        });
+    }
+    ensure!(
+        rows.len() == 3,
+        "Lysis V1 requires exactly three input codecs"
+    );
+    ensure_unique_values("input codec role", rows.iter().map(|row| row.role_id))?;
+    ensure_unique_values(
+        "input codec variant",
+        rows.iter().map(|row| row.variant.as_str()),
+    )?;
+    ensure_unique_values(
+        "input codec constant",
+        rows.iter().map(|row| row.constant.as_str()),
+    )?;
+    ensure!(
+        rows.iter().all(|row| {
+            row.role_id > 0
+                && row.version > 0
+                && !row.descriptor.is_empty()
+                && row.descriptor.is_ascii()
+        }),
+        "input codec descriptors must be non-empty ASCII with non-zero role/version"
+    );
+    ensure!(
+        rows.iter().map(|row| row.role_id).eq([1, 2, 3]),
+        "input codec roles must be canonical 1,2,3 order"
+    );
+    Ok(rows)
+}
+
+fn ensure_unique_values<T: Ord + std::fmt::Debug>(
+    what: &str,
+    values: impl IntoIterator<Item = T>,
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        ensure!(seen.insert(value), "duplicate {what}");
     }
     Ok(())
 }
@@ -162,7 +246,7 @@ fn parse_identifier(value: &str) -> Result<u16> {
     parsed.wrap_err_with(|| format!("invalid u16 registry identifier {value:?}"))
 }
 
-fn render_rust(rows: &[Row]) -> Result<String> {
+fn render_rust(rows: &[Row], input_codecs: &[InputCodecRow]) -> Result<String> {
     let objects = rows_for(rows, RowKind::Object);
     let domains = rows_for(rows, RowKind::Domain);
     let lists = rows_for(rows, RowKind::List);
@@ -207,7 +291,90 @@ fn render_rust(rows: &[Row]) -> Result<String> {
         "UnknownListKind",
         "id",
     )?);
+    output.push_str(&render_input_codec_constants(input_codecs)?);
     Ok(output)
+}
+
+fn render_input_codec_constants(rows: &[InputCodecRow]) -> Result<String> {
+    let mut output = String::new();
+    for row in rows {
+        let descriptor_constant = format!(
+            "{}_DESCRIPTOR",
+            row.constant
+                .strip_suffix("_ID")
+                .expect("validated codec ID constant")
+        );
+        writeln!(
+            output,
+            "\npub const {descriptor_constant}: &str = {:?};",
+            row.descriptor
+        )?;
+        writeln!(
+            output,
+            "pub const {}: alloy_primitives::B256 = alloy_primitives::B256::new({:?});",
+            row.constant,
+            codec_id(row).0
+        )?;
+    }
+    let fidelity = rows
+        .iter()
+        .find(|row| row.role_id == 2)
+        .expect("validated Fidelity codec");
+    let oracle = rows
+        .iter()
+        .find(|row| row.role_id == 3)
+        .expect("validated Oracle codec");
+    writeln!(
+        output,
+        "\npub const OPENING_CODEC_REGISTRY_HASH: alloy_primitives::B256 = alloy_primitives::B256::new({:?});",
+        opening_codec_registry_hash(codec_id(fidelity), codec_id(oracle)).0
+    )?;
+    Ok(output)
+}
+
+fn codec_id(row: &InputCodecRow) -> alloy_primitives::B256 {
+    let descriptor = row.descriptor.as_bytes();
+    let mut payload = Vec::with_capacity(8 + descriptor.len());
+    payload.extend_from_slice(&row.role_id.to_be_bytes());
+    payload.extend_from_slice(&row.version.to_be_bytes());
+    payload.extend_from_slice(
+        &u32::try_from(descriptor.len())
+            .expect("validated descriptor length fits u32")
+            .to_be_bytes(),
+    );
+    payload.extend_from_slice(descriptor);
+    framed_hash("OUTBE_OCOMP_CODEC_DESCRIPTOR_V1", &payload)
+}
+
+fn opening_codec_registry_hash(
+    fidelity: alloy_primitives::B256,
+    oracle: alloy_primitives::B256,
+) -> alloy_primitives::B256 {
+    let mut payload = Vec::with_capacity(68);
+    payload.extend_from_slice(&2_u16.to_be_bytes());
+    payload.push(1);
+    payload.extend_from_slice(fidelity.as_slice());
+    payload.push(2);
+    payload.extend_from_slice(oracle.as_slice());
+    framed_hash("OUTBE_OCOMP_OPENING_CODEC_REGISTRY_V1", &payload)
+}
+
+fn framed_hash(domain: &str, payload: &[u8]) -> alloy_primitives::B256 {
+    let domain = domain.as_bytes();
+    let mut preimage = Vec::with_capacity(6 + domain.len() + payload.len());
+    preimage.extend_from_slice(
+        &u16::try_from(domain.len())
+            .expect("registered domain length fits u16")
+            .to_be_bytes(),
+    );
+    preimage.extend_from_slice(domain);
+    preimage.extend_from_slice(
+        &u32::try_from(payload.len())
+            .expect("generated payload length fits u32")
+            .to_be_bytes(),
+    );
+    preimage.extend_from_slice(payload);
+    keccak256(preimage)
 }
 
 fn render_numeric_enum(
@@ -271,7 +438,7 @@ fn render_numeric_enum(
     Ok(output)
 }
 
-fn render_docs(rows: &[Row]) -> String {
+fn render_docs(rows: &[Row], input_codecs: &[InputCodecRow]) -> String {
     let mut output = String::from(
         "<!-- @generated by cargo xtask ocomp registry; do not edit. -->\n\
          # OCOMP V1 generated registry\n\n",
@@ -304,6 +471,21 @@ fn render_docs(rows: &[Row]) -> String {
         if section_index + 1 < section_count {
             output.push('\n');
         }
+    }
+    output.push_str("\n## Lysis V1 nested input codecs\n\n");
+    output.push_str("| Role | Version | Constant | Codec ID | Descriptor |\n");
+    output.push_str("|---:|---:|---|---|---|\n");
+    for row in input_codecs {
+        writeln!(
+            output,
+            "| {} | {} | `{}` | `0x{}` | `{}` |",
+            row.role_id,
+            row.version,
+            row.constant,
+            hex::encode(codec_id(row)),
+            row.descriptor
+        )
+        .expect("writing to String cannot fail");
     }
     output
 }
