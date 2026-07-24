@@ -4,8 +4,40 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 
 use alloy_primitives::B256;
+use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
+use outbe_ocomp_protocol::{
+    shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
+    unit::CanonicalRunSpan,
+    ObjectKind,
+};
 use tempfile::tempdir;
+
+fn shuffle_leaf_bytes() -> Vec<u8> {
+    ShuffleRunArtifactV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 1,
+        unit_id: B256::repeat_byte(3),
+        kind: ShuffleRunKindV1::Owner,
+        run_span: CanonicalRunSpan {
+            start_run: 0,
+            end_run: 1,
+        },
+        page_span: ShufflePageSpanV1 {
+            start_page: 0,
+            end_page: 1,
+        },
+        first_record_ordinal: 0,
+        record_count: 0,
+        source_coverage_root: B256::repeat_byte(4),
+        source_coverage_count: 256,
+        ordered_record_root: B256::repeat_byte(5),
+        payload: ShuffleRunPayloadV1::OwnerLeaf(Vec::new()),
+    }
+    .encode_canonical(&poc_schema_limits())
+    .expect("canonical shuffle leaf")
+}
 
 #[test]
 fn worker_inbox_derives_one_atomic_artifact_path_from_unit_id() {
@@ -155,7 +187,10 @@ fn supervisor_adoption_accepts_exact_reexecution_and_rejects_conflicting_artifac
         } if conflicting == unit_id
     ));
     assert_eq!(
-        inbox.read_verified(&first).expect("original remains").bytes(),
+        inbox
+            .read_verified(&first)
+            .expect("original remains")
+            .bytes(),
         b"canonical artifact"
     );
 }
@@ -235,5 +270,80 @@ fn concurrent_workers_cannot_race_past_the_total_inbox_quota() {
             }
         )));
     assert_eq!(inbox.artifact_count().expect("artifact count"), 2);
+    assert_eq!(inbox.staging_count().expect("staging count"), 0);
+}
+
+#[test]
+fn shuffle_descendants_are_typed_content_addressed_and_idempotent() {
+    let bytes = shuffle_leaf_bytes();
+    let directory = tempdir().expect("worker inbox directory");
+    let inbox = WorkerInbox::open(
+        directory.path(),
+        WorkerInboxLimits {
+            max_artifact_bytes: 1_024,
+            max_total_bytes: 2_048,
+        },
+    )
+    .expect("open worker inbox");
+    let limits = poc_schema_limits();
+
+    let first = inbox
+        .stage_shuffle_object(&bytes, &limits)
+        .expect("stage shuffle child");
+    let replay = inbox
+        .stage_shuffle_object(&bytes, &limits)
+        .expect("same content is an idempotent cache hit");
+    assert_eq!(first, replay);
+    assert_eq!(
+        first.expected_ocb1_kind,
+        Some(ObjectKind::ShuffleRunArtifactV1.tag())
+    );
+    assert_eq!(
+        inbox
+            .read_shuffle_object(&first, &limits)
+            .expect("verify shuffle child")
+            .bytes(),
+        bytes
+    );
+    assert_eq!(inbox.object_count().expect("object count"), 1);
+    assert_eq!(inbox.artifact_count().expect("artifact count"), 0);
+
+    assert!(matches!(
+        inbox
+            .stage_shuffle_object(b"not an OCB1 object", &limits)
+            .expect_err("untyped bytes must never enter shuffle object storage"),
+        WorkerInboxError::InvalidShuffleObject(_)
+    ));
+    assert_eq!(inbox.object_count().expect("object count"), 1);
+}
+
+#[test]
+fn unit_artifacts_and_shuffle_objects_share_one_total_quota() {
+    let bytes = shuffle_leaf_bytes();
+    let exact_bytes = u64::try_from(bytes.len()).expect("fixture length");
+    let directory = tempdir().expect("worker inbox directory");
+    let inbox = WorkerInbox::open(
+        directory.path(),
+        WorkerInboxLimits {
+            max_artifact_bytes: exact_bytes,
+            max_total_bytes: exact_bytes,
+        },
+    )
+    .expect("open worker inbox");
+    inbox
+        .stage_shuffle_object(&bytes, &poc_schema_limits())
+        .expect("bounded shuffle object");
+
+    assert!(matches!(
+        inbox
+            .stage(B256::repeat_byte(0x55), b"x")
+            .expect_err("unit artifact cannot race past shared quota"),
+        WorkerInboxError::TotalLimitExceeded {
+            limit,
+            attempted
+        } if limit == exact_bytes && attempted == exact_bytes + 1
+    ));
+    assert_eq!(inbox.object_count().expect("object count"), 1);
+    assert_eq!(inbox.artifact_count().expect("artifact count"), 0);
     assert_eq!(inbox.staging_count().expect("staging count"), 0);
 }
