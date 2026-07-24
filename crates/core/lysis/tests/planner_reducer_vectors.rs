@@ -8,17 +8,20 @@ use outbe_lysis::program_v1::reducers::{
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::artifacts::{
-    decode_enumerated_run, decode_fidelity_map_output, decode_raw_coverage_carrier,
-    encode_enumerated_run, encode_fidelity_map_output, encode_raw_coverage_carrier,
-    enumerate_tributes, RawCoverageCarrierV1,
+    decode_enumerated_run, decode_fidelity_map_output, decode_fixed_reduce_output,
+    decode_raw_coverage_carrier, encode_enumerated_run, encode_fidelity_map_output,
+    encode_fixed_reduce_output, encode_raw_coverage_carrier, enumerate_tributes,
+    FixedReduceOutputV1, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    output_finalize, shuffle_buckets, shuffle_owners, FidelityReduceValueV1, GratisSummaryValueV1,
+    output_finalize, shuffle_buckets, shuffle_owners, FidelityAggregateV1,
+    FidelityLeaguePartialV1, FidelityReduceValueV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::{
-    execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
+    execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
+    TributeInputV1,
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
@@ -290,6 +293,48 @@ fn coverage_carriers_reject_non_canonical_ranges_and_merge_order() {
 }
 
 #[test]
+fn fixed_reduce_output_is_canonical_and_binds_aggregate_carrier_and_fractions() {
+    let limits = poc_schema_limits();
+    let records = (0..257_u32)
+        .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+        .collect::<Vec<_>>();
+    let left = RawCoverageCarrierV1::from_records(257, &records[..256]).unwrap();
+    let right = RawCoverageCarrierV1::from_records(257, &records[256..]).unwrap();
+    let coverage = RawCoverageCarrierV1::merge(&left, &right).unwrap();
+    let output = FixedReduceOutputV1 {
+        aggregate: Some(FidelityAggregateV1 {
+            start_ordinal: 0,
+            end_ordinal: 257,
+            tribute_count: 257,
+            checked_total_nominal: U256::from(257),
+            ordered_league_partials: vec![FidelityLeaguePartialV1 {
+                league_id: 7,
+                count: 257,
+                nominal_amount_minor: U256::from(257),
+            }],
+        }),
+        coverage,
+        ordered_fractions: vec![LeagueFractionV1 {
+            league: 7,
+            fraction: U256::from(9),
+        }],
+    };
+
+    let encoded = encode_fixed_reduce_output(&output, &limits).unwrap();
+    assert_eq!(
+        decode_fixed_reduce_output(&encoded, &limits).unwrap(),
+        output
+    );
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(decode_fixed_reduce_output(&trailing, &limits).is_err());
+
+    let mut mismatched = output;
+    mismatched.coverage.end_ordinal = 256;
+    assert!(encode_fixed_reduce_output(&mismatched, &limits).is_err());
+}
+
+#[test]
 fn shard_cap_plus_one_places_the_last_tribute_in_the_second_adjacent_range() {
     let tree = PaddedBinaryTreeV1::for_tribute_count(257).unwrap();
     assert_eq!(tree.primary_leaf_count(), 2);
@@ -549,6 +594,51 @@ fn fidelity_map_unit_is_derived_only_from_plan_and_exact_enumerate_unit() {
     );
     assert!(planner
         .fidelity_map_unit_at(0, B256::ZERO, &limits)
+        .is_err());
+}
+
+#[test]
+fn fixed_reduce_units_bind_exact_left_right_producers_and_canonical_padding() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
+    let left = B256::repeat_byte(0x41);
+    let right = B256::repeat_byte(0x42);
+
+    let first = planner
+        .fixed_reduce_unit_at(0, [Some(left), Some(right)], &limits)
+        .unwrap();
+    assert_eq!(first.phase, UnitPhase::FixedReduce);
+    assert_eq!(
+        first.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 0 }
+        )
+    );
+    assert_eq!(
+        first
+            .canonical_ordered_inputs
+            .iter()
+            .skip(1)
+            .map(|input| (input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (InputSourceKind::UnitOutput, left),
+            (InputSourceKind::UnitOutput, right),
+        ]
+    );
+
+    let padded = planner
+        .fixed_reduce_unit_at(1, [Some(left), None], &limits)
+        .unwrap();
+    assert_eq!(
+        padded.canonical_ordered_inputs[2].source_kind,
+        InputSourceKind::CanonicalEmpty
+    );
+    assert!(planner
+        .fixed_reduce_unit_at(0, [Some(left), None], &limits)
+        .is_err());
+    assert!(planner
+        .fixed_reduce_unit_at(1, [Some(left), Some(right)], &limits)
         .is_err());
 }
 

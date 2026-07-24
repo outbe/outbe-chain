@@ -7,8 +7,9 @@ use outbe_ocomp_protocol::{
     input::{InputChunkKind, InputChunkRefV1},
     registry::ListKind,
     unit::{
-        CanonicalInputRefV1, EntityIdHalfOpenRange, FidelityIndexHalfOpenRange, InputPurpose,
-        InputSourceKind, PlanCommitmentV1, UnitInterval, UnitPhase, UnitSpecV1,
+        empty_unit_input_id, BinaryReducerNode, CanonicalInputRefV1, EntityIdHalfOpenRange,
+        FidelityIndexHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1, UnitInterval,
+        UnitPhase, UnitSpecV1,
     },
     ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
@@ -417,6 +418,78 @@ impl LysisPlannerV1 {
                     max_decoded_bytes: max_fidelity_opening_bytes,
                 },
             ],
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
+    pub fn fixed_reduce_unit_at(
+        self,
+        phase_ordinal: u32,
+        producer_unit_ids: [Option<B256>; 2],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
+        let position = topology.phase_position_at(UnitPhase::FixedReduce, phase_ordinal)?;
+        let PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::FixedReduce,
+            level,
+            index,
+        } = position
+        else {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        };
+        let producers = topology.required_producers(position)?;
+        let mut canonical_ordered_inputs = vec![CanonicalInputRefV1 {
+            purpose: InputPurpose::InputManifest,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: self.bindings.input_manifest_hash,
+            record_count_limit: 1,
+            max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+            max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+        }];
+        for (producer, unit_id) in producers.into_iter().zip(producer_unit_ids) {
+            let input = match (producer, unit_id) {
+                (PlannedProducerV1::Unit(_), Some(unit_id)) if !unit_id.is_zero() => {
+                    CanonicalInputRefV1 {
+                        purpose: InputPurpose::FidelityPartials,
+                        source_kind: InputSourceKind::UnitOutput,
+                        source_id: unit_id,
+                        record_count_limit: self.bindings.tribute_count,
+                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
+                            .max_activation_ocb1_bytes,
+                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
+                            .max_activation_ocb1_bytes,
+                    }
+                }
+                (
+                    PlannedProducerV1::CanonicalEmpty {
+                        purpose: InputPurpose::FidelityPartials,
+                        ..
+                    },
+                    None,
+                ) => CanonicalInputRefV1 {
+                    purpose: InputPurpose::FidelityPartials,
+                    source_kind: InputSourceKind::CanonicalEmpty,
+                    source_id: empty_unit_input_id(InputPurpose::FidelityPartials)?,
+                    record_count_limit: 0,
+                    max_encoded_bytes: 0,
+                    max_decoded_bytes: 0,
+                },
+                _ => return Err(PlannerErrorV1::ProducerMembershipMismatch),
+            };
+            canonical_ordered_inputs.push(input);
+        }
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase: UnitPhase::FixedReduce,
+            interval: UnitInterval::BinaryReducerNode(BinaryReducerNode { level, index }),
+            canonical_ordered_inputs,
             lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
             planner_spec_version: self.bindings.planner_spec_version,
             reducer_spec_version: self.bindings.reducer_spec_version,

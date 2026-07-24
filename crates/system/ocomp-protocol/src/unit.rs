@@ -449,7 +449,7 @@ fn require_output_header_semantics(header: &WorkOutputHeaderV1) -> Result<(), Pr
     require(
         !header.source_coverage_root.is_zero()
             && !header.output_coverage_root.is_zero()
-            && header.source_coverage_count > 0,
+            && (header.source_coverage_count > 0 || header.output_coverage_count == 0),
         "work output coverage header",
     )
 }

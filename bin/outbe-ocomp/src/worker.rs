@@ -10,11 +10,17 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
 use outbe_fidelity::{evaluate_fidelity_opening_v1, FidelityOpeningEvaluationError};
 use outbe_lysis::program_v1::artifacts::{
-    decode_enumerated_run, encode_enumerated_run, encode_fidelity_map_output, enumerate_tributes,
-    LysisArtifactErrorV1,
+    decode_enumerated_run, decode_fidelity_map_output, decode_fixed_reduce_output,
+    encode_enumerated_run, encode_fidelity_map_output, encode_fixed_reduce_output,
+    enumerate_tributes, FixedReduceOutputV1, LysisArtifactErrorV1, RawCoverageCarrierV1,
 };
-use outbe_lysis::program_v1::phases::fidelity_map;
-use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1, PlannerErrorV1};
+use outbe_lysis::program_v1::phases::{
+    fidelity_map, fidelity_reduce_pair, finalize_fi_fraction_table, FidelityReduceValueV1,
+};
+use outbe_lysis::program_v1::planner::{
+    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
+    PlannedUnitPositionV1, PlannerErrorV1, PRIMARY_WORK_SHARD_SIZE,
+};
 use outbe_lysis::program_v1::{ObservationValueV1, ObservedTributeV1, TributeInputV1};
 use outbe_ocomp_protocol::common::BoundedBytes;
 use outbe_ocomp_protocol::input::{
@@ -22,8 +28,8 @@ use outbe_ocomp_protocol::input::{
     InputManifestV1, OpeningSourceKind,
 };
 use outbe_ocomp_protocol::unit::{
-    InputPurpose, InputSourceKind, PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase,
-    UnitSpecV1, WorkOutputHeaderV1,
+    BinaryReducerNode, FidelityIndexHalfOpenRange, InputPurpose, InputSourceKind,
+    PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
 };
 use outbe_ocomp_protocol::{
     verify_ordered_list_membership, ListKind, ObjectKind, RunUnitV1, SchemaLimits,
@@ -284,6 +290,7 @@ fn execute_unit(
             authority.limits,
         ),
         UnitPhase::FidelityMap => execute_fidelity_map_unit(spec, authority),
+        UnitPhase::FixedReduce => execute_fixed_reduce_unit(spec, authority),
         phase => Err(WorkerError::UnsupportedPhase(phase)),
     }
 }
@@ -497,6 +504,265 @@ fn execute_fidelity_map_unit(
         limits,
     )
     .map_err(WorkerError::from)
+}
+
+struct FixedReduceInputV1 {
+    value: FidelityReduceValueV1,
+    coverage: RawCoverageCarrierV1,
+}
+
+fn execute_fixed_reduce_unit(
+    spec: &UnitSpecV1,
+    authority: UnitExecutionAuthority<'_>,
+) -> Result<UnitArtifactV1, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        unit_index,
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        bundle,
+        limits,
+    } = authority;
+    if !input_chunks.is_empty() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let planner = planner_from_authority(plan, manifest, bundle, limits)?;
+    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
+    let fixed_reduce_offset = plan
+        .primary_work_unit_count
+        .checked_mul(2)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let phase_ordinal = unit_index
+        .checked_sub(fixed_reduce_offset)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let position = topology.phase_position_at(UnitPhase::FixedReduce, phase_ordinal)?;
+    let PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::FixedReduce,
+        level,
+        index,
+    } = position
+    else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    let reducer_inputs = spec
+        .canonical_ordered_inputs
+        .iter()
+        .filter(|input| input.purpose == InputPurpose::FidelityPartials)
+        .collect::<Vec<_>>();
+    if reducer_inputs.len() != 2 {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let producer_ids = reducer_inputs
+        .iter()
+        .map(|input| match input.source_kind {
+            InputSourceKind::UnitOutput if !input.source_id.is_zero() => Ok(Some(input.source_id)),
+            InputSourceKind::CanonicalEmpty => Ok(None),
+            _ => Err(WorkerError::UnitBindingMismatch),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let producer_ids: [Option<B256>; 2] = producer_ids
+        .try_into()
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    if planner.fixed_reduce_unit_at(phase_ordinal, producer_ids, limits)? != spec.clone() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let expected_producers = topology.required_producers(position)?;
+    let mut artifacts = producer_artifacts.iter();
+    let mut decoded_inputs = Vec::with_capacity(2);
+    for (expected, input) in expected_producers.into_iter().zip(reducer_inputs) {
+        match expected {
+            PlannedProducerV1::CanonicalEmpty {
+                purpose: InputPurpose::FidelityPartials,
+                padded_ordinal,
+            } => {
+                if input.source_kind != InputSourceKind::CanonicalEmpty {
+                    return Err(WorkerError::UnitBindingMismatch);
+                }
+                decoded_inputs.push(FixedReduceInputV1 {
+                    value: FidelityReduceValueV1::Empty,
+                    coverage: RawCoverageCarrierV1::canonical_empty(
+                        plan.tribute_count,
+                        padded_ordinal,
+                    )?,
+                });
+            }
+            PlannedProducerV1::Unit(producer_position) => {
+                if input.source_kind != InputSourceKind::UnitOutput {
+                    return Err(WorkerError::UnitBindingMismatch);
+                }
+                let artifact = artifacts.next().ok_or(WorkerError::UnitBindingMismatch)?;
+                decoded_inputs.push(decode_fixed_reduce_producer(
+                    artifact,
+                    input.source_id,
+                    producer_position,
+                    spec,
+                    plan,
+                    limits,
+                )?);
+            }
+            _ => return Err(WorkerError::UnitBindingMismatch),
+        }
+    }
+    if artifacts.next().is_some() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let [left, right]: [FixedReduceInputV1; 2] = decoded_inputs
+        .try_into()
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    let single_primary_root =
+        plan.primary_work_unit_count == 1 && level == 1 && index == 0;
+    let (value, coverage) = if single_primary_root {
+        if !matches!(&right.value, FidelityReduceValueV1::Empty)
+            || !matches!(&left.value, FidelityReduceValueV1::Aggregate(_))
+        {
+            return Err(WorkerError::UnitBindingMismatch);
+        }
+        (left.value, left.coverage)
+    } else {
+        (
+            fidelity_reduce_pair(left.value, right.value)
+                .map_err(LysisArtifactErrorV1::from)?,
+            RawCoverageCarrierV1::merge(&left.coverage, &right.coverage)?,
+        )
+    };
+    let is_root = level == topology.tree().height() && index == 0;
+    let aggregate = match value {
+        FidelityReduceValueV1::Empty => None,
+        FidelityReduceValueV1::Aggregate(aggregate) => Some(aggregate),
+    };
+    let ordered_fractions = if is_root {
+        finalize_fi_fraction_table(
+            aggregate
+                .as_ref()
+                .ok_or(WorkerError::UnitBindingMismatch)?,
+            plan.lysis_budget,
+        )
+        .map_err(LysisArtifactErrorV1::from)?
+    } else {
+        Vec::new()
+    };
+    let output_count = aggregate
+        .as_ref()
+        .map_or(0, |aggregate| aggregate.tribute_count);
+    let coverage_root = if is_root {
+        coverage.final_root(plan.tribute_count)?
+    } else {
+        coverage.tree_root
+    };
+    let output = FixedReduceOutputV1 {
+        aggregate,
+        coverage,
+        ordered_fractions,
+    };
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: output_count,
+            output_coverage_count: output_count,
+        },
+        BoundedBytes(encode_fixed_reduce_output(&output, limits)?),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
+fn decode_fixed_reduce_producer(
+    artifact: &UnitArtifactV1,
+    expected_unit_id: B256,
+    position: PlannedUnitPositionV1,
+    consumer_spec: &UnitSpecV1,
+    plan: &PlanCommitmentV1,
+    limits: &SchemaLimits,
+) -> Result<FixedReduceInputV1, WorkerError> {
+    artifact.validate_semantics(limits)?;
+    if artifact.unit_id != expected_unit_id
+        || artifact.protocol_bundle_hash != consumer_spec.protocol_bundle_hash
+        || artifact.job_id != consumer_spec.job_id
+        || artifact.attempt != consumer_spec.attempt
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let (phase, interval) = match position {
+        PlannedUnitPositionV1::Primary {
+            phase: UnitPhase::FidelityMap,
+            ordinal,
+        } => {
+            let start = ordinal
+                .checked_mul(PRIMARY_WORK_SHARD_SIZE)
+                .ok_or(WorkerError::UnitBindingMismatch)?;
+            let end = start
+                .saturating_add(PRIMARY_WORK_SHARD_SIZE)
+                .min(plan.tribute_count);
+            (
+                UnitPhase::FidelityMap,
+                UnitInterval::FidelityIndexRange(FidelityIndexHalfOpenRange { start, end }),
+            )
+        }
+        PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::FixedReduce,
+            level,
+            index,
+        } => (
+            UnitPhase::FixedReduce,
+            UnitInterval::BinaryReducerNode(BinaryReducerNode { level, index }),
+        ),
+        _ => return Err(WorkerError::UnitBindingMismatch),
+    };
+    let mut interval_binding = consumer_spec.clone();
+    interval_binding.phase = phase;
+    interval_binding.interval = interval;
+    if artifact.phase != phase
+        || artifact.interval_commitment != interval_binding.interval_commitment(limits)?
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let header = artifact.output_header(limits)?;
+    match phase {
+        UnitPhase::FidelityMap => {
+            let output = decode_fidelity_map_output(artifact.phase_payload(limits)?, limits)?;
+            if output.coverage_root()? != header.output_coverage_root
+                || output.aggregate.tribute_count != header.output_coverage_count
+            {
+                return Err(WorkerError::UnitBindingMismatch);
+            }
+            let records = output
+                .observations
+                .iter()
+                .map(|observation| {
+                    (observation.raw_ordinal, *observation.tribute_id.as_bytes())
+                })
+                .collect::<Vec<_>>();
+            let coverage = RawCoverageCarrierV1::from_records(plan.tribute_count, &records)?;
+            Ok(FixedReduceInputV1 {
+                value: FidelityReduceValueV1::Aggregate(output.aggregate),
+                coverage,
+            })
+        }
+        UnitPhase::FixedReduce => {
+            let output = decode_fixed_reduce_output(artifact.phase_payload(limits)?, limits)?;
+            let output_count = output
+                .aggregate
+                .as_ref()
+                .map_or(0, |aggregate| aggregate.tribute_count);
+            if !output.ordered_fractions.is_empty()
+                || output.coverage.tree_root != header.output_coverage_root
+                || output_count != header.output_coverage_count
+            {
+                return Err(WorkerError::UnitBindingMismatch);
+            }
+            Ok(FixedReduceInputV1 {
+                value: output
+                    .aggregate
+                    .map_or(FidelityReduceValueV1::Empty, FidelityReduceValueV1::Aggregate),
+                coverage: output.coverage,
+            })
+        }
+        _ => Err(WorkerError::UnitBindingMismatch),
+    }
 }
 
 fn planner_from_authority(

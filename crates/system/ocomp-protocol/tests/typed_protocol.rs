@@ -1464,6 +1464,24 @@ fn unit_artifact_constructor_binds_spec_output_and_coverage() {
     let mut changed_count = artifact;
     changed_count.output_record_count += 1;
     assert!(changed_count.validate_against(&spec, &LIMITS).is_err());
+
+    let empty_reducer_spec = UnitSpecV1 {
+        phase: UnitPhase::FixedReduce,
+        interval: UnitInterval::BinaryReducerNode(BinaryReducerNode { level: 1, index: 3 }),
+        ..spec
+    };
+    UnitArtifactV1::from_canonical_output(
+        &empty_reducer_spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: hash(111),
+            output_coverage_root: hash(111),
+            source_coverage_count: 0,
+            output_coverage_count: 0,
+        },
+        BoundedBytes(vec![0x01]),
+        &LIMITS,
+    )
+    .expect("canonical padded reducer subtree may cover zero real Tribute");
 }
 
 #[test]

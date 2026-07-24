@@ -10,6 +10,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
+use outbe_lysis::program_v1::artifacts::decode_fixed_reduce_output;
 use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
@@ -71,7 +72,7 @@ fn identity(boot: u8) -> EndpointIdentity {
 }
 
 #[test]
-fn real_worker_processes_execute_enumerate_then_fidelity() {
+fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -274,7 +275,7 @@ fn real_worker_processes_execute_enumerate_then_fidelity() {
         command
             .args([
                 "--exact",
-                "real_worker_processes_execute_enumerate_then_fidelity",
+                "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
@@ -423,7 +424,7 @@ fn real_worker_processes_execute_enumerate_then_fidelity() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_enumerate_then_fidelity",
+            "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -479,8 +480,8 @@ fn real_worker_processes_execute_enumerate_then_fidelity() {
                         .expect("canonical Fidelity spec"),
                 ),
                 unit_membership_siblings: Vec::new(),
-                plan_ref,
-                input_manifest_ref: published.manifest_ref,
+                plan_ref: plan_ref.clone(),
+                input_manifest_ref: published.manifest_ref.clone(),
                 ordered_input_refs: vec![producer_ref, tribute_ref, fidelity_ref],
             }
             .encode_body(&limits)
@@ -513,6 +514,124 @@ fn real_worker_processes_execute_enumerate_then_fidelity() {
     fidelity_artifact
         .validate_against(&fidelity_spec, &limits)
         .expect("validate Fidelity artifact");
+
+    let mut fidelity_producer_ref = cas
+        .publish_bytes(
+            &fidelity_artifact
+                .encode_canonical(&limits)
+                .expect("canonical Fidelity artifact"),
+        )
+        .expect("publish Fidelity producer artifact");
+    fidelity_producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let reduce_spec = planner
+        .fixed_reduce_unit_at(0, [Some(fidelity_artifact.unit_id), None], &limits)
+        .expect("derive FixedReduce unit");
+    let reduce_unit_id = reduce_spec.unit_id(&limits).expect("FixedReduce UnitId");
+    let (parent_stream, child_stream) =
+        UnixStream::pair().expect("FixedReduce worker socket pair");
+    let child_fd: OwnedFd = child_stream.into();
+    let worker_identity = identity(0xE0);
+    let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
+    command
+        .args([
+            "--exact",
+            "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env(CHILD_USER, &user)
+        .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
+        .env(
+            CHILD_GENESIS,
+            format!("{:#x}", worker_identity.genesis_hash),
+        )
+        .env(
+            CHILD_BOOT_NONCE,
+            format!("{:#x}", worker_identity.boot_nonce),
+        )
+        .env(
+            CHILD_BUNDLE,
+            format!("{:#x}", worker_identity.protocol_bundle_hash),
+        )
+        .env(CHILD_GENERATION, "300")
+        .env(CHILD_CAS_ROOT, directory.path())
+        .env(
+            CHILD_CAS_OBJECT_CAP,
+            cas_limits.max_object_bytes.to_string(),
+        )
+        .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
+        .env(CHILD_INBOX_ROOT, &inbox_root)
+        .stdin(Stdio::from(child_fd))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn FixedReduce worker");
+    drop(command);
+    let client_identity = EndpointIdentity {
+        boot_nonce: B256::repeat_byte(0xE1),
+        ..worker_identity
+    };
+    let mut client = ControlClientSession::connect(
+        parent_stream,
+        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
+    )
+    .expect("FixedReduce worker client");
+    client.handshake().expect("FixedReduce worker handshake");
+    client
+        .send_request(
+            WorkerMessageKind::RunUnit as u16,
+            RunUnitV1 {
+                protocol_bundle_hash,
+                job_id,
+                attempt: 1,
+                plan_hash,
+                unit_index: plan.primary_work_unit_count * 2,
+                canonical_unit_spec: BoundedBytes(
+                    reduce_spec
+                        .encode_canonical(&limits)
+                        .expect("canonical FixedReduce spec"),
+                ),
+                unit_membership_siblings: Vec::new(),
+                plan_ref,
+                input_manifest_ref: published.manifest_ref,
+                ordered_input_refs: vec![fidelity_producer_ref],
+            }
+            .encode_body(&limits)
+            .expect("FixedReduce RunUnit body"),
+        )
+        .expect("send FixedReduce unit");
+    let output = child.wait_with_output().expect("FixedReduce worker exit");
+    assert!(
+        output.status.success(),
+        "FixedReduce worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame = client
+        .receive_response()
+        .expect("FixedReduce worker response");
+    let finished =
+        UnitFinishedV1::decode_body(&frame.body, &limits).expect("FixedReduce finished body");
+    assert_eq!(finished.status, UnitFinishedStatus::Success);
+    assert_eq!(finished.unit_id, reduce_unit_id);
+    let reduce_artifact = UnitArtifactV1::decode_canonical(
+        inbox
+            .read_reported(
+                finished.unit_id,
+                finished.exact_staged_bytes,
+                finished.transport_digest,
+            )
+            .expect("read staged FixedReduce artifact")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode FixedReduce artifact");
+    reduce_artifact
+        .validate_against(&reduce_spec, &limits)
+        .expect("validate FixedReduce artifact");
+    let reduced =
+        decode_fixed_reduce_output(reduce_artifact.phase_payload(&limits).unwrap(), &limits)
+            .expect("decode FixedReduce phase output");
+    assert_eq!(reduced.aggregate.unwrap().tribute_count, 1);
+    assert!(!reduced.ordered_fractions.is_empty());
 }
 
 fn run_child_worker() {
