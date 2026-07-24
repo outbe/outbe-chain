@@ -415,7 +415,9 @@ pub fn verify_input_artifact_set(
         opening.validate_against_bundle(bundle, limits)?;
         let _ = opening
             .decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
-        opened_owners.extend(decode_fidelity_subject(&opening.canonical_subject_key.0)?);
+        opened_owners.extend(decode_fidelity_subject_key(
+            &opening.canonical_subject_key.0,
+        )?);
     }
     require(
         opened_owners == tribute_owners.into_iter().collect::<Vec<_>>(),
@@ -593,7 +595,7 @@ fn require_expected_kind(
     )
 }
 
-fn decode_fidelity_subject(encoded: &[u8]) -> Result<Vec<Address>, InputArtifactError> {
+pub fn decode_fidelity_subject_key(encoded: &[u8]) -> Result<Vec<Address>, InputArtifactError> {
     let count_bytes: [u8; 4] = encoded
         .get(..4)
         .ok_or(InputArtifactError::Invariant("Fidelity subject count"))?

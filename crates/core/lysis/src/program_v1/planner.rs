@@ -393,6 +393,14 @@ impl LysisPlannerV1 {
             }),
             canonical_ordered_inputs: vec![
                 CanonicalInputRefV1 {
+                    purpose: InputPurpose::InputManifest,
+                    source_kind: InputSourceKind::AuthenticatedRoot,
+                    source_id: self.bindings.input_manifest_hash,
+                    record_count_limit: 1,
+                    max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                    max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                },
+                CanonicalInputRefV1 {
                     purpose: InputPurpose::EnumeratedTributes,
                     source_kind: InputSourceKind::UnitOutput,
                     source_id: enumerate_unit_id,

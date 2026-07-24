@@ -8037,6 +8037,7 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-e2e-harness",
+ "outbe-fidelity",
  "outbe-lysis",
  "outbe-node",
  "outbe-ocomp-protocol",

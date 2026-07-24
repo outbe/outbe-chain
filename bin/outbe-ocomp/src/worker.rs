@@ -1,5 +1,6 @@
 //! One socket-activated process handles one immutable work-unit request.
 
+use std::collections::BTreeMap;
 use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -7,12 +8,19 @@ use std::path::PathBuf;
 use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
+use outbe_fidelity::{evaluate_fidelity_opening_v1, FidelityOpeningEvaluationError};
 use outbe_lysis::program_v1::artifacts::{
-    encode_enumerated_run, enumerate_tributes, LysisArtifactErrorV1,
+    decode_enumerated_run, encode_enumerated_run, encode_fidelity_map_output, enumerate_tributes,
+    LysisArtifactErrorV1,
 };
-use outbe_lysis::program_v1::TributeInputV1;
+use outbe_lysis::program_v1::phases::fidelity_map;
+use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1, PlannerErrorV1};
+use outbe_lysis::program_v1::{ObservationValueV1, ObservedTributeV1, TributeInputV1};
 use outbe_ocomp_protocol::common::BoundedBytes;
-use outbe_ocomp_protocol::input::{AuthenticatedInputChunkV1, InputChunkKind, InputManifestV1};
+use outbe_ocomp_protocol::input::{
+    AuthenticatedInputChunkV1, AuthenticatedOpeningV1, InputChunkKind, InputChunkRefV1,
+    InputManifestV1, OpeningSourceKind,
+};
 use outbe_ocomp_protocol::unit::{
     InputPurpose, InputSourceKind, PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase,
     UnitSpecV1, WorkOutputHeaderV1,
@@ -31,7 +39,8 @@ use crate::control::{
 };
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
-    decode_verified_input_chunk, derive_input_chunk_ref, InputArtifactError,
+    decode_fidelity_subject_key, decode_verified_input_chunk, derive_input_chunk_ref,
+    InputArtifactError,
 };
 
 #[derive(Clone, Debug)]
@@ -66,6 +75,16 @@ struct ExpectedPlanBindingsV1 {
     reducer_spec_version: u16,
 }
 
+struct UnitExecutionAuthority<'a> {
+    plan: &'a PlanCommitmentV1,
+    unit_index: u32,
+    manifest: &'a InputManifestV1,
+    input_chunks: &'a [(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    producer_artifacts: &'a [UnitArtifactV1],
+    bundle: &'a outbe_ocomp_protocol::profile::ProtocolBundleV1,
+    limits: &'a SchemaLimits,
+}
+
 #[derive(Debug, Error)]
 pub enum WorkerError {
     #[error(transparent)]
@@ -91,7 +110,11 @@ pub enum WorkerError {
     #[error(transparent)]
     LysisArtifact(#[from] LysisArtifactErrorV1),
     #[error(transparent)]
+    Planner(#[from] PlannerErrorV1),
+    #[error(transparent)]
     CanonicalBody(#[from] CanonicalBodyError),
+    #[error(transparent)]
+    FidelityOpening(#[from] FidelityOpeningEvaluationError),
     #[error("worker does not yet implement Lysis phase {0:?}")]
     UnsupportedPhase(UnitPhase),
 }
@@ -161,14 +184,18 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         },
         &limits,
     )?;
-    verify_ordered_list_membership(
-        ListKind::UnitSpecificationsArtifacts,
-        plan.primary_work_unit_count,
-        request.unit_index,
-        &request.canonical_unit_spec.0,
-        &request.unit_membership_siblings,
-        plan.primary_work_unit_root,
-    )?;
+    if spec.phase == UnitPhase::Enumerate {
+        verify_ordered_list_membership(
+            ListKind::UnitSpecificationsArtifacts,
+            plan.primary_work_unit_count,
+            request.unit_index,
+            &request.canonical_unit_spec.0,
+            &request.unit_membership_siblings,
+            plan.primary_work_unit_root,
+        )?;
+    } else if !request.unit_membership_siblings.is_empty() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
     require_authenticated_input(
         &spec,
         InputPurpose::InputManifest,
@@ -176,45 +203,49 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         1,
         request.input_manifest_ref.encoded_bytes,
     )?;
-    let mut tribute_chunk = None;
+    let mut input_chunks = Vec::new();
+    let mut producer_artifacts = Vec::new();
     for reference in &request.ordered_input_refs {
-        if reference.expected_ocb1_kind != Some(ObjectKind::AuthenticatedInputChunkV1.tag()) {
-            return Err(WorkerError::UnitBindingMismatch);
-        }
         let object = reader.read_verified(reference)?;
-        let derived =
-            derive_input_chunk_ref(&object, config.protocol_bundle.bundle(), &limits)?.reference;
-        let purpose = match derived.kind {
-            InputChunkKind::Tribute => InputPurpose::TributeStream,
-            InputChunkKind::Fidelity => InputPurpose::FidelityOpenings,
-            InputChunkKind::Oracle => InputPurpose::OracleOpenings,
-        };
-        require_authenticated_input(
-            &spec,
-            purpose,
-            derived.semantic_digest,
-            derived.record_count,
-            derived.encoded_bytes,
-        )?;
-        if derived.kind == InputChunkKind::Tribute {
-            if tribute_chunk.is_some() {
-                return Err(WorkerError::UnitBindingMismatch);
+        match reference.expected_ocb1_kind {
+            Some(kind) if kind == ObjectKind::AuthenticatedInputChunkV1.tag() => {
+                let derived =
+                    derive_input_chunk_ref(&object, config.protocol_bundle.bundle(), &limits)?
+                        .reference;
+                let chunk =
+                    decode_verified_input_chunk(&object, config.protocol_bundle.bundle(), &limits)?;
+                if chunk.job_id != spec.job_id
+                    || chunk.protocol_bundle_hash != spec.protocol_bundle_hash
+                {
+                    return Err(WorkerError::UnitBindingMismatch);
+                }
+                input_chunks.push((derived, chunk));
             }
-            tribute_chunk = Some(decode_verified_input_chunk(
-                &object,
-                config.protocol_bundle.bundle(),
-                &limits,
-            )?);
+            Some(kind) if kind == ObjectKind::UnitArtifactV1.tag() => {
+                producer_artifacts.push(UnitArtifactV1::decode_canonical(object.bytes(), &limits)?);
+            }
+            _ => return Err(WorkerError::UnitBindingMismatch),
         }
     }
 
-    let finished = match execute_unit(&spec, &manifest, tribute_chunk.as_ref(), &limits)
-        .and_then(|artifact| {
-            artifact
-                .encode_canonical(&limits)
-                .map_err(WorkerError::from)
-        })
-        .and_then(|bytes| inbox.adopt(unit_id, &bytes).map_err(WorkerError::from))
+    let finished = match execute_unit(
+        &spec,
+        UnitExecutionAuthority {
+            plan: &plan,
+            unit_index: request.unit_index,
+            manifest: &manifest,
+            input_chunks: &input_chunks,
+            producer_artifacts: &producer_artifacts,
+            bundle: config.protocol_bundle.bundle(),
+            limits: &limits,
+        },
+    )
+    .and_then(|artifact| {
+        artifact
+            .encode_canonical(&limits)
+            .map_err(WorkerError::from)
+    })
+    .and_then(|bytes| inbox.adopt(unit_id, &bytes).map_err(WorkerError::from))
     {
         Ok(staged) => {
             let reference = staged.reference();
@@ -242,17 +273,42 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
 
 fn execute_unit(
     spec: &UnitSpecV1,
+    authority: UnitExecutionAuthority<'_>,
+) -> Result<UnitArtifactV1, WorkerError> {
+    match spec.phase {
+        UnitPhase::Enumerate => execute_enumerate_unit(
+            spec,
+            authority.manifest,
+            authority.input_chunks,
+            authority.producer_artifacts,
+            authority.limits,
+        ),
+        UnitPhase::FidelityMap => execute_fidelity_map_unit(spec, authority),
+        phase => Err(WorkerError::UnsupportedPhase(phase)),
+    }
+}
+
+fn execute_enumerate_unit(
+    spec: &UnitSpecV1,
     manifest: &InputManifestV1,
-    tribute_chunk: Option<&AuthenticatedInputChunkV1>,
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    producer_artifacts: &[UnitArtifactV1],
     limits: &SchemaLimits,
 ) -> Result<UnitArtifactV1, WorkerError> {
-    if spec.phase != UnitPhase::Enumerate {
-        return Err(WorkerError::UnsupportedPhase(spec.phase));
+    if !producer_artifacts.is_empty() || input_chunks.len() != 1 {
+        return Err(WorkerError::UnitBindingMismatch);
     }
-    let chunk = tribute_chunk.ok_or(WorkerError::UnitBindingMismatch)?;
+    let (reference, chunk) = &input_chunks[0];
     if chunk.kind != InputChunkKind::Tribute {
         return Err(WorkerError::UnitBindingMismatch);
     }
+    require_authenticated_input(
+        spec,
+        InputPurpose::TributeStream,
+        reference.semantic_digest,
+        reference.record_count,
+        reference.encoded_bytes,
+    )?;
     let UnitInterval::EntityIdRange(range) = &spec.interval else {
         return Err(WorkerError::UnitBindingMismatch);
     };
@@ -295,6 +351,193 @@ fn execute_unit(
         limits,
     )
     .map_err(WorkerError::from)
+}
+
+fn execute_fidelity_map_unit(
+    spec: &UnitSpecV1,
+    authority: UnitExecutionAuthority<'_>,
+) -> Result<UnitArtifactV1, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        unit_index,
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        bundle,
+        limits,
+    } = authority;
+    let shard_ordinal = unit_index
+        .checked_sub(plan.primary_work_unit_count)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    if shard_ordinal >= plan.primary_work_unit_count || producer_artifacts.len() != 1 {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let enumerate_unit_id = exact_unit_output_source(spec, InputPurpose::EnumeratedTributes)?;
+    let planner = planner_from_authority(plan, manifest, bundle, limits)?;
+    if planner.fidelity_map_unit_at(shard_ordinal, enumerate_unit_id, limits)? != spec.clone() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let primary_spec = planner.primary_unit_at(
+        shard_ordinal,
+        |ordinal| {
+            input_chunks
+                .iter()
+                .find(|(reference, chunk)| {
+                    reference.kind == InputChunkKind::Tribute
+                        && chunk.kind == InputChunkKind::Tribute
+                        && reference.ordinal == ordinal
+                })
+                .map(|(reference, _)| reference.clone())
+        },
+        limits,
+    )?;
+    let producer = &producer_artifacts[0];
+    producer.validate_against(&primary_spec, limits)?;
+    if producer.unit_id != enumerate_unit_id || producer.phase != UnitPhase::Enumerate {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let enumerated = decode_enumerated_run(producer.phase_payload(limits)?, limits)?;
+    let producer_header = producer.output_header(limits)?;
+    if enumerated.coverage_root()? != producer_header.output_coverage_root
+        || enumerated.ordered_records.len()
+            != usize::try_from(producer_header.output_coverage_count)
+                .map_err(|_| WorkerError::UnitBindingMismatch)?
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let mut leagues = BTreeMap::new();
+    let mut fidelity_opening_count = 0_u32;
+    let mut fidelity_encoded_bytes = 0_u64;
+    for (reference, chunk) in input_chunks {
+        match chunk.kind {
+            InputChunkKind::Tribute => {}
+            InputChunkKind::Fidelity => {
+                fidelity_encoded_bytes = fidelity_encoded_bytes
+                    .checked_add(reference.encoded_bytes)
+                    .ok_or(WorkerError::UnitBindingMismatch)?;
+                for encoded in &chunk.canonical_records_or_openings {
+                    fidelity_opening_count = fidelity_opening_count
+                        .checked_add(1)
+                        .ok_or(WorkerError::UnitBindingMismatch)?;
+                    let opening =
+                        AuthenticatedOpeningV1::decode_canonical_record(&encoded.0, limits)?;
+                    if opening.source_kind != OpeningSourceKind::Fidelity {
+                        return Err(WorkerError::UnitBindingMismatch);
+                    }
+                    opening.validate_against_bundle(bundle, limits)?;
+                    let raw = opening.decode_and_validate_raw_opening(
+                        manifest.checkpoint.finalized_state_root,
+                        limits,
+                    )?;
+                    let owners = decode_fidelity_subject_key(&opening.canonical_subject_key.0)?;
+                    let slot_values = raw
+                        .ordered_slots
+                        .iter()
+                        .map(|slot| (slot.slot, slot.value))
+                        .collect::<Vec<_>>();
+                    for observation in evaluate_fidelity_opening_v1(
+                        &owners,
+                        &slot_values,
+                        plan.logical_evaluation_time,
+                    )? {
+                        if leagues
+                            .insert(observation.owner, observation.league)
+                            .is_some()
+                        {
+                            return Err(WorkerError::UnitBindingMismatch);
+                        }
+                    }
+                }
+            }
+            InputChunkKind::Oracle => return Err(WorkerError::UnitBindingMismatch),
+        }
+    }
+    require_authenticated_input(
+        spec,
+        InputPurpose::FidelityOpenings,
+        manifest.fidelity_opening_root,
+        fidelity_opening_count,
+        fidelity_encoded_bytes,
+    )?;
+
+    let mut observed = Vec::new();
+    observed
+        .try_reserve_exact(enumerated.ordered_records.len())
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
+    for record in &enumerated.ordered_records {
+        let league = leagues
+            .get(&record.tribute.owner)
+            .copied()
+            .ok_or(WorkerError::UnitBindingMismatch)?;
+        observed.push(ObservedTributeV1 {
+            tribute: record.tribute.clone(),
+            first_league: ObservationValueV1::Value(league),
+            second_league: ObservationValueV1::Value(league),
+            conditional_entry_price_minor: ObservationValueV1::Unavailable,
+            nod_target_available: true,
+        });
+    }
+    let output =
+        fidelity_map(enumerated.start_ordinal, &observed).map_err(LysisArtifactErrorV1::from)?;
+    let output_coverage_root = output.coverage_root()?;
+    if output_coverage_root != producer_header.output_coverage_root {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: producer_header.output_coverage_root,
+            output_coverage_root,
+            source_coverage_count: producer_header.output_coverage_count,
+            output_coverage_count: output.aggregate.tribute_count,
+        },
+        BoundedBytes(encode_fidelity_map_output(&output, limits)?),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
+fn planner_from_authority(
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    bundle: &outbe_ocomp_protocol::profile::ProtocolBundleV1,
+    limits: &SchemaLimits,
+) -> Result<LysisPlannerV1, WorkerError> {
+    LysisPlannerV1::new(LysisPlannerBindingsV1 {
+        protocol_bundle_hash: plan.protocol_bundle_hash,
+        job_id: plan.job_id,
+        attempt: plan.attempt,
+        input_manifest_hash: plan.input_manifest_hash,
+        input_manifest_encoded_bytes: u64::try_from(manifest.encode_canonical(limits)?.len())
+            .map_err(|_| WorkerError::UnitBindingMismatch)?,
+        fidelity_opening_root: manifest.fidelity_opening_root,
+        oracle_opening_root: manifest.oracle_opening_root,
+        wwd: plan.wwd,
+        lysis_budget: plan.lysis_budget,
+        logical_evaluation_time: plan.logical_evaluation_time,
+        tribute_count: plan.tribute_count,
+        lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+        planner_spec_version: plan.planner_spec_version,
+        reducer_spec_version: plan.reducer_spec_version,
+    })
+    .map_err(WorkerError::from)
+}
+
+fn exact_unit_output_source(spec: &UnitSpecV1, purpose: InputPurpose) -> Result<B256, WorkerError> {
+    let mut matches = spec.canonical_ordered_inputs.iter().filter(|input| {
+        input.purpose == purpose && input.source_kind == InputSourceKind::UnitOutput
+    });
+    let source = matches
+        .next()
+        .ok_or(WorkerError::UnitBindingMismatch)?
+        .source_id;
+    if source.is_zero() || matches.next().is_some() {
+        Err(WorkerError::UnitBindingMismatch)
+    } else {
+        Ok(source)
+    }
 }
 
 fn require_plan_binding(

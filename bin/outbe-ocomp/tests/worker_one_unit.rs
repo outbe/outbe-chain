@@ -9,6 +9,8 @@ use std::process::{Child, Command, Stdio};
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
+use outbe_fidelity::fidelity_opening_slot_plan_v1;
+use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -23,7 +25,7 @@ use outbe_ocomp::input_artifacts::{
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
-    materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind,
+    materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
 };
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
@@ -33,8 +35,8 @@ use outbe_ocomp_protocol::unit::{
     UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
 };
 use outbe_ocomp_protocol::{
-    ordered_list_root, ListKind, OrderedListLimits, RunUnitV1, UnitFinishedStatus, UnitFinishedV1,
-    WorkerMessageKind,
+    ordered_list_root, ListKind, ObjectKind, OrderedListLimits, RunUnitV1, UnitFinishedStatus,
+    UnitFinishedV1, WorkerMessageKind,
 };
 use tempfile::tempdir;
 
@@ -69,7 +71,7 @@ fn identity(boot: u8) -> EndpointIdentity {
 }
 
 #[test]
-fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
+fn real_worker_processes_execute_enumerate_then_fidelity() {
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -114,6 +116,21 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
+    let fidelity_raw = RawContractOpeningProofV1 {
+        contract_address: Address::repeat_byte(0x54),
+        state_root: finalized_state_root,
+        ordered_slots: fidelity_opening_slot_plan_v1(owner, 0, 0)
+            .expect("fixture Fidelity slot plan")
+            .slots
+            .into_iter()
+            .map(|slot| RawStorageSlotV1 {
+                slot,
+                value: U256::ZERO,
+            })
+            .collect(),
+        account_proof: ProofBytes(vec![0xa1]),
+        storage_proof: ProofBytes(vec![0xb1]),
+    };
     let materialized = materialize_authenticated_openings(
         &LysisOpeningsProofV1 {
             protocol_bundle_hash: bundle
@@ -127,7 +144,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
                 owners: vec![owner],
                 settlement_isos: vec![840, 978],
             },
-            fidelity: raw(Address::repeat_byte(0x54), 0x55),
+            fidelity: fidelity_raw,
             oracle: raw(Address::repeat_byte(0x56), 0x57),
         },
         &bundle,
@@ -211,7 +228,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
             end: None,
         }),
         canonical_ordered_inputs: canonical_inputs,
-        lysis_program_semantics_hash: B256::repeat_byte(0x71),
+        lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
         planner_spec_version: 1,
         reducer_spec_version: 1,
     };
@@ -257,7 +274,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         command
             .args([
                 "--exact",
-                "four_real_worker_processes_each_handle_one_exact_unit_and_exit",
+                "real_worker_processes_execute_enumerate_then_fidelity",
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
@@ -355,6 +372,147 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
     let artifact = UnitArtifactV1::decode_canonical(verified.bytes(), &limits)
         .expect("decode staged unit artifact");
     artifact.validate_against(&spec, &limits).unwrap();
+
+    let mut producer_ref = cas
+        .publish_bytes(verified.bytes())
+        .expect("publish Enumerate producer artifact");
+    producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let fidelity_ref = published
+        .ordered_chunk_refs
+        .iter()
+        .find(|reference| {
+            cas.read_verified(reference)
+                .ok()
+                .and_then(|object| derive_input_chunk_ref(&object, &bundle, &limits).ok())
+                .is_some_and(|derived| derived.reference.kind == InputChunkKind::Fidelity)
+        })
+        .cloned()
+        .expect("fixture Fidelity input reference");
+    let manifest = InputManifestV1::decode_canonical(
+        cas.read_verified(&published.manifest_ref)
+            .expect("read fixture manifest")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode fixture manifest");
+    let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
+        protocol_bundle_hash,
+        job_id,
+        attempt: 1,
+        input_manifest_hash: published.manifest_hash,
+        input_manifest_encoded_bytes: published.manifest_ref.encoded_bytes,
+        fidelity_opening_root: manifest.fidelity_opening_root,
+        oracle_opening_root: manifest.oracle_opening_root,
+        wwd: day.value(),
+        lysis_budget: plan.lysis_budget,
+        logical_evaluation_time: plan.logical_evaluation_time,
+        tribute_count: published.tribute_count,
+        lysis_program_semantics_hash: bundle.lysis_program_semantics_hash,
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    })
+    .expect("fixture planner");
+    let fidelity_spec = planner
+        .fidelity_map_unit_at(0, artifact.unit_id, &limits)
+        .expect("derive Fidelity unit");
+    let fidelity_unit_id = fidelity_spec.unit_id(&limits).expect("Fidelity UnitId");
+    let (parent_stream, child_stream) = UnixStream::pair().expect("Fidelity worker socket pair");
+    let child_fd: OwnedFd = child_stream.into();
+    let worker_identity = identity(0xD0);
+    let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
+    command
+        .args([
+            "--exact",
+            "real_worker_processes_execute_enumerate_then_fidelity",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env(CHILD_USER, &user)
+        .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
+        .env(
+            CHILD_GENESIS,
+            format!("{:#x}", worker_identity.genesis_hash),
+        )
+        .env(
+            CHILD_BOOT_NONCE,
+            format!("{:#x}", worker_identity.boot_nonce),
+        )
+        .env(
+            CHILD_BUNDLE,
+            format!("{:#x}", worker_identity.protocol_bundle_hash),
+        )
+        .env(CHILD_GENERATION, "200")
+        .env(CHILD_CAS_ROOT, directory.path())
+        .env(
+            CHILD_CAS_OBJECT_CAP,
+            cas_limits.max_object_bytes.to_string(),
+        )
+        .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
+        .env(CHILD_INBOX_ROOT, &inbox_root)
+        .stdin(Stdio::from(child_fd))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn Fidelity worker");
+    drop(command);
+    let client_identity = EndpointIdentity {
+        boot_nonce: B256::repeat_byte(0xD1),
+        ..worker_identity
+    };
+    let mut client = ControlClientSession::connect(
+        parent_stream,
+        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
+    )
+    .expect("Fidelity worker client");
+    client.handshake().expect("Fidelity worker handshake");
+    client
+        .send_request(
+            WorkerMessageKind::RunUnit as u16,
+            RunUnitV1 {
+                protocol_bundle_hash,
+                job_id,
+                attempt: 1,
+                plan_hash,
+                unit_index: plan.primary_work_unit_count,
+                canonical_unit_spec: BoundedBytes(
+                    fidelity_spec
+                        .encode_canonical(&limits)
+                        .expect("canonical Fidelity spec"),
+                ),
+                unit_membership_siblings: Vec::new(),
+                plan_ref,
+                input_manifest_ref: published.manifest_ref,
+                ordered_input_refs: vec![producer_ref, tribute_ref, fidelity_ref],
+            }
+            .encode_body(&limits)
+            .expect("Fidelity RunUnit body"),
+        )
+        .expect("send Fidelity unit");
+    let output = child.wait_with_output().expect("Fidelity worker exit");
+    assert!(
+        output.status.success(),
+        "Fidelity worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame = client.receive_response().expect("Fidelity worker response");
+    let finished =
+        UnitFinishedV1::decode_body(&frame.body, &limits).expect("Fidelity finished body");
+    assert_eq!(finished.status, UnitFinishedStatus::Success);
+    assert_eq!(finished.unit_id, fidelity_unit_id);
+    let fidelity_artifact = UnitArtifactV1::decode_canonical(
+        inbox
+            .read_reported(
+                finished.unit_id,
+                finished.exact_staged_bytes,
+                finished.transport_digest,
+            )
+            .expect("read staged Fidelity artifact")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode Fidelity artifact");
+    fidelity_artifact
+        .validate_against(&fidelity_spec, &limits)
+        .expect("validate Fidelity artifact");
 }
 
 fn run_child_worker() {

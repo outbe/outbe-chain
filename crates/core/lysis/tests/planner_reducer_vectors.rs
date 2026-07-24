@@ -425,6 +425,11 @@ fn fidelity_map_unit_is_derived_only_from_plan_and_exact_enumerate_unit() {
             .collect::<Vec<_>>(),
         [
             (
+                InputPurpose::InputManifest,
+                InputSourceKind::AuthenticatedRoot,
+                planner_bindings(257).input_manifest_hash,
+            ),
+            (
                 InputPurpose::EnumeratedTributes,
                 InputSourceKind::UnitOutput,
                 enumerate_unit_id,
