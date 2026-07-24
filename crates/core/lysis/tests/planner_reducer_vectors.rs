@@ -9,9 +9,10 @@ use outbe_lysis::program_v1::reducers::{
 };
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
-    decode_fixed_reduce_output, decode_gratis_prefix_down_output,
-    decode_gratis_segment_summary, decode_raw_coverage_carrier, encode_amount_run,
-    encode_enumerated_run, encode_fidelity_map_output, encode_fixed_reduce_output,
+    decode_finalized_output_run, decode_fixed_reduce_output,
+    decode_gratis_prefix_down_output, decode_gratis_segment_summary,
+    decode_raw_coverage_carrier, encode_amount_run, encode_enumerated_run,
+    encode_fidelity_map_output, encode_finalized_output_run, encode_fixed_reduce_output,
     encode_gratis_prefix_down_output, encode_gratis_segment_summary,
     encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage,
     FixedReduceOutputV1, GratisPrefixDownOutputV1, RawCoverageCarrierV1,
@@ -821,6 +822,68 @@ fn gratis_prefix_down_units_bind_parent_and_immediate_summaries() {
 }
 
 #[test]
+fn output_finalize_unit_binds_exact_amount_and_leaf_prefix() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(257)).unwrap();
+    let ids = (0..257).map(entity_id).collect::<Vec<_>>();
+    let chunks = [
+        tribute_chunk_ref(0, &ids[..256], 10_000),
+        tribute_chunk_ref(1, &ids[256..], 100),
+    ];
+    let enumerate = planner
+        .primary_unit_at(
+            1,
+            |ordinal| chunks.get(ordinal as usize).cloned(),
+            &limits,
+        )
+        .unwrap();
+    let amount = planner
+        .amount_map_unit_at(
+            1,
+            &enumerate,
+            B256::repeat_byte(0x91),
+            B256::repeat_byte(0x92),
+            &limits,
+        )
+        .unwrap();
+    let prefix_id = B256::repeat_byte(0x93);
+    let finalize = planner
+        .output_finalize_unit_at(1, &amount, prefix_id, &limits)
+        .unwrap();
+
+    assert_eq!(finalize.phase, UnitPhase::OutputFinalize);
+    assert_eq!(finalize.interval, amount.interval);
+    assert_eq!(
+        finalize
+            .canonical_ordered_inputs
+            .iter()
+            .skip(1)
+            .map(|input| (input.purpose, input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (
+                InputPurpose::AmountRecords,
+                InputSourceKind::UnitOutput,
+                amount.unit_id(&limits).unwrap(),
+            ),
+            (
+                InputPurpose::GratisPrefixTable,
+                InputSourceKind::UnitOutput,
+                prefix_id,
+            ),
+        ]
+    );
+    assert!(planner
+        .output_finalize_unit_at(1, &amount, B256::ZERO, &limits)
+        .is_err());
+    let mut wrong_phase = amount;
+    wrong_phase.phase = UnitPhase::Enumerate;
+    assert!(planner
+        .output_finalize_unit_at(1, &wrong_phase, prefix_id, &limits)
+        .is_err());
+}
+
+#[test]
 fn gratis_scan_artifacts_are_typed_canonical_and_reject_trailing_bytes() {
     let limits = poc_schema_limits();
     let summary = GratisSegmentSummaryV1 {
@@ -1349,6 +1412,14 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     .unwrap();
     let finalized_left = output_finalize(&amount_left, &left_prefix, logical_time).unwrap();
     let finalized_right = output_finalize(&amount_right, &right_prefix, logical_time).unwrap();
+    let encoded_finalized = encode_finalized_output_run(&finalized_right, &limits).unwrap();
+    assert_eq!(
+        decode_finalized_output_run(&encoded_finalized, &limits).unwrap(),
+        finalized_right
+    );
+    let mut trailing_finalized = encoded_finalized;
+    trailing_finalized.push(0);
+    assert!(decode_finalized_output_run(&trailing_finalized, &limits).is_err());
     let records = finalized_left
         .ordered_records
         .iter()

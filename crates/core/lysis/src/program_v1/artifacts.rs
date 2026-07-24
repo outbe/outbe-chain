@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, fmt};
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, ordered_list_root, pad_hash, root_hash, OrderedListLimits,
 };
@@ -14,14 +14,15 @@ use outbe_ocomp_protocol::{
     hash_framed, CanonicalReader, CanonicalWriter, SchemaLimits,
 };
 
-use super::execute::validate_canonical_tributes;
+use super::execute::{nod_bucket_key, validate_canonical_tributes};
 use super::phases::{
     AmountRecordV1, AmountRunV1, FidelityAggregateV1, FidelityLeaguePartialV1,
-    FidelityMapOutputV1, FidelityObservationV1, GratisIncomingV1, GratisLeafPrefixV1,
+    FidelityMapOutputV1, FidelityObservationV1, FinalizedContributorV1,
+    FinalizedOutputRecordV1, FinalizedOutputRunV1, GratisIncomingV1, GratisLeafPrefixV1,
     GratisSegmentSummaryV1,
 };
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
-use super::{LeagueFractionV1, ProgramErrorV1, TributeInputV1};
+use super::{LeagueFractionV1, NodActionV1, ProgramErrorV1, TributeInputV1};
 
 const ENUMERATED_RUN_MAGIC: [u8; 4] = *b"LYE1";
 const FIDELITY_MAP_MAGIC: [u8; 4] = *b"LYF1";
@@ -29,6 +30,7 @@ const FIXED_REDUCE_MAGIC: [u8; 4] = *b"LYR1";
 const AMOUNT_RUN_MAGIC: [u8; 4] = *b"LYA1";
 const GRATIS_SUMMARY_MAGIC: [u8; 4] = *b"LYG1";
 const GRATIS_PREFIX_DOWN_MAGIC: [u8; 4] = *b"LYD1";
+const FINALIZED_OUTPUT_MAGIC: [u8; 4] = *b"LYO1";
 const RAW_COVERAGE_CARRIER_MAGIC: [u8; 4] = *b"LYC1";
 const COVERAGE_RECORD_BYTES: usize = 40;
 const PRIMARY_SUBTREE_HEIGHT: u16 = 8;
@@ -668,6 +670,132 @@ pub fn decode_gratis_prefix_down_output(
     Ok(output)
 }
 
+pub fn encode_finalized_output_run(
+    run: &FinalizedOutputRunV1,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, LysisArtifactErrorV1> {
+    validate_finalized_output_run(run)?;
+    let mut encoded = CanonicalWriter::new(limits.codec);
+    encoded.write_fixed(&FINALIZED_OUTPUT_MAGIC)?;
+    encoded.write_u32(run.start_ordinal)?;
+    encoded.write_u32(run.end_ordinal)?;
+    encoded.write_u32(
+        u32::try_from(run.ordered_records.len())
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    for record in &run.ordered_records {
+        let nod = &record.nod_action;
+        encoded.write_u32(record.raw_ordinal)?;
+        encoded.write_entity_id36(nod.source_tribute_id.as_bytes())?;
+        encoded.write_entity_id36(nod.nod_id.as_bytes())?;
+        encoded.write_address20(nod.owner)?;
+        encoded.write_u32(nod.worldwide_day.value())?;
+        encoded.write_u16(nod.league_id)?;
+        encoded.write_u256(nod.floor_price_minor)?;
+        encoded.write_u256(nod.gratis_load_minor)?;
+        encoded.write_u256(nod.entry_price_minor)?;
+        encoded.write_u256(nod.cost_amount_minor)?;
+        encoded.write_u16(nod.issuance_currency)?;
+        encoded.write_u16(nod.reference_currency)?;
+        encoded.write_b256(nod.bucket_key)?;
+        encoded.write_u64(nod.issued_at)?;
+        encoded.write_option(record.contributor_action.as_ref(), |writer, contributor| {
+            writer.write_address20(contributor.owner)?;
+            writer.write_entity_id36(contributor.source_tribute_id.as_bytes())?;
+            writer.write_u256(contributor.nominal_amount_minor)
+        })?;
+    }
+    Ok(encoded.into_bytes())
+}
+
+pub fn decode_finalized_output_run(
+    encoded: &[u8],
+    limits: &SchemaLimits,
+) -> Result<FinalizedOutputRunV1, LysisArtifactErrorV1> {
+    let mut input = CanonicalReader::new(encoded, limits.codec)?;
+    if input.read_fixed::<4>()? != FINALIZED_OUTPUT_MAGIC {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "finalized output header",
+        ));
+    }
+    let start_ordinal = input.read_u32()?;
+    let end_ordinal = input.read_u32()?;
+    let count = input.read_u32()?;
+    validate_shard_size(
+        usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    let mut ordered_records = Vec::new();
+    ordered_records
+        .try_reserve_exact(
+            usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+        )
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    for _ in 0..count {
+        let raw_ordinal = input.read_u32()?;
+        let source_tribute_id = EntityId36::try_from(input.read_entity_id36()?.as_slice())
+            .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Tribute id"))?;
+        let nod_id = EntityId36::try_from(input.read_entity_id36()?.as_slice())
+            .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod id"))?;
+        let owner = input.read_address20()?;
+        let worldwide_day = WorldwideDay::new(input.read_u32()?);
+        let league_id = input.read_u16()?;
+        let floor_price_minor = input.read_u256()?;
+        let gratis_load_minor = input.read_u256()?;
+        let entry_price_minor = input.read_u256()?;
+        let cost_amount_minor = input.read_u256()?;
+        let issuance_currency = input.read_u16()?;
+        let reference_currency = input.read_u16()?;
+        let bucket_key = input.read_b256()?;
+        let issued_at = input.read_u64()?;
+        let contributor_action = input.read_option(|reader| {
+            Ok(FinalizedContributorV1 {
+                owner: reader.read_address20()?,
+                source_tribute_id: EntityId36::try_from(
+                    reader.read_entity_id36()?.as_slice(),
+                )
+                .map_err(|_| {
+                    outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                        "finalized contributor Tribute id",
+                    )
+                })?,
+                nominal_amount_minor: reader.read_u256()?,
+            })
+        })?;
+        ordered_records.push(FinalizedOutputRecordV1 {
+            raw_ordinal,
+            nod_action: NodActionV1 {
+                source_tribute_id,
+                nod_id,
+                owner,
+                worldwide_day,
+                league_id,
+                floor_price_minor,
+                gratis_load_minor,
+                entry_price_minor,
+                cost_amount_minor,
+                issuance_currency,
+                reference_currency,
+                bucket_key,
+                issued_at,
+            },
+            contributor_action,
+        });
+    }
+    input.finish()?;
+    let run = FinalizedOutputRunV1 {
+        start_ordinal,
+        end_ordinal,
+        ordered_records,
+    };
+    validate_finalized_output_run(&run)?;
+    if encode_finalized_output_run(&run, limits)? != encoded {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "finalized output canonical re-encoding",
+        ));
+    }
+    Ok(run)
+}
+
 pub fn gratis_summary_coverage(
     prefix_interval_commitment: B256,
     children: [Option<(B256, u32)>; 2],
@@ -1124,6 +1252,61 @@ fn validate_gratis_prefix_down_output(
                     "Gratis prefix-down leaf",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_finalized_output_run(
+    run: &FinalizedOutputRunV1,
+) -> Result<(), LysisArtifactErrorV1> {
+    validate_shard_size(run.ordered_records.len())?;
+    let count = u32::try_from(run.ordered_records.len())
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
+        || run.end_ordinal
+            != run
+                .start_ordinal
+                .checked_add(count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+    {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "finalized output range",
+        ));
+    }
+    let mut previous_tribute = None;
+    for (offset, record) in run.ordered_records.iter().enumerate() {
+        let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        let nod = &record.nod_action;
+        if record.raw_ordinal
+            != run
+                .start_ordinal
+                .checked_add(offset)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+            || previous_tribute.is_some_and(|previous| previous >= nod.source_tribute_id)
+            || nod.owner.is_zero()
+            || nod.worldwide_day.value() == 0
+            || nod.gratis_load_minor.is_zero()
+            || nod.entry_price_minor.is_zero()
+            || nod.bucket_key != nod_bucket_key(nod.worldwide_day, nod.floor_price_minor)
+            || nod.issued_at == 0
+            || derive_poseidon_entity_id(nod.owner, nod.worldwide_day)
+                .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod identity"))?
+                != nod.nod_id
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "finalized output record",
+            ));
+        }
+        previous_tribute = Some(nod.source_tribute_id);
+        if record.contributor_action.as_ref().is_some_and(|contributor| {
+            contributor.owner != nod.owner
+                || contributor.source_tribute_id != nod.source_tribute_id
+                || contributor.nominal_amount_minor.is_zero()
+        }) {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "finalized contributor binding",
+            ));
         }
     }
     Ok(())

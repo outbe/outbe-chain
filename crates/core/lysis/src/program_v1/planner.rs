@@ -607,6 +607,118 @@ impl LysisPlannerV1 {
         )
     }
 
+    pub fn output_finalize_unit_at(
+        self,
+        shard_ordinal: u32,
+        amount_spec: &UnitSpecV1,
+        prefix_unit_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        if prefix_unit_id.is_zero()
+            || amount_spec.protocol_bundle_hash != self.bindings.protocol_bundle_hash
+            || amount_spec.job_id != self.bindings.job_id
+            || amount_spec.attempt != self.bindings.attempt
+            || amount_spec.phase != UnitPhase::AmountMap
+            || amount_spec.lysis_program_semantics_hash
+                != self.bindings.lysis_program_semantics_hash
+            || amount_spec.planner_spec_version != self.bindings.planner_spec_version
+            || amount_spec.reducer_spec_version != self.bindings.reducer_spec_version
+            || !matches!(amount_spec.interval, UnitInterval::EntityIdRange(_))
+        {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        self.output_finalize_unit_from_producers(
+            shard_ordinal,
+            amount_spec.interval.clone(),
+            amount_spec.unit_id(limits)?,
+            prefix_unit_id,
+            limits,
+        )
+    }
+
+    pub fn validate_output_finalize_unit(
+        self,
+        shard_ordinal: u32,
+        spec: &UnitSpecV1,
+        amount_unit_id: B256,
+        prefix_unit_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<(), PlannerErrorV1> {
+        if spec.phase != UnitPhase::OutputFinalize
+            || !matches!(spec.interval, UnitInterval::EntityIdRange(_))
+        {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let expected = self.output_finalize_unit_from_producers(
+            shard_ordinal,
+            spec.interval.clone(),
+            amount_unit_id,
+            prefix_unit_id,
+            limits,
+        )?;
+        if expected == *spec {
+            Ok(())
+        } else {
+            Err(PlannerErrorV1::ProducerMembershipMismatch)
+        }
+    }
+
+    fn output_finalize_unit_from_producers(
+        self,
+        shard_ordinal: u32,
+        interval: UnitInterval,
+        amount_unit_id: B256,
+        prefix_unit_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let shard = self.primary_tree.primary_shard(shard_ordinal)?;
+        if amount_unit_id.is_zero()
+            || prefix_unit_id.is_zero()
+            || !matches!(interval, UnitInterval::EntityIdRange(_))
+        {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase: UnitPhase::OutputFinalize,
+            interval,
+            canonical_ordered_inputs: vec![
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::InputManifest,
+                    source_kind: InputSourceKind::AuthenticatedRoot,
+                    source_id: self.bindings.input_manifest_hash,
+                    record_count_limit: 1,
+                    max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                    max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::AmountRecords,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: amount_unit_id,
+                    record_count_limit: shard.record_count(),
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::GratisPrefixTable,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: prefix_unit_id,
+                    record_count_limit: shard.record_count(),
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+            ],
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
     fn gratis_scan_unit_at(
         self,
         phase: UnitPhase,
