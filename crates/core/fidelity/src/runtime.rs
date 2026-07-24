@@ -1,4 +1,5 @@
-use crate::math::{t_dec, SCALE};
+use crate::math::{league_from_rcfi, t_dec, RcfiAccumulator};
+pub(crate) use crate::math::{MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::{
     active_cohort_key, sold_cohort_key, ActiveCohort, FidelityContract, SoldCohort,
 };
@@ -15,12 +16,6 @@ pub struct FidelityOcompProjection {
     pub max_cohorts_per_owner: u16,
     pub max_cohorts_observed: u16,
 }
-
-/// Lowest league id (1-based). Assigned to the bottom slot and to accounts with
-/// no retention / before any account has qualified.
-pub(crate) const MIN_LEAGUE: u16 = 1;
-/// Highest league id, assigned to the top slot. `4096` leagues span `1..=4096`.
-pub(crate) const MAX_LEAGUE: u16 = 4096;
 
 impl FidelityContract<'_> {
     /// Initializes the OCOMP profile only for the fresh-devnet empty Fidelity
@@ -238,21 +233,15 @@ impl FidelityContract<'_> {
     /// well under `2^256` (see the crate plan's overflow analysis).
     pub fn compute_rcfi_fp(&self, account: Address, timestamp: u64) -> Result<(U256, U256, U256)> {
         let qs = self.qualified_start.read(&account)?;
-        if qs == 0 {
-            return Ok((U256::ZERO, U256::ZERO, U256::ZERO));
-        }
-        let d_dec_age = t_dec(timestamp.saturating_sub(qs));
-
-        let mut num = U256::ZERO;
-        let mut den = U256::ZERO;
+        let mut accumulator = RcfiAccumulator::default();
 
         // Active cohorts: full decayed age, counted in numerator and denominator.
         let active = self.active_count.read(&account)?;
         for i in 0..active {
             if let Some(c) = self.active_cohorts.get(active_cohort_key(account, i))? {
-                let contribution = c.size * t_dec(timestamp.saturating_sub(c.acquired_at));
-                num += contribution;
-                den += contribution;
+                accumulator
+                    .add_active(c.size, c.acquired_at, timestamp)
+                    .ok_or_else(fidelity_arithmetic_error)?;
             }
         }
 
@@ -260,20 +249,15 @@ impl FidelityContract<'_> {
         let sold = self.sold_count.read(&account)?;
         for i in 0..sold {
             if let Some(c) = self.sold_cohorts.get(sold_cohort_key(account, i))? {
-                let buy = t_dec(timestamp.saturating_sub(c.acquired_at));
-                let sell = t_dec(timestamp.saturating_sub(c.sold_at));
-                // buy ≥ sell since acquired_at ≤ sold_at; saturating guards skew.
-                den += c.size * buy.saturating_sub(sell);
+                accumulator
+                    .add_sold(c.size, c.acquired_at, c.sold_at, timestamp)
+                    .ok_or_else(fidelity_arithmetic_error)?;
             }
         }
 
-        let efficiency = if den.is_zero() {
-            U256::ZERO
-        } else {
-            num * SCALE / den
-        };
-        let rcfi = d_dec_age * efficiency / SCALE;
-        Ok((rcfi, efficiency, d_dec_age))
+        accumulator
+            .finish(qs, timestamp)
+            .ok_or_else(fidelity_arithmetic_error)
     }
 
     pub fn get_fidelity_index(&self, account: Address) -> Result<U256> {
@@ -302,13 +286,8 @@ impl FidelityContract<'_> {
     /// Returns [`MIN_LEAGUE`] when no account has qualified yet (max is zero).
     pub fn league_at(&self, account: Address, timestamp: u64) -> Result<u16> {
         let max = self.max_rcfi_at(timestamp)?;
-        if max.is_zero() {
-            return Ok(MIN_LEAGUE);
-        }
         let rcfi = self.compute_fidelity_index(account, timestamp)?;
-        let slot = rcfi * U256::from(MAX_LEAGUE) / max;
-        let slot = slot.min(U256::from(MAX_LEAGUE - 1)).to::<u16>();
-        Ok(MIN_LEAGUE + slot)
+        league_from_rcfi(rcfi, max).ok_or_else(fidelity_arithmetic_error)
     }
 
     /// League for `account` at the current block time. See [`Self::league_at`].
@@ -316,4 +295,8 @@ impl FidelityContract<'_> {
         let now = self.storage.timestamp()?.to::<u64>();
         self.league_at(account, now)
     }
+}
+
+fn fidelity_arithmetic_error() -> PrecompileError {
+    PrecompileError::Fatal("Fidelity arithmetic overflow".into())
 }

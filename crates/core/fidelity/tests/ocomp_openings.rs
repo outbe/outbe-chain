@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_fidelity::{
-    fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1, FidelityContract,
-    FidelityOpeningPlanError, MAX_OCOMP_COHORTS_PER_OWNER,
+    evaluate_fidelity_opening_v1, fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1,
+    FidelityContract, FidelityOpeningPlanError, MAX_OCOMP_COHORTS_PER_OWNER,
 };
 use outbe_primitives::{
     addresses::FIDELITY_ADDRESS,
@@ -76,4 +76,46 @@ fn fidelity_opening_plan_accepts_64_and_rejects_65_before_detail_allocation() {
             cap: 64,
         })
     );
+}
+
+#[test]
+fn authenticated_raw_slots_reproduce_runtime_league_and_reject_non_exact_plans() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut contract = FidelityContract::new(storage.clone());
+        contract.cohort_in(OWNER, U256::from(100), T0).unwrap();
+        contract.cohort_in(OWNER, U256::from(50), T0 + 1).unwrap();
+        contract.cohort_out(OWNER, U256::from(30), T0 + 2).unwrap();
+        let timestamp = T0 + 365 * 86_400;
+        let plan = fidelity_opening_slot_plan_v1(OWNER, 2, 1).unwrap();
+        let slots = plan
+            .slots
+            .iter()
+            .copied()
+            .map(|slot| (slot, slot_word(&storage, slot)))
+            .collect::<Vec<_>>();
+
+        let observed = evaluate_fidelity_opening_v1(&[OWNER], &slots, timestamp).unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].owner, OWNER);
+        assert_eq!(
+            observed[0].league,
+            contract.league_at(OWNER, timestamp).unwrap()
+        );
+
+        let mut missing = slots.clone();
+        missing.pop();
+        assert!(evaluate_fidelity_opening_v1(&[OWNER], &missing, timestamp).is_err());
+
+        let mut reordered = slots.clone();
+        reordered.swap(0, 1);
+        assert!(evaluate_fidelity_opening_v1(&[OWNER], &reordered, timestamp).is_err());
+
+        let mut changed = slots;
+        changed[0].1 = U256::from(timestamp);
+        assert_ne!(
+            evaluate_fidelity_opening_v1(&[OWNER], &changed, timestamp).unwrap()[0].league,
+            observed[0].league
+        );
+    });
 }
