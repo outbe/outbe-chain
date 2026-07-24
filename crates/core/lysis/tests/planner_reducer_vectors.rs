@@ -3,6 +3,10 @@ use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, PlannedProducerV1, PlannedUnitPositionV1, PlannerErrorV1,
     ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
 };
+use outbe_lysis::program_v1::reducers::{
+    merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
+    StreamingMergeErrorV1,
+};
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
@@ -676,6 +680,100 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .collect::<Vec<_>>();
     bucket_ordinals.sort_unstable();
     assert_eq!(bucket_ordinals, (0..257_u32).collect::<Vec<_>>());
+
+    let mut owner_chunk_sizes = Vec::new();
+    let mut previous_merged_owner = None;
+    let owner_summary = merge_owner_runs_streaming(
+        CanonicalRunSpanV1 {
+            start_run: 0,
+            end_run: 1,
+        },
+        owner_left.ordered_contributors.clone(),
+        CanonicalRunSpanV1 {
+            start_run: 1,
+            end_run: 2,
+        },
+        owner_right.ordered_contributors.clone(),
+        64,
+        |_, chunk| {
+            owner_chunk_sizes.push(chunk.len());
+            for action in chunk {
+                assert!(previous_merged_owner.is_none_or(|owner| owner < action.owner));
+                previous_merged_owner = Some(action.owner);
+            }
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        owner_summary.record_count as usize,
+        sequential.contributors.len()
+    );
+    assert!(owner_chunk_sizes.iter().all(|count| *count <= 64));
+    assert_eq!(
+        owner_summary.chunk_count as usize,
+        owner_chunk_sizes.len()
+    );
+
+    let mut bucket_chunk_sizes = Vec::new();
+    let mut previous_bucket_key = None;
+    let bucket_summary = merge_bucket_runs_streaming(
+        CanonicalRunSpanV1 {
+            start_run: 0,
+            end_run: 1,
+        },
+        bucket_left.ordered_records.clone(),
+        CanonicalRunSpanV1 {
+            start_run: 1,
+            end_run: 2,
+        },
+        bucket_right.ordered_records.clone(),
+        64,
+        |_, chunk| {
+            bucket_chunk_sizes.push(chunk.len());
+            for record in chunk {
+                let key = (record.bucket_key, record.raw_ordinal);
+                assert!(previous_bucket_key.is_none_or(|previous| previous < key));
+                previous_bucket_key = Some(key);
+            }
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+    assert_eq!(bucket_summary.record_count, 257);
+    assert!(bucket_chunk_sizes.iter().all(|count| *count <= 64));
+    assert!(merge_bucket_runs_streaming(
+        CanonicalRunSpanV1 {
+            start_run: 1,
+            end_run: 2,
+        },
+        bucket_right.ordered_records,
+        CanonicalRunSpanV1 {
+            start_run: 0,
+            end_run: 1,
+        },
+        bucket_left.ordered_records,
+        64,
+        |_, _| Ok::<_, ()>(()),
+    )
+    .is_err());
+    assert!(matches!(
+        merge_owner_runs_streaming(
+            CanonicalRunSpanV1 {
+                start_run: 0,
+                end_run: 1,
+            },
+            owner_left.ordered_contributors,
+            CanonicalRunSpanV1 {
+                start_run: 1,
+                end_run: 2,
+            },
+            owner_right.ordered_contributors,
+            64,
+            |_, _| Err::<(), _>("persist failed"),
+        ),
+        Err(StreamingMergeErrorV1::Sink("persist failed"))
+    ));
 
     let mut wrong_coverage = finalized_left.clone();
     wrong_coverage.ordered_records[0].raw_ordinal = 1;
