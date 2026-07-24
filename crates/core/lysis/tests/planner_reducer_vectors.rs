@@ -7,6 +7,9 @@ use outbe_lysis::program_v1::reducers::{
     merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
     StreamingMergeErrorV1,
 };
+use outbe_lysis::program_v1::artifacts::{
+    decode_enumerated_run, encode_enumerated_run, enumerate_tributes,
+};
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
@@ -25,6 +28,22 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::BTreeMap;
+
+fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> TributeInputV1 {
+    let mut owner_bytes = [0_u8; 20];
+    owner_bytes[16..].copy_from_slice(&seed.to_be_bytes());
+    let owner = Address::from(owner_bytes);
+    TributeInputV1 {
+        tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+        owner,
+        worldwide_day: day,
+        issuance_currency: 840,
+        nominal_amount_minor: U256::from(nominal),
+        reference_currency: 978,
+        tribute_price_minor: U256::from(2),
+        exclude_from_intex_issuance: excluded,
+    }
+}
 
 // OCM-SEM-002: planner, unit coverage and fixed reducer topology.
 #[test]
@@ -48,6 +67,49 @@ fn primary_work_is_unbounded_in_total_and_partitioned_in_exact_256_record_shards
         primary_work_unit_count(0),
         Err(PlannerErrorV1::EmptyTributePopulation)
     );
+}
+
+#[test]
+fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
+    let limits = poc_schema_limits();
+    let day = WorldwideDay::new(20_260_724);
+    let mut tributes = vec![
+        tribute(1, day, 10, false),
+        tribute(2, day, 20, true),
+    ];
+    tributes.sort_by_key(|tribute| tribute.tribute_id);
+    let run = enumerate_tributes(256, day, &tributes).unwrap();
+
+    assert_eq!((run.start_ordinal, run.end_ordinal), (256, 258));
+    assert_eq!(run.ordered_records[0].raw_ordinal, 256);
+    assert_eq!(run.ordered_records[1].raw_ordinal, 257);
+    assert_ne!(run.coverage_root().unwrap(), B256::ZERO);
+
+    let encoded = encode_enumerated_run(&run, &limits).unwrap();
+    assert_eq!(decode_enumerated_run(&encoded, &limits).unwrap(), run);
+
+    let mut changed = encoded.clone();
+    changed[24] ^= 1;
+    assert!(decode_enumerated_run(&changed, &limits).is_err());
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(decode_enumerated_run(&trailing, &limits).is_err());
+}
+
+#[test]
+fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
+    let day = WorldwideDay::new(20_260_724);
+    assert!(enumerate_tributes(0, day, &[]).is_err());
+
+    let mut oversized = (0..257)
+        .map(|index| tribute(index + 1, day, 1, false))
+        .collect::<Vec<_>>();
+    oversized.sort_by_key(|tribute| tribute.tribute_id);
+    assert!(enumerate_tributes(0, day, &oversized).is_err());
+
+    let duplicate = tribute(1, day, 1, false);
+    assert!(enumerate_tributes(0, day, &[duplicate.clone(), duplicate]).is_err());
 }
 
 #[test]

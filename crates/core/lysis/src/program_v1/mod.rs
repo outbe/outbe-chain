@@ -3,6 +3,7 @@
 //! The program consumes request-pinned logical observations and emits typed
 //! actions. It owns no storage, node, process, codec or worker dependency.
 
+pub mod artifacts;
 mod execute;
 pub mod phases;
 pub mod planner;

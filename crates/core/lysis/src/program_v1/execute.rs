@@ -417,7 +417,7 @@ pub(crate) fn compute_fraction_map_from_groups(
     Ok(sorted_fis.into_iter().zip(fractions).collect())
 }
 
-fn validate_canonical_tributes(
+pub(crate) fn validate_canonical_tributes(
     worldwide_day: WorldwideDay,
     tributes: &[TributeInputV1],
 ) -> Result<(), ProgramErrorV1> {
