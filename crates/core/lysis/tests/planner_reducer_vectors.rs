@@ -8,8 +8,9 @@ use outbe_lysis::program_v1::reducers::{
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::artifacts::{
-    decode_enumerated_run, decode_fidelity_map_output, encode_enumerated_run,
-    encode_fidelity_map_output, enumerate_tributes,
+    decode_enumerated_run, decode_fidelity_map_output, decode_raw_coverage_carrier,
+    encode_enumerated_run, encode_fidelity_map_output, encode_raw_coverage_carrier,
+    enumerate_tributes, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
@@ -202,6 +203,90 @@ fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
     let mut trailing = encoded;
     trailing.push(0);
     assert!(decode_fidelity_map_output(&trailing, &limits).is_err());
+}
+
+#[test]
+fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
+    let limits = poc_schema_limits();
+    for total_count in [1_u32, 255, 256, 257, 513] {
+        let records = (0..total_count)
+            .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+            .collect::<Vec<_>>();
+        let primary_count = total_count.div_ceil(PRIMARY_WORK_SHARD_SIZE);
+        let mut carriers = (0..primary_count)
+            .map(|ordinal| {
+                let start = ordinal * PRIMARY_WORK_SHARD_SIZE;
+                let end = (start + PRIMARY_WORK_SHARD_SIZE).min(total_count);
+                RawCoverageCarrierV1::from_records(
+                    total_count,
+                    &records[start as usize..end as usize],
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        if primary_count > 1 {
+            let padded_count = primary_count.next_power_of_two();
+            carriers.extend((primary_count..padded_count).map(|ordinal| {
+                RawCoverageCarrierV1::canonical_empty(total_count, ordinal).unwrap()
+            }));
+            while carriers.len() > 1 {
+                carriers = carriers
+                    .chunks_exact(2)
+                    .map(|pair| RawCoverageCarrierV1::merge(&pair[0], &pair[1]).unwrap())
+                    .collect();
+            }
+        }
+        let carrier = carriers.first().unwrap();
+        let expected_records = records
+            .iter()
+            .map(|(ordinal, id)| {
+                let mut encoded = [0_u8; 40];
+                encoded[..4].copy_from_slice(&ordinal.to_be_bytes());
+                encoded[4..].copy_from_slice(id);
+                encoded
+            })
+            .collect::<Vec<_>>();
+        let expected_root = outbe_ocomp_protocol::ordered_list_root(
+            outbe_ocomp_protocol::ListKind::RawTributeCoverage,
+            &expected_records,
+            outbe_ocomp_protocol::OrderedListLimits::new(
+                expected_records.len(),
+                40,
+                expected_records.len().next_power_of_two() * 32,
+            ),
+        )
+        .unwrap();
+        assert_eq!(carrier.final_root(total_count).unwrap(), expected_root);
+
+        let encoded = encode_raw_coverage_carrier(carrier, &limits).unwrap();
+        assert_eq!(
+            decode_raw_coverage_carrier(&encoded, &limits).unwrap(),
+            *carrier
+        );
+        assert!(encoded.len() < 128);
+    }
+}
+
+#[test]
+fn coverage_carriers_reject_non_canonical_ranges_and_merge_order() {
+    let total_count = 257_u32;
+    let records = (0..total_count)
+        .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+        .collect::<Vec<_>>();
+    let left = RawCoverageCarrierV1::from_records(total_count, &records[..256]).unwrap();
+    let right = RawCoverageCarrierV1::from_records(total_count, &records[256..]).unwrap();
+
+    assert!(RawCoverageCarrierV1::merge(&right, &left).is_err());
+
+    let mut non_contiguous = records[..256].to_vec();
+    non_contiguous[127].0 += 1;
+    assert!(RawCoverageCarrierV1::from_records(total_count, &non_contiguous).is_err());
+
+    let limits = poc_schema_limits();
+    let mut trailing = encode_raw_coverage_carrier(&left, &limits).unwrap();
+    trailing.push(0);
+    assert!(decode_raw_coverage_carrier(&trailing, &limits).is_err());
 }
 
 #[test]

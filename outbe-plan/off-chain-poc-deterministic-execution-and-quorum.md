@@ -304,6 +304,22 @@ The last truncated share is assigned to the highest sorted league exactly as in
 the baseline. All wrapping/checked/division points come from ticket #3; no
 floating point is introduced.
 
+Every real Fidelity leaf also emits a constant-size
+`RawCoverageCarrierV1(start_ordinal, end_ordinal, subtree_height,
+subtree_index, tree_root)`. Its `tree_root` is the globally indexed inner
+Merkle subtree for that exact raw Tribute range, padded with the frozen
+`RawTributeCoverage` pad hashes. It is deliberately not a separately wrapped
+list root: independently wrapped sub-list roots cannot be composed.
+
+Each reducer verifies equal child heights, left/right sibling positions and
+adjacent raw ranges, then merges the two carriers with the frozen list-node
+hash. Padded reducer leaves use canonical all-pad carriers. Only the final
+carrier is wrapped with the manifest `tribute_count` and final tree height; the
+result must equal the canonical full raw-Tribute coverage root. Thus every
+reducer reads two constant-size carriers and never re-reads all Tribute. For
+`K=1`, the explicit root unit validates and forwards the already-final leaf
+carrier rather than performing an unbounded scan.
+
 ### 4.4 `AMOUNT_MAP`
 
 Inputs:

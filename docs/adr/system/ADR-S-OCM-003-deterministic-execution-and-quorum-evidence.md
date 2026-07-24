@@ -70,6 +70,15 @@ committed unit count and is likewise scheduled lazily.
 reducer root supplies the global league fraction table. Omitting the matching
 leaf would leave the Tribute-to-league relation unproved.
 
+Raw Tribute coverage is reduced through constant-size globally indexed Merkle
+subtree carriers. A leaf carrier commits its exact raw ordinal interval;
+canonical empty leaves commit the corresponding all-pad subtree. A reducer
+accepts only equal-height left/right siblings with adjacent coverage and hashes
+them once into their parent carrier. Only the root carrier receives the frozen
+ordered-list root wrapper using the manifest Tribute count, and that root must
+equal the canonical complete raw coverage commitment. Reducers therefore never
+materialize or re-read the complete Tribute population.
+
 A unit may run zero or many times. Only a digest-valid artifact for its exact
 `UnitId` and plan membership participates in reduction. One, two and four
 workers plus randomized completion/retry order must produce byte-identical plan,
