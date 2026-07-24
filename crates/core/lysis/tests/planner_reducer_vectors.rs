@@ -1,28 +1,30 @@
-use outbe_lysis::program_v1::planner::{
-    primary_work_unit_count, LysisPlannerBindingsV1, LysisPlannerV1, PaddedBinaryTreeV1,
-    LysisPlanTopologyV1, PlannedProducerV1, PlannedUnitPositionV1, PlannerErrorV1,
-    ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
-};
-use outbe_lysis::program_v1::reducers::{
-    merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
-    StreamingMergeErrorV1,
-};
+use alloy_primitives::{Address, B256, U256};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
-    decode_finalized_output_run, decode_fixed_reduce_output,
-    decode_gratis_prefix_down_output, decode_gratis_segment_summary,
-    decode_raw_coverage_carrier, encode_amount_run, encode_enumerated_run,
-    encode_fidelity_map_output, encode_finalized_output_run, encode_fixed_reduce_output,
-    encode_gratis_prefix_down_output, encode_gratis_segment_summary,
-    encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage,
-    FixedReduceOutputV1, GratisPrefixDownOutputV1, RawCoverageCarrierV1,
+    decode_finalized_output_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
+    decode_gratis_segment_summary, decode_raw_coverage_carrier, encode_amount_run,
+    encode_enumerated_run, encode_fidelity_map_output, encode_finalized_output_run,
+    encode_fixed_reduce_output, encode_gratis_prefix_down_output, encode_gratis_segment_summary,
+    encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage, FixedReduceOutputV1,
+    GratisPrefixDownOutputV1, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    output_finalize, shuffle_buckets, shuffle_owners, FidelityAggregateV1,
-    FidelityLeaguePartialV1, FidelityReduceValueV1, GratisIncomingV1,
-    GratisLeafPrefixV1, GratisSegmentSummaryV1, GratisSummaryValueV1,
+    output_finalize, shuffle_buckets, shuffle_owners, FidelityAggregateV1, FidelityLeaguePartialV1,
+    FidelityReduceValueV1, GratisIncomingV1, GratisLeafPrefixV1, GratisSegmentSummaryV1,
+    GratisSummaryValueV1,
+};
+use outbe_lysis::program_v1::planner::{
+    primary_work_unit_count, LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
+    PaddedBinaryTreeV1, PlannedProducerV1, PlannedUnitPositionV1, PlannerErrorV1, ReducerInputV1,
+    PRIMARY_WORK_SHARD_SIZE,
+};
+use outbe_lysis::program_v1::reducers::{
+    merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
+    StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::{
     execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
@@ -34,9 +36,6 @@ use outbe_ocomp_protocol::{
     local_control::poc_schema_limits,
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
 };
-use alloy_primitives::{Address, B256, U256};
-use outbe_common::WorldwideDay;
-use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::BTreeMap;
 
@@ -72,11 +71,7 @@ fn observed(
     }
 }
 
-fn tribute_chunk_ref(
-    ordinal: u32,
-    ids: &[EntityId36],
-    encoded_bytes: u64,
-) -> InputChunkRefV1 {
+fn tribute_chunk_ref(ordinal: u32, ids: &[EntityId36], encoded_bytes: u64) -> InputChunkRefV1 {
     InputChunkRefV1 {
         kind: InputChunkKind::Tribute,
         ordinal,
@@ -136,10 +131,7 @@ fn primary_work_is_unbounded_in_total_and_partitioned_in_exact_256_record_shards
 fn enumerate_artifact_is_bounded_canonical_and_commits_raw_coverage() {
     let limits = poc_schema_limits();
     let day = WorldwideDay::new(20_260_724);
-    let mut tributes = vec![
-        tribute(1, day, 10, false),
-        tribute(2, day, 20, true),
-    ];
+    let mut tributes = vec![tribute(1, day, 10, false), tribute(2, day, 20, true)];
     tributes.sort_by_key(|tribute| tribute.tribute_id);
     let run = enumerate_tributes(256, day, &tributes).unwrap();
 
@@ -432,18 +424,22 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
             .map(|input| (input.purpose, input.source_kind))
             .collect::<Vec<_>>(),
         [
-            (InputPurpose::InputManifest, InputSourceKind::AuthenticatedRoot),
-            (InputPurpose::TributeStream, InputSourceKind::AuthenticatedRoot),
+            (
+                InputPurpose::InputManifest,
+                InputSourceKind::AuthenticatedRoot
+            ),
+            (
+                InputPurpose::TributeStream,
+                InputSourceKind::AuthenticatedRoot
+            ),
         ]
     );
     assert_eq!(
         first.interval,
-        UnitInterval::EntityIdRange(
-            outbe_ocomp_protocol::unit::EntityIdHalfOpenRange {
-                start: ids[0],
-                end: Some(ids[256]),
-            }
-        )
+        UnitInterval::EntityIdRange(outbe_ocomp_protocol::unit::EntityIdHalfOpenRange {
+            start: ids[0],
+            end: Some(ids[256]),
+        })
     );
     assert_eq!(
         first.canonical_ordered_inputs[1].source_id,
@@ -468,12 +464,10 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     assert_eq!(lookups, [1]);
     assert_eq!(
         second.interval,
-        UnitInterval::EntityIdRange(
-            outbe_ocomp_protocol::unit::EntityIdHalfOpenRange {
-                start: ids[256],
-                end: None,
-            }
-        )
+        UnitInterval::EntityIdRange(outbe_ocomp_protocol::unit::EntityIdHalfOpenRange {
+            start: ids[256],
+            end: None,
+        })
     );
     assert_eq!(
         second.canonical_ordered_inputs[1].source_id,
@@ -545,12 +539,10 @@ fn fidelity_map_unit_is_derived_only_from_plan_and_exact_enumerate_unit() {
     assert_eq!(first.phase, UnitPhase::FidelityMap);
     assert_eq!(
         first.interval,
-        UnitInterval::FidelityIndexRange(
-            outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
-                start: 0,
-                end: 256,
-            }
-        )
+        UnitInterval::FidelityIndexRange(outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
+            start: 0,
+            end: 256,
+        })
     );
     assert_eq!(
         first
@@ -582,12 +574,10 @@ fn fidelity_map_unit_is_derived_only_from_plan_and_exact_enumerate_unit() {
         .unwrap();
     assert_eq!(
         second.interval,
-        UnitInterval::FidelityIndexRange(
-            outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
-                start: 256,
-                end: 257,
-            }
-        )
+        UnitInterval::FidelityIndexRange(outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
+            start: 256,
+            end: 257,
+        })
     );
     assert_ne!(
         first.unit_id(&limits).unwrap(),
@@ -615,9 +605,10 @@ fn fixed_reduce_units_bind_exact_left_right_producers_and_canonical_padding() {
     assert_eq!(first.phase, UnitPhase::FixedReduce);
     assert_eq!(
         first.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 0 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 1,
+            index: 0
+        })
     );
     assert_eq!(
         first
@@ -657,11 +648,7 @@ fn amount_map_unit_binds_exact_enumerate_fidelity_root_and_oracle_inputs() {
         tribute_chunk_ref(1, &ids[256..], 100),
     ];
     let enumerate = planner
-        .primary_unit_at(
-            1,
-            |ordinal| chunks.get(ordinal as usize).cloned(),
-            &limits,
-        )
+        .primary_unit_at(1, |ordinal| chunks.get(ordinal as usize).cloned(), &limits)
         .unwrap();
     let enumerate_id = enumerate.unit_id(&limits).unwrap();
     let fidelity_id = B256::repeat_byte(0x51);
@@ -721,9 +708,10 @@ fn gratis_prefix_units_bind_exact_amount_children_and_padding() {
     assert_eq!(leaf.phase, UnitPhase::GratisPrefix);
     assert_eq!(
         leaf.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 0, index: 0 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 0,
+            index: 0
+        })
     );
     assert_eq!(
         leaf.canonical_ordered_inputs[1].purpose,
@@ -736,9 +724,10 @@ fn gratis_prefix_units_bind_exact_amount_children_and_padding() {
         .unwrap();
     assert_eq!(
         internal.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 0 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 1,
+            index: 0
+        })
     );
     assert!(internal
         .canonical_ordered_inputs
@@ -775,28 +764,23 @@ fn gratis_prefix_down_units_bind_parent_and_immediate_summaries() {
     assert_eq!(root.phase, UnitPhase::GratisPrefixDown);
     assert_eq!(
         root.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 2, index: 0 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 2,
+            index: 0
+        })
     );
 
     let internal = planner
-        .gratis_prefix_down_unit_at(
-            2,
-            &[Some(parent), Some(left), None],
-            &limits,
-        )
+        .gratis_prefix_down_unit_at(2, &[Some(parent), Some(left), None], &limits)
         .unwrap();
     assert_eq!(
         internal.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 1 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 1,
+            index: 1
+        })
     );
-    assert_eq!(
-        internal.canonical_ordered_inputs[1].source_id,
-        parent
-    );
+    assert_eq!(internal.canonical_ordered_inputs[1].source_id, parent);
     assert_eq!(
         internal.canonical_ordered_inputs[3].source_kind,
         InputSourceKind::CanonicalEmpty
@@ -807,9 +791,10 @@ fn gratis_prefix_down_units_bind_parent_and_immediate_summaries() {
         .unwrap();
     assert_eq!(
         leaf.interval,
-        UnitInterval::BinaryReducerNode(
-            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 0, index: 2 }
-        )
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 0,
+            index: 2
+        })
     );
     assert!(leaf
         .canonical_ordered_inputs
@@ -831,11 +816,7 @@ fn output_finalize_unit_binds_exact_amount_and_leaf_prefix() {
         tribute_chunk_ref(1, &ids[256..], 100),
     ];
     let enumerate = planner
-        .primary_unit_at(
-            1,
-            |ordinal| chunks.get(ordinal as usize).cloned(),
-            &limits,
-        )
+        .primary_unit_at(1, |ordinal| chunks.get(ordinal as usize).cloned(), &limits)
         .unwrap();
     let amount = planner
         .amount_map_unit_at(
@@ -889,21 +870,14 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
     let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
     let leaf_source = B256::repeat_byte(0x71);
     let leaf = planner
-        .shuffle_unit_at(
-            UnitPhase::OwnerShuffle,
-            2,
-            &[leaf_source],
-            &limits,
-        )
+        .shuffle_unit_at(UnitPhase::OwnerShuffle, 2, &[leaf_source], &limits)
         .unwrap();
     assert_eq!(
         leaf.interval,
-        UnitInterval::CanonicalRunSpan(
-            outbe_ocomp_protocol::unit::CanonicalRunSpan {
-                start_run: 2,
-                end_run: 3,
-            }
-        )
+        UnitInterval::CanonicalRunSpan(outbe_ocomp_protocol::unit::CanonicalRunSpan {
+            start_run: 2,
+            end_run: 3,
+        })
     );
     assert_eq!(
         leaf.canonical_ordered_inputs[1].purpose,
@@ -914,21 +888,14 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
     let left = B256::repeat_byte(0x72);
     let right = B256::repeat_byte(0x73);
     let root = planner
-        .shuffle_unit_at(
-            UnitPhase::OwnerShuffle,
-            4,
-            &[left, right],
-            &limits,
-        )
+        .shuffle_unit_at(UnitPhase::OwnerShuffle, 4, &[left, right], &limits)
         .unwrap();
     assert_eq!(
         root.interval,
-        UnitInterval::CanonicalRunSpan(
-            outbe_ocomp_protocol::unit::CanonicalRunSpan {
-                start_run: 0,
-                end_run: 3,
-            }
-        )
+        UnitInterval::CanonicalRunSpan(outbe_ocomp_protocol::unit::CanonicalRunSpan {
+            start_run: 0,
+            end_run: 3,
+        })
     );
     assert_eq!(
         root.canonical_ordered_inputs[1..]
@@ -952,15 +919,83 @@ fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
         .shuffle_unit_at(UnitPhase::OwnerShuffle, 4, &[left], &limits)
         .is_err());
     assert!(planner
-        .shuffle_unit_at(
-            UnitPhase::BucketShuffle,
-            4,
-            &[left, B256::ZERO],
-            &limits,
-        )
+        .shuffle_unit_at(UnitPhase::BucketShuffle, 4, &[left, B256::ZERO], &limits,)
         .is_err());
     assert!(planner
         .shuffle_unit_at(UnitPhase::RootReduce, 4, &[left, right], &limits)
+        .is_err());
+}
+
+#[test]
+fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
+    let finalized = B256::repeat_byte(0x81);
+    let owner_root = B256::repeat_byte(0x82);
+    let bucket_root = B256::repeat_byte(0x83);
+
+    let leaf = planner
+        .root_reduce_unit_at(
+            2,
+            &[Some(finalized), Some(owner_root), Some(bucket_root)],
+            &limits,
+        )
+        .unwrap();
+    assert_eq!(leaf.phase, UnitPhase::RootReduce);
+    assert_eq!(
+        leaf.interval,
+        UnitInterval::BinaryReducerNode(outbe_ocomp_protocol::unit::BinaryReducerNode {
+            level: 0,
+            index: 2
+        })
+    );
+    assert_eq!(
+        leaf.canonical_ordered_inputs[1..]
+            .iter()
+            .map(|input| (input.purpose, input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (
+                InputPurpose::FinalizedOutputRecords,
+                InputSourceKind::UnitOutput,
+                finalized,
+            ),
+            (
+                InputPurpose::OwnerOrderedRecords,
+                InputSourceKind::UnitOutput,
+                owner_root,
+            ),
+            (
+                InputPurpose::BucketOrderedRecords,
+                InputSourceKind::UnitOutput,
+                bucket_root,
+            ),
+        ]
+    );
+
+    let left = B256::repeat_byte(0x84);
+    let right = B256::repeat_byte(0x85);
+    let internal = planner
+        .root_reduce_unit_at(3, &[Some(left), Some(right)], &limits)
+        .unwrap();
+    assert!(internal
+        .canonical_ordered_inputs
+        .iter()
+        .skip(1)
+        .all(|input| input.purpose == InputPurpose::RootSummary));
+
+    let padded = planner
+        .root_reduce_unit_at(4, &[Some(left), None], &limits)
+        .unwrap();
+    assert_eq!(
+        padded.canonical_ordered_inputs[2].source_kind,
+        InputSourceKind::CanonicalEmpty
+    );
+    assert!(planner
+        .root_reduce_unit_at(2, &[Some(finalized), Some(owner_root)], &limits)
+        .is_err());
+    assert!(planner
+        .root_reduce_unit_at(3, &[Some(left), Some(B256::ZERO)], &limits)
         .is_err());
 }
 
@@ -1033,10 +1068,19 @@ fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
             .map(|level| primary_count.div_ceil(1_u32 << level))
             .sum::<u32>();
 
-        assert_eq!(topology.phase_unit_count(UnitPhase::Enumerate), primary_count);
-        assert_eq!(topology.phase_unit_count(UnitPhase::FidelityMap), primary_count);
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::Enumerate),
+            primary_count
+        );
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::FidelityMap),
+            primary_count
+        );
         assert_eq!(topology.phase_unit_count(UnitPhase::FixedReduce), internal);
-        assert_eq!(topology.phase_unit_count(UnitPhase::AmountMap), primary_count);
+        assert_eq!(
+            topology.phase_unit_count(UnitPhase::AmountMap),
+            primary_count
+        );
         assert_eq!(
             topology.phase_unit_count(UnitPhase::GratisPrefix),
             primary_count + active_internal
@@ -1193,8 +1237,11 @@ fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
                 } if end_run == primary_count
             ));
 
-            for (consumer_ordinal, consumer) in
-                positions.iter().copied().enumerate().skip(primary_count as usize)
+            for (consumer_ordinal, consumer) in positions
+                .iter()
+                .copied()
+                .enumerate()
+                .skip(primary_count as usize)
             {
                 let producers = topology.required_producers(consumer).unwrap();
                 assert_eq!(producers.len(), 2);
@@ -1726,10 +1773,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         sequential.contributors.len()
     );
     assert!(owner_chunk_sizes.iter().all(|count| *count <= 64));
-    assert_eq!(
-        owner_summary.chunk_count as usize,
-        owner_chunk_sizes.len()
-    );
+    assert_eq!(owner_summary.chunk_count as usize, owner_chunk_sizes.len());
 
     let mut bucket_chunk_sizes = Vec::new();
     let mut previous_bucket_key = None;
@@ -1886,9 +1930,7 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
             }
         }
 
-        let FidelityReduceValueV1::Aggregate(root) =
-            nodes.get(&(tree.height(), 0)).unwrap()
-        else {
+        let FidelityReduceValueV1::Aggregate(root) = nodes.get(&(tree.height(), 0)).unwrap() else {
             panic!("a non-empty plan must have a non-empty Fidelity root");
         };
         assert_eq!(root.tribute_count, primary_count);
@@ -1919,11 +1961,20 @@ fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
         GratisSummaryValueV1::Summary(second.clone()),
     )
     .unwrap();
-    assert_eq!(exact[0].as_ref().unwrap().incoming_remaining, Some(U256::from(257_u16)));
-    assert_eq!(exact[1].as_ref().unwrap().incoming_remaining, Some(U256::from(1_u8)));
-    let first_leaf =
-        finalize_gratis_leaf(exact[0].as_ref().unwrap().incoming_remaining, 0, &first_loads)
-            .unwrap();
+    assert_eq!(
+        exact[0].as_ref().unwrap().incoming_remaining,
+        Some(U256::from(257_u16))
+    );
+    assert_eq!(
+        exact[1].as_ref().unwrap().incoming_remaining,
+        Some(U256::from(1_u8))
+    );
+    let first_leaf = finalize_gratis_leaf(
+        exact[0].as_ref().unwrap().incoming_remaining,
+        0,
+        &first_loads,
+    )
+    .unwrap();
     let second_leaf = finalize_gratis_leaf(
         exact[1].as_ref().unwrap().incoming_remaining,
         256,
@@ -1948,9 +1999,7 @@ fn two_direction_gratis_prefix_preserves_exact_sequential_budget_semantics() {
     .unwrap_err();
     assert_eq!(
         error,
-        outbe_lysis::program_v1::ProgramErrorV1::GratisLoadExceedsRemaining {
-            ordinal: 256
-        }
+        outbe_lysis::program_v1::ProgramErrorV1::GratisLoadExceedsRemaining { ordinal: 256 }
     );
 }
 

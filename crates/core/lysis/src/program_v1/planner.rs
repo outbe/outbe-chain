@@ -63,16 +63,25 @@ impl fmt::Display for PlannerErrorV1 {
                 "primary shard {ordinal} is outside 0..{primary_leaf_count}"
             ),
             Self::ReducerNodeOutOfRange { level, index } => {
-                write!(formatter, "reducer node ({level}, {index}) is outside the fixed tree")
+                write!(
+                    formatter,
+                    "reducer node ({level}, {index}) is outside the fixed tree"
+                )
             }
             Self::MissingTributeChunk { ordinal } => {
                 write!(formatter, "Tribute input chunk is missing shard {ordinal}")
             }
             Self::UnexpectedTributeChunk { ordinal } => {
-                write!(formatter, "Tribute input chunk has an extra shard {ordinal}")
+                write!(
+                    formatter,
+                    "Tribute input chunk has an extra shard {ordinal}"
+                )
             }
             Self::InvalidTributeChunk { ordinal } => {
-                write!(formatter, "Tribute input chunk does not bind shard {ordinal}")
+                write!(
+                    formatter,
+                    "Tribute input chunk does not bind shard {ordinal}"
+                )
             }
             Self::PhasePositionOutOfRange {
                 phase,
@@ -85,7 +94,10 @@ impl fmt::Display for PlannerErrorV1 {
             Self::PlanPositionOutOfRange {
                 ordinal,
                 total_unit_count,
-            } => write!(formatter, "plan unit {ordinal} is outside 0..{total_unit_count}"),
+            } => write!(
+                formatter,
+                "plan unit {ordinal} is outside 0..{total_unit_count}"
+            ),
             Self::ProducerMembershipMismatch => {
                 formatter.write_str("unit producer list is not the exact derived list")
             }
@@ -237,14 +249,11 @@ fn chunk_first_id(
     chunk: &InputChunkRefV1,
     shard_ordinal: u32,
 ) -> Result<EntityId36, PlannerErrorV1> {
-    let bytes: [u8; 36] = chunk
-        .first_key
-        .0
-        .as_slice()
-        .try_into()
-        .map_err(|_| PlannerErrorV1::InvalidTributeChunk {
+    let bytes: [u8; 36] = chunk.first_key.0.as_slice().try_into().map_err(|_| {
+        PlannerErrorV1::InvalidTributeChunk {
             ordinal: shard_ordinal,
-        })?;
+        }
+    })?;
     Ok(EntityId36(bytes))
 }
 
@@ -299,11 +308,9 @@ impl LysisPlannerV1 {
                 .checked_add(1)
                 .ok_or(PlannerErrorV1::IntegerOverflow)?;
             Some(chunk_first_id(
-                &tribute_chunk_at(next_ordinal).ok_or(
-                    PlannerErrorV1::MissingTributeChunk {
-                        ordinal: next_ordinal,
-                    },
-                )?,
+                &tribute_chunk_at(next_ordinal).ok_or(PlannerErrorV1::MissingTributeChunk {
+                    ordinal: next_ordinal,
+                })?,
                 next_ordinal,
             )?)
         } else {
@@ -327,11 +334,9 @@ impl LysisPlannerV1 {
         )?;
 
         for shard_ordinal in 0..self.primary_work_unit_count() {
-            let tribute_chunk = chunks
-                .next()
-                .ok_or(PlannerErrorV1::MissingTributeChunk {
-                    ordinal: shard_ordinal,
-                })?;
+            let tribute_chunk = chunks.next().ok_or(PlannerErrorV1::MissingTributeChunk {
+                ordinal: shard_ordinal,
+            })?;
             let shard = self.primary_tree.primary_shard(shard_ordinal)?;
             let start = chunk_first_id(&tribute_chunk, shard_ordinal)?;
             let end = chunks
@@ -459,10 +464,8 @@ impl LysisPlannerV1 {
                         source_kind: InputSourceKind::UnitOutput,
                         source_id: unit_id,
                         record_count_limit: self.bindings.tribute_count,
-                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
-                            .max_activation_ocb1_bytes,
-                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
-                            .max_activation_ocb1_bytes,
+                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
+                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
                     }
                 }
                 (
@@ -658,8 +661,7 @@ impl LysisPlannerV1 {
             return Err(PlannerErrorV1::ProducerMembershipMismatch);
         };
         let producers = topology.required_producers(position)?;
-        if producers.len() != producer_unit_ids.len()
-            || producer_unit_ids.iter().any(B256::is_zero)
+        if producers.len() != producer_unit_ids.len() || producer_unit_ids.iter().any(B256::is_zero)
         {
             return Err(PlannerErrorV1::ProducerMembershipMismatch);
         }
@@ -696,10 +698,134 @@ impl LysisPlannerV1 {
             job_id: self.bindings.job_id,
             attempt: self.bindings.attempt,
             phase,
-            interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan {
-                start_run,
-                end_run,
-            }),
+            interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan { start_run, end_run }),
+            canonical_ordered_inputs,
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
+    pub fn root_reduce_unit_at(
+        self,
+        phase_ordinal: u32,
+        producer_unit_ids: &[Option<B256>],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
+        let position = topology.phase_position_at(UnitPhase::RootReduce, phase_ordinal)?;
+        let PlannedUnitPositionV1::TreeNode {
+            phase: UnitPhase::RootReduce,
+            level,
+            index,
+        } = position
+        else {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        };
+        let producers = topology.required_producers(position)?;
+        if producers.len() != producer_unit_ids.len() {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let mut canonical_ordered_inputs = vec![CanonicalInputRefV1 {
+            purpose: InputPurpose::InputManifest,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: self.bindings.input_manifest_hash,
+            record_count_limit: 1,
+            max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+            max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+        }];
+        for (producer, unit_id) in producers.into_iter().zip(producer_unit_ids.iter().copied()) {
+            let input = match (producer, unit_id) {
+                (
+                    PlannedProducerV1::Unit(
+                        position @ PlannedUnitPositionV1::Primary {
+                            phase: UnitPhase::OutputFinalize,
+                            ..
+                        },
+                    ),
+                    Some(unit_id),
+                ) if !unit_id.is_zero() => CanonicalInputRefV1 {
+                    purpose: InputPurpose::FinalizedOutputRecords,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: unit_id,
+                    record_count_limit: self.shuffle_position_record_limit(position)?,
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                (
+                    PlannedProducerV1::Unit(
+                        position @ PlannedUnitPositionV1::RunSpan {
+                            phase: UnitPhase::OwnerShuffle,
+                            ..
+                        },
+                    ),
+                    Some(unit_id),
+                ) if !unit_id.is_zero() => CanonicalInputRefV1 {
+                    purpose: InputPurpose::OwnerOrderedRecords,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: unit_id,
+                    record_count_limit: self.shuffle_position_record_limit(position)?,
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                (
+                    PlannedProducerV1::Unit(
+                        position @ PlannedUnitPositionV1::RunSpan {
+                            phase: UnitPhase::BucketShuffle,
+                            ..
+                        },
+                    ),
+                    Some(unit_id),
+                ) if !unit_id.is_zero() => CanonicalInputRefV1 {
+                    purpose: InputPurpose::BucketOrderedRecords,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: unit_id,
+                    record_count_limit: self.shuffle_position_record_limit(position)?,
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                (
+                    PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                        phase: UnitPhase::RootReduce,
+                        ..
+                    }),
+                    Some(unit_id),
+                ) if !unit_id.is_zero() => CanonicalInputRefV1 {
+                    purpose: InputPurpose::RootSummary,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: unit_id,
+                    record_count_limit: self.bindings.tribute_count,
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                (
+                    PlannedProducerV1::CanonicalEmpty {
+                        purpose: InputPurpose::RootSummary,
+                        ..
+                    },
+                    None,
+                ) => CanonicalInputRefV1 {
+                    purpose: InputPurpose::RootSummary,
+                    source_kind: InputSourceKind::CanonicalEmpty,
+                    source_id: empty_unit_input_id(InputPurpose::RootSummary)?,
+                    record_count_limit: 0,
+                    max_encoded_bytes: 0,
+                    max_decoded_bytes: 0,
+                },
+                _ => return Err(PlannerErrorV1::ProducerMembershipMismatch),
+            };
+            canonical_ordered_inputs.push(input);
+        }
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase: UnitPhase::RootReduce,
+            interval: UnitInterval::BinaryReducerNode(BinaryReducerNode { level, index }),
             canonical_ordered_inputs,
             lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
             planner_spec_version: self.bindings.planner_spec_version,
@@ -837,10 +963,8 @@ impl LysisPlannerV1 {
                         source_kind: InputSourceKind::UnitOutput,
                         source_id: unit_id,
                         record_count_limit: self.bindings.tribute_count,
-                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
-                            .max_activation_ocb1_bytes,
-                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
-                            .max_activation_ocb1_bytes,
+                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
+                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
                     }
                 }
                 (
@@ -1014,10 +1138,7 @@ impl LysisPlanTopologyV1 {
             .sum()
     }
 
-    pub fn plan_position_at(
-        self,
-        ordinal: u32,
-    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+    pub fn plan_position_at(self, ordinal: u32) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
         let mut offset = 0_u32;
         for phase in LYSIS_PLAN_PHASE_ORDER {
             let count = self.phase_unit_count(phase);
@@ -1050,10 +1171,7 @@ impl LysisPlanTopologyV1 {
             UnitPhase::Enumerate
             | UnitPhase::FidelityMap
             | UnitPhase::AmountMap
-            | UnitPhase::OutputFinalize => Ok(PlannedUnitPositionV1::Primary {
-                phase,
-                ordinal,
-            }),
+            | UnitPhase::OutputFinalize => Ok(PlannedUnitPositionV1::Primary { phase, ordinal }),
             UnitPhase::FixedReduce => {
                 let (level, index) = self.full_bottom_up_node_at(ordinal)?;
                 Ok(PlannedUnitPositionV1::TreeNode {
@@ -1235,13 +1353,11 @@ impl LysisPlanTopologyV1 {
                     Ok(child_summaries)
                 } else if level < self.tree.height {
                     let mut producers = Vec::with_capacity(3);
-                    producers.push(PlannedProducerV1::Unit(
-                        PlannedUnitPositionV1::TreeNode {
-                            phase: UnitPhase::GratisPrefixDown,
-                            level: level + 1,
-                            index: index / 2,
-                        },
-                    ));
+                    producers.push(PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                        phase: UnitPhase::GratisPrefixDown,
+                        level: level + 1,
+                        index: index / 2,
+                    }));
                     producers.extend(child_summaries);
                     Ok(producers)
                 } else {
@@ -1347,10 +1463,7 @@ impl LysisPlanTopologyV1 {
         }
     }
 
-    fn shuffle_root(
-        self,
-        phase: UnitPhase,
-    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+    fn shuffle_root(self, phase: UnitPhase) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
         self.run_span_root_position(phase, 0, self.tree.primary_leaf_count)
     }
 
@@ -1425,9 +1538,7 @@ impl LysisPlanTopologyV1 {
         } else if full_tree {
             self.tree.padded_leaf_count >> child_level
         } else {
-            self.tree
-                .primary_leaf_count
-                .div_ceil(1_u32 << child_level)
+            self.tree.primary_leaf_count.div_ceil(1_u32 << child_level)
         };
         if child_index >= child_count {
             return PlannedProducerV1::CanonicalEmpty {
@@ -1461,9 +1572,7 @@ impl LysisPlanTopologyV1 {
         }
         let position = self.run_span_position(phase, level, index)?;
         let PlannedUnitPositionV1::RunSpan {
-            start_run,
-            end_run,
-            ..
+            start_run, end_run, ..
         } = position
         else {
             return Err(PlannerErrorV1::ProducerMembershipMismatch);
@@ -1479,9 +1588,7 @@ impl LysisPlanTopologyV1 {
             .checked_add(left_width)
             .ok_or(PlannerErrorV1::IntegerOverflow)?;
         Ok(vec![
-            PlannedProducerV1::Unit(self.run_span_root_position(
-                phase, start_run, split,
-            )?),
+            PlannedProducerV1::Unit(self.run_span_root_position(phase, start_run, split)?),
             PlannedProducerV1::Unit(self.run_span_root_position(phase, split, end_run)?),
         ])
     }
@@ -1521,10 +1628,7 @@ impl LysisPlanTopologyV1 {
             .sum()
     }
 
-    fn shuffle_internal_node_at(
-        self,
-        mut ordinal: u32,
-    ) -> Result<(u16, u32), PlannerErrorV1> {
+    fn shuffle_internal_node_at(self, mut ordinal: u32) -> Result<(u16, u32), PlannerErrorV1> {
         let primary = self.tree.primary_leaf_count;
         for level in 1..=self.tree.height {
             let half_width = 1_u32
@@ -1557,10 +1661,7 @@ impl LysisPlanTopologyV1 {
         Err(PlannerErrorV1::IntegerOverflow)
     }
 
-    fn active_bottom_up_node_at(
-        self,
-        mut ordinal: u32,
-    ) -> Result<(u16, u32), PlannerErrorV1> {
+    fn active_bottom_up_node_at(self, mut ordinal: u32) -> Result<(u16, u32), PlannerErrorV1> {
         for level in 1..=self.tree.height {
             let width = self.tree.primary_leaf_count.div_ceil(1_u32 << level);
             if ordinal < width {
@@ -1571,10 +1672,7 @@ impl LysisPlanTopologyV1 {
         Err(PlannerErrorV1::IntegerOverflow)
     }
 
-    fn active_top_down_node_at(
-        self,
-        mut ordinal: u32,
-    ) -> Result<(u16, u32), PlannerErrorV1> {
+    fn active_top_down_node_at(self, mut ordinal: u32) -> Result<(u16, u32), PlannerErrorV1> {
         for level in (1..=self.tree.height).rev() {
             let width = self.tree.primary_leaf_count.div_ceil(1_u32 << level);
             if ordinal < width {
@@ -1594,9 +1692,7 @@ impl PaddedBinaryTreeV1 {
         Ok(tree)
     }
 
-    pub fn for_primary_leaf_count(
-        primary_leaf_count: u32,
-    ) -> Result<Self, PlannerErrorV1> {
+    pub fn for_primary_leaf_count(primary_leaf_count: u32) -> Result<Self, PlannerErrorV1> {
         if primary_leaf_count == 0 {
             return Err(PlannerErrorV1::EmptyTributePopulation);
         }
@@ -1641,9 +1737,7 @@ impl PaddedBinaryTreeV1 {
                 primary_leaf_count: self.primary_leaf_count,
             });
         }
-        let tribute_count = self
-            .tribute_count
-            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let tribute_count = self.tribute_count.ok_or(PlannerErrorV1::IntegerOverflow)?;
         let start_ordinal = ordinal
             .checked_mul(PRIMARY_WORK_SHARD_SIZE)
             .ok_or(PlannerErrorV1::IntegerOverflow)?;
@@ -1657,11 +1751,7 @@ impl PaddedBinaryTreeV1 {
         })
     }
 
-    pub fn reducer_node(
-        self,
-        level: u16,
-        index: u32,
-    ) -> Result<ReducerNodeV1, PlannerErrorV1> {
+    pub fn reducer_node(self, level: u16, index: u32) -> Result<ReducerNodeV1, PlannerErrorV1> {
         if level == 0 || level > self.height {
             return Err(PlannerErrorV1::ReducerNodeOutOfRange { level, index });
         }
