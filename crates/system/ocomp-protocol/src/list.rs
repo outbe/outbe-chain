@@ -271,6 +271,61 @@ pub fn root_hash(
     hash_framed(HashDomain::ListRoot, &payload)
 }
 
+/// Verifies one real leaf against the frozen ordered-list commitment without
+/// materializing the complete catalog. Siblings are ordered bottom-up.
+pub fn verify_ordered_list_membership(
+    kind: ListKind,
+    real_count: u32,
+    index: u32,
+    item: &[u8],
+    siblings: &[B256],
+    expected_root: B256,
+) -> Result<(), ProtocolError> {
+    if real_count == 0 || index >= real_count || expected_root.is_zero() {
+        return Err(ProtocolError::InvalidInvariant(
+            "ordered-list membership bounds",
+        ));
+    }
+    let padded_count =
+        real_count
+            .checked_next_power_of_two()
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "ordered-list membership padded count",
+            })?;
+    let tree_height = u16::try_from(padded_count.trailing_zeros()).map_err(|_| {
+        ProtocolError::IntegerOverflow {
+            what: "ordered-list membership tree height",
+        }
+    })?;
+    if siblings.len() != usize::from(tree_height) {
+        return Err(ProtocolError::InvalidInvariant(
+            "ordered-list membership proof height",
+        ));
+    }
+
+    let mut position = index;
+    let mut hash = leaf_hash(kind, index, item)?;
+    for (offset, sibling) in siblings.iter().enumerate() {
+        let level = u16::try_from(offset + 1).map_err(|_| ProtocolError::IntegerOverflow {
+            what: "ordered-list membership level",
+        })?;
+        let parent_index = position >> 1;
+        hash = if position & 1 == 0 {
+            node_hash(kind, level, parent_index, hash, *sibling)?
+        } else {
+            node_hash(kind, level, parent_index, *sibling, hash)?
+        };
+        position = parent_index;
+    }
+    let actual_root = root_hash(kind, real_count, tree_height, hash)?;
+    if actual_root != expected_root {
+        return Err(ProtocolError::InvalidInvariant(
+            "ordered-list membership root",
+        ));
+    }
+    Ok(())
+}
+
 fn index_as_u32(index: usize) -> Result<u32, ProtocolError> {
     u32::try_from(index).map_err(|_| ProtocolError::IntegerOverflow {
         what: "ordered-list index",

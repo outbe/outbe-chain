@@ -1,6 +1,9 @@
 use outbe_ocomp_protocol::{
     ordered_list_root, registry::ListKind, OrderedListLimits, StreamingOrderedListRoot,
 };
+use outbe_ocomp_protocol::list::{
+    leaf_hash, node_hash, pad_hash, verify_ordered_list_membership,
+};
 
 #[test]
 fn streaming_root_matches_the_frozen_ordered_list_scheme_without_a_catalog_vector() {
@@ -33,4 +36,34 @@ fn streaming_root_requires_the_exact_declared_population() {
         StreamingOrderedListRoot::new(ListKind::UnitSpecificationsArtifacts, 1).unwrap();
     root.push(b"first", 64).unwrap();
     assert!(root.push(b"extra", 64).is_err());
+}
+
+#[test]
+fn ordered_list_membership_binds_item_position_population_and_root() {
+    let kind = ListKind::UnitSpecificationsArtifacts;
+    let items = [b"first".as_slice(), b"second".as_slice(), b"third".as_slice()];
+    let expected =
+        ordered_list_root(kind, &items, OrderedListLimits::new(16, 64, 16 * 32)).unwrap();
+    let left_root = node_hash(
+        kind,
+        1,
+        0,
+        leaf_hash(kind, 0, items[0]).unwrap(),
+        leaf_hash(kind, 1, items[1]).unwrap(),
+    )
+    .unwrap();
+    let proof = [pad_hash(kind, 3).unwrap(), left_root];
+
+    verify_ordered_list_membership(kind, 3, 2, items[2], &proof, expected).unwrap();
+    assert!(
+        verify_ordered_list_membership(kind, 3, 2, b"changed", &proof, expected).is_err()
+    );
+    assert!(verify_ordered_list_membership(kind, 3, 1, items[2], &proof, expected).is_err());
+    assert!(verify_ordered_list_membership(kind, 4, 2, items[2], &proof, expected).is_err());
+
+    let mut changed_proof = proof;
+    changed_proof[0] = leaf_hash(kind, 3, b"not padding").unwrap();
+    assert!(
+        verify_ordered_list_membership(kind, 3, 2, items[2], &changed_proof, expected).is_err()
+    );
 }
