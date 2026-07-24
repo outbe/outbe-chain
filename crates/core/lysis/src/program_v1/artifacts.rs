@@ -13,7 +13,8 @@ use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
 
 use super::execute::validate_canonical_tributes;
 use super::phases::{
-    FidelityAggregateV1, FidelityLeaguePartialV1, FidelityMapOutputV1, FidelityObservationV1,
+    AmountRecordV1, AmountRunV1, FidelityAggregateV1, FidelityLeaguePartialV1,
+    FidelityMapOutputV1, FidelityObservationV1,
 };
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
 use super::{LeagueFractionV1, ProgramErrorV1, TributeInputV1};
@@ -21,6 +22,7 @@ use super::{LeagueFractionV1, ProgramErrorV1, TributeInputV1};
 const ENUMERATED_RUN_MAGIC: [u8; 4] = *b"LYE1";
 const FIDELITY_MAP_MAGIC: [u8; 4] = *b"LYF1";
 const FIXED_REDUCE_MAGIC: [u8; 4] = *b"LYR1";
+const AMOUNT_RUN_MAGIC: [u8; 4] = *b"LYA1";
 const RAW_COVERAGE_CARRIER_MAGIC: [u8; 4] = *b"LYC1";
 const COVERAGE_RECORD_BYTES: usize = 40;
 const PRIMARY_SUBTREE_HEIGHT: u16 = 8;
@@ -232,6 +234,17 @@ impl FidelityMapOutputV1 {
     }
 }
 
+impl AmountRunV1 {
+    pub fn coverage_root(&self) -> Result<B256, LysisArtifactErrorV1> {
+        validate_amount_run(self)?;
+        raw_coverage_root(
+            self.ordered_records
+                .iter()
+                .map(|record| (record.raw_ordinal, record.tribute_id.as_bytes())),
+        )
+    }
+}
+
 #[derive(Debug)]
 pub enum LysisArtifactErrorV1 {
     InvalidEncoding(&'static str),
@@ -428,6 +441,97 @@ pub fn decode_fixed_reduce_output(
         ));
     }
     Ok(output)
+}
+
+pub fn encode_amount_run(
+    run: &AmountRunV1,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, LysisArtifactErrorV1> {
+    validate_amount_run(run)?;
+    let mut encoded = CanonicalWriter::new(limits.codec);
+    encoded.write_fixed(&AMOUNT_RUN_MAGIC)?;
+    encoded.write_u32(run.start_ordinal)?;
+    encoded.write_u32(run.end_ordinal)?;
+    encoded.write_u256(run.checked_segment_gratis_total)?;
+    encoded.write_u32(
+        u32::try_from(run.ordered_records.len())
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    for record in &run.ordered_records {
+        encoded.write_u32(record.raw_ordinal)?;
+        encoded.write_entity_id36(record.tribute_id.as_bytes())?;
+        encoded.write_address20(record.owner)?;
+        encoded.write_u32(record.worldwide_day.value())?;
+        encoded.write_u16(record.league_id)?;
+        encoded.write_u256(record.nominal_amount_minor)?;
+        encoded.write_u256(record.gratis_fraction_fp)?;
+        encoded.write_u256(record.gratis_load_minor)?;
+        encoded.write_u256(record.entry_price_minor)?;
+        encoded.write_u256(record.floor_price_minor)?;
+        encoded.write_u256(record.cost_amount_minor)?;
+        encoded.write_u16(record.issuance_currency)?;
+        encoded.write_u16(record.reference_currency)?;
+        encoded.write_bool(record.exclude_from_intex_issuance)?;
+    }
+    Ok(encoded.into_bytes())
+}
+
+pub fn decode_amount_run(
+    encoded: &[u8],
+    limits: &SchemaLimits,
+) -> Result<AmountRunV1, LysisArtifactErrorV1> {
+    let mut input = CanonicalReader::new(encoded, limits.codec)?;
+    if input.read_fixed::<4>()? != AMOUNT_RUN_MAGIC {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run header",
+        ));
+    }
+    let start_ordinal = input.read_u32()?;
+    let end_ordinal = input.read_u32()?;
+    let checked_segment_gratis_total = input.read_u256()?;
+    let count = input.read_u32()?;
+    validate_shard_size(
+        usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    let mut ordered_records = Vec::new();
+    ordered_records
+        .try_reserve_exact(
+            usize::try_from(count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+        )
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    for _ in 0..count {
+        ordered_records.push(AmountRecordV1 {
+            raw_ordinal: input.read_u32()?,
+            tribute_id: EntityId36::try_from(input.read_entity_id36()?.as_slice())
+                .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("amount Tribute id"))?,
+            owner: input.read_address20()?,
+            worldwide_day: WorldwideDay::new(input.read_u32()?),
+            league_id: input.read_u16()?,
+            nominal_amount_minor: input.read_u256()?,
+            gratis_fraction_fp: input.read_u256()?,
+            gratis_load_minor: input.read_u256()?,
+            entry_price_minor: input.read_u256()?,
+            floor_price_minor: input.read_u256()?,
+            cost_amount_minor: input.read_u256()?,
+            issuance_currency: input.read_u16()?,
+            reference_currency: input.read_u16()?,
+            exclude_from_intex_issuance: input.read_bool()?,
+        });
+    }
+    input.finish()?;
+    let run = AmountRunV1 {
+        start_ordinal,
+        end_ordinal,
+        ordered_records,
+        checked_segment_gratis_total,
+    };
+    validate_amount_run(&run)?;
+    if encode_amount_run(&run, limits)? != encoded {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run canonical re-encoding",
+        ));
+    }
+    Ok(run)
 }
 
 pub fn encode_enumerated_run(
@@ -750,6 +854,57 @@ fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), Lysi
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "Fidelity map league partial totals",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_amount_run(run: &AmountRunV1) -> Result<(), LysisArtifactErrorV1> {
+    validate_shard_size(run.ordered_records.len())?;
+    let count = u32::try_from(run.ordered_records.len())
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    if run.end_ordinal
+        != run
+            .start_ordinal
+            .checked_add(count)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+        || run.checked_segment_gratis_total.is_zero()
+    {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run aggregate range",
+        ));
+    }
+    let mut checked_gratis_total = U256::ZERO;
+    let mut previous_id = None;
+    for (offset, record) in run.ordered_records.iter().enumerate() {
+        let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        if record.raw_ordinal
+            != run
+                .start_ordinal
+                .checked_add(offset)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+            || previous_id.is_some_and(|previous| previous >= record.tribute_id)
+            || record.owner.is_zero()
+            || record.worldwide_day.value() == 0
+            || record.nominal_amount_minor.is_zero()
+            || record.gratis_fraction_fp.is_zero()
+            || record.gratis_load_minor.is_zero()
+            || record.entry_price_minor.is_zero()
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "amount run record order",
+            ));
+        }
+        previous_id = Some(record.tribute_id);
+        checked_gratis_total = checked_gratis_total
+            .checked_add(record.gratis_load_minor)
+            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
+                "amount run Gratis overflow",
+            ))?;
+    }
+    if checked_gratis_total != run.checked_segment_gratis_total {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "amount run Gratis total",
         ));
     }
     Ok(())

@@ -6,12 +6,13 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
-use outbe_lysis::program_v1::artifacts::decode_fixed_reduce_output;
+use outbe_lysis::program_v1::artifacts::{decode_amount_run, decode_fixed_reduce_output};
 use outbe_lysis::program_v1::planner::{LysisPlannerBindingsV1, LysisPlannerV1};
+use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -72,7 +73,7 @@ fn identity(boot: u8) -> EndpointIdentity {
 }
 
 #[test]
-fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
+fn real_worker_processes_execute_through_amount_map() {
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -107,16 +108,6 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
         tribute_price_minor: U256::from(2),
         exclude_from_intex_issuance: false,
     };
-    let raw = |address, slot| RawContractOpeningProofV1 {
-        contract_address: address,
-        state_root: finalized_state_root,
-        ordered_slots: vec![RawStorageSlotV1 {
-            slot: B256::repeat_byte(slot),
-            value: U256::from(slot),
-        }],
-        account_proof: ProofBytes(vec![0xa1]),
-        storage_proof: ProofBytes(vec![0xb1]),
-    };
     let fidelity_raw = RawContractOpeningProofV1 {
         contract_address: Address::repeat_byte(0x54),
         state_root: finalized_state_root,
@@ -128,6 +119,46 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
                 slot,
                 value: U256::ZERO,
             })
+            .collect(),
+        account_proof: ProofBytes(vec![0xa1]),
+        storage_proof: ProofBytes(vec![0xb1]),
+    };
+    let usd_pair = keccak256(b"USD/COEN");
+    let eur_pair = keccak256(b"EUR/COEN");
+    let oracle_plan = oracle_opening_slot_plan_v1(
+        day,
+        &[(840, usd_pair), (978, eur_pair)],
+        2,
+        0,
+        0,
+    )
+    .expect("fixture Oracle slot plan");
+    let scale = U256::from(1_000_000_000_000_000_000_u64);
+    let oracle_values = [
+        U256::from_be_bytes(keccak256(b"USD").0),
+        U256::from_be_bytes(usd_pair.0),
+        U256::from(1),
+        U256::from_be_bytes(keccak256(b"EUR").0),
+        U256::from_be_bytes(eur_pair.0),
+        U256::from(2),
+        U256::from(1),
+        U256::from(2),
+        U256::from(1),
+        scale,
+        U256::from(2),
+        scale * U256::from(2),
+        U256::ZERO,
+        U256::ZERO,
+    ];
+    assert_eq!(oracle_plan.slots.len(), oracle_values.len());
+    let oracle_raw = RawContractOpeningProofV1 {
+        contract_address: Address::repeat_byte(0x56),
+        state_root: finalized_state_root,
+        ordered_slots: oracle_plan
+            .slots
+            .into_iter()
+            .zip(oracle_values)
+            .map(|(slot, value)| RawStorageSlotV1 { slot, value })
             .collect(),
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
@@ -146,7 +177,7 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
                 settlement_isos: vec![840, 978],
             },
             fidelity: fidelity_raw,
-            oracle: raw(Address::repeat_byte(0x56), 0x57),
+            oracle: oracle_raw,
         },
         &bundle,
         &limits,
@@ -275,7 +306,7 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
         command
             .args([
                 "--exact",
-                "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
+                "real_worker_processes_execute_through_amount_map",
                 "--nocapture",
             ])
             .env(CHILD_MODE, "1")
@@ -424,7 +455,7 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
+            "real_worker_processes_execute_through_amount_map",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -482,7 +513,11 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
                 unit_membership_siblings: Vec::new(),
                 plan_ref: plan_ref.clone(),
                 input_manifest_ref: published.manifest_ref.clone(),
-                ordered_input_refs: vec![producer_ref, tribute_ref, fidelity_ref],
+                ordered_input_refs: vec![
+                    producer_ref.clone(),
+                    tribute_ref.clone(),
+                    fidelity_ref,
+                ],
             }
             .encode_body(&limits)
             .expect("Fidelity RunUnit body"),
@@ -535,7 +570,7 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
     command
         .args([
             "--exact",
-            "real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce",
+            "real_worker_processes_execute_through_amount_map",
             "--nocapture",
         ])
         .env(CHILD_MODE, "1")
@@ -591,9 +626,9 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
                         .expect("canonical FixedReduce spec"),
                 ),
                 unit_membership_siblings: Vec::new(),
-                plan_ref,
-                input_manifest_ref: published.manifest_ref,
-                ordered_input_refs: vec![fidelity_producer_ref],
+                plan_ref: plan_ref.clone(),
+                input_manifest_ref: published.manifest_ref.clone(),
+                ordered_input_refs: vec![fidelity_producer_ref.clone()],
             }
             .encode_body(&limits)
             .expect("FixedReduce RunUnit body"),
@@ -632,6 +667,144 @@ fn real_worker_processes_execute_enumerate_fidelity_then_fixed_reduce() {
             .expect("decode FixedReduce phase output");
     assert_eq!(reduced.aggregate.unwrap().tribute_count, 1);
     assert!(!reduced.ordered_fractions.is_empty());
+
+    let mut reduce_producer_ref = cas
+        .publish_bytes(
+            &reduce_artifact
+                .encode_canonical(&limits)
+                .expect("canonical FixedReduce artifact"),
+        )
+        .expect("publish FixedReduce producer artifact");
+    reduce_producer_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let amount_spec = planner
+        .amount_map_unit_at(
+            0,
+            &spec,
+            fidelity_artifact.unit_id,
+            reduce_artifact.unit_id,
+            &limits,
+        )
+        .expect("derive AmountMap unit");
+    let amount_unit_id = amount_spec.unit_id(&limits).expect("AmountMap UnitId");
+    let oracle_ref = published
+        .ordered_chunk_refs
+        .iter()
+        .find(|reference| {
+            cas.read_verified(reference)
+                .ok()
+                .and_then(|object| derive_input_chunk_ref(&object, &bundle, &limits).ok())
+                .is_some_and(|derived| derived.reference.kind == InputChunkKind::Oracle)
+        })
+        .cloned()
+        .expect("fixture Oracle input reference");
+    let (parent_stream, child_stream) =
+        UnixStream::pair().expect("AmountMap worker socket pair");
+    let child_fd: OwnedFd = child_stream.into();
+    let worker_identity = identity(0xF0);
+    let mut command = Command::new(env::current_exe().expect("current Rust test binary"));
+    command
+        .args([
+            "--exact",
+            "real_worker_processes_execute_through_amount_map",
+            "--nocapture",
+        ])
+        .env(CHILD_MODE, "1")
+        .env(CHILD_USER, &user)
+        .env(CHILD_CHAIN_ID, worker_identity.chain_id.to_string())
+        .env(
+            CHILD_GENESIS,
+            format!("{:#x}", worker_identity.genesis_hash),
+        )
+        .env(
+            CHILD_BOOT_NONCE,
+            format!("{:#x}", worker_identity.boot_nonce),
+        )
+        .env(
+            CHILD_BUNDLE,
+            format!("{:#x}", worker_identity.protocol_bundle_hash),
+        )
+        .env(CHILD_GENERATION, "400")
+        .env(CHILD_CAS_ROOT, directory.path())
+        .env(
+            CHILD_CAS_OBJECT_CAP,
+            cas_limits.max_object_bytes.to_string(),
+        )
+        .env(CHILD_CAS_TOTAL_CAP, cas_limits.max_total_bytes.to_string())
+        .env(CHILD_INBOX_ROOT, &inbox_root)
+        .stdin(Stdio::from(child_fd))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn AmountMap worker");
+    drop(command);
+    let client_identity = EndpointIdentity {
+        boot_nonce: B256::repeat_byte(0xF1),
+        ..worker_identity
+    };
+    let mut client = ControlClientSession::connect(
+        parent_stream,
+        ClientPolicy::supervisor_to_worker(uid, client_identity, limits),
+    )
+    .expect("AmountMap worker client");
+    client.handshake().expect("AmountMap worker handshake");
+    client
+        .send_request(
+            WorkerMessageKind::RunUnit as u16,
+            RunUnitV1 {
+                protocol_bundle_hash,
+                job_id,
+                attempt: 1,
+                plan_hash,
+                unit_index: 3,
+                canonical_unit_spec: BoundedBytes(
+                    amount_spec
+                        .encode_canonical(&limits)
+                        .expect("canonical AmountMap spec"),
+                ),
+                unit_membership_siblings: Vec::new(),
+                plan_ref,
+                input_manifest_ref: published.manifest_ref,
+                ordered_input_refs: vec![
+                    producer_ref,
+                    fidelity_producer_ref,
+                    reduce_producer_ref,
+                    tribute_ref,
+                    oracle_ref,
+                ],
+            }
+            .encode_body(&limits)
+            .expect("AmountMap RunUnit body"),
+        )
+        .expect("send AmountMap unit");
+    let output = child.wait_with_output().expect("AmountMap worker exit");
+    assert!(
+        output.status.success(),
+        "AmountMap worker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let frame = client.receive_response().expect("AmountMap worker response");
+    let finished =
+        UnitFinishedV1::decode_body(&frame.body, &limits).expect("AmountMap finished body");
+    assert_eq!(finished.status, UnitFinishedStatus::Success);
+    assert_eq!(finished.unit_id, amount_unit_id);
+    let amount_artifact = UnitArtifactV1::decode_canonical(
+        inbox
+            .read_reported(
+                finished.unit_id,
+                finished.exact_staged_bytes,
+                finished.transport_digest,
+            )
+            .expect("read staged AmountMap artifact")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode AmountMap artifact");
+    amount_artifact
+        .validate_against(&amount_spec, &limits)
+        .expect("validate AmountMap artifact");
+    let amount = decode_amount_run(amount_artifact.phase_payload(&limits).unwrap(), &limits)
+        .expect("decode AmountMap phase output");
+    assert_eq!(amount.ordered_records.len(), 1);
+    assert_eq!(amount.ordered_records[0].entry_price_minor, scale * U256::from(2));
 }
 
 fn run_child_worker() {

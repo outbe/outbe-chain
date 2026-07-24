@@ -498,6 +498,87 @@ impl LysisPlannerV1 {
         Ok(spec)
     }
 
+    pub fn amount_map_unit_at(
+        self,
+        shard_ordinal: u32,
+        enumerate_spec: &UnitSpecV1,
+        fidelity_unit_id: B256,
+        fraction_root_unit_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        let shard = self.primary_tree.primary_shard(shard_ordinal)?;
+        if fidelity_unit_id.is_zero()
+            || fraction_root_unit_id.is_zero()
+            || enumerate_spec.protocol_bundle_hash != self.bindings.protocol_bundle_hash
+            || enumerate_spec.job_id != self.bindings.job_id
+            || enumerate_spec.attempt != self.bindings.attempt
+            || enumerate_spec.phase != UnitPhase::Enumerate
+            || enumerate_spec.lysis_program_semantics_hash
+                != self.bindings.lysis_program_semantics_hash
+            || enumerate_spec.planner_spec_version != self.bindings.planner_spec_version
+            || enumerate_spec.reducer_spec_version != self.bindings.reducer_spec_version
+            || !matches!(enumerate_spec.interval, UnitInterval::EntityIdRange(_))
+        {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let enumerate_unit_id = enumerate_spec.unit_id(limits)?;
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase: UnitPhase::AmountMap,
+            interval: enumerate_spec.interval.clone(),
+            canonical_ordered_inputs: vec![
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::InputManifest,
+                    source_kind: InputSourceKind::AuthenticatedRoot,
+                    source_id: self.bindings.input_manifest_hash,
+                    record_count_limit: 1,
+                    max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                    max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::EnumeratedTributes,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: enumerate_unit_id,
+                    record_count_limit: shard.record_count(),
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::FidelityPartials,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: fidelity_unit_id,
+                    record_count_limit: shard.record_count(),
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::FiFractionTable,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: fraction_root_unit_id,
+                    record_count_limit: self.bindings.tribute_count,
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::OracleOpenings,
+                    source_kind: InputSourceKind::AuthenticatedRoot,
+                    source_id: self.bindings.oracle_opening_root,
+                    record_count_limit: 1,
+                    max_encoded_bytes: candidate.max_opening_bytes,
+                    max_decoded_bytes: candidate.max_opening_bytes,
+                },
+            ],
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
     fn push_primary_spec(
         self,
         root: &mut StreamingOrderedListRoot,

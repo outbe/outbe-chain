@@ -8043,6 +8043,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-data",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
  "reth-ethereum",

@@ -8,10 +8,11 @@ use outbe_lysis::program_v1::reducers::{
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::artifacts::{
-    decode_enumerated_run, decode_fidelity_map_output, decode_fixed_reduce_output,
-    decode_raw_coverage_carrier, encode_enumerated_run, encode_fidelity_map_output,
-    encode_fixed_reduce_output, encode_raw_coverage_carrier, enumerate_tributes,
-    FixedReduceOutputV1, RawCoverageCarrierV1,
+    decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
+    decode_fixed_reduce_output, decode_raw_coverage_carrier, encode_amount_run,
+    encode_enumerated_run, encode_fidelity_map_output, encode_fixed_reduce_output,
+    encode_raw_coverage_carrier, enumerate_tributes, FixedReduceOutputV1,
+    RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
@@ -643,6 +644,67 @@ fn fixed_reduce_units_bind_exact_left_right_producers_and_canonical_padding() {
 }
 
 #[test]
+fn amount_map_unit_binds_exact_enumerate_fidelity_root_and_oracle_inputs() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(257)).unwrap();
+    let ids = (0..257).map(entity_id).collect::<Vec<_>>();
+    let chunks = [
+        tribute_chunk_ref(0, &ids[..256], 10_000),
+        tribute_chunk_ref(1, &ids[256..], 100),
+    ];
+    let enumerate = planner
+        .primary_unit_at(
+            1,
+            |ordinal| chunks.get(ordinal as usize).cloned(),
+            &limits,
+        )
+        .unwrap();
+    let enumerate_id = enumerate.unit_id(&limits).unwrap();
+    let fidelity_id = B256::repeat_byte(0x51);
+    let root_id = B256::repeat_byte(0x52);
+    let amount = planner
+        .amount_map_unit_at(1, &enumerate, fidelity_id, root_id, &limits)
+        .unwrap();
+
+    assert_eq!(amount.phase, UnitPhase::AmountMap);
+    assert_eq!(amount.interval, enumerate.interval);
+    assert_eq!(
+        amount
+            .canonical_ordered_inputs
+            .iter()
+            .map(|input| (input.purpose, input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (
+                InputPurpose::InputManifest,
+                InputSourceKind::AuthenticatedRoot,
+                planner_bindings(257).input_manifest_hash,
+            ),
+            (
+                InputPurpose::EnumeratedTributes,
+                InputSourceKind::UnitOutput,
+                enumerate_id,
+            ),
+            (
+                InputPurpose::FidelityPartials,
+                InputSourceKind::UnitOutput,
+                fidelity_id,
+            ),
+            (
+                InputPurpose::FiFractionTable,
+                InputSourceKind::UnitOutput,
+                root_id,
+            ),
+            (
+                InputPurpose::OracleOpenings,
+                InputSourceKind::AuthenticatedRoot,
+                planner_bindings(257).oracle_opening_root,
+            ),
+        ]
+    );
+}
+
+#[test]
 fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
     for primary_count in 1..=8 {
         let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
@@ -993,6 +1055,15 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         entry_price,
     )
     .unwrap();
+    let limits = poc_schema_limits();
+    let encoded_amount = encode_amount_run(&amount_right, &limits).unwrap();
+    assert_eq!(
+        decode_amount_run(&encoded_amount, &limits).unwrap(),
+        amount_right
+    );
+    let mut trailing_amount = encoded_amount;
+    trailing_amount.push(0);
+    assert!(decode_amount_run(&trailing_amount, &limits).is_err());
 
     let left_summary = gratis_summary(
         0,
