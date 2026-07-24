@@ -2,8 +2,8 @@ use alloy_primitives::{keccak256, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
 use outbe_oracle::{
-    oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1, OracleOpeningPlanError,
-    MAX_OCOMP_ACTIVE_SCURVE_ENTRIES, MAX_OCOMP_WWD_PAIR_ENTRIES,
+    evaluate_oracle_opening_v1, oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1,
+    OracleOpeningPlanError, MAX_OCOMP_ACTIVE_SCURVE_ENTRIES, MAX_OCOMP_WWD_PAIR_ENTRIES,
 };
 use outbe_primitives::{
     addresses::ORACLE_ADDRESS,
@@ -63,11 +63,12 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
             .unwrap();
         oracle.scurve_count.write(4).unwrap();
         oracle.scurve_oldest_idx.write(2).unwrap();
+        let target_day = outbe_oracle::scurve::truncate_to_day(day.to_timestamp_utc());
         oracle.scurve_pair_id.write(&2, 1).unwrap();
-        oracle.scurve_peak_day.write(&2, 1_700_000_000).unwrap();
+        oracle.scurve_peak_day.write(&2, target_day).unwrap();
         oracle.scurve_peak_price.write(&2, U256::from(300)).unwrap();
         oracle.scurve_pair_id.write(&3, 2).unwrap();
-        oracle.scurve_peak_day.write(&3, 1_700_086_400).unwrap();
+        oracle.scurve_peak_day.write(&3, target_day).unwrap();
         oracle.scurve_peak_price.write(&3, U256::from(400)).unwrap();
 
         let counts = oracle_count_slot_plan_v1(day, &[840, 978]).unwrap();
@@ -92,12 +93,14 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
 
         let plan =
             oracle_opening_slot_plan_v1(day, &[(840, usd_pair), (978, eur_pair)], 2, 4, 2).unwrap();
+        let raw_slots = plan
+            .slots
+            .iter()
+            .copied()
+            .map(|slot| (slot, slot_word(&storage, slot)))
+            .collect::<Vec<_>>();
         assert_eq!(
-            plan.slots
-                .iter()
-                .copied()
-                .map(|slot| slot_word(&storage, slot))
-                .collect::<Vec<_>>(),
+            raw_slots.iter().map(|(_, value)| *value).collect::<Vec<_>>(),
             vec![
                 U256::from_be_bytes(usd_denom.0),
                 U256::from_be_bytes(usd_pair.0),
@@ -114,13 +117,34 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 U256::from(4),
                 U256::from(2),
                 U256::from(1),
-                U256::from(1_700_000_000u64),
+                U256::from(target_day),
                 U256::from(300),
                 U256::from(2),
-                U256::from(1_700_086_400u64),
+                U256::from(target_day),
                 U256::from(400),
             ]
         );
+        let evaluated = evaluate_oracle_opening_v1(day, &[840, 978], &raw_slots).unwrap();
+        for (iso, pair_id) in [(840, 1), (978, 2)] {
+            let runtime_vwap = oracle
+                .get_worldwide_day_vwap_for_pair_id(day, pair_id)
+                .unwrap()
+                .unwrap_or(U256::ZERO);
+            let runtime_scurve = outbe_oracle::scurve::get_max_active_scurve_value(
+                &oracle,
+                pair_id,
+                day.to_timestamp_utc(),
+            )
+            .unwrap();
+            assert_eq!(
+                evaluated.entry_price(iso),
+                Some(runtime_vwap.max(runtime_scurve))
+            );
+        }
+
+        let mut reordered = raw_slots;
+        reordered.swap(0, 1);
+        assert!(evaluate_oracle_opening_v1(day, &[840, 978], &reordered).is_err());
     });
 }
 
