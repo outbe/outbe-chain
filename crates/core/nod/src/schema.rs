@@ -3,6 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
+use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::storage::types::StorageKey;
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +88,17 @@ pub struct NodBucketState {
     pub entry_price_minor: U256,
 }
 
+/// Immutable owner projection frozen into one OCOMP activation precondition.
+///
+/// The values describe the per-WWD certified Nod namespace that OCM-18 later
+/// advances atomically. They are active-result state, never a reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodOcompTargetProjection {
+    pub worldwide_day: WorldwideDay,
+    pub target_generation: u64,
+    pub namespace_root_before: B256,
+}
+
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// NodItem fields keyed by nod_id (U256).
@@ -142,7 +154,17 @@ pub struct NodContract {
 
     // Compact reversible WWD prefix for bucket identities parked by bucket_key.
     #[attribute(order = 18)]
-    pub bucket_worldwide_day: outbe_primitives::storage::dsl::Map<B256, WorldwideDay>,
+    pub bucket_worldwide_day: Mapping<B256, WorldwideDay>,
+
+    /// Global certified Nod namespace generation. Legacy issuance does not
+    /// touch it; OCM-18 compare-and-sets it only through certified activation.
+    #[attribute(order = 19)]
+    pub ocomp_target_generation: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Root of the certified Nod namespace at the generation above. Generation
+    /// zero is represented canonically by the zero root.
+    #[attribute(order = 20)]
+    pub ocomp_namespace_root: outbe_primitives::storage::dsl::Value<B256>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -167,5 +189,24 @@ impl<'storage> NodContract<'storage> {
     ) -> outbe_primitives::error::Result<EntityId36> {
         derive_poseidon_entity_id(owner, worldwide_day)
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+    }
+
+    /// Reads the exact certified target state used by JobIntent construction.
+    pub fn ocomp_target_projection(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> outbe_primitives::error::Result<NodOcompTargetProjection> {
+        let target_generation = self.ocomp_target_generation.read()?;
+        let namespace_root_before = self.ocomp_namespace_root.read()?;
+        if (target_generation == 0) != namespace_root_before.is_zero() {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Nod OCOMP target generation/root mismatch".into(),
+            ));
+        }
+        Ok(NodOcompTargetProjection {
+            worldwide_day,
+            target_generation,
+            namespace_root_before,
+        })
     }
 }

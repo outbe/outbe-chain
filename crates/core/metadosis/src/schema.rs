@@ -2,6 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
+use outbe_primitives::storage::types::{Mapping, StorageBytes, StorageVec};
 
 /// WorldwideDay status values stored as u8.
 pub mod status {
@@ -13,6 +14,7 @@ pub mod status {
     pub const IN_PROGRESS: u8 = 5;
     pub const COMPLETED: u8 = 6;
     pub const FAILED: u8 = 7;
+    pub const OFFCHAIN_PENDING: u8 = 8;
 }
 
 /// Day type values.
@@ -106,4 +108,55 @@ pub struct MetadosisContract {
     #[attribute(order = 5)]
     pub ocomp_pre_admission:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompPreAdmissionState>,
+
+    /// Fork-profile authority installed by the OCOMP upgrade handler. Empty
+    /// before the disposable-devnet profile is armed.
+    #[attribute(order = 6)]
+    pub ocomp_request_profile: outbe_primitives::storage::types::StorageBytes,
+
+    /// Exact single-live-job index. Empty while no OCOMP intent is pending.
+    /// READY work is kept in the separately bounded ordered index below.
+    #[attribute(order = 7)]
+    pub ocomp_scheduler: outbe_primitives::storage::types::StorageBytes,
+
+    /// Canonical OCB1 `OcompJobRecordV1`, keyed by `IntentId`.
+    #[attribute(order = 8)]
+    pub ocomp_job_records: outbe_primitives::storage::types::Mapping<
+        B256,
+        outbe_primitives::storage::types::StorageBytes,
+    >,
+
+    /// Immutable request-phase budget receipt, keyed by WorldwideDay.
+    #[attribute(order = 9)]
+    pub ocomp_request_budget_receipts: outbe_primitives::storage::types::Mapping<
+        WorldwideDayKey,
+        outbe_primitives::storage::types::StorageBytes,
+    >,
+
+    /// Exact canonical pre-admission envelope committed by a created intent.
+    #[attribute(order = 10)]
+    pub ocomp_pre_admission_envelopes: outbe_primitives::storage::types::Mapping<
+        WorldwideDayKey,
+        outbe_primitives::storage::types::StorageBytes,
+    >,
+
+    /// Append-only terminal IntentIds. Reaching the profile cap rejects the
+    /// transition; records are never silently evicted.
+    #[attribute(order = 11)]
+    pub ocomp_terminal_intents: outbe_primitives::storage::types::StorageVec<B256>,
+
+    /// Canonical per-WWD FSM snapshots. A WWD has one exact READY or live
+    /// state, while the global indexes below select bounded work without
+    /// scanning `active_wwd`.
+    #[attribute(order = 12)]
+    pub ocomp_fsm_states: outbe_primitives::storage::types::Mapping<
+        WorldwideDayKey,
+        outbe_primitives::storage::types::StorageBytes,
+    >,
+
+    /// Canonical ordered READY keys `(next_check_height, WWD, pending_nonce)`.
+    /// The encoded vector is bounded by `MAX_RECORDS_KEPT`; terminal request
+    /// processing reads only its first key.
+    #[attribute(order = 13)]
+    pub ocomp_ready_index: outbe_primitives::storage::types::StorageBytes,
 }

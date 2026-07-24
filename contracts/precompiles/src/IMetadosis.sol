@@ -46,6 +46,23 @@ interface IMetadosis {
     /// `finalStatus` is the day's terminal status (COMPLETED or FAILED).
     event WorldwideDayCleanedUp(uint32 indexed worldwideDay, uint8 finalStatus);
 
+    event OffchainJobRequested(
+        bytes32 indexed intentId,
+        uint32 indexed wwd,
+        uint64 pendingNonce,
+        uint32 attempt,
+        uint64 deadlineHeight,
+        bytes32 activationPreconditionsHash
+    );
+
+    event OffchainJobExpired(
+        bytes32 indexed intentId,
+        uint32 indexed wwd,
+        uint64 oldPendingNonce,
+        uint64 nextPendingNonce,
+        uint64 expiredAtHeight
+    );
+
     function getWorldwideDay(uint32 wwd)
         external
         view
@@ -64,4 +81,9 @@ interface IMetadosis {
     function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory wwds);
     function getBootstrapEndTime() external view returns (uint64 endTime);
+
+    /// @notice Return the canonical OCB1 record for one off-chain computation job.
+    /// @param intentId Canonical JobIntent identifier.
+    /// @return ocompJobRecordV1 Canonically encoded OcompJobRecordV1 bytes.
+    function getOffchainJob(bytes32 intentId) external view returns (bytes memory ocompJobRecordV1);
 }

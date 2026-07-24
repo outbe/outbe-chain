@@ -13,6 +13,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
+outbe-intex.workspace = true
 outbe-tribute.workspace = true
 outbe-nod.workspace = true
 outbe-promislimit.workspace = true

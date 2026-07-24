@@ -52,6 +52,10 @@ pub fn dispatch(
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
                 metadosis.get_bootstrap_end_time()
             }),
+            getOffchainJob(c) => view(c, |c| {
+                crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
+                    .map(Bytes::from)
+            }),
         }
     })
 }

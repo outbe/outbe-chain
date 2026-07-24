@@ -16,6 +16,19 @@ use outbe_primitives::storage::StorageHandle;
 use crate::errors::IntexError;
 use crate::schema::{CreateSeriesParams, DistProgress, IntexContract, IntexState, SeriesRecord};
 
+/// Immutable contributor target state consumed by OCOMP JobIntent assembly.
+///
+/// PoC contributor recording is create-only: an absent series is version 0,
+/// while any existing series is version 1. No reservation/version field is
+/// added to Intex storage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OcompContributorTargetProjection {
+    pub series_id: u32,
+    pub expected_series_version: u64,
+    pub contributor_count: u32,
+    pub contributor_total: U256,
+}
+
 /// Create a new Intex series record. Always born in `Issued`. Rejects a
 /// duplicate `series_id` (via the record-level create) and a zero `issued_at`
 /// (which would make the record read back as non-existent).
@@ -93,6 +106,28 @@ pub fn get_series(storage: &StorageHandle<'_>, series_id: u32) -> Result<Option<
 /// Whether a series exists.
 pub fn series_exists(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
     IntexContract::new(storage.clone()).series_exists(series_id)
+}
+
+/// Reads the exact create-only contributor target state for one series.
+pub fn ocomp_contributor_target_projection(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<OcompContributorTargetProjection> {
+    let registry = IntexContract::new(storage.clone());
+    let exists = registry.series_exists(series_id)?;
+    let contributor_count = registry.read_contributor_count(series_id)?;
+    let contributor_total = registry.read_contributor_total(series_id)?;
+    if !exists && (contributor_count != 0 || !contributor_total.is_zero()) {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex absent series has residual contributor state".into(),
+        ));
+    }
+    Ok(OcompContributorTargetProjection {
+        series_id,
+        expected_series_version: u64::from(exists),
+        contributor_count,
+        contributor_total,
+    })
 }
 
 /// Number of series ever created (for dense enumeration).

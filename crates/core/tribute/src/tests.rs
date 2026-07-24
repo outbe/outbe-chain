@@ -454,6 +454,7 @@ fn pre_admission_overflow_rolls_back_the_entire_issue() {
                 distinct_owner_count: 0,
                 distinct_reference_currency_count: 0,
                 capacity_exceeded: false,
+                source_generation: 0,
             })
             .unwrap();
         let before = tc.pre_admission_projection(tribute.worldwide_day).unwrap();

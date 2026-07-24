@@ -555,7 +555,14 @@ impl OutbeEvmConfig {
         }
     }
 
-    fn new_with_provider_and_runtime_body_readers(
+    /// Creates the provider-backed full-node configuration with the typed
+    /// runtime body readers required by production precompile execution.
+    ///
+    /// This is the no-bridge counterpart of the live node configuration: the
+    /// exact accounted-parent artifact is resolved from the header provider,
+    /// while Tribute and Nod bodies remain available through their read-only
+    /// runtime capabilities.
+    pub fn new_with_provider_and_runtime_body_readers(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
         runtime_body_readers: RuntimeBodyReaders,

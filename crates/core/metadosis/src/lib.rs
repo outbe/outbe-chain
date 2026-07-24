@@ -1,6 +1,7 @@
 pub mod constants;
 pub mod emission_sink;
 pub mod errors;
+pub mod ocomp;
 pub(crate) mod ocomp_budget;
 mod pre_admission;
 pub mod precompile;

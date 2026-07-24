@@ -92,6 +92,12 @@ pub struct DayPreAdmission {
     /// allocated for it.
     #[attribute(order = 8, default = false)]
     pub capacity_exceeded: bool,
+
+    /// Certified source generation. A sealed, unconsumed Tribute partition is
+    /// generation 0; OCM-20 advances it exactly once on logical retirement.
+    /// This is owner state, not an OCOMP reservation.
+    #[attribute(order = 9, default = 0)]
+    pub source_generation: u64,
 }
 
 #[storage_schema]

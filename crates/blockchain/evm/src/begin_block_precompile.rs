@@ -165,7 +165,12 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompTerminalRequest => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_terminal_request(&ctx)?;
+            let (scope, _) = body_readers.ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "OCOMP terminal request requires execution seal authority".into(),
+                )
+            })?;
+            run_ocomp_terminal_request(&ctx, scope)?;
         }
     }
 
@@ -969,14 +974,17 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Reserved OCOMP expiry/reset slot. OCM-08 wires the bounded Metadosis
 /// lifecycle handler into this already receipt-visible phase.
-pub(crate) fn run_ocomp_lifecycle_begin(_ctx: &BlockRuntimeContext) -> Result<()> {
-    Ok(())
+pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext) -> Result<()> {
+    outbe_metadosis::ocomp::expiry::run_lifecycle_begin(ctx)
 }
 
 /// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
 /// creation here without changing block ordering or the system-tx ABI.
-pub(crate) fn run_ocomp_terminal_request(_ctx: &BlockRuntimeContext) -> Result<()> {
-    Ok(())
+pub(crate) fn run_ocomp_terminal_request(
+    ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
+) -> Result<()> {
+    outbe_metadosis::ocomp::request::run_terminal_request(ctx, scope)
 }
 
 fn block_runtime_context_from_storage(

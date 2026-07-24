@@ -129,10 +129,24 @@ pub fn start_metadosis(
     advance_active_worldwide_days(ctx)?;
 
     let active = metadosis.active_wwd.read_all()?;
+    let schema_limits = crate::ocomp::schema::poc_schema_limits();
+    let ocomp_profile = metadosis.read_ocomp_request_profile(&schema_limits)?;
 
     for wwd in &active {
         if metadosis.get_wwd_status(*wwd)? == status::READY {
-            process_metadosis(&mut metadosis, ctx, scope, parent, *wwd)?;
+            if let Some(profile) = &ocomp_profile {
+                if !metadosis.ocomp_fsm_states.get_bytes(wwd).is_empty()? {
+                    metadosis.ocomp_fsm_state(
+                        *wwd,
+                        &schema_limits,
+                        crate::ocomp::request::fsm_limits(profile),
+                    )?;
+                    continue;
+                }
+                process_ocomp_ready_candidate(&mut metadosis, ctx, scope, parent, *wwd, profile)?;
+            } else {
+                process_metadosis(&mut metadosis, ctx, scope, parent, *wwd)?;
+            }
             break;
         }
     }
@@ -143,6 +157,40 @@ pub fn start_metadosis(
     // deletes the oldest record past `MAX_RECORDS_KEPT`.
 
     Ok(())
+}
+
+fn process_ocomp_ready_candidate(
+    metadosis: &mut MetadosisContract<'_>,
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    wwd: WorldwideDay,
+    profile: &crate::ocomp::schema::OcompRequestProfile,
+) -> Result<()> {
+    let limit_amount = metadosis
+        .worldwide_days
+        .entry(wwd)
+        .metadosis_limit_amount()
+        .read()?;
+    let tribute_count = TributeContract::new(metadosis.storage.clone())
+        .get_day_totals(wwd)?
+        .tribute_count;
+
+    // These branches are pinned to their pre-fork behavior and cannot invoke
+    // Lysis. Populated resolved days are instead indexed for the post-seal
+    // terminal request phase.
+    if limit_amount.is_zero()
+        || metadosis.get_wwd_day_type(wwd)? == day_type::UNKNOWN
+        || tribute_count == 0
+    {
+        return process_metadosis(metadosis, ctx, scope, parent, wwd);
+    }
+    metadosis.initialize_ocomp_pre_admission(wwd)?;
+    metadosis.enqueue_ocomp_ready(
+        wwd,
+        ctx.block.block_number,
+        crate::ocomp::request::fsm_limits(profile),
+    )
 }
 
 /// Walk every active WorldwideDay's status machine forward to the phase

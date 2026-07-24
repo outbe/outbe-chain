@@ -840,6 +840,52 @@ impl ExecutionScope {
         self.opened_parent_tree().map(|tree| tree.parent_root())
     }
 
+    /// Returns the exact global CE root recorded by this scope's completed
+    /// end-block seal. It is unavailable before the executor closes the CE
+    /// lifecycle and does not expose the mutable staging envelope.
+    pub fn completed_sealed_root(&self) -> Result<B256> {
+        Ok(self.completed_seal()?.new_root)
+    }
+
+    /// Resolves one partition root from this scope's exact completed seal.
+    ///
+    /// Terminal system phases use this instead of accepting a caller-supplied
+    /// `SealOutput`, keeping the executor-owned seal as the only authority.
+    pub fn completed_partition_root(
+        &self,
+        partition: PartitionRef,
+    ) -> Result<SealedCollectionRoot> {
+        let output = self.completed_seal()?;
+        self.sealed_collection_root(&output, partition)
+    }
+
+    fn completed_seal(&self) -> Result<crate::SealOutput> {
+        if self.phase.load(Ordering::Acquire) != PHASE_ENDED {
+            return Err(fatal_scope(
+                "compressed-entity seal requested before end-block completed",
+            ));
+        }
+        let output = self
+            .completed_seal
+            .lock()
+            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
+            .clone()
+            .ok_or_else(|| fatal_scope("completed compressed-entity seal is absent"))?;
+        if output.parent_root != output.staged_tree_batch.parent_root()
+            || output.new_root != output.staged_tree_batch.new_root()
+        {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match its staged tree batch",
+            ));
+        }
+        if self.opened_parent_tree()?.parent_root() != output.parent_root {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match the authenticated parent",
+            ));
+        }
+        Ok(output)
+    }
+
     /// Resolves a collection root from the exact completed CE seal. A changed
     /// collection comes from the validated provisional batch; an unchanged
     /// collection comes from the authenticated parent catalog.

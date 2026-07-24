@@ -58,6 +58,7 @@ fn inputs() -> PreAdmissionInputs {
     PreAdmissionInputs {
         tribute: TributePreAdmissionProjection {
             worldwide_day: 20260723u32.into(),
+            source_generation: 0,
             profile_ready: true,
             is_sealed: true,
             sealed_collection_root: B256::repeat_byte(0x51),

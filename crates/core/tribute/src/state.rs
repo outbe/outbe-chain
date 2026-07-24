@@ -13,6 +13,7 @@ use crate::schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributePreAdmissionProjection {
     pub worldwide_day: WorldwideDay,
+    pub source_generation: u64,
     pub profile_ready: bool,
     pub is_sealed: bool,
     pub sealed_collection_root: B256,
@@ -143,6 +144,7 @@ impl TributeContract<'_> {
         };
         Ok(TributePreAdmissionProjection {
             worldwide_day: day,
+            source_generation: admission.source_generation,
             profile_ready: self.ocomp_profile_ready.read()?,
             is_sealed: admission.is_sealed,
             sealed_collection_root: admission.sealed_collection_root,

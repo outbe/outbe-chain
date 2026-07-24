@@ -5394,9 +5394,12 @@ mod tests {
         let proposer = signer.address();
         let mut state = state_with_active_proposer(proposer);
         let chain_spec = test_chain_spec();
-        let config = OutbeEvmConfig::new(chain_spec)
-            .with_evm_signer(signer)
-            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        let config = OutbeEvmConfig::new_with_runtime_body_readers(
+            chain_spec,
+            RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+        )
+        .with_evm_signer(signer)
+        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
         let evm = config.evm_with_env(&mut state, evm_env);
@@ -5544,9 +5547,12 @@ mod tests {
                 .expect("regular tx signer recovers");
             let user_sender = Address(*user.signer());
             let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
-            let config = OutbeEvmConfig::new(test_chain_spec())
-                .with_evm_signer(signer)
-                .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+            let config = OutbeEvmConfig::new_with_runtime_body_readers(
+                test_chain_spec(),
+                RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+            )
+            .with_evm_signer(signer)
+            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
             let begin =
                 begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
             let end = config

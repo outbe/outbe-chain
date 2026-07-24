@@ -62,10 +62,6 @@ pub(crate) enum PreAdmissionDeferredReason {
 /// Produces the complete typed pre-admission envelope from bounded owner
 /// projections only. It never owns or enumerates Tribute, Fidelity or Oracle
 /// records.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "OCM-08 wires terminal pre-admission")
-)]
 pub(crate) fn evaluate_pre_admission(
     context: &PreAdmissionContext,
     inputs: &PreAdmissionInputs,
@@ -363,10 +359,6 @@ impl MetadosisContract<'_> {
 
     /// Commits the exact canonical envelope once. No component field can be
     /// replaced later because the non-zero hash is an immutable seal.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "OCM-08 wires terminal pre-admission")
-    )]
     pub(crate) fn seal_pre_admission_envelope(
         &mut self,
         wwd: WorldwideDay,
