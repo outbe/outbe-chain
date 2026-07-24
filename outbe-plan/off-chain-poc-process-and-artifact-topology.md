@@ -209,6 +209,11 @@ is reached normally. A supervisor may use successive worker invocations for
 arbitrarily many units, but each invocation receives exactly one immutable
 unit.
 
+The primary catalog is streamed from the manifest-committed Tribute chunk
+references, not from a second full Tribute vector. Each primary `UnitSpecV1`
+binds the exact chunk semantic digest/count/byte limit; its half-open ID range is
+the current chunk's first key through the next chunk's first key.
+
 A second run request, different `UnitId`, arbitrary path, executable, shell
 command or resource override is rejected. Connection loss cancels the result;
 `RuntimeMaxSec` is the final bound if computation does not observe cancellation.

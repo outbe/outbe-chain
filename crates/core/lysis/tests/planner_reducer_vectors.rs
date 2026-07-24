@@ -19,7 +19,8 @@ use outbe_lysis::program_v1::{
     execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
 };
 use outbe_ocomp_protocol::{
-    common::EntityId36,
+    common::{BoundedBytes, EntityId36},
+    input::{InputChunkKind, InputChunkRefV1},
     local_control::poc_schema_limits,
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
 };
@@ -42,6 +43,23 @@ fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> Tribut
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
         exclude_from_intex_issuance: excluded,
+    }
+}
+
+fn tribute_chunk_ref(
+    ordinal: u32,
+    ids: &[EntityId36],
+    encoded_bytes: u64,
+) -> InputChunkRefV1 {
+    InputChunkRefV1 {
+        kind: InputChunkKind::Tribute,
+        ordinal,
+        record_count: u32::try_from(ids.len()).unwrap(),
+        first_key: BoundedBytes(ids.first().unwrap().0.to_vec()),
+        last_key_inclusive: BoundedBytes(ids.last().unwrap().0.to_vec()),
+        encoded_bytes,
+        semantic_digest: B256::repeat_byte(u8::try_from(ordinal + 10).unwrap()),
+        transport_digest: B256::repeat_byte(u8::try_from(ordinal + 20).unwrap()),
     }
 }
 
@@ -184,8 +202,6 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         attempt: 3,
         input_manifest_hash: B256::repeat_byte(4),
         input_manifest_encoded_bytes: 512,
-        tribute_collection_root: B256::repeat_byte(5),
-        tribute_input_encoded_bytes: 65_536,
         fidelity_opening_root: B256::repeat_byte(6),
         oracle_opening_root: B256::repeat_byte(7),
         wwd: 20_260_724,
@@ -198,6 +214,10 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     })
     .unwrap();
     let ids = (0..257).map(entity_id).collect::<Vec<_>>();
+    let chunks = [
+        tribute_chunk_ref(0, &ids[..256], 65_536),
+        tribute_chunk_ref(1, &ids[256..], 512),
+    ];
 
     let mut lookups = Vec::new();
     let first = planner
@@ -205,12 +225,12 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
             0,
             |ordinal| {
                 lookups.push(ordinal);
-                ids.get(ordinal as usize).copied()
+                chunks.get(ordinal as usize).cloned()
             },
             &limits,
         )
         .unwrap();
-    assert_eq!(lookups, [0, 256]);
+    assert_eq!(lookups, [0, 1]);
     assert_eq!(first.phase, UnitPhase::Enumerate);
     assert_eq!(
         first
@@ -232,6 +252,14 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
             }
         )
     );
+    assert_eq!(
+        first.canonical_ordered_inputs[1].source_id,
+        chunks[0].semantic_digest
+    );
+    assert_eq!(
+        first.canonical_ordered_inputs[1].max_encoded_bytes,
+        chunks[0].encoded_bytes
+    );
 
     lookups.clear();
     let second = planner
@@ -239,12 +267,12 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
             1,
             |ordinal| {
                 lookups.push(ordinal);
-                ids.get(ordinal as usize).copied()
+                chunks.get(ordinal as usize).cloned()
             },
             &limits,
         )
         .unwrap();
-    assert_eq!(lookups, [256]);
+    assert_eq!(lookups, [1]);
     assert_eq!(
         second.interval,
         UnitInterval::EntityIdRange(
@@ -254,12 +282,16 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
             }
         )
     );
+    assert_eq!(
+        second.canonical_ordered_inputs[1].source_id,
+        chunks[1].semantic_digest
+    );
 
     let plan = planner
-        .commit_primary_catalog(ids.iter().copied(), &limits)
+        .commit_primary_catalog(chunks.iter().cloned(), &limits)
         .unwrap();
     let replay = planner
-        .commit_primary_catalog(ids.iter().copied(), &limits)
+        .commit_primary_catalog(chunks.iter().cloned(), &limits)
         .unwrap();
     assert_eq!(plan, replay);
     assert_eq!(plan.primary_work_unit_count, 2);
@@ -271,6 +303,34 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         plan.plan_hash(&limits).unwrap(),
         replay.plan_hash(&limits).unwrap()
     );
+
+    let mut wrong_chunk = chunks[0].clone();
+    wrong_chunk.first_key.0[0] ^= 1;
+    assert!(planner
+        .primary_unit_at(
+            0,
+            |ordinal| {
+                if ordinal == 0 {
+                    Some(wrong_chunk.clone())
+                } else {
+                    chunks.get(ordinal as usize).cloned()
+                }
+            },
+            &limits,
+        )
+        .is_err());
+    assert!(planner
+        .commit_primary_catalog(std::iter::once(chunks[0].clone()), &limits)
+        .is_err());
+    assert!(planner
+        .commit_primary_catalog(
+            chunks
+                .iter()
+                .cloned()
+                .chain(std::iter::once(chunks[1].clone())),
+            &limits,
+        )
+        .is_err());
 
     let mut changed_budget = plan.clone();
     changed_budget.lysis_budget += U256::from(1);

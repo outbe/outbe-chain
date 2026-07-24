@@ -3,6 +3,7 @@ use core::fmt;
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     common::EntityId36,
+    input::{InputChunkKind, InputChunkRefV1},
     registry::ListKind,
     unit::{
         CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind,
@@ -25,13 +26,13 @@ pub enum PlannerErrorV1 {
         level: u16,
         index: u32,
     },
-    MissingEntityId {
+    MissingTributeChunk {
         ordinal: u32,
     },
-    UnexpectedEntityId {
+    UnexpectedTributeChunk {
         ordinal: u32,
     },
-    NonCanonicalEntityOrder {
+    InvalidTributeChunk {
         ordinal: u32,
     },
     PhasePositionOutOfRange {
@@ -62,14 +63,14 @@ impl fmt::Display for PlannerErrorV1 {
             Self::ReducerNodeOutOfRange { level, index } => {
                 write!(formatter, "reducer node ({level}, {index}) is outside the fixed tree")
             }
-            Self::MissingEntityId { ordinal } => {
-                write!(formatter, "canonical EntityId stream is missing ordinal {ordinal}")
+            Self::MissingTributeChunk { ordinal } => {
+                write!(formatter, "Tribute input chunk is missing shard {ordinal}")
             }
-            Self::UnexpectedEntityId { ordinal } => {
-                write!(formatter, "canonical EntityId stream has an extra ordinal {ordinal}")
+            Self::UnexpectedTributeChunk { ordinal } => {
+                write!(formatter, "Tribute input chunk has an extra shard {ordinal}")
             }
-            Self::NonCanonicalEntityOrder { ordinal } => {
-                write!(formatter, "canonical EntityId stream is not increasing at {ordinal}")
+            Self::InvalidTributeChunk { ordinal } => {
+                write!(formatter, "Tribute input chunk does not bind shard {ordinal}")
             }
             Self::PhasePositionOutOfRange {
                 phase,
@@ -144,8 +145,6 @@ pub struct LysisPlannerBindingsV1 {
     pub attempt: u32,
     pub input_manifest_hash: B256,
     pub input_manifest_encoded_bytes: u64,
-    pub tribute_collection_root: B256,
-    pub tribute_input_encoded_bytes: u64,
     pub fidelity_opening_root: B256,
     pub oracle_opening_root: B256,
     pub wwd: u32,
@@ -232,6 +231,21 @@ pub fn primary_work_unit_count(tribute_count: u32) -> Result<u32, PlannerErrorV1
         + u32::from(!tribute_count.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)))
 }
 
+fn chunk_first_id(
+    chunk: &InputChunkRefV1,
+    shard_ordinal: u32,
+) -> Result<EntityId36, PlannerErrorV1> {
+    let bytes: [u8; 36] = chunk
+        .first_key
+        .0
+        .as_slice()
+        .try_into()
+        .map_err(|_| PlannerErrorV1::InvalidTributeChunk {
+            ordinal: shard_ordinal,
+        })?;
+    Ok(EntityId36(bytes))
+}
+
 impl LysisPlannerV1 {
     pub fn new(bindings: LysisPlannerBindingsV1) -> Result<Self, PlannerErrorV1> {
         if bindings.tribute_count == 0 {
@@ -240,7 +254,6 @@ impl LysisPlannerV1 {
         if bindings.protocol_bundle_hash.is_zero()
             || bindings.job_id.is_zero()
             || bindings.input_manifest_hash.is_zero()
-            || bindings.tribute_collection_root.is_zero()
             || bindings.fidelity_opening_root.is_zero()
             || bindings.oracle_opening_root.is_zero()
             || bindings.wwd == 0
@@ -248,7 +261,6 @@ impl LysisPlannerV1 {
             || bindings.logical_evaluation_time == 0
             || bindings.lysis_program_semantics_hash.is_zero()
             || bindings.input_manifest_encoded_bytes == 0
-            || bindings.tribute_input_encoded_bytes == 0
             || bindings.planner_spec_version == 0
             || bindings.reducer_spec_version == 0
         {
@@ -268,80 +280,69 @@ impl LysisPlannerV1 {
     pub fn primary_unit_at<F>(
         self,
         shard_ordinal: u32,
-        mut entity_id_at: F,
+        mut tribute_chunk_at: F,
         limits: &SchemaLimits,
     ) -> Result<UnitSpecV1, PlannerErrorV1>
     where
-        F: FnMut(u32) -> Option<EntityId36>,
+        F: FnMut(u32) -> Option<InputChunkRefV1>,
     {
         let shard = self.primary_tree.primary_shard(shard_ordinal)?;
-        let start = entity_id_at(shard.start_ordinal).ok_or(PlannerErrorV1::MissingEntityId {
-            ordinal: shard.start_ordinal,
-        })?;
+        let tribute_chunk =
+            tribute_chunk_at(shard_ordinal).ok_or(PlannerErrorV1::MissingTributeChunk {
+                ordinal: shard_ordinal,
+            })?;
+        let start = chunk_first_id(&tribute_chunk, shard_ordinal)?;
         let end = if shard.end_ordinal < self.bindings.tribute_count {
-            Some(
-                entity_id_at(shard.end_ordinal).ok_or(PlannerErrorV1::MissingEntityId {
-                    ordinal: shard.end_ordinal,
-                })?,
-            )
+            let next_ordinal = shard_ordinal
+                .checked_add(1)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+            Some(chunk_first_id(
+                &tribute_chunk_at(next_ordinal).ok_or(
+                    PlannerErrorV1::MissingTributeChunk {
+                        ordinal: next_ordinal,
+                    },
+                )?,
+                next_ordinal,
+            )?)
         } else {
             None
         };
-        self.primary_unit_for_range(shard, start, end, limits)
+        self.primary_unit_for_range(shard, start, end, &tribute_chunk, limits)
     }
 
     pub fn commit_primary_catalog<I>(
         self,
-        entity_ids: I,
+        tribute_chunks: I,
         limits: &SchemaLimits,
     ) -> Result<PlanCommitmentV1, PlannerErrorV1>
     where
-        I: IntoIterator<Item = EntityId36>,
+        I: IntoIterator<Item = InputChunkRefV1>,
     {
-        let mut ids = entity_ids.into_iter();
-        let mut previous = None;
-        let mut shard_start = None;
-        let mut shard = None;
+        let mut chunks = tribute_chunks.into_iter().peekable();
         let mut root = StreamingOrderedListRoot::new(
             ListKind::UnitSpecificationsArtifacts,
             self.primary_work_unit_count(),
         )?;
 
-        for ordinal in 0..self.bindings.tribute_count {
-            let current = ids
+        for shard_ordinal in 0..self.primary_work_unit_count() {
+            let tribute_chunk = chunks
                 .next()
-                .ok_or(PlannerErrorV1::MissingEntityId { ordinal })?;
-            if previous.is_some_and(|prior| current <= prior) {
-                return Err(PlannerErrorV1::NonCanonicalEntityOrder { ordinal });
-            }
-            if ordinal % PRIMARY_WORK_SHARD_SIZE == 0 {
-                if let (Some(previous_shard), Some(start)) = (shard, shard_start) {
-                    self.push_primary_spec(
-                        &mut root,
-                        previous_shard,
-                        start,
-                        Some(current),
-                        limits,
-                    )?;
-                }
-                let shard_ordinal = ordinal / PRIMARY_WORK_SHARD_SIZE;
-                shard = Some(self.primary_tree.primary_shard(shard_ordinal)?);
-                shard_start = Some(current);
-            }
-            previous = Some(current);
+                .ok_or(PlannerErrorV1::MissingTributeChunk {
+                    ordinal: shard_ordinal,
+                })?;
+            let shard = self.primary_tree.primary_shard(shard_ordinal)?;
+            let start = chunk_first_id(&tribute_chunk, shard_ordinal)?;
+            let end = chunks
+                .peek()
+                .map(|next| chunk_first_id(next, shard_ordinal + 1))
+                .transpose()?;
+            self.push_primary_spec(&mut root, shard, start, end, &tribute_chunk, limits)?;
         }
-        if ids.next().is_some() {
-            return Err(PlannerErrorV1::UnexpectedEntityId {
-                ordinal: self.bindings.tribute_count,
+        if chunks.next().is_some() {
+            return Err(PlannerErrorV1::UnexpectedTributeChunk {
+                ordinal: self.primary_work_unit_count(),
             });
         }
-        self.push_primary_spec(
-            &mut root,
-            shard.ok_or(PlannerErrorV1::EmptyTributePopulation)?,
-            shard_start.ok_or(PlannerErrorV1::EmptyTributePopulation)?,
-            None,
-            limits,
-        )?;
         let primary_work_unit_root = root.finish()?;
         let plan = PlanCommitmentV1 {
             protocol_bundle_hash: self.bindings.protocol_bundle_hash,
@@ -368,9 +369,10 @@ impl LysisPlannerV1 {
         shard: PrimaryShardV1,
         start: EntityId36,
         end: Option<EntityId36>,
+        tribute_chunk: &InputChunkRefV1,
         limits: &SchemaLimits,
     ) -> Result<(), PlannerErrorV1> {
-        let spec = self.primary_unit_for_range(shard, start, end, limits)?;
+        let spec = self.primary_unit_for_range(shard, start, end, tribute_chunk, limits)?;
         root.push(&spec.encode_canonical(limits)?, limits.codec.max_body_bytes)?;
         Ok(())
     }
@@ -380,11 +382,22 @@ impl LysisPlannerV1 {
         shard: PrimaryShardV1,
         start: EntityId36,
         end: Option<EntityId36>,
+        tribute_chunk: &InputChunkRefV1,
         limits: &SchemaLimits,
     ) -> Result<UnitSpecV1, PlannerErrorV1> {
-        if end.is_some_and(|end| start >= end) {
-            return Err(PlannerErrorV1::NonCanonicalEntityOrder {
-                ordinal: shard.end_ordinal,
+        tribute_chunk.encode_canonical_record(limits)?;
+        if tribute_chunk.kind != InputChunkKind::Tribute
+            || tribute_chunk.ordinal != shard.ordinal
+            || tribute_chunk.record_count != shard.record_count()
+            || tribute_chunk.first_key.0.as_slice() != start.0
+            || tribute_chunk.last_key_inclusive.0.len() != 36
+            || tribute_chunk.last_key_inclusive.0.as_slice() < start.0.as_slice()
+            || end.is_some_and(|end| {
+                tribute_chunk.last_key_inclusive.0.as_slice() >= end.0.as_slice()
+            })
+        {
+            return Err(PlannerErrorV1::InvalidTributeChunk {
+                ordinal: shard.ordinal,
             });
         }
         let spec = UnitSpecV1 {
@@ -405,10 +418,10 @@ impl LysisPlannerV1 {
                 CanonicalInputRefV1 {
                     purpose: InputPurpose::TributeStream,
                     source_kind: InputSourceKind::AuthenticatedRoot,
-                    source_id: self.bindings.tribute_collection_root,
+                    source_id: tribute_chunk.semantic_digest,
                     record_count_limit: shard.record_count(),
-                    max_encoded_bytes: self.bindings.tribute_input_encoded_bytes,
-                    max_decoded_bytes: self.bindings.tribute_input_encoded_bytes,
+                    max_encoded_bytes: tribute_chunk.encoded_bytes,
+                    max_decoded_bytes: tribute_chunk.encoded_bytes,
                 },
             ],
             lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
