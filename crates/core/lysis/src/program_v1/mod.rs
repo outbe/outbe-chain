@@ -4,6 +4,7 @@
 //! actions. It owns no storage, node, process, codec or worker dependency.
 
 mod execute;
+pub mod planner;
 mod types;
 
 pub use execute::execute;

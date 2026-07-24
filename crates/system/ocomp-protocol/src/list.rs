@@ -28,6 +28,106 @@ impl OrderedListLimits {
     }
 }
 
+/// Incremental implementation of the frozen ordered-list commitment.
+///
+/// The caller declares the exact population up front. Leaves are accepted in
+/// canonical index order and only one pending hash per tree level is retained,
+/// so memory use is independent of the complete catalog size.
+pub struct StreamingOrderedListRoot {
+    kind: ListKind,
+    expected_count: u32,
+    pushed_count: u32,
+    frontier: [Option<B256>; 33],
+}
+
+impl StreamingOrderedListRoot {
+    pub fn new(kind: ListKind, expected_count: u32) -> Result<Self, ProtocolError> {
+        if expected_count > 0 {
+            expected_count
+                .checked_next_power_of_two()
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "streaming ordered-list padded item count",
+                })?;
+        }
+        Ok(Self {
+            kind,
+            expected_count,
+            pushed_count: 0,
+            frontier: [None; 33],
+        })
+    }
+
+    pub fn push(&mut self, item: &[u8], max_item_bytes: usize) -> Result<(), ProtocolError> {
+        if self.pushed_count >= self.expected_count {
+            return Err(ProtocolError::InvalidInvariant(
+                "streaming ordered-list exact item count",
+            ));
+        }
+        check_cap("ordered-list item bytes", max_item_bytes, item.len())?;
+        let hash = leaf_hash(self.kind, self.pushed_count, item)?;
+        self.push_hash(self.pushed_count, hash)?;
+        self.pushed_count += 1;
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> Result<B256, ProtocolError> {
+        if self.pushed_count != self.expected_count {
+            return Err(ProtocolError::InvalidInvariant(
+                "streaming ordered-list exact item count",
+            ));
+        }
+        if self.expected_count == 0 {
+            return hash_framed(HashDomain::ListEmpty, &self.kind.id().to_be_bytes());
+        }
+
+        let padded_count = self.expected_count.checked_next_power_of_two().ok_or(
+            ProtocolError::IntegerOverflow {
+                what: "streaming ordered-list padded item count",
+            },
+        )?;
+        for index in self.expected_count..padded_count {
+            self.push_hash(index, pad_hash(self.kind, index)?)?;
+            self.pushed_count += 1;
+        }
+        let tree_height = u16::try_from(padded_count.trailing_zeros()).map_err(|_| {
+            ProtocolError::IntegerOverflow {
+                what: "streaming ordered-list tree height",
+            }
+        })?;
+        let tree_root = self.frontier[usize::from(tree_height)].ok_or(
+            ProtocolError::InvalidInvariant("streaming ordered-list complete tree"),
+        )?;
+        root_hash(self.kind, self.expected_count, tree_height, tree_root)
+    }
+
+    fn push_hash(&mut self, index: u32, mut hash: B256) -> Result<(), ProtocolError> {
+        let mut position = index;
+        let mut level = 0_usize;
+        loop {
+            if position & 1 == 0 {
+                self.frontier[level] = Some(hash);
+                return Ok(());
+            }
+            let left = self.frontier[level].take().ok_or(
+                ProtocolError::InvalidInvariant("streaming ordered-list left sibling"),
+            )?;
+            let parent_level =
+                u16::try_from(level + 1).map_err(|_| ProtocolError::IntegerOverflow {
+                    what: "streaming ordered-list parent level",
+                })?;
+            hash = node_hash(
+                self.kind,
+                parent_level,
+                position >> 1,
+                left,
+                hash,
+            )?;
+            position >>= 1;
+            level += 1;
+        }
+    }
+}
+
 pub fn ordered_list_root<T: AsRef<[u8]>>(
     kind: ListKind,
     items: &[T],
