@@ -4,7 +4,8 @@ use outbe_lysis::program_v1::planner::{
     ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_lysis::program_v1::phases::{
-    fidelity_map, fidelity_reduce, finalize_fi_fraction_table,
+    fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
+    FidelityReduceValueV1,
 };
 use outbe_lysis::program_v1::{
     execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
@@ -18,6 +19,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_primitives::units::SCALE_1E18;
+use std::collections::BTreeMap;
 
 // OCM-SEM-002: planner, unit coverage and fixed reducer topology.
 #[test]
@@ -449,6 +451,67 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
     let left = fidelity_map(0, &[observed.clone()]).unwrap();
     let right = fidelity_map(2, &[observed]).unwrap();
     assert!(fidelity_reduce(&left.aggregate, &right.aggregate).is_err());
+}
+
+#[test]
+fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
+    let day = WorldwideDay::new(20_260_724);
+    for primary_count in 1..=8_u32 {
+        let tree = PaddedBinaryTreeV1::for_primary_leaf_count(primary_count).unwrap();
+        let leaves = (0..primary_count)
+            .map(|ordinal| {
+                let mut owner_bytes = [0_u8; 20];
+                owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
+                let owner = Address::from(owner_bytes);
+                let observed = ObservedTributeV1 {
+                    tribute: TributeInputV1 {
+                        tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                        owner,
+                        worldwide_day: day,
+                        issuance_currency: 978,
+                        nominal_amount_minor: SCALE_1E18,
+                        reference_currency: 840,
+                        tribute_price_minor: U256::ZERO,
+                        exclude_from_intex_issuance: false,
+                    },
+                    first_league: ObservationValueV1::Value((ordinal % 3 + 1) as u16),
+                    second_league: ObservationValueV1::Value((ordinal % 3 + 1) as u16),
+                    conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                    nod_target_available: true,
+                };
+                fidelity_map(ordinal, &[observed]).unwrap().aggregate
+            })
+            .collect::<Vec<_>>();
+        let mut nodes = BTreeMap::<(u16, u32), FidelityReduceValueV1>::new();
+
+        for level in 1..=tree.height() {
+            let width = tree.padded_leaf_count() >> level;
+            for index in 0..width {
+                let node = tree.reducer_node(level, index).unwrap();
+                let resolve = |input| match input {
+                    ReducerInputV1::Primary(ordinal) => {
+                        FidelityReduceValueV1::Aggregate(leaves[ordinal as usize].clone())
+                    }
+                    ReducerInputV1::CanonicalEmpty { .. } => FidelityReduceValueV1::Empty,
+                    ReducerInputV1::Reducer { level, index } => {
+                        nodes.get(&(level, index)).unwrap().clone()
+                    }
+                };
+                let output =
+                    fidelity_reduce_pair(resolve(node.inputs[0]), resolve(node.inputs[1])).unwrap();
+                nodes.insert((level, index), output);
+            }
+        }
+
+        let FidelityReduceValueV1::Aggregate(root) =
+            nodes.get(&(tree.height(), 0)).unwrap()
+        else {
+            panic!("a non-empty plan must have a non-empty Fidelity root");
+        };
+        assert_eq!(root.tribute_count, primary_count);
+        assert_eq!(root.start_ordinal, 0);
+        assert_eq!(root.end_ordinal, primary_count);
+    }
 }
 
 fn entity_id(ordinal: u32) -> EntityId36 {

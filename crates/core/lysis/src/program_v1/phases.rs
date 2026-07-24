@@ -43,6 +43,12 @@ pub struct FidelityMapOutputV1 {
     pub aggregate: FidelityAggregateV1,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FidelityReduceValueV1 {
+    Empty,
+    Aggregate(FidelityAggregateV1),
+}
+
 pub fn fidelity_map(
     start_ordinal: u32,
     observed: &[ObservedTributeV1],
@@ -196,6 +202,27 @@ pub fn fidelity_reduce(
             )
             .collect(),
     })
+}
+
+pub fn fidelity_reduce_pair(
+    left: FidelityReduceValueV1,
+    right: FidelityReduceValueV1,
+) -> Result<FidelityReduceValueV1, ProgramErrorV1> {
+    match (left, right) {
+        (FidelityReduceValueV1::Empty, FidelityReduceValueV1::Empty) => {
+            Ok(FidelityReduceValueV1::Empty)
+        }
+        (FidelityReduceValueV1::Aggregate(left), FidelityReduceValueV1::Empty) => {
+            Ok(FidelityReduceValueV1::Aggregate(left))
+        }
+        (
+            FidelityReduceValueV1::Aggregate(left),
+            FidelityReduceValueV1::Aggregate(right),
+        ) => fidelity_reduce(&left, &right).map(FidelityReduceValueV1::Aggregate),
+        (FidelityReduceValueV1::Empty, FidelityReduceValueV1::Aggregate(_)) => {
+            Err(ProgramErrorV1::OutputCountMismatch)
+        }
+    }
 }
 
 pub fn finalize_fi_fraction_table(
