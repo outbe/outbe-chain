@@ -1,8 +1,8 @@
 //! Canonical bounded artifacts for the fixed Lysis V1 work graph.
 
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::EntityId36;
 use outbe_ocomp_protocol::list::{ordered_list_root, OrderedListLimits};
@@ -10,10 +10,14 @@ use outbe_ocomp_protocol::registry::ListKind;
 use outbe_ocomp_protocol::{CanonicalReader, CanonicalWriter, SchemaLimits};
 
 use super::execute::validate_canonical_tributes;
+use super::phases::{
+    FidelityAggregateV1, FidelityLeaguePartialV1, FidelityMapOutputV1, FidelityObservationV1,
+};
 use super::planner::PRIMARY_WORK_SHARD_SIZE;
 use super::{ProgramErrorV1, TributeInputV1};
 
 const ENUMERATED_RUN_MAGIC: [u8; 4] = *b"LYE1";
+const FIDELITY_MAP_MAGIC: [u8; 4] = *b"LYF1";
 const COVERAGE_RECORD_BYTES: usize = 40;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,27 +37,22 @@ pub struct EnumeratedRunV1 {
 impl EnumeratedRunV1 {
     pub fn coverage_root(&self) -> Result<B256, LysisArtifactErrorV1> {
         validate_enumerated_run(self)?;
-        let mut records = Vec::new();
-        records
-            .try_reserve_exact(self.ordered_records.len())
-            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
-        for record in &self.ordered_records {
-            let mut encoded = [0_u8; COVERAGE_RECORD_BYTES];
-            encoded[..4].copy_from_slice(&record.raw_ordinal.to_be_bytes());
-            encoded[4..].copy_from_slice(record.tribute.tribute_id.as_bytes());
-            records.push(encoded);
-        }
-        ordered_list_root(
-            ListKind::RawTributeCoverage,
-            &records,
-            OrderedListLimits {
-                max_items: PRIMARY_WORK_SHARD_SIZE as usize,
-                max_item_bytes: COVERAGE_RECORD_BYTES,
-                max_tree_allocation_bytes: PRIMARY_WORK_SHARD_SIZE as usize
-                    * core::mem::size_of::<B256>(),
-            },
+        raw_coverage_root(
+            self.ordered_records
+                .iter()
+                .map(|record| (record.raw_ordinal, record.tribute.tribute_id.as_bytes())),
         )
-        .map_err(LysisArtifactErrorV1::Protocol)
+    }
+}
+
+impl FidelityMapOutputV1 {
+    pub fn coverage_root(&self) -> Result<B256, LysisArtifactErrorV1> {
+        validate_fidelity_map_output(self)?;
+        raw_coverage_root(
+            self.observations
+                .iter()
+                .map(|record| (record.raw_ordinal, record.tribute_id.as_bytes())),
+        )
     }
 }
 
@@ -206,6 +205,109 @@ pub fn decode_enumerated_run(
     Ok(run)
 }
 
+pub fn encode_fidelity_map_output(
+    output: &FidelityMapOutputV1,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, LysisArtifactErrorV1> {
+    validate_fidelity_map_output(output)?;
+    let mut encoded = CanonicalWriter::new(limits.codec);
+    encoded.write_fixed(&FIDELITY_MAP_MAGIC)?;
+    encoded.write_u32(output.aggregate.start_ordinal)?;
+    encoded.write_u32(output.aggregate.end_ordinal)?;
+    encoded.write_u32(output.aggregate.tribute_count)?;
+    encoded.write_u256(output.aggregate.checked_total_nominal)?;
+    encoded.write_u32(
+        u32::try_from(output.observations.len())
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    for observation in &output.observations {
+        encoded.write_u32(observation.raw_ordinal)?;
+        encoded.write_entity_id36(observation.tribute_id.as_bytes())?;
+        encoded.write_u16(observation.pre_distribution_league)?;
+        encoded.write_u16(observation.issuance_league)?;
+        encoded.write_u256(observation.nominal_amount_minor)?;
+    }
+    encoded.write_u32(
+        u32::try_from(output.aggregate.ordered_league_partials.len())
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    for partial in &output.aggregate.ordered_league_partials {
+        encoded.write_u16(partial.league_id)?;
+        encoded.write_u32(partial.count)?;
+        encoded.write_u256(partial.nominal_amount_minor)?;
+    }
+    Ok(encoded.into_bytes())
+}
+
+pub fn decode_fidelity_map_output(
+    encoded: &[u8],
+    limits: &SchemaLimits,
+) -> Result<FidelityMapOutputV1, LysisArtifactErrorV1> {
+    let mut input = CanonicalReader::new(encoded, limits.codec)?;
+    if input.read_fixed::<4>()? != FIDELITY_MAP_MAGIC {
+        return Err(LysisArtifactErrorV1::InvalidEncoding("Fidelity map header"));
+    }
+    let start_ordinal = input.read_u32()?;
+    let end_ordinal = input.read_u32()?;
+    let tribute_count = input.read_u32()?;
+    let checked_total_nominal = input.read_u256()?;
+    let observation_count = input.read_u32()?;
+    validate_shard_size(
+        usize::try_from(observation_count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    let mut observations = Vec::new();
+    observations
+        .try_reserve_exact(
+            usize::try_from(observation_count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+        )
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    for _ in 0..observation_count {
+        observations.push(FidelityObservationV1 {
+            raw_ordinal: input.read_u32()?,
+            tribute_id: EntityId36::try_from(input.read_entity_id36()?.as_slice())
+                .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("Fidelity Tribute id"))?,
+            pre_distribution_league: input.read_u16()?,
+            issuance_league: input.read_u16()?,
+            nominal_amount_minor: input.read_u256()?,
+        });
+    }
+    let partial_count = input.read_u32()?;
+    validate_shard_size(
+        usize::try_from(partial_count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+    )?;
+    let mut ordered_league_partials = Vec::new();
+    ordered_league_partials
+        .try_reserve_exact(
+            usize::try_from(partial_count).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+        )
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    for _ in 0..partial_count {
+        ordered_league_partials.push(FidelityLeaguePartialV1 {
+            league_id: input.read_u16()?,
+            count: input.read_u32()?,
+            nominal_amount_minor: input.read_u256()?,
+        });
+    }
+    input.finish()?;
+    let output = FidelityMapOutputV1 {
+        observations,
+        aggregate: FidelityAggregateV1 {
+            start_ordinal,
+            end_ordinal,
+            tribute_count,
+            checked_total_nominal,
+            ordered_league_partials,
+        },
+    };
+    validate_fidelity_map_output(&output)?;
+    if encode_fidelity_map_output(&output, limits)? != encoded {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "Fidelity map canonical re-encoding",
+        ));
+    }
+    Ok(output)
+}
+
 fn validate_enumerated_run(run: &EnumeratedRunV1) -> Result<(), LysisArtifactErrorV1> {
     validate_shard_size(run.ordered_records.len())?;
     let tributes = run
@@ -237,6 +339,141 @@ fn validate_enumerated_run(run: &EnumeratedRunV1) -> Result<(), LysisArtifactErr
         ));
     }
     Ok(())
+}
+
+fn validate_fidelity_map_output(output: &FidelityMapOutputV1) -> Result<(), LysisArtifactErrorV1> {
+    validate_shard_size(output.observations.len())?;
+    validate_shard_size(output.aggregate.ordered_league_partials.len())?;
+    let observation_count = u32::try_from(output.observations.len())
+        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+    if output.aggregate.tribute_count != observation_count
+        || output.aggregate.end_ordinal
+            != output
+                .aggregate
+                .start_ordinal
+                .checked_add(observation_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+    {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "Fidelity map aggregate range",
+        ));
+    }
+
+    let mut checked_total_nominal = U256::ZERO;
+    let mut previous_id = None;
+    let mut expected_partials = BTreeMap::<u16, (u32, U256)>::new();
+    for (offset, observation) in output.observations.iter().enumerate() {
+        let offset = u32::try_from(offset).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        if observation.raw_ordinal
+            != output
+                .aggregate
+                .start_ordinal
+                .checked_add(offset)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?
+            || observation.pre_distribution_league != observation.issuance_league
+            || previous_id.is_some_and(|previous| previous >= observation.tribute_id)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Fidelity map observation order",
+            ));
+        }
+        previous_id = Some(observation.tribute_id);
+        checked_total_nominal = checked_total_nominal
+            .checked_add(observation.nominal_amount_minor)
+            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
+                "Fidelity map nominal overflow",
+            ))?;
+        let expected = expected_partials
+            .entry(observation.issuance_league)
+            .or_insert((0, U256::ZERO));
+        expected.0 = expected
+            .0
+            .checked_add(1)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        expected.1 = expected
+            .1
+            .checked_add(observation.nominal_amount_minor)
+            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
+                "Fidelity map league nominal overflow",
+            ))?;
+    }
+    if checked_total_nominal != output.aggregate.checked_total_nominal {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "Fidelity map aggregate nominal",
+        ));
+    }
+
+    let mut checked_partial_count = 0_u32;
+    let mut checked_partial_nominal = U256::ZERO;
+    let mut previous_league = None;
+    for partial in &output.aggregate.ordered_league_partials {
+        if partial.count == 0
+            || partial.nominal_amount_minor.is_zero()
+            || previous_league.is_some_and(|previous| previous >= partial.league_id)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Fidelity map league partial order",
+            ));
+        }
+        previous_league = Some(partial.league_id);
+        checked_partial_count = checked_partial_count
+            .checked_add(partial.count)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        checked_partial_nominal = checked_partial_nominal
+            .checked_add(partial.nominal_amount_minor)
+            .ok_or(LysisArtifactErrorV1::InvalidEncoding(
+                "Fidelity map partial nominal overflow",
+            ))?;
+    }
+    if checked_partial_count != observation_count
+        || checked_partial_nominal != checked_total_nominal
+        || output
+            .aggregate
+            .ordered_league_partials
+            .iter()
+            .map(|partial| {
+                (
+                    partial.league_id,
+                    (partial.count, partial.nominal_amount_minor),
+                )
+            })
+            .ne(expected_partials
+                .iter()
+                .map(|(league, values)| (*league, *values)))
+    {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "Fidelity map league partial totals",
+        ));
+    }
+    Ok(())
+}
+
+fn raw_coverage_root<'a>(
+    records: impl IntoIterator<Item = (u32, &'a [u8; 36])>,
+) -> Result<B256, LysisArtifactErrorV1> {
+    let mut encoded_records = Vec::new();
+    for (raw_ordinal, tribute_id) in records {
+        if encoded_records.len() >= PRIMARY_WORK_SHARD_SIZE as usize {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "raw coverage item cap",
+            ));
+        }
+        let mut encoded = [0_u8; COVERAGE_RECORD_BYTES];
+        encoded[..4].copy_from_slice(&raw_ordinal.to_be_bytes());
+        encoded[4..].copy_from_slice(tribute_id);
+        encoded_records.push(encoded);
+    }
+    ordered_list_root(
+        ListKind::RawTributeCoverage,
+        &encoded_records,
+        OrderedListLimits {
+            max_items: PRIMARY_WORK_SHARD_SIZE as usize,
+            max_item_bytes: COVERAGE_RECORD_BYTES,
+            max_tree_allocation_bytes: PRIMARY_WORK_SHARD_SIZE as usize
+                * core::mem::size_of::<B256>(),
+        },
+    )
+    .map_err(LysisArtifactErrorV1::Protocol)
 }
 
 fn validate_shard_size(count: usize) -> Result<(), LysisArtifactErrorV1> {

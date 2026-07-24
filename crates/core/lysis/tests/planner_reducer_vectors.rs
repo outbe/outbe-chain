@@ -8,7 +8,8 @@ use outbe_lysis::program_v1::reducers::{
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::artifacts::{
-    decode_enumerated_run, encode_enumerated_run, enumerate_tributes,
+    decode_enumerated_run, decode_fidelity_map_output, encode_enumerated_run,
+    encode_fidelity_map_output, enumerate_tributes,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
@@ -43,6 +44,22 @@ fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> Tribut
         reference_currency: 978,
         tribute_price_minor: U256::from(2),
         exclude_from_intex_issuance: excluded,
+    }
+}
+
+fn observed(
+    seed: u32,
+    day: WorldwideDay,
+    nominal: u64,
+    league: u16,
+    excluded: bool,
+) -> ObservedTributeV1 {
+    ObservedTributeV1 {
+        tribute: tribute(seed, day, nominal, excluded),
+        first_league: ObservationValueV1::Value(league),
+        second_league: ObservationValueV1::Value(league),
+        conditional_entry_price_minor: ObservationValueV1::Value(U256::from(3)),
+        nod_target_available: true,
     }
 }
 
@@ -128,6 +145,44 @@ fn enumerate_rejects_empty_oversized_and_noncanonical_shards() {
 
     let duplicate = tribute(1, day, 1, false);
     assert!(enumerate_tributes(0, day, &[duplicate.clone(), duplicate]).is_err());
+}
+
+#[test]
+fn fidelity_map_artifact_is_bounded_canonical_and_preserves_raw_coverage() {
+    let limits = poc_schema_limits();
+    let day = WorldwideDay::new(20_260_724);
+    let mut observed = vec![
+        observed(1, day, 10, 2, false),
+        observed(2, day, 20, 3, true),
+    ];
+    observed.sort_by_key(|item| item.tribute.tribute_id);
+    let output = fidelity_map(256, &observed).unwrap();
+
+    let encoded = encode_fidelity_map_output(&output, &limits).unwrap();
+    assert_eq!(
+        decode_fidelity_map_output(&encoded, &limits).unwrap(),
+        output
+    );
+    assert_eq!(output.coverage_root().unwrap(), {
+        let enumerated = enumerate_tributes(
+            256,
+            day,
+            &observed
+                .iter()
+                .map(|item| item.tribute.clone())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        enumerated.coverage_root().unwrap()
+    });
+
+    let mut changed = encoded.clone();
+    changed[24] ^= 1;
+    assert!(decode_fidelity_map_output(&changed, &limits).is_err());
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(decode_fidelity_map_output(&trailing, &limits).is_err());
 }
 
 #[test]
