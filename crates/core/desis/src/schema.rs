@@ -82,8 +82,8 @@ impl AuctionConfig {
     /// prior-clearing count are in reach.
     pub fn from_entry_price(entry_price_minor: U256) -> Self {
         Self {
-            issuance_currency: crate::constants::QUALIFIER_ISSUANCE_ISO,
-            reference_currency: crate::constants::QUALIFIER_REFERENCE_ISO,
+            issuance_currency: outbe_intexfactory::constants::QUALIFIER_ISSUANCE_ISO,
+            reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
