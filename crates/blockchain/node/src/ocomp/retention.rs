@@ -794,6 +794,28 @@ impl OcompRetentionCoordinator {
             })
     }
 
+    /// Returns the one exact finalized job that remains locally live for
+    /// discovery/export. Tentative, terminal and released records are not
+    /// discoverable work.
+    pub fn finalized_live_job(&self) -> Result<Option<FinalizedJobPinV1>, RetentionError> {
+        let inner = self.lock()?;
+        match inner.status {
+            RetentionStatus::Empty => Ok(None),
+            RetentionStatus::Quarantined { ref reason } => {
+                Err(RetentionError::Quarantined(reason.clone()))
+            }
+            RetentionStatus::Ready(record) => match record.state {
+                PinStateV1::Finalized { candidate, job_id }
+                | PinStateV1::Exported {
+                    candidate, job_id, ..
+                } => Ok(Some(FinalizedJobPinV1 { candidate, job_id })),
+                PinStateV1::Tentative { .. }
+                | PinStateV1::Terminal { .. }
+                | PinStateV1::Released { .. } => Ok(None),
+            },
+        }
+    }
+
     pub fn prepare_candidate(&self, block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
         let candidate = self.source.candidate_for_block(block).map_err(hook_error)?;
         if let Some(candidate) = candidate {

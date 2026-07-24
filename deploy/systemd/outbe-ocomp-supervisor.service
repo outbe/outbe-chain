@@ -8,6 +8,7 @@ StartLimitBurst=3
 Type=simple
 User=outbe-ocomp-supervisor
 Group=outbe-ocomp-supervisor
+EnvironmentFile=/etc/outbe/outbe-ocomp.env
 ExecStart=/usr/local/bin/outbe-ocomp supervisor
 Restart=on-failure
 RestartSec=5

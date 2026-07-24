@@ -8016,7 +8016,11 @@ dependencies = [
  "clap",
  "hex",
  "libc",
+ "outbe-consensus",
+ "outbe-node",
  "outbe-ocomp-protocol",
+ "outbe-primitives",
+ "reth-ethereum",
  "sha3",
  "tempfile",
  "thiserror 2.0.18",
@@ -8036,6 +8040,7 @@ dependencies = [
  "commonware-cryptography",
  "commonware-utils",
  "k256 0.13.4",
+ "libc",
  "outbe-consensus",
  "outbe-metadosis",
  "outbe-node",
@@ -8047,6 +8052,7 @@ dependencies = [
  "reth-trie",
  "revm",
  "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

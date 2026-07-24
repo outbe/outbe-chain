@@ -8,6 +8,8 @@ publish.workspace = true
 [dependencies]
 alloy-primitives = { workspace = true, features = ["std"] }
 k256.workspace = true
+libc.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 alloy-consensus.workspace = true

@@ -3,4 +3,5 @@
 pub mod cas;
 pub mod control;
 pub mod inbox;
+pub mod supervisor;
 pub mod worker;

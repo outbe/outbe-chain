@@ -5,6 +5,7 @@ use alloy_primitives::B256;
 use crate::{
     common::BoundedBytes,
     error::ProtocolError,
+    intent::JobIntentV1,
     schema::{require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
     CanonicalReader, CanonicalWriter,
 };
@@ -14,6 +15,7 @@ pub const CONTROL_FRAME_HEADER_LEN: usize = 32;
 pub const CONTROL_FRAME_LEN_AFTER_PREFIX: usize = 28;
 pub const NODE_CONTROL_MAGIC: [u8; 4] = *b"OCL1";
 pub const WORKER_CONTROL_MAGIC: [u8; 4] = *b"OWR1";
+pub const MAX_FINALIZED_JOBS_PER_RESPONSE: u16 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlMagic {
@@ -134,6 +136,91 @@ wire_struct! {
         pub encoded_bytes: u64,
         pub expected_ocb1_kind: Option<u16>,
     }
+}
+
+wire_struct! {
+    pub struct ListFinalizedJobsV1 {
+        pub after_cursor: u64,
+        pub limit: u16,
+    }
+    validate = validate_list_finalized_jobs;
+}
+
+wire_struct! {
+    pub struct FinalizedJobSummaryV1 {
+        pub cursor: u64,
+        pub job_id: B256,
+        pub intent_id: B256,
+        pub finalized_block_hash: B256,
+        pub finalized_state_root: B256,
+        pub protocol_bundle_hash: B256,
+    }
+    validate = validate_finalized_job_summary;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListFinalizedJobsResponseV1 {
+    pub next_cursor: u64,
+    pub jobs: Vec<FinalizedJobSummaryV1>,
+}
+
+impl NestedCodec for ListFinalizedJobsResponseV1 {
+    fn validate(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
+        require(
+            self.jobs.len() <= usize::from(MAX_FINALIZED_JOBS_PER_RESPONSE),
+            "finalized job response cap",
+        )?;
+        for job in &self.jobs {
+            job.validate(limits)?;
+        }
+        if let Some(job) = self.jobs.first() {
+            require(
+                self.next_cursor == job.cursor,
+                "finalized job response cursor",
+            )?;
+        }
+        Ok(())
+    }
+
+    fn encode_nested(
+        &self,
+        output: &mut CanonicalWriter,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        self.validate(limits)?;
+        output.write_u64(self.next_cursor)?;
+        output.write_vec(
+            &self.jobs,
+            usize::from(MAX_FINALIZED_JOBS_PER_RESPONSE),
+            |writer, job| job.encode_nested(writer, limits),
+        )
+    }
+
+    fn decode_nested(
+        input: &mut CanonicalReader<'_>,
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let next_cursor = input.read_u64()?;
+        let jobs = input.read_vec(usize::from(MAX_FINALIZED_JOBS_PER_RESPONSE), 0, |reader| {
+            FinalizedJobSummaryV1::decode_nested(reader, limits)
+        })?;
+        Ok(Self { next_cursor, jobs })
+    }
+}
+
+wire_struct! {
+    pub struct GetJobSpecV1 {
+        pub job_id: B256,
+    }
+    validate = validate_get_job_spec;
+}
+
+wire_struct! {
+    pub struct FinalizedJobSpecV1 {
+        pub summary: FinalizedJobSummaryV1,
+        pub canonical_job_intent: BoundedBytes,
+    }
+    validate = validate_finalized_job_spec;
 }
 
 wire_struct! {
@@ -269,6 +356,7 @@ macro_rules! impl_control_body_codec {
     ($type:ty) => {
         impl $type {
             pub fn encode_body(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+                self.validate(limits)?;
                 let mut output = CanonicalWriter::new(limits.codec);
                 self.encode_nested(&mut output, limits)?;
                 Ok(output.into_bytes())
@@ -281,6 +369,7 @@ macro_rules! impl_control_body_codec {
                 let mut input = CanonicalReader::new(encoded, limits.codec)?;
                 let value = Self::decode_nested(&mut input, limits)?;
                 input.finish()?;
+                value.validate(limits)?;
                 Ok(value)
             }
         }
@@ -291,6 +380,10 @@ impl_control_body_codec!(HelloV1);
 impl_control_body_codec!(HelloAckV1);
 impl_control_body_codec!(LocalErrorV1);
 impl_control_body_codec!(UnitFinishedV1);
+impl_control_body_codec!(ListFinalizedJobsV1);
+impl_control_body_codec!(ListFinalizedJobsResponseV1);
+impl_control_body_codec!(GetJobSpecV1);
+impl_control_body_codec!(FinalizedJobSpecV1);
 
 impl RunUnitV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
@@ -331,4 +424,61 @@ impl RunUnitV1 {
 
 fn validate_run_unit(request: &RunUnitV1, limits: &SchemaLimits) -> Result<(), ProtocolError> {
     request.validate_semantics(limits)
+}
+
+fn validate_list_finalized_jobs(
+    request: &ListFinalizedJobsV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    require(
+        request.limit == MAX_FINALIZED_JOBS_PER_RESPONSE,
+        "finalized job request limit",
+    )
+}
+
+fn validate_finalized_job_summary(
+    summary: &FinalizedJobSummaryV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    require(summary.cursor != 0, "finalized job cursor")?;
+    require(!summary.job_id.is_zero(), "finalized job id")?;
+    require(!summary.intent_id.is_zero(), "finalized intent id")?;
+    require(
+        !summary.finalized_block_hash.is_zero(),
+        "finalized job block hash",
+    )?;
+    require(
+        !summary.finalized_state_root.is_zero(),
+        "finalized job state root",
+    )?;
+    require(
+        !summary.protocol_bundle_hash.is_zero(),
+        "finalized job protocol bundle",
+    )
+}
+
+fn validate_get_job_spec(
+    request: &GetJobSpecV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    require(!request.job_id.is_zero(), "get job spec id")
+}
+
+fn validate_finalized_job_spec(
+    spec: &FinalizedJobSpecV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    let intent = JobIntentV1::decode_canonical(&spec.canonical_job_intent.0, limits)?;
+    let intent_id = intent.intent_id(limits)?;
+    let job_id = intent.job_id(
+        spec.summary.finalized_block_hash,
+        spec.summary.finalized_state_root,
+        limits,
+    )?;
+    require(intent_id == spec.summary.intent_id, "job spec IntentId")?;
+    require(job_id == spec.summary.job_id, "job spec JobId")?;
+    require(
+        intent.protocol_bundle_hash == spec.summary.protocol_bundle_hash,
+        "job spec protocol bundle",
+    )
 }

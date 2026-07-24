@@ -19,6 +19,10 @@ sha3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-consensus.workspace = true
+outbe-node.workspace = true
+outbe-primitives.workspace = true
+reth-ethereum.workspace = true
 tempfile.workspace = true
 
 [lints]

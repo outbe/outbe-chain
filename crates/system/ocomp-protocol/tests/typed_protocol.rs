@@ -19,7 +19,9 @@ use outbe_ocomp_protocol::{
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
-        ControlFrameV1, ControlMagic, RunUnitV1, CONTROL_FRAME_HEADER_LEN, WORKER_CONTROL_MAGIC,
+        ControlFrameV1, ControlMagic, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
+        ListFinalizedJobsResponseV1, ListFinalizedJobsV1, RunUnitV1, CONTROL_FRAME_HEADER_LEN,
+        MAX_FINALIZED_JOBS_PER_RESPONSE, WORKER_CONTROL_MAGIC,
     },
     hash::hash_framed,
     input::{CheckpointIdentityV1, Compression, InputManifestV1},
@@ -1071,6 +1073,73 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
     };
     let body = request.encode_body(&LIMITS).unwrap();
     assert_eq!(RunUnitV1::decode_body(&body, &LIMITS).unwrap(), request);
+}
+
+#[test]
+fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
+    let request = ListFinalizedJobsV1 {
+        after_cursor: 99,
+        limit: 1,
+    };
+    assert_eq!(
+        ListFinalizedJobsV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        request
+    );
+    for invalid_limit in [0, MAX_FINALIZED_JOBS_PER_RESPONSE + 1] {
+        assert!(ListFinalizedJobsV1 {
+            after_cursor: 99,
+            limit: invalid_limit,
+        }
+        .encode_body(&LIMITS)
+        .is_err());
+    }
+
+    let intent = intent();
+    let finalized_block_hash = hash(0x92);
+    let finalized_state_root = hash(0x93);
+    let summary = FinalizedJobSummaryV1 {
+        cursor: 100,
+        job_id: intent
+            .job_id(finalized_block_hash, finalized_state_root, &LIMITS)
+            .expect("JobId"),
+        intent_id: intent.intent_id(&LIMITS).expect("IntentId"),
+        finalized_block_hash,
+        finalized_state_root,
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+    };
+    let response = ListFinalizedJobsResponseV1 {
+        next_cursor: summary.cursor,
+        jobs: vec![summary.clone()],
+    };
+    assert_eq!(
+        ListFinalizedJobsResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        response
+    );
+    assert!(ListFinalizedJobsResponseV1 {
+        next_cursor: 101,
+        jobs: vec![summary.clone(), summary.clone()],
+    }
+    .encode_body(&LIMITS)
+    .is_err());
+
+    let get = GetJobSpecV1 {
+        job_id: summary.job_id,
+    };
+    assert_eq!(
+        GetJobSpecV1::decode_body(&get.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        get
+    );
+    let spec = FinalizedJobSpecV1 {
+        summary,
+        canonical_job_intent: BoundedBytes(
+            intent.encode_canonical(&LIMITS).expect("canonical intent"),
+        ),
+    };
+    assert_eq!(
+        FinalizedJobSpecV1::decode_body(&spec.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        spec
+    );
 }
 
 fn selector(signature: &str) -> [u8; 4] {
