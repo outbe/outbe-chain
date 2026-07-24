@@ -878,25 +878,46 @@ impl LysisPlanTopologyV1 {
             ),
             PlannedUnitPositionV1::TreeNode {
                 phase: UnitPhase::GratisPrefixDown,
+                level: 0,
+                index,
+            } if index < primary => Ok(vec![
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::GratisPrefixDown,
+                    level: 1,
+                    index: index / 2,
+                }),
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::GratisPrefix,
+                    level: 0,
+                    index,
+                }),
+            ]),
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
                 level,
                 index,
             } => {
-                let prefix = PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
-                    phase: UnitPhase::GratisPrefix,
+                let child_summaries = self.binary_children(
+                    UnitPhase::GratisPrefix,
+                    UnitPhase::GratisPrefix,
+                    InputPurpose::GratisPrefixTable,
                     level,
                     index,
-                });
+                    false,
+                )?;
                 if level == self.tree.height && index == 0 {
-                    Ok(vec![prefix])
+                    Ok(child_summaries)
                 } else if level < self.tree.height {
-                    Ok(vec![
-                        PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    let mut producers = Vec::with_capacity(3);
+                    producers.push(PlannedProducerV1::Unit(
+                        PlannedUnitPositionV1::TreeNode {
                             phase: UnitPhase::GratisPrefixDown,
                             level: level + 1,
                             index: index / 2,
-                        }),
-                        prefix,
-                    ])
+                        },
+                    ));
+                    producers.extend(child_summaries);
+                    Ok(producers)
                 } else {
                     Err(PlannerErrorV1::ProducerMembershipMismatch)
                 }

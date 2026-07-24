@@ -815,6 +815,69 @@ fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
 }
 
 #[test]
+fn prefix_down_reads_parent_prefix_and_immediate_child_summaries() {
+    let topology = LysisPlanTopologyV1::new(3).unwrap();
+    let root = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::GratisPrefixDown,
+        level: 2,
+        index: 0,
+    };
+    assert_eq!(
+        topology.required_producers(root).unwrap(),
+        [
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 1,
+                index: 0,
+            }),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 1,
+                index: 1,
+            }),
+        ]
+    );
+
+    let internal = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::GratisPrefixDown,
+        level: 1,
+        index: 1,
+    };
+    assert_eq!(
+        topology.required_producers(internal).unwrap(),
+        [
+            PlannedProducerV1::Unit(root),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 0,
+                index: 2,
+            }),
+            PlannedProducerV1::CanonicalEmpty {
+                purpose: InputPurpose::GratisPrefixTable,
+                padded_ordinal: 3,
+            },
+        ]
+    );
+
+    let leaf = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::GratisPrefixDown,
+        level: 0,
+        index: 2,
+    };
+    assert_eq!(
+        topology.required_producers(leaf).unwrap(),
+        [
+            PlannedProducerV1::Unit(internal),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 0,
+                index: 2,
+            }),
+        ]
+    );
+}
+
+#[test]
 fn every_derived_producer_is_an_earlier_exact_plan_member() {
     for primary_count in 1..=8 {
         let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
