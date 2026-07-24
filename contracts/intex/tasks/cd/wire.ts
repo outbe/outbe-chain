@@ -57,7 +57,7 @@ interface EscrowWireArgs {
   paymentToken: string;
 }
 
-interface BNBBridgeWireArgs {
+interface TargetBridgeWireArgs {
   bridgeContract: string;
   intexAuctionContract: string;
   intexContract: string;
@@ -65,7 +65,7 @@ interface BNBBridgeWireArgs {
   nftBridgeContract: string;
 }
 
-interface OutbeBridgeWireArgs {
+interface OriginBridgeWireArgs {
   bridgeContract: string;
   desisContract: string;
   intexFactoryContract: string;
@@ -227,7 +227,7 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
 // TargetRouter Wire
 // ============================================================================
 
-const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
+const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) => {
   const auction = (args.intexAuctionContract ?? "").trim();
   const intex = (args.intexContract ?? "").trim();
   const escrow = (args.escrowContract ?? "").trim();
@@ -308,7 +308,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
 };
 
-const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
+const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
   .addOption({
     name: "bridgeContract",
     description: "TargetRouter contract address",
@@ -334,13 +334,13 @@ const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Int
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
-  .setAction(lazy(bnbBridgeWireAction));
+  .setAction(lazy(targetBridgeWireAction));
 
 // ============================================================================
 // OriginRouter Wire
 // ============================================================================
 
-const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) => {
+const originBridgeWireAction = async (args: OriginBridgeWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
   
   console.log(`Wiring OriginRouter...`);
@@ -390,7 +390,7 @@ const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) =>
   console.log(`✅ OriginRouter wired. Tx: ${txHash}`);
 };
 
-const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
+const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
   .addOption({
     name: "bridgeContract",
     description: "OriginRouter contract address",
@@ -406,7 +406,7 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + 
     description: "IntexFactory contract address",
     defaultValue: "",
   })
-  .setAction(lazy(outbeBridgeWireAction));
+  .setAction(lazy(originBridgeWireAction));
 
 // ============================================================================
 // IntexNFT1155Bridge Wire (grant SYSTEM_RELAYER_ROLE)
@@ -928,9 +928,9 @@ const grantSystemRelayerRole = task(
 export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
-  bnbBridgeWire.build(),
+  targetBridgeWire.build(),
   nftBridgeWire.build(),
-  outbeBridgeWire.build(),
+  originBridgeWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
