@@ -145,9 +145,14 @@ BUCKET_SHUFFLE
 ROOT_REDUCE
 ```
 
-`PlanHash` hashes `PlanCommitmentV1`, which commits the exact primary work-unit
-count and ordered primary work-unit root. Scheduler order is not plan order and
-has no semantic effect. A primary unit is verified against that root; every
+`PlanHash` hashes `PlanCommitmentV1`, which commits the finalized execution
+context (`wwd`, `lysis_budget`, `logical_evaluation_time`), exact primary
+work-unit count and ordered primary work-unit root. Scheduler order is not plan
+order and has no semantic effect. A worker decodes the exact commitment bytes
+from CAS and checks their hash and job/manifest bindings before execution. The
+node attestation gate, not the worker, reloads the finalized `JobIntentV1` and
+checks its `wwd`, Lysis budget and logical evaluation time against the plan
+before signing. A primary unit is verified against the committed root; every
 secondary phase unit is verified against the frozen derivation rule and its
 position-bound producer commitments.
 
@@ -304,8 +309,13 @@ floating point is introduced.
 Inputs:
 
 1. matching `ENUMERATED_TRIBUTES/UNIT_OUTPUT`;
-2. root `FI_FRACTION_TABLE/UNIT_OUTPUT`;
-3. `ORACLE_OPENINGS/AUTHENTICATED_ROOT`.
+2. matching `FIDELITY_PARTIALS/UNIT_OUTPUT`;
+3. root `FI_FRACTION_TABLE/UNIT_OUTPUT`;
+4. `ORACLE_OPENINGS/AUTHENTICATED_ROOT`.
+
+The matching Fidelity leaf carries the per-Tribute league observations. The
+global fraction table carries only league totals/fractions and therefore cannot
+by itself establish which league applies to a particular Tribute.
 
 Output:
 

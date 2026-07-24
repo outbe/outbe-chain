@@ -1,6 +1,6 @@
 use core::fmt;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     common::EntityId36,
     registry::ListKind,
@@ -148,6 +148,9 @@ pub struct LysisPlannerBindingsV1 {
     pub tribute_input_encoded_bytes: u64,
     pub fidelity_opening_root: B256,
     pub oracle_opening_root: B256,
+    pub wwd: u32,
+    pub lysis_budget: U256,
+    pub logical_evaluation_time: u64,
     pub tribute_count: u32,
     pub lysis_program_semantics_hash: B256,
     pub planner_spec_version: u16,
@@ -240,6 +243,9 @@ impl LysisPlannerV1 {
             || bindings.tribute_collection_root.is_zero()
             || bindings.fidelity_opening_root.is_zero()
             || bindings.oracle_opening_root.is_zero()
+            || bindings.wwd == 0
+            || bindings.lysis_budget.is_zero()
+            || bindings.logical_evaluation_time == 0
             || bindings.lysis_program_semantics_hash.is_zero()
             || bindings.input_manifest_encoded_bytes == 0
             || bindings.tribute_input_encoded_bytes == 0
@@ -342,6 +348,9 @@ impl LysisPlannerV1 {
             job_id: self.bindings.job_id,
             attempt: self.bindings.attempt,
             input_manifest_hash: self.bindings.input_manifest_hash,
+            wwd: self.bindings.wwd,
+            lysis_budget: self.bindings.lysis_budget,
+            logical_evaluation_time: self.bindings.logical_evaluation_time,
             tribute_count: self.bindings.tribute_count,
             max_tributes_per_work_shard: PRIMARY_WORK_SHARD_SIZE,
             primary_work_unit_count: self.primary_work_unit_count(),
@@ -608,6 +617,10 @@ impl LysisPlanTopologyV1 {
             } if ordinal < primary => Ok(vec![
                 PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
                     phase: UnitPhase::Enumerate,
+                    ordinal,
+                }),
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                    phase: UnitPhase::FidelityMap,
                     ordinal,
                 }),
                 PlannedProducerV1::Unit(self.fixed_reduce_root()),

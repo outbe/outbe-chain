@@ -54,11 +54,21 @@ adjacent, non-overlapping and cover the manifest count exactly once. The
 generated PoC profile bounds an individual work shard and the demonstrated
 chunk/concurrency envelope. It never bounds the parent Tribute population.
 
-`PlanCommitmentV1` is constant-size. A supervisor does not materialize all
-`UnitSpecV1` values in memory or persist them inside the plan hash: it derives a
-unit from `(PlanCommitment, ordinal)`, verifies membership against the committed
-root and advances bounded cursors. The deterministic reduction hierarchy is
-derived from the committed unit count and is likewise scheduled lazily.
+`PlanCommitmentV1` is constant-size and also commits the finalized `wwd`,
+`lysis_budget` and `logical_evaluation_time`. A supervisor does not materialize
+all `UnitSpecV1` values in memory or persist them inside the plan hash: it
+derives a unit from `(PlanCommitment, ordinal)`, verifies membership against the
+committed root and advances bounded cursors. Before execution, the worker
+decodes the exact commitment bytes from CAS and checks `PlanHash`, job, manifest
+and planner/reducer-version bindings. Before signing, the node attestation gate
+independently reloads the finalized intent and checks the plan's `wwd`, budget
+and logical time. The deterministic reduction hierarchy is derived from the
+committed unit count and is likewise scheduled lazily.
+
+`AMOUNT_MAP(j)` has two distinct Fidelity dependencies:
+`FIDELITY_MAP(j)` supplies the per-Tribute league observation and the fixed
+reducer root supplies the global league fraction table. Omitting the matching
+leaf would leave the Tribute-to-league relation unproved.
 
 A unit may run zero or many times. Only a digest-valid artifact for its exact
 `UnitId` and plan membership participates in reduction. One, two and four

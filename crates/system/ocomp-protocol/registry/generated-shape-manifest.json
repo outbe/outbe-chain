@@ -2,7 +2,7 @@
   "armable": false,
   "classification": "measurement_only",
   "generator": {
-    "input_set_sha256": "23799a9c9122e2959e53f4c928217da33abbe92ec55a472adc0b8bbe4c1e7705",
+    "input_set_sha256": "ae60f737af72660e8e6fa8103e4d0fa477bee66ade611242ddd986d9e1788ac4",
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "00498a5c66d7c281ff08505d10b10ae7a8f612b03a8ae8eba1d84eb52db46769"
   },
@@ -27,7 +27,7 @@
   },
   "registries": {
     "canonical_schema_sha256": "7fcd91e7345c24840413cc8b2e199eb6a5764b7a7de162baf456f658c290f1a9",
-    "domain_preimage_sha256": "94fc3820ffb6a54d2db8317b6f5ba71a83e98aef3b0d2adf5f6e21e613902a05",
+    "domain_preimage_sha256": "955a3d4b0d9828cb93fc2c20afa7b6efbefc668ded032490ab3398a10fb55cf6",
     "fidelity_opening_codec_id": "3d3ac5818fb82e51c3041e24e9ff36cc5fdce8dbdb74da1fbf3978ff0e19de1a",
     "input_codecs_sha256": "27af1b6c7146845b7e5c54cc69804a473332e0931be3e678e98f144f41bcdfac",
     "object_count": 30,

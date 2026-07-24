@@ -6,9 +6,9 @@ use std::path::PathBuf;
 
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::input::{InputChunkKind, InputManifestV1};
-use outbe_ocomp_protocol::unit::{InputPurpose, InputSourceKind, UnitSpecV1};
+use outbe_ocomp_protocol::unit::{InputPurpose, InputSourceKind, PlanCommitmentV1, UnitSpecV1};
 use outbe_ocomp_protocol::{
-    ObjectKind, RunUnitV1, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
+    ObjectKind, RunUnitV1, SchemaLimits, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
 use thiserror::Error;
 
@@ -35,6 +35,19 @@ pub struct WorkerConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkerOutcome {
     pub unit_id: B256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExpectedPlanBindingsV1 {
+    plan_hash: B256,
+    protocol_bundle_hash: B256,
+    job_id: B256,
+    attempt: u32,
+    input_manifest_hash: B256,
+    wwd: u32,
+    tribute_count: u32,
+    planner_spec_version: u16,
+    reducer_spec_version: u16,
 }
 
 #[derive(Debug, Error)]
@@ -99,7 +112,8 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         return Err(WorkerError::UnitBindingMismatch);
     }
     let unit_id = spec.unit_id(&limits)?;
-    reader.read_verified(&request.plan_ref)?;
+    let plan_object = reader.read_verified(&request.plan_ref)?;
+    let plan = PlanCommitmentV1::decode_canonical_record(plan_object.bytes(), &limits)?;
     let manifest_object = reader.read_verified(&request.input_manifest_ref)?;
     let manifest = InputManifestV1::decode_canonical(manifest_object.bytes(), &limits)?;
     manifest.validate_against_bundle(config.protocol_bundle.bundle(), &limits)?;
@@ -107,6 +121,21 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
         return Err(WorkerError::UnitBindingMismatch);
     }
     let manifest_hash = manifest.manifest_hash(&limits)?;
+    require_plan_binding(
+        &plan,
+        ExpectedPlanBindingsV1 {
+            plan_hash: request.plan_hash,
+            protocol_bundle_hash: request.protocol_bundle_hash,
+            job_id: request.job_id,
+            attempt: request.attempt,
+            input_manifest_hash: manifest_hash,
+            wwd: manifest.wwd,
+            tribute_count: manifest.tribute_count,
+            planner_spec_version: spec.planner_spec_version,
+            reducer_spec_version: spec.reducer_spec_version,
+        },
+        &limits,
+    )?;
     require_authenticated_input(
         &spec,
         InputPurpose::InputManifest,
@@ -152,6 +181,27 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     Ok(WorkerOutcome { unit_id })
 }
 
+fn require_plan_binding(
+    plan: &PlanCommitmentV1,
+    expected: ExpectedPlanBindingsV1,
+    limits: &SchemaLimits,
+) -> Result<(), WorkerError> {
+    let matches = plan.plan_hash(limits)? == expected.plan_hash
+        && plan.protocol_bundle_hash == expected.protocol_bundle_hash
+        && plan.job_id == expected.job_id
+        && plan.attempt == expected.attempt
+        && plan.input_manifest_hash == expected.input_manifest_hash
+        && plan.wwd == expected.wwd
+        && plan.tribute_count == expected.tribute_count
+        && plan.planner_spec_version == expected.planner_spec_version
+        && plan.reducer_spec_version == expected.reducer_spec_version;
+    if matches {
+        Ok(())
+    } else {
+        Err(WorkerError::UnitBindingMismatch)
+    }
+}
+
 fn require_authenticated_input(
     spec: &UnitSpecV1,
     purpose: InputPurpose,
@@ -188,4 +238,52 @@ fn duplicate_connected_stream(fd: RawFd) -> Result<UnixStream, WorkerError> {
     // SAFETY: `duplicated` is a fresh descriptor owned by this function.
     let owned = unsafe { OwnedFd::from_raw_fd(duplicated) };
     Ok(UnixStream::from(owned))
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::{B256, U256};
+    use outbe_ocomp_protocol::unit::PlanCommitmentV1;
+
+    use super::{poc_schema_limits, require_plan_binding, ExpectedPlanBindingsV1};
+
+    fn plan() -> PlanCommitmentV1 {
+        PlanCommitmentV1 {
+            protocol_bundle_hash: B256::repeat_byte(1),
+            job_id: B256::repeat_byte(2),
+            attempt: 3,
+            input_manifest_hash: B256::repeat_byte(4),
+            wwd: 20_260_724,
+            lysis_budget: U256::from(99_000_000_u64),
+            logical_evaluation_time: 1_784_765_900,
+            tribute_count: 257,
+            max_tributes_per_work_shard: 256,
+            primary_work_unit_count: 2,
+            primary_work_unit_root: B256::repeat_byte(5),
+            planner_spec_version: 1,
+            reducer_spec_version: 1,
+        }
+    }
+
+    #[test]
+    fn changed_frozen_plan_context_is_rejected_even_when_job_and_manifest_bindings_match() {
+        let limits = poc_schema_limits();
+        let committed = plan();
+        let expected = ExpectedPlanBindingsV1 {
+            plan_hash: committed.plan_hash(&limits).unwrap(),
+            protocol_bundle_hash: committed.protocol_bundle_hash,
+            job_id: committed.job_id,
+            attempt: committed.attempt,
+            input_manifest_hash: committed.input_manifest_hash,
+            wwd: committed.wwd,
+            tribute_count: committed.tribute_count,
+            planner_spec_version: committed.planner_spec_version,
+            reducer_spec_version: committed.reducer_spec_version,
+        };
+        require_plan_binding(&committed, expected, &limits).unwrap();
+
+        let mut changed = committed;
+        changed.lysis_budget += U256::from(1);
+        assert!(require_plan_binding(&changed, expected, &limits).is_err());
+    }
 }

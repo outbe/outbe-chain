@@ -1105,6 +1105,9 @@ PlanCommitmentV1 {
   JobId: Hash,
   attempt: u32,
   input_manifest_hash: Hash,
+  wwd: u32,
+  lysis_budget: U256,
+  logical_evaluation_time: u64,
   tribute_count: u32,
   max_tributes_per_work_shard: u32,
   primary_work_unit_count: u32,
@@ -1166,14 +1169,25 @@ The phase fixes the interval tag:
 | `OWNER_SHUFFLE`, `BUCKET_SHUFFLE` | `CanonicalRunSpan` |
 
 For `FIDELITY_MAP`, the canonical Fidelity opening index is the raw Tribute
-ordinal after the opening owner is mapped to its unique Tribute. Range `j` is
-`[32*j, min(32*(j+1), T))`; missing, duplicate or non-gap-free indexes are
-invalid. Storage/chunk order is never an index.
+ordinal after the opening owner is mapped to its unique Tribute. For
+`S = max_tributes_per_work_shard`, range `j` is
+`[S*j, min(S*(j+1), T))`; missing, duplicate or non-gap-free indexes are
+invalid. Storage/chunk order is never an index. `AMOUNT_MAP(j)` consumes both
+`FIDELITY_MAP(j)` and the fixed-reduce root: the matching leaf supplies each
+Tribute's league observation, while the root supplies the global fraction
+table. The fraction table alone cannot recover the Tribute-to-league mapping.
 
 Unit specifications are uniquely derived in topological phase order, then by
 interval `(start,end)` or `(level,index)`. They are enumerated by bounded cursor
 and committed by roots/counts; no caller supplies or materializes the complete
 vector. Each phase has an exact positional input-purpose grammar.
+
+`wwd`, `lysis_budget` and `logical_evaluation_time` are immutable execution
+inputs, not supervisor configuration. They are copied from the finalized
+`JobIntentV1` context into `PlanCommitmentV1` and covered by `PlanHash`. A worker
+authenticates the exact plan bytes/hash and their job/manifest bindings before
+execution. Before signing, the node attestation gate independently reloads the
+finalized intent and checks all three values against it.
 
 Every `canonical_output_bytes` starts with the nested common header:
 

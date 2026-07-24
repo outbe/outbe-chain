@@ -28,8 +28,8 @@ use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
 use outbe_ocomp_protocol::unit::{
-    CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, UnitInterval,
-    UnitPhase, UnitSpecV1,
+    CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
+    UnitInterval, UnitPhase, UnitSpecV1,
 };
 use outbe_ocomp_protocol::{RunUnitV1, UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind};
 use tempfile::tempdir;
@@ -77,7 +77,6 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
     };
     let cas = FilesystemCas::open(directory.path(), CasWriterRole::Supervisor, cas_limits)
         .expect("open CAS");
-    let plan_ref = cas.publish_bytes(b"fixed plan bytes").expect("plan object");
     let limits = poc_schema_limits();
     let bundle = support::protocol_bundle();
     let job_id = B256::repeat_byte(0x31);
@@ -153,6 +152,31 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
         poc_input_list_limits(),
     )
     .expect("publish worker fixture inputs");
+    let plan = PlanCommitmentV1 {
+        protocol_bundle_hash: bundle
+            .protocol_bundle_hash(&limits)
+            .expect("fixture bundle hash"),
+        job_id,
+        attempt: 1,
+        input_manifest_hash: published.manifest_hash,
+        wwd: day.value(),
+        lysis_budget: U256::from(99_000_000_u64),
+        logical_evaluation_time: 1_784_765_900,
+        tribute_count: published.tribute_count,
+        max_tributes_per_work_shard: 256,
+        primary_work_unit_count: 1,
+        primary_work_unit_root: B256::repeat_byte(0x72),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    };
+    let plan_hash = plan.plan_hash(&limits).expect("fixture plan hash");
+    let plan_ref = cas
+        .publish_bytes(
+            &plan
+                .encode_canonical_record(&limits)
+                .expect("canonical plan commitment"),
+        )
+        .expect("plan object");
     let mut canonical_inputs = vec![CanonicalInputRefV1 {
         purpose: InputPurpose::InputManifest,
         source_kind: InputSourceKind::AuthenticatedRoot,
@@ -253,7 +277,7 @@ fn four_real_worker_processes_each_handle_one_exact_unit_and_exit() {
             protocol_bundle_hash: spec.protocol_bundle_hash,
             job_id: spec.job_id,
             attempt: spec.attempt,
-            plan_hash: B256::repeat_byte(0x72),
+            plan_hash,
             unit_index: u32::from(index),
             canonical_unit_spec: BoundedBytes(
                 spec.encode_canonical(&limits).expect("unit spec bytes"),

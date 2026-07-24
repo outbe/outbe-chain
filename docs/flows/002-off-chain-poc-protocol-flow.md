@@ -135,7 +135,7 @@ This journal is restart/reconciliation evidence, not chain authority.
 | `JobIntentV1` and job FSM | canonical chain state | pending nonce, budget split, activation preconditions, deadline, bundle |
 | canonical input chunks | validator-local CAS | digest, length, manifest membership |
 | `InputManifestV1` | exporter/CAS | JobId, checkpoint, input chunk count/root, source roots, count/totals, openings |
-| `PlanCommitmentV1`, derived `UnitSpecV1`/artifacts | supervisor/workers/CAS | JobId, unit count/root, program semantics, UnitId |
+| `PlanCommitmentV1`, derived `UnitSpecV1`/artifacts | supervisor/workers/CAS | JobId, manifest, `wwd`, Lysis budget, logical evaluation time, unit count/root, program semantics, UnitId |
 | `ResultChunkV1` catalog and `LysisResultV1` | supervisor/CAS | exact chunk count/root, typed result and ResultDigest |
 | sign-once record | node attestation gate | key epoch, JobId, attempt, purpose, digest |
 | activation transaction/receipt | canonical block data | finality proof, typed result, certificate |
@@ -155,6 +155,13 @@ This journal is restart/reconciliation evidence, not chain authority.
    can be frozen at the request logical context.
 6. Every validator can either retain/reconstruct the finalized input or
    explicitly abstain; local admission cannot change chain eligibility.
+
+For every shard `j`, `AMOUNT_MAP(j)` reads the matching `FIDELITY_MAP(j)`
+artifact for Tribute-to-league observations and the fixed-reduce root for the
+global fraction table. Workers authenticate the exact `PlanCommitmentV1` bytes
+and all job/manifest bindings before accepting either dependency. The node
+attestation gate separately compares the plan's WWD, budget and logical time to
+the finalized `JobIntentV1` before signing.
 
 ## Normative success protocol and test oracle
 

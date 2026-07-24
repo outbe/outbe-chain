@@ -824,6 +824,9 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
             job_id: hash(2),
             attempt: 1,
             input_manifest_hash: hash(3),
+            wwd: 20_260_724,
+            lysis_budget: U256::from(99_000_000_u64),
+            logical_evaluation_time: 1_784_765_900,
             tribute_count,
             max_tributes_per_work_shard: 256,
             primary_work_unit_count: expected_units,
@@ -833,7 +836,23 @@ fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total
         };
         assert!(plan.plan_hash(&LIMITS).is_ok());
 
-        let mut missing_unit = plan;
+        let encoded = plan.encode_canonical_record(&LIMITS).unwrap();
+        assert_eq!(
+            PlanCommitmentV1::decode_canonical_record(&encoded, &LIMITS).unwrap(),
+            plan
+        );
+        let committed_hash = plan.plan_hash(&LIMITS).unwrap();
+        let mut changed_wwd = plan.clone();
+        changed_wwd.wwd += 1;
+        let mut changed_budget = plan.clone();
+        changed_budget.lysis_budget += U256::from(1);
+        let mut changed_time = plan.clone();
+        changed_time.logical_evaluation_time += 1;
+        for changed in [changed_wwd, changed_budget, changed_time] {
+            assert_ne!(changed.plan_hash(&LIMITS).unwrap(), committed_hash);
+        }
+
+        let mut missing_unit = plan.clone();
         missing_unit.primary_work_unit_count -= 1;
         assert!(missing_unit.plan_hash(&LIMITS).is_err());
     }

@@ -1,6 +1,7 @@
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 
 use crate::{
+    codec::require_canonical_reencoding,
     common::{BoundedBytes, EntityId36},
     error::ProtocolError,
     hash::hash_framed,
@@ -199,6 +200,9 @@ wire_struct! {
         pub job_id: B256,
         pub attempt: u32,
         pub input_manifest_hash: B256,
+        pub wwd: u32,
+        pub lysis_budget: U256,
+        pub logical_evaluation_time: u64,
         pub tribute_count: u32,
         pub max_tributes_per_work_shard: u32,
         pub primary_work_unit_count: u32,
@@ -342,9 +346,31 @@ impl UnitArtifactV1 {
 }
 
 impl PlanCommitmentV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+
+    pub fn decode_canonical_record(
+        encoded: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+        let plan = Self::decode_nested(&mut reader, limits)?;
+        reader.finish()?;
+        <Self as NestedCodec>::validate(&plan, limits)?;
+        require_canonical_reencoding(encoded, &plan.encode_canonical_record(limits)?)?;
+        Ok(plan)
+    }
+
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         require(
             self.tribute_count > 0
+                && self.wwd > 0
+                && !self.lysis_budget.is_zero()
+                && self.logical_evaluation_time > 0
                 && self.max_tributes_per_work_shard > 0
                 && !self.primary_work_unit_root.is_zero(),
             "plan committed population",
@@ -363,7 +389,7 @@ impl PlanCommitmentV1 {
 
     pub fn plan_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         self.validate_semantics()?;
-        hash_framed(HashDomain::Plan, &encode_nested_value(self, limits)?)
+        hash_framed(HashDomain::Plan, &self.encode_canonical_record(limits)?)
     }
 }
 

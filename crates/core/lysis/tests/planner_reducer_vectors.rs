@@ -122,6 +122,9 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         tribute_input_encoded_bytes: 65_536,
         fidelity_opening_root: B256::repeat_byte(6),
         oracle_opening_root: B256::repeat_byte(7),
+        wwd: 20_260_724,
+        lysis_budget: U256::from(99_000_000_u64),
+        logical_evaluation_time: 1_784_765_900,
         tribute_count: 257,
         lysis_program_semantics_hash: B256::repeat_byte(8),
         planner_spec_version: 1,
@@ -195,7 +198,20 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     assert_eq!(plan, replay);
     assert_eq!(plan.primary_work_unit_count, 2);
     assert_eq!(plan.tribute_count, 257);
-    assert_eq!(plan.plan_hash(&limits).unwrap(), replay.plan_hash(&limits).unwrap());
+    assert_eq!(plan.wwd, 20_260_724);
+    assert_eq!(plan.lysis_budget, U256::from(99_000_000_u64));
+    assert_eq!(plan.logical_evaluation_time, 1_784_765_900);
+    assert_eq!(
+        plan.plan_hash(&limits).unwrap(),
+        replay.plan_hash(&limits).unwrap()
+    );
+
+    let mut changed_budget = plan.clone();
+    changed_budget.lysis_budget += U256::from(1);
+    assert_ne!(
+        changed_budget.plan_hash(&limits).unwrap(),
+        plan.plan_hash(&limits).unwrap()
+    );
 }
 
 #[test]
@@ -367,6 +383,37 @@ fn producer_membership_rejects_missing_duplicate_and_replaced_inputs() {
                 }),
             ],
         )
+        .is_err());
+}
+
+#[test]
+fn amount_map_requires_the_matching_fidelity_leaf_not_only_the_global_fraction_table() {
+    let topology = LysisPlanTopologyV1::new(3).unwrap();
+    let consumer = PlannedUnitPositionV1::Primary {
+        phase: UnitPhase::AmountMap,
+        ordinal: 1,
+    };
+    let expected = topology.required_producers(consumer).unwrap();
+    assert_eq!(
+        expected,
+        [
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::Enumerate,
+                ordinal: 1,
+            }),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::FidelityMap,
+                ordinal: 1,
+            }),
+            PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level: topology.tree().height(),
+                index: 0,
+            }),
+        ]
+    );
+    assert!(topology
+        .validate_exact_producers(consumer, &[expected[0], expected[2]])
         .is_err());
 }
 

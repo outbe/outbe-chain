@@ -809,6 +809,15 @@ UnitId(spec) =
   H("OUTBE_OCOMP_UNIT_V1", canonical(UnitSpecV1))
 ```
 
+The constant-size `PlanCommitmentV1` additionally fixes `wwd`,
+`lysis_budget`, `logical_evaluation_time`, the authenticated manifest and the
+ordered primary-unit root. These fields are covered by `PlanHash`; a worker
+must decode the exact CAS bytes and match their hash and job/manifest bindings
+before execution. Before signing, the node attestation gate compares the plan
+context to the finalized `JobIntentV1`. For shard `j`, `AMOUNT_MAP(j)` consumes both
+`FIDELITY_MAP(j)` (the per-Tribute league observations) and the fixed-reduce
+root (the global fraction table). Neither artifact substitutes for the other.
+
 Ranges are fixed-width, start-inclusive and end-exclusive. The bundle fixes
 vector order, optional/empty encoding and valid phase/interval combinations.
 Unknown combinations, duplicates, non-minimal fields and trailing bytes reject.

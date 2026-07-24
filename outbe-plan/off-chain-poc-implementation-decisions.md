@@ -141,6 +141,16 @@ starts shard 2, 10,000 produce 40 shards and 1,000,000,000 produce 3,906,250.
 Final generation may lower the per-shard value but cannot create a total
 population cap.
 
+The 2026-07-24 execution-binding amendment also makes three request-context
+values explicit in `PlanCommitmentV1`: `wwd`, `lysis_budget` and
+`logical_evaluation_time`. They are covered by `PlanHash`; workers authenticate
+the exact commitment and its job/manifest bindings, while the node attestation
+gate compares the values to the finalized intent before signing.
+It also fixes the `AMOUNT_MAP(j)` dependency grammar: the unit consumes both
+`FIDELITY_MAP(j)` for per-Tribute league observations and the fixed-reduce root
+for the global fraction table. This is a correction of missing commitments, not
+a new phase or a wider PoC scope.
+
 ## #5: How is finalized authenticated input retained and exported?
 
 Blocked by: #2, #4
