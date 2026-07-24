@@ -3,11 +3,12 @@ use core::fmt;
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     common::EntityId36,
+    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     input::{InputChunkKind, InputChunkRefV1},
     registry::ListKind,
     unit::{
-        CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind,
-        PlanCommitmentV1, UnitInterval, UnitPhase, UnitSpecV1,
+        CanonicalInputRefV1, EntityIdHalfOpenRange, FidelityIndexHalfOpenRange, InputPurpose,
+        InputSourceKind, PlanCommitmentV1, UnitInterval, UnitPhase, UnitSpecV1,
     },
     ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
@@ -361,6 +362,59 @@ impl LysisPlannerV1 {
         };
         plan.validate_semantics()?;
         Ok(plan)
+    }
+
+    pub fn fidelity_map_unit_at(
+        self,
+        shard_ordinal: u32,
+        enumerate_unit_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        if enumerate_unit_id.is_zero() {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let shard = self.primary_tree.primary_shard(shard_ordinal)?;
+        let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let max_fidelity_opening_bytes = candidate
+            .max_fidelity_openings_per_work_shard
+            .checked_mul(candidate.max_opening_bytes)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let fidelity_opening_count_limit =
+            u32::try_from(candidate.max_fidelity_openings_per_work_shard)
+                .map_err(|_| PlannerErrorV1::IntegerOverflow)?;
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase: UnitPhase::FidelityMap,
+            interval: UnitInterval::FidelityIndexRange(FidelityIndexHalfOpenRange {
+                start: shard.start_ordinal,
+                end: shard.end_ordinal,
+            }),
+            canonical_ordered_inputs: vec![
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::EnumeratedTributes,
+                    source_kind: InputSourceKind::UnitOutput,
+                    source_id: enumerate_unit_id,
+                    record_count_limit: shard.record_count(),
+                    max_encoded_bytes: candidate.max_activation_ocb1_bytes,
+                    max_decoded_bytes: candidate.max_activation_ocb1_bytes,
+                },
+                CanonicalInputRefV1 {
+                    purpose: InputPurpose::FidelityOpenings,
+                    source_kind: InputSourceKind::AuthenticatedRoot,
+                    source_id: self.bindings.fidelity_opening_root,
+                    record_count_limit: fidelity_opening_count_limit,
+                    max_encoded_bytes: max_fidelity_opening_bytes,
+                    max_decoded_bytes: max_fidelity_opening_bytes,
+                },
+            ],
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
     }
 
     fn push_primary_spec(

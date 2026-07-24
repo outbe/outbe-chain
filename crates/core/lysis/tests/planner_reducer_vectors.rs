@@ -80,6 +80,25 @@ fn tribute_chunk_ref(
     }
 }
 
+fn planner_bindings(tribute_count: u32) -> LysisPlannerBindingsV1 {
+    LysisPlannerBindingsV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 3,
+        input_manifest_hash: B256::repeat_byte(4),
+        input_manifest_encoded_bytes: 512,
+        fidelity_opening_root: B256::repeat_byte(6),
+        oracle_opening_root: B256::repeat_byte(7),
+        wwd: 20_260_724,
+        lysis_budget: U256::from(99_000_000_u64),
+        logical_evaluation_time: 1_784_765_900,
+        tribute_count,
+        lysis_program_semantics_hash: B256::repeat_byte(8),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
+    }
+}
+
 // OCM-SEM-002: planner, unit coverage and fixed reducer topology.
 #[test]
 fn primary_work_is_unbounded_in_total_and_partitioned_in_exact_256_record_shards() {
@@ -251,23 +270,7 @@ fn padded_binary_reducer_is_derived_by_position_without_completion_order() {
 #[test]
 fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
     let limits = poc_schema_limits();
-    let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
-        protocol_bundle_hash: B256::repeat_byte(1),
-        job_id: B256::repeat_byte(2),
-        attempt: 3,
-        input_manifest_hash: B256::repeat_byte(4),
-        input_manifest_encoded_bytes: 512,
-        fidelity_opening_root: B256::repeat_byte(6),
-        oracle_opening_root: B256::repeat_byte(7),
-        wwd: 20_260_724,
-        lysis_budget: U256::from(99_000_000_u64),
-        logical_evaluation_time: 1_784_765_900,
-        tribute_count: 257,
-        lysis_program_semantics_hash: B256::repeat_byte(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-    })
-    .unwrap();
+    let planner = LysisPlannerV1::new(planner_bindings(257)).unwrap();
     let ids = (0..257).map(entity_id).collect::<Vec<_>>();
     let chunks = [
         tribute_chunk_ref(0, &ids[..256], 65_536),
@@ -393,6 +396,70 @@ fn primary_catalog_and_units_are_deterministic_and_lazily_derived() {
         changed_budget.plan_hash(&limits).unwrap(),
         plan.plan_hash(&limits).unwrap()
     );
+}
+
+#[test]
+fn fidelity_map_unit_is_derived_only_from_plan_and_exact_enumerate_unit() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(257)).unwrap();
+    let enumerate_unit_id = B256::repeat_byte(0x31);
+
+    let first = planner
+        .fidelity_map_unit_at(0, enumerate_unit_id, &limits)
+        .unwrap();
+    assert_eq!(first.phase, UnitPhase::FidelityMap);
+    assert_eq!(
+        first.interval,
+        UnitInterval::FidelityIndexRange(
+            outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
+                start: 0,
+                end: 256,
+            }
+        )
+    );
+    assert_eq!(
+        first
+            .canonical_ordered_inputs
+            .iter()
+            .map(|input| (input.purpose, input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (
+                InputPurpose::EnumeratedTributes,
+                InputSourceKind::UnitOutput,
+                enumerate_unit_id,
+            ),
+            (
+                InputPurpose::FidelityOpenings,
+                InputSourceKind::AuthenticatedRoot,
+                planner_bindings(257).fidelity_opening_root,
+            ),
+        ]
+    );
+
+    let second = planner
+        .fidelity_map_unit_at(1, B256::repeat_byte(0x32), &limits)
+        .unwrap();
+    assert_eq!(
+        second.interval,
+        UnitInterval::FidelityIndexRange(
+            outbe_ocomp_protocol::unit::FidelityIndexHalfOpenRange {
+                start: 256,
+                end: 257,
+            }
+        )
+    );
+    assert_ne!(
+        first.unit_id(&limits).unwrap(),
+        planner
+            .fidelity_map_unit_at(0, B256::repeat_byte(0x33), &limits)
+            .unwrap()
+            .unit_id(&limits)
+            .unwrap()
+    );
+    assert!(planner
+        .fidelity_map_unit_at(0, B256::ZERO, &limits)
+        .is_err());
 }
 
 #[test]
