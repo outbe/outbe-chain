@@ -98,6 +98,23 @@ two child roots. The tree commitment is therefore composable and verifiable in
 one bounded-memory traversal rather than a trusted field. No unit
 contains a population-sized page-reference vector or merged run.
 
+A shuffle execution DAG is distinct from the page tree stored by one unit.
+For `K` primary runs, each owner/bucket phase contains exactly `K` leaf units
+and `K - 1` real two-input merge units. An odd run is consumed directly by the
+next real merge; no shuffle `CanonicalEmpty`, unary alias or copy-only
+promotion unit is scheduled. Every real merge reads exactly two verified,
+materialized producer runs and writes a new canonical page tree whose root and
+descendants carry the current merge `UnitId`. Producer roots remain UnitSpec
+inputs and are never reused as output-tree children: concatenating two sorted
+runs would not prove their merged order.
+
+This binary external merge has `Θ((N + E) log K)` aggregate record I/O for
+`N` bucket and `E` eligible-owner records, while each worker retains only two
+bounded input pages, one bounded output page and logarithmic tree frontiers.
+That write amplification is an explicit PoC performance assumption, not hidden
+behind an unbounded lazy-merge frontier. A fixed higher fan-in is a later
+versioned capacity decision.
+
 A unit may run zero or many times. Only a digest-valid artifact for its exact
 `UnitId` and plan membership participates in reduction. One, two and four
 workers plus randomized completion/retry order must produce byte-identical plan,

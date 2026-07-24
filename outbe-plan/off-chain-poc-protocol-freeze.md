@@ -1198,6 +1198,24 @@ before admitting the producer artifact. This keeps every OCB1 object bounded
 without imposing any limit on the parent Tribute population and without an
 unbounded vector of CAS references.
 
+The shuffle execution DAG is not the page tree above. If the manifest yields
+`K` primary runs, each shuffle phase has exactly `K` leaf units and `K - 1`
+real merge units. Its canonical largest-power-of-two run-span split promotes
+an odd run directly into the next real merge; the planner must not create a
+shuffle `CanonicalEmpty`, unary alias or copy-only promotion unit. Each real
+merge consumes two exact producer `UnitId`s, stream-merges their already
+materialized records and creates a fresh local page tree bound throughout to
+the current merge `UnitId`. A producer root is never installed directly as a
+child of that new tree.
+
+Canonical pagination fills every non-final leaf with exactly 256 records. The
+final non-empty leaf contains `1..=256`; an empty owner stream has exactly one
+`OWNER_LEAF([])` and retains its non-empty raw source-coverage binding. Bucket
+streams are never empty. `ROOT_REDUCE` derives the frozen flat ordered-list
+root by traversing the verified final materialized run; the structural
+`ordered_record_root` of an internal shuffle object commits its exact adjacent
+page tree and is not treated as a homomorphic sorted-merge root.
+
 The phase fixes the interval tag:
 
 | Phase | Required interval |

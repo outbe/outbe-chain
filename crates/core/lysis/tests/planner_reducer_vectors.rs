@@ -884,6 +884,87 @@ fn output_finalize_unit_binds_exact_amount_and_leaf_prefix() {
 }
 
 #[test]
+fn shuffle_units_bind_only_the_exact_materialized_producer_runs() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
+    let leaf_source = B256::repeat_byte(0x71);
+    let leaf = planner
+        .shuffle_unit_at(
+            UnitPhase::OwnerShuffle,
+            2,
+            &[leaf_source],
+            &limits,
+        )
+        .unwrap();
+    assert_eq!(
+        leaf.interval,
+        UnitInterval::CanonicalRunSpan(
+            outbe_ocomp_protocol::unit::CanonicalRunSpan {
+                start_run: 2,
+                end_run: 3,
+            }
+        )
+    );
+    assert_eq!(
+        leaf.canonical_ordered_inputs[1].purpose,
+        InputPurpose::FinalizedOutputRecords
+    );
+    assert_eq!(leaf.canonical_ordered_inputs[1].source_id, leaf_source);
+
+    let left = B256::repeat_byte(0x72);
+    let right = B256::repeat_byte(0x73);
+    let root = planner
+        .shuffle_unit_at(
+            UnitPhase::OwnerShuffle,
+            4,
+            &[left, right],
+            &limits,
+        )
+        .unwrap();
+    assert_eq!(
+        root.interval,
+        UnitInterval::CanonicalRunSpan(
+            outbe_ocomp_protocol::unit::CanonicalRunSpan {
+                start_run: 0,
+                end_run: 3,
+            }
+        )
+    );
+    assert_eq!(
+        root.canonical_ordered_inputs[1..]
+            .iter()
+            .map(|input| (input.purpose, input.source_kind, input.source_id))
+            .collect::<Vec<_>>(),
+        [
+            (
+                InputPurpose::OwnerOrderedRecords,
+                InputSourceKind::UnitOutput,
+                left,
+            ),
+            (
+                InputPurpose::OwnerOrderedRecords,
+                InputSourceKind::UnitOutput,
+                right,
+            ),
+        ]
+    );
+    assert!(planner
+        .shuffle_unit_at(UnitPhase::OwnerShuffle, 4, &[left], &limits)
+        .is_err());
+    assert!(planner
+        .shuffle_unit_at(
+            UnitPhase::BucketShuffle,
+            4,
+            &[left, B256::ZERO],
+            &limits,
+        )
+        .is_err());
+    assert!(planner
+        .shuffle_unit_at(UnitPhase::RootReduce, 4, &[left, right], &limits)
+        .is_err());
+}
+
+#[test]
 fn gratis_scan_artifacts_are_typed_canonical_and_reject_trailing_bytes() {
     let limits = poc_schema_limits();
     let summary = GratisSegmentSummaryV1 {
@@ -970,11 +1051,11 @@ fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
         );
         assert_eq!(
             topology.phase_unit_count(UnitPhase::OwnerShuffle),
-            primary_count + active_internal
+            primary_count * 2 - 1
         );
         assert_eq!(
             topology.phase_unit_count(UnitPhase::BucketShuffle),
-            primary_count + active_internal
+            primary_count * 2 - 1
         );
         assert_eq!(
             topology.phase_unit_count(UnitPhase::RootReduce),
@@ -1050,6 +1131,137 @@ fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
             UnitPhase::RootReduce,
         ]
     );
+}
+
+#[test]
+fn three_shuffle_runs_have_only_real_binary_merges() {
+    let topology = LysisPlanTopologyV1::new(3).unwrap();
+    for phase in [UnitPhase::OwnerShuffle, UnitPhase::BucketShuffle] {
+        assert_eq!(topology.phase_unit_count(phase), 5);
+
+        let root = topology.phase_position_at(phase, 4).unwrap();
+        assert_eq!(
+            root,
+            PlannedUnitPositionV1::RunSpan {
+                phase,
+                level: 2,
+                index: 0,
+                start_run: 0,
+                end_run: 3,
+            }
+        );
+        assert_eq!(
+            topology.required_producers(root).unwrap(),
+            [
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
+                    phase,
+                    level: 1,
+                    index: 0,
+                    start_run: 0,
+                    end_run: 2,
+                }),
+                PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
+                    phase,
+                    level: 0,
+                    index: 2,
+                    start_run: 2,
+                    end_run: 3,
+                }),
+            ]
+        );
+    }
+}
+
+#[test]
+fn shuffle_topology_is_exact_for_small_boundaries_and_a_billion_tributes() {
+    for primary_count in [1, 2, 3, 5, 256, 257] {
+        let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
+        for phase in [UnitPhase::OwnerShuffle, UnitPhase::BucketShuffle] {
+            let unit_count = primary_count * 2 - 1;
+            assert_eq!(topology.phase_unit_count(phase), unit_count);
+
+            let positions = (0..unit_count)
+                .map(|ordinal| topology.phase_position_at(phase, ordinal).unwrap())
+                .collect::<Vec<_>>();
+            let root = *positions.last().unwrap();
+            assert!(matches!(
+                root,
+                PlannedUnitPositionV1::RunSpan {
+                    start_run: 0,
+                    end_run,
+                    ..
+                } if end_run == primary_count
+            ));
+
+            for (consumer_ordinal, consumer) in
+                positions.iter().copied().enumerate().skip(primary_count as usize)
+            {
+                let producers = topology.required_producers(consumer).unwrap();
+                assert_eq!(producers.len(), 2);
+                for producer in producers {
+                    let PlannedProducerV1::Unit(producer) = producer else {
+                        panic!("shuffle topology must not contain CanonicalEmpty");
+                    };
+                    let producer_ordinal = positions
+                        .iter()
+                        .position(|candidate| *candidate == producer)
+                        .expect("shuffle producer belongs to the same phase");
+                    assert!(producer_ordinal < consumer_ordinal);
+                }
+            }
+        }
+    }
+
+    let billion_primary = primary_work_unit_count(1_000_000_000).unwrap();
+    assert_eq!(billion_primary, 3_906_250);
+    let topology = LysisPlanTopologyV1::new(billion_primary).unwrap();
+    let unit_count = topology.phase_unit_count(UnitPhase::OwnerShuffle);
+    assert_eq!(unit_count, 7_812_499);
+    assert!(matches!(
+        topology
+            .phase_position_at(UnitPhase::OwnerShuffle, unit_count - 1)
+            .unwrap(),
+        PlannedUnitPositionV1::RunSpan {
+            start_run: 0,
+            end_run: 3_906_250,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn owner_merge_preserves_source_span_when_every_contributor_is_excluded() {
+    let mut sink_calls = 0_u32;
+    let summary = merge_owner_runs_streaming(
+        CanonicalRunSpanV1 {
+            start_run: 0,
+            end_run: 1,
+        },
+        Vec::new(),
+        CanonicalRunSpanV1 {
+            start_run: 1,
+            end_run: 2,
+        },
+        Vec::new(),
+        256,
+        |_, _| {
+            sink_calls += 1;
+            Ok::<_, ()>(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        summary.span,
+        CanonicalRunSpanV1 {
+            start_run: 0,
+            end_run: 2,
+        }
+    );
+    assert_eq!(summary.record_count, 0);
+    assert_eq!(summary.chunk_count, 0);
+    assert_eq!(summary.checked_eligible_nominal_total, U256::ZERO);
+    assert_eq!(sink_calls, 0);
 }
 
 #[test]

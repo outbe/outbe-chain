@@ -1360,6 +1360,14 @@ all unique buckets and all records in one bucket. `1`, `2` and `N` workers plus
 arbitrary retry/completion order must produce identical bytes with cap-bounded
 RAM, file descriptors and spill.
 
+For `K` primary runs, owner and bucket shuffle each use exactly `K` leaf units
+and `K - 1` real binary merge units. Odd runs feed the next real merge directly;
+there are no shuffle `CanonicalEmpty` or copy-only promotion units. Every real
+merge materializes a fresh bounded page tree under its own `UnitId`; it does
+not install producer roots as pages of a supposedly merged output. This keeps
+per-worker memory bounded while making the binary external-merge
+`Θ((N + E) log K)` I/O cost explicit.
+
 All logical inputs are pinned to the request snapshot: Tribute, Fidelity,
 Oracle, Gratis/Metadosis scalars, time, code and arithmetic version. There is no
 wall clock, floating point, host locale, random iteration order, live RPC read or

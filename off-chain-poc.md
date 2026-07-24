@@ -879,6 +879,14 @@ Canonical page spans and splits make the same input produce byte-identical
 trees under any worker count. The tree grows with the number of Tribute; the
 protocol does not reject or truncate a 257th, 10,000th or billionth Tribute.
 
+For `K` primary runs, each shuffle execution DAG contains exactly `K` leaf
+units and `K - 1` real binary merge units. An odd run is consumed directly by
+the next real merge; no shuffle `CanonicalEmpty` or copy-only promotion unit
+exists. Each real merge reads two verified materialized producer runs and
+writes a fresh local page tree under its own `UnitId`; producer roots are not
+reused as pages of the merged result. The valid all-excluded case produces one
+canonical empty owner leaf with complete raw source coverage.
+
 Sort run limits, merge fan-in, file count, spill bytes, compression ratio and
 tie-breaking are fixed. Even though the PoC is small, no result may depend on a
 language hash-map iteration order or worker completion timing.

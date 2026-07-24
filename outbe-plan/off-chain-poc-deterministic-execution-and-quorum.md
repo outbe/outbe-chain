@@ -433,11 +433,20 @@ the final canonical output is ordered by `(owner, source_tribute_id)`.
 The artifact carries both raw-ordinal coverage and the eligible-subset
 commitment, so omission cannot masquerade as an excluded Tribute.
 
+For `K` primary runs the phase has `K` bounded leaf units and `K - 1` real
+binary merge units. An odd run is passed directly to the next canonical
+largest-power-of-two merge; there is no shuffle `CanonicalEmpty` or copy-only
+promotion unit. Each real merge materializes a fresh bounded page tree under
+its own `UnitId`. The all-excluded case is valid and has one canonical empty
+owner leaf while retaining complete non-empty raw source coverage.
+
 ### 4.8 `BUCKET_SHUFFLE`
 
 Inputs are the same finalized outputs. It stable-sorts bucket records by
 `(bucket_key, raw_ordinal)` and emits the exact grouped bucket leaves used by
 `bucket_root`. The complete raw-ordinal coverage must equal the source.
+It uses the same `K + (K - 1)` real-merge topology and fresh per-merge
+materialization; bucket output is never empty.
 
 ### 4.9 `ROOT_REDUCE`
 

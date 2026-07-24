@@ -115,9 +115,6 @@ where
             .checked_add(1)
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
     }
-    if record_count == 0 {
-        return Err(ProgramErrorV1::OutputCountMismatch.into());
-    }
     Ok(OwnerMergeSummaryV1 {
         span: CanonicalRunSpanV1 {
             start_run: left_span.start_run,

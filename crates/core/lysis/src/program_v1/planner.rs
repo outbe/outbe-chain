@@ -7,9 +7,9 @@ use outbe_ocomp_protocol::{
     input::{InputChunkKind, InputChunkRefV1},
     registry::ListKind,
     unit::{
-        empty_unit_input_id, BinaryReducerNode, CanonicalInputRefV1, EntityIdHalfOpenRange,
-        FidelityIndexHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1, UnitInterval,
-        UnitPhase, UnitSpecV1,
+        empty_unit_input_id, BinaryReducerNode, CanonicalInputRefV1, CanonicalRunSpan,
+        EntityIdHalfOpenRange, FidelityIndexHalfOpenRange, InputPurpose, InputSourceKind,
+        PlanCommitmentV1, UnitInterval, UnitPhase, UnitSpecV1,
     },
     ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
@@ -636,6 +636,79 @@ impl LysisPlannerV1 {
         )
     }
 
+    pub fn shuffle_unit_at(
+        self,
+        phase: UnitPhase,
+        phase_ordinal: u32,
+        producer_unit_ids: &[B256],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        if !matches!(phase, UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle) {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
+        let position = topology.phase_position_at(phase, phase_ordinal)?;
+        let PlannedUnitPositionV1::RunSpan {
+            level,
+            start_run,
+            end_run,
+            ..
+        } = position
+        else {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        };
+        let producers = topology.required_producers(position)?;
+        if producers.len() != producer_unit_ids.len()
+            || producer_unit_ids.iter().any(B256::is_zero)
+        {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let purpose = if level == 0 {
+            InputPurpose::FinalizedOutputRecords
+        } else if phase == UnitPhase::OwnerShuffle {
+            InputPurpose::OwnerOrderedRecords
+        } else {
+            InputPurpose::BucketOrderedRecords
+        };
+        let mut canonical_ordered_inputs = vec![CanonicalInputRefV1 {
+            purpose: InputPurpose::InputManifest,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: self.bindings.input_manifest_hash,
+            record_count_limit: 1,
+            max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+            max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+        }];
+        for (producer, unit_id) in producers.into_iter().zip(producer_unit_ids) {
+            let PlannedProducerV1::Unit(producer) = producer else {
+                return Err(PlannerErrorV1::ProducerMembershipMismatch);
+            };
+            canonical_ordered_inputs.push(CanonicalInputRefV1 {
+                purpose,
+                source_kind: InputSourceKind::UnitOutput,
+                source_id: *unit_id,
+                record_count_limit: self.shuffle_position_record_limit(producer)?,
+                max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
+                max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_ocb1_bytes,
+            });
+        }
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase,
+            interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan {
+                start_run,
+                end_run,
+            }),
+            canonical_ordered_inputs,
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
     pub fn validate_output_finalize_unit(
         self,
         shard_ordinal: u32,
@@ -817,6 +890,37 @@ impl LysisPlannerV1 {
         Ok(())
     }
 
+    fn shuffle_position_record_limit(
+        self,
+        position: PlannedUnitPositionV1,
+    ) -> Result<u32, PlannerErrorV1> {
+        let (start_run, end_run) = match position {
+            PlannedUnitPositionV1::Primary {
+                phase: UnitPhase::OutputFinalize,
+                ordinal,
+            } => {
+                let shard = self.primary_tree.primary_shard(ordinal)?;
+                return Ok(shard.record_count());
+            }
+            PlannedUnitPositionV1::RunSpan {
+                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                start_run,
+                end_run,
+                ..
+            } => (start_run, end_run),
+            _ => return Err(PlannerErrorV1::ProducerMembershipMismatch),
+        };
+        let start = start_run
+            .checked_mul(PRIMARY_WORK_SHARD_SIZE)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let end = end_run
+            .checked_mul(PRIMARY_WORK_SHARD_SIZE)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?
+            .min(self.bindings.tribute_count);
+        end.checked_sub(start)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
     fn primary_unit_for_range(
         self,
         shard: PrimaryShardV1,
@@ -896,10 +1000,8 @@ impl LysisPlanTopologyV1 {
             | UnitPhase::AmountMap
             | UnitPhase::OutputFinalize => primary,
             UnitPhase::FixedReduce => full_internal,
-            UnitPhase::GratisPrefix
-            | UnitPhase::GratisPrefixDown
-            | UnitPhase::OwnerShuffle
-            | UnitPhase::BucketShuffle => primary + active_internal,
+            UnitPhase::GratisPrefix | UnitPhase::GratisPrefixDown => primary + active_internal,
+            UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => primary + (primary - 1),
             UnitPhase::RootReduce => primary + full_internal,
         }
     }
@@ -997,7 +1099,7 @@ impl LysisPlanTopologyV1 {
                 let (level, index) = if ordinal < primary {
                     (0, ordinal)
                 } else {
-                    self.active_bottom_up_node_at(ordinal - primary)?
+                    self.shuffle_internal_node_at(ordinal - primary)?
                 };
                 let width = 1_u32
                     .checked_shl(u32::from(level))
@@ -1195,12 +1297,7 @@ impl LysisPlanTopologyV1 {
                 {
                     return Err(PlannerErrorV1::ProducerMembershipMismatch);
                 }
-                let purpose = if phase == UnitPhase::OwnerShuffle {
-                    InputPurpose::OwnerOrderedRecords
-                } else {
-                    InputPurpose::BucketOrderedRecords
-                };
-                self.run_children(phase, purpose, level, index)
+                self.run_children(phase, level, index)
             }
             PlannedUnitPositionV1::TreeNode {
                 phase: UnitPhase::RootReduce,
@@ -1254,7 +1351,7 @@ impl LysisPlanTopologyV1 {
         self,
         phase: UnitPhase,
     ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
-        self.run_span_position(phase, self.tree.height, 0)
+        self.run_span_root_position(phase, 0, self.tree.primary_leaf_count)
     }
 
     fn run_span_position(
@@ -1356,46 +1453,97 @@ impl LysisPlanTopologyV1 {
     fn run_children(
         self,
         phase: UnitPhase,
-        purpose: InputPurpose,
         level: u16,
         index: u32,
     ) -> Result<Vec<PlannedProducerV1>, PlannerErrorV1> {
         if level == 0 {
             return Err(PlannerErrorV1::ProducerMembershipMismatch);
         }
-        let first = index
-            .checked_mul(2)
-            .ok_or(PlannerErrorV1::IntegerOverflow)?;
-        let child_level = level - 1;
-        let child_count = if child_level == 0 {
-            self.tree.primary_leaf_count
-        } else {
-            self.tree
-                .primary_leaf_count
-                .div_ceil(1_u32 << child_level)
+        let position = self.run_span_position(phase, level, index)?;
+        let PlannedUnitPositionV1::RunSpan {
+            start_run,
+            end_run,
+            ..
+        } = position
+        else {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
         };
-        let mut inputs = Vec::with_capacity(2);
-        for child_index in [first, first + 1] {
-            if child_index < child_count {
-                inputs.push(PlannedProducerV1::Unit(self.run_span_position(
-                    phase,
-                    child_level,
-                    child_index,
-                )?));
-            } else {
-                inputs.push(PlannedProducerV1::CanonicalEmpty {
-                    purpose,
-                    padded_ordinal: child_index,
-                });
-            }
+        let width = end_run
+            .checked_sub(start_run)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        if width <= 1 {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
         }
-        Ok(inputs)
+        let left_width = 1_u32 << (31 - (width - 1).leading_zeros());
+        let split = start_run
+            .checked_add(left_width)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        Ok(vec![
+            PlannedProducerV1::Unit(self.run_span_root_position(
+                phase, start_run, split,
+            )?),
+            PlannedProducerV1::Unit(self.run_span_root_position(phase, split, end_run)?),
+        ])
+    }
+
+    fn run_span_root_position(
+        self,
+        phase: UnitPhase,
+        start_run: u32,
+        end_run: u32,
+    ) -> Result<PlannedUnitPositionV1, PlannerErrorV1> {
+        let width = end_run
+            .checked_sub(start_run)
+            .filter(|width| *width > 0)
+            .ok_or(PlannerErrorV1::ProducerMembershipMismatch)?;
+        let padded_width = width
+            .checked_next_power_of_two()
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        if !start_run.is_multiple_of(padded_width) {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let level = u16::try_from(padded_width.trailing_zeros())
+            .map_err(|_| PlannerErrorV1::IntegerOverflow)?;
+        let position = self.run_span_position(phase, level, start_run / padded_width)?;
+        match position {
+            PlannedUnitPositionV1::RunSpan {
+                start_run: actual_start,
+                end_run: actual_end,
+                ..
+            } if actual_start == start_run && actual_end == end_run => Ok(position),
+            _ => Err(PlannerErrorV1::ProducerMembershipMismatch),
+        }
     }
 
     fn active_internal_node_count(self) -> u32 {
         (1..=self.tree.height)
             .map(|level| self.tree.primary_leaf_count.div_ceil(1_u32 << level))
             .sum()
+    }
+
+    fn shuffle_internal_node_at(
+        self,
+        mut ordinal: u32,
+    ) -> Result<(u16, u32), PlannerErrorV1> {
+        let primary = self.tree.primary_leaf_count;
+        for level in 1..=self.tree.height {
+            let half_width = 1_u32
+                .checked_shl(u32::from(level - 1))
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+            let width = half_width
+                .checked_mul(2)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+            let node_count = primary
+                .checked_sub(1)
+                .and_then(|value| value.checked_add(half_width))
+                .ok_or(PlannerErrorV1::IntegerOverflow)?
+                / width;
+            if ordinal < node_count {
+                return Ok((level, ordinal));
+            }
+            ordinal -= node_count;
+        }
+        Err(PlannerErrorV1::IntegerOverflow)
     }
 
     fn full_bottom_up_node_at(self, mut ordinal: u32) -> Result<(u16, u32), PlannerErrorV1> {

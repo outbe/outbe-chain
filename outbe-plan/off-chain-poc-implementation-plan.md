@@ -984,6 +984,15 @@ sort order, and recomputed leaf/internal ordered-record root before source
 coverage is admitted. No control frame or unit
 artifact carries all page references.
 
+For `K` primary runs, each shuffle phase plans exactly `K` leaf units plus
+`K - 1` real binary merge units. It plans no shuffle `CanonicalEmpty` or
+copy-only promotion unit: an odd run becomes the exact lower-level producer of
+the next canonical real merge. Every real merge reads two materialized inputs
+and writes a new local page tree under its own `UnitId`; it must not reuse
+producer roots as output descendants. Non-final pages contain exactly 256
+records, and the valid zero-contributor result has one canonical empty owner
+leaf with preserved raw source coverage.
+
 **Invariants/failures:** topological canonical UnitSpec order; stable UnitId;
 zero/many executions allowed; ranges are adjacent/non-overlapping and cover all
 `N` manifest records exactly once; shard-cap+1 starts a second shard; only exact
