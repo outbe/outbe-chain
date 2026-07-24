@@ -3,12 +3,21 @@ use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, PlannedProducerV1, PlannedUnitPositionV1, PlannerErrorV1,
     ReducerInputV1, PRIMARY_WORK_SHARD_SIZE,
 };
+use outbe_lysis::program_v1::phases::{
+    fidelity_map, fidelity_reduce, finalize_fi_fraction_table,
+};
+use outbe_lysis::program_v1::{
+    execute, ObservationValueV1, ObservedTributeV1, ProgramInputV1, TributeInputV1,
+};
 use outbe_ocomp_protocol::{
     common::EntityId36,
     local_control::poc_schema_limits,
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
 };
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256, U256};
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::derive_poseidon_entity_id;
+use outbe_primitives::units::SCALE_1E18;
 
 // OCM-SEM-002: planner, unit coverage and fixed reducer topology.
 #[test]
@@ -356,6 +365,59 @@ fn producer_membership_rejects_missing_duplicate_and_replaced_inputs() {
             ],
         )
         .is_err());
+}
+
+#[test]
+fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
+    let day = WorldwideDay::new(20_260_724);
+    let mut tributes = (0..257_u32)
+        .map(|ordinal| {
+            let mut owner_bytes = [0_u8; 20];
+            owner_bytes[16..].copy_from_slice(&(ordinal + 1).to_be_bytes());
+            let owner = Address::from(owner_bytes);
+            ObservedTributeV1 {
+                tribute: TributeInputV1 {
+                    tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                    owner,
+                    worldwide_day: day,
+                    issuance_currency: 978,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E18,
+                    reference_currency: 840,
+                    tribute_price_minor: U256::ZERO,
+                    exclude_from_intex_issuance: ordinal.is_multiple_of(11),
+                },
+                first_league: ObservationValueV1::Value(7),
+                second_league: ObservationValueV1::Value(7),
+                conditional_entry_price_minor: ObservationValueV1::Unavailable,
+                nod_target_available: true,
+            }
+        })
+        .collect::<Vec<_>>();
+    tributes.sort_by_key(|observed| observed.tribute.tribute_id);
+    let total_nominal = tributes
+        .iter()
+        .map(|observed| observed.tribute.nominal_amount_minor)
+        .sum::<U256>();
+    let gratis_allocation = total_nominal * U256::from(32_u8) / U256::from(100_u8);
+    let expected = execute(ProgramInputV1 {
+        worldwide_day: day,
+        logical_evaluation_time: 1_784_765_900,
+        gratis_allocation,
+        mandatory_entry_price_840: ObservationValueV1::Value(SCALE_1E18),
+        tributes: tributes.clone(),
+    })
+    .unwrap();
+
+    let first = fidelity_map(0, &tributes[..256]).unwrap();
+    let second = fidelity_map(256, &tributes[256..]).unwrap();
+    assert_eq!(first.observations.len(), 256);
+    assert_eq!(second.observations.len(), 1);
+    let aggregate = fidelity_reduce(&first.aggregate, &second.aggregate).unwrap();
+    let actual = finalize_fi_fraction_table(&aggregate, gratis_allocation).unwrap();
+
+    assert_eq!(aggregate.tribute_count, 257);
+    assert_eq!(aggregate.checked_total_nominal, expected.total_nominal);
+    assert_eq!(actual, expected.league_fractions);
 }
 
 fn entity_id(ordinal: u32) -> EntityId36 {

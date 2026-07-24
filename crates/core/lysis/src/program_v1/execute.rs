@@ -359,20 +359,41 @@ pub(crate) fn compute_fraction_map(
     total_interest: U256,
     gratis_allocation: U256,
 ) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
-    let mut fi_groups = BTreeMap::<u16, Vec<usize>>::new();
+    let mut fi_groups = BTreeMap::<u16, (u32, U256)>::new();
     for (ordinal, &league) in tribute_fis.iter().enumerate() {
-        fi_groups.entry(league).or_default().push(ordinal);
+        let group = fi_groups.entry(league).or_insert((0, U256::ZERO));
+        group.0 = group
+            .0
+            .checked_add(1)
+            .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                message: "Fidelity league population overflow".to_owned(),
+            })?;
+        group.1 = group
+            .1
+            .checked_add(nominal_amounts[ordinal])
+            .ok_or(ProgramErrorV1::TotalNominalOverflow { ordinal })?;
     }
+    compute_fraction_map_from_groups(
+        &fi_groups,
+        u32::try_from(nominal_amounts.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+        total_interest,
+        gratis_allocation,
+    )
+}
+
+pub(crate) fn compute_fraction_map_from_groups(
+    fi_groups: &BTreeMap<u16, (u32, U256)>,
+    tribute_count: u32,
+    total_interest: U256,
+    gratis_allocation: U256,
+) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
     let sorted_fis = fi_groups.keys().copied().collect::<Vec<_>>();
     let mut shares = Vec::with_capacity(sorted_fis.len());
     let mut populations = Vec::with_capacity(sorted_fis.len());
     for league in &sorted_fis {
-        let group_nominal = fi_groups[league]
-            .iter()
-            .map(|ordinal| nominal_amounts[*ordinal])
-            .fold(U256::ZERO, |sum, value| sum + value);
+        let (population, group_nominal) = fi_groups[league];
         shares.push(group_nominal * SCALE_1E18 / total_interest);
-        populations.push(fi_groups[league].len() as u64);
+        populations.push(u64::from(population));
     }
     let share_sum = shares.iter().copied().sum::<U256>();
     if let Some(last) = shares.last_mut() {
@@ -383,8 +404,14 @@ pub(crate) fn compute_fraction_map(
     let f = gratis_allocation * SCALE_1E18 / total_interest;
     let fmax = f * U256::from(2_u8);
     let fractions =
-        calc_fraction_distribution_fp(&shares, &populations, nominal_amounts.len(), f, fmax)
-            .map_err(|error| ProgramErrorV1::Arithmetic {
+        calc_fraction_distribution_fp(
+            &shares,
+            &populations,
+            usize::try_from(tribute_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+            f,
+            fmax,
+        )
+        .map_err(|error| ProgramErrorV1::Arithmetic {
                 message: error.to_string(),
             })?;
     Ok(sorted_fis.into_iter().zip(fractions).collect())
