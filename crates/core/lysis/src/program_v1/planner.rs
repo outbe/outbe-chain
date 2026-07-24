@@ -579,6 +579,118 @@ impl LysisPlannerV1 {
         Ok(spec)
     }
 
+    pub fn gratis_prefix_unit_at(
+        self,
+        phase_ordinal: u32,
+        producer_unit_ids: &[Option<B256>],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        self.gratis_scan_unit_at(
+            UnitPhase::GratisPrefix,
+            phase_ordinal,
+            producer_unit_ids,
+            limits,
+        )
+    }
+
+    pub fn gratis_prefix_down_unit_at(
+        self,
+        phase_ordinal: u32,
+        producer_unit_ids: &[Option<B256>],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        self.gratis_scan_unit_at(
+            UnitPhase::GratisPrefixDown,
+            phase_ordinal,
+            producer_unit_ids,
+            limits,
+        )
+    }
+
+    fn gratis_scan_unit_at(
+        self,
+        phase: UnitPhase,
+        phase_ordinal: u32,
+        producer_unit_ids: &[Option<B256>],
+        limits: &SchemaLimits,
+    ) -> Result<UnitSpecV1, PlannerErrorV1> {
+        let topology = LysisPlanTopologyV1::new(self.primary_work_unit_count())?;
+        let position = topology.phase_position_at(phase, phase_ordinal)?;
+        let PlannedUnitPositionV1::TreeNode {
+            phase: position_phase,
+            level,
+            index,
+        } = position
+        else {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        };
+        if position_phase != phase {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let producers = topology.required_producers(position)?;
+        if producers.len() != producer_unit_ids.len() {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let unit_purpose = if phase == UnitPhase::GratisPrefix && level == 0 {
+            InputPurpose::AmountRecords
+        } else {
+            InputPurpose::GratisPrefixTable
+        };
+        let mut canonical_ordered_inputs = vec![CanonicalInputRefV1 {
+            purpose: InputPurpose::InputManifest,
+            source_kind: InputSourceKind::AuthenticatedRoot,
+            source_id: self.bindings.input_manifest_hash,
+            record_count_limit: 1,
+            max_encoded_bytes: self.bindings.input_manifest_encoded_bytes,
+            max_decoded_bytes: self.bindings.input_manifest_encoded_bytes,
+        }];
+        for (producer, unit_id) in producers.into_iter().zip(producer_unit_ids.iter().copied()) {
+            let input = match (producer, unit_id) {
+                (PlannedProducerV1::Unit(_), Some(unit_id)) if !unit_id.is_zero() => {
+                    CanonicalInputRefV1 {
+                        purpose: unit_purpose,
+                        source_kind: InputSourceKind::UnitOutput,
+                        source_id: unit_id,
+                        record_count_limit: self.bindings.tribute_count,
+                        max_encoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
+                            .max_activation_ocb1_bytes,
+                        max_decoded_bytes: OCOMP_POC_CANDIDATE_LIMITS_V1
+                            .max_activation_ocb1_bytes,
+                    }
+                }
+                (
+                    PlannedProducerV1::CanonicalEmpty {
+                        purpose: empty_purpose,
+                        ..
+                    },
+                    None,
+                ) if empty_purpose == unit_purpose => CanonicalInputRefV1 {
+                    purpose: unit_purpose,
+                    source_kind: InputSourceKind::CanonicalEmpty,
+                    source_id: empty_unit_input_id(unit_purpose)?,
+                    record_count_limit: 0,
+                    max_encoded_bytes: 0,
+                    max_decoded_bytes: 0,
+                },
+                _ => return Err(PlannerErrorV1::ProducerMembershipMismatch),
+            };
+            canonical_ordered_inputs.push(input);
+        }
+        let spec = UnitSpecV1 {
+            protocol_bundle_hash: self.bindings.protocol_bundle_hash,
+            job_id: self.bindings.job_id,
+            attempt: self.bindings.attempt,
+            phase,
+            interval: UnitInterval::BinaryReducerNode(BinaryReducerNode { level, index }),
+            canonical_ordered_inputs,
+            lysis_program_semantics_hash: self.bindings.lysis_program_semantics_hash,
+            planner_spec_version: self.bindings.planner_spec_version,
+            reducer_spec_version: self.bindings.reducer_spec_version,
+        };
+        spec.validate_semantics(limits)?;
+        Ok(spec)
+    }
+
     fn push_primary_spec(
         self,
         root: &mut StreamingOrderedListRoot,

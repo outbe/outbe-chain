@@ -9,16 +9,19 @@ use outbe_lysis::program_v1::reducers::{
 };
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
-    decode_fixed_reduce_output, decode_raw_coverage_carrier, encode_amount_run,
+    decode_fixed_reduce_output, decode_gratis_prefix_down_output,
+    decode_gratis_segment_summary, decode_raw_coverage_carrier, encode_amount_run,
     encode_enumerated_run, encode_fidelity_map_output, encode_fixed_reduce_output,
-    encode_raw_coverage_carrier, enumerate_tributes, FixedReduceOutputV1,
-    RawCoverageCarrierV1,
+    encode_gratis_prefix_down_output, encode_gratis_segment_summary,
+    encode_raw_coverage_carrier, enumerate_tributes, gratis_summary_coverage,
+    FixedReduceOutputV1, GratisPrefixDownOutputV1, RawCoverageCarrierV1,
 };
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
     output_finalize, shuffle_buckets, shuffle_owners, FidelityAggregateV1,
-    FidelityLeaguePartialV1, FidelityReduceValueV1, GratisSummaryValueV1,
+    FidelityLeaguePartialV1, FidelityReduceValueV1, GratisIncomingV1,
+    GratisLeafPrefixV1, GratisSegmentSummaryV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::{
     execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
@@ -702,6 +705,178 @@ fn amount_map_unit_binds_exact_enumerate_fidelity_root_and_oracle_inputs() {
             ),
         ]
     );
+}
+
+#[test]
+fn gratis_prefix_units_bind_exact_amount_children_and_padding() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
+    let left = B256::repeat_byte(0x61);
+    let right = B256::repeat_byte(0x62);
+
+    let leaf = planner
+        .gratis_prefix_unit_at(0, &[Some(left)], &limits)
+        .unwrap();
+    assert_eq!(leaf.phase, UnitPhase::GratisPrefix);
+    assert_eq!(
+        leaf.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 0, index: 0 }
+        )
+    );
+    assert_eq!(
+        leaf.canonical_ordered_inputs[1].purpose,
+        InputPurpose::AmountRecords
+    );
+    assert_eq!(leaf.canonical_ordered_inputs[1].source_id, left);
+
+    let internal = planner
+        .gratis_prefix_unit_at(3, &[Some(left), Some(right)], &limits)
+        .unwrap();
+    assert_eq!(
+        internal.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 0 }
+        )
+    );
+    assert!(internal
+        .canonical_ordered_inputs
+        .iter()
+        .skip(1)
+        .all(|input| input.purpose == InputPurpose::GratisPrefixTable));
+
+    let padded = planner
+        .gratis_prefix_unit_at(4, &[Some(left), None], &limits)
+        .unwrap();
+    assert_eq!(
+        padded.canonical_ordered_inputs[2].source_kind,
+        InputSourceKind::CanonicalEmpty
+    );
+    assert!(planner
+        .gratis_prefix_unit_at(0, &[Some(left), Some(right)], &limits)
+        .is_err());
+    assert!(planner
+        .gratis_prefix_unit_at(4, &[Some(left), Some(right)], &limits)
+        .is_err());
+}
+
+#[test]
+fn gratis_prefix_down_units_bind_parent_and_immediate_summaries() {
+    let limits = poc_schema_limits();
+    let planner = LysisPlannerV1::new(planner_bindings(513)).unwrap();
+    let parent = B256::repeat_byte(0x71);
+    let left = B256::repeat_byte(0x72);
+    let right = B256::repeat_byte(0x73);
+
+    let root = planner
+        .gratis_prefix_down_unit_at(0, &[Some(left), Some(right)], &limits)
+        .unwrap();
+    assert_eq!(root.phase, UnitPhase::GratisPrefixDown);
+    assert_eq!(
+        root.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 2, index: 0 }
+        )
+    );
+
+    let internal = planner
+        .gratis_prefix_down_unit_at(
+            2,
+            &[Some(parent), Some(left), None],
+            &limits,
+        )
+        .unwrap();
+    assert_eq!(
+        internal.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 1, index: 1 }
+        )
+    );
+    assert_eq!(
+        internal.canonical_ordered_inputs[1].source_id,
+        parent
+    );
+    assert_eq!(
+        internal.canonical_ordered_inputs[3].source_kind,
+        InputSourceKind::CanonicalEmpty
+    );
+
+    let leaf = planner
+        .gratis_prefix_down_unit_at(5, &[Some(parent), Some(left)], &limits)
+        .unwrap();
+    assert_eq!(
+        leaf.interval,
+        UnitInterval::BinaryReducerNode(
+            outbe_ocomp_protocol::unit::BinaryReducerNode { level: 0, index: 2 }
+        )
+    );
+    assert!(leaf
+        .canonical_ordered_inputs
+        .iter()
+        .skip(1)
+        .all(|input| input.purpose == InputPurpose::GratisPrefixTable));
+    assert!(planner
+        .gratis_prefix_down_unit_at(0, &[Some(parent), Some(left), Some(right)], &limits)
+        .is_err());
+}
+
+#[test]
+fn gratis_scan_artifacts_are_typed_canonical_and_reject_trailing_bytes() {
+    let limits = poc_schema_limits();
+    let summary = GratisSegmentSummaryV1 {
+        start_ordinal: 256,
+        end_ordinal: 513,
+        checked_segment_gratis_total: U256::from(77),
+    };
+    let encoded_summary = encode_gratis_segment_summary(&summary, &limits).unwrap();
+    assert_eq!(
+        decode_gratis_segment_summary(&encoded_summary, &limits).unwrap(),
+        summary
+    );
+
+    let branch = GratisPrefixDownOutputV1::Branch([
+        Some(GratisIncomingV1 {
+            start_ordinal: 0,
+            end_ordinal: 256,
+            incoming_remaining: Some(U256::from(1_000)),
+        }),
+        Some(GratisIncomingV1 {
+            start_ordinal: 256,
+            end_ordinal: 513,
+            incoming_remaining: Some(U256::from(700)),
+        }),
+    ]);
+    let encoded_branch = encode_gratis_prefix_down_output(&branch, &limits).unwrap();
+    assert_eq!(
+        decode_gratis_prefix_down_output(&encoded_branch, &limits).unwrap(),
+        branch
+    );
+
+    let leaf = GratisPrefixDownOutputV1::Leaf(GratisLeafPrefixV1 {
+        segment_ordinal: 2,
+        incoming_remaining: U256::from(700),
+        outgoing_remaining: U256::from(623),
+        first_error_ordinal: None,
+    });
+    let mut encoded_leaf = encode_gratis_prefix_down_output(&leaf, &limits).unwrap();
+    assert_eq!(
+        decode_gratis_prefix_down_output(&encoded_leaf, &limits).unwrap(),
+        leaf
+    );
+    encoded_leaf.push(0);
+    assert!(decode_gratis_prefix_down_output(&encoded_leaf, &limits).is_err());
+
+    let interval = B256::repeat_byte(0x81);
+    let left = (B256::repeat_byte(0x82), 256);
+    let right = (B256::repeat_byte(0x83), 257);
+    let complete = gratis_summary_coverage(interval, [Some(left), Some(right)]).unwrap();
+    assert_eq!(complete.count, 513);
+    assert_ne!(complete.root, B256::ZERO);
+    assert_ne!(
+        complete,
+        gratis_summary_coverage(interval, [Some(left), None]).unwrap()
+    );
+    assert!(gratis_summary_coverage(interval, [None, Some(right)]).is_err());
 }
 
 #[test]
