@@ -1,5 +1,7 @@
 mod support;
 
+use std::path::PathBuf;
+
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
@@ -39,11 +41,13 @@ fn input_ref(kind: InputChunkKind, ordinal: u32, records: u32, byte: u8) -> Inpu
 }
 
 struct Fixture {
+    cas: FilesystemCas,
+    catalog_root: PathBuf,
     limits: outbe_ocomp_protocol::SchemaLimits,
     list_limits: OrderedListLimits,
     references: [InputChunkRefV1; 2],
-    manifest: InputManifestV1,
     manifest_ref: CasObjectRefV1,
+    _directory: tempfile::TempDir,
 }
 
 fn fixture() -> Fixture {
@@ -94,30 +98,40 @@ fn fixture() -> Fixture {
         opening_codec_registry_hash: hash(14),
         compression: Compression::None,
     };
-    let manifest_ref = CasObjectRefV1 {
-        transport_digest: hash(15),
-        encoded_bytes: 1024,
-        expected_ocb1_kind: Some(ObjectKind::InputManifestV1.tag()),
-    };
+    let directory = tempfile::tempdir().unwrap();
+    let cas = FilesystemCas::open(
+        directory.path().join("cas"),
+        CasWriterRole::SnapshotExporter,
+        CasLimits {
+            max_object_bytes: 1_048_576,
+            max_total_bytes: 8_388_608,
+        },
+    )
+    .unwrap();
+    let mut manifest_ref = cas
+        .publish_bytes(&manifest.encode_canonical(&limits).unwrap())
+        .unwrap();
+    manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
     Fixture {
+        cas,
+        catalog_root: directory.path().join("input-refs"),
         limits,
         list_limits,
         references,
-        manifest,
         manifest_ref,
+        _directory: directory,
     }
 }
 
 #[test]
 fn exact_input_refs_survive_cold_restart_under_the_manifest_authority() {
     let fixture = fixture();
-    let directory = tempfile::tempdir().unwrap();
 
     {
         let mut catalog = VerifiedInputChunkRefCatalog::open(
-            directory.path(),
+            &fixture.catalog_root,
+            &fixture.cas,
             &fixture.manifest_ref,
-            &fixture.manifest,
             fixture.limits,
             fixture.list_limits,
         )
@@ -131,9 +145,9 @@ fn exact_input_refs_survive_cold_restart_under_the_manifest_authority() {
     }
 
     let catalog = VerifiedInputChunkRefCatalog::open(
-        directory.path(),
+        &fixture.catalog_root,
+        &fixture.cas,
         &fixture.manifest_ref,
-        &fixture.manifest,
         fixture.limits,
         fixture.list_limits,
     )
@@ -151,11 +165,10 @@ fn exact_input_refs_survive_cold_restart_under_the_manifest_authority() {
 #[test]
 fn partial_input_ref_catalog_never_opens_an_exact_cursor() {
     let fixture = fixture();
-    let directory = tempfile::tempdir().unwrap();
     let mut catalog = VerifiedInputChunkRefCatalog::open(
-        directory.path(),
+        &fixture.catalog_root,
+        &fixture.cas,
         &fixture.manifest_ref,
-        &fixture.manifest,
         fixture.limits,
         fixture.list_limits,
     )
@@ -171,25 +184,24 @@ fn partial_input_ref_catalog_never_opens_an_exact_cursor() {
 #[test]
 fn input_ref_state_without_its_header_is_never_rebound_to_a_manifest() {
     let fixture = fixture();
-    let directory = tempfile::tempdir().unwrap();
     {
         let mut catalog = VerifiedInputChunkRefCatalog::open(
-            directory.path(),
+            &fixture.catalog_root,
+            &fixture.cas,
             &fixture.manifest_ref,
-            &fixture.manifest,
             fixture.limits,
             fixture.list_limits,
         )
         .unwrap();
         catalog.admit(&fixture.references[0]).unwrap();
     }
-    std::fs::remove_file(directory.path().join("catalog.header")).unwrap();
+    std::fs::remove_file(fixture.catalog_root.join("catalog.header")).unwrap();
 
     assert!(matches!(
         VerifiedInputChunkRefCatalog::open(
-            directory.path(),
+            &fixture.catalog_root,
+            &fixture.cas,
             &fixture.manifest_ref,
-            &fixture.manifest,
             fixture.limits,
             fixture.list_limits,
         ),
@@ -283,8 +295,8 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
     {
         let mut catalog = VerifiedInputChunkRefCatalog::open(
             &catalog_path,
+            &cas,
             &manifest_ref,
-            &manifest,
             limits,
             list_limits,
         )

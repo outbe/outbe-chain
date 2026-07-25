@@ -350,15 +350,10 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
     assert_eq!(tribute_chunks[1].ordinal, 1);
     assert_eq!(tribute_chunks[1].canonical_records_or_openings.len(), 1);
 
-    let manifest = InputManifestV1::decode_canonical(
-        cas.read_verified(&published.manifest_ref).unwrap().bytes(),
-        &limits,
-    )
-    .unwrap();
     let catalog = VerifiedInputChunkRefCatalog::open(
         &input_ref_catalog_path,
+        &cas,
         &published.manifest_ref,
-        &manifest,
         limits,
         poc_input_list_limits(),
     )

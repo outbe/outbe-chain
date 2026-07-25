@@ -1153,6 +1153,27 @@ impl LysisPlanTopologyV1 {
         })
     }
 
+    pub fn plan_ordinal_of(self, position: PlannedUnitPositionV1) -> Result<u32, PlannerErrorV1> {
+        let phase = position.phase();
+        let phase_ordinal = self.phase_ordinal_of(position)?;
+        self.phase_offset(phase)?
+            .checked_add(phase_ordinal)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
+    pub fn phase_offset(self, target: UnitPhase) -> Result<u32, PlannerErrorV1> {
+        let mut offset = 0_u32;
+        for phase in LYSIS_PLAN_PHASE_ORDER {
+            if phase == target {
+                return Ok(offset);
+            }
+            offset = offset
+                .checked_add(self.phase_unit_count(phase))
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        }
+        Err(PlannerErrorV1::ProducerMembershipMismatch)
+    }
+
     pub fn phase_position_at(
         self,
         phase: UnitPhase,
@@ -1251,6 +1272,170 @@ impl LysisPlanTopologyV1 {
                 }
             }
         }
+    }
+
+    fn phase_ordinal_of(self, position: PlannedUnitPositionV1) -> Result<u32, PlannerErrorV1> {
+        let primary = self.tree.primary_leaf_count;
+        let phase = position.phase();
+        let ordinal = match position {
+            PlannedUnitPositionV1::Primary { ordinal, .. } => ordinal,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::FixedReduce,
+                level,
+                index,
+            } => self.full_bottom_up_ordinal(level, index)?,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level: 0,
+                index,
+            } => index,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefix,
+                level,
+                index,
+            } => primary
+                .checked_add(self.active_bottom_up_ordinal(level, index)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
+                level: 0,
+                index,
+            } => self
+                .active_internal_node_count()
+                .checked_add(index)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::GratisPrefixDown,
+                level,
+                index,
+            } => self.active_top_down_ordinal(level, index)?,
+            PlannedUnitPositionV1::RunSpan {
+                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                level: 0,
+                index,
+                ..
+            } => index,
+            PlannedUnitPositionV1::RunSpan {
+                phase: UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle,
+                level,
+                index,
+                ..
+            } => primary
+                .checked_add(self.shuffle_internal_ordinal(level, index)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::RootReduce,
+                level: 0,
+                index,
+            } => index,
+            PlannedUnitPositionV1::TreeNode {
+                phase: UnitPhase::RootReduce,
+                level,
+                index,
+            } => primary
+                .checked_add(self.full_bottom_up_ordinal(level, index)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?,
+            _ => return Err(PlannerErrorV1::ProducerMembershipMismatch),
+        };
+        if self.phase_position_at(phase, ordinal)? != position {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        Ok(ordinal)
+    }
+
+    fn full_bottom_up_ordinal(self, level: u16, index: u32) -> Result<u32, PlannerErrorV1> {
+        if level == 0 || level > self.tree.height {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let mut ordinal = 0_u32;
+        for current_level in 1..level {
+            ordinal = ordinal
+                .checked_add(self.tree.padded_leaf_count >> current_level)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        }
+        let width = self.tree.padded_leaf_count >> level;
+        if index >= width {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        ordinal
+            .checked_add(index)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn active_bottom_up_ordinal(self, level: u16, index: u32) -> Result<u32, PlannerErrorV1> {
+        if level == 0 || level > self.tree.height {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let mut ordinal = 0_u32;
+        for current_level in 1..level {
+            ordinal = ordinal
+                .checked_add(self.active_width(current_level)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        }
+        if index >= self.active_width(level)? {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        ordinal
+            .checked_add(index)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn active_top_down_ordinal(self, level: u16, index: u32) -> Result<u32, PlannerErrorV1> {
+        if level == 0 || level > self.tree.height {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let mut ordinal = 0_u32;
+        for current_level in ((level + 1)..=self.tree.height).rev() {
+            ordinal = ordinal
+                .checked_add(self.active_width(current_level)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        }
+        if index >= self.active_width(level)? {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        ordinal
+            .checked_add(index)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn active_width(self, level: u16) -> Result<u32, PlannerErrorV1> {
+        let width = 1_u32
+            .checked_shl(u32::from(level))
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        Ok(self.tree.primary_leaf_count.div_ceil(width))
+    }
+
+    fn shuffle_internal_ordinal(self, level: u16, index: u32) -> Result<u32, PlannerErrorV1> {
+        if level == 0 || level > self.tree.height {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        let mut ordinal = 0_u32;
+        for current_level in 1..level {
+            ordinal = ordinal
+                .checked_add(self.shuffle_node_count(current_level)?)
+                .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        }
+        if index >= self.shuffle_node_count(level)? {
+            return Err(PlannerErrorV1::ProducerMembershipMismatch);
+        }
+        ordinal
+            .checked_add(index)
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+    }
+
+    fn shuffle_node_count(self, level: u16) -> Result<u32, PlannerErrorV1> {
+        let half_width = 1_u32
+            .checked_shl(u32::from(level - 1))
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        let width = half_width
+            .checked_mul(2)
+            .ok_or(PlannerErrorV1::IntegerOverflow)?;
+        self.tree
+            .primary_leaf_count
+            .checked_sub(1)
+            .and_then(|value| value.checked_add(half_width))
+            .ok_or(PlannerErrorV1::IntegerOverflow)
+            .map(|value| value / width)
     }
 
     pub fn required_producers(

@@ -20,7 +20,7 @@ use outbe_ocomp_protocol::{
 use thiserror::Error;
 
 use crate::{
-    cas::{CasError, FilesystemCasReader},
+    cas::{CasError, FilesystemCas, FilesystemCasReader},
     input_artifacts::{decode_verified_input_chunk, derive_input_chunk_ref},
 };
 
@@ -67,12 +67,14 @@ pub struct VerifiedInputChunkRefCatalog {
 impl VerifiedInputChunkRefCatalog {
     pub fn open(
         root: impl AsRef<Path>,
+        cas: &FilesystemCas,
         manifest_ref: &CasObjectRefV1,
-        manifest: &InputManifestV1,
         limits: SchemaLimits,
         list_limits: OrderedListLimits,
     ) -> Result<Self, InputRefCatalogError> {
-        let expected = expected_header(manifest_ref, manifest, &limits)?;
+        let manifest_object = cas.read_verified(manifest_ref)?;
+        let manifest = InputManifestV1::decode_canonical(manifest_object.bytes(), &limits)?;
+        let expected = expected_header(manifest_ref, &manifest, &limits)?;
         let root = root.as_ref().to_path_buf();
         create_private_directory(&root)?;
         let lock = CatalogLock::acquire(&root)?;
@@ -165,10 +167,33 @@ impl VerifiedInputChunkRefCatalog {
 
     pub fn exact_cursor(&self) -> Result<InputRefCursor<'_>, InputRefCatalogError> {
         self.require_active()?;
-        self.verify_closed_catalog()?;
+        for step in self.bounded_closure_cursor()? {
+            let _ = step?;
+        }
         Ok(InputRefCursor {
             catalog: self,
             next_ordinal: 0,
+        })
+    }
+
+    pub(crate) fn bounded_closure_cursor(
+        &self,
+    ) -> Result<InputRefCatalogClosureCursorV1<'_>, InputRefCatalogError> {
+        self.require_active()?;
+        Ok(InputRefCatalogClosureCursorV1 {
+            catalog: self,
+            stage: InputRefCatalogClosureStageV1::References,
+            next_ordinal: 0,
+            root: Some(StreamingOrderedListRoot::new(
+                ListKind::InputChunkReferences,
+                self.header.input_chunk_count,
+            )?),
+            exact_encoded_bytes: 0,
+            exact_record_count: 0,
+            tribute_count: 0,
+            previous_kind: None,
+            directory: None,
+            actual_entry_count: 0,
         })
     }
 
@@ -184,100 +209,25 @@ impl VerifiedInputChunkRefCatalog {
         })
     }
 
-    fn verify_closed_catalog(&self) -> Result<(), InputRefCatalogError> {
-        let mut actual_count = 0_u32;
-        let entries = fs::read_dir(&self.root)
-            .map_err(|source| io_error("list input-ref catalog", &self.root, source))?;
-        for entry in entries {
-            let entry =
-                entry.map_err(|source| io_error("read input-ref catalog", &self.root, source))?;
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| InputRefCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if name == HEADER_FILE || name == LOCK_FILE {
-                continue;
-            }
-            let Some(prefix) = name.strip_suffix(ENTRY_SUFFIX) else {
-                return Err(InputRefCatalogError::UnexpectedCatalogEntry(entry.path()));
-            };
-            let ordinal = parse_entry_ordinal(prefix)
-                .ok_or_else(|| InputRefCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if !entry
-                .file_type()
-                .map_err(|source| io_error("inspect input-ref entry", &entry.path(), source))?
-                .is_file()
-            {
-                return Err(InputRefCatalogError::UnexpectedCatalogEntry(entry.path()));
-            }
-            if ordinal >= self.header.input_chunk_count {
-                return Err(InputRefCatalogError::UnexpectedReference { ordinal });
-            }
-            actual_count = actual_count
-                .checked_add(1)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "input-ref catalog count",
-                })?;
-        }
-        if actual_count != self.header.input_chunk_count {
-            for ordinal in 0..self.header.input_chunk_count {
-                if !path_exists(&self.entry_path(ordinal))? {
-                    return Err(InputRefCatalogError::MissingReference { ordinal });
-                }
-            }
-            return Err(ProtocolError::InvalidInvariant("closed input-ref catalog count").into());
-        }
-
-        let mut root = StreamingOrderedListRoot::new(
-            ListKind::InputChunkReferences,
-            self.header.input_chunk_count,
-        )?;
-        let mut exact_encoded_bytes = 0_u64;
-        let mut exact_record_count = 0_u32;
-        let mut tribute_count = 0_u32;
-        let mut previous_kind = None;
-        for ordinal in 0..self.header.input_chunk_count {
-            let reference = self.read(ordinal)?;
-            if let Some(kind) = previous_kind {
-                if kind > reference.kind {
-                    return Err(
-                        ProtocolError::InvalidInvariant("input-ref catalog kind order").into(),
-                    );
-                }
-            }
-            previous_kind = Some(reference.kind);
-            exact_encoded_bytes = exact_encoded_bytes
-                .checked_add(reference.encoded_bytes)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "input-ref encoded bytes",
-                })?;
-            exact_record_count = exact_record_count
-                .checked_add(reference.record_count)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "input-ref record count",
-                })?;
-            if reference.kind == InputChunkKind::Tribute {
-                tribute_count = tribute_count.checked_add(reference.record_count).ok_or(
-                    ProtocolError::IntegerOverflow {
-                        what: "input-ref Tribute count",
-                    },
-                )?;
-            }
-            root.push(
-                &reference.encode_canonical_record(&self.limits)?,
-                self.limits.max_bounded_bytes,
-            )?;
-        }
-        if root.finish()? != self.header.input_chunk_list_root
-            || exact_encoded_bytes != self.header.exact_encoded_bytes
-            || exact_record_count != self.header.exact_record_count
-            || tribute_count != self.header.tribute_count
-        {
-            return Err(
-                ProtocolError::InvalidInvariant("input-ref catalog manifest closure").into(),
-            );
+    pub(crate) fn require_manifest_authority(
+        &self,
+        manifest_ref: &CasObjectRefV1,
+        manifest: &InputManifestV1,
+    ) -> Result<(), InputRefCatalogError> {
+        self.require_active()?;
+        if expected_header(manifest_ref, manifest, &self.limits)? != self.header {
+            return Err(InputRefCatalogError::AuthorityMismatch);
         }
         Ok(())
+    }
+
+    pub(crate) fn verified_reference_at(
+        &self,
+        ordinal: u32,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+    ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
+        self.verify_reference(self.read(ordinal)?, reader, bundle)
     }
 
     fn read(&self, ordinal: u32) -> Result<InputChunkRefV1, InputRefCatalogError> {
@@ -294,6 +244,40 @@ impl VerifiedInputChunkRefCatalog {
             });
         }
         Ok(reference)
+    }
+
+    pub(crate) fn verify_reference(
+        &self,
+        reference: InputChunkRefV1,
+        reader: &FilesystemCasReader,
+        bundle: &ProtocolBundleV1,
+    ) -> Result<VerifiedInputChunkRefV1, InputRefCatalogError> {
+        let object_ref = CasObjectRefV1 {
+            transport_digest: reference.transport_digest,
+            encoded_bytes: reference.encoded_bytes,
+            expected_ocb1_kind: Some(ObjectKind::AuthenticatedInputChunkV1.tag()),
+        };
+        let object = reader.read_verified(&object_ref)?;
+        let derived = derive_input_chunk_ref(&object, bundle, &self.limits)
+            .map_err(|_| {
+                ProtocolError::InvalidInvariant("input-ref catalog CAS reference derivation")
+            })?
+            .reference;
+        if derived != reference {
+            return Err(ProtocolError::InvalidInvariant("input-ref catalog CAS preimage").into());
+        }
+        let chunk = decode_verified_input_chunk(&object, bundle, &self.limits)
+            .map_err(|_| ProtocolError::InvalidInvariant("input-ref catalog CAS chunk decoding"))?;
+        if chunk.protocol_bundle_hash != self.header.protocol_bundle_hash
+            || chunk.job_id != self.header.job_id
+            || chunk.kind != reference.kind
+            || chunk.ordinal != reference.ordinal
+        {
+            return Err(
+                ProtocolError::InvalidInvariant("input-ref catalog chunk authority").into(),
+            );
+        }
+        Ok(VerifiedInputChunkRefV1 { reference, chunk })
     }
 
     fn entry_path(&self, ordinal: u32) -> PathBuf {
@@ -322,6 +306,185 @@ impl VerifiedInputChunkRefCatalog {
         persist_atomic(&self.root, &self.root.join(CONFLICT_FILE), &marker)?;
         self.abstained = true;
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum InputRefCatalogClosureStepV1 {
+    Reference(InputChunkRefV1),
+    ReferencesClosed,
+    DirectoryEntryChecked,
+    Complete,
+}
+
+enum InputRefCatalogClosureStageV1 {
+    References,
+    Directory,
+    Complete,
+}
+
+pub(crate) struct InputRefCatalogClosureCursorV1<'a> {
+    catalog: &'a VerifiedInputChunkRefCatalog,
+    stage: InputRefCatalogClosureStageV1,
+    next_ordinal: u32,
+    root: Option<StreamingOrderedListRoot>,
+    exact_encoded_bytes: u64,
+    exact_record_count: u32,
+    tribute_count: u32,
+    previous_kind: Option<InputChunkKind>,
+    directory: Option<fs::ReadDir>,
+    actual_entry_count: u32,
+}
+
+impl Iterator for InputRefCatalogClosureCursorV1<'_> {
+    type Item = Result<InputRefCatalogClosureStepV1, InputRefCatalogError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.stage {
+            InputRefCatalogClosureStageV1::References => {
+                if self.next_ordinal < self.catalog.header.input_chunk_count {
+                    let ordinal = self.next_ordinal;
+                    self.next_ordinal += 1;
+                    return Some((|| {
+                        let reference = self.catalog.read(ordinal)?;
+                        if self.previous_kind.is_some_and(|kind| kind > reference.kind) {
+                            return Err(ProtocolError::InvalidInvariant(
+                                "input-ref catalog kind order",
+                            )
+                            .into());
+                        }
+                        self.previous_kind = Some(reference.kind);
+                        self.exact_encoded_bytes = self
+                            .exact_encoded_bytes
+                            .checked_add(reference.encoded_bytes)
+                            .ok_or(ProtocolError::IntegerOverflow {
+                                what: "input-ref encoded bytes",
+                            })?;
+                        self.exact_record_count = self
+                            .exact_record_count
+                            .checked_add(reference.record_count)
+                            .ok_or(ProtocolError::IntegerOverflow {
+                                what: "input-ref record count",
+                            })?;
+                        if reference.kind == InputChunkKind::Tribute {
+                            self.tribute_count = self
+                                .tribute_count
+                                .checked_add(reference.record_count)
+                                .ok_or(ProtocolError::IntegerOverflow {
+                                    what: "input-ref Tribute count",
+                                })?;
+                        }
+                        self.root
+                            .as_mut()
+                            .ok_or(ProtocolError::InvalidInvariant(
+                                "input-ref closure root state",
+                            ))?
+                            .push(
+                                &reference.encode_canonical_record(&self.catalog.limits)?,
+                                self.catalog.limits.max_bounded_bytes,
+                            )?;
+                        Ok(InputRefCatalogClosureStepV1::Reference(reference))
+                    })());
+                }
+
+                let root = match self.root.take() {
+                    Some(root) => root,
+                    None => {
+                        return Some(Err(ProtocolError::InvalidInvariant(
+                            "input-ref closure root state",
+                        )
+                        .into()));
+                    }
+                };
+                let closure = root.finish().and_then(|root| {
+                    if root != self.catalog.header.input_chunk_list_root
+                        || self.exact_encoded_bytes != self.catalog.header.exact_encoded_bytes
+                        || self.exact_record_count != self.catalog.header.exact_record_count
+                        || self.tribute_count != self.catalog.header.tribute_count
+                    {
+                        Err(ProtocolError::InvalidInvariant(
+                            "input-ref catalog manifest closure",
+                        ))
+                    } else {
+                        Ok(())
+                    }
+                });
+                if let Err(error) = closure {
+                    self.stage = InputRefCatalogClosureStageV1::Complete;
+                    return Some(Err(error.into()));
+                }
+                match fs::read_dir(&self.catalog.root) {
+                    Ok(directory) => self.directory = Some(directory),
+                    Err(source) => {
+                        self.stage = InputRefCatalogClosureStageV1::Complete;
+                        return Some(Err(io_error(
+                            "list input-ref catalog",
+                            &self.catalog.root,
+                            source,
+                        )));
+                    }
+                }
+                self.stage = InputRefCatalogClosureStageV1::Directory;
+                Some(Ok(InputRefCatalogClosureStepV1::ReferencesClosed))
+            }
+            InputRefCatalogClosureStageV1::Directory => {
+                let entry = match self.directory.as_mut().and_then(Iterator::next) {
+                    Some(Ok(entry)) => entry,
+                    Some(Err(source)) => {
+                        self.stage = InputRefCatalogClosureStageV1::Complete;
+                        return Some(Err(io_error(
+                            "read input-ref catalog",
+                            &self.catalog.root,
+                            source,
+                        )));
+                    }
+                    None => {
+                        self.stage = InputRefCatalogClosureStageV1::Complete;
+                        if self.actual_entry_count != self.catalog.header.input_chunk_count {
+                            return Some(Err(ProtocolError::InvalidInvariant(
+                                "closed input-ref catalog count",
+                            )
+                            .into()));
+                        }
+                        return Some(Ok(InputRefCatalogClosureStepV1::Complete));
+                    }
+                };
+                Some((|| {
+                    let name = entry
+                        .file_name()
+                        .into_string()
+                        .map_err(|_| InputRefCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+                    if name == HEADER_FILE || name == LOCK_FILE {
+                        return Ok(InputRefCatalogClosureStepV1::DirectoryEntryChecked);
+                    }
+                    let prefix = name.strip_suffix(ENTRY_SUFFIX).ok_or_else(|| {
+                        InputRefCatalogError::UnexpectedCatalogEntry(entry.path())
+                    })?;
+                    let ordinal = parse_entry_ordinal(prefix).ok_or_else(|| {
+                        InputRefCatalogError::UnexpectedCatalogEntry(entry.path())
+                    })?;
+                    if !entry
+                        .file_type()
+                        .map_err(|source| {
+                            io_error("inspect input-ref entry", &entry.path(), source)
+                        })?
+                        .is_file()
+                    {
+                        return Err(InputRefCatalogError::UnexpectedCatalogEntry(entry.path()));
+                    }
+                    if ordinal >= self.catalog.header.input_chunk_count {
+                        return Err(InputRefCatalogError::UnexpectedReference { ordinal });
+                    }
+                    self.actual_entry_count = self.actual_entry_count.checked_add(1).ok_or(
+                        ProtocolError::IntegerOverflow {
+                            what: "input-ref catalog count",
+                        },
+                    )?;
+                    Ok(InputRefCatalogClosureStepV1::DirectoryEntryChecked)
+                })())
+            }
+            InputRefCatalogClosureStageV1::Complete => None,
+        }
     }
 }
 
@@ -375,39 +538,11 @@ impl Iterator for VerifiedInputRefCursor<'_> {
             Ok(reference) => reference,
             Err(error) => return Some(Err(error)),
         };
-        Some((|| {
-            let object_ref = CasObjectRefV1 {
-                transport_digest: reference.transport_digest,
-                encoded_bytes: reference.encoded_bytes,
-                expected_ocb1_kind: Some(ObjectKind::AuthenticatedInputChunkV1.tag()),
-            };
-            let object = self.reader.read_verified(&object_ref)?;
-            let derived = derive_input_chunk_ref(&object, self.bundle, &self.inner.catalog.limits)
-                .map_err(|_| {
-                    ProtocolError::InvalidInvariant("input-ref catalog CAS reference derivation")
-                })?
-                .reference;
-            if derived != reference {
-                return Err(
-                    ProtocolError::InvalidInvariant("input-ref catalog CAS preimage").into(),
-                );
-            }
-            let chunk =
-                decode_verified_input_chunk(&object, self.bundle, &self.inner.catalog.limits)
-                    .map_err(|_| {
-                        ProtocolError::InvalidInvariant("input-ref catalog CAS chunk decoding")
-                    })?;
-            if chunk.protocol_bundle_hash != self.inner.catalog.header.protocol_bundle_hash
-                || chunk.job_id != self.inner.catalog.header.job_id
-                || chunk.kind != reference.kind
-                || chunk.ordinal != reference.ordinal
-            {
-                return Err(
-                    ProtocolError::InvalidInvariant("input-ref catalog chunk authority").into(),
-                );
-            }
-            Ok(VerifiedInputChunkRefV1 { reference, chunk })
-        })())
+        Some(
+            self.inner
+                .catalog
+                .verify_reference(reference, self.reader, self.bundle),
+        )
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

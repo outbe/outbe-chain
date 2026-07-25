@@ -31,8 +31,8 @@ use outbe_lysis::program_v1::result::{
     encode_root_reduce_summary, LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_lysis::program_v1::{
-    execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
-    ProgramErrorV1, TributeInputV1,
+    execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
+    ProgramInputV1, TributeInputV1,
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
@@ -1564,6 +1564,25 @@ fn complete_plan_cursor_uses_protocol_order_not_runtime_completion_order() {
 }
 
 #[test]
+fn exact_plan_positions_round_trip_to_their_global_ordinals() {
+    for primary_count in 1..=8 {
+        let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
+        for ordinal in 0..topology.total_unit_count() {
+            let position = topology.plan_position_at(ordinal).unwrap();
+            assert_eq!(topology.plan_ordinal_of(position).unwrap(), ordinal);
+        }
+    }
+
+    let primary_count = primary_work_unit_count(1_000_000_000).unwrap();
+    let topology = LysisPlanTopologyV1::new(primary_count).unwrap();
+    let last = topology.total_unit_count() - 1;
+    for ordinal in [0, primary_count - 1, primary_count, last / 2, last] {
+        let position = topology.plan_position_at(ordinal).unwrap();
+        assert_eq!(topology.plan_ordinal_of(position).unwrap(), ordinal);
+    }
+}
+
+#[test]
 fn three_shuffle_runs_have_only_real_binary_merges() {
     let topology = LysisPlanTopologyV1::new(3).unwrap();
     for phase in [UnitPhase::OwnerShuffle, UnitPhase::BucketShuffle] {
@@ -2338,16 +2357,11 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
         1_784_765_900,
     )
     .unwrap();
-    assert_eq!(
-        finalized.checked_tribute_nominal_total,
-        U256::from(18)
-    );
-    assert!(
-        finalized
-            .ordered_records
-            .iter()
-            .all(|record| record.contributor_action.is_none())
-    );
+    assert_eq!(finalized.checked_tribute_nominal_total, U256::from(18));
+    assert!(finalized
+        .ordered_records
+        .iter()
+        .all(|record| record.contributor_action.is_none()));
     let limits = poc_schema_limits();
     let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
     assert_eq!(
@@ -2356,11 +2370,7 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
     );
 
     assert!(matches!(
-        output_finalize(
-            &run([U256::MAX, U256::from(1)]),
-            &prefix,
-            1_784_765_900,
-        ),
+        output_finalize(&run([U256::MAX, U256::from(1)]), &prefix, 1_784_765_900,),
         Err(ProgramErrorV1::TotalNominalOverflow { ordinal: 1 })
     ));
 }

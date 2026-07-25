@@ -87,6 +87,13 @@ pub(crate) struct AdmissionPlanAuthorityV1 {
     pub primary_work_unit_count: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AdmissionPinnedPlanV1 {
+    pub input_manifest_ref: CasObjectRefV1,
+    pub input_manifest: InputManifestV1,
+    pub plan: PlanCommitmentV1,
+}
+
 pub struct VerifiedAdmissionCatalog {
     root: PathBuf,
     limits: SchemaLimits,
@@ -260,53 +267,33 @@ impl VerifiedAdmissionCatalog {
         self.require_active()?;
         let expected_plan_hash = self.header.plan_hash;
         let expected_count = self.header.exact_plan_unit_count;
-        let mut actual_count = 0_u32;
-        let entries = fs::read_dir(&self.root)
-            .map_err(|source| io_error("list catalog directory", &self.root, source))?;
-        for entry in entries {
-            let entry =
-                entry.map_err(|source| io_error("read catalog directory", &self.root, source))?;
-            let name = entry
-                .file_name()
-                .into_string()
-                .map_err(|_| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if name == HEADER_FILE || name == LOCK_FILE {
-                continue;
-            }
-            let Some(prefix) = name.strip_suffix(ENTRY_SUFFIX) else {
-                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
-            };
-            let plan_ordinal = parse_entry_ordinal(prefix)
-                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
-            if !entry
-                .file_type()
-                .map_err(|source| io_error("inspect catalog entry", &entry.path(), source))?
-                .is_file()
-            {
-                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
-            }
-            if plan_ordinal >= expected_count {
-                return Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal });
-            }
-            actual_count = actual_count
-                .checked_add(1)
-                .ok_or(ProtocolError::IntegerOverflow {
-                    what: "closed admission count",
-                })?;
+        // This compatibility API is deliberately eager and preserves its
+        // precise missing-ordinal error. Security-sensitive finalization uses
+        // `bounded_directory_cursor` directly and never pays this O(N) pass.
+        for plan_ordinal in 0..expected_count {
+            let _ = self.read(plan_ordinal)?;
         }
-        if actual_count != expected_count {
-            for plan_ordinal in 0..expected_count {
-                if !path_exists(&self.entry_path(plan_ordinal))? {
-                    return Err(AdmissionCatalogError::MissingAdmission { plan_ordinal });
-                }
-            }
-            return Err(ProtocolError::InvalidInvariant("closed admission count").into());
+        for step in self.bounded_directory_cursor()? {
+            let _ = step?;
         }
         Ok(AdmissionCursor {
             catalog: self,
             next_ordinal: 0,
             expected_count,
             expected_plan_hash,
+        })
+    }
+
+    pub(crate) fn bounded_directory_cursor(
+        &self,
+    ) -> Result<AdmissionDirectoryCursorV1<'_>, AdmissionCatalogError> {
+        self.require_active()?;
+        Ok(AdmissionDirectoryCursorV1 {
+            catalog: self,
+            entries: fs::read_dir(&self.root)
+                .map_err(|source| io_error("list catalog directory", &self.root, source))?,
+            actual_count: 0,
+            complete: false,
         })
     }
 
@@ -324,6 +311,33 @@ impl VerifiedAdmissionCatalog {
             tribute_count: self.header.tribute_count,
             primary_work_unit_count: self.header.primary_work_unit_count,
         }
+    }
+
+    pub(crate) fn reload_pinned_plan(
+        &self,
+        reader: &FilesystemCasReader,
+    ) -> Result<AdmissionPinnedPlanV1, AdmissionCatalogError> {
+        self.require_active()?;
+        let plan_object = reader.read_verified(&self.header.plan_ref)?;
+        let manifest_object = reader.read_verified(&self.header.input_manifest_ref)?;
+        let expected = expected_header(
+            &self.header.plan_ref,
+            plan_object.bytes(),
+            &self.header.input_manifest_ref,
+            manifest_object.bytes(),
+            &self.limits,
+        )?;
+        if expected != self.header {
+            return Err(AdmissionCatalogError::AuthorityMismatch);
+        }
+        Ok(AdmissionPinnedPlanV1 {
+            input_manifest_ref: self.header.input_manifest_ref.clone(),
+            input_manifest: InputManifestV1::decode_canonical(
+                manifest_object.bytes(),
+                &self.limits,
+            )?,
+            plan: PlanCommitmentV1::decode_canonical_record(plan_object.bytes(), &self.limits)?,
+        })
     }
 
     fn require_active(&self) -> Result<(), AdmissionCatalogError> {
@@ -353,6 +367,81 @@ impl VerifiedAdmissionCatalog {
         persist_atomic(&self.root, &path, &marker)?;
         self.abstained = true;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AdmissionDirectoryStepV1 {
+    EntryChecked,
+    Complete,
+}
+
+pub(crate) struct AdmissionDirectoryCursorV1<'a> {
+    catalog: &'a VerifiedAdmissionCatalog,
+    entries: fs::ReadDir,
+    actual_count: u32,
+    complete: bool,
+}
+
+impl Iterator for AdmissionDirectoryCursorV1<'_> {
+    type Item = Result<AdmissionDirectoryStepV1, AdmissionCatalogError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.complete {
+            return None;
+        }
+        let entry = match self.entries.next() {
+            Some(Ok(entry)) => entry,
+            Some(Err(source)) => {
+                self.complete = true;
+                return Some(Err(io_error(
+                    "read catalog directory",
+                    &self.catalog.root,
+                    source,
+                )));
+            }
+            None => {
+                self.complete = true;
+                if self.actual_count != self.catalog.header.exact_plan_unit_count {
+                    return Some(Err(ProtocolError::InvalidInvariant(
+                        "closed admission count",
+                    )
+                    .into()));
+                }
+                return Some(Ok(AdmissionDirectoryStepV1::Complete));
+            }
+        };
+        Some((|| {
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+            if name == HEADER_FILE || name == LOCK_FILE {
+                return Ok(AdmissionDirectoryStepV1::EntryChecked);
+            }
+            let prefix = name
+                .strip_suffix(ENTRY_SUFFIX)
+                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+            let plan_ordinal = parse_entry_ordinal(prefix)
+                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+            if !entry
+                .file_type()
+                .map_err(|source| io_error("inspect catalog entry", &entry.path(), source))?
+                .is_file()
+            {
+                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
+            }
+            if plan_ordinal >= self.catalog.header.exact_plan_unit_count {
+                return Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal });
+            }
+            self.actual_count =
+                self.actual_count
+                    .checked_add(1)
+                    .ok_or(ProtocolError::IntegerOverflow {
+                        what: "closed admission count",
+                    })?;
+            Ok(AdmissionDirectoryStepV1::EntryChecked)
+        })())
     }
 }
 

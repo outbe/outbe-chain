@@ -55,7 +55,9 @@ pub fn authoritative_bucket_shuffle_records<'a>(
     if start_run != 0 || end_run != authority.primary_work_unit_count {
         return Err(ProtocolError::InvalidInvariant("complete BucketShuffle run span").into());
     }
-    let plan_ordinal = phase_offset(topology, UnitPhase::BucketShuffle)?
+    let plan_ordinal = topology
+        .phase_offset(UnitPhase::BucketShuffle)
+        .map_err(|_| ProtocolError::InvalidInvariant("BucketShuffle phase offset"))?
         .checked_add(phase_ordinal)
         .ok_or(ProtocolError::IntegerOverflow {
             what: "final BucketShuffle plan ordinal",
@@ -110,30 +112,4 @@ pub fn authoritative_bucket_shuffle_records<'a>(
             .map_err(|_| ProtocolError::InvalidInvariant("authoritative BucketShuffle descendant"))
     })
     .map_err(AuthoritativeBucketShuffleError::from)
-}
-
-fn phase_offset(topology: LysisPlanTopologyV1, target: UnitPhase) -> Result<u32, ProtocolError> {
-    let mut offset = 0_u32;
-    for phase in [
-        UnitPhase::Enumerate,
-        UnitPhase::FidelityMap,
-        UnitPhase::FixedReduce,
-        UnitPhase::AmountMap,
-        UnitPhase::GratisPrefix,
-        UnitPhase::GratisPrefixDown,
-        UnitPhase::OutputFinalize,
-        UnitPhase::OwnerShuffle,
-        UnitPhase::BucketShuffle,
-        UnitPhase::RootReduce,
-    ] {
-        if phase == target {
-            return Ok(offset);
-        }
-        offset = offset.checked_add(topology.phase_unit_count(phase)).ok_or(
-            ProtocolError::IntegerOverflow {
-                what: "Lysis phase offset",
-            },
-        )?;
-    }
-    Err(ProtocolError::InvalidInvariant("known Lysis phase"))
 }

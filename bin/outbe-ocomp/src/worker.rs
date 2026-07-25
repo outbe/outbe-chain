@@ -1037,7 +1037,7 @@ fn execute_gratis_prefix_unit(
     let planner = planner_from_authority(plan, manifest, bundle, limits)?;
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let phase_ordinal = unit_index
-        .checked_sub(gratis_prefix_offset(plan, topology)?)
+        .checked_sub(topology.phase_offset(UnitPhase::GratisPrefix)?)
         .ok_or(WorkerError::UnitBindingMismatch)?;
     let position = topology.phase_position_at(UnitPhase::GratisPrefix, phase_ordinal)?;
     let PlannedUnitPositionV1::TreeNode {
@@ -1169,7 +1169,7 @@ fn execute_gratis_prefix_down_unit(
     let planner = planner_from_authority(plan, manifest, bundle, limits)?;
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let phase_ordinal = unit_index
-        .checked_sub(gratis_prefix_down_offset(plan, topology)?)
+        .checked_sub(topology.phase_offset(UnitPhase::GratisPrefixDown)?)
         .ok_or(WorkerError::UnitBindingMismatch)?;
     let position = topology.phase_position_at(UnitPhase::GratisPrefixDown, phase_ordinal)?;
     let PlannedUnitPositionV1::TreeNode {
@@ -1353,7 +1353,7 @@ fn execute_output_finalize_unit(
     }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let shard_ordinal = unit_index
-        .checked_sub(output_finalize_offset(plan, topology)?)
+        .checked_sub(topology.phase_offset(UnitPhase::OutputFinalize)?)
         .ok_or(WorkerError::UnitBindingMismatch)?;
     if shard_ordinal >= plan.primary_work_unit_count {
         return Err(WorkerError::UnitBindingMismatch);
@@ -1395,11 +1395,7 @@ fn execute_shuffle_unit(
         return Err(WorkerError::UnitBindingMismatch);
     }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
-    let phase_offset = if spec.phase == UnitPhase::OwnerShuffle {
-        owner_shuffle_offset(plan, topology)?
-    } else {
-        bucket_shuffle_offset(plan, topology)?
-    };
+    let phase_offset = topology.phase_offset(spec.phase)?;
     let phase_ordinal = unit_index
         .checked_sub(phase_offset)
         .ok_or(WorkerError::UnitBindingMismatch)?;
@@ -1711,7 +1707,7 @@ fn execute_root_reduce_unit(
     }
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
     let phase_ordinal = unit_index
-        .checked_sub(root_reduce_offset(plan, topology)?)
+        .checked_sub(topology.phase_offset(UnitPhase::RootReduce)?)
         .ok_or(WorkerError::UnitBindingMismatch)?;
     let position = topology.phase_position_at(UnitPhase::RootReduce, phase_ordinal)?;
     let PlannedUnitPositionV1::TreeNode {
@@ -2302,61 +2298,6 @@ fn decode_shuffle_producer_root(
 
 fn protocol_entity_id(value: outbe_compressed_entities::EntityId36) -> ProtocolEntityId36 {
     ProtocolEntityId36(*value.as_bytes())
-}
-
-fn gratis_prefix_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    plan.primary_work_unit_count
-        .checked_mul(3)
-        .and_then(|offset| offset.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce)))
-        .ok_or(WorkerError::UnitBindingMismatch)
-}
-
-fn gratis_prefix_down_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    gratis_prefix_offset(plan, topology)?
-        .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefix))
-        .ok_or(WorkerError::UnitBindingMismatch)
-}
-
-fn output_finalize_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    gratis_prefix_down_offset(plan, topology)?
-        .checked_add(topology.phase_unit_count(UnitPhase::GratisPrefixDown))
-        .ok_or(WorkerError::UnitBindingMismatch)
-}
-
-fn owner_shuffle_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    output_finalize_offset(plan, topology)?
-        .checked_add(topology.phase_unit_count(UnitPhase::OutputFinalize))
-        .ok_or(WorkerError::UnitBindingMismatch)
-}
-
-fn bucket_shuffle_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    owner_shuffle_offset(plan, topology)?
-        .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
-        .ok_or(WorkerError::UnitBindingMismatch)
-}
-
-fn root_reduce_offset(
-    plan: &PlanCommitmentV1,
-    topology: LysisPlanTopologyV1,
-) -> Result<u32, WorkerError> {
-    bucket_shuffle_offset(plan, topology)?
-        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
-        .ok_or(WorkerError::UnitBindingMismatch)
 }
 
 fn scan_producer_inputs(

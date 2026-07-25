@@ -307,8 +307,8 @@ pub fn publish_input_artifact_set(
     )?;
     let mut input_ref_catalog = VerifiedInputChunkRefCatalog::open(
         input_ref_catalog_root,
+        cas,
         &manifest_ref,
-        &manifest,
         *limits,
         list_limits,
     )?;
@@ -459,8 +459,7 @@ pub fn verify_input_artifact_set(
     oracle.validate_against_bundle(bundle, limits)?;
     let _ =
         oracle.decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
-    let (oracle_wwd, oracle_isos) =
-        decode_oracle_subject_key(&oracle.canonical_subject_key.0)?;
+    let (oracle_wwd, oracle_isos) = decode_oracle_subject_key(&oracle.canonical_subject_key.0)?;
     require(oracle_wwd == manifest.wwd, "Oracle subject WWD")?;
     require(
         oracle_isos == tribute_isos.into_iter().collect::<Vec<_>>(),
@@ -651,9 +650,7 @@ pub fn decode_fidelity_subject_key(encoded: &[u8]) -> Result<Vec<Address>, Input
     Ok(owners)
 }
 
-pub fn decode_oracle_subject_key(
-    encoded: &[u8],
-) -> Result<(u32, Vec<u16>), InputArtifactError> {
+pub fn decode_oracle_subject_key(encoded: &[u8]) -> Result<(u32, Vec<u16>), InputArtifactError> {
     let wwd = u32::from_be_bytes(
         encoded
             .get(..4)
