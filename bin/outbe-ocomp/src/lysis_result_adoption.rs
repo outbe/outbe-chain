@@ -1,0 +1,111 @@
+//! Supervisor-side adoption of one ROOT_REDUCE result chunk.
+
+use outbe_lysis::program_v1::{
+    artifacts::LysisArtifactErrorV1,
+    result::{decode_root_reduce_output, RootReduceOutputV1},
+};
+use outbe_ocomp_protocol::{
+    result::ResultChunkV1,
+    unit::{BinaryReducerNode, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1},
+    CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits,
+};
+use thiserror::Error;
+
+use crate::{
+    cas::{CasError, FilesystemCas},
+    inbox::{WorkerInbox, WorkerInboxError},
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdoptedLysisResultChunkV1 {
+    pub chunk_ordinal: u32,
+    pub nod_count: u32,
+    pub contributor_count: u32,
+    pub authoritative_ref: CasObjectRefV1,
+}
+
+#[derive(Debug, Error)]
+pub enum LysisResultAdoptionError {
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error(transparent)]
+    Inbox(#[from] WorkerInboxError),
+    #[error(transparent)]
+    Cas(#[from] CasError),
+    #[error(transparent)]
+    LysisArtifact(#[from] LysisArtifactErrorV1),
+}
+
+/// Reopens and verifies the exact typed chunk reported by one admitted
+/// ROOT_REDUCE leaf before publishing it into the supervisor's authoritative
+/// CAS. No caller-selected path or out-of-band chunk reference is accepted.
+pub fn adopt_lysis_result_chunk(
+    root_reduce_spec: &UnitSpecV1,
+    root_reduce_artifact: &UnitArtifactV1,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    limits: &SchemaLimits,
+) -> Result<AdoptedLysisResultChunkV1, LysisResultAdoptionError> {
+    root_reduce_spec.validate_semantics(limits)?;
+    root_reduce_artifact.validate_against(root_reduce_spec, limits)?;
+    let UnitInterval::BinaryReducerNode(BinaryReducerNode { level: 0, index }) =
+        root_reduce_spec.interval
+    else {
+        return Err(
+            ProtocolError::InvalidInvariant("result chunk producer is ROOT_REDUCE leaf").into(),
+        );
+    };
+    let RootReduceOutputV1::Leaf {
+        output_manifest_entry: entry,
+        ..
+    } = decode_root_reduce_output(root_reduce_artifact.phase_payload(limits)?, limits)?
+    else {
+        return Err(ProtocolError::InvalidInvariant(
+            "result chunk producer carries ROOT_REDUCE LEAF",
+        )
+        .into());
+    };
+    if root_reduce_spec.phase != UnitPhase::RootReduce || entry.chunk_ordinal != index {
+        return Err(ProtocolError::InvalidInvariant("result chunk ROOT_REDUCE position").into());
+    }
+    entry.encode_canonical_record(limits)?;
+
+    let object = inbox.read_result_chunk(&entry.result_chunk_ref, limits)?;
+    let chunk = ResultChunkV1::decode_canonical(object.bytes(), limits)?;
+    if chunk.protocol_bundle_hash != root_reduce_spec.protocol_bundle_hash
+        || chunk.job_id != root_reduce_spec.job_id
+        || chunk.attempt != root_reduce_spec.attempt
+        || chunk.chunk_ordinal != entry.chunk_ordinal
+        || chunk.result_chunk_hash(limits)? != entry.result_chunk_hash
+    {
+        return Err(
+            ProtocolError::InvalidInvariant("result chunk semantic manifest binding").into(),
+        );
+    }
+
+    let published = cas.publish_bytes(object.bytes())?;
+    if published.transport_digest != entry.result_chunk_ref.transport_digest
+        || published.encoded_bytes != entry.result_chunk_ref.encoded_bytes
+        || entry.result_chunk_ref.expected_ocb1_kind != Some(ObjectKind::ResultChunkV1.tag())
+    {
+        return Err(
+            ProtocolError::InvalidInvariant("authoritative result chunk descriptor").into(),
+        );
+    }
+    cas.read_verified(&entry.result_chunk_ref)?;
+
+    Ok(AdoptedLysisResultChunkV1 {
+        chunk_ordinal: chunk.chunk_ordinal,
+        nod_count: u32::try_from(chunk.ordered_nod_actions.len()).map_err(|_| {
+            ProtocolError::IntegerOverflow {
+                what: "adopted result chunk Nod count",
+            }
+        })?,
+        contributor_count: u32::try_from(chunk.ordered_eligible_contributors.len()).map_err(
+            |_| ProtocolError::IntegerOverflow {
+                what: "adopted result chunk contributor count",
+            },
+        )?,
+        authoritative_ref: entry.result_chunk_ref,
+    })
+}
