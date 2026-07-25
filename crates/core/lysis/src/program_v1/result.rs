@@ -198,6 +198,89 @@ pub struct RootReduceSummaryV1 {
     pub first_error_ordinal: Option<u32>,
 }
 
+impl RootReduceSummaryV1 {
+    pub fn merge_adjacent(self, right: Self) -> Result<Self, LysisArtifactErrorV1> {
+        validate_root_reduce_summary(&self)?;
+        validate_root_reduce_summary(&right)?;
+        if self.protocol_bundle_hash != right.protocol_bundle_hash
+            || self.job_id != right.job_id
+            || self.attempt != right.attempt
+            || self.plan_hash != right.plan_hash
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "root reducer summary parent binding",
+            ));
+        }
+        let left_primary_capacity = 1_u32
+            .checked_shl(u32::from(self.result_chunk_hashes.subtree_height))
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        if right.covered_primary_count != 0 && self.covered_primary_count != left_primary_capacity {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "root reducer summary real coverage prefix",
+            ));
+        }
+
+        let summary = Self {
+            protocol_bundle_hash: self.protocol_bundle_hash,
+            job_id: self.job_id,
+            attempt: self.attempt,
+            plan_hash: self.plan_hash,
+            covered_primary_start: self.covered_primary_start,
+            covered_primary_count: self
+                .covered_primary_count
+                .checked_add(right.covered_primary_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            nod_actions: self.nod_actions.merge_adjacent(right.nod_actions)?,
+            bucket_records: self.bucket_records.merge_adjacent(right.bucket_records)?,
+            contributor_actions: self
+                .contributor_actions
+                .merge_adjacent(right.contributor_actions)?,
+            output_manifest_entries: self
+                .output_manifest_entries
+                .merge_adjacent(right.output_manifest_entries)?,
+            result_chunk_hashes: self
+                .result_chunk_hashes
+                .merge_adjacent(right.result_chunk_hashes)?,
+            tribute_count: self
+                .tribute_count
+                .checked_add(right.tribute_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            nod_count: self
+                .nod_count
+                .checked_add(right.nod_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            bucket_count: self
+                .bucket_count
+                .checked_add(right.bucket_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            contributor_count: self
+                .contributor_count
+                .checked_add(right.contributor_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            tribute_nominal_total: checked_add_summary_total(
+                self.tribute_nominal_total,
+                right.tribute_nominal_total,
+            )?,
+            eligible_nominal_total: checked_add_summary_total(
+                self.eligible_nominal_total,
+                right.eligible_nominal_total,
+            )?,
+            nod_gratis_consumed: checked_add_summary_total(
+                self.nod_gratis_consumed,
+                right.nod_gratis_consumed,
+            )?,
+            nod_cost_total: checked_add_summary_total(self.nod_cost_total, right.nod_cost_total)?,
+            first_error_ordinal: match (self.first_error_ordinal, right.first_error_ordinal) {
+                (Some(left), Some(right)) => Some(left.min(right)),
+                (left @ Some(_), None) => left,
+                (None, right) => right,
+            },
+        };
+        validate_root_reduce_summary(&summary)?;
+        Ok(summary)
+    }
+}
+
 pub fn encode_root_reduce_summary(
     summary: &RootReduceSummaryV1,
     limits: &SchemaLimits,
@@ -475,4 +558,11 @@ fn primary_subtree_height(list_kind: ListKind) -> Result<u16, LysisArtifactError
             "Lysis list subtree kind",
         )),
     }
+}
+
+fn checked_add_summary_total(left: U256, right: U256) -> Result<U256, LysisArtifactErrorV1> {
+    left.checked_add(right)
+        .ok_or(LysisArtifactErrorV1::InvalidEncoding(
+            "root reducer summary total overflow",
+        ))
 }

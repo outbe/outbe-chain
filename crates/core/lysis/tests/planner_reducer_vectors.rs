@@ -489,6 +489,135 @@ fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots
 }
 
 #[test]
+fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
+    let summary = |primary_ordinal: u32,
+                   tribute_count: u32,
+                   contributor_count: u32,
+                   marker: u8,
+                   first_error_ordinal: Option<u32>| {
+        let actions = vec![vec![marker]; usize::try_from(tribute_count).unwrap()];
+        let contributors = vec![vec![marker]; usize::try_from(contributor_count).unwrap()];
+        let result_hash = vec![vec![marker; 32]];
+        RootReduceSummaryV1 {
+            protocol_bundle_hash: B256::repeat_byte(1),
+            job_id: B256::repeat_byte(2),
+            attempt: 3,
+            plan_hash: B256::repeat_byte(4),
+            covered_primary_start: primary_ordinal,
+            covered_primary_count: 1,
+            nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::NodActions,
+                primary_ordinal,
+                &actions,
+                16,
+            )
+            .unwrap(),
+            bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::BucketRecords,
+                primary_ordinal,
+                &actions,
+                16,
+            )
+            .unwrap(),
+            contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::ContributorActions,
+                primary_ordinal,
+                &contributors,
+                16,
+            )
+            .unwrap(),
+            output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::CompleteOutputManifest,
+                primary_ordinal,
+                &actions,
+                16,
+            )
+            .unwrap(),
+            result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::ResultChunkHashes,
+                primary_ordinal,
+                &result_hash,
+                32,
+            )
+            .unwrap(),
+            tribute_count,
+            nod_count: tribute_count,
+            bucket_count: tribute_count,
+            contributor_count,
+            tribute_nominal_total: U256::from(tribute_count) * U256::from(10),
+            eligible_nominal_total: U256::from(tribute_count) * U256::from(8),
+            nod_gratis_consumed: U256::from(tribute_count) * U256::from(3),
+            nod_cost_total: U256::from(tribute_count) * U256::from(7),
+            first_error_ordinal,
+        }
+    };
+
+    let left = summary(0, 256, 1, 11, Some(1));
+    let right = summary(1, 1, 1, 12, Some(256));
+    let merged = left.clone().merge_adjacent(right.clone()).unwrap();
+    assert_eq!(merged.covered_primary_start, 0);
+    assert_eq!(merged.covered_primary_count, 2);
+    assert_eq!(merged.tribute_count, 257);
+    assert_eq!(merged.contributor_count, 2);
+    assert_eq!(merged.tribute_nominal_total, U256::from(2_570));
+    assert_eq!(merged.first_error_ordinal, Some(1));
+    assert_eq!(merged.nod_actions.subtree_height, 9);
+    assert_eq!(merged.result_chunk_hashes.subtree_height, 1);
+
+    assert!(right.clone().merge_adjacent(left.clone()).is_err());
+    let mut mismatched = right.clone();
+    mismatched.plan_hash = B256::repeat_byte(99);
+    assert!(left.clone().merge_adjacent(mismatched).is_err());
+
+    let empty_summary = |primary_ordinal| RootReduceSummaryV1 {
+        protocol_bundle_hash: left.protocol_bundle_hash,
+        job_id: left.job_id,
+        attempt: left.attempt,
+        plan_hash: left.plan_hash,
+        covered_primary_start: primary_ordinal,
+        covered_primary_count: 0,
+        nod_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::NodActions,
+            primary_ordinal,
+        )
+        .unwrap(),
+        bucket_records: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::BucketRecords,
+            primary_ordinal,
+        )
+        .unwrap(),
+        contributor_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::ContributorActions,
+            primary_ordinal,
+        )
+        .unwrap(),
+        output_manifest_entries: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::CompleteOutputManifest,
+            primary_ordinal,
+        )
+        .unwrap(),
+        result_chunk_hashes: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::ResultChunkHashes,
+            primary_ordinal,
+        )
+        .unwrap(),
+        tribute_count: 0,
+        nod_count: 0,
+        bucket_count: 0,
+        contributor_count: 0,
+        tribute_nominal_total: U256::ZERO,
+        eligible_nominal_total: U256::ZERO,
+        nod_gratis_consumed: U256::ZERO,
+        nod_cost_total: U256::ZERO,
+        first_error_ordinal: None,
+    };
+    let padded = left.clone().merge_adjacent(empty_summary(1)).unwrap();
+    assert_eq!(padded.covered_primary_count, 1);
+    assert_eq!(padded.result_chunk_hashes.subtree_height, 1);
+    assert!(empty_summary(0).merge_adjacent(right).is_err());
+}
+
+#[test]
 fn shard_cap_plus_one_places_the_last_tribute_in_the_second_adjacent_range() {
     let tree = PaddedBinaryTreeV1::for_tribute_count(257).unwrap();
     assert_eq!(tree.primary_leaf_count(), 2);
