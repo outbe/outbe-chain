@@ -221,6 +221,38 @@ pub(crate) fn owner_state_event_digest<T: NestedCodec>(
     hash_framed(HashDomain::StateEvents, &payload)
 }
 
+pub fn nod_state_event_digest(
+    binding: &EffectBindingV1,
+    projection: &NodStateEventProjectionV1,
+    limits: &SchemaLimits,
+) -> Result<B256, ProtocolError> {
+    owner_state_event_digest(OwnerKind::Nod, binding, projection, limits)
+}
+
+pub fn contributor_state_event_digest(
+    binding: &EffectBindingV1,
+    projection: &ContributorStateEventProjectionV1,
+    limits: &SchemaLimits,
+) -> Result<B256, ProtocolError> {
+    owner_state_event_digest(OwnerKind::Contributor, binding, projection, limits)
+}
+
+pub fn tribute_state_event_digest(
+    binding: &EffectBindingV1,
+    projection: &TributeStateEventProjectionV1,
+    limits: &SchemaLimits,
+) -> Result<B256, ProtocolError> {
+    owner_state_event_digest(OwnerKind::Tribute, binding, projection, limits)
+}
+
+pub fn carry_over_state_event_digest(
+    binding: &EffectBindingV1,
+    projection: &CarryOverStateEventProjectionV1,
+    limits: &SchemaLimits,
+) -> Result<B256, ProtocolError> {
+    owner_state_event_digest(OwnerKind::CarryOver, binding, projection, limits)
+}
+
 macro_rules! receipt_hash {
     ($type:ty, $method:ident, $domain:ident) => {
         impl $type {

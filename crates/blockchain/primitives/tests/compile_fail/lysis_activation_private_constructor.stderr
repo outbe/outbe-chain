@@ -1,0 +1,16 @@
+error[E0624]: associated function `new` is private
+ --> tests/compile_fail/lysis_activation_private_constructor.rs:5:39
+  |
+5 |     let _ = CertifiedLysisActivation::new(B256::ZERO);
+  |                                       ^^^ private associated function
+  |
+ ::: src/storage/lysis_activation.rs
+  |
+  |     pub(crate) const fn new(activation_call_id: B256) -> Self {
+  |     --------------------------------------------------------- private associated function defined here
+  |
+  = help: items from traits can only be used if the trait is in scope
+help: trait `Paint` which provides `new` is implemented but not in scope; perhaps you want to import it
+  |
+1 + use yansi::paint::Paint;
+  |
