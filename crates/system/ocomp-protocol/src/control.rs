@@ -404,6 +404,23 @@ wire_struct! {
 }
 
 wire_struct! {
+    /// Supervisor request carrying the complete canonical constant-size result.
+    /// The caller cannot choose a digest or signature purpose.
+    pub struct RequestAttestationV1 {
+        pub canonical_result: BoundedBytes,
+    }
+    validate = validate_request_attestation;
+}
+
+wire_struct! {
+    /// Node-produced signed candidate, returned as exact canonical OCB1 bytes.
+    pub struct AttestationResponseV1 {
+        pub canonical_candidate: BoundedBytes,
+    }
+    validate = validate_attestation_response;
+}
+
+wire_struct! {
     pub struct RunUnitV1 {
         pub protocol_bundle_hash: B256,
         pub job_id: B256,
@@ -580,6 +597,8 @@ impl_control_body_codec!(CheckProjectionContainmentV1);
 impl_control_body_codec!(ProjectionContainedV1);
 impl_control_body_codec!(CommitSnapshotExportV1);
 impl_control_body_codec!(SnapshotExportCommittedV1);
+impl_control_body_codec!(RequestAttestationV1);
+impl_control_body_codec!(AttestationResponseV1);
 
 impl RunUnitV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
@@ -854,5 +873,29 @@ fn validate_snapshot_export_committed(
             && response.pin_generation != 0
             && !response.record_hash.is_zero(),
         "snapshot export committed identity",
+    )
+}
+
+fn validate_request_attestation(
+    request: &RequestAttestationV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    request.canonical_result.validate(limits)?;
+    require(
+        !request.canonical_result.0.is_empty()
+            && request.canonical_result.0.len() <= limits.max_control_body_bytes,
+        "attestation result control cap",
+    )
+}
+
+fn validate_attestation_response(
+    response: &AttestationResponseV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    response.canonical_candidate.validate(limits)?;
+    require(
+        !response.canonical_candidate.0.is_empty()
+            && response.canonical_candidate.0.len() <= limits.max_control_body_bytes,
+        "attestation candidate control cap",
     )
 }

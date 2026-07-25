@@ -17,9 +17,10 @@ use outbe_ocomp_protocol::local_control::{
     ClientPolicy, ControlClientSession, ControlError, EndpointIdentity,
 };
 use outbe_ocomp_protocol::{
+    activation::CandidateAnnouncementV1, common::BoundedBytes, AttestationResponseV1,
     FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, ListFinalizedJobsResponseV1,
     ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
-    SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    RequestAttestationV1, SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use thiserror::Error;
 
@@ -160,6 +161,52 @@ impl SupervisorDiscovery {
             &self.config.limits,
         )?;
         SnapshotHandoffV1::decode_body(&body, &self.config.limits).map_err(Into::into)
+    }
+
+    pub fn request_attestation(
+        &self,
+        canonical_result: &[u8],
+    ) -> Result<CandidateAnnouncementV1, SupervisorDiscoveryError> {
+        if canonical_result.is_empty() {
+            return Err(ProtocolError::InvalidInvariant("attestation result is empty").into());
+        }
+        let limit = self
+            .config
+            .limits
+            .max_control_body_bytes
+            .min(self.config.limits.max_bounded_bytes);
+        if canonical_result.len() > limit {
+            return Err(ProtocolError::CapacityExceeded {
+                what: "attestation result bytes",
+                limit,
+                actual: canonical_result.len(),
+            }
+            .into());
+        }
+        let request = RequestAttestationV1 {
+            canonical_result: BoundedBytes(canonical_result.to_vec()),
+        };
+        let mut session = self.connect()?;
+        session.send_request(
+            NodeMessageKind::RequestAttestation as u16,
+            request.encode_body(&self.config.limits)?,
+        )?;
+        let frame = session.receive_response()?;
+        let body = response_body(
+            frame.message_kind,
+            frame.body,
+            NodeMessageKind::RequestAttestation,
+            &self.config.limits,
+        )?;
+        let response = AttestationResponseV1::decode_body(&body, &self.config.limits)?;
+        let candidate = CandidateAnnouncementV1::decode_canonical(
+            &response.canonical_candidate.0,
+            &self.config.limits,
+        )?;
+        if candidate.result.encode_canonical(&self.config.limits)? != canonical_result {
+            return Err(SupervisorDiscoveryError::AttestationResultChanged);
+        }
+        Ok(candidate)
     }
 
     fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {
@@ -548,6 +595,8 @@ pub enum SupervisorDiscoveryError {
     SummaryChanged,
     #[error("node returned a finalized job for a different protocol bundle")]
     BundleChanged,
+    #[error("node attestation response changed the submitted canonical result")]
+    AttestationResultChanged,
     #[error("snapshot lease may only be opened for the durably discovered job")]
     SnapshotJobNotDiscovered,
     #[error("node returned unexpected OCOMP response kind {0:#06x}")]

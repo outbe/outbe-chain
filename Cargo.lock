@@ -7828,9 +7828,12 @@ dependencies = [
  "commonware-math",
  "eyre",
  "hex",
+ "k256 0.13.4",
  "outbe-consensus",
+ "outbe-ocomp-protocol",
  "rand_core 0.6.4",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -7954,6 +7957,7 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
+ "k256 0.13.4",
  "metrics",
  "mongodb",
  "outbe-common",
@@ -8002,6 +8006,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -8032,6 +8037,7 @@ dependencies = [
  "alloy-sol-types",
  "clap",
  "hex",
+ "k256 0.13.4",
  "libc",
  "outbe-common",
  "outbe-compressed-entities",

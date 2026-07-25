@@ -19,13 +19,14 @@ use outbe_ocomp_protocol::{
     },
     common::{BoundedBytes, EntityId36, ProofBytes},
     control::{
-        BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
-        CommitSnapshotExportV1, ControlFrameV1, ControlMagic, FinalizedIntentProofResponseV1,
-        FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1,
-        ListFinalizedJobsResponseV1, ListFinalizedJobsV1, ListSnapshotHandoffsResponseV1,
-        ListSnapshotHandoffsV1, OpenSnapshotLeaseV1, ProjectionCheckpointV1, ProjectionContainedV1,
-        RenewSnapshotLeaseV1, RunUnitV1, SnapshotExportCommittedV1, SnapshotHandoffV1,
-        SnapshotLeaseOpenedV1, CONTROL_FRAME_HEADER_LEN, MAX_FINALIZED_JOBS_PER_RESPONSE,
+        AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
+        CheckProjectionContainmentV1, CommitSnapshotExportV1, ControlFrameV1, ControlMagic,
+        FinalizedIntentProofResponseV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
+        GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
+        ListSnapshotHandoffsResponseV1, ListSnapshotHandoffsV1, OpenSnapshotLeaseV1,
+        ProjectionCheckpointV1, ProjectionContainedV1, RenewSnapshotLeaseV1, RequestAttestationV1,
+        RunUnitV1, SnapshotExportCommittedV1, SnapshotHandoffV1, SnapshotLeaseOpenedV1,
+        CONTROL_FRAME_HEADER_LEN, MAX_FINALIZED_JOBS_PER_RESPONSE,
         MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE, SNAPSHOT_LEASE_WIRE_BYTES, WORKER_CONTROL_MAGIC,
     },
     hash::hash_framed,
@@ -1415,6 +1416,41 @@ fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
         FinalizedJobSpecV1::decode_body(&spec.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
         spec
     );
+}
+
+#[test]
+fn attestation_control_carries_only_bounded_canonical_artifacts() {
+    let request = RequestAttestationV1 {
+        canonical_result: BoundedBytes(vec![1, 2, 3, 4]),
+    };
+    assert_eq!(
+        RequestAttestationV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
+        request
+    );
+    let response = AttestationResponseV1 {
+        canonical_candidate: BoundedBytes(vec![5, 6, 7]),
+    };
+    assert_eq!(
+        AttestationResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
+            .unwrap(),
+        response
+    );
+
+    assert!(RequestAttestationV1 {
+        canonical_result: BoundedBytes(Vec::new()),
+    }
+    .encode_body(&LIMITS)
+    .is_err());
+    assert!(AttestationResponseV1 {
+        canonical_candidate: BoundedBytes(Vec::new()),
+    }
+    .encode_body(&LIMITS)
+    .is_err());
+
+    let mut tiny_control = LIMITS;
+    tiny_control.max_control_body_bytes = 3;
+    assert!(request.encode_body(&tiny_control).is_err());
+    assert!(response.encode_body(&tiny_control).is_ok());
 }
 
 #[test]

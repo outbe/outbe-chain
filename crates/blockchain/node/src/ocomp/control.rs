@@ -6,6 +6,7 @@
 
 use std::io;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -18,15 +19,22 @@ use outbe_ocomp_protocol::local_control::{
     ControlError, ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp_protocol::{
-    common::BoundedBytes, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
-    CheckProjectionContainmentV1, CommitSnapshotExportV1, FinalizedJobSpecV1,
-    FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, NodeMessageKind,
-    OpenSnapshotLeaseV1, ProtocolError, RenewSnapshotLeaseV1, SchemaLimits,
+    committee::OcompCommitteeSnapshotV1, common::BoundedBytes, AttestationResponseV1,
+    BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
+    CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
+    GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, ListSnapshotHandoffsV1,
+    LocalErrorCode, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
+    RenewSnapshotLeaseV1, RequestAttestationV1, SchemaLimits,
 };
 use thiserror::Error;
 
+use super::attestation::{
+    AtomicHeightSource, AttestationAuthorityError, AttestationError, OcompAttestationConfig,
+    OcompAttestationGate,
+};
 use super::retention::{FinalizedJobPinV1, OcompRetentionCoordinator, RetentionError};
+use super::sign_once::{SignOnceError, SignOnceStore};
+use super::signer::OcompSigner;
 use super::snapshot_control::{
     ProjectionContainmentAuthority, SnapshotExportAuthority, SnapshotExportError,
 };
@@ -99,6 +107,18 @@ pub struct OcompControlServer {
     readiness: OcompControlReadiness,
     snapshot_export: Option<Arc<SnapshotExportAuthority>>,
     expected_snapshot_exporter_uid: Option<u32>,
+    attestation: Option<Arc<OcompAttestationGate>>,
+    attestation_height: Option<Arc<AtomicHeightSource>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OcompNodeAttestationConfig {
+    pub key_path: PathBuf,
+    pub sign_once_root: PathBuf,
+    pub expected_owner_uid: u32,
+    pub validator_index: u8,
+    pub committee: OcompCommitteeSnapshotV1,
+    pub initial_height: u64,
 }
 
 impl OcompControlServer {
@@ -121,7 +141,62 @@ impl OcompControlServer {
             readiness: OcompControlReadiness::default(),
             snapshot_export: None,
             expected_snapshot_exporter_uid: None,
+            attestation: None,
+            attestation_height: None,
         })
+    }
+
+    /// Enables the node-owned result attestation gate on the existing
+    /// supervisor endpoint. The control caller still supplies only canonical
+    /// `LysisResultV1` bytes.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_attestation(mut self, attestation: Arc<OcompAttestationGate>) -> Self {
+        self.attestation = Some(attestation);
+        self
+    }
+
+    /// Loads the node-owned OCOMP key and immutable sign-once store behind the
+    /// closed attestation gate. The caller supplies configuration and canonical
+    /// height, never a digest, purpose, signer, or signing closure.
+    pub fn with_node_attestation(
+        mut self,
+        config: OcompNodeAttestationConfig,
+    ) -> Result<Self, NodeControlError> {
+        let signer = OcompSigner::from_file(&config.key_path, config.expected_owner_uid)
+            .map_err(AttestationError::from)?;
+        let sign_once = SignOnceStore::open(
+            config.sign_once_root,
+            config.expected_owner_uid,
+            self.limits,
+        )
+        .map_err(AttestationError::from)?;
+        let height = Arc::new(AtomicHeightSource::new(config.initial_height));
+        let gate = OcompAttestationGate::new(
+            self.retention.clone(),
+            height.clone(),
+            OcompAttestationConfig {
+                identity: self.identity,
+                validator_index: config.validator_index,
+            },
+            config.committee,
+            signer,
+            sign_once,
+            self.limits,
+        )?;
+        self.attestation = Some(Arc::new(gate));
+        self.attestation_height = Some(height);
+        Ok(self)
+    }
+
+    /// Advances the monotonic canonical-height view checked immediately before
+    /// the irreversible sign-once transition.
+    pub fn advance_ocomp_height(&self, height: u64) -> Result<(), NodeControlError> {
+        self.attestation_height
+            .as_deref()
+            .ok_or(NodeControlError::AttestationUnavailable)?
+            .advance_to(height);
+        Ok(())
     }
 
     /// Enables the separate fixed-role snapshot-exporter endpoint without
@@ -267,6 +342,38 @@ impl OcompControlServer {
                         Err(error) => return Err(error),
                     }
                 }
+                kind if kind == NodeMessageKind::RequestAttestation as u16 => {
+                    let request = match RequestAttestationV1::decode_body(&frame.body, &self.limits)
+                    {
+                        Ok(request) => request,
+                        Err(_) => {
+                            send_local_error(
+                                &mut session,
+                                frame.request_id,
+                                frame.message_kind,
+                                LocalErrorCode::Malformed,
+                                false,
+                                &self.limits,
+                            )?;
+                            continue;
+                        }
+                    };
+                    match self.request_attestation(&request) {
+                        Ok(response) => response.encode_body(&self.limits)?,
+                        Err(error) => {
+                            let (error_code, retryable) = attestation_local_error(&error);
+                            send_local_error(
+                                &mut session,
+                                frame.request_id,
+                                frame.message_kind,
+                                error_code,
+                                retryable,
+                                &self.limits,
+                            )?;
+                            continue;
+                        }
+                    }
+                }
                 kind if kind == NodeMessageKind::OpenSnapshotLease as u16 => {
                     let request = OpenSnapshotLeaseV1::decode_body(&frame.body, &self.limits)?;
                     self.snapshot_export()?
@@ -329,6 +436,24 @@ impl OcompControlServer {
             .ok_or(NodeControlError::SnapshotExportUnavailable)
     }
 
+    fn attestation(&self) -> Result<&OcompAttestationGate, NodeControlError> {
+        self.attestation
+            .as_deref()
+            .ok_or(NodeControlError::AttestationUnavailable)
+    }
+
+    pub fn request_attestation(
+        &self,
+        request: &RequestAttestationV1,
+    ) -> Result<AttestationResponseV1, NodeControlError> {
+        let candidate = self
+            .attestation()?
+            .attest_canonical_result(&request.canonical_result.0)?;
+        Ok(AttestationResponseV1 {
+            canonical_candidate: BoundedBytes(candidate.encode_canonical(&self.limits)?),
+        })
+    }
+
     fn list_finalized_jobs(
         &self,
         request: &ListFinalizedJobsV1,
@@ -371,6 +496,72 @@ impl OcompControlServer {
     }
 }
 
+fn send_local_error(
+    session: &mut ControlServerSession,
+    request_id: u64,
+    rejected_kind: u16,
+    error_code: LocalErrorCode,
+    retryable: bool,
+    limits: &SchemaLimits,
+) -> Result<(), NodeControlError> {
+    let error = LocalErrorV1 {
+        rejected_kind,
+        error_code: error_code as u16,
+        retryable,
+    };
+    session.send_response(
+        request_id,
+        NodeMessageKind::Error as u16,
+        error.encode_body(limits)?,
+    )?;
+    Ok(())
+}
+
+fn attestation_local_error(error: &NodeControlError) -> (LocalErrorCode, bool) {
+    match error {
+        NodeControlError::AttestationUnavailable => {
+            (LocalErrorCode::InternalOcompUnavailable, true)
+        }
+        NodeControlError::Attestation(AttestationError::Authority(
+            AttestationAuthorityError::NotExported(_),
+        )) => (LocalErrorCode::NotFound, false),
+        NodeControlError::Attestation(
+            AttestationError::Authority(
+                AttestationAuthorityError::Unavailable(_) | AttestationAuthorityError::Retention(_),
+            )
+            | AttestationError::Height(_),
+        ) => (LocalErrorCode::SourceUnavailable, true),
+        NodeControlError::Attestation(AttestationError::AuthorityChanged) => {
+            (LocalErrorCode::Conflict, true)
+        }
+        NodeControlError::Attestation(
+            AttestationError::DeadlineReached { .. } | AttestationError::LocalMemberInactive { .. },
+        ) => (LocalErrorCode::Conflict, false),
+        NodeControlError::Attestation(AttestationError::SignOnce(
+            SignOnceError::Equivocation { .. },
+        )) => (LocalErrorCode::Conflict, false),
+        NodeControlError::Attestation(AttestationError::SignOnce(
+            SignOnceError::Disabled(_)
+            | SignOnceError::UnsafeStore { .. }
+            | SignOnceError::UncertainState { .. }
+            | SignOnceError::CorruptRecord { .. },
+        ))
+        | NodeControlError::Attestation(AttestationError::Signer(_)) => {
+            (LocalErrorCode::InternalOcompUnavailable, false)
+        }
+        NodeControlError::Attestation(AttestationError::SignOnce(
+            SignOnceError::SigningFailed(_) | SignOnceError::Io { .. },
+        )) => (LocalErrorCode::InternalOcompUnavailable, true),
+        NodeControlError::Attestation(
+            AttestationError::Binding(_)
+            | AttestationError::Protocol(_)
+            | AttestationError::Authority(AttestationAuthorityError::Protocol(_)),
+        )
+        | NodeControlError::Protocol(_) => (LocalErrorCode::Malformed, false),
+        _ => (LocalErrorCode::InternalOcompUnavailable, false),
+    }
+}
+
 fn summary(pin: FinalizedJobPinV1) -> FinalizedJobSummaryV1 {
     FinalizedJobSummaryV1 {
         cursor: pin.candidate.block_number,
@@ -392,12 +583,16 @@ pub enum NodeControlError {
     Retention(#[from] RetentionError),
     #[error(transparent)]
     SnapshotExport(#[from] SnapshotExportError),
+    #[error(transparent)]
+    Attestation(#[from] AttestationError),
     #[error("node OCOMP control received unsupported method {0:#06x}")]
     UnexpectedMethod(u16),
     #[error("requested finalized OCOMP job is not live")]
     JobNotFound,
     #[error("node OCOMP snapshot export control is not configured")]
     SnapshotExportUnavailable,
+    #[error("node OCOMP attestation gate is not configured")]
+    AttestationUnavailable,
     #[error("node OCOMP control cannot serve peer role {0:?}")]
     UnsupportedPeerRole(ControlRole),
     #[error("node OCOMP control session generation cannot be zero")]

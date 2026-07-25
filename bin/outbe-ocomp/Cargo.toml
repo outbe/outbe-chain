@@ -29,6 +29,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 alloy-sol-types.workspace = true
+k256.workspace = true
 outbe-consensus.workspace = true
 outbe-e2e-harness = { path = "../../crates/testing/e2e-harness", features = ["ocomp-integration"] }
 outbe-primitives.workspace = true

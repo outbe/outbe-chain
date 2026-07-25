@@ -4,10 +4,13 @@
 //! validator has enough durable, authenticated input to advertise, vote for,
 //! export, execute, or sign one PoC job.
 
+pub(crate) mod attestation;
 pub mod control;
 pub mod finality;
 mod openings;
 pub mod retention;
+pub(crate) mod sign_once;
+pub(crate) mod signer;
 pub mod snapshot_control;
 
 pub use openings::{build_lysis_openings, verify_lysis_openings};

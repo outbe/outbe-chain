@@ -3,20 +3,35 @@
 mod support;
 
 use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
 use std::os::fd::OwnedFd;
-use std::os::unix::net::UnixStream;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use alloy_primitives::{keccak256, Address, B256, U256};
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
+use outbe_consensus::block::ConsensusBlock;
 use outbe_e2e_harness::ocomp_finality_fixture::finalized_intent_proof_fixture;
 use outbe_fidelity::{
     evaluate_fidelity_opening_v1, fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
+};
+use outbe_node::ocomp::{
+    control::{OcompControlServer, OcompNodeAttestationConfig},
+    retention::{
+        CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, FinalizedJobPinV1,
+        OcompRetentionCoordinator, RetentionError,
+    },
 };
 use outbe_ocomp::{
     admission_catalog::{AdmissionCatalogError, AdmissionOutcome, VerifiedAdmissionCatalog},
@@ -36,27 +51,37 @@ use outbe_ocomp::{
     lysis_plan_audit::{ExactLysisPlanError, LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
     lysis_result_catalog::{ExactLysisResultCatalogCursorV1, LysisResultCatalogStepV1},
     lysis_scheduler::admit_reported_lysis_unit_v1,
-    supervisor::DiscoveryRecord,
+    supervisor::{
+        DiscoveryRecord, SupervisorDiscovery, SupervisorDiscoveryConfig, SupervisorDiscoveryError,
+    },
     worker::{run_one_from_inherited_fd, WorkerConfig},
 };
 use outbe_ocomp_protocol::{
+    activation::CandidateAnnouncementV1,
+    committee::{
+        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
+        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
+    },
     common::ProofBytes,
+    hash::hash_framed,
     input::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
         ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1,
         RawContractOpeningProofV1, RawStorageSlotV1,
     },
-    result::ResultChunkV1,
+    registry::HashDomain,
+    result::{LysisResultV1, ResultChunkV1},
     unit::UnitSpecV1,
-    FinalizedJobSpecV1, FinalizedJobSummaryV1, RunUnitV1, SchemaLimits, UnitFinishedStatus,
-    UnitFinishedV1, WorkerMessageKind,
+    FinalizedJobSpecV1, FinalizedJobSummaryV1, LocalErrorCode, RunUnitV1, SchemaLimits,
+    UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
 use outbe_primitives::addresses::{FIDELITY_ADDRESS, ORACLE_ADDRESS};
@@ -73,6 +98,9 @@ const CHILD_CAS_ROOT: &str = "OUTBE_OCOMP_DET_CAS_ROOT";
 const CHILD_CAS_OBJECT_CAP: &str = "OUTBE_OCOMP_DET_CAS_OBJECT_CAP";
 const CHILD_CAS_TOTAL_CAP: &str = "OUTBE_OCOMP_DET_CAS_TOTAL_CAP";
 const CHILD_INBOX_ROOT: &str = "OUTBE_OCOMP_DET_INBOX_ROOT";
+const NODE_CHILD_MODE: &str = "OUTBE_OCOMP_SIG_NODE_CHILD";
+const NODE_CHILD_ROOT: &str = "OUTBE_OCOMP_SIG_NODE_ROOT";
+const NODE_CHILD_SOCKET: &str = "OUTBE_OCOMP_SIG_NODE_SOCKET";
 
 const TEST_NAME: &str = "ocm_det_001_real_257_tribute_schedules_are_byte_identical";
 const TRIBUTE_COUNT: u32 = 257;
@@ -108,8 +136,163 @@ fn endpoint_identity(boot_nonce: u8) -> EndpointIdentity {
     }
 }
 
+fn ocomp_signing_key(index: u8) -> SigningKey {
+    SigningKey::from_bytes((&[index.saturating_add(1); 32]).into())
+        .expect("deterministic OCOMP key")
+}
+
+fn ocomp_signature(key: &SigningKey, digest: B256) -> [u8; 64] {
+    let signature: Signature = key
+        .sign_prehash(digest.as_slice())
+        .expect("deterministic OCOMP signature");
+    signature
+        .normalize_s()
+        .unwrap_or(signature)
+        .to_bytes()
+        .into()
+}
+
+fn deterministic_committee() -> OcompCommitteeSnapshotV1 {
+    let limits = poc_schema_limits();
+    let bundle = support::protocol_bundle();
+    let bundle_hash = bundle
+        .protocol_bundle_hash(&limits)
+        .expect("deterministic bundle hash");
+    OcompCommitteeSnapshotV1 {
+        chain_id: 41,
+        genesis_hash: B256::repeat_byte(0x41),
+        fork_id: B256::repeat_byte(0x42),
+        protocol_bundle_hash: bundle_hash,
+        snapshot_epoch: 1,
+        threshold: 3,
+        ordered_members: (0..4)
+            .map(|index| {
+                let key = ocomp_signing_key(index);
+                let public_key: [u8; 33] = key
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .expect("compressed deterministic OCOMP key");
+                let mut registration = OcompKeyRegistrationV1 {
+                    core: OcompKeyRegistrationCoreV1 {
+                        chain_id: 41,
+                        genesis_hash: B256::repeat_byte(0x41),
+                        fork_id: B256::repeat_byte(0x42),
+                        protocol_bundle_hash: bundle_hash,
+                        validator_index: index,
+                        validator_identity_hash: B256::repeat_byte(0x90 + index),
+                        ocomp_public_key_sec1: public_key,
+                        key_epoch: 1,
+                        allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                        valid_from_height: 1,
+                        valid_until_height_exclusive: 1_000,
+                    },
+                    proof_of_possession: [0; 64],
+                };
+                let pop_digest = registration
+                    .proof_of_possession_digest(&limits)
+                    .expect("deterministic OCOMP PoP digest");
+                registration.proof_of_possession = ocomp_signature(&key, pop_digest);
+                OcompMemberV1 {
+                    validator_index: index,
+                    validator_identity_hash: registration.core.validator_identity_hash,
+                    ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
+                    key_epoch: registration.core.key_epoch,
+                    allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
+                    valid_from_height: registration.core.valid_from_height,
+                    valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
+                    proof_of_possession: registration.proof_of_possession,
+                }
+            })
+            .collect(),
+    }
+}
+
+#[derive(Clone)]
+struct ExportedNodeFixtureSource {
+    candidate: CandidatePinV1,
+    job_id: B256,
+    proof: FinalizedIntentProofV1,
+}
+
+impl FinalizedInputProofSource for ExportedNodeFixtureSource {
+    fn candidate_for_block(
+        &self,
+        block: &ConsensusBlock,
+    ) -> Result<Option<CandidatePinV1>, RetentionError> {
+        Ok((block.block_hash() == self.candidate.block_hash).then_some(self.candidate))
+    }
+
+    fn resolve_finality(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<CandidateFinalityV1, RetentionError> {
+        if candidate != self.candidate {
+            return Err(RetentionError::Source(
+                "attestation fixture received a different candidate".to_owned(),
+            ));
+        }
+        Ok(CandidateFinalityV1::Finalized(FinalizedJobPinV1 {
+            candidate,
+            job_id: self.job_id,
+        }))
+    }
+
+    fn build_finalized_intent_proof(
+        &self,
+        candidate: CandidatePinV1,
+    ) -> Result<FinalizedIntentProofV1, RetentionError> {
+        if candidate != self.candidate {
+            return Err(RetentionError::Source(
+                "attestation fixture received a different proof candidate".to_owned(),
+            ));
+        }
+        Ok(self.proof.clone())
+    }
+}
+
+fn exported_node_fixture() -> (ConsensusBlock, ExportedNodeFixtureSource, JobIntentV1) {
+    let limits = poc_schema_limits();
+    let bundle_hash = support::protocol_bundle()
+        .protocol_bundle_hash(&limits)
+        .expect("deterministic bundle hash");
+    let day = WorldwideDay::new(20_260_725);
+    let nominal_total = tributes(day)
+        .iter()
+        .try_fold(U256::ZERO, |total, tribute| {
+            total.checked_add(tribute.nominal_amount_minor)
+        })
+        .expect("deterministic nominal total");
+    let intent = job_intent(day, bundle_hash, nominal_total);
+    let proof_fixture = finalized_intent_proof_fixture(intent.clone(), &limits);
+    let candidate = CandidatePinV1 {
+        block_number: proof_fixture.block.number(),
+        block_hash: proof_fixture.header_hash,
+        state_root: proof_fixture.state_root,
+        intent_id: proof_fixture.intent_id,
+        wwd: intent.wwd,
+        ce_sealed_root: intent.ce_sealed_root,
+        protocol_bundle_hash: intent.protocol_bundle_hash,
+        deadline_height: intent.deadline_height,
+    };
+    (
+        proof_fixture.block,
+        ExportedNodeFixtureSource {
+            candidate,
+            job_id: proof_fixture.job_id,
+            proof: proof_fixture.proof,
+        },
+        intent,
+    )
+}
+
 #[test]
 fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
+    if env::var_os(NODE_CHILD_MODE).is_some() {
+        run_child_node();
+        return;
+    }
     if env::var_os(CHILD_MODE).is_some() {
         run_child_worker();
         return;
@@ -135,6 +318,174 @@ fn ocm_det_001_real_257_tribute_schedules_are_byte_identical() {
     assert!(four.schedule.iter().any(|batch| batch.len() >= 3));
     assert_ne!(one.schedule, two.schedule);
     assert_ne!(two.schedule, four.schedule);
+
+    attest_finalized_schedule_across_node_restart(&one);
+}
+
+fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
+    let limits = poc_schema_limits();
+    let root = tempdir().expect("attestation process fixture");
+    let (block, source, intent) = exported_node_fixture();
+    assert_eq!(source.job_id, outcome.job_id);
+    let result = LysisResultV1::decode_canonical(&outcome.result_bytes, &limits)
+        .expect("final Lysis result");
+    assert_eq!(
+        result
+            .activation_payload(&limits)
+            .expect("activation payload")
+            .result_digest(&limits)
+            .expect("result digest"),
+        outcome.result_digest
+    );
+
+    let retention_root = root.path().join("retention");
+    let coordinator = OcompRetentionCoordinator::open(&retention_root, Arc::new(source.clone()));
+    coordinator
+        .reconcile_finalized(&block)
+        .expect("persist finalized OCOMP authority");
+    coordinator
+        .record_exported(outcome.job_id, 2, 1, result.input_manifest_hash)
+        .expect("persist exact exported manifest authority");
+    drop(coordinator);
+
+    let key_path = root.path().join("ocomp-key-v1.hex");
+    let mut key_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&key_path)
+        .expect("create node OCOMP key");
+    key_file
+        .write_all(b"0101010101010101010101010101010101010101010101010101010101010101\n")
+        .expect("write node OCOMP key");
+    key_file.sync_all().expect("sync node OCOMP key");
+
+    let first = request_node_attestation(root.path(), "first", &outcome.result_bytes)
+        .expect("first process attestation");
+    first
+        .verify(
+            &intent,
+            outcome.job_id,
+            &deterministic_committee(),
+            105,
+            &limits,
+        )
+        .expect("verify first process candidate");
+    let replay = request_node_attestation(root.path(), "replay", &outcome.result_bytes)
+        .expect("exact replay after node process restart");
+    assert_eq!(replay, first);
+
+    let mut conflicting = result;
+    conflicting.roots.nod_root = B256::repeat_byte(0xe1);
+    conflicting.arithmetic_commitment = hash_framed(
+        HashDomain::LysisArithmetic,
+        &conflicting
+            .arithmetic_summary()
+            .encode_canonical(&limits)
+            .expect("conflicting arithmetic summary"),
+    )
+    .expect("conflicting arithmetic commitment");
+    conflicting
+        .validate_semantics(&limits)
+        .expect("internally valid conflicting result");
+    let error = request_node_attestation(
+        root.path(),
+        "conflict",
+        &conflicting
+            .encode_canonical(&limits)
+            .expect("canonical conflicting result"),
+    )
+    .expect_err("second digest must be refused after node restart");
+    assert!(matches!(
+        error,
+        SupervisorDiscoveryError::RemoteRejected {
+            error_code,
+            retryable: false,
+            ..
+        } if error_code == LocalErrorCode::Conflict as u16
+    ));
+}
+
+fn request_node_attestation(
+    root: &Path,
+    run: &str,
+    canonical_result: &[u8],
+) -> Result<CandidateAnnouncementV1, SupervisorDiscoveryError> {
+    let socket = root.join(format!("node-{run}.sock"));
+    let mut child = Command::new(env::current_exe().expect("current deterministic test binary"));
+    child
+        .args(["--exact", TEST_NAME, "--nocapture"])
+        .env(NODE_CHILD_MODE, "1")
+        .env(NODE_CHILD_ROOT, root)
+        .env(NODE_CHILD_SOCKET, &socket)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = child.spawn().expect("spawn attestation node process");
+    for _ in 0..500 {
+        if socket.exists() {
+            break;
+        }
+        if let Some(status) = child.try_wait().expect("poll attestation node") {
+            panic!("attestation node exited before binding UDS: {status}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(socket.exists(), "attestation node did not bind its UDS");
+
+    let supervisor = SupervisorDiscovery::open(SupervisorDiscoveryConfig {
+        node_socket: socket,
+        journal_root: root.join(format!("supervisor-{run}")),
+        expected_node_uid: effective_uid().expect("effective uid"),
+        identity: endpoint_identity(0x92),
+        limits: poc_schema_limits(),
+    })
+    .expect("open supervisor attestation client");
+    let response = supervisor.request_attestation(canonical_result);
+    drop(supervisor);
+    let output = child
+        .wait_with_output()
+        .expect("wait for attestation node process");
+    assert!(
+        output.status.success(),
+        "attestation node failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    response
+}
+
+fn run_child_node() {
+    let root = PathBuf::from(env::var_os(NODE_CHILD_ROOT).expect("node child root"));
+    let socket = PathBuf::from(env::var_os(NODE_CHILD_SOCKET).expect("node child socket"));
+    let (_, source, _) = exported_node_fixture();
+    let coordinator = Arc::new(OcompRetentionCoordinator::open(
+        root.join("retention"),
+        Arc::new(source),
+    ));
+    let uid = fs::metadata(&root).expect("node child root metadata").uid();
+    let server = OcompControlServer::new(
+        coordinator,
+        uid,
+        endpoint_identity(0x91),
+        1,
+        poc_schema_limits(),
+    )
+    .expect("construct node control server")
+    .with_node_attestation(OcompNodeAttestationConfig {
+        key_path: root.join("ocomp-key-v1.hex"),
+        sign_once_root: root.join("sign-once"),
+        expected_owner_uid: uid,
+        validator_index: 0,
+        committee: deterministic_committee(),
+        initial_height: 105,
+    })
+    .expect("configure closed node attestation");
+    let listener = UnixListener::bind(&socket).expect("bind node attestation UDS");
+    let (stream, _) = listener.accept().expect("accept supervisor attestation");
+    server
+        .serve_connection(stream)
+        .expect("serve supervisor attestation");
+    drop(listener);
+    fs::remove_file(&socket).expect("remove node attestation UDS");
 }
 
 fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
@@ -719,6 +1070,9 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
 fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256) -> JobIntentV1 {
     let collection_key = B256::repeat_byte(0x51);
     let collection_root = B256::repeat_byte(0x52);
+    let result_committee_snapshot_hash = deterministic_committee()
+        .snapshot_hash(&poc_schema_limits())
+        .expect("deterministic committee snapshot hash");
     JobIntentV1 {
         chain_id: 41,
         genesis_hash: B256::repeat_byte(0x41),
@@ -776,7 +1130,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 state_version: 1,
             },
         },
-        result_committee_snapshot_hash: B256::repeat_byte(0x57),
+        result_committee_snapshot_hash,
         custody_committee_epoch_hash: None,
         deadline_height: 110,
     }

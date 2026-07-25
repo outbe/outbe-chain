@@ -58,6 +58,8 @@ tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
+k256.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 alloy-eips.workspace = true

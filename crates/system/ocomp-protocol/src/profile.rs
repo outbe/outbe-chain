@@ -1,11 +1,52 @@
 use alloy_primitives::B256;
 
 use crate::{
+    codec::CodecLimits,
     error::ProtocolError,
+    generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     hash::hash_framed,
     registry::HashDomain,
     schema::{impl_top_level_codec, wire_enum_u8, wire_struct, SchemaLimits},
 };
+
+/// Generated measurement ceilings shared by every OCOMP PoC process.
+///
+/// These compile ceilings do not arm a network or provide a bundle hash.
+#[must_use]
+pub fn poc_schema_limits() -> SchemaLimits {
+    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
+    let max_body_bytes = usize::try_from(candidate.max_activation_ocb1_bytes)
+        .expect("generated body cap fits usize");
+    let max_collection_items = usize::try_from(candidate.max_protocol_collection_items)
+        .expect("generated item cap fits usize");
+    SchemaLimits {
+        codec: CodecLimits::new(
+            max_body_bytes,
+            max_collection_items,
+            usize::try_from(candidate.max_transaction_rlp_bytes)
+                .expect("generated allocation cap fits usize"),
+        ),
+        max_bounded_bytes: max_body_bytes,
+        max_proof_bytes: usize::try_from(candidate.max_finalized_intent_proof_bytes)
+            .expect("generated proof cap fits usize"),
+        max_opening_bytes: usize::try_from(candidate.max_opening_bytes)
+            .expect("generated opening cap fits usize"),
+        max_collection_items,
+        max_action_items: usize::try_from(
+            candidate
+                .max_nod_actions_per_result_chunk
+                .min(candidate.max_contributor_actions_per_result_chunk),
+        )
+        .expect("generated per-result-chunk action cap fits usize"),
+        max_chunk_items: usize::try_from(candidate.max_records_per_input_chunk)
+            .expect("generated per-chunk record cap fits usize"),
+        max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
+            .expect("generated per-unit input cap fits usize"),
+        max_result_chunk_bytes: candidate.max_result_chunk_bytes,
+        max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
+            .expect("generated control cap fits usize"),
+    }
+}
 
 wire_enum_u8! {
     /// Closed program registry for the PoC.

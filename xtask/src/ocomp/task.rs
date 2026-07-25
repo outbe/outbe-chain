@@ -967,6 +967,105 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-15" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--test",
+                    "typed_protocol",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-node",
+                    "ocm_sig_001",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-keygen",
+                    "ocm_sig_001",
+                    "--",
+                    "--test-threads=1",
+                ],
+            )?;
+            for integration_test in ["finalized_export", "deterministic_schedules"] {
+                cargo(
+                    repository_root,
+                    &[
+                        "test",
+                        "--locked",
+                        "-p",
+                        "outbe-ocomp",
+                        "--test",
+                        integration_test,
+                        "--",
+                        "--test-threads=1",
+                    ],
+                )?;
+            }
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-keygen",
+                    "-p",
+                    "outbe-ocomp",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

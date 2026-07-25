@@ -1,7 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
-    codec::CodecLimits,
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{intent_storage_key, JobIntentV1, PreAdmissionEnvelopeV1},
     profile::CapacityProfileV1,
@@ -92,38 +91,7 @@ impl ReadyIndexKey {
 /// `ProtocolBundleHash`; OCM-26 supplies the final network profile.
 #[must_use]
 pub fn poc_schema_limits() -> SchemaLimits {
-    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let max_body_bytes = usize::try_from(candidate.max_activation_ocb1_bytes)
-        .expect("generated body cap fits usize");
-    let max_collection_items = usize::try_from(candidate.max_protocol_collection_items)
-        .expect("generated item cap fits usize");
-    SchemaLimits {
-        codec: CodecLimits::new(
-            max_body_bytes,
-            max_collection_items,
-            usize::try_from(candidate.max_transaction_rlp_bytes)
-                .expect("generated allocation cap fits usize"),
-        ),
-        max_bounded_bytes: max_body_bytes,
-        max_proof_bytes: usize::try_from(candidate.max_finalized_intent_proof_bytes)
-            .expect("generated proof cap fits usize"),
-        max_opening_bytes: usize::try_from(candidate.max_opening_bytes)
-            .expect("generated opening cap fits usize"),
-        max_collection_items,
-        max_action_items: usize::try_from(
-            candidate
-                .max_nod_actions_per_result_chunk
-                .min(candidate.max_contributor_actions_per_result_chunk),
-        )
-        .expect("generated per-result-chunk action cap fits usize"),
-        max_chunk_items: usize::try_from(candidate.max_records_per_input_chunk)
-            .expect("generated per-chunk record cap fits usize"),
-        max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
-            .expect("generated per-unit input cap fits usize"),
-        max_result_chunk_bytes: candidate.max_result_chunk_bytes,
-        max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
-            .expect("generated control cap fits usize"),
-    }
+    outbe_ocomp_protocol::profile::poc_schema_limits()
 }
 
 impl MetadosisContract<'_> {
