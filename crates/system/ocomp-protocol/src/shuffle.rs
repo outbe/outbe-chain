@@ -138,6 +138,201 @@ where
     })
 }
 
+/// Opens one canonical 256-record page from an already admitted shuffle root.
+///
+/// The lookup follows only the unique authenticated child path for
+/// `page_ordinal`; it never scans the preceding population. A request beyond
+/// the exact record stream returns the canonical empty slice.
+pub fn verified_shuffle_run_page<R>(
+    root: ShuffleRunArtifactV1,
+    page_ordinal: u32,
+    limits: &SchemaLimits,
+    mut resolver: R,
+) -> Result<Vec<VerifiedShuffleRecordV1>, ProtocolError>
+where
+    R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
+{
+    root.validate_root_semantics(limits)?;
+    let root_page_end = exact_shuffle_page_count(root.kind, root.record_count)?;
+    require(
+        root.page_span.end_page == root_page_end,
+        "shuffle root exact page count",
+    )?;
+    if page_ordinal >= root_page_end {
+        return Ok(Vec::new());
+    }
+    let context = ShuffleRunContextV1 {
+        protocol_bundle_hash: root.protocol_bundle_hash,
+        job_id: root.job_id,
+        attempt: root.attempt,
+        unit_id: root.unit_id,
+        kind: root.kind,
+        run_span: root.run_span.clone(),
+        root_page_end,
+        root_record_count: root.record_count,
+        source_coverage_root: root.source_coverage_root,
+        source_coverage_count: root.source_coverage_count,
+    };
+    let mut artifact = root;
+    loop {
+        require_shuffle_context(&context, &artifact, limits)?;
+        match artifact.payload {
+            ShuffleRunPayloadV1::Node { left, right } => {
+                let expected = if page_ordinal >= left.page_span.start_page
+                    && page_ordinal < left.page_span.end_page
+                {
+                    left
+                } else if page_ordinal >= right.page_span.start_page
+                    && page_ordinal < right.page_span.end_page
+                {
+                    right
+                } else {
+                    return Err(ProtocolError::InvalidInvariant(
+                        "shuffle page child coverage",
+                    ));
+                };
+                artifact = resolve_shuffle_child(&context, &expected, limits, &mut resolver)?;
+            }
+            ShuffleRunPayloadV1::OwnerLeaf(records) => {
+                require(
+                    context.kind == ShuffleRunKindV1::Owner,
+                    "shuffle page owner kind",
+                )?;
+                require_shuffle_page_leaf(
+                    &context,
+                    &artifact.page_span,
+                    artifact.first_record_ordinal,
+                    artifact.record_count,
+                    page_ordinal,
+                )?;
+                return Ok(records
+                    .into_iter()
+                    .map(VerifiedShuffleRecordV1::Owner)
+                    .collect());
+            }
+            ShuffleRunPayloadV1::BucketLeaf(records) => {
+                require(
+                    context.kind == ShuffleRunKindV1::Bucket,
+                    "shuffle page bucket kind",
+                )?;
+                require_shuffle_page_leaf(
+                    &context,
+                    &artifact.page_span,
+                    artifact.first_record_ordinal,
+                    artifact.record_count,
+                    page_ordinal,
+                )?;
+                return Ok(records
+                    .into_iter()
+                    .map(VerifiedShuffleRecordV1::Bucket)
+                    .collect());
+            }
+        }
+    }
+}
+
+fn exact_shuffle_page_count(
+    kind: ShuffleRunKindV1,
+    record_count: u32,
+) -> Result<u32, ProtocolError> {
+    if record_count == 0 {
+        return if kind == ShuffleRunKindV1::Owner {
+            Ok(1)
+        } else {
+            Err(ProtocolError::InvalidInvariant(
+                "non-empty bucket shuffle run",
+            ))
+        };
+    }
+    Ok(record_count.div_ceil(MAX_SHUFFLE_LEAF_RECORDS as u32))
+}
+
+fn require_shuffle_page_leaf(
+    context: &ShuffleRunContextV1,
+    page_span: &ShufflePageSpanV1,
+    first_record_ordinal: u32,
+    record_count: u32,
+    page_ordinal: u32,
+) -> Result<(), ProtocolError> {
+    let page_end = page_ordinal
+        .checked_add(1)
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "shuffle requested page end",
+        })?;
+    let expected_first = page_ordinal
+        .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "shuffle requested first record",
+        })?;
+    let expected_end = if page_end == context.root_page_end {
+        context.root_record_count
+    } else {
+        page_end
+            .checked_mul(MAX_SHUFFLE_LEAF_RECORDS as u32)
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "shuffle requested record end",
+            })?
+    };
+    require(
+        page_span.start_page == page_ordinal
+            && page_span.end_page == page_end
+            && first_record_ordinal == expected_first
+            && first_record_ordinal
+                .checked_add(record_count)
+                .is_some_and(|actual| actual == expected_end),
+        "shuffle exact page slice",
+    )
+}
+
+fn resolve_shuffle_child<R>(
+    context: &ShuffleRunContextV1,
+    expected: &ShuffleRunChildV1,
+    limits: &SchemaLimits,
+    resolver: &mut R,
+) -> Result<ShuffleRunArtifactV1, ProtocolError>
+where
+    R: FnMut(&CasObjectRefV1) -> Result<Vec<u8>, ProtocolError>,
+{
+    let bytes = resolver(&expected.artifact_ref)?;
+    let encoded_bytes = u64::try_from(bytes.len()).map_err(|_| ProtocolError::IntegerOverflow {
+        what: "shuffle child encoded bytes",
+    })?;
+    require(
+        encoded_bytes == expected.artifact_ref.encoded_bytes
+            && keccak256(&bytes) == expected.artifact_ref.transport_digest,
+        "shuffle child transport descriptor",
+    )?;
+    let child = ShuffleRunArtifactV1::decode_canonical(&bytes, limits)?;
+    require_shuffle_context(context, &child, limits)?;
+    require(
+        child.page_span == expected.page_span
+            && child.first_record_ordinal == expected.first_record_ordinal
+            && child.record_count == expected.record_count
+            && child.ordered_record_root == expected.ordered_record_root,
+        "shuffle child summary",
+    )?;
+    Ok(child)
+}
+
+fn require_shuffle_context(
+    context: &ShuffleRunContextV1,
+    artifact: &ShuffleRunArtifactV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    artifact.validate_semantics(limits)?;
+    require(
+        artifact.protocol_bundle_hash == context.protocol_bundle_hash
+            && artifact.job_id == context.job_id
+            && artifact.attempt == context.attempt
+            && artifact.unit_id == context.unit_id
+            && artifact.kind == context.kind
+            && artifact.run_span == context.run_span
+            && artifact.source_coverage_root == context.source_coverage_root
+            && artifact.source_coverage_count == context.source_coverage_count,
+        "shuffle descendant context",
+    )
+}
+
 pub fn merge_verified_shuffle_runs<L, R>(
     kind: ShuffleRunKindV1,
     left: L,
@@ -898,6 +1093,15 @@ wire_struct! {
         pub raw_ordinal: u32,
         pub tribute_id: EntityId36,
         pub nod_id: EntityId36,
+    }
+}
+
+impl ShuffleBucketRecordV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
     }
 }
 

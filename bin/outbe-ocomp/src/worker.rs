@@ -21,7 +21,7 @@ use outbe_lysis::program_v1::artifacts::{
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce_pair, finalize_fi_fraction_table, gratis_prefix_down,
     gratis_summary, gratis_summary_reduce_pair, output_finalize, shuffle_buckets, shuffle_owners,
-    FidelityReduceValueV1, GratisLeafPrefixV1, GratisSummaryValueV1,
+    FidelityReduceValueV1, FinalizedOutputRunV1, GratisLeafPrefixV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
@@ -43,11 +43,14 @@ use outbe_ocomp_protocol::unit::{
     WorkOutputHeaderV1,
 };
 use outbe_ocomp_protocol::{
-    result::ContributorActionV1 as ProtocolContributorActionV1,
+    result::{
+        ContributorActionV1 as ProtocolContributorActionV1, NodActionV1 as ProtocolNodActionV1,
+        OutputManifestEntryV1, ResultChunkV1,
+    },
     shuffle::{
         build_bucket_shuffle_run, build_owner_shuffle_run, merge_verified_shuffle_runs,
-        verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1,
-        ShuffleRunBuildContextV1, ShuffleRunKindV1, ShuffleSourceCoverageV1,
+        verified_shuffle_run_page, verified_shuffle_run_records, ShuffleBucketRecordV1,
+        ShuffleRunArtifactV1, ShuffleRunBuildContextV1, ShuffleRunKindV1, ShuffleSourceCoverageV1,
         VerifiedShuffleRecordV1,
     },
 };
@@ -1758,7 +1761,8 @@ fn execute_root_reduce_unit(
         producer_artifacts,
         bundle,
         limits,
-        ..
+        reader,
+        inbox,
     } = authority;
     if !input_chunks.is_empty() {
         return Err(WorkerError::UnitBindingMismatch);
@@ -1776,11 +1780,19 @@ fn execute_root_reduce_unit(
     else {
         return Err(WorkerError::UnitBindingMismatch);
     };
-    if level == 0 {
-        return Err(WorkerError::UnsupportedPhase(UnitPhase::RootReduce));
+    if spec
+        .canonical_ordered_inputs
+        .first()
+        .map(|input| input.purpose)
+        != Some(InputPurpose::InputManifest)
+    {
+        return Err(WorkerError::UnitBindingMismatch);
     }
-
-    let producer_inputs = scan_producer_inputs(spec, InputPurpose::RootSummary)?;
+    let producer_inputs = spec
+        .canonical_ordered_inputs
+        .iter()
+        .skip(1)
+        .collect::<Vec<_>>();
     let producer_ids = producer_inputs
         .iter()
         .map(|input| unit_or_empty_id(input))
@@ -1797,11 +1809,25 @@ fn execute_root_reduce_unit(
         producer_artifacts,
         limits,
     )?;
+    let plan_hash = plan.plan_hash(limits)?;
+    if level == 0 {
+        return execute_root_reduce_leaf(
+            spec,
+            plan,
+            manifest,
+            phase_ordinal,
+            plan_hash,
+            &expected,
+            &resolved,
+            reader,
+            inbox,
+            limits,
+        );
+    }
     if resolved.len() != 2 {
         return Err(WorkerError::UnitBindingMismatch);
     }
 
-    let plan_hash = plan.plan_hash(limits)?;
     let mut summaries = Vec::with_capacity(2);
     for (producer, artifact) in expected.into_iter().zip(resolved) {
         match (producer, artifact) {
@@ -1827,6 +1853,7 @@ fn execute_root_reduce_unit(
     let right = summaries.pop().ok_or(WorkerError::UnitBindingMismatch)?;
     let left = summaries.pop().ok_or(WorkerError::UnitBindingMismatch)?;
     let summary = left.merge_adjacent(right)?;
+    require_complete_root_summary(&summary, plan, manifest)?;
     let coverage_root = summary.result_chunk_hashes.tree_root;
     UnitArtifactV1::from_canonical_output(
         spec,
@@ -1843,6 +1870,363 @@ fn execute_root_reduce_unit(
         limits,
     )
     .map_err(WorkerError::from)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_root_reduce_leaf(
+    spec: &UnitSpecV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    shard_ordinal: u32,
+    plan_hash: B256,
+    expected: &[PlannedProducerV1],
+    resolved: &[Option<&UnitArtifactV1>],
+    reader: &FilesystemCasReader,
+    inbox: &WorkerInbox,
+    limits: &SchemaLimits,
+) -> Result<UnitArtifactV1, WorkerError> {
+    let [finalized_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::Primary {
+        phase: UnitPhase::OutputFinalize,
+        ordinal,
+    }), owner_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
+        phase: UnitPhase::OwnerShuffle,
+        ..
+    }), bucket_position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::RunSpan {
+        phase: UnitPhase::BucketShuffle,
+        ..
+    })] = expected
+    else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    let [Some(finalized_artifact), Some(owner_artifact), Some(bucket_artifact)] = resolved else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    if *ordinal != shard_ordinal {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let finalized = decode_finalized_output_run(finalized_artifact.phase_payload(limits)?, limits)?;
+    let finalized_header = finalized_artifact.output_header(limits)?;
+    let expected_start = shard_ordinal
+        .checked_mul(PRIMARY_WORK_SHARD_SIZE)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let expected_end = expected_start
+        .checked_add(PRIMARY_WORK_SHARD_SIZE)
+        .ok_or(WorkerError::UnitBindingMismatch)?
+        .min(plan.tribute_count);
+    let tribute_count = expected_end
+        .checked_sub(expected_start)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    require_root_reduce_finalized_binding(
+        &finalized,
+        finalized_header,
+        expected_start,
+        expected_end,
+        tribute_count,
+    )?;
+    validate_scan_artifact(
+        spec,
+        match finalized_position {
+            PlannedProducerV1::Unit(position) => *position,
+            PlannedProducerV1::CanonicalEmpty { .. } => {
+                return Err(WorkerError::UnitBindingMismatch);
+            }
+        },
+        finalized_artifact.unit_id,
+        finalized_artifact,
+        limits,
+    )?;
+
+    let owner_root = decode_shuffle_producer_root(
+        spec,
+        owner_artifact,
+        ShuffleRunKindV1::Owner,
+        *owner_position,
+        limits,
+    )?;
+    let bucket_root = decode_shuffle_producer_root(
+        spec,
+        bucket_artifact,
+        ShuffleRunKindV1::Bucket,
+        *bucket_position,
+        limits,
+    )?;
+    require_root_reduce_shuffle_population(
+        owner_root.source_coverage_count,
+        bucket_root.source_coverage_count,
+        owner_root.source_coverage_root,
+        bucket_root.source_coverage_root,
+        owner_root.record_count,
+        bucket_root.record_count,
+        plan.tribute_count,
+    )?;
+
+    let owner_page = verified_shuffle_run_page(owner_root, shard_ordinal, limits, |reference| {
+        reader
+            .read_verified(reference)
+            .map(|object| object.bytes().to_vec())
+            .map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                    "authenticated owner shuffle descendant",
+                )
+            })
+    })?;
+    let contributors = owner_page
+        .into_iter()
+        .map(|record| match record {
+            VerifiedShuffleRecordV1::Owner(contributor) => Ok(contributor),
+            VerifiedShuffleRecordV1::Bucket(_) => Err(WorkerError::UnitBindingMismatch),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let bucket_page = verified_shuffle_run_page(bucket_root, shard_ordinal, limits, |reference| {
+        reader
+            .read_verified(reference)
+            .map(|object| object.bytes().to_vec())
+            .map_err(|_| {
+                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
+                    "authenticated bucket shuffle descendant",
+                )
+            })
+    })?;
+    let buckets = bucket_page
+        .into_iter()
+        .map(|record| match record {
+            VerifiedShuffleRecordV1::Bucket(bucket) => Ok(bucket),
+            VerifiedShuffleRecordV1::Owner(_) => Err(WorkerError::UnitBindingMismatch),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if u32::try_from(buckets.len()).ok() != Some(tribute_count) {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let nod_actions = finalized
+        .ordered_records
+        .iter()
+        .map(|record| ProtocolNodActionV1 {
+            raw_ordinal: record.raw_ordinal,
+            tribute_id: protocol_entity_id(record.nod_action.source_tribute_id),
+            nod_id: protocol_entity_id(record.nod_action.nod_id),
+            owner: record.nod_action.owner,
+            wwd: record.nod_action.worldwide_day.value(),
+            league_id: record.nod_action.league_id,
+            floor_price_minor: record.nod_action.floor_price_minor,
+            gratis_load_minor: record.nod_action.gratis_load_minor,
+            entry_price_minor: record.nod_action.entry_price_minor,
+            cost_amount_minor: record.nod_action.cost_amount_minor,
+            issuance_currency: record.nod_action.issuance_currency,
+            reference_currency: record.nod_action.reference_currency,
+            issued_at: record.nod_action.issued_at,
+            bucket_key: record.nod_action.bucket_key,
+        })
+        .collect::<Vec<_>>();
+    let chunk = ResultChunkV1 {
+        protocol_bundle_hash: spec.protocol_bundle_hash,
+        job_id: spec.job_id,
+        attempt: spec.attempt,
+        chunk_ordinal: shard_ordinal,
+        first_nod_ordinal: expected_start,
+        ordered_nod_actions: nod_actions.clone(),
+        ordered_eligible_contributors: contributors.clone(),
+    };
+    let chunk_hash = chunk.result_chunk_hash(limits)?;
+    let chunk_bytes = chunk.encode_canonical(limits)?;
+    let chunk_ref = inbox.stage_result_chunk(&chunk_bytes, limits)?;
+    let output_manifest_entry = OutputManifestEntryV1 {
+        chunk_ordinal: shard_ordinal,
+        result_chunk_hash: chunk_hash,
+        result_chunk_ref: chunk_ref,
+    };
+
+    let nod_records = nod_actions
+        .iter()
+        .map(|action| action.encode_canonical_record(limits))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bucket_records = buckets
+        .iter()
+        .map(|record| record.encode_canonical_record(limits))
+        .collect::<Result<Vec<_>, _>>()?;
+    let contributor_records = contributors
+        .iter()
+        .map(|action| action.encode_canonical_record(limits))
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifest_records = vec![output_manifest_entry.encode_canonical_record(limits)?];
+    let chunk_hash_records = vec![chunk_hash.as_slice().to_vec()];
+
+    let eligible_nominal_total = checked_sum(
+        finalized
+            .ordered_records
+            .iter()
+            .filter_map(|record| record.contributor_action.as_ref())
+            .map(|action| action.nominal_amount_minor),
+        "root reducer eligible nominal total",
+    )?;
+    let nod_gratis_consumed = checked_sum(
+        nod_actions.iter().map(|action| action.gratis_load_minor),
+        "root reducer Nod Gratis total",
+    )?;
+    let nod_cost_total = checked_sum(
+        nod_actions.iter().map(|action| action.cost_amount_minor),
+        "root reducer Nod cost total",
+    )?;
+    let summary = RootReduceSummaryV1 {
+        protocol_bundle_hash: spec.protocol_bundle_hash,
+        job_id: spec.job_id,
+        attempt: spec.attempt,
+        plan_hash,
+        covered_primary_start: shard_ordinal,
+        covered_primary_count: 1,
+        nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
+            ListKind::NodActions,
+            shard_ordinal,
+            &nod_records,
+            limits.max_bounded_bytes,
+        )?,
+        bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
+            ListKind::BucketRecords,
+            shard_ordinal,
+            &bucket_records,
+            limits.max_bounded_bytes,
+        )?,
+        contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
+            ListKind::ContributorActions,
+            shard_ordinal,
+            &contributor_records,
+            limits.max_bounded_bytes,
+        )?,
+        output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
+            ListKind::CompleteOutputManifest,
+            shard_ordinal,
+            &manifest_records,
+            limits.max_bounded_bytes,
+        )?,
+        result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
+            ListKind::ResultChunkHashes,
+            shard_ordinal,
+            &chunk_hash_records,
+            B256::len_bytes(),
+        )?,
+        tribute_count,
+        nod_count: tribute_count,
+        bucket_count: tribute_count,
+        contributor_count: u32::try_from(contributors.len())
+            .map_err(|_| WorkerError::UnitBindingMismatch)?,
+        tribute_nominal_total: finalized.checked_tribute_nominal_total,
+        eligible_nominal_total,
+        nod_gratis_consumed,
+        nod_cost_total,
+        first_error_ordinal: None,
+    };
+    require_complete_root_summary(&summary, plan, manifest)?;
+    let coverage_root = summary.result_chunk_hashes.tree_root;
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        },
+        BoundedBytes(encode_root_reduce_output(
+            &RootReduceOutputV1::Leaf {
+                summary,
+                output_manifest_entry,
+            },
+            limits,
+        )?),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
+fn checked_sum(
+    values: impl IntoIterator<Item = U256>,
+    what: &'static str,
+) -> Result<U256, WorkerError> {
+    values.into_iter().try_fold(U256::ZERO, |total, value| {
+        total
+            .checked_add(value)
+            .ok_or(outbe_ocomp_protocol::ProtocolError::IntegerOverflow { what }.into())
+    })
+}
+
+fn require_root_reduce_finalized_binding(
+    finalized: &FinalizedOutputRunV1,
+    header: WorkOutputHeaderV1,
+    expected_start: u32,
+    expected_end: u32,
+    expected_count: u32,
+) -> Result<(), WorkerError> {
+    if finalized.start_ordinal != expected_start
+        || finalized.end_ordinal != expected_end
+        || u32::try_from(finalized.ordered_records.len()).ok() != Some(expected_count)
+        || finalized.coverage_root()? != header.output_coverage_root
+        || header.source_coverage_root != header.output_coverage_root
+        || header.source_coverage_count != expected_count
+        || header.output_coverage_count != expected_count
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn require_root_reduce_shuffle_population(
+    owner_source_count: u32,
+    bucket_source_count: u32,
+    owner_source_root: B256,
+    bucket_source_root: B256,
+    owner_record_count: u32,
+    bucket_record_count: u32,
+    tribute_count: u32,
+) -> Result<(), WorkerError> {
+    if owner_source_count != tribute_count
+        || bucket_source_count != tribute_count
+        || owner_source_root != bucket_source_root
+        || owner_record_count > tribute_count
+        || bucket_record_count != tribute_count
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    Ok(())
+}
+
+fn require_complete_root_summary(
+    summary: &RootReduceSummaryV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+) -> Result<(), WorkerError> {
+    require_complete_root_values(
+        summary.covered_primary_start,
+        summary.covered_primary_count,
+        plan.primary_work_unit_count,
+        summary.tribute_count,
+        plan.tribute_count,
+        manifest.tribute_count,
+        summary.tribute_nominal_total,
+        manifest.tribute_nominal_total,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn require_complete_root_values(
+    covered_primary_start: u32,
+    covered_primary_count: u32,
+    primary_work_unit_count: u32,
+    summary_tribute_count: u32,
+    plan_tribute_count: u32,
+    manifest_tribute_count: u32,
+    summary_tribute_nominal_total: U256,
+    manifest_tribute_nominal_total: U256,
+) -> Result<(), WorkerError> {
+    if covered_primary_start == 0
+        && covered_primary_count == primary_work_unit_count
+        && (summary_tribute_count != plan_tribute_count
+            || summary_tribute_count != manifest_tribute_count
+            || summary_tribute_nominal_total != manifest_tribute_nominal_total)
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    Ok(())
 }
 
 fn decode_root_reduce_producer(
@@ -2247,10 +2631,19 @@ fn duplicate_connected_stream(fd: RawFd) -> Result<UnixStream, WorkerError> {
 
 #[cfg(test)]
 mod tests {
-    use alloy_primitives::{B256, U256};
-    use outbe_ocomp_protocol::unit::PlanCommitmentV1;
+    use alloy_primitives::{Address, B256, U256};
+    use outbe_common::WorldwideDay;
+    use outbe_compressed_entities::derive_poseidon_entity_id;
+    use outbe_lysis::program_v1::phases::{
+        output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
+    };
+    use outbe_ocomp_protocol::unit::{PlanCommitmentV1, WorkOutputHeaderV1};
 
-    use super::{poc_schema_limits, require_plan_binding, ExpectedPlanBindingsV1};
+    use super::{
+        poc_schema_limits, require_complete_root_values, require_plan_binding,
+        require_root_reduce_finalized_binding, require_root_reduce_shuffle_population,
+        ExpectedPlanBindingsV1,
+    };
 
     fn plan() -> PlanCommitmentV1 {
         PlanCommitmentV1 {
@@ -2290,5 +2683,102 @@ mod tests {
         let mut changed = committed;
         changed.lysis_budget += U256::from(1);
         assert!(require_plan_binding(&changed, expected, &limits).is_err());
+    }
+
+    #[test]
+    fn root_reduce_rejects_finalized_payload_that_no_longer_matches_coverage_header() {
+        let day = WorldwideDay::new(20_260_725);
+        let owner = Address::repeat_byte(0x11);
+        let tribute_id = derive_poseidon_entity_id(owner, day).unwrap();
+        let finalized = output_finalize(
+            &AmountRunV1 {
+                start_ordinal: 0,
+                end_ordinal: 1,
+                ordered_records: vec![AmountRecordV1 {
+                    raw_ordinal: 0,
+                    tribute_id,
+                    owner,
+                    worldwide_day: day,
+                    league_id: 1,
+                    nominal_amount_minor: U256::from(10),
+                    gratis_fraction_fp: U256::ZERO,
+                    gratis_load_minor: U256::from(1),
+                    entry_price_minor: U256::from(2),
+                    floor_price_minor: U256::from(3),
+                    cost_amount_minor: U256::from(4),
+                    issuance_currency: 840,
+                    reference_currency: 978,
+                    exclude_from_intex_issuance: false,
+                }],
+                checked_segment_gratis_total: U256::from(1),
+            },
+            &GratisLeafPrefixV1 {
+                segment_ordinal: 0,
+                incoming_remaining: U256::from(2),
+                outgoing_remaining: U256::from(1),
+                first_error_ordinal: None,
+            },
+            2_026_072_500,
+        )
+        .unwrap();
+        let coverage_root = finalized.coverage_root().unwrap();
+        let header = WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: 1,
+            output_coverage_count: 1,
+        };
+        require_root_reduce_finalized_binding(&finalized, header.clone(), 0, 1, 1).unwrap();
+
+        let mut changed = finalized;
+        changed.ordered_records[0].nod_action.source_tribute_id =
+            derive_poseidon_entity_id(Address::repeat_byte(0x12), day).unwrap();
+        assert!(require_root_reduce_finalized_binding(&changed, header, 0, 1, 1).is_err());
+    }
+
+    #[test]
+    fn root_reduce_rejects_hidden_shuffle_suffix_or_missing_bucket_record() {
+        let source_root = B256::repeat_byte(0x21);
+        require_root_reduce_shuffle_population(256, 256, source_root, source_root, 255, 256, 256)
+            .unwrap();
+        assert!(require_root_reduce_shuffle_population(
+            256,
+            256,
+            source_root,
+            source_root,
+            257,
+            256,
+            256,
+        )
+        .is_err());
+        assert!(require_root_reduce_shuffle_population(
+            256,
+            256,
+            source_root,
+            source_root,
+            255,
+            255,
+            256,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn complete_root_rejects_manifest_total_mismatch_for_leaf_and_node() {
+        for primary_work_unit_count in [1, 2] {
+            assert!(require_complete_root_values(
+                0,
+                primary_work_unit_count,
+                primary_work_unit_count,
+                257,
+                257,
+                257,
+                U256::from(256),
+                U256::from(257),
+            )
+            .is_err());
+        }
+        require_complete_root_values(0, 1, 2, 256, 257, 257, U256::from(256), U256::from(257))
+            .unwrap();
     }
 }

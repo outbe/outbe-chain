@@ -9,9 +9,9 @@ use outbe_ocomp_protocol::{
     result::ContributorActionV1,
     shuffle::{
         build_bucket_shuffle_run, build_owner_shuffle_run, merge_verified_shuffle_runs,
-        verified_shuffle_run_records, ShuffleBucketRecordV1, ShufflePageSpanV1,
-        ShuffleRunArtifactV1, ShuffleRunBuildContextV1, ShuffleRunChildV1, ShuffleRunKindV1,
-        ShuffleRunPayloadV1, ShuffleSourceCoverageV1, VerifiedShuffleRecordV1,
+        verified_shuffle_run_page, verified_shuffle_run_records, ShuffleBucketRecordV1,
+        ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunBuildContextV1, ShuffleRunChildV1,
+        ShuffleRunKindV1, ShuffleRunPayloadV1, ShuffleSourceCoverageV1, VerifiedShuffleRecordV1,
         MAX_SHUFFLE_LEAF_RECORDS,
     },
     unit::CanonicalRunSpan,
@@ -377,6 +377,72 @@ fn streaming_builder_materializes_three_canonical_pages_with_logarithmic_frontie
     .collect::<Result<Vec<_>, _>>()
     .unwrap();
     assert_eq!(records.len(), 513);
+}
+
+#[test]
+fn indexed_page_lookup_opens_only_the_authenticated_path_and_returns_exact_slices() {
+    let mut objects = BTreeMap::new();
+    let root = build_owner_shuffle_run(
+        build_context(513),
+        (0..513_u32).map(|index| Ok(contributor(index))),
+        &LIMITS,
+        |bytes| memory_stage(&mut objects, bytes),
+    )
+    .unwrap();
+
+    let mut opened = 0_usize;
+    let middle = verified_shuffle_run_page(root.clone(), 1, &LIMITS, |reference| {
+        opened += 1;
+        objects
+            .get(&reference.transport_digest)
+            .cloned()
+            .ok_or(ProtocolError::InvalidInvariant("test object missing"))
+    })
+    .unwrap();
+    assert_eq!(middle.len(), MAX_SHUFFLE_LEAF_RECORDS);
+    assert!(matches!(
+        middle.first(),
+        Some(VerifiedShuffleRecordV1::Owner(record))
+            if record.owner == owner(MAX_SHUFFLE_LEAF_RECORDS as u32 + 1)
+    ));
+    assert_eq!(opened, 2);
+
+    let tail = verified_shuffle_run_page(root.clone(), 2, &LIMITS, |reference| {
+        objects
+            .get(&reference.transport_digest)
+            .cloned()
+            .ok_or(ProtocolError::InvalidInvariant("test object missing"))
+    })
+    .unwrap();
+    assert_eq!(tail.len(), 1);
+
+    assert!(verified_shuffle_run_page(root.clone(), 1, &LIMITS, |_| Err(
+        ProtocolError::InvalidInvariant("selected descendant missing")
+    ))
+    .is_err());
+    assert!(
+        verified_shuffle_run_page(root.clone(), 1, &LIMITS, |reference| {
+            let mut bytes = objects
+                .get(&reference.transport_digest)
+                .cloned()
+                .ok_or(ProtocolError::InvalidInvariant("test object missing"))?;
+            let last = bytes
+                .last_mut()
+                .ok_or(ProtocolError::InvalidInvariant("empty test object"))?;
+            *last ^= 0x01;
+            Ok(bytes)
+        })
+        .is_err()
+    );
+
+    let mut opened_beyond_end = 0_usize;
+    let empty = verified_shuffle_run_page(root, 3, &LIMITS, |_| {
+        opened_beyond_end += 1;
+        Err(ProtocolError::InvalidInvariant("unexpected lookup"))
+    })
+    .unwrap();
+    assert!(empty.is_empty());
+    assert_eq!(opened_beyond_end, 0);
 }
 
 #[test]

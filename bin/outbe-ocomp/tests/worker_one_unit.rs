@@ -21,10 +21,7 @@ use outbe_lysis::program_v1::phases::{
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
-use outbe_lysis::program_v1::result::{
-    decode_root_reduce_output, encode_root_reduce_output, LysisListSubtreeCarrierV1,
-    RootReduceOutputV1, RootReduceSummaryV1,
-};
+use outbe_lysis::program_v1::result::{decode_root_reduce_output, RootReduceOutputV1};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -46,7 +43,7 @@ use outbe_ocomp_protocol::input::{
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
-use outbe_ocomp_protocol::result::OutputManifestEntryV1;
+use outbe_ocomp_protocol::result::ResultChunkV1;
 use outbe_ocomp_protocol::shuffle::{
     verified_shuffle_run_records, ShuffleRunArtifactV1, ShuffleRunKindV1,
 };
@@ -1130,9 +1127,9 @@ fn real_worker_processes_execute_through_output_finalize() {
         &bucket_spec,
         bucket_offset,
         plan_hash,
-        plan_ref,
-        published.manifest_ref,
-        vec![finalized_ref],
+        plan_ref.clone(),
+        published.manifest_ref.clone(),
+        vec![finalized_ref.clone()],
     );
     bucket_artifact
         .validate_against(&bucket_spec, &limits)
@@ -1148,8 +1145,94 @@ fn real_worker_processes_execute_through_output_finalize() {
     assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.record_count, 1);
 
+    let mut owner_ref = cas
+        .publish_bytes(
+            &owner_artifact
+                .encode_canonical(&limits)
+                .expect("canonical OwnerShuffle root producer"),
+        )
+        .expect("publish OwnerShuffle root producer");
+    owner_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let mut bucket_ref = cas
+        .publish_bytes(
+            &bucket_artifact
+                .encode_canonical(&limits)
+                .expect("canonical BucketShuffle root producer"),
+        )
+        .expect("publish BucketShuffle root producer");
+    bucket_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let root_reduce_spec = planner
+        .root_reduce_unit_at(
+            0,
+            &[
+                Some(output_finalize_artifact.unit_id),
+                Some(owner_artifact.unit_id),
+                Some(bucket_artifact.unit_id),
+            ],
+            &limits,
+        )
+        .expect("derive RootReduce leaf");
+    let root_reduce_offset = bucket_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
+        .expect("RootReduce offset");
+    let root_reduce_artifact = execute_real_worker_unit(
+        507,
+        0x9c,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &root_reduce_spec,
+        root_reduce_offset,
+        plan_hash,
+        plan_ref,
+        published.manifest_ref,
+        vec![finalized_ref, owner_ref, bucket_ref],
+    );
+    root_reduce_artifact
+        .validate_against(&root_reduce_spec, &limits)
+        .expect("validate RootReduce leaf artifact");
+    let reduced = decode_root_reduce_output(
+        root_reduce_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode RootReduce leaf");
+    let RootReduceOutputV1::Leaf {
+        summary,
+        output_manifest_entry,
+    } = reduced
+    else {
+        panic!("single-shard RootReduce must emit LEAF");
+    };
+    assert_eq!(summary.tribute_count, 1);
+    assert_eq!(summary.nod_count, 1);
+    assert_eq!(summary.bucket_count, 1);
+    assert_eq!(summary.contributor_count, 1);
+    assert_eq!(summary.tribute_nominal_total, tribute.nominal_amount_minor);
+    assert_eq!(summary.eligible_nominal_total, tribute.nominal_amount_minor);
+    assert_eq!(
+        summary.nod_gratis_consumed,
+        finalized.ordered_records[0].nod_action.gratis_load_minor
+    );
+
     let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("reopen worker inbox");
-    assert_eq!(inbox.object_count().expect("count shuffle objects"), 2);
+    let chunk_object = inbox
+        .read_result_chunk(&output_manifest_entry.result_chunk_ref, &limits)
+        .expect("read staged ResultChunkV1");
+    let chunk = ResultChunkV1::decode_canonical(chunk_object.bytes(), &limits)
+        .expect("decode staged ResultChunkV1");
+    assert_eq!(chunk.chunk_ordinal, 0);
+    assert_eq!(chunk.first_nod_ordinal, 0);
+    assert_eq!(chunk.ordered_nod_actions.len(), 1);
+    assert_eq!(chunk.ordered_eligible_contributors.len(), 1);
+    assert_eq!(
+        chunk.result_chunk_hash(&limits).unwrap(),
+        output_manifest_entry.result_chunk_hash
+    );
+    assert_eq!(inbox.object_count().expect("count typed objects"), 3);
 }
 
 #[test]
@@ -1180,6 +1263,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     let attempt = 1;
     let day = WorldwideDay::new(20_260_725);
     let tribute_count = 257_u32;
+    let tribute_nominal_total =
+        U256::from(tribute_count) * U256::from(tribute_count + 1) / U256::from(2);
     let manifest = InputManifestV1 {
         protocol_bundle_hash,
         job_id,
@@ -1195,7 +1280,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         sealed_tribute_collection_key: B256::repeat_byte(0x75),
         sealed_tribute_collection_root: B256::repeat_byte(0x76),
         tribute_count,
-        tribute_nominal_total: U256::from(tribute_count),
+        tribute_nominal_total,
         input_chunk_count: 1,
         input_chunk_list_root: B256::repeat_byte(0x77),
         fidelity_opening_root: B256::repeat_byte(0x78),
@@ -1283,21 +1368,24 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         let amount_records = shard
             .iter()
             .enumerate()
-            .map(|(offset, (tribute_id, owner))| AmountRecordV1 {
-                raw_ordinal: start + u32::try_from(offset).expect("merge local ordinal"),
-                tribute_id: *tribute_id,
-                owner: *owner,
-                worldwide_day: day,
-                league_id: 1,
-                nominal_amount_minor: U256::from(1),
-                gratis_fraction_fp: U256::ZERO,
-                gratis_load_minor: U256::from(1),
-                entry_price_minor: U256::from(2),
-                floor_price_minor: U256::from(3),
-                cost_amount_minor: U256::from(4),
-                issuance_currency: 840,
-                reference_currency: 978,
-                exclude_from_intex_issuance: false,
+            .map(|(offset, (tribute_id, owner))| {
+                let raw_ordinal = start + u32::try_from(offset).expect("merge local ordinal");
+                AmountRecordV1 {
+                    raw_ordinal,
+                    tribute_id: *tribute_id,
+                    owner: *owner,
+                    worldwide_day: day,
+                    league_id: 1,
+                    nominal_amount_minor: U256::from(raw_ordinal + 1),
+                    gratis_fraction_fp: U256::ZERO,
+                    gratis_load_minor: U256::from(1),
+                    entry_price_minor: U256::from(2),
+                    floor_price_minor: U256::from(3),
+                    cost_amount_minor: U256::from(4),
+                    issuance_currency: 840,
+                    reference_currency: 978,
+                    exclude_from_intex_issuance: raw_ordinal == 0,
+                }
             })
             .collect::<Vec<_>>();
         let shard_count = end - start;
@@ -1464,12 +1552,12 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     assert_eq!(root.run_span.start_run, 0);
     assert_eq!(root.run_span.end_run, 2);
     assert_eq!(root.source_coverage_count, tribute_count);
-    assert_eq!(root.record_count, tribute_count);
+    assert_eq!(root.record_count, tribute_count - 1);
 
     let inbox = WorkerInbox::open(&inbox_root, inbox_limits).expect("open merge inbox");
     let adopted = adopt_lysis_shuffle_descendants(root.clone(), &inbox, &cas, &limits)
         .expect("adopt owner internal merge closure");
-    assert_eq!(adopted.verified_record_count, tribute_count);
+    assert_eq!(adopted.verified_record_count, tribute_count - 1);
     let records = verified_shuffle_run_records(root, &limits, |reference| {
         cas.read_verified(reference)
             .map(|object| object.bytes().to_vec())
@@ -1482,7 +1570,7 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     .expect("open adopted owner merge")
     .collect::<Result<Vec<_>, _>>()
     .expect("traverse adopted owner merge");
-    assert_eq!(records.len(), tribute_count as usize);
+    assert_eq!(records.len(), (tribute_count - 1) as usize);
 
     let bucket_offset = owner_offset
         .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
@@ -1597,6 +1685,25 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     .expect("traverse adopted bucket merge");
     assert_eq!(bucket_records.len(), tribute_count as usize);
 
+    let mut owner_root_ref = cas
+        .publish_bytes(
+            &merged_artifact
+                .encode_canonical(&limits)
+                .expect("canonical merged owner root producer"),
+        )
+        .expect("publish merged owner root producer");
+    owner_root_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let mut bucket_root_ref = cas
+        .publish_bytes(
+            &merged_bucket_artifact
+                .encode_canonical(&limits)
+                .expect("canonical merged bucket root producer"),
+        )
+        .expect("publish merged bucket root producer");
+    bucket_root_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    let root_reduce_offset = bucket_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
+        .expect("RootReduce offset");
     let mut root_reduce_leaf_artifacts = Vec::new();
     for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
         let ordinal = u32::try_from(ordinal).expect("root reduce leaf ordinal");
@@ -1611,98 +1718,74 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                 &limits,
             )
             .expect("derive root reduce leaf");
-        let shard_count = if ordinal == 0 { 256 } else { 1 };
-        let records = vec![vec![0xc0 + u8::try_from(ordinal).unwrap()]; shard_count];
-        let result_chunk_hash = B256::repeat_byte(0xd0 + u8::try_from(ordinal).unwrap());
-        let manifest_entry = OutputManifestEntryV1 {
-            chunk_ordinal: ordinal,
-            result_chunk_hash,
-            result_chunk_ref: CasObjectRefV1 {
-                transport_digest: B256::repeat_byte(0xe0 + u8::try_from(ordinal).unwrap()),
-                encoded_bytes: 128,
-                expected_ocb1_kind: Some(ObjectKind::ResultChunkV1.tag()),
-            },
-        };
-        let manifest_record = vec![manifest_entry
-            .encode_canonical_record(&limits)
-            .expect("encode root reduce manifest entry")];
-        let result_hash = vec![result_chunk_hash.as_slice().to_vec()];
-        let summary = RootReduceSummaryV1 {
-            protocol_bundle_hash,
-            job_id,
-            attempt,
+        let mut finalized_ref = cas
+            .publish_bytes(
+                &finalized_artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical root reduce finalized producer"),
+            )
+            .expect("publish root reduce finalized producer");
+        finalized_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        let artifact = execute_real_worker_unit(
+            707 + u64::from(ordinal),
+            0xa7 + u8::try_from(ordinal).expect("root reduce boot"),
+            &user,
+            uid,
+            directory.path(),
+            cas_limits,
+            &inbox_root,
+            inbox_limits,
+            limits,
+            &leaf_spec,
+            root_reduce_offset + ordinal,
             plan_hash,
-            covered_primary_start: ordinal,
-            covered_primary_count: 1,
-            nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::NodActions,
-                ordinal,
-                &records,
-                1,
-            )
-            .expect("root reduce Nod carrier"),
-            bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::BucketRecords,
-                ordinal,
-                &records,
-                1,
-            )
-            .expect("root reduce bucket carrier"),
-            contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::ContributorActions,
-                ordinal,
-                &records,
-                1,
-            )
-            .expect("root reduce contributor carrier"),
-            output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::CompleteOutputManifest,
-                ordinal,
-                &manifest_record,
-                limits.max_bounded_bytes,
-            )
-            .expect("root reduce output manifest carrier"),
-            result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
-                ListKind::ResultChunkHashes,
-                ordinal,
-                &result_hash,
-                32,
-            )
-            .expect("root reduce result chunk carrier"),
-            tribute_count: u32::try_from(shard_count).unwrap(),
-            nod_count: u32::try_from(shard_count).unwrap(),
-            bucket_count: u32::try_from(shard_count).unwrap(),
-            contributor_count: u32::try_from(shard_count).unwrap(),
-            tribute_nominal_total: U256::from(shard_count),
-            eligible_nominal_total: U256::from(shard_count),
-            nod_gratis_consumed: U256::from(shard_count),
-            nod_cost_total: U256::from(shard_count) * U256::from(4),
-            first_error_ordinal: None,
-        };
-        let root = summary.result_chunk_hashes.tree_root;
-        root_reduce_leaf_artifacts.push(
-            UnitArtifactV1::from_canonical_output(
-                &leaf_spec,
-                outbe_ocomp_protocol::unit::WorkOutputHeaderV1 {
-                    source_coverage_root: root,
-                    output_coverage_root: root,
-                    source_coverage_count: 1,
-                    output_coverage_count: 1,
-                },
-                BoundedBytes(
-                    encode_root_reduce_output(
-                        &RootReduceOutputV1::Leaf {
-                            summary,
-                            output_manifest_entry: manifest_entry,
-                        },
-                        &limits,
-                    )
-                    .expect("encode root reduce leaf output"),
-                ),
-                &limits,
-            )
-            .expect("build root reduce leaf artifact"),
+            plan_ref.clone(),
+            manifest_ref.clone(),
+            vec![
+                finalized_ref,
+                owner_root_ref.clone(),
+                bucket_root_ref.clone(),
+            ],
         );
+        artifact
+            .validate_against(&leaf_spec, &limits)
+            .expect("validate real root reduce leaf");
+        let RootReduceOutputV1::Leaf {
+            summary,
+            output_manifest_entry,
+        } = decode_root_reduce_output(artifact.phase_payload(&limits).unwrap(), &limits)
+            .expect("decode real root reduce leaf")
+        else {
+            panic!("root reduce primary unit must emit LEAF");
+        };
+        let expected_count = if ordinal == 0 { 256 } else { 1 };
+        let expected_contributor_count = if ordinal == 0 { 256 } else { 0 };
+        let expected_tribute_nominal = if ordinal == 0 {
+            U256::from(256_u32) * U256::from(257_u32) / U256::from(2)
+        } else {
+            U256::from(257_u32)
+        };
+        let expected_eligible_nominal = if ordinal == 0 {
+            expected_tribute_nominal - U256::from(1)
+        } else {
+            U256::from(257_u32)
+        };
+        assert_eq!(summary.tribute_count, expected_count);
+        assert_eq!(summary.tribute_nominal_total, expected_tribute_nominal);
+        assert_eq!(summary.contributor_count, expected_contributor_count);
+        assert_eq!(summary.eligible_nominal_total, expected_eligible_nominal);
+        let chunk_object = inbox
+            .read_result_chunk(&output_manifest_entry.result_chunk_ref, &limits)
+            .expect("read real root reduce ResultChunkV1");
+        let chunk = ResultChunkV1::decode_canonical(chunk_object.bytes(), &limits)
+            .expect("decode real root reduce ResultChunkV1");
+        assert_eq!(chunk.chunk_ordinal, ordinal);
+        assert_eq!(chunk.ordered_nod_actions.len(), expected_count as usize);
+        assert_eq!(
+            chunk.ordered_eligible_contributors.len(),
+            expected_contributor_count as usize
+        );
+        root_reduce_leaf_artifacts.push(artifact);
     }
 
     let mut root_reduce_leaf_refs = Vec::new();
@@ -1727,12 +1810,9 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             &limits,
         )
         .expect("derive internal root reduce unit");
-    let root_reduce_offset = bucket_offset
-        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
-        .expect("RootReduce offset");
     let root_reduce_artifact = execute_real_worker_unit(
-        706,
-        0xa6,
+        709,
+        0xa9,
         &user,
         uid,
         directory.path(),
@@ -1760,6 +1840,12 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     };
     assert_eq!(reduced.covered_primary_count, 2);
     assert_eq!(reduced.tribute_count, tribute_count);
+    assert_eq!(reduced.tribute_nominal_total, tribute_nominal_total);
+    assert_eq!(reduced.contributor_count, tribute_count - 1);
+    assert_eq!(
+        reduced.eligible_nominal_total,
+        tribute_nominal_total - U256::from(1)
+    );
     assert_eq!(reduced.result_chunk_hashes.subtree_height, 1);
 }
 

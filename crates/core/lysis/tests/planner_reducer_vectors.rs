@@ -665,6 +665,9 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     let mut mismatched = right.clone();
     mismatched.plan_hash = B256::repeat_byte(99);
     assert!(left.clone().merge_adjacent(mismatched).is_err());
+    let mut overflowing = left.clone();
+    overflowing.tribute_nominal_total = U256::MAX;
+    assert!(overflowing.merge_adjacent(right.clone()).is_err());
 
     let empty_summary = |primary_ordinal| RootReduceSummaryV1 {
         protocol_bundle_hash: left.protocol_bundle_hash,

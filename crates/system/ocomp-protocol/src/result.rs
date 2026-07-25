@@ -279,6 +279,24 @@ impl OutputManifestEntryV1 {
     }
 }
 
+impl NodActionV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+}
+
+impl ContributorActionV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+}
+
 impl LysisResultV1 {
     #[must_use]
     pub fn arithmetic_summary(&self) -> LysisArithmeticSummaryV1 {
