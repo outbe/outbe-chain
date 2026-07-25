@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
-    shuffle::ShuffleRunArtifactV1, CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits,
+    result::ResultChunkV1, shuffle::ShuffleRunArtifactV1, CasObjectRefV1, ObjectKind,
+    ProtocolError, SchemaLimits,
 };
 use sha3::{Digest, Keccak256};
 use thiserror::Error;
@@ -62,6 +63,8 @@ pub enum WorkerInboxError {
     ArtifactChanged,
     #[error("invalid bounded shuffle object: {0}")]
     InvalidShuffleObject(#[source] ProtocolError),
+    #[error("invalid bounded result chunk: {0}")]
+    InvalidResultChunk(#[source] ProtocolError),
     #[error("worker completion report contains a zero identity, length or digest")]
     InvalidReport,
     #[error("worker inbox byte count does not fit this host")]
@@ -319,6 +322,81 @@ impl WorkerInbox {
         let bytes = read_verified_bytes(&path, reference, self.limits.max_artifact_bytes)?;
         ShuffleRunArtifactV1::decode_canonical(&bytes, limits)
             .map_err(WorkerInboxError::InvalidShuffleObject)?;
+        Ok(VerifiedWorkerObject {
+            reference: reference.clone(),
+            bytes,
+        })
+    }
+
+    /// Stages one bounded Lysis result chunk by its transport digest.
+    /// The typed OCB1 payload is validated before publication and again on
+    /// idempotent replay.
+    pub fn stage_result_chunk(
+        &self,
+        bytes: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<CasObjectRefV1, WorkerInboxError> {
+        ResultChunkV1::decode_canonical(bytes, limits)
+            .map_err(WorkerInboxError::InvalidResultChunk)?;
+        let declared = u64::try_from(bytes.len()).map_err(|_| WorkerInboxError::LengthOverflow)?;
+        if declared > self.limits.max_artifact_bytes {
+            return Err(WorkerInboxError::ArtifactLimitExceeded {
+                limit: self.limits.max_artifact_bytes,
+                actual: declared,
+            });
+        }
+        let reference = content_descriptor(bytes, ObjectKind::ResultChunkV1)?;
+        let _lock = InboxLock::acquire(&self.root)?;
+        let object_path = self.object_path(reference.transport_digest);
+        match fs::symlink_metadata(&object_path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata.file_type().is_symlink() =>
+            {
+                self.read_result_chunk(&reference, limits)?;
+                return Ok(reference);
+            }
+            Ok(_) => {
+                return Err(WorkerInboxError::UnsafeArtifact { path: object_path });
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(WorkerInboxError::Io {
+                    path: object_path,
+                    source,
+                });
+            }
+        }
+        let attempted = self
+            .used_bytes()?
+            .checked_add(declared)
+            .ok_or(WorkerInboxError::LengthOverflow)?;
+        if attempted > self.limits.max_total_bytes {
+            return Err(WorkerInboxError::TotalLimitExceeded {
+                limit: self.limits.max_total_bytes,
+                attempted,
+            });
+        }
+        let staging_path = self.next_staging_path();
+        let result = self.stage_shuffle_inner(&reference, bytes, &staging_path);
+        let _ = fs::remove_file(&staging_path);
+        result?;
+        Ok(reference)
+    }
+
+    pub fn read_result_chunk(
+        &self,
+        reference: &CasObjectRefV1,
+        limits: &SchemaLimits,
+    ) -> Result<VerifiedWorkerObject, WorkerInboxError> {
+        if reference.expected_ocb1_kind != Some(ObjectKind::ResultChunkV1.tag()) {
+            return Err(WorkerInboxError::InvalidResultChunk(
+                ProtocolError::InvalidInvariant("typed result chunk CAS reference"),
+            ));
+        }
+        let path = self.object_path(reference.transport_digest);
+        let bytes = read_verified_bytes(&path, reference, self.limits.max_artifact_bytes)?;
+        ResultChunkV1::decode_canonical(&bytes, limits)
+            .map_err(WorkerInboxError::InvalidResultChunk)?;
         Ok(VerifiedWorkerObject {
             reference: reference.clone(),
             bytes,

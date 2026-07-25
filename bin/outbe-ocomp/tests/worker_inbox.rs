@@ -7,6 +7,7 @@ use alloy_primitives::B256;
 use outbe_ocomp::control::poc_schema_limits;
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use outbe_ocomp_protocol::{
+    result::ResultChunkV1,
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     unit::CanonicalRunSpan,
     ObjectKind,
@@ -39,6 +40,20 @@ fn shuffle_leaf_bytes() -> Vec<u8> {
     .expect("bind shuffle leaf root")
     .encode_canonical(&poc_schema_limits())
     .expect("canonical shuffle leaf")
+}
+
+fn result_chunk_bytes() -> Vec<u8> {
+    ResultChunkV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 1,
+        chunk_ordinal: 0,
+        first_nod_ordinal: 0,
+        ordered_nod_actions: Vec::new(),
+        ordered_eligible_contributors: Vec::new(),
+    }
+    .encode_canonical(&poc_schema_limits())
+    .expect("canonical result chunk")
 }
 
 #[test]
@@ -315,6 +330,50 @@ fn shuffle_descendants_are_typed_content_addressed_and_idempotent() {
             .stage_shuffle_object(b"not an OCB1 object", &limits)
             .expect_err("untyped bytes must never enter shuffle object storage"),
         WorkerInboxError::InvalidShuffleObject(_)
+    ));
+    assert_eq!(inbox.object_count().expect("object count"), 1);
+}
+
+#[test]
+fn result_chunks_are_typed_content_addressed_and_idempotent() {
+    let bytes = result_chunk_bytes();
+    let exact_bytes = u64::try_from(bytes.len()).expect("fixture length");
+    let directory = tempdir().expect("worker inbox directory");
+    let inbox = WorkerInbox::open(
+        directory.path(),
+        WorkerInboxLimits {
+            max_artifact_bytes: exact_bytes,
+            max_total_bytes: exact_bytes,
+        },
+    )
+    .expect("open worker inbox");
+    let limits = poc_schema_limits();
+
+    let first = inbox
+        .stage_result_chunk(&bytes, &limits)
+        .expect("stage result chunk");
+    let replay = inbox
+        .stage_result_chunk(&bytes, &limits)
+        .expect("same result chunk is an idempotent cache hit");
+    assert_eq!(first, replay);
+    assert_eq!(
+        first.expected_ocb1_kind,
+        Some(ObjectKind::ResultChunkV1.tag())
+    );
+    assert_eq!(
+        inbox
+            .read_result_chunk(&first, &limits)
+            .expect("verify result chunk")
+            .bytes(),
+        bytes
+    );
+    assert_eq!(inbox.object_count().expect("object count"), 1);
+
+    assert!(matches!(
+        inbox
+            .stage_result_chunk(&shuffle_leaf_bytes(), &limits)
+            .expect_err("a different OCB1 kind must not enter result-chunk storage"),
+        WorkerInboxError::InvalidResultChunk(_)
     ));
     assert_eq!(inbox.object_count().expect("object count"), 1);
 }
