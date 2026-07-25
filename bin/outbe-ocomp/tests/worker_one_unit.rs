@@ -22,8 +22,8 @@ use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
 use outbe_lysis::program_v1::result::{
-    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
-    RootReduceSummaryV1,
+    decode_root_reduce_output, encode_root_reduce_output, LysisListSubtreeCarrierV1,
+    RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
@@ -46,6 +46,7 @@ use outbe_ocomp_protocol::input::{
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
+use outbe_ocomp_protocol::result::OutputManifestEntryV1;
 use outbe_ocomp_protocol::shuffle::{
     verified_shuffle_run_records, ShuffleRunArtifactV1, ShuffleRunKindV1,
 };
@@ -1608,9 +1609,20 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             .expect("derive root reduce leaf");
         let shard_count = if ordinal == 0 { 256 } else { 1 };
         let records = vec![vec![0xc0 + u8::try_from(ordinal).unwrap()]; shard_count];
-        let result_hash = vec![B256::repeat_byte(0xd0 + u8::try_from(ordinal).unwrap())
-            .as_slice()
-            .to_vec()];
+        let result_chunk_hash = B256::repeat_byte(0xd0 + u8::try_from(ordinal).unwrap());
+        let manifest_entry = OutputManifestEntryV1 {
+            chunk_ordinal: ordinal,
+            result_chunk_hash,
+            result_chunk_ref: CasObjectRefV1 {
+                transport_digest: B256::repeat_byte(0xe0 + u8::try_from(ordinal).unwrap()),
+                encoded_bytes: 128,
+                expected_ocb1_kind: Some(ObjectKind::ResultChunkV1.tag()),
+            },
+        };
+        let manifest_record = vec![manifest_entry
+            .encode_canonical_record(&limits)
+            .expect("encode root reduce manifest entry")];
+        let result_hash = vec![result_chunk_hash.as_slice().to_vec()];
         let summary = RootReduceSummaryV1 {
             protocol_bundle_hash,
             job_id,
@@ -1642,8 +1654,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
                 ListKind::CompleteOutputManifest,
                 ordinal,
-                &records,
-                1,
+                &manifest_record,
+                limits.max_bounded_bytes,
             )
             .expect("root reduce output manifest carrier"),
             result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
@@ -1674,8 +1686,14 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
                     output_coverage_count: 1,
                 },
                 BoundedBytes(
-                    encode_root_reduce_summary(&summary, &limits)
-                        .expect("encode root reduce leaf summary"),
+                    encode_root_reduce_output(
+                        &RootReduceOutputV1::Leaf {
+                            summary,
+                            output_manifest_entry: manifest_entry,
+                        },
+                        &limits,
+                    )
+                    .expect("encode root reduce leaf output"),
                 ),
                 &limits,
             )
@@ -1728,11 +1746,14 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     root_reduce_artifact
         .validate_against(&root_reduce_spec, &limits)
         .expect("validate internal RootReduce artifact");
-    let reduced = decode_root_reduce_summary(
+    let reduced = decode_root_reduce_output(
         root_reduce_artifact.phase_payload(&limits).unwrap(),
         &limits,
     )
-    .expect("decode internal RootReduce summary");
+    .expect("decode internal RootReduce output");
+    let RootReduceOutputV1::Node { summary: reduced } = reduced else {
+        panic!("internal RootReduce must emit NODE");
+    };
     assert_eq!(reduced.covered_primary_count, 2);
     assert_eq!(reduced.tribute_count, tribute_count);
     assert_eq!(reduced.result_chunk_hashes.subtree_height, 1);

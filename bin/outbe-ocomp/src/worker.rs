@@ -28,8 +28,8 @@ use outbe_lysis::program_v1::planner::{
     PlannedUnitPositionV1, PlannerErrorV1, PRIMARY_WORK_SHARD_SIZE,
 };
 use outbe_lysis::program_v1::result::{
-    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
-    RootReduceSummaryV1,
+    decode_root_reduce_output, encode_root_reduce_output, LysisListSubtreeCarrierV1,
+    RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_lysis::program_v1::{ObservationValueV1, ObservedTributeV1, TributeInputV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36 as ProtocolEntityId36};
@@ -1836,7 +1836,10 @@ fn execute_root_reduce_unit(
             source_coverage_count: summary.covered_primary_count,
             output_coverage_count: summary.covered_primary_count,
         },
-        BoundedBytes(encode_root_reduce_summary(&summary, limits)?),
+        BoundedBytes(encode_root_reduce_output(
+            &RootReduceOutputV1::Node { summary },
+            limits,
+        )?),
         limits,
     )
     .map_err(WorkerError::from)
@@ -1857,7 +1860,12 @@ fn decode_root_reduce_producer(
     else {
         return Err(WorkerError::UnitBindingMismatch);
     };
-    let summary = decode_root_reduce_summary(artifact.phase_payload(limits)?, limits)?;
+    let output = decode_root_reduce_output(artifact.phase_payload(limits)?, limits)?;
+    let summary = match (level, output) {
+        (0, RootReduceOutputV1::Leaf { summary, .. }) => summary,
+        (_, RootReduceOutputV1::Node { summary }) if level > 0 => summary,
+        _ => return Err(WorkerError::UnitBindingMismatch),
+    };
     let expected_start = index
         .checked_shl(u32::from(level))
         .ok_or(WorkerError::UnitBindingMismatch)?;
