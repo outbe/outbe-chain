@@ -829,6 +829,17 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
+                    "outbe-lysis",
+                    "--test",
+                    "planner_reducer_vectors",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
                     "outbe-ocomp-protocol",
                     "--test",
                     "input_codec_bindings",
@@ -840,6 +851,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 "protocol_bundle",
                 "worker_one_unit",
                 "finalized_export",
+                "deterministic_schedules",
             ] {
                 cargo(
                     repository_root,
@@ -895,6 +907,8 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-DIS-001",
                     "OCM-EXP-001",
                     "OCM-CAS-001",
+                    "OCM-SEM-002",
+                    "OCM-DET-001",
                 ],
             )?;
         }

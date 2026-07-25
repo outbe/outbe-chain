@@ -3,7 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -456,7 +456,7 @@ impl WorkerInbox {
         let mut staging = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(0o660)
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(staging_path)
             .map_err(|source| WorkerInboxError::Io {
@@ -546,7 +546,7 @@ impl WorkerInbox {
         let mut staging = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(0o660)
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(staging_path)
             .map_err(|source| WorkerInboxError::Io {
@@ -733,7 +733,7 @@ impl InboxLock {
             .read(true)
             .write(true)
             .create(true)
-            .mode(0o600)
+            .mode(0o660)
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|source| WorkerInboxError::Io {
@@ -871,6 +871,12 @@ fn create_directory(path: &Path) -> Result<(), WorkerInboxError> {
     fs::create_dir_all(path).map_err(|source| WorkerInboxError::Io {
         path: path.to_path_buf(),
         source,
+    })?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o770)).map_err(|source| {
+        WorkerInboxError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
     })
 }
 

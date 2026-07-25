@@ -60,6 +60,16 @@ fn values<'a>(
         .collect()
 }
 
+fn parse_records(path: &Path) -> Vec<Vec<String>> {
+    fs::read_to_string(path)
+        .expect("configuration bytes")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| line.split_whitespace().map(str::to_owned).collect())
+        .collect()
+}
+
 #[test]
 fn systemd_analyze_accepts_the_fixed_ocomp_topology() {
     let root = tempfile::tempdir().expect("systemd verify root");
@@ -179,5 +189,83 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
     assert_eq!(
         values(&relay, "Service", "Slice"),
         vec!["outbe-ocomp.slice"]
+    );
+}
+
+#[test]
+fn role_configuration_provisions_narrow_cross_process_artifact_access() {
+    let expected_memberships = [
+        ("outbe-ocomp-supervisor", "outbe-ocomp-artifacts"),
+        ("outbe-ocomp-export", "outbe-ocomp-artifacts"),
+        ("outbe-ocomp-worker", "outbe-ocomp-artifacts"),
+    ];
+    let sysusers = parse_records(&unit_dir().join("outbe-ocomp.sysusers"));
+    for (user, group) in expected_memberships {
+        assert!(
+            sysusers.iter().any(|record| {
+                record.first().map(String::as_str) == Some("m")
+                    && record.get(1).map(String::as_str) == Some(user)
+                    && record.get(2).map(String::as_str) == Some(group)
+            }),
+            "{user} must receive read access through {group}"
+        );
+    }
+
+    let expected_directories = [
+        ("/var/lib/outbe-ocomp/cas-v1/objects", "0770"),
+        ("/var/lib/outbe-ocomp/cas-v1/refs", "0770"),
+        ("/var/lib/outbe-ocomp/exporter-v1", "0750"),
+        ("/var/lib/outbe-ocomp/supervisor-v1", "0700"),
+        ("/var/lib/outbe-ocomp/worker-inbox-v1", "0770"),
+    ];
+    let tmpfiles = parse_records(&unit_dir().join("outbe-ocomp.tmpfiles"));
+    for (path, mode) in expected_directories {
+        assert!(
+            tmpfiles.iter().any(|record| {
+                record.first().map(String::as_str) == Some("d")
+                    && record.get(1).map(String::as_str) == Some(path)
+                    && record.get(2).map(String::as_str) == Some(mode)
+                    && record.get(4).map(String::as_str) == Some("outbe-ocomp-artifacts")
+            }),
+            "{path} must be provisioned with mode {mode} and the artifact group"
+        );
+    }
+
+    for name in [
+        "outbe-ocomp-snapshot-exporter.service",
+        "outbe-ocomp-supervisor.service",
+        "outbe-ocomp-worker@.service",
+    ] {
+        let unit = parse_unit(&unit_dir().join(name));
+        assert_eq!(
+            values(&unit, "Service", "Group"),
+            vec!["outbe-ocomp-artifacts"],
+            "{name} must use the shared artifact group as its primary group"
+        );
+        assert_eq!(values(&unit, "Service", "UMask"), vec!["0027"]);
+    }
+
+    let supervisor = parse_unit(&unit_dir().join("outbe-ocomp-supervisor.service"));
+    assert_eq!(
+        values(&supervisor, "Service", "ReadOnlyPaths"),
+        vec!["/var/lib/outbe-ocomp/exporter-v1"]
+    );
+    assert_eq!(
+        values(&supervisor, "Service", "EnvironmentFile"),
+        vec!["/etc/outbe/outbe-ocomp.env"]
+    );
+    let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker@.service"));
+    assert_eq!(
+        values(&worker, "Service", "EnvironmentFile"),
+        vec!["/etc/outbe/outbe-ocomp.env"]
+    );
+    let exporter = parse_unit(&unit_dir().join("outbe-ocomp-snapshot-exporter.service"));
+    assert_eq!(
+        values(&exporter, "Service", "EnvironmentFile"),
+        vec![
+            "/etc/outbe/outbe-ocomp.env",
+            "/etc/outbe/outbe-ocomp-export.env"
+        ],
+        "only snapshot-exporter receives Mongo projection credentials"
     );
 }

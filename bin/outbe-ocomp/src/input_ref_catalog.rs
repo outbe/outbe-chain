@@ -24,8 +24,8 @@ use crate::{
     input_artifacts::{decode_verified_input_chunk, derive_input_chunk_ref},
 };
 
-const DIRECTORY_MODE: u32 = 0o700;
-const FILE_MODE: u32 = 0o600;
+const DIRECTORY_MODE: u32 = 0o750;
+const FILE_MODE: u32 = 0o640;
 const HEADER_MAGIC: [u8; 8] = *b"OUTBICH1";
 const ENTRY_MAGIC: [u8; 8] = *b"OUTBICR1";
 const CONFLICT_MAGIC: [u8; 8] = *b"OUTBICF1";
@@ -61,6 +61,7 @@ pub struct VerifiedInputChunkRefCatalog {
     _list_limits: OrderedListLimits,
     header: InputRefCatalogHeaderV1,
     abstained: bool,
+    writable: bool,
     _lock: CatalogLock,
 }
 
@@ -99,6 +100,7 @@ impl VerifiedInputChunkRefCatalog {
             _list_limits: list_limits,
             header: expected,
             abstained,
+            writable: true,
             _lock: lock,
         })
     }
@@ -111,7 +113,7 @@ impl VerifiedInputChunkRefCatalog {
     ) -> Result<Self, InputRefCatalogError> {
         let root = root.as_ref().to_path_buf();
         inspect_private_directory(&root)?;
-        let lock = CatalogLock::acquire(&root)?;
+        let lock = CatalogLock::acquire_shared(&root)?;
         reject_orphaned_temps(&root)?;
         let header_path = root.join(HEADER_FILE);
         if !path_exists(&header_path)? {
@@ -134,6 +136,7 @@ impl VerifiedInputChunkRefCatalog {
             _list_limits: list_limits,
             header,
             abstained,
+            writable: false,
             _lock: lock,
         })
     }
@@ -142,6 +145,9 @@ impl VerifiedInputChunkRefCatalog {
         &mut self,
         reference: &InputChunkRefV1,
     ) -> Result<InputRefAdmissionOutcome, InputRefCatalogError> {
+        if !self.writable {
+            return Err(InputRefCatalogError::ReadOnly);
+        }
         self.require_active()?;
         let canonical = reference.encode_canonical_record(&self.limits)?;
         if reference.ordinal >= self.header.input_chunk_count {
@@ -564,6 +570,8 @@ pub enum InputRefCatalogError {
     MissingHeader,
     #[error("input-ref catalog is permanently abstained")]
     Abstained,
+    #[error("input-ref catalog was reopened with read-only authority")]
+    ReadOnly,
     #[error("input reference {ordinal} is missing")]
     MissingReference { ordinal: u32 },
     #[error("input reference {ordinal} lies outside the manifest")]
@@ -887,6 +895,26 @@ impl CatalogLock {
                 return Err(InputRefCatalogError::LockHeld(path));
             }
             return Err(io_error("lock catalog", &path, source));
+        }
+        Ok(Self { file })
+    }
+
+    #[allow(unsafe_code)]
+    fn acquire_shared(root: &Path) -> Result<Self, InputRefCatalogError> {
+        let path = root.join(LOCK_FILE);
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&path)
+            .map_err(|source| io_error("open read-only catalog lock", &path, source))?;
+        // SAFETY: `file` owns a live descriptor for the complete flock call.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) };
+        if result != 0 {
+            let source = std::io::Error::last_os_error();
+            if source.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                return Err(InputRefCatalogError::LockHeld(path));
+            }
+            return Err(io_error("lock read-only catalog", &path, source));
         }
         Ok(Self { file })
     }

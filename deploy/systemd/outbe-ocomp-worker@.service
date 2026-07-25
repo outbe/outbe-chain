@@ -5,7 +5,8 @@ After=outbe-ocomp-worker.socket
 [Service]
 Type=simple
 User=outbe-ocomp-worker
-Group=outbe-ocomp-worker
+Group=outbe-ocomp-artifacts
+UMask=0027
 EnvironmentFile=/etc/outbe/outbe-ocomp.env
 ExecStart=/usr/local/bin/outbe-ocomp worker --chain-id ${OCOMP_CHAIN_ID} --genesis-hash ${OCOMP_GENESIS_HASH} --boot-nonce ${OCOMP_BOOT_NONCE} --protocol-bundle-hash ${OCOMP_PROTOCOL_BUNDLE_HASH} --session-generation ${OCOMP_SESSION_GENERATION}
 StandardInput=socket

@@ -2,7 +2,6 @@
 
 mod support;
 
-use std::collections::BTreeSet;
 use std::env;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -18,10 +17,10 @@ use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_tribute_v1, partition_collection_key,
-    sealed_root, AuthenticatedExportView, CandidateCacheLimits, CeMdbx, CeMdbxReadOnly,
-    CompressedTreeService, EntityRef, EnvironmentIdentity, ExactParentIdentity, ExportLeaseOffer,
-    ExportLeaseStatus, FinalLeafMutation, FinalizedMarker, PartitionRef, TributeBodyV1,
-    ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, LOCAL_STORAGE_SCHEMA_VERSION,
+    sealed_root, CandidateCacheLimits, CeMdbx, CompressedTreeService, EntityRef,
+    EnvironmentIdentity, ExactParentIdentity, ExportLeaseStatus, FinalLeafMutation,
+    FinalizedMarker, PartitionRef, TributeBodyV1, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_consensus::block::ConsensusBlock;
 use outbe_e2e_harness::{
@@ -35,37 +34,33 @@ use outbe_node::ocomp::{
         OcompRetentionCoordinator, RetentionError,
     },
     snapshot_control::{ProjectionContainmentAuthority, RethProjectionContainmentAuthority},
-    verify_lysis_openings,
 };
 use outbe_ocomp::{
+    bundle::PinnedProtocolBundle,
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::{effective_uid, poc_schema_limits, EndpointIdentity},
-    export_binding::{
-        ExportBindingCandidate, ExportBindingError, ExportBindingSealOutcome,
-        ExportedManifestBindingStore,
-    },
-    exporter::FinalizedTributeSource,
-    input_artifacts::{
-        poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
-        InputArtifactIdentity,
-    },
+    export_binding::{ExportBindingCandidate, ExportBindingError, ExportedManifestBindingStore},
+    export_receipt::ExportReceiptReader,
+    input_artifacts::poc_input_list_limits,
     input_ref_catalog::VerifiedInputChunkRefCatalog,
     snapshot_client::{SnapshotExporterNodeClient, SnapshotExporterNodeConfig},
+    snapshot_exporter::{SnapshotExporter, SnapshotExporterConfig},
     supervisor::DiscoveryRecord,
+    supervisor_export::{
+        SupervisorExportAdoption, SupervisorExportAdoptionConfig, SupervisorExportAdoptionOutcome,
+    },
 };
 use outbe_ocomp_protocol::local_control::{ClientPolicy, ControlClientSession};
 use outbe_ocomp_protocol::{
-    input::materialize_authenticated_openings,
     intent::{
         ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
-        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
-        NodTargetPreconditionV1, TributeInputBindingV1,
+        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        TributeInputBindingV1,
     },
-    opening::{partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1},
-    CasObjectRefV1, CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1,
-    ListFinalizedJobsResponseV1, ListFinalizedJobsV1, NodeMessageKind, ObjectKind,
-    OpenSnapshotLeaseV1, RenewSnapshotLeaseV1, SnapshotExportCommittedV1, SnapshotHandoffV1,
+    opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
+    FinalizedJobSpecV1, FinalizedJobSummaryV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1,
+    NodeMessageKind, OpenSnapshotLeaseV1, SnapshotExportCommittedV1, SnapshotHandoffV1,
     MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use outbe_offchain_data::{
@@ -73,9 +68,7 @@ use outbe_offchain_data::{
 };
 use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
 use outbe_primitives::{addresses::TRIBUTE_ADDRESS, projection::ProjectionCheckpoint};
-use outbe_tribute::{
-    from_canonical_body, precompile::ITribute, RetainedTributePin, TributeRepositoryWriter,
-};
+use outbe_tribute::{from_canonical_body, precompile::ITribute, TributeRepositoryWriter};
 
 const CHILD_MODE: &str = "OCM_EXP_CHILD_MODE";
 const CHILD_DATADIR: &str = "OCM_EXP_CE_DATADIR";
@@ -87,224 +80,95 @@ const CHILD_MONGO_DATABASE: &str = "OCM_EXP_MONGO_DATABASE";
 const VENDOR_REVISION: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
 const FORK_ID: B256 = B256::repeat_byte(0x14);
 
+fn protocol_bundle() -> outbe_ocomp_protocol::profile::ProtocolBundleV1 {
+    let mut bundle = support::protocol_bundle();
+    bundle.fork_id = FORK_ID;
+    bundle
+}
+
 #[test]
-fn ocm_exp_001_child() {
-    if env::var_os(CHILD_MODE).as_deref() != Some("open-exact".as_ref()) {
+fn ocm_exp_001_production_child() {
+    if env::var_os(CHILD_MODE).as_deref() != Some("production-role".as_ref()) {
         return;
     }
-
     let datadir = env::var_os(CHILD_DATADIR).expect("child CE datadir");
     let limits = poc_schema_limits();
-    let mut node = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
-        node_socket: env::var_os(CHILD_NODE_SOCKET)
-            .expect("child snapshot UDS")
-            .into(),
-        expected_node_uid: env::var(CHILD_NODE_UID)
-            .expect("child node uid")
-            .parse()
-            .expect("parse node uid"),
-        identity: endpoint_identity(),
-        limits,
-    })
-    .expect("connect production snapshot-exporter node endpoint");
-    let listing = node.list(0).expect("list node-owned snapshot handoff");
-    assert_eq!(listing.handoffs.len(), 1, "one PoC snapshot handoff");
-    let listed = listing
-        .handoffs
-        .into_iter()
-        .next()
-        .expect("snapshot handoff");
-    let handoff = node
-        .get(listed.job_id, listed.lease_generation)
-        .expect("read exact snapshot handoff");
-    assert_eq!(handoff, listed);
-    let verified = node
-        .authenticate_handoff(
-            &handoff,
-            ExpectedFinalizedIntentBindingV1 {
-                chain_id: environment().chain_id,
-                genesis_hash: environment().genesis_hash,
-                fork_id: FORK_ID,
-                protocol_bundle_hash: endpoint_identity().protocol_bundle_hash,
-            },
-        )
-        .expect("authenticate q=3/4 finality, historical committee and intent MPT");
-    let day = WorldwideDay::new(verified.intent.wwd);
-    let expected_root = verified.intent.sealed_tribute_collection_root;
-    let expected_count = verified.intent.authenticated_day_count;
-    let expected_nominal = verified.intent.authenticated_day_nominal;
-    let offer = ExportLeaseOffer::decode_fixed(&handoff.canonical_lease_offer.0)
-        .expect("decode node-minted lease");
-    assert_eq!(offer.generation(), handoff.lease_generation);
-    assert_eq!(
-        offer.identity().block_number,
-        handoff.checkpoint.finalized_block_number
-    );
-    assert_eq!(
-        offer.identity().block_hash,
-        handoff.checkpoint.finalized_block_hash
-    );
-    assert_eq!(offer.identity().root, handoff.checkpoint.finalized_ce_root);
-
-    let store = CeMdbxReadOnly::open(datadir.as_ref(), environment())
-        .expect("open production read-only CE");
-    let catalog = store
-        .open_exact(offer.identity())
-        .expect("open exact finalized CE snapshot");
-    let acknowledgement = offer
-        .confirm_open(&catalog)
-        .expect("ack only the exact opened snapshot");
-    if env::var_os(CHILD_SKIP_ACK).is_none() {
-        let opened = node
-            .acknowledge_open(RenewSnapshotLeaseV1 {
-                job_id: handoff.job_id,
-                lease_generation: handoff.lease_generation,
-                canonical_open_ack: outbe_ocomp_protocol::common::BoundedBytes(
-                    acknowledgement.encode_fixed().to_vec(),
-                ),
-            })
-            .expect("acknowledge exact opened snapshot over node UDS");
-        assert_eq!(opened.job_id, handoff.job_id);
-        assert_eq!(opened.lease_generation, handoff.lease_generation);
-    }
-    let export = AuthenticatedExportView::new(catalog).expect("open authenticated export view");
-    let closure = export
-        .close_tribute_partition(
-            day,
-            verified.intent.sealed_tribute_collection_key,
-            expected_root,
-            expected_count,
-        )
-        .expect("close exact Tribute partition");
-
-    let storage = Arc::new(
-        MongoStorage::connect(MongoStorageConfig {
+    let canonical_bundle = protocol_bundle()
+        .encode_canonical(&limits)
+        .expect("canonical protocol bundle");
+    let protocol_bundle = PinnedProtocolBundle::decode(
+        &canonical_bundle,
+        endpoint_identity().protocol_bundle_hash,
+        &limits,
+    )
+    .expect("pin exact protocol bundle");
+    let mutation_probe = env::var_os(CHILD_SKIP_ACK).is_some();
+    let mut exporter = SnapshotExporter::open(SnapshotExporterConfig {
+        node: SnapshotExporterNodeConfig {
+            node_socket: env::var_os(CHILD_NODE_SOCKET)
+                .expect("child snapshot UDS")
+                .into(),
+            expected_node_uid: env::var(CHILD_NODE_UID)
+                .expect("child node uid")
+                .parse()
+                .expect("parse node uid"),
+            identity: endpoint_identity(),
+            limits,
+        },
+        ce_datadir: datadir.clone().into(),
+        ce_environment: environment(),
+        mongo: MongoStorageConfig {
             uri: env::var(CHILD_MONGO_URI).expect("child Mongo URI"),
             database: env::var(CHILD_MONGO_DATABASE).expect("child Mongo database"),
-        })
-        .expect("connect existing production Mongo storage"),
-    );
-    let pin = RetainedTributePin {
-        job_id: handoff.job_id,
-        worldwide_day: day,
-    };
-    let source = FinalizedTributeSource::new(storage, 1).expect("open bounded Tribute source");
-    let projection = source
-        .projection_state(ProjectionConfig {
-            chain_id: environment().chain_id,
-            genesis_hash: environment().genesis_hash,
-            start_block: 1,
-        })
-        .expect("read projection state without writer capability")
-        .expect("projection state exists");
-    let projection_checkpoint = projection.checkpoint.expect("projection checkpoint exists");
-    let contained = node
-        .require_projection_contains(
-            &handoff,
-            projection_checkpoint.block_number,
-            projection_checkpoint.block_hash,
-        )
-        .expect("node proves projection checkpoint contains the finalized job");
-    assert_eq!(contained.job_id, handoff.job_id);
-    assert_eq!(contained.lease_generation, handoff.lease_generation);
-    let mut stream = source
-        .stream(pin, &closure, expected_nominal)
-        .expect("open authenticated Tribute stream");
-    let mut ordered_ids = Vec::new();
-    let mut canonical_tributes = Vec::new();
-    let mut owners = BTreeSet::new();
-    let mut settlement_isos = BTreeSet::new();
-    settlement_isos.insert(840);
-    while let Some(record) = stream.next_record().expect("read authenticated body") {
-        ordered_ids.push(hex::encode(record.tribute_id.as_bytes()));
-        owners.insert(record.body.owner);
-        settlement_isos.insert(record.body.reference_currency);
-        canonical_tributes.push(record.canonical_body);
-    }
-    let summary = stream.finish().expect("close body count and nominal");
-    let owner_set = owners.into_iter().collect::<Vec<_>>();
-    let iso_set = settlement_isos.into_iter().collect::<Vec<_>>();
-    let subjects =
-        partition_lysis_opening_subjects(&owner_set, &iso_set, &limits).expect("partition owners");
-    let mut fidelity_openings = Vec::new();
-    let mut oracle_opening = None;
-    let mut fidelity_slot_count = 0_usize;
-    let mut oracle_slot_count = 0_usize;
-    for subject_batch in &subjects {
-        let openings = node
-            .lysis_openings(handoff.job_id, subject_batch.clone())
-            .expect("request one bounded exact-block Fidelity and Oracle opening batch");
-        verify_lysis_openings(&openings, &verified, subject_batch, &limits)
-            .expect("verify exact finalized Fidelity and Oracle MPT openings");
-        fidelity_slot_count = fidelity_slot_count
-            .checked_add(openings.fidelity.ordered_slots.len())
-            .expect("fixture Fidelity slot count");
-        oracle_slot_count = openings.oracle.ordered_slots.len();
-        let materialized =
-            materialize_authenticated_openings(&openings, &support::protocol_bundle(), &limits)
-                .expect("materialize source-specific authenticated openings");
-        fidelity_openings.push(materialized.fidelity);
-        match &oracle_opening {
-            None => oracle_opening = Some(materialized.oracle),
-            Some(existing) => assert_eq!(
-                existing, &materialized.oracle,
-                "every bounded owner request must return the same canonical Oracle opening"
-            ),
-        }
-    }
-    let cas = FilesystemCas::open(
-        Path::new(&datadir).join("ocomp-cas-v1"),
-        CasWriterRole::SnapshotExporter,
-        CasLimits {
+        },
+        cas_root: Path::new(&datadir).join("ocomp-cas-v1"),
+        cas_limits: CasLimits {
             max_object_bytes: 1_048_576,
             max_total_bytes: 64 * 1_048_576,
         },
-    )
-    .expect("open production CAS writer boundary");
-    let published = publish_input_artifact_set(
-        &cas,
-        Path::new(&datadir).join("ocomp-input-refs-v1"),
-        &support::protocol_bundle(),
-        InputArtifactContents {
-            identity: InputArtifactIdentity {
-                job_id: handoff.job_id,
-                attempt: verified.intent.attempt,
-                checkpoint: handoff.checkpoint.clone(),
-                wwd: verified.intent.wwd,
-                sealed_tribute_collection_key: verified.intent.sealed_tribute_collection_key,
-                sealed_tribute_collection_root: verified.intent.sealed_tribute_collection_root,
-            },
-            canonical_tributes,
-            fidelity_openings,
-            oracle_opening: oracle_opening.expect("one canonical Oracle opening"),
-        },
-        &limits,
-        poc_input_list_limits(),
-    )
-    .expect("publish and independently reconstruct complete input artifact closure");
-    assert_eq!(published.tribute_count, summary.record_count);
-    assert_eq!(published.tribute_nominal_total, summary.nominal_total);
-    let committed = node
-        .commit(CommitSnapshotExportV1 {
-            job_id: handoff.job_id,
-            pin_generation: handoff.pin_generation,
-            lease_generation: handoff.lease_generation,
-            manifest_hash: published.manifest_hash,
-        })
-        .expect("commit exact manifest hash to node-owned finalized pin");
-
+        input_ref_root: Path::new(&datadir).join("ocomp-input-refs-v1"),
+        receipt_root: Path::new(&datadir).join(if mutation_probe {
+            "ocomp-export-receipts-mutation-v1"
+        } else {
+            "ocomp-export-receipts-v1"
+        }),
+        protocol_bundle,
+        tribute_page_limit: 1,
+        max_recoverable_prepared_jobs: 1,
+        projection_start_block: 1,
+    })
+    .expect("open production snapshot-exporter");
+    let reconciled = exporter
+        .reconcile_once(0)
+        .expect("run production snapshot-exporter reconciliation");
+    if reconciled.completed.is_empty() {
+        assert!(
+            reconciled.replayed_job_ids.is_empty(),
+            "a completed receipt is not pending exporter recovery"
+        );
+        println!("OCM_EXP_IDLE=1");
+        return;
+    }
+    assert_eq!(reconciled.completed.len(), 1, "one completed export");
+    let completed = reconciled
+        .completed
+        .into_iter()
+        .next()
+        .expect("completed export");
+    let committed = completed.receipt.committed();
+    let manifest_ref = completed.receipt.manifest_ref();
     println!(
         "OCM_EXP_OPENED={}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
-        hex::encode(acknowledgement.encode_fixed()),
-        closure.collection_root,
-        closure.exact_leaf_count,
-        summary.nominal_total,
-        ordered_ids.join(","),
-        fidelity_slot_count,
-        oracle_slot_count,
-        published.manifest_hash,
-        published.manifest_ref.transport_digest,
-        published.manifest_ref.encoded_bytes,
+        hex::encode(completed.canonical_open_ack),
+        completed.collection_root,
+        completed.tribute_count,
+        completed.tribute_nominal_total,
+        completed.ordered_tribute_ids.join(","),
+        completed.fidelity_slot_count,
+        completed.oracle_slot_count,
+        completed.receipt.manifest_hash(),
+        manifest_ref.transport_digest,
+        manifest_ref.encoded_bytes,
         committed.record_hash,
     );
 }
@@ -574,13 +438,23 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         .expect("open supervisor CAS writer");
     let cas_reader =
         FilesystemCasReader::open(&cas_root, cas_limits).expect("open supervisor CAS reader");
-    let manifest_ref = CasObjectRefV1 {
-        transport_digest: manifest_transport_digest,
-        encoded_bytes: manifest_encoded_bytes,
-        expected_ocb1_kind: Some(ObjectKind::InputManifestV1.tag()),
-    };
+    let receipt = ExportReceiptReader::open(
+        directory.path().join("ocomp-export-receipts-v1"),
+        job_id,
+        poc_schema_limits(),
+    )
+    .expect("open exporter receipt read-only")
+    .load_exact(&cas_reader)
+    .expect("load exact node-committed exporter receipt");
+    assert_eq!(receipt.manifest_hash(), manifest_hash);
+    let manifest_ref = receipt.manifest_ref();
+    assert_eq!(manifest_ref.transport_digest, manifest_transport_digest);
+    assert_eq!(manifest_ref.encoded_bytes, manifest_encoded_bytes);
     let input_refs = VerifiedInputChunkRefCatalog::reopen(
-        directory.path().join("ocomp-input-refs-v1"),
+        directory
+            .path()
+            .join("ocomp-input-refs-v1")
+            .join(hex::encode(job_id.as_slice())),
         &cas_reader,
         poc_schema_limits(),
         poc_input_list_limits(),
@@ -591,39 +465,47 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         cursor: finalized_spec.summary.cursor,
         spec: finalized_spec,
     };
-    let committed = SnapshotExportCommittedV1 {
-        job_id,
-        pin_generation: handoff
-            .pin_generation
-            .checked_add(1)
-            .expect("fixture exported generation"),
-        record_hash: commit_record_hash,
+    let committed = receipt.committed();
+    assert_eq!(committed.record_hash, commit_record_hash);
+    let protocol_bundle = protocol_bundle();
+    let pinned_bundle = PinnedProtocolBundle::decode(
+        &protocol_bundle
+            .encode_canonical(&poc_schema_limits())
+            .expect("canonical protocol bundle"),
+        endpoint_identity().protocol_bundle_hash,
+        &poc_schema_limits(),
+    )
+    .expect("pin supervisor protocol bundle");
+    let binding_base = directory.path().join("supervisor-export-binding-v1");
+    let adoption = SupervisorExportAdoption::open(SupervisorExportAdoptionConfig {
+        cas_root: cas_root.clone(),
+        cas_limits,
+        input_ref_root: directory.path().join("ocomp-input-refs-v1"),
+        receipt_root: directory.path().join("ocomp-export-receipts-v1"),
+        binding_root: binding_base.clone(),
+        protocol_bundle: pinned_bundle,
+        limits: poc_schema_limits(),
+    })
+    .expect("open production supervisor export adoption");
+    let verified_binding = match adoption
+        .try_adopt(&discovery)
+        .expect("adopt exact exporter receipt")
+    {
+        SupervisorExportAdoptionOutcome::Pending => panic!("export receipt must be visible"),
+        SupervisorExportAdoptionOutcome::Adopted(binding) => binding,
     };
-    let protocol_bundle = support::protocol_bundle();
-    let binding_root = directory.path().join("supervisor-export-binding-v1");
-    let verified_binding = {
-        let mut binding_store =
-            ExportedManifestBindingStore::open(&binding_root, poc_schema_limits())
-                .expect("open supervisor export-binding store");
-        let candidate = || ExportBindingCandidate {
-            discovery: &discovery,
-            handoff: &handoff,
-            manifest_ref: &manifest_ref,
-            committed: &committed,
-            bundle: &protocol_bundle,
-            input_refs: &input_refs,
-        };
-        let (outcome, first) = binding_store
-            .seal(&supervisor_cas, &cas_reader, candidate())
-            .expect("seal node-committed manifest authority");
-        assert_eq!(outcome, ExportBindingSealOutcome::NewlySealed);
-        let (outcome, replayed) = binding_store
-            .seal(&supervisor_cas, &cas_reader, candidate())
-            .expect("exact binding seal replay");
-        assert_eq!(outcome, ExportBindingSealOutcome::ExactReplay);
-        assert_eq!(replayed.binding_ref(), first.binding_ref());
-        replayed
+    let replayed_binding = match adoption
+        .try_adopt(&discovery)
+        .expect("replay exact exporter receipt adoption")
+    {
+        SupervisorExportAdoptionOutcome::Pending => panic!("export receipt must remain visible"),
+        SupervisorExportAdoptionOutcome::Adopted(binding) => binding,
     };
+    assert_eq!(
+        replayed_binding.binding_ref(),
+        verified_binding.binding_ref()
+    );
+    let binding_root = binding_base.join(hex::encode(job_id.as_slice()));
     let mut binding_store = ExportedManifestBindingStore::open(&binding_root, poc_schema_limits())
         .expect("restart supervisor export-binding store");
     let restarted_binding = binding_store
@@ -679,6 +561,23 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         &restarted_supervisor_socket,
         &restarted_exporter_socket,
     );
+    let recovered_exporter = run_exporter_child(
+        directory.path(),
+        &restarted_exporter_socket,
+        uid,
+        false,
+        mongo.uri(),
+        &database,
+    );
+    assert!(
+        recovered_exporter.status.success(),
+        "production exporter failed to reconcile after node restart: {}",
+        String::from_utf8_lossy(&recovered_exporter.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&recovered_exporter.stdout).contains("OCM_EXP_IDLE=1"),
+        "a completed receipt must not reread mutable Mongo or consume recovery capacity"
+    );
     let mut restarted_exporter = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
         node_socket: restarted_exporter_socket,
         expected_node_uid: uid,
@@ -712,7 +611,10 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
             &cas_reader,
             ExportBindingCandidate {
                 discovery: &discovery,
-                handoff: &handoff,
+                job_id: handoff.job_id,
+                source_pin_generation: handoff.pin_generation,
+                lease_generation: handoff.lease_generation,
+                checkpoint: &handoff.checkpoint,
                 manifest_ref: &manifest_ref,
                 committed: &conflicting_commit,
                 bundle: &protocol_bundle,
@@ -741,9 +643,9 @@ fn run_exporter_child(
     let mut command = Command::new(env::current_exe().expect("integration test executable"));
     command
         .arg("--exact")
-        .arg("ocm_exp_001_child")
+        .arg("ocm_exp_001_production_child")
         .arg("--nocapture")
-        .env(CHILD_MODE, "open-exact")
+        .env(CHILD_MODE, "production-role")
         .env(CHILD_DATADIR, ce_datadir)
         .env(CHILD_NODE_SOCKET, node_socket)
         .env(CHILD_NODE_UID, node_uid.to_string())
@@ -1126,7 +1028,7 @@ fn endpoint_identity() -> EndpointIdentity {
         chain_id: environment().chain_id,
         genesis_hash: environment().genesis_hash,
         boot_nonce: B256::repeat_byte(0x12),
-        protocol_bundle_hash: support::protocol_bundle()
+        protocol_bundle_hash: protocol_bundle()
             .protocol_bundle_hash(&limits)
             .expect("fixture protocol bundle hash"),
     }

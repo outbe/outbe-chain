@@ -18,12 +18,13 @@ use outbe_ocomp_protocol::{
     intent::JobIntentV1,
     profile::ProtocolBundleV1,
     CasObjectRefV1, CommitSnapshotExportV1, ObjectKind, ProtocolError, SchemaLimits,
-    SnapshotExportCommittedV1, SnapshotHandoffV1,
+    SnapshotExportCommittedV1,
 };
 use thiserror::Error;
 
 use crate::{
     cas::{CasError, FilesystemCas, FilesystemCasReader},
+    export_receipt::VerifiedExportReceipt,
     input_ref_catalog::{InputRefCatalogError, VerifiedInputChunkRefCatalog},
     supervisor::DiscoveryRecord,
 };
@@ -50,9 +51,19 @@ const CONFLICT_FIXED_BYTES: usize = 8 + 32 + 32 + 32;
 
 pub struct ExportBindingCandidate<'a> {
     pub discovery: &'a DiscoveryRecord,
-    pub handoff: &'a SnapshotHandoffV1,
+    pub job_id: B256,
+    pub source_pin_generation: u64,
+    pub lease_generation: u64,
+    pub checkpoint: &'a CheckpointIdentityV1,
     pub manifest_ref: &'a CasObjectRefV1,
     pub committed: &'a SnapshotExportCommittedV1,
+    pub bundle: &'a ProtocolBundleV1,
+    pub input_refs: &'a VerifiedInputChunkRefCatalog,
+}
+
+pub struct ExportReceiptBindingCandidate<'a> {
+    pub discovery: &'a DiscoveryRecord,
+    pub receipt: &'a VerifiedExportReceipt,
     pub bundle: &'a ProtocolBundleV1,
     pub input_refs: &'a VerifiedInputChunkRefCatalog,
 }
@@ -219,6 +230,32 @@ impl ExportedManifestBindingStore {
         Ok((ExportBindingSealOutcome::NewlySealed, verified))
     }
 
+    pub fn seal_receipt(
+        &mut self,
+        cas: &FilesystemCas,
+        reader: &FilesystemCasReader,
+        candidate: ExportReceiptBindingCandidate<'_>,
+    ) -> Result<(ExportBindingSealOutcome, VerifiedExportedManifestBinding), ExportBindingError>
+    {
+        let manifest_ref = candidate.receipt.manifest_ref();
+        let committed = candidate.receipt.committed();
+        self.seal(
+            cas,
+            reader,
+            ExportBindingCandidate {
+                discovery: candidate.discovery,
+                job_id: candidate.receipt.job_id(),
+                source_pin_generation: candidate.receipt.source_pin_generation(),
+                lease_generation: candidate.receipt.lease_generation(),
+                checkpoint: candidate.receipt.checkpoint(),
+                manifest_ref: &manifest_ref,
+                committed: &committed,
+                bundle: candidate.bundle,
+                input_refs: candidate.input_refs,
+            },
+        )
+    }
+
     pub fn load_exact(
         &self,
         reader: &FilesystemCasReader,
@@ -314,9 +351,11 @@ fn derive_binding(
     validate_manifest_job_authority(
         candidate.discovery,
         &intent,
-        candidate.handoff,
+        candidate.job_id,
+        candidate.source_pin_generation,
+        candidate.lease_generation,
+        candidate.checkpoint,
         &manifest,
-        limits,
     )?;
     let manifest_hash = manifest.manifest_hash(limits)?;
     require(
@@ -326,8 +365,7 @@ fn derive_binding(
     require(
         candidate.committed.pin_generation
             == candidate
-                .handoff
-                .pin_generation
+                .source_pin_generation
                 .checked_add(1)
                 .ok_or(ExportBindingError::IntegerOverflow)?,
         "exported pin generation",
@@ -344,8 +382,8 @@ fn derive_binding(
         job_id: manifest.job_id,
         attempt: manifest.attempt,
         protocol_bundle_hash: manifest.protocol_bundle_hash,
-        source_pin_generation: candidate.handoff.pin_generation,
-        lease_generation: candidate.handoff.lease_generation,
+        source_pin_generation: candidate.source_pin_generation,
+        lease_generation: candidate.lease_generation,
         checkpoint: manifest.checkpoint.clone(),
         manifest_ref: candidate.manifest_ref.clone(),
         manifest_hash,
@@ -408,20 +446,22 @@ fn validate_binding_authority(
 fn validate_manifest_job_authority(
     discovery: &DiscoveryRecord,
     intent: &JobIntentV1,
-    handoff: &SnapshotHandoffV1,
+    job_id: B256,
+    source_pin_generation: u64,
+    lease_generation: u64,
+    checkpoint: &CheckpointIdentityV1,
     manifest: &InputManifestV1,
-    _limits: &SchemaLimits,
 ) -> Result<(), ExportBindingError> {
     require(
-        handoff.job_id == discovery.spec.summary.job_id,
+        job_id == discovery.spec.summary.job_id,
         "snapshot handoff job id",
     )?;
     require(
-        handoff.pin_generation != 0 && handoff.lease_generation != 0,
+        source_pin_generation != 0 && lease_generation != 0,
         "snapshot handoff generations",
     )?;
     require(
-        handoff.checkpoint == manifest.checkpoint,
+        checkpoint == &manifest.checkpoint,
         "snapshot handoff checkpoint",
     )?;
     validate_manifest_job_fields(discovery, intent, manifest)

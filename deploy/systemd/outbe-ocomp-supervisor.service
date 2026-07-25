@@ -7,7 +7,8 @@ StartLimitBurst=3
 [Service]
 Type=simple
 User=outbe-ocomp-supervisor
-Group=outbe-ocomp-supervisor
+Group=outbe-ocomp-artifacts
+UMask=0027
 EnvironmentFile=/etc/outbe/outbe-ocomp.env
 ExecStart=/usr/local/bin/outbe-ocomp supervisor
 Restart=on-failure
@@ -32,6 +33,7 @@ ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/staging/supervisor
 ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/refs
 ReadWritePaths=/var/lib/outbe-ocomp/supervisor-v1
 ReadWritePaths=/var/lib/outbe-ocomp/worker-inbox-v1
+ReadOnlyPaths=/var/lib/outbe-ocomp/exporter-v1
 
 [Install]
 WantedBy=outbe-ocomp.target

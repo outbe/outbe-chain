@@ -212,7 +212,7 @@ impl FilesystemCas {
         let mut staging = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(0o640)
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(staging_path)
             .map_err(|source| CasError::Io {
@@ -469,7 +469,7 @@ impl PublicationLock {
             .read(true)
             .write(true)
             .create(true)
-            .mode(0o600)
+            .mode(0o660)
             .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|source| CasError::Io {
@@ -513,6 +513,11 @@ fn open_regular_nofollow(path: &Path) -> Result<File, CasError> {
 
 fn create_directory(path: &Path) -> Result<(), CasError> {
     fs::create_dir_all(path).map_err(|source| CasError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o770)).map_err(|source| CasError::Io {
         path: path.to_path_buf(),
         source,
     })

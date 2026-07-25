@@ -1,5 +1,7 @@
 mod support;
 
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
@@ -304,9 +306,13 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
         catalog.admit(&derived_ref).unwrap();
     }
     drop(cas);
+    for entry in fs::read_dir(&catalog_path).unwrap() {
+        fs::set_permissions(entry.unwrap().path(), fs::Permissions::from_mode(0o400)).unwrap();
+    }
+    fs::set_permissions(&catalog_path, fs::Permissions::from_mode(0o500)).unwrap();
 
     let reader = FilesystemCasReader::open(directory.path().join("cas"), cas_limits).unwrap();
-    let catalog =
+    let mut catalog =
         VerifiedInputChunkRefCatalog::reopen(&catalog_path, &reader, limits, list_limits).unwrap();
     let reopened = catalog
         .exact_verified_cursor(&reader, &bundle)
@@ -316,4 +322,10 @@ fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_it
     assert_eq!(reopened.len(), 1);
     assert_eq!(reopened[0].reference, derived_ref);
     assert_eq!(reopened[0].chunk, chunk);
+    assert!(matches!(
+        catalog.admit(&derived_ref),
+        Err(InputRefCatalogError::ReadOnly)
+    ));
+    drop(catalog);
+    fs::set_permissions(&catalog_path, fs::Permissions::from_mode(0o700)).unwrap();
 }

@@ -7,7 +7,10 @@ StartLimitBurst=3
 [Service]
 Type=simple
 User=outbe-ocomp-export
-Group=outbe-ocomp-export
+Group=outbe-ocomp-artifacts
+UMask=0027
+EnvironmentFile=/etc/outbe/outbe-ocomp.env
+EnvironmentFile=/etc/outbe/outbe-ocomp-export.env
 ExecStart=/usr/local/bin/outbe-ocomp snapshot-exporter
 Restart=on-failure
 RestartSec=5
