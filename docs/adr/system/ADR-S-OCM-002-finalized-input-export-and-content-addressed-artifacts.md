@@ -100,6 +100,12 @@ durable, revalidated intent and the exact exported-manifest binding. A CAS
 object, local path or caller-provided scalar never substitutes for finalized
 job authority.
 
+`InputManifestV1.tribute_nominal_total` is the authenticated global
+conservation authority. Bounded execution may carry checked per-shard
+subtotals, but the typed finalizer must checked-reduce them and require exact
+equality with this manifest field. A subtotal, contributor-only stream or
+worker-supplied scalar cannot replace the exported total.
+
 The closed manifest covers the complete parent `JobId`. Work-shard range
 descriptors are derived from that manifest's canonical Tribute order; they do
 not create smaller competing snapshots. For `N` records and shard capacity

@@ -937,6 +937,14 @@ An owner contribution is emitted only when
 the calculations where legacy Lysis uses total Tribute nominal, but it creates
 no contributor entitlement.
 
+Each bounded `OUTPUT_FINALIZE` shard therefore carries one checked
+`tribute_nominal_total` over all of its `AmountRecordV1` inputs, including
+excluded Tribute. The value is stored once per shard, not once per finalized
+record. The supervisor deterministically re-executes the phase before
+admission; `ROOT_REDUCE` checked-adds the verified shard subtotals and the typed
+finalizer requires the result to equal
+`InputManifestV1.tribute_nominal_total`.
+
 Current Tribute identity makes owners unique within a WWD:
 
 ```text
@@ -963,6 +971,8 @@ closed pure `LysisProgramV1` finalizer. It streams artifacts in exact plan order
 and chunks in exact chunk order, reloads the canonical finalized intent/export
 binding, derives every result root and either emits `LysisResultV1` or abstains.
 The supervisor cannot pass a ready-made root or result into this interface.
+In particular, optional contributor records cannot be used to infer
+`tribute_nominal_total`, because they intentionally omit excluded Tribute.
 
 Each validator domain produces:
 

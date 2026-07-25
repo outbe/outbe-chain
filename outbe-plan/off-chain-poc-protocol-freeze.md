@@ -1285,6 +1285,19 @@ WorkOutputHeaderV1 {
   source_coverage_count: u32,
   output_coverage_count: u32
 }
+
+FinalizedOutputRecordV1 {
+  raw_ordinal: u32,
+  nod_action: NodActionV1,
+  contributor_action: Option<FinalizedContributorV1>
+}
+
+FinalizedOutputRunV1 {
+  start_ordinal: u32,
+  end_ordinal: u32,
+  ordered_records: Vec<FinalizedOutputRecordV1>,
+  checked_tribute_nominal_total: U256
+}
 ```
 
 Both coverage roots are list-kind `8` over canonical nested
@@ -1297,6 +1310,22 @@ The remaining nested bytes are selected solely by `phase` and the pinned Lysis
 work-output schema manifest. The artifact fields must equal
 `UnitIntervalCommitment`, `UnitInputRoot`, `UnitOutputSemanticDigest` and
 `UnitCoverageCommitment` recomputed from the specification and decoded output.
+
+For `OUTPUT_FINALIZE`, `checked_tribute_nominal_total` is the checked sum of
+the nominal amount of every input `AmountRecordV1` in `[start_ordinal,
+end_ordinal)`, irrespective of `exclude_from_intex_issuance`. It is encoded
+once per bounded work shard. It must not be reconstructed from
+`contributor_action`, which is absent for excluded Tribute, and nominal must
+not be duplicated in every `FinalizedOutputRecordV1`. Overflow is a
+deterministic semantic failure.
+
+This field is consensus-significant. The supervisor admits a finalized-output
+artifact only after re-executing `OUTPUT_FINALIZE` from its exact verified
+producer artifacts and requiring canonical-byte equality. Any change to this
+schema regenerates the Lysis work-output codec descriptor,
+`object_codec_registry_hash`, `lysis_program_semantics_hash` and all
+bundle-dependent golden vectors. Old finalized-output bytes are not silently
+accepted under the corrected bundle.
 
 `unit_artifact_root` in `LysisResultV1` is list-kind `7` over
 `UnitArtifactDigest` values for every plan unit except the final
@@ -1366,6 +1395,13 @@ entry and one result-chunk hash at the primary ordinal, and fills every
 remaining action slot with the frozen `pad_hash(list_kind, global_slot)` value.
 A canonical padded primary leaf contains the all-pad carriers for that exact
 position and zero counts/totals.
+
+For a real leaf, `tribute_nominal_total` is copied only from the exact verified
+`FinalizedOutputRunV1.checked_tribute_nominal_total` at that primary position.
+Internal nodes checked-add child subtotals. At typed finalization the root
+subtotal must equal `InputManifestV1.tribute_nominal_total`; contributor
+records cannot supply this authority because their stream excludes ineligible
+Tribute.
 
 An internal `ROOT_REDUCE` unit accepts only adjacent equal-height summaries at
 its two producer positions and combines each pair of equal-capacity carriers

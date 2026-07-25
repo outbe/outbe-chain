@@ -423,11 +423,24 @@ FinalizedOutputRecordV1 {
   contributor_action: Option<ContributorActionV1>,
   bucket_key: Hash
 }
+
+FinalizedOutputRunV1 {
+  start_ordinal: u32,
+  end_ordinal: u32,
+  ordered_records: Vec<FinalizedOutputRecordV1>,
+  checked_tribute_nominal_total: U256
+}
 ```
 
 There is exactly one Nod action per Tribute. Contributor action is absent only
 for `exclude_from_intex_issuance=true`. IDs, prices, logical issue time and
-bucket key are pure functions of pinned inputs.
+bucket key are pure functions of pinned inputs. The run subtotal is the
+checked-add of `nominal_amount_minor` for every matching `AmountRecordV1`,
+including excluded Tribute; overflow is a deterministic semantic failure.
+It is one `U256` per work shard, not a duplicated nominal field on every
+finalized record. Before admission, the supervisor re-executes
+`OUTPUT_FINALIZE` from its producer artifacts and requires exact canonical-byte
+equality, so the subtotal is computation-derived rather than worker-asserted.
 
 ### 4.7 `OWNER_SHUFFLE`
 
@@ -477,9 +490,17 @@ Across the fixed tree the phase:
 
 - verifies producer artifacts and gap-free source/output coverage;
 - combines adjacent equal-capacity result-chunk and semantic coverage carriers;
-- accumulates exact counts and computation-derived totals;
+- takes each leaf's `tribute_nominal_total` only from the verified
+  `FinalizedOutputRunV1.checked_tribute_nominal_total`;
+- accumulates exact counts and computation-derived totals with checked
+  arithmetic;
 - closes the tree with one bounded root payload whose summary covers every
   primary position.
+
+The final reduced `tribute_nominal_total` must equal the authenticated global
+`InputManifestV1.tribute_nominal_total`; mismatch causes abstention. Optional
+contributor actions are never used to reconstruct this total because they
+intentionally omit excluded Tribute.
 
 Each primary leaf carrier has a fixed positional capacity: 256 slots for Nod,
 bucket and contributor records, and one slot each for its output-manifest entry

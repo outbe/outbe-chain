@@ -130,6 +130,21 @@ A unit may run zero or many times. Only a digest-valid artifact for its exact
 workers plus randomized completion/retry order must produce byte-identical plan,
 result and digest.
 
+`OUTPUT_FINALIZE` carries one checked
+`FinalizedOutputRunV1.checked_tribute_nominal_total` per bounded primary shard.
+It is computed from every input `AmountRecordV1`, including Tribute excluded
+from contributor issuance. The nominal is not duplicated in every finalized
+record: `ROOT_REDUCE` requires only the shard subtotal, and per-record
+duplication would add 32 bytes per Tribute without adding evidence.
+
+The subtotal becomes authoritative only through deterministic semantic replay.
+Before adoption, the supervisor re-executes `OUTPUT_FINALIZE` from the exact
+verified producer artifacts and requires canonical-byte equality. Each
+`ROOT_REDUCE` leaf consumes that verified subtotal, internal reducers
+checked-add child totals, and the typed finalizer requires the root total to
+equal the authenticated `InputManifestV1.tribute_nominal_total`. It must never
+infer total nominal from the optional contributor stream.
+
 ### Typed result finalization
 
 The final `ROOT_REDUCE` worker emits a bounded closed payload:

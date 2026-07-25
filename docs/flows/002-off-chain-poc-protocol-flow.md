@@ -177,7 +177,7 @@ the finalized `JobIntentV1` before signing.
 | 4 | supervisor | discover by finalized cursor; event may only reduce latency | local `DISCOVERED` journal | dropping the request subscription still discovers exactly one job | POC-05 |
 | 5 | node/exporter | open read-only checkpoint lease; full-fold CE; verify raw bodies/openings; publish manifest/chunks | finalized pin, `InputManifestV1`, CAS objects | every domain independently reconstructs exact root/count/nominal/opening commitments; Mongo/CAS mutation rejects | POC-06, POC-09, POC-20 |
 | 6 | supervisor/planner | partition the complete manifest into adjacent bounded work shards; commit count/root and derive `UnitSpecV1`/`UnitId` lazily by ordinal | `PlanCommitmentV1`, bounded queue cursor and unit artifacts | shard capacity + 1 creates the next shard; 10,000 and 1,000,000,000 counts produce exact unit counts without proportional plan allocation; frozen bytes/hashes match golden vectors | POC-07 |
-| 7 | workers/reducer | execute immutable units from the bounded local queue, retry freely, stage one bounded result chunk per real leaf, expose its typed manifest entry only through the leaf artifact and reduce summaries through bounded NODE payloads | unit artifacts, exact `OutputManifestEntryV1`/`ResultChunkV1` catalog and final reduction summary | missing any shard/entry/chunk cannot close reduction; wrong descriptor/hash/bytes reject before leaf VERIFIED; 1/2/4 workers and randomized completion/retry yield byte-identical artifacts/summary; reference corpus matches | POC-01, POC-08 |
+| 7 | workers/reducer | execute immutable units from the bounded local queue, retry freely, compute one checked nominal subtotal per finalized-output shard including excluded Tribute, stage one bounded result chunk per real leaf, expose its typed manifest entry only through the leaf artifact and reduce summaries through bounded NODE payloads | unit artifacts, exact `OutputManifestEntryV1`/`ResultChunkV1` catalog and final reduction summary | missing any shard/entry/chunk cannot close reduction; forged or overflowing shard subtotal and wrong descriptor/hash/bytes reject before leaf VERIFIED; reduced nominal must equal the authenticated manifest total; 1/2/4 workers and randomized completion/retry yield byte-identical artifacts/summary; reference corpus matches | POC-01, POC-08 |
 | 8 | supervisor-hosted typed finalizer, then node attestation gate | after durable complete admission, stream exact plan/manifest-entry/chunk catalogs through pure `LysisProgramV1` finalization; node independently reloads finalized job/export authority, verifies the constant-size candidate and durably signs one exact digest | one `LysisResultV1`, sign-once journal plus one signature/domain | missing/duplicate/reordered/substituted artifact, entry or chunk causes abstention; descriptor and semantic roots must close over the same bytes; no caller-provided root is accepted; exact retry returns the same signature and a second digest refuses after restart | POC-08, POC-12 |
 | 9 | untrusted relay | group three distinct matching signatures and build activation transaction | public transaction bytes | stopped fourth supervisor is not used; duplicate/wrong/mixed signer sets reject | POC-10, POC-13, POC-19 |
 | 10 | RPC/txpool/P2P/proposer/import | submit and include one constant-size complete-result `activateLysis` transaction | canonical transaction/receipt candidate | activation-byte cap-1/cap succeeds and cap+1 rejects consistently across public path/replay; increasing total Tribute does not increase activation bytes | POC-20, POC-21 |
@@ -306,8 +306,11 @@ job COMPLETED <=> exact certified effect receipt set committed
 ```
 
 Every excluded-from-Intex Tribute still participates in Lysis/Nod conservation
-but follows the pinned contributor exclusion rule. Logical Tribute retirement,
-active generation and public queries remain consistent across replay/restart.
+but follows the pinned contributor exclusion rule. Each bounded
+`OUTPUT_FINALIZE` run commits one checked subtotal over all its Tribute;
+`ROOT_REDUCE` checked-adds those subtotals and the finalizer requires exact
+equality with the sealed manifest total. Logical Tribute retirement, active
+generation and public queries remain consistent across replay/restart.
 
 ## Normative protocol versus test harness
 

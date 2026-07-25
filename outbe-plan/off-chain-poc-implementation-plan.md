@@ -451,6 +451,9 @@ The closed `ROOT_REDUCE` phase payload is bounded
 `RootReduceSummaryV1`; list kinds `11..13` commit result-chunk hashes, league
 fractions and Gratis leaf prefixes. `VerifiedLysisFinalizationInputsV1` is an
 internal typed Rust interface over bounded cursors, not a wire/control object.
+`FinalizedOutputRunV1` carries one checked `tribute_nominal_total` per bounded
+primary shard, including excluded Tribute; nominal is not duplicated in every
+finalized record.
 
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
 bundle/parent job; complete canonical shard coverage; q=3 distinct signers;
@@ -466,6 +469,9 @@ traits.
 **Task-local tests:** per-type roundtrip/negative/cap/hash tests, independent ABI
 selector/topic checks and schema dependency-cycle checks. Contributes
 `OCM-BYT-001/002`, `OCM-FIN-001`, `OCM-APL-001` and `OCM-CRT-001`.
+Finalized-output vectors include mixed eligible/excluded, all-excluded,
+subtotal overflow, mutation/truncation and rejection of bytes produced under
+the previous work-output schema.
 
 **Evidence/CI:** `OCM-FAST`; schema/domain manifests and preliminary marked
 measurement vectors.
@@ -983,6 +989,16 @@ bounded-run owner/bucket merge trees, result chunks and root reducer; verify
 producer membership/coverage before CAS adoption. No phase may collapse all
 `K` ranges into one unit or input vector.
 
+`OUTPUT_FINALIZE` checked-adds the nominal amount of every record in its shard,
+including excluded Tribute, into one
+`FinalizedOutputRunV1.checked_tribute_nominal_total`. The supervisor
+re-executes the phase from exact producer artifacts and requires byte equality
+before adoption. A `ROOT_REDUCE` leaf consumes only this verified subtotal,
+internal nodes checked-add child subtotals, and `finalize_v1` requires the root
+total to equal `InputManifestV1.tribute_nominal_total`. Do not add nominal to
+each finalized record, add a second subtotal artifact, or reread the original
+input shard in `ROOT_REDUCE`.
+
 The final `ROOT_REDUCE` worker emits only the bounded closed payload
 `LEAF(RootReduceSummaryV1, OutputManifestEntryV1)` for a one-shard plan or
 `NODE(RootReduceSummaryV1)` otherwise. Its five list carriers are
@@ -1052,6 +1068,11 @@ substituted artifact or chunk, changed finalized intent scalar, stale manifest,
 included final carrier, malformed summary, sparse fixed-capacity carrier versus
 canonical dense root, wrong/missing/reordered/duplicate manifest entry,
 descriptor kind/length/digest/hash mismatch, exact replay and conflicting retry.
+Add mixed eligible/excluded and all-excluded shard totals, checked `U256`
+subtotal overflow, forged canonical subtotal with recomputed artifact digest,
+`S/S+1/2S+1` subtotal reduction and final manifest-total mismatch. Prove that
+the forged subtotal is rejected by semantic phase replay rather than by a
+source-text or metadata-only assertion.
 Crash after CAS-before-journal and journal-before-finalize must restart to the
 same result. No test may inspect source text.
 

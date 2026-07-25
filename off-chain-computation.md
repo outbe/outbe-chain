@@ -1401,6 +1401,13 @@ their nominal amounts; the excluded nominal still participates everywhere the
 current Lysis algorithm uses total Tribute nominal, but never creates a claim
 entitlement.
 
+Phase D3 writes one checked nominal subtotal per bounded finalized-output run,
+covering every input Tribute regardless of contributor eligibility. It does
+not duplicate nominal in every finalized record. Admission re-executes D3 from
+the exact producer artifacts and requires byte equality; the root reducer
+checked-adds the verified subtotals, and finalization requires equality with
+the authenticated global nominal in `InputManifestV1`.
+
 The semantic program must reproduce the current Lysis algorithm, including raw
 ID order, two logical Fidelity observations per Tribute, conditional Oracle
 reads, each current wrapping or saturating `U256` operation, first-error ordinal,
