@@ -299,6 +299,10 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
         self.reader
     }
 
+    pub(crate) const fn admissions(&self) -> &VerifiedAdmissionCatalog {
+        self.admissions
+    }
+
     pub(crate) const fn limits(&self) -> &SchemaLimits {
         self.limits
     }

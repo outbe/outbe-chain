@@ -15,11 +15,15 @@ use outbe_lysis::program_v1::artifacts::{
     decode_fixed_reduce_output, decode_gratis_prefix_down_output, decode_gratis_segment_summary,
     encode_enumerated_run, encode_finalized_output_run, GratisPrefixDownOutputV1,
 };
+use outbe_lysis::program_v1::finalizer::{
+    finalize_v1, FinalizationResultChunkV1, FinalizationUnitArtifactV1,
+    VerifiedLysisFinalizationInputsV1,
+};
 use outbe_lysis::program_v1::phases::{
     output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
 };
 use outbe_lysis::program_v1::planner::{
-    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
+    LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedUnitPositionV1,
 };
 use outbe_lysis::program_v1::result::{
     decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
@@ -52,12 +56,17 @@ use outbe_ocomp_protocol::input::{
     materialize_authenticated_openings, CheckpointIdentityV1, Compression, InputChunkKind,
     InputManifestV1,
 };
+use outbe_ocomp_protocol::intent::{
+    ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType, FrozenMetadosisValuesV1,
+    JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+    TributeInputBindingV1,
+};
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
 use outbe_ocomp_protocol::result::ResultChunkV1;
 use outbe_ocomp_protocol::shuffle::{
-    verified_shuffle_run_records, ShuffleRunArtifactV1, ShuffleRunKindV1,
+    verified_shuffle_run_records, ShuffleBucketRecordV1, ShuffleRunArtifactV1, ShuffleRunKindV1,
 };
 use outbe_ocomp_protocol::unit::{
     CanonicalInputRefV1, EntityIdHalfOpenRange, InputPurpose, InputSourceKind, PlanCommitmentV1,
@@ -1632,6 +1641,218 @@ fn real_worker_processes_execute_through_output_finalize() {
         output_manifest_entry.result_chunk_hash
     );
     assert_eq!(inbox.object_count().expect("count typed objects"), 3);
+
+    let intent = JobIntentV1 {
+        chain_id: 41,
+        genesis_hash: B256::repeat_byte(0x41),
+        fork_id: B256::repeat_byte(0x42),
+        wwd: day.value(),
+        pending_nonce: 1,
+        attempt: 1,
+        protocol_bundle_hash,
+        ce_sealed_root: manifest.checkpoint.finalized_ce_root,
+        sealed_tribute_collection_key: manifest.sealed_tribute_collection_key,
+        sealed_tribute_collection_root: manifest.sealed_tribute_collection_root,
+        authenticated_day_count: manifest.tribute_count,
+        authenticated_day_nominal: manifest.tribute_nominal_total,
+        pre_admission_envelope_hash: B256::repeat_byte(0x43),
+        source_availability_policy_id: B256::repeat_byte(0x44),
+        frozen_metadosis_values: FrozenMetadosisValuesV1 {
+            day_type: DayType::Green,
+            day_limit: plan.lysis_budget + U256::from(1_000),
+            previous_vwap: U256::from(90),
+            current_vwap: U256::from(100),
+            gratis_demand: U256::from(25),
+            gratis_supply: U256::from(20),
+            lysis_budget: plan.lysis_budget,
+            auction_base: U256::from(1_000),
+            auction_entry_price: U256::from(95),
+            request_budget_split_receipt_hash: B256::repeat_byte(0x45),
+        },
+        logical_evaluation_height: manifest.checkpoint.finalized_block_number,
+        logical_evaluation_time: plan.logical_evaluation_time,
+        activation_preconditions: ActivationPreconditionsV1 {
+            tribute: TributeInputBindingV1 {
+                wwd: day.value(),
+                source_generation: 1,
+                collection_key: manifest.sealed_tribute_collection_key,
+                sealed_collection_root: manifest.sealed_tribute_collection_root,
+                exact_count: manifest.tribute_count,
+                exact_nominal_total: manifest.tribute_nominal_total,
+            },
+            nod: NodTargetPreconditionV1 {
+                wwd: day.value(),
+                target_generation: 1,
+                namespace_root_before: B256::repeat_byte(0x46),
+                max_nod_count: manifest.tribute_count,
+            },
+            contributors: ContributorTargetPreconditionV1 {
+                series_id: day.value(),
+                expected_series_version: 1,
+                max_contributor_count: manifest.tribute_count,
+                max_eligible_nominal_total: manifest.tribute_nominal_total,
+            },
+            metadosis: MetadosisAttemptPreconditionV1 {
+                wwd: day.value(),
+                pending_nonce: 1,
+                expected_status: MetadosisExpectedStatus::OffchainPending,
+                state_version: 1,
+            },
+        },
+        result_committee_snapshot_hash: B256::repeat_byte(0x47),
+        custody_committee_epoch_hash: None,
+        deadline_height: manifest.checkpoint.finalized_block_number + 10,
+    };
+    let ordered_artifacts = vec![
+        artifact,
+        fidelity_artifact,
+        reduce_artifact,
+        amount_artifact,
+        prefix_leaf_artifact,
+        prefix_root_artifact,
+        prefix_down_root_artifact,
+        prefix_down_leaf_artifact,
+        output_finalize_artifact,
+        owner_artifact,
+        bucket_artifact,
+        root_reduce_artifact,
+    ];
+    let canonical_chunk_bytes = chunk
+        .encode_canonical(&limits)
+        .expect("canonical finalization chunk");
+    let bucket_record = ShuffleBucketRecordV1 {
+        bucket_key: chunk.ordered_nod_actions[0].bucket_key,
+        raw_ordinal: chunk.ordered_nod_actions[0].raw_ordinal,
+        tribute_id: chunk.ordered_nod_actions[0].tribute_id,
+        nod_id: chunk.ordered_nod_actions[0].nod_id,
+    };
+    let run_finalizer =
+        |intent: &JobIntentV1, artifacts: Vec<UnitArtifactV1>, chunk_bytes: Vec<u8>| {
+            let units = artifacts
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, artifact)| {
+                    let plan_ordinal = u32::try_from(ordinal).expect("fixture plan ordinal");
+                    Ok(FinalizationUnitArtifactV1 {
+                        plan_ordinal,
+                        position: topology.plan_position_at(plan_ordinal).unwrap_or(
+                            PlannedUnitPositionV1::TreeNode {
+                                phase: UnitPhase::RootReduce,
+                                level: 0,
+                                index: 0,
+                            },
+                        ),
+                        artifact,
+                    })
+                });
+            finalize_v1(
+                VerifiedLysisFinalizationInputsV1 {
+                    finalized_job_id: job_id,
+                    intent,
+                    input_manifest: &manifest,
+                    plan: &plan,
+                    root_reduce_summary: &summary,
+                    unit_artifacts: units,
+                    result_chunks: std::iter::once(Ok(FinalizationResultChunkV1 {
+                        chunk_ordinal: 0,
+                        summary: summary.clone(),
+                        output_manifest_entry: output_manifest_entry.clone(),
+                        canonical_chunk_bytes: chunk_bytes,
+                    })),
+                    bucket_records: std::iter::once(Ok(bucket_record.clone())),
+                },
+                &limits,
+            )
+        };
+    let result = run_finalizer(
+        &intent,
+        ordered_artifacts.clone(),
+        canonical_chunk_bytes.clone(),
+    )
+    .expect("typed Lysis finalizer accepts the exact real-worker pipeline");
+    result.validate_semantics(&limits).unwrap();
+    result.validate_finalized_intent(&intent).unwrap();
+    assert_eq!(result.job_id, job_id);
+    assert_eq!(result.tribute_count, 1);
+    assert_eq!(result.counts.nod_count, 1);
+    assert_eq!(result.counts.bucket_count, 1);
+    assert_eq!(result.counts.contributor_count, 1);
+    assert_eq!(result.result_chunk_count, 1);
+
+    let replay = run_finalizer(
+        &intent,
+        ordered_artifacts.clone(),
+        canonical_chunk_bytes.clone(),
+    )
+    .expect("exact finalization replay");
+    assert_eq!(
+        replay.encode_canonical(&limits).unwrap(),
+        result.encode_canonical(&limits).unwrap()
+    );
+
+    let unit_digests = ordered_artifacts[..ordered_artifacts.len() - 1]
+        .iter()
+        .map(|artifact| artifact.artifact_digest(&limits).unwrap().to_vec())
+        .collect::<Vec<_>>();
+    let expected_unit_artifact_root = ordered_list_root(
+        ListKind::UnitSpecificationsArtifacts,
+        &unit_digests,
+        OrderedListLimits::new(
+            unit_digests.len(),
+            B256::len_bytes(),
+            unit_digests.len().next_power_of_two() * B256::len_bytes(),
+        ),
+    )
+    .unwrap();
+    assert_eq!(result.unit_artifact_root, expected_unit_artifact_root);
+    let all_unit_digests = ordered_artifacts
+        .iter()
+        .map(|artifact| artifact.artifact_digest(&limits).unwrap().to_vec())
+        .collect::<Vec<_>>();
+    assert_ne!(
+        result.unit_artifact_root,
+        ordered_list_root(
+            ListKind::UnitSpecificationsArtifacts,
+            &all_unit_digests,
+            OrderedListLimits::new(
+                all_unit_digests.len(),
+                B256::len_bytes(),
+                all_unit_digests.len().next_power_of_two() * B256::len_bytes(),
+            ),
+        )
+        .unwrap()
+    );
+
+    let mut changed_intent = intent.clone();
+    changed_intent.frozen_metadosis_values.lysis_budget += U256::from(1);
+    changed_intent.frozen_metadosis_values.day_limit += U256::from(1);
+    assert!(run_finalizer(
+        &changed_intent,
+        ordered_artifacts.clone(),
+        canonical_chunk_bytes.clone(),
+    )
+    .is_err());
+
+    let mut changed_chunk = canonical_chunk_bytes;
+    let last = changed_chunk
+        .last_mut()
+        .expect("non-empty canonical ResultChunkV1");
+    *last ^= 1;
+    assert!(run_finalizer(&intent, ordered_artifacts.clone(), changed_chunk).is_err());
+
+    let mut extra_artifact = ordered_artifacts;
+    extra_artifact.push(
+        extra_artifact
+            .last()
+            .expect("final ROOT_REDUCE artifact")
+            .clone(),
+    );
+    assert!(run_finalizer(
+        &intent,
+        extra_artifact,
+        chunk.encode_canonical(&limits).unwrap(),
+    )
+    .is_err());
 }
 
 #[test]

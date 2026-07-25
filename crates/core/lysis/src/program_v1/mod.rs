@@ -5,6 +5,7 @@
 
 pub mod artifacts;
 mod execute;
+pub mod finalizer;
 pub mod phases;
 pub mod planner;
 pub mod reducers;
