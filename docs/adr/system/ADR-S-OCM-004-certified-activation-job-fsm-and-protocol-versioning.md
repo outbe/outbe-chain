@@ -120,6 +120,14 @@ iterate over `N` Nod or contributor actions on-chain. Bounded
 projection, availability and proof-serving paths; they are not independent
 activation transactions.
 
+Neither the node attestation gate nor the activation verifier executes
+`ROOT_REDUCE`, invokes the Lysis finalizer or traverses result chunks. The
+attestation gate reloads finalized intent/export authority and checks the
+constant-size result bindings, equations, digest and sign-once subject.
+Activation repeats the consensus-visible constant-size checks and certificate
+verification. Correctness of bulk computation is the matching `q=3/4`
+independent-domain evidence defined by ADR-S-OCM-003.
+
 Desis is absent because its exact `auction_base` brief committed before compute.
 PromisLimit receives only a checked additive carry-over credit.
 

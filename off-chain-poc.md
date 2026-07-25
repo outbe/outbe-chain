@@ -129,7 +129,9 @@ The central architectural seam is:
 ```text
 off-chain:
   execute_lysis(JobSpec, AuthenticatedInputBundle)
-    -> ResultChunkV1 catalog + LysisResultV1
+    -> ResultChunkV1 catalog + RootReduceSummaryV1
+  finalize_lysis(verified authority, exact bounded cursors, summary)
+    -> LysisResultV1
 
 on-chain:
   apply_certified_lysis(JobIntentV1, LysisResultV1,
@@ -954,6 +956,14 @@ comparison by calling on-chain Lysis.
 
 ## 9. Result, certificate and sign-once rule
 
+Workers never manufacture the final signing subject. The final
+`ROOT_REDUCE` worker emits bounded `RootReduceSummaryV1`. Once every planned
+artifact and result chunk has been durably verified, the supervisor hosts the
+closed pure `LysisProgramV1` finalizer. It streams artifacts in exact plan order
+and chunks in exact chunk order, reloads the canonical finalized intent/export
+binding, derives every result root and either emits `LysisResultV1` or abstains.
+The supervisor cannot pass a ready-made root or result into this interface.
+
 Each validator domain produces:
 
 ```text
@@ -1003,11 +1013,12 @@ ExecutionCertificateV1 {
 ```
 
 Every validator domain's separate compute process independently reads every
-authenticated result chunk, proves gap-free complete catalog coverage, and
-recomputes roots, counts, totals, arithmetic commitment and event summary
-before requesting its node's attestation. The node verifies the constant-size
-closed signing subject and never scans those chunks. The activation carries
-only `LysisResultV1`; result-chunk bodies remain content-addressed artifacts for
+authenticated result chunk through that typed finalizer, proves gap-free
+complete catalog coverage, and recomputes roots, counts, totals, arithmetic
+commitment and event summary before requesting its node's attestation. The node
+reloads finalized authority, verifies the constant-size closed signing subject
+and never scans those chunks or reruns Lysis. The activation carries only
+`LysisResultV1`; result-chunk bodies remain content-addressed artifacts for
 projection, availability and proof serving. No chunk is separately signable or
 activatable.
 
@@ -1393,6 +1404,7 @@ end-to-end program proves the shared invariants.
 finalized JobIntent
 -> authenticated snapshot
 -> deterministic execute_lysis
+-> typed deterministic finalization
 -> q independent validator-domain signatures
 -> one typed activateLysis transaction
 -> private CertifiedLysisActivation
@@ -1556,8 +1568,8 @@ This is an inventory for the next planning step, not a task breakdown.
   execution, reduction and typed result verification;
 - storage-independent `execute_lysis`;
 - canonical authenticated input bundle;
-- `PlanCommitmentV1`, bounded `ResultChunkV1` and constant-size
-  `LysisResultV1`;
+- `PlanCommitmentV1`, bounded `ResultChunkV1`/`RootReduceSummaryV1`, pure typed
+  finalizer and constant-size `LysisResultV1`;
 - offline independent reference implementation/golden corpus;
 - conservation and arithmetic checks.
 
@@ -1644,7 +1656,8 @@ consensus blocks and public APIs.
 
 - [ ] pure `execute_lysis`;
 - [ ] independent reference/golden implementation;
-- [ ] bounded result chunks plus constant-size typed result commitment;
+- [ ] bounded result chunks/reduction summary plus pure typed finalizer and
+  constant-size typed result commitment;
 - [ ] certified activation module;
 - [ ] one request split receipt and four typed activation receipts;
 - [ ] logical Tribute retirement.

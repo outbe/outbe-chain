@@ -102,6 +102,8 @@ N authenticated Tribute
   -> PlanCommitmentV1(X, primary_work_unit_root)
   -> UnitSpecV1 derived lazily by ordinal and executed by a bounded pool
   -> bounded ResultChunkV1 objects
+  -> bounded RootReduceSummaryV1
+  -> pure LysisProgramV1 finalization over exact verified catalogs
   -> one LysisResultV1(result_chunk_count, result_chunk_list_root)
 ```
 
@@ -136,7 +138,8 @@ This journal is restart/reconciliation evidence, not chain authority.
 | canonical input chunks | validator-local CAS | digest, length, manifest membership |
 | `InputManifestV1` | exporter/CAS | JobId, checkpoint, input chunk count/root, source roots, count/totals, openings |
 | `PlanCommitmentV1`, derived `UnitSpecV1`/artifacts | supervisor/workers/CAS | JobId, manifest, `wwd`, Lysis budget, logical evaluation time, unit count/root, program semantics, UnitId |
-| `ResultChunkV1` catalog and `LysisResultV1` | supervisor/CAS | exact chunk count/root, typed result and ResultDigest |
+| `RootReduceSummaryV1` and `ResultChunkV1` catalog | workers/supervisor/CAS | bounded reduction summary, exact chunk order and verified CAS bytes |
+| `LysisResultV1` | pure `LysisProgramV1` finalizer hosted by supervisor | finalized intent/manifest/plan bindings, exact streamed catalogs, typed result and ResultDigest |
 | sign-once record | node attestation gate | key epoch, JobId, attempt, purpose, digest |
 | activation transaction/receipt | canonical block data | finality proof, typed result, certificate |
 | active generation/terminal receipt | canonical state | JobId, result/effect commitments |
@@ -173,8 +176,8 @@ the finalized `JobIntentV1` before signing.
 | 4 | supervisor | discover by finalized cursor; event may only reduce latency | local `DISCOVERED` journal | dropping the request subscription still discovers exactly one job | POC-05 |
 | 5 | node/exporter | open read-only checkpoint lease; full-fold CE; verify raw bodies/openings; publish manifest/chunks | finalized pin, `InputManifestV1`, CAS objects | every domain independently reconstructs exact root/count/nominal/opening commitments; Mongo/CAS mutation rejects | POC-06, POC-09, POC-20 |
 | 6 | supervisor/planner | partition the complete manifest into adjacent bounded work shards; commit count/root and derive `UnitSpecV1`/`UnitId` lazily by ordinal | `PlanCommitmentV1`, bounded queue cursor and unit artifacts | shard capacity + 1 creates the next shard; 10,000 and 1,000,000,000 counts produce exact unit counts without proportional plan allocation; frozen bytes/hashes match golden vectors | POC-07 |
-| 7 | workers/reducer | execute immutable units from the bounded local queue, retry freely, reduce the complete set in fixed streaming order and publish bounded result chunks | unit artifacts, `ResultChunkV1` catalog and one `LysisResultV1` | missing any shard/chunk cannot produce/sign a result; 1/2/4 workers and randomized completion/retry yield byte-identical roots/result; reference corpus matches | POC-01, POC-08 |
-| 8 | node attestation gate | reload job, verify candidate/caps and durably sign one exact digest | sign-once journal plus one signature/domain | exact retry returns same signature; second digest refuses after restart | POC-12 |
+| 7 | workers/reducer | execute immutable units from the bounded local queue, retry freely, publish bounded result chunks and reduce the complete set to one bounded `RootReduceSummaryV1` | unit artifacts, exact `ResultChunkV1` catalog and final reduction summary | missing any shard/chunk cannot close reduction; 1/2/4 workers and randomized completion/retry yield byte-identical artifacts/summary; reference corpus matches | POC-01, POC-08 |
+| 8 | supervisor-hosted typed finalizer, then node attestation gate | after durable complete admission, stream exact plan/chunk catalogs through pure `LysisProgramV1` finalization; node independently reloads finalized job/export authority, verifies the constant-size candidate and durably signs one exact digest | one `LysisResultV1`, sign-once journal plus one signature/domain | missing/duplicate/reordered/substituted artifact or chunk causes abstention; no caller-provided root is accepted; exact retry returns the same signature and a second digest refuses after restart | POC-08, POC-12 |
 | 9 | untrusted relay | group three distinct matching signatures and build activation transaction | public transaction bytes | stopped fourth supervisor is not used; duplicate/wrong/mixed signer sets reject | POC-10, POC-13, POC-19 |
 | 10 | RPC/txpool/P2P/proposer/import | submit and include one constant-size complete-result `activateLysis` transaction | canonical transaction/receipt candidate | activation-byte cap-1/cap succeeds and cap+1 rejects consistently across public path/replay; increasing total Tribute does not increase activation bytes | POC-20, POC-21 |
 | 11 | OCOMP/Lysis verifier | verify terminal/live job, finality, bundle, deadline, certificate, typed result and activation preconditions without Lysis execution | private `CertifiedLysisActivation` in execution frame only | one-byte, JobId, order, root/count, precondition and deadline mutations reject with no state diff; trace contains no Lysis/Fidelity/Oracle calculation | POC-03, POC-14, POC-18 |

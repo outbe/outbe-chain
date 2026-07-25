@@ -165,7 +165,11 @@ The core seam is:
 ```text
 pure off-chain:
   execute_lysis(JobSpec, authenticated InputBundle)
-      -> ResultChunkV1 catalog + LysisResultV1
+      -> ResultChunkV1 catalog + RootReduceSummaryV1
+  finalize_lysis(verified finalized authority,
+                 exact artifact/chunk cursors,
+                 RootReduceSummaryV1)
+      -> LysisResultV1
 
 on-chain:
   apply_certified_lysis(JobIntent, LysisResultV1,
@@ -302,6 +306,14 @@ PoCActivationV1 {
   ExecutionCertificateV1
 }
 ```
+
+The final `ROOT_REDUCE` worker produces a bounded `RootReduceSummaryV1`, not
+`LysisResultV1`. After complete durable admission, the supervisor hosts the
+closed pure `LysisProgramV1` finalizer. That finalizer reloads canonical
+finalized job/export authority, streams exact plan-order artifacts and
+chunk-order results through bounded cursors, derives every result field and
+abstains on any missing, duplicate, reordered, substituted or conflicting
+entry. It accepts no caller-built root/result and has no signing authority.
 
 Every node:
 
@@ -576,7 +588,8 @@ around those same interfaces rather than replacing a fake PoC architecture.
 The PoC should be built as six independently testable vertical slices:
 
 1. **Pure semantics:** extract current Lysis calculation from storage mutation as
-   `execute_lysis`; prove its typed result matches existing golden fixtures.
+   `execute_lysis`, plus closed typed result finalization; prove its summary,
+   chunks and result match existing golden fixtures.
 2. **Real request:** fork terminal Metadosis to create/expire `JobIntent` and
    remove the synchronous Lysis call for the PoC profile.
 3. **One validator domain:** exporter, supervisor and workers discover a finalized
@@ -1461,9 +1474,11 @@ ExecutionCertificateV1 {
 }
 ```
 
-For `PoC` and `BoundedMVP`, each signing validator traverses every bounded
+For `PoC` and `BoundedMVP`, each signing validator domain's separate compute
+plane invokes the typed finalizer, which traverses every bounded
 `ResultChunkV1`, verifies gap-free complete coverage and recomputes the catalog
-root, output roots, counts, totals and event summary before signing. The
+root, output roots, counts, totals and event summary before requesting the
+node's signature. The node itself does not perform this bulk traversal. The
 activation transaction carries only the constant-size `LysisResultV1`
 commitment. This is the only valid `ResultDigest` preimage; no alternate tuple
 encoding is permitted. Thus a quorum signature cannot be detached from the
@@ -2282,6 +2297,7 @@ These core facts are identical in PoC and BoundedMVP:
 finalized JobIntent
 -> authenticated snapshot
 -> deterministic off-chain execute_lysis
+-> deterministic typed result finalization
 -> q independent validator-domain signatures
 -> one typed activateLysis transaction
 -> private CertifiedLysisActivation capability
@@ -2395,9 +2411,10 @@ There is one bounded `ResultChunkV1` codec and one constant-size result
 preimage, both defined normatively in section 8.2. This section does not
 redefine them.
 
-Every validator domain's separate compute process decodes the complete chunk
-catalog and recomputes every root, count, conservation total and event summary
-before asking its node to attest. The node's closed attestation gate verifies
+Every validator domain's separate compute process uses the closed typed
+finalizer to decode the complete chunk/artifact catalogs and recompute every
+root, count, conservation total and event summary before asking its node to
+attest. The node's closed attestation gate verifies
 only the constant-size result/job binding and sign-once subject; it never scans
 bulk chunks. The activation verifier reconstructs the committed
 `ActivationPayloadV1` and verifies its certified old-root-to-new-root
@@ -3192,9 +3209,9 @@ credit/take semantics.
 
 Rollout order:
 
-1. split current Lysis into pure `execute_lysis` and the typed
-   `apply_certified_lysis` module; add the PoC consensus state/codec under an
-   explicit devnet fork;
+1. split current Lysis into pure `execute_lysis`, closed typed result
+   finalization and the typed `apply_certified_lysis` module; add the PoC
+   consensus state/codec under an explicit devnet fork;
 2. run four node/supervisor/exporter/worker deployments plus an untrusted relayer
    and pass the complete section 1.6 acceptance story;
 3. run native/reference differential Lysis and deterministic 1/2/4-worker tests;

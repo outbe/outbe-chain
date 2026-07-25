@@ -248,9 +248,12 @@ no-gap/no-overlap coverage before CAS adoption, and an independent corpus
 remains mandatory. The `S+1` fixture must place its last Tribute in shard 2; a
 missing shard or result chunk prevents reduction and signing.
 
-The node reloads finalized job/export state, validates every bounded
-`ResultChunkV1` plus the constant-size `LysisResultV1`, and derives
-`ResultDigest` itself. A node-only epoch-1 OCOMP key writes an immutable
+The validator domain's separate compute plane validates every bounded
+`ResultChunkV1`, reduces to `RootReduceSummaryV1` and invokes the pure typed
+`LysisProgramV1` finalizer over exact durable verified catalogs. The node
+reloads finalized job/export state, validates only the constant-size closed
+`LysisResultV1` bindings/equations and derives `ResultDigest` itself; it never
+scans bulk chunks or reruns Lysis. A node-only epoch-1 OCOMP key writes an immutable
 OCB1 sign-once record with file fsync, no-clobber hard-link publication and
 directory fsync before releasing its deterministic low-`s` signature. Existing
 best-effort JSON journals are explicitly not reused. The relay accepts bounded
@@ -264,6 +267,13 @@ semantic roots, and `unit_artifact_root` excludes only the final
 `ROOT_REDUCE` carrier to avoid self-reference. New interval/input/output,
 coverage, validator-identity, committee and sign-once hash formulas are recorded
 in the protocol freeze.
+
+The later A′ review closes the final-result authority gap: bounded
+`ROOT_REDUCE` emits `RootReduceSummaryV1`, not `LysisResultV1`; the supervisor
+hosts but cannot parameterize the closed program finalizer; and the finalizer
+derives unit/chunk/fraction/prefix roots from bounded cursors over exact durable
+admission. Passing the complete catalog through `RunUnitV1` was rejected because
+it expands the worker/control seam without adding Byzantine evidence.
 
 The consistency pass additionally fixes raw-ordinal coverage as an exact
 list-kind root, gives Fidelity its own canonical opening-index range, and pads

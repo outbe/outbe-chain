@@ -40,6 +40,8 @@ JobId + authenticated input
   -> bounded ShuffleRunArtifactV1 trees for owner/bucket runs
   -> fixed streaming reduction tree/order
   -> bounded ResultChunkV1 objects
+  -> bounded RootReduceSummaryV1
+  -> pure LysisProgramV1 finalization over exact verified catalogs
   -> LysisResultV1(result_chunk_count, result_chunk_list_root)
   -> ActivationPayloadV1 / ResultDigest
 ```
@@ -85,9 +87,9 @@ Owner and bucket shuffle outputs use the Lysis-specific
 object is embedded as the bounded `canonical_output_bytes` of the producing
 `UnitArtifactV1`. A leaf carries at most 256 canonically ordered owner or bucket
 records. A node carries exactly two content-addressed child references plus
-their adjacent page/record summaries. Odd subtrees are promoted unchanged, so
-there are no unary nodes. The split for every non-leaf page span is canonical,
-which makes the tree independent of worker count and completion order.
+their adjacent page/record summaries. The split for every non-leaf page span is
+canonical and never creates a unary page-tree node, which makes the tree
+independent of worker count and completion order.
 Descendants are individually bounded OCB1 objects in validator-local CAS.
 Consumers verify every referenced object's digest, OCB1 kind, job/unit/run
 binding, canonical split, page and record adjacency, exact count, order,
@@ -127,6 +129,31 @@ A unit may run zero or many times. Only a digest-valid artifact for its exact
 workers plus randomized completion/retry order must produce byte-identical plan,
 result and digest.
 
+### Typed result finalization
+
+The final `ROOT_REDUCE` worker emits a bounded
+`RootReduceSummaryV1`; it does not emit `LysisResultV1` and does not receive the
+complete artifact catalog or canonical `JobIntentV1` through `RunUnitV1`.
+
+After every required unit and result chunk is durably `VERIFIED`, the supervisor
+hosts one pure `LysisProgramV1` finalizer. The finalizer:
+
+- reloads and validates the journaled canonical `FinalizedJobSpecV1`, plan and
+  exported-manifest binding;
+- enumerates artifacts in exact plan order and result chunks in exact chunk
+  order through bounded cursors;
+- reopens the exact CAS bytes and rechecks kind, digest, `UnitId`, specification
+  and semantic validation;
+- derives all catalog, fraction, prefix, result and event roots itself; and
+- emits canonical `LysisResultV1` or abstains.
+
+The finalizer accepts no caller-built `LysisResultV1` and no precomputed result
+root. Its semantic author is the pinned Lysis program; the supervisor is only
+the invocation/admission host. The finalizer is not a schedulable unit, new
+program, signer or generic framework. The final `ROOT_REDUCE` artifact remains
+excluded from `unit_artifact_root` to prevent self-reference, while its summary
+is bound through the semantic result and `ResultDigest`.
+
 ### PoC evidence profile
 
 The first devnet fixes:
@@ -145,7 +172,9 @@ The node owns a separate OCOMP signing key/epoch and an
 `OcompAttestationGate`. The supervisor and worker never receive the key or an
 arbitrary signing endpoint. Before signing, the gate reloads the finalized job,
 checks the pinned bundle/committee, reconstructs the canonical result digest,
-checks caps and program structure, and durably commits the sign-once record.
+checks constant-size caps, bindings, equations and program structure, and
+durably commits the sign-once record. It does not traverse bulk result chunks or
+repeat Lysis finalization.
 
 The sign-once subject binds at least:
 
@@ -160,10 +189,13 @@ subject is refused after restart as well as in one process.
 
 Any relay may collect announcements and submit the constant-size
 `LysisResultV1` commitment plus `ExecutionCertificateV1`. Result chunks remain
-authenticated content-addressed artifacts. Every signing validator must have
-validated complete chunk coverage and reduction before signing; no chunk has
-independent evidence weight. The relay has no signing key, exclusivity or
-trusted ordering role. Every node verifies:
+authenticated content-addressed artifacts. Before requesting its node's
+signature, every validator's separate compute plane must have validated
+complete chunk coverage and reduction. The node verifies only the closed
+constant-size signing subject; no chunk has independent evidence weight. A
+faulty compute plane may consume its own sign-once slot, but contributes at most
+that validator domain's one signature. The relay has no signing key,
+exclusivity or trusted ordering role. Every activation verifier verifies:
 
 - exact `ResultDigest` reconstruction;
 - distinct eligible committee indexes from the job-pinned snapshot;

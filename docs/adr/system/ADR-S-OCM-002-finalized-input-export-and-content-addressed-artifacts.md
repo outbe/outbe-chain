@@ -93,6 +93,13 @@ checks the expected digest, canonical length and manifest membership. A
 separate “check then reopen” is insufficient because it creates a
 time-of-check/time-of-use gap.
 
+The supervisor receives the canonical finalized `JobIntentV1` through the
+existing finalized-job control response and journals the complete
+`FinalizedJobSpecV1` before planning. The Lysis finalizer may consume only that
+durable, revalidated intent and the exact exported-manifest binding. A CAS
+object, local path or caller-provided scalar never substitutes for finalized
+job authority.
+
 The closed manifest covers the complete parent `JobId`. Work-shard range
 descriptors are derived from that manifest's canonical Tribute order; they do
 not create smaller competing snapshots. For `N` records and shard capacity

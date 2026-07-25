@@ -447,6 +447,10 @@ Leaf ordered-record roots use the frozen ordered-list construction; internal
 ordered-record roots use `OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1` over the node
 summary and two child roots, so every root is recomputed from bounded content.
 It does not introduce a generic artifact or program extension surface.
+The closed `ROOT_REDUCE` phase payload is bounded
+`RootReduceSummaryV1`; list kinds `11..13` commit result-chunk hashes, league
+fractions and Gratis leaf prefixes. `VerifiedLysisFinalizationInputsV1` is an
+internal typed Rust interface over bounded cursors, not a wire/control object.
 
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
 bundle/parent job; complete canonical shard coverage; q=3 distinct signers;
@@ -960,13 +964,16 @@ pass with real backends and no trusted Mongo/CAS assertion exists.
 **Depends on:** `OCM-01`, `OCM-04`, `OCM-11`, `OCM-13`.
 
 **Outcome:** one finalized manifest deterministically produces bounded
-`ResultChunkV1` objects and one constant-size `LysisResultV1`, independent of
-worker count, order and retries.
+`ResultChunkV1` objects, one bounded `RootReduceSummaryV1` and, through the pure
+typed finalizer, one constant-size `LysisResultV1`, independent of worker count,
+order and retries.
 
 **Files/symbols:**
 
-- `crates/core/lysis/src/program_v1/{planner,phases,reducers,result}.rs`;
-- `bin/outbe-ocomp` supervisor scheduler, worker runner and artifact adoption;
+- `crates/core/lysis/src/program_v1/{planner,phases,reducers,result}.rs`,
+  including `RootReduceSummaryV1` and `finalize_v1`;
+- `bin/outbe-ocomp` supervisor scheduler, worker runner, durable verified
+  admission and finalizer host;
 - plan/unit/result protocol types and vector fixtures.
 
 **Changes:** implement fixed bounded source ranges from
@@ -975,6 +982,15 @@ derivation, padded Fidelity tree, two-direction parallel prefix scan,
 bounded-run owner/bucket merge trees, result chunks and root reducer; verify
 producer membership/coverage before CAS adoption. No phase may collapse all
 `K` ranges into one unit or input vector.
+
+The final `ROOT_REDUCE` worker emits only bounded `RootReduceSummaryV1`.
+After all required artifacts/chunks are durably verified, the supervisor opens
+bounded exact-order cursors and invokes the closed
+`LysisProgramV1::finalize_v1`. The finalizer reloads canonical
+`FinalizedJobSpecV1`, manifest and plan authority, revalidates every streamed
+CAS object, derives all unit/chunk/fraction/prefix/result/event roots and emits
+`LysisResultV1`. It accepts no caller-built result/root/scalar and is neither a
+schedulable unit nor a generic program interface.
 
 Shuffle workers embed one bounded `ShuffleRunArtifactV1` root in their
 `UnitArtifactV1` and stage every bounded descendant by content digest. The
@@ -997,8 +1013,10 @@ leaf with preserved raw source coverage.
 zero/many executions allowed; ranges are adjacent/non-overlapping and cover all
 `N` manifest records exactly once; shard-cap+1 starts a second shard; only exact
 plan member participates; two different valid-looking artifacts cause
-abstention; no reduce-as-completed; worker identity/wall time/filesystem order
-are irrelevant.
+abstention; no reduce-as-completed; exact plan/chunk order rather than
+completion order drives finalization; missing, duplicate, reordered,
+substituted or conflicting catalog entries cause abstention; worker
+identity/wall time/filesystem order are irrelevant.
 
 **Fork impact:** none; pure/local work.
 
@@ -1006,31 +1024,44 @@ are irrelevant.
 entrypoint. Do not copy semantics into process code, count workers as voters or
 add generic DAG/program interfaces.
 
-**Test first:** `OCM-SEM-002` plan-commitment/lazy-reducer vectors including
-`S-1/S/S+1` shard boundaries plus synthetic 10,000/1,000,000,000 unit counts,
-and `OCM-DET-001` real 1/2/4-worker randomized kill/retry/order runs over the
-`S+1` multi-shard fixture.
+**Test first:** implement vertical behavioral slices through public Rust
+interfaces: `OCM-SEM-002` plan-commitment/lazy-reducer vectors including
+`S-1/S/S+1` shard boundaries plus synthetic 10,000/1,000,000,000 unit counts;
+then `OCM-DET-001` real 1/2/4-worker randomized kill/retry/order runs over the
+`S+1` multi-shard fixture. Add behavioral cases for missing/duplicate/reordered/
+substituted artifact or chunk, changed finalized intent scalar, stale manifest,
+included final carrier, malformed summary, exact replay and conflicting retry.
+Crash after CAS-before-journal and journal-before-finalize must restart to the
+same result. No test may inspect source text.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; seed/operation schedule, UnitSpecs,
-artifacts, coverage roots, result bytes and digest equality.
+artifacts, durable admission catalog, reduction-summary bytes, coverage/catalog
+roots, result bytes and digest equality.
 
 **Observable acceptance:** the same `S+1`-Tribute JobId places the last Tribute
 in shard 2 and under 1, 2 and 4 workers produces byte-identical
-plan/result/digest matching the independent Lysis corpus.
+plan/summary/result/digest matching the independent Lysis corpus. A synthetic
+1,000,000,000-Tribute plan/catalog traversal uses bounded cursor memory and does
+not allocate a population-sized vector.
 
-**Risks:** hidden completion-order or hash self-reference.
-Mitigation: fixed tree width/order, producer UnitIds and final root carrier
-exclusion.
+**Risks:** hidden completion-order, trusted result-field injection, unbounded
+catalog materialization or hash self-reference. Mitigation: fixed tree
+width/order, producer UnitIds, typed finalizer-owned derivation, bounded cursors
+and final root carrier exclusion.
 
-**DoD:** both deterministic tests pass across real worker processes; no worker
-has node/Mongo/key/write-CAS authority.
+**DoD:** deterministic and negative/restart tests pass across real worker
+processes; finalizer output is byte-identical for exact replay; no worker has
+node/Mongo/key/write-CAS authority; supervisor has no signing authority and
+cannot inject a precomputed result root.
 
 ### OCM-15 — Add node-owned OCOMP keys, attestation and sign-once
 
 **Depends on:** `OCM-04`, `OCM-09`, `OCM-14`.
 
 **Outcome:** a node independently reloads and validates a candidate, then
-releases at most one durable signature for one exact job attempt.
+releases at most one durable signature for one exact job attempt. Independent
+means finalized intent/export authority and constant-size bindings/equations;
+the node does not read result chunks or rerun Lysis.
 
 **Files/symbols:**
 
@@ -1042,7 +1073,9 @@ releases at most one durable signature for one exact job attempt.
 **Changes:** separate secp256k1 OCOMP key type/epoch, proof-of-possession
 artifacts, exact 64-lowercase-hex-plus-LF owner-only secret file, candidate
 reload/reconstruction, cap/program checks and create/write/file-fsync/
-no-clobber-link/directory-fsync-before-response protocol.
+no-clobber-link/directory-fsync-before-response protocol. The gate recomputes
+the signing subject and `ResultDigest` from canonical candidate bytes; it does
+not claim to prove opaque catalog bodies it does not read.
 
 **Invariants/failures:** compute processes never access key; caller supplies no
 arbitrary digest/purpose; exact retry returns recorded signature; different
@@ -1058,13 +1091,16 @@ Do not reuse EVM/consensus/TEE keys, current best-effort JSON journals or expose
 a generic signing endpoint.
 
 **Test first:** `OCM-SIG-001` fault after every persistence boundary, exact
-retry, equivocation and restart.
+retry, equivocation and restart, plus rejected stale/wrong intent, export,
+bundle, committee, deadline, arithmetic and result bindings.
 
 **Evidence/CI:** `OCM-INT`; key public identity/epoch, candidate/digest,
 sign-once exact bytes, fsync boundary and typed refusal.
 
 **Observable acceptance:** one domain signs the independently reconstructed
-ResultDigest; a second digest is refused before and after node restart.
+ResultDigest; a second digest is refused before and after node restart. A
+malicious internally consistent opaque catalog claim can consume at most its
+faulty domain's one sign-once slot and cannot form `q=3`.
 
 **Risks:** signature released before durable record. Mitigation: response is
 strictly after directory fsync and startup reconciliation.

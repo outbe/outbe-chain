@@ -27,7 +27,9 @@ finalized JobId + verified InputManifestV1
   -> local scheduler runs them in any order allowed by the derived DAG
   -> phase verifier accepts only exact producer-bound artifacts
   -> fixed streaming reducers publish bounded ResultChunkV1 objects
-  -> ROOT_REDUCE produces constant-size LysisResultV1
+  -> ROOT_REDUCE produces bounded RootReduceSummaryV1
+  -> pure LysisProgramV1 finalizer streams exact verified catalogs
+  -> finalizer produces constant-size LysisResultV1
   -> supervisor sends the result commitment with constant-size chunk count/root
   -> node reloads the finalized job/export binding and reconstructs ResultDigest
   -> node durably installs one SignOnceRecordV1
@@ -171,6 +173,8 @@ K x ENUMERATE
   -> bounded OWNER_SHUFFLE run/merge tree
   -> bounded BUCKET_SHUFFLE run/merge tree
   -> padded binary ROOT_REDUCE tree
+  -> RootReduceSummaryV1
+  -> typed streaming finalization
   -> LysisResultV1
 ```
 
@@ -195,8 +199,10 @@ child summaries and emits child prefixes. Leaves therefore learn their exact
 incoming remaining Gratis without any unit reading all `K` segments.
 
 `ROOT_REDUCE` uses the same fixed padded binary topology. Each unit consumes at
-most two child commitments; only the final root unit emits
-`LysisResultV1`. No input vector grows with `K`.
+most two child commitments; only the final root unit emits bounded
+`RootReduceSummaryV1`. The later typed finalizer consumes catalogs through
+bounded cursors. No worker input vector or finalizer allocation grows with
+`K`.
 
 `OWNER_SHUFFLE` and `BUCKET_SHUFFLE` first emit one bounded sorted run per
 primary range, then merge adjacent run spans in a fixed binary hierarchy.
@@ -456,26 +462,29 @@ materialization; bucket output is never empty.
 
 ### 4.9 `ROOT_REDUCE`
 
-Leaf units consume one finalized-output/result chunk plus the matching
-owner/bucket commitments. Internal units consume at most two child root
-artifacts. All inputs are position-bound by the derived `UnitSpecV1`.
+Leaf units consume one finalized-output artifact plus the matching
+owner/bucket commitments, emit the primary shard's bounded `ResultChunkV1` and
+commit its hash in the leaf summary. Internal units consume at most two child
+root artifacts. All inputs are position-bound by the derived `UnitSpecV1`.
 
 Across the fixed tree the phase:
 
 - verifies producer artifacts and gap-free source/output coverage;
-- streams the ordered unit-artifact and result-chunk catalog roots;
-- constructs output roots, counts and conservation totals;
-- reconstructs the semantic event summary;
-- computes the arithmetic commitment;
-- emits the constant-size canonical `LysisResultV1` only at the root.
+- combines adjacent result-chunk subtree carriers;
+- constructs output roots, exact counts and computation-derived totals;
+- combines the semantic action/event carriers; and
+- emits bounded canonical `RootReduceSummaryV1` only at the root.
 
-The result's `unit_artifact_root` excludes the final `ROOT_REDUCE` carrier to
-avoid a self-reference. `PlanHash` still commits its derivation rule and primary
-unit catalog.
+`ROOT_REDUCE` does not receive canonical `JobIntentV1`, the complete artifact
+catalog or a population-sized input vector, and it does not emit
+`LysisResultV1`. The result's later `unit_artifact_root` excludes the final
+`ROOT_REDUCE` carrier to avoid a self-reference. `PlanHash` still commits its
+derivation rule and primary unit catalog; the final summary is committed by the
+semantic result and `ResultDigest`.
 
-## 5. Scheduler and local verification
+## 5. Scheduler, admission and typed finalization
 
-The supervisor scheduler owns only operational state:
+The supervisor scheduler submodule owns operational state:
 
 ```text
 PENDING -> LEASED(slot, lease_generation) -> VERIFIED
@@ -506,6 +515,36 @@ mismatch. Neither is selected by majority or completion time; the local domain
 abstains and retains only digests, counts, phase and failure code in normal
 diagnostics.
 
+Artifact adoption also durably records
+`(JobId, attempt, PlanHash, plan_ordinal, UnitId, UnitArtifactDigest, CAS ref)`.
+An entry becomes visible to finalization only after the artifact and journal
+record are durable. Exact replay returns the adopted entry; a second valid byte
+sequence for the same `UnitId` causes abstention and is never overwritten.
+
+After all plan units and result chunks are durably `VERIFIED`, the supervisor
+hosts the pure typed `LysisProgramV1::finalize_v1` module. Its interface accepts
+typed revalidated finalized intent/manifest/plan authority,
+`RootReduceSummaryV1`, and bounded artifact/result-chunk cursors. It accepts no
+caller-built result, root or scalar override. The implementation:
+
+1. derives every expected `UnitSpecV1` from the plan in exact ordinal order;
+2. reloads each admitted artifact from CAS and rechecks digest, spec, `UnitId`
+   and semantic validation;
+3. excludes only the final `ROOT_REDUCE` carrier while constructing
+   `unit_artifact_root`;
+4. traverses final fixed-reduce and Gratis prefix-down outputs to construct
+   their frozen ordered roots;
+5. traverses result chunks in exact ordinal order, checks deterministic Nod and
+   contributor slicing, and constructs `result_chunk_list_root`;
+6. combines only computation-derived values from `RootReduceSummaryV1` with
+   finalized frozen scalars from canonical `JobIntentV1`;
+7. derives the completion, conservation, arithmetic and event commitments; and
+8. emits canonical `LysisResultV1` or abstains.
+
+This module belongs to the closed Lysis program. It is not a schedulable unit,
+second program, generic finalizer interface or signer. The supervisor is its
+invocation/admission host, not the semantic author of result fields.
+
 The reference implementation is the isolated test-only Rust crate selected by
 ticket #3. It has no dependency on production Lysis, Outbe domain crates,
 Alloy or shared arithmetic helpers. It consumes the canonical semantic corpus,
@@ -520,7 +559,8 @@ The PoC does not import a MapReduce framework.
 ## 6. Result reconstruction at the trust boundary
 
 The supervisor cannot choose an arbitrary digest or signing purpose. After its
-compute domain has verified complete chunk coverage, it sends
+compute domain has completed typed finalization over exact durable admission,
+it sends
 `RequestAttestationV1` with constant-size `LysisResultV1`.
 
 The node `OcompAttestationGate` independently:
@@ -536,7 +576,8 @@ The node `OcompAttestationGate` independently:
    `input_manifest_hash` equality;
 8. canonical-decodes and re-encodes the constant-size result commitment;
 9. verifies `PlanHash`, non-empty result-chunk count/root, exact summary
-   equations, job bindings, conservation and arithmetic/event commitments;
+   equations, finalized intent/result bindings, conservation and
+   arithmetic/event commitment rehashing;
 10. reconstructs `ActivationPayloadV1` and `ResultDigest`;
 11. derives the one sign-once key from canonical state;
 12. invokes the closed result signer/store operation.
@@ -833,11 +874,18 @@ For one exact manifest:
 - duplicate exact completion;
 - stale lease/session completion;
 - retry on a different slot/process;
-- restart supervisor with verified CAS artifacts.
+- restart supervisor with verified CAS artifacts;
+- finalize forward, reverse and shuffled completion journals through the same
+  exact plan-order cursor;
+- remove, duplicate, reorder or substitute one admitted artifact/chunk;
+- mutate one finalized intent scalar or exported-manifest binding;
+- include the excluded final `ROOT_REDUCE` carrier;
+- crash after CAS publication, durable admission and partial finalization.
 
 Every run must produce identical plan bytes, ordered unit/result-chunk roots,
-`LysisResultV1` and `ResultDigest`. A retry count or PID must not appear in
-semantic bytes.
+`RootReduceSummaryV1`, `LysisResultV1` and `ResultDigest`. Every invalid
+catalog/authority case must abstain before attestation. A retry count or PID
+must not appear in semantic bytes.
 
 ### 11.3 Attestation/store vectors
 
@@ -888,13 +936,14 @@ crates/core/lysis/src/program_v1/
   input normalization
   exact planner
   phase execute/verify functions
-  result reconstruction
+  bounded RootReduceSummaryV1
+  pure typed result finalization/reconstruction
   no StorageHandle, node, UDS, CAS or signer
 
 bin/outbe-ocomp
   CAS adapters
-  scheduler journal and worker role
-  supervisor orchestration
+  scheduler/durable verified-admission journal and worker role
+  supervisor orchestration and typed finalizer host
   HTTP relay adapter
 
 crates/blockchain/node/src/ocomp/

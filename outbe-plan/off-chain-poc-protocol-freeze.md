@@ -612,6 +612,9 @@ List kinds are:
 | `8` | raw Tribute coverage `(raw_ordinal, tribute_id)` |
 | `9` | Fidelity authenticated openings |
 | `10` | Oracle authenticated openings |
+| `11` | result-chunk hashes |
+| `12` | Lysis league fractions |
+| `13` | Lysis Gratis leaf prefixes |
 
 For list kind `k` and canonical item bytes `item_i`:
 
@@ -1182,10 +1185,10 @@ an unknown future output digest is never represented by a zero or placeholder.
 For `OWNER_SHUFFLE` and `BUCKET_SHUFFLE`,
 `UnitArtifactV1.canonical_output_bytes` is exactly one canonical
 `ShuffleRunArtifactV1` root. Each leaf has at most 256 records. Internal nodes
-contain exactly two content-addressed child references; an odd last subtree is
-promoted unchanged. Page spans start at zero for a root, are adjacent, and use
-the unique largest-power-of-two canonical split. Child summaries bind page
-span, first record ordinal, record count and ordered-record root. A leaf
+contain exactly two content-addressed child references. Page spans start at
+zero for a root, are adjacent, and use the unique largest-power-of-two
+canonical split. Child summaries bind page span, first record ordinal, record
+count and ordered-record root. A leaf
 `ordered_record_root` is the frozen ordered-list root for its canonical owner
 or bucket records. A node `ordered_record_root` is
 `H(OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1,
@@ -1302,6 +1305,58 @@ self-referential result/artifact digest. The `ROOT_REDUCE` specification is
 still committed by `PlanHash`, and its complete output is committed by the
 activation result/digest.
 
+`ROOT_REDUCE` canonical output is a closed Lysis phase payload:
+
+```text
+LysisListSubtreeCarrierV1 {
+  list_kind: enum u16 = NOD(1) | BUCKET(2) | CONTRIBUTOR(3) |
+                        OUTPUT_MANIFEST(4) | RESULT_CHUNK_HASH(11),
+  start_ordinal: u32,
+  real_count: u32,
+  subtree_height: u16,
+  subtree_index: u32,
+  tree_root: Hash
+}
+
+RootReduceSummaryV1 {
+  protocol_bundle_hash: Hash,
+  JobId: Hash,
+  attempt: u32,
+  PlanHash: Hash,
+  covered_primary_start: u32,
+  covered_primary_count: u32,
+  nod_actions: LysisListSubtreeCarrierV1,
+  bucket_records: LysisListSubtreeCarrierV1,
+  contributor_actions: LysisListSubtreeCarrierV1,
+  output_manifest_entries: LysisListSubtreeCarrierV1,
+  result_chunk_hashes: LysisListSubtreeCarrierV1,
+  tribute_count: u32,
+  nod_count: u32,
+  bucket_count: u32,
+  contributor_count: u32,
+  tribute_nominal_total: U256,
+  eligible_nominal_total: U256,
+  nod_gratis_consumed: U256,
+  nod_cost_total: U256,
+  first_error_ordinal: Option<u32>
+}
+```
+
+A leaf covers one exact primary shard. An internal `ROOT_REDUCE` unit accepts
+only adjacent equal-height summaries at its two producer positions, combines
+each list carrier with the frozen ordered-list node formula, checked-adds
+counts/totals and selects the lowest error ordinal. Canonical padded leaves
+contain the position-bound empty carriers and zero totals. The final summary
+must cover all primary shards exactly once. Its carriers are wrapped with the
+frozen list-root formula only after their exact final counts/heights have been
+validated.
+
+`RootReduceSummaryV1` intentionally contains no `unit_artifact_root`,
+`fidelity_fraction_root`, `gratis_prefix_root`, finalized Metadosis scalar,
+carry-over action, arithmetic commitment, event summary or caller-selected
+result root. Those fields require authority outside one worker's bounded
+producer set and are derived only by the typed finalizer below.
+
 ### 5.5 Actions and result
 
 ```text
@@ -1366,9 +1421,35 @@ ResultChunkV1 {
 Within each result chunk, Nod actions are strictly ordered by
 `(raw_ordinal, tribute_id)`, ordinals are gap-free from
 `first_nod_ordinal`, and IDs/owners are unique. Contributors are strictly
-ordered by `(owner, source_tribute_id)`. The ordered chunk catalog proves global
-gap-free coverage and ordering. The bucket list used for `bucket_root` is
-derived from Nod actions and sorted by `(bucket_key, raw_ordinal)`.
+ordered by `(owner, source_tribute_id)`.
+
+There is exactly one result chunk per primary work shard. For chunk ordinal
+`i`, `first_nod_ordinal = i * max_tributes_per_work_shard`; its Nod slice is the
+corresponding raw primary range. Its contributor slice is
+`[i * max_contributor_actions_per_result_chunk,
+ min((i + 1) * max_contributor_actions_per_result_chunk,
+ contributor_count))` of the final globally owner-sorted contributor stream. A
+contributor slice is empty only after that stream is exhausted. Thus no
+separate caller-provided contributor offset is needed. Chunk ordinals start at
+zero, are gap-free, and the last chunk is the unique primary-tail chunk.
+
+The PoC capacity profile fixes
+`max_nod_actions_per_result_chunk =
+max_contributor_actions_per_result_chunk =
+max_tributes_per_work_shard = 256`; changing that equality is a bundle/version
+change because it changes chunk slicing.
+
+`result_chunk_list_root` is list-kind `11` over the exact 32-byte
+`ResultChunkHash` values in chunk ordinal order.
+`fidelity_fraction_root` is list-kind `12` over canonical
+`LeagueFractionV1` records in strictly increasing league order.
+`gratis_prefix_root` is list-kind `13` over canonical `GratisLeafPrefixV1`
+records in segment ordinal order. The typed finalizer constructs these roots
+from verified bytes; none is accepted as an input field.
+
+The ordered chunk catalog proves global gap-free Nod and contributor coverage
+and ordering. The bucket list used for `bucket_root` is derived from Nod actions
+and sorted by `(bucket_key, raw_ordinal)`.
 
 ```text
 ExactCountsV1 {
@@ -1465,6 +1546,45 @@ arithmetic_commitment = H(
 The summary is reconstructed from the explicit result fields. A local failed
 execution is never signed or activated and therefore has no
 `LysisResultV1`.
+
+### 5.5.1 Closed Lysis result finalizer
+
+`LysisProgramV1::finalize_v1` is an internal typed module interface, not an
+OCB1/control message and not a program registry:
+
+```text
+VerifiedLysisFinalizationInputsV1 {
+  finalized_job_spec: verified canonical FinalizedJobSpecV1,
+  input_manifest: verified InputManifestV1,
+  plan: verified PlanCommitmentV1,
+  root_reduce_summary: verified RootReduceSummaryV1,
+  unit_artifacts: exact-plan-order bounded cursor,
+  result_chunks: exact-chunk-order bounded cursor
+}
+
+finalize_v1(VerifiedLysisFinalizationInputsV1)
+  -> LysisResultV1 | deterministic abstention
+```
+
+The cursors yield at most one bounded object at a time and cannot be encoded
+inside `RunUnitV1`. The finalizer rederives every expected ordinal/spec, reopens
+and validates the corresponding CAS bytes, rejects missing, duplicate,
+reordered, substituted or conflicting entries, and computes:
+
+1. list-kind `7` `unit_artifact_root`, excluding only the final
+   `ROOT_REDUCE` artifact;
+2. list-kind `11` `result_chunk_list_root`;
+3. list-kind `12` `fidelity_fraction_root`;
+4. list-kind `13` `gratis_prefix_root`;
+5. final list roots/counts/totals from `RootReduceSummaryV1`;
+6. carry-over and completion fields from canonical finalized intent plus
+   computation-derived totals; and
+7. arithmetic and semantic event commitments from the resulting explicit
+   fields.
+
+It accepts no precomputed item above. Partial output is non-authoritative and
+never signable. Replay after a crash over the same immutable CAS/catalog state
+must produce byte-identical `LysisResultV1`.
 
 ### 5.6 Committee, certificate and activation
 

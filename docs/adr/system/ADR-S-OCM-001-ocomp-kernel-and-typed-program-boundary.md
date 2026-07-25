@@ -46,6 +46,7 @@ The kernel and program own different truths:
 | pending, expiry and terminal lifecycle shell | program-specific preconditions, capacity claims and cleanup |
 | process/control-plane boundaries | authenticated input schema and completeness |
 | artifact addressing, leases and retry mechanics | planner, units, reducer and semantic ordering |
+| verified-admission journal and bounded catalog cursors | pure typed finalizer and every result-field derivation |
 | committee snapshot, sign-once and evidence envelope | typed result, equations and result verifier |
 | outer activation checkpoint and closed dispatch | private effect capability, owner calls and receipts |
 | protocol compatibility and readiness | domain-visible output and recovery contract |
@@ -69,7 +70,8 @@ One validator domain contains:
 - `outbe-chain`, which owns consensus, finalized job state, OCOMP attestation
   authority and activation verification;
 - a separate unprivileged OCOMP supervisor, which discovers work, plans,
-  schedules and journals but owns no chain writer or signing key;
+  schedules and journals, then hosts the closed program's pure finalizer after
+  complete verified admission, but owns no chain writer or signing key;
 - a separate read-only snapshot exporter;
 - sandboxed retryable workers; and
 - untrusted content-addressed artifact storage.
@@ -90,6 +92,8 @@ one finalized JobIntent / JobId over N Tribute
   -> PlanCommitmentV1 commits X = ceil(N / S) and the work-unit root
   -> bounded local worker pool lazily derives and executes every shard
   -> fixed streaming reducer commits bounded ResultChunkV1 objects
+  -> final ROOT_REDUCE worker emits bounded RootReduceSummaryV1
+  -> LysisProgramV1 pure finalizer streams the verified catalogs
   -> LysisResultV1 commits the complete result-chunk catalog root
 ```
 
@@ -108,7 +112,10 @@ are bounded.
 | consensus job state and finality binding | OCOMP kernel inside block execution |
 | local job discovery/lease/attestation control | bounded versioned `OcompControlV1` |
 | bulk input/result bytes | authenticated CAS objects, never control messages |
+| exact admitted artifact/chunk order | plan-derived, durable supervisor catalog cursors |
 | Lysis semantics and result meaning | ADR-C-LYS-001 and the pinned Lysis bundle |
+| result construction | pure `LysisProgramV1` finalizer; supervisor is only its host |
+| result signature | node-owned `OcompAttestationGate`; never the finalizer host |
 | Metadosis trigger/status | ADR-C-MET-001 |
 | effect mutations | domain-owner certified methods, never kernel raw storage |
 | deployment/readiness/failure reporting | ADR-B-SUP-001 and ADR-B-OPS-001 |
@@ -117,6 +124,12 @@ are bounded.
 
 - OCOMP failure cannot stop consensus or mutate domain state.
 - A supervisor, exporter, worker, CAS or relay owns no consensus authority.
+- The supervisor may invoke the Lysis finalizer but cannot supply precomputed
+  result fields or roots; the finalizer derives them from typed finalized
+  authority and exact durable verified catalogs.
+- A final `ROOT_REDUCE` worker emits a bounded summary, not
+  `LysisResultV1`, and receives no population-sized catalog through the control
+  plane.
 - Worker count never increases evidence weight.
 - A worker-shard capacity limits one invocation, not the Tribute population
   covered by the parent Job Intent.
