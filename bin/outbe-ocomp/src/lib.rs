@@ -5,6 +5,7 @@ pub mod bucket_shuffle_cursor;
 pub mod bundle;
 pub mod cas;
 pub mod control;
+pub mod export_binding;
 pub mod exporter;
 pub mod inbox;
 pub mod input_artifacts;

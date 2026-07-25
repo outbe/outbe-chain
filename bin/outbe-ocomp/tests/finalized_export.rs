@@ -38,14 +38,20 @@ use outbe_node::ocomp::{
     verify_lysis_openings,
 };
 use outbe_ocomp::{
-    cas::{CasLimits, CasWriterRole, FilesystemCas},
+    cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::{effective_uid, poc_schema_limits, EndpointIdentity},
+    export_binding::{
+        ExportBindingCandidate, ExportBindingError, ExportBindingSealOutcome,
+        ExportedManifestBindingStore,
+    },
     exporter::FinalizedTributeSource,
     input_artifacts::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
         InputArtifactIdentity,
     },
+    input_ref_catalog::VerifiedInputChunkRefCatalog,
     snapshot_client::{SnapshotExporterNodeClient, SnapshotExporterNodeConfig},
+    supervisor::DiscoveryRecord,
 };
 use outbe_ocomp_protocol::local_control::{ClientPolicy, ControlClientSession};
 use outbe_ocomp_protocol::{
@@ -57,8 +63,10 @@ use outbe_ocomp_protocol::{
         NodTargetPreconditionV1, TributeInputBindingV1,
     },
     opening::{partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1},
-    CommitSnapshotExportV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, NodeMessageKind,
-    OpenSnapshotLeaseV1, RenewSnapshotLeaseV1, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    CasObjectRefV1, CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1,
+    ListFinalizedJobsResponseV1, ListFinalizedJobsV1, NodeMessageKind, ObjectKind,
+    OpenSnapshotLeaseV1, RenewSnapshotLeaseV1, SnapshotExportCommittedV1, SnapshotHandoffV1,
+    MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use outbe_offchain_data::{
     FinalizedBlock, FinalizedLog, FinalizedReceipt, OffchainDataProjection, ProjectionConfig,
@@ -286,7 +294,7 @@ fn ocm_exp_001_child() {
         .expect("commit exact manifest hash to node-owned finalized pin");
 
     println!(
-        "OCM_EXP_OPENED={}:{}:{}:{}:{}:{}:{}:{}:{}",
+        "OCM_EXP_OPENED={}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
         hex::encode(acknowledgement.encode_fixed()),
         closure.collection_root,
         closure.exact_leaf_count,
@@ -295,6 +303,8 @@ fn ocm_exp_001_child() {
         fidelity_slot_count,
         oracle_slot_count,
         published.manifest_hash,
+        published.manifest_ref.transport_digest,
+        published.manifest_ref.encoded_bytes,
         committed.record_hash,
     );
 }
@@ -356,6 +366,17 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let finalized_block = proof_fixture.block.clone();
     let block_hash = proof_fixture.header_hash;
     assert_eq!(finalized_block.block_hash(), block_hash);
+    let finalized_spec = FinalizedJobSpecV1 {
+        summary: FinalizedJobSummaryV1 {
+            cursor: 1,
+            job_id: proof_fixture.job_id,
+            intent_id: proof_fixture.intent_id,
+            finalized_block_hash: block_hash,
+            finalized_state_root: proof_fixture.state_root,
+            protocol_bundle_hash: endpoint_identity().protocol_bundle_hash,
+        },
+        canonical_job_intent: proof_fixture.proof.canonical_job_intent.clone(),
+    };
     project_tribute_bodies(mongo_storage.clone(), block_hash, &bodies);
     let ahead_projection_hash = B256::repeat_byte(0x44);
     project_empty_block(mongo_storage.clone(), 2, ahead_projection_hash);
@@ -519,6 +540,16 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         .parse::<B256>()
         .expect("manifest hash is B256");
     assert!(!manifest_hash.is_zero());
+    let manifest_transport_digest = fields
+        .next()
+        .expect("manifest transport digest")
+        .parse::<B256>()
+        .expect("manifest transport digest is B256");
+    let manifest_encoded_bytes = fields
+        .next()
+        .expect("manifest encoded bytes")
+        .parse::<u64>()
+        .expect("manifest encoded bytes is u64");
     let commit_record_hash = fields
         .next()
         .expect("snapshot export commit record hash")
@@ -532,6 +563,75 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
             .export_lease_status(handoff.lease_generation)
             .expect("lease status"),
         ExportLeaseStatus::Opened
+    );
+
+    let cas_limits = CasLimits {
+        max_object_bytes: 1_048_576,
+        max_total_bytes: 64 * 1_048_576,
+    };
+    let cas_root = directory.path().join("ocomp-cas-v1");
+    let supervisor_cas = FilesystemCas::open(&cas_root, CasWriterRole::Supervisor, cas_limits)
+        .expect("open supervisor CAS writer");
+    let cas_reader =
+        FilesystemCasReader::open(&cas_root, cas_limits).expect("open supervisor CAS reader");
+    let manifest_ref = CasObjectRefV1 {
+        transport_digest: manifest_transport_digest,
+        encoded_bytes: manifest_encoded_bytes,
+        expected_ocb1_kind: Some(ObjectKind::InputManifestV1.tag()),
+    };
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        directory.path().join("ocomp-input-refs-v1"),
+        &cas_reader,
+        poc_schema_limits(),
+        poc_input_list_limits(),
+    )
+    .expect("reopen exact exported input-ref catalog");
+    let discovery = DiscoveryRecord {
+        generation: 1,
+        cursor: finalized_spec.summary.cursor,
+        spec: finalized_spec,
+    };
+    let committed = SnapshotExportCommittedV1 {
+        job_id,
+        pin_generation: handoff
+            .pin_generation
+            .checked_add(1)
+            .expect("fixture exported generation"),
+        record_hash: commit_record_hash,
+    };
+    let protocol_bundle = support::protocol_bundle();
+    let binding_root = directory.path().join("supervisor-export-binding-v1");
+    let verified_binding = {
+        let mut binding_store =
+            ExportedManifestBindingStore::open(&binding_root, poc_schema_limits())
+                .expect("open supervisor export-binding store");
+        let candidate = || ExportBindingCandidate {
+            discovery: &discovery,
+            handoff: &handoff,
+            manifest_ref: &manifest_ref,
+            committed: &committed,
+            bundle: &protocol_bundle,
+            input_refs: &input_refs,
+        };
+        let (outcome, first) = binding_store
+            .seal(&supervisor_cas, &cas_reader, candidate())
+            .expect("seal node-committed manifest authority");
+        assert_eq!(outcome, ExportBindingSealOutcome::NewlySealed);
+        let (outcome, replayed) = binding_store
+            .seal(&supervisor_cas, &cas_reader, candidate())
+            .expect("exact binding seal replay");
+        assert_eq!(outcome, ExportBindingSealOutcome::ExactReplay);
+        assert_eq!(replayed.binding_ref(), first.binding_ref());
+        replayed
+    };
+    let mut binding_store = ExportedManifestBindingStore::open(&binding_root, poc_schema_limits())
+        .expect("restart supervisor export-binding store");
+    let restarted_binding = binding_store
+        .load_exact(&cas_reader, &discovery, &protocol_bundle, &input_refs)
+        .expect("reload exact content-addressed export binding");
+    assert_eq!(
+        restarted_binding.binding_ref(),
+        verified_binding.binding_ref()
     );
 
     // A valid canonical Mongo body under the same identity is still only
@@ -587,13 +687,11 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     })
     .expect("connect restarted exporter control");
     let replayed = restarted_exporter
-        .commit(CommitSnapshotExportV1 {
-            job_id,
-            pin_generation: handoff.pin_generation,
-            lease_generation: handoff.lease_generation,
-            manifest_hash,
-        })
+        .commit(restarted_binding.commit_replay_request())
         .expect("lost commit response replays from durable exported state after restart");
+    restarted_binding
+        .require_exact_node_replay(&replayed)
+        .expect("restarted node confirms the exact durable export binding");
     assert_eq!(replayed.job_id, job_id);
     assert_eq!(
         replayed.pin_generation,
@@ -603,6 +701,33 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
             .expect("fixture export generation")
     );
     assert_eq!(replayed.record_hash, commit_record_hash);
+
+    let conflicting_commit = SnapshotExportCommittedV1 {
+        record_hash: B256::repeat_byte(0xFE),
+        ..committed
+    };
+    assert!(matches!(
+        binding_store.seal(
+            &supervisor_cas,
+            &cas_reader,
+            ExportBindingCandidate {
+                discovery: &discovery,
+                handoff: &handoff,
+                manifest_ref: &manifest_ref,
+                committed: &conflicting_commit,
+                bundle: &protocol_bundle,
+                input_refs: &input_refs,
+            },
+        ),
+        Err(ExportBindingError::ConflictingBinding)
+    ));
+    drop(binding_store);
+    let abstained = ExportedManifestBindingStore::open(&binding_root, poc_schema_limits())
+        .expect("restart conflicted export-binding store");
+    assert!(matches!(
+        abstained.load_exact(&cas_reader, &discovery, &protocol_bundle, &input_refs),
+        Err(ExportBindingError::Abstained)
+    ));
 }
 
 fn run_exporter_child(
