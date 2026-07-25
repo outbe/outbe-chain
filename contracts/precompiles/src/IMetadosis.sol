@@ -6,6 +6,16 @@ interface IMetadosis {
         uint32 indexed date, uint256 dayMetadosisLimitAmount, uint256 totalAccumulated, uint64 blockNumber
     );
 
+    event OcompDayLimitFormed(
+        uint32 indexed worldwideDay,
+        uint256 baseLimit,
+        uint256 carryOverBefore,
+        uint256 carryOverTaken,
+        uint256 carryOverAfter,
+        uint256 formedDayLimit,
+        uint64 blockNumber
+    );
+
     event WorldwideDayStarted(
         uint32 indexed worldwideDay,
         uint64 formingStart,

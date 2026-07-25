@@ -68,6 +68,22 @@ pub struct WorldwideDay {
     pub current_vwap: U256,
 }
 
+/// Minimal PoC state proving which carry-over was consumed into an immutable
+/// day limit. This is deliberately a separate append-only mapping so the
+/// established `WorldwideDay` width and every later consensus slot remain
+/// unchanged.
+#[storage_record(exists_field = formed)]
+pub struct OcompDayLimitFormationState {
+    #[key]
+    pub wwd: WorldwideDayKey,
+
+    #[attribute(order = 0)]
+    pub formed: bool,
+
+    #[attribute(order = 1, default = U256::ZERO)]
+    pub carry_over_taken: U256,
+}
+
 /// Fork-initialized OCOMP state owned by Metadosis for one WorldwideDay.
 ///
 /// The detailed pre-admission values remain owned by Tribute, Fidelity and
@@ -168,4 +184,10 @@ pub struct MetadosisContract {
     /// processing reads only its first key.
     #[attribute(order = 13)]
     pub ocomp_ready_index: outbe_primitives::storage::types::StorageBytes,
+
+    /// PoC day-limit formation state. Appended after all existing fields so
+    /// OCM finality proof paths and pre-fork storage offsets remain fixed.
+    #[attribute(order = 14)]
+    pub ocomp_day_limit_formations:
+        outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompDayLimitFormationState>,
 }

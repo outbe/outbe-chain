@@ -1451,6 +1451,88 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-21" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-promislimit",
+                    "-p",
+                    "outbe-metadosis",
+                    "-p",
+                    "outbe-emissionlimit",
+                    "-p",
+                    "outbe-cycle",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-evm",
+                    "--test",
+                    "ocomp_request_lifecycle",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-promislimit",
+                    "-p",
+                    "outbe-metadosis",
+                    "-p",
+                    "outbe-emissionlimit",
+                    "-p",
+                    "outbe-cycle",
+                    "-p",
+                    "outbe-evm",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                    "OCM-CRT-001",
+                    "OCM-APL-001",
+                    "OCM-BND-002",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

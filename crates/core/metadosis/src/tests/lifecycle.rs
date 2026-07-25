@@ -1,4 +1,5 @@
 use super::*;
+use alloy_sol_types::SolEvent;
 use outbe_nod::NodContract;
 use outbe_oracle::contract::OracleContract;
 
@@ -149,6 +150,201 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
             U256::ZERO
         );
     });
+}
+
+#[test]
+fn ocomp_day_limit_formation_takes_carry_over_once_and_late_credit_waits() {
+    with_storage(|storage| {
+        arm_ocomp_request_profile(&storage);
+        let first = outbe_common::WorldwideDay::new(20260725);
+        let second = outbe_common::WorldwideDay::new(20260726);
+        let third = outbe_common::WorldwideDay::new(20260727);
+        let first_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                10,
+                first.start_timestamp() + 2 * SECONDS_PER_HOUR,
+                CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        let second_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                20,
+                second.start_timestamp() + 2 * SECONDS_PER_HOUR,
+                CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        let third_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                30,
+                third.start_timestamp() + 2 * SECONDS_PER_HOUR,
+                CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+
+        let mut promis = PromisLimitContract::new(storage.clone());
+        promis.checked_add_carry_over(U256::from(30)).unwrap();
+        crate::emission_sink::apply(&first_ctx, U256::from(100)).unwrap();
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        let first_day = metadosis.worldwide_days.entry(first);
+        let first_formation = metadosis.ocomp_day_limit_formation(first).unwrap().unwrap();
+        assert_eq!(first_formation.carry_over_taken, U256::from(30));
+        assert_eq!(
+            first_day.metadosis_limit_amount().read().unwrap(),
+            U256::from(130)
+        );
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
+
+        promis.checked_add_carry_over(U256::from(7)).unwrap();
+        crate::emission_sink::apply(&first_ctx, U256::from(100)).unwrap();
+        assert_eq!(
+            first_day.metadosis_limit_amount().read().unwrap(),
+            U256::from(130)
+        );
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(7));
+        assert!(crate::emission_sink::apply(&first_ctx, U256::from(101)).is_err());
+        assert!(MetadosisContract::new(storage.clone())
+            .set_metadosis_limit(first, U256::from(999))
+            .is_err());
+        assert_eq!(
+            first_day.metadosis_limit_amount().read().unwrap(),
+            U256::from(130)
+        );
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::from(7));
+
+        crate::emission_sink::apply(&second_ctx, U256::from(200)).unwrap();
+        let second_day = metadosis.worldwide_days.entry(second);
+        let second_formation = metadosis
+            .ocomp_day_limit_formation(second)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second_formation.carry_over_taken, U256::from(7));
+        assert_eq!(
+            second_day.metadosis_limit_amount().read().unwrap(),
+            U256::from(207)
+        );
+        assert_eq!(promis.get_total_unallocated().unwrap(), U256::ZERO);
+
+        crate::emission_sink::apply(&third_ctx, U256::from(50)).unwrap();
+        let third_formation = metadosis.ocomp_day_limit_formation(third).unwrap().unwrap();
+        assert_eq!(third_formation.base_limit, U256::from(50));
+        assert_eq!(third_formation.carry_over_taken, U256::ZERO);
+        assert_eq!(third_formation.day_limit, U256::from(50));
+
+        MetadosisContract::new(storage.clone())
+            .delete_worldwide_day(third)
+            .unwrap();
+        assert!(MetadosisContract::new(storage)
+            .ocomp_day_limit_formation(third)
+            .unwrap()
+            .is_none());
+    });
+}
+
+#[test]
+fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
+    fn seed(provider: &mut HashMapStorageProvider, carry_over: U256) {
+        StorageHandle::enter(provider, |storage| {
+            arm_ocomp_request_profile(&storage);
+            PromisLimitContract::new(storage)
+                .checked_add_carry_over(carry_over)
+                .unwrap();
+        });
+    }
+
+    fn apply_limit(
+        provider: &mut HashMapStorageProvider,
+        base_limit: U256,
+    ) -> outbe_primitives::error::Result<U256> {
+        let wwd = outbe_common::WorldwideDay::new(20260727);
+        StorageHandle::enter(provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(
+                    30,
+                    wwd.start_timestamp() + 2 * SECONDS_PER_HOUR,
+                    CHAIN_ID,
+                ),
+                storage,
+            );
+            crate::emission_sink::apply(&ctx, base_limit)
+        })
+    }
+
+    let mut overflow = HashMapStorageProvider::new(CHAIN_ID);
+    seed(&mut overflow, U256::from(1));
+    let before_storage = overflow.storage.clone();
+    let before_events = overflow.events.clone();
+    assert!(apply_limit(&mut overflow, U256::MAX).is_err());
+    assert_eq!(overflow.storage, before_storage);
+    assert_eq!(overflow.events, before_events);
+    StorageHandle::enter(&mut overflow, |storage| {
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(1)
+        );
+        assert!(MetadosisContract::new(storage)
+            .ocomp_day_limit_formation(outbe_common::WorldwideDay::new(20260727))
+            .unwrap()
+            .is_none());
+    });
+
+    let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    seed(&mut probe, U256::from(9));
+    probe.fail_after_mutation_at(usize::MAX);
+    apply_limit(&mut probe, U256::from(100)).unwrap();
+    let mutation_count = probe.clear_mutation_failure();
+    assert!(
+        mutation_count >= 3,
+        "formation must mutate Promis, Metadosis and events"
+    );
+    let event = IMetadosis::OcompDayLimitFormed::decode_log(
+        probe.get_ordered_events().last().expect("formation event"),
+    )
+    .unwrap();
+    assert_eq!(event.data.worldwideDay, 20260727);
+    assert_eq!(event.data.baseLimit, U256::from(100));
+    assert_eq!(event.data.carryOverBefore, U256::from(9));
+    assert_eq!(event.data.carryOverTaken, U256::from(9));
+    assert_eq!(event.data.carryOverAfter, U256::ZERO);
+    assert_eq!(event.data.formedDayLimit, U256::from(109));
+    let replay_event_count = probe.get_ordered_events().len();
+    apply_limit(&mut probe, U256::from(100)).unwrap();
+    assert_eq!(probe.get_ordered_events().len(), replay_event_count);
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        seed(&mut provider, U256::from(9));
+        let before_storage = provider.storage.clone();
+        let before_events = provider.events.clone();
+        provider.fail_after_mutation_at(operation);
+
+        assert!(apply_limit(&mut provider, U256::from(100)).is_err());
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, before_storage);
+        assert_eq!(provider.events, before_events);
+
+        apply_limit(&mut provider, U256::from(100)).unwrap();
+        StorageHandle::enter(&mut provider, |storage| {
+            let formed = MetadosisContract::new(storage.clone())
+                .ocomp_day_limit_formation(outbe_common::WorldwideDay::new(20260727))
+                .unwrap()
+                .unwrap();
+            assert_eq!(formed.base_limit, U256::from(100));
+            assert_eq!(formed.carry_over_taken, U256::from(9));
+            assert_eq!(formed.day_limit, U256::from(109));
+            assert_eq!(
+                PromisLimitContract::new(storage)
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO
+            );
+        });
+    }
 }
 
 #[test]

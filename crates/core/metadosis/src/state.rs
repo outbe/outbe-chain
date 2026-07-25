@@ -1,10 +1,20 @@
 use crate::constants::*;
 use crate::errors::MetadosisError;
 use crate::precompile::IMetadosis;
-use crate::schema::{day_type, status, MetadosisContract, WorldwideDay, WorldwideDayEntryExt};
+use crate::schema::{
+    day_type, status, MetadosisContract, OcompDayLimitFormationStateEntryExt, WorldwideDay,
+    WorldwideDayEntryExt,
+};
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay as WorldwideDayKey;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OcompDayLimitFormation {
+    pub base_limit: U256,
+    pub carry_over_taken: U256,
+    pub day_limit: U256,
+}
 
 impl MetadosisContract<'_> {
     // --- WorldwideDay Management ---
@@ -38,6 +48,16 @@ impl MetadosisContract<'_> {
     }
 
     pub fn set_metadosis_limit(&mut self, wwd_key: WorldwideDayKey, amount: U256) -> Result<()> {
+        if self
+            .ocomp_day_limit_formations
+            .entry(wwd_key)
+            .formed()
+            .read()?
+        {
+            return Err(PrecompileError::Revert(
+                "formed OCOMP day limit is immutable".into(),
+            ));
+        }
         self.worldwide_days
             .entry(wwd_key)
             .metadosis_limit_amount()
@@ -45,9 +65,45 @@ impl MetadosisContract<'_> {
         Ok(())
     }
 
+    pub fn ocomp_day_limit_formation(
+        &self,
+        wwd_key: WorldwideDayKey,
+    ) -> Result<Option<OcompDayLimitFormation>> {
+        let formation = self.ocomp_day_limit_formations.entry(wwd_key);
+        if !formation.formed().read()? {
+            return Ok(None);
+        }
+        let day_limit = self
+            .worldwide_days
+            .entry(wwd_key)
+            .metadosis_limit_amount()
+            .read()?;
+        let carry_over_taken = formation.carry_over_taken().read()?;
+        let base_limit = day_limit.checked_sub(carry_over_taken).ok_or_else(|| {
+            PrecompileError::Fatal("formed OCOMP day limit is below its recorded carry-over".into())
+        })?;
+        Ok(Some(OcompDayLimitFormation {
+            base_limit,
+            carry_over_taken,
+            day_limit,
+        }))
+    }
+
     /// Deletes all stored fields for a worldwide day.
     pub fn delete_worldwide_day(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
-        self.worldwide_days.delete(wwd_key)
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.worldwide_days.delete(wwd_key)?;
+            if self
+                .ocomp_day_limit_formations
+                .entry(wwd_key)
+                .formed()
+                .read()?
+            {
+                self.ocomp_day_limit_formations.delete(wwd_key)?;
+            }
+            Ok(())
+        })
     }
 
     /// Updates worldwide day status based on block time.
