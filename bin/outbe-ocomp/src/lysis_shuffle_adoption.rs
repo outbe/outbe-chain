@@ -2,11 +2,15 @@
 
 use outbe_ocomp_protocol::{
     shuffle::{verified_shuffle_run_records, ShuffleRunArtifactV1},
-    ObjectKind, ProtocolError, SchemaLimits,
+    unit::{UnitArtifactV1, UnitPhase, UnitSpecV1},
+    CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use thiserror::Error;
 
-use crate::{cas::FilesystemCas, inbox::WorkerInbox};
+use crate::{
+    cas::{CasError, FilesystemCas},
+    inbox::{WorkerInbox, WorkerInboxError},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdoptedLysisShuffleClosureV1 {
@@ -14,10 +18,85 @@ pub struct AdoptedLysisShuffleClosureV1 {
     pub verified_record_count: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedLysisShuffleUnitV1 {
+    pub artifact_ref: CasObjectRefV1,
+    pub closure: AdoptedLysisShuffleClosureV1,
+}
+
 #[derive(Debug, Error)]
 pub enum LysisShuffleAdoptionError {
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+    #[error(transparent)]
+    Inbox(#[from] WorkerInboxError),
+    #[error(transparent)]
+    Cas(#[from] CasError),
+}
+
+/// Makes one reported shuffle unit ready only after its complete descendant
+/// closure has been verified and copied into authoritative CAS.
+pub fn admit_reported_lysis_shuffle_unit(
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    limits: &SchemaLimits,
+) -> Result<AdmittedLysisShuffleUnitV1, LysisShuffleAdoptionError> {
+    spec.validate_semantics(limits)?;
+    let unit_id = spec.unit_id(limits)?;
+    if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
+        return Err(ProtocolError::InvalidInvariant("successful shuffle unit report").into());
+    }
+    let reported = inbox.read_reported(
+        finished.unit_id,
+        finished.exact_staged_bytes,
+        finished.transport_digest,
+    )?;
+    let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
+    artifact.validate_against(spec, limits)?;
+    let expected_kind = match spec.phase {
+        UnitPhase::OwnerShuffle => outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Owner,
+        UnitPhase::BucketShuffle => outbe_ocomp_protocol::shuffle::ShuffleRunKindV1::Bucket,
+        _ => {
+            return Err(
+                ProtocolError::InvalidInvariant("reported unit is a Lysis shuffle phase").into(),
+            );
+        }
+    };
+    let root = ShuffleRunArtifactV1::decode_canonical(artifact.phase_payload(limits)?, limits)?;
+    root.validate_root_semantics(limits)?;
+    let header = artifact.output_header(limits)?;
+    if root.protocol_bundle_hash != spec.protocol_bundle_hash
+        || root.job_id != spec.job_id
+        || root.attempt != spec.attempt
+        || root.unit_id != artifact.unit_id
+        || root.kind != expected_kind
+        || root.source_coverage_root != header.source_coverage_root
+        || root.source_coverage_count != header.source_coverage_count
+        || root.ordered_record_root != header.output_coverage_root
+        || root.record_count != header.output_coverage_count
+    {
+        return Err(ProtocolError::InvalidInvariant("reported shuffle root binding").into());
+    }
+
+    let closure = adopt_lysis_shuffle_descendants(root.clone(), inbox, cas, limits)?;
+    if closure.verified_record_count != root.record_count {
+        return Err(ProtocolError::InvalidInvariant("admitted shuffle record count").into());
+    }
+
+    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(ProtocolError::InvalidInvariant("published shuffle unit descriptor").into());
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    Ok(AdmittedLysisShuffleUnitV1 {
+        artifact_ref,
+        closure,
+    })
 }
 
 /// Verifies the complete bounded page tree from the worker inbox while

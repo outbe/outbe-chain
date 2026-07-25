@@ -3,14 +3,17 @@ use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
     inbox::{WorkerInbox, WorkerInboxLimits},
-    lysis_shuffle_adoption::adopt_lysis_shuffle_descendants,
+    lysis_shuffle_adoption::{admit_reported_lysis_shuffle_unit, adopt_lysis_shuffle_descendants},
 };
 use outbe_ocomp_protocol::{
-    common::EntityId36,
+    common::{BoundedBytes, EntityId36},
     result::ContributorActionV1,
     shuffle::{build_owner_shuffle_run, verified_shuffle_run_records, ShuffleRunBuildContextV1},
-    unit::CanonicalRunSpan,
-    ProtocolError,
+    unit::{
+        CanonicalInputRefV1, CanonicalRunSpan, InputPurpose, InputSourceKind, UnitArtifactV1,
+        UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
+    },
+    ObjectKind, ProtocolError, UnitFinishedStatus, UnitFinishedV1,
 };
 use tempfile::tempdir;
 
@@ -32,6 +35,40 @@ fn contributor(index: u32) -> ContributorActionV1 {
         owner: Address::from(owner),
         source_tribute_id: EntityId36(tribute),
         nominal_amount_minor: U256::from(index + 1),
+    }
+}
+
+fn owner_shuffle_spec() -> UnitSpecV1 {
+    UnitSpecV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 1,
+        phase: UnitPhase::OwnerShuffle,
+        interval: UnitInterval::CanonicalRunSpan(CanonicalRunSpan {
+            start_run: 0,
+            end_run: 2,
+        }),
+        canonical_ordered_inputs: vec![
+            CanonicalInputRefV1 {
+                purpose: InputPurpose::InputManifest,
+                source_kind: InputSourceKind::AuthenticatedRoot,
+                source_id: B256::repeat_byte(5),
+                record_count_limit: 1,
+                max_encoded_bytes: 1024,
+                max_decoded_bytes: 1024,
+            },
+            CanonicalInputRefV1 {
+                purpose: InputPurpose::FinalizedOutputRecords,
+                source_kind: InputSourceKind::UnitOutput,
+                source_id: B256::repeat_byte(6),
+                record_count_limit: 257,
+                max_encoded_bytes: 1_048_576,
+                max_decoded_bytes: 1_048_576,
+            },
+        ],
+        lysis_program_semantics_hash: B256::repeat_byte(7),
+        planner_spec_version: 1,
+        reducer_spec_version: 1,
     }
 }
 
@@ -103,12 +140,14 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         CAS_LIMITS,
     )
     .unwrap();
+    let spec = owner_shuffle_spec();
+    let unit_id = spec.unit_id(&limits).unwrap();
     let root = build_owner_shuffle_run(
         ShuffleRunBuildContextV1 {
-            protocol_bundle_hash: B256::repeat_byte(1),
-            job_id: B256::repeat_byte(2),
-            attempt: 1,
-            unit_id: B256::repeat_byte(3),
+            protocol_bundle_hash: spec.protocol_bundle_hash,
+            job_id: spec.job_id,
+            attempt: spec.attempt,
+            unit_id,
             run_span: CanonicalRunSpan {
                 start_run: 0,
                 end_run: 2,
@@ -125,7 +164,101 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         },
     )
     .unwrap();
+    let artifact = UnitArtifactV1::from_canonical_output(
+        &spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: root.source_coverage_root,
+            output_coverage_root: root.ordered_record_root,
+            source_coverage_count: root.source_coverage_count,
+            output_coverage_count: root.record_count,
+        },
+        BoundedBytes(root.encode_canonical(&limits).unwrap()),
+        &limits,
+    )
+    .unwrap();
+    let staged = empty_inbox
+        .adopt(unit_id, &artifact.encode_canonical(&limits).unwrap())
+        .unwrap();
+    let reference = staged.reference();
+    let finished = UnitFinishedV1 {
+        unit_id,
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: reference.encoded_bytes,
+        transport_digest: reference.transport_digest,
+    };
 
-    assert!(adopt_lysis_shuffle_descendants(root, &empty_inbox, &cas, &limits).is_err());
+    assert!(
+        admit_reported_lysis_shuffle_unit(&spec, &finished, &empty_inbox, &cas, &limits).is_err()
+    );
     assert_eq!(cas.object_count().unwrap(), 0);
+}
+
+#[test]
+fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption() {
+    let directory = tempdir().unwrap();
+    let limits = poc_schema_limits();
+    let inbox = WorkerInbox::open(directory.path().join("inbox"), INBOX_LIMITS).unwrap();
+    let cas = FilesystemCas::open(
+        directory.path().join("cas"),
+        CasWriterRole::Supervisor,
+        CAS_LIMITS,
+    )
+    .unwrap();
+    let spec = owner_shuffle_spec();
+    let unit_id = spec.unit_id(&limits).unwrap();
+    let root = build_owner_shuffle_run(
+        ShuffleRunBuildContextV1 {
+            protocol_bundle_hash: spec.protocol_bundle_hash,
+            job_id: spec.job_id,
+            attempt: spec.attempt,
+            unit_id,
+            run_span: CanonicalRunSpan {
+                start_run: 0,
+                end_run: 2,
+            },
+            source_coverage_root: B256::repeat_byte(4),
+            source_coverage_count: 257,
+        },
+        (0..257_u32).map(|index| Ok(contributor(index))),
+        &limits,
+        |bytes| {
+            inbox
+                .stage_shuffle_object(bytes, &limits)
+                .map_err(|_| ProtocolError::InvalidInvariant("test inbox stage"))
+        },
+    )
+    .unwrap();
+    let artifact = UnitArtifactV1::from_canonical_output(
+        &spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: root.source_coverage_root,
+            output_coverage_root: root.ordered_record_root,
+            source_coverage_count: root.source_coverage_count,
+            output_coverage_count: root.record_count,
+        },
+        BoundedBytes(root.encode_canonical(&limits).unwrap()),
+        &limits,
+    )
+    .unwrap();
+    let bytes = artifact.encode_canonical(&limits).unwrap();
+    let staged = inbox.adopt(unit_id, &bytes).unwrap();
+    let reference = staged.reference();
+    let finished = UnitFinishedV1 {
+        unit_id,
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: reference.encoded_bytes,
+        transport_digest: reference.transport_digest,
+    };
+
+    let admitted =
+        admit_reported_lysis_shuffle_unit(&spec, &finished, &inbox, &cas, &limits).unwrap();
+    assert_eq!(admitted.closure.verified_record_count, 257);
+    assert_eq!(
+        admitted.artifact_ref.expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
+    assert_eq!(
+        cas.read_verified(&admitted.artifact_ref).unwrap().bytes(),
+        bytes
+    );
 }
