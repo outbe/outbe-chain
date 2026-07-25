@@ -1022,7 +1022,8 @@ bounded exact-order cursors and invokes the closed
 `LysisProgramV1::finalize_v1`. The finalizer reloads canonical
 `FinalizedJobSpecV1`, manifest and plan authority, revalidates every streamed
 CAS object, independently derives all unit/chunk/manifest/fraction/prefix/
-dense-result/event roots, verifies every descriptor against its exact chunk
+dense-result roots, fixes `semantic_event_count=0` plus the canonical empty
+list-kind `SemanticEventRecords` root, verifies every descriptor against its exact chunk
 bytes plus the summary carriers/counts/totals and emits `LysisResultV1`. It
 accepts no caller-built result/root/scalar and is neither a schedulable unit nor
 a generic program interface.
@@ -1210,7 +1211,9 @@ inputs.
 - compile-fail/dependency boundary tests.
 
 **Changes:** reconstruct result-chunk count/root, output roots, counts, totals,
-activation preconditions and arithmetic/event summaries; produce a closed
+activation preconditions and arithmetic summary; require the exact LYSIS_V1
+zero-count/canonical-empty pre-result semantic-event commitment; bind every
+Metadosis completion field to finalized `JobIntentV1`; produce a closed
 constant-size four-owner root-transition apply plan; add the
 non-Clone/non-codec `CertifiedLysisActivation` token and one-shot
 `StorageHandle::with_lysis_activation_frame` closure. The token carries only a
@@ -1475,6 +1478,12 @@ frame entitlement recorded from the exact Metadosis selector/value/static
 context, one-shot capability closure, owner cursor/receipt verification,
 APPLIED/conflict/retry/rejection semantics, aggregate receipt/active generation,
 three views and frozen logs/errors.
+
+`APPLIED` recomputes the aggregate event summary from four validated owner
+state-event digests in fixed Nod/Contributor/Tribute/CarryOver order.
+`CONFLICT_RESOLVED` executes no owner effect and uses the canonical empty
+apply-event-summary hash. Neither is compared with the signed empty
+`SemanticEventRecords` root.
 
 **Invariants/failures:** at most one activation attempt/block; completed exact
 retry does no crypto/owner/event work; conflict only after valid evidence;

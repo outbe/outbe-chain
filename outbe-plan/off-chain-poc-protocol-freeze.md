@@ -566,12 +566,22 @@ OwnerStateEventDigest(
   canonical_owner_projection
 )
 
-ApplyEventSummaryHash = H(
+AppliedEventSummaryHash = H(
   "OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1",
   nod_state_event_digest ||
   contributor_state_event_digest ||
   tribute_state_event_digest ||
   carry_over_state_event_digest
+)
+
+ConflictEventSummaryHash = H(
+  "OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1",
+  empty
+)
+
+LysisV1PreResultSemanticEventRoot = H(
+  "OUTBE_OCOMP_LIST_EMPTY_V1",
+  u16_be(5) // ListKind::SemanticEventRecords
 )
 
 TransportDigestV1 = keccak256(exact stored bytes)
@@ -1641,6 +1651,21 @@ The summary is reconstructed from the explicit result fields. A local failed
 execution is never signed or activated and therefore has no
 `LysisResultV1`.
 
+LYSIS_V1 has no pre-activation semantic-event record schema. Every successful
+result therefore requires:
+
+```text
+counts.semantic_event_count = 0
+event_summary_hash = LysisV1PreResultSemanticEventRoot
+```
+
+The finalizer derives this pair; callers cannot supply it. Result validation,
+the node attestation gate and activation verification all reject any other
+pair. `LysisResultV1.event_summary_hash` is a legacy wire name for this
+pre-result empty-list commitment. It is not an
+`AggregateActivationReceiptV1.event_summary_hash` and the two are never
+compared. Non-empty Lysis semantic events require new bundle semantics.
+
 ### 5.5.1 Closed Lysis result finalizer
 
 `LysisProgramV1::finalize_v1` is an internal typed module interface, not an
@@ -1679,8 +1704,8 @@ reordered, substituted or conflicting entries, and computes:
    against those exact streamed records, abstaining on any mismatch;
 7. carry-over and completion fields from canonical finalized intent plus
    computation-derived totals; and
-8. arithmetic and semantic event commitments from the resulting explicit
-   fields.
+8. the arithmetic commitment from the resulting explicit fields and the exact
+   LYSIS_V1 zero-count/canonical-empty pre-result semantic-event commitment.
 
 It accepts no precomputed item above. Partial output is non-authoritative and
 never signable. Replay after a crash over the same immutable CAS/catalog state
@@ -1919,12 +1944,12 @@ AggregateActivationReceiptV1 {
 
 The four activation projection structs are nested canonical types, not tagged
 OCB1 objects. Each receipt's `state_event_digest` is
-`OwnerStateEventDigest(owner_kind, binding, projection)`. The aggregate
-receipt's `event_summary_hash` is `ApplyEventSummaryHash` over those four
-digests in the same fixed owner order. `LysisActivated` is emitted only after
-the aggregate receipt exists and is checked directly against its binding and
-terminal receipt hash, so it is intentionally not included in the summary and
-cannot create a hash cycle.
+`OwnerStateEventDigest(owner_kind, binding, projection)`. For `APPLIED`, the
+aggregate receipt's `event_summary_hash` is `AppliedEventSummaryHash` over
+those four digests in the fixed order Nod, Contributor, Tribute, CarryOver.
+`LysisActivated` is emitted only after the aggregate receipt exists and is
+checked directly against its binding and terminal receipt hash, so it is
+intentionally not included in the summary and cannot create a hash cycle.
 
 An exact retry of a completed binding/digest returns the already recorded
 `AggregateActivationReceiptV1`; it does not create a second receipt or effects.
@@ -1934,7 +1959,9 @@ For `APPLIED`, all four activation receipt hashes and `active_generation_hash`
 are `some`. The request split receipt hash is always present.
 
 For `CONFLICT_RESOLVED`, all five optional hashes are `none`; no activation
-owner effect has run.
+owner effect has run and `event_summary_hash` is exactly
+`ConflictEventSummaryHash`. This empty apply-summary hash is domain-separated
+from `LysisV1PreResultSemanticEventRoot`.
 
 `effect_commitment` is:
 

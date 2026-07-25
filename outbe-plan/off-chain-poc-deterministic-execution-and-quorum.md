@@ -590,8 +590,15 @@ caller-built result, root or scalar override. The implementation:
    totals committed by `RootReduceSummaryV1`;
 7. combines only verified computation-derived values with
    finalized frozen scalars from canonical `JobIntentV1`;
-8. derives the completion, conservation, arithmetic and event commitments; and
+8. derives completion fields from finalized intent, conservation and
+   arithmetic commitments, plus the exact LYSIS_V1
+   `semantic_event_count=0`/canonical-empty list-kind `5` commitment; and
 9. emits canonical `LysisResultV1` or abstains.
+
+The signed pre-result empty-list commitment is never equated with the
+post-activation `ApplyEventSummaryHash`. The latter is computed only from
+verified owner receipts after an `APPLIED` transition, or from an empty payload
+for `CONFLICT_RESOLVED`.
 
 This module belongs to the closed Lysis program. It is not a schedulable unit,
 second program, generic finalizer interface or signer. The supervisor is its

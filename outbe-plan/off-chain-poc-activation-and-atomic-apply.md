@@ -587,6 +587,11 @@ stored request split receipt. It checks:
 
 Only then can the capability produce the terminal permit.
 
+Before any live-precondition branch or owner call, the verifier also requires
+the LYSIS_V1 signed result to carry `semantic_event_count=0` and the canonical
+empty `SemanticEventRecords` list root, and binds every completion field to the
+finalized intent. This pre-result commitment is not an apply-event summary.
+
 ### 8.2 APPLIED
 
 Using the terminal permit, Metadosis in the same checkpoint:
@@ -598,6 +603,11 @@ Using the terminal permit, Metadosis in the same checkpoint:
 5. changes WWD `OFFCHAIN_PENDING -> COMPLETED`;
 6. removes it from active/READY indexes without deleting OCOMP evidence;
 7. emits the frozen `MetadosisExecuted` fields and `LysisActivated`.
+
+The aggregate `APPLIED` receipt recomputes `event_summary_hash` from the four
+validated owner state-event digests in the fixed order Nod, Contributor,
+Tribute, CarryOver. Permutation, omission or substitution is a receipt
+mismatch and reverts the checkpoint.
 
 Only constant-size `LysisResultV1` remains in canonical transaction bytes.
 Consensus state stores the intent, binding, active generation roots/counts,
@@ -617,6 +627,11 @@ its frozen precondition, the same checkpoint:
 5. increments nonce, returns WWD to `READY` with the same budget;
 6. schedules `height+1`;
 7. emits `OffchainJobConflicted`.
+
+The conflict receipt has no owner receipt/effect hashes and fixes
+`event_summary_hash =
+H("OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1", empty)`. This value is distinct from
+the signed empty `SemanticEventRecords` root.
 
 Junk evidence can never force conflict resolution.
 

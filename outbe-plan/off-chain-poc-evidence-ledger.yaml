@@ -309,6 +309,7 @@ tests:
       - all_phase_and_interval_vectors
       - padded_tree_vectors
       - plan_and_result_hashes
+      - lysis_v1_zero_semantic_event_count_and_empty_root_vectors
   OCM-FSM-001:
     status: planned
     layer: MODEL
@@ -349,6 +350,8 @@ tests:
     evidence:
       - result_action_receipt_mutation_matrix
       - green_red_conservation_vectors
+      - finalized_intent_completion_binding_matrix
+      - semantic_event_count_and_root_mutation_matrix
   OCM-BND-001:
     status: planned
     layer: MODULE
@@ -626,6 +629,8 @@ tests:
       - four_activation_owner_failure_matrix
       - four_activation_receipt_and_request_split_mutation_matrix
       - exact_retry_and_conflict_results
+      - fixed_owner_order_applied_event_summary_mutations
+      - canonical_empty_conflict_event_summary
   OCM-TIM-001:
     status: planned
     layer: MODULE

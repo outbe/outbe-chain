@@ -162,8 +162,19 @@ hosts one pure `LysisProgramV1` finalizer. The finalizer:
   order through bounded cursors;
 - reopens the exact CAS bytes and rechecks kind, digest, `UnitId`, specification
   and semantic validation;
-- derives all catalog, fraction, prefix, result and event roots itself; and
+- derives all catalog, fraction, prefix and result roots itself, and fixes the
+  LYSIS_V1 pre-result semantic-event population to the canonical empty
+  list-kind `5` root with count zero; and
 - emits canonical `LysisResultV1` or abstains.
+
+LYSIS_V1 defines no pre-activation `SemanticEventRecordV1` producer or codec.
+Therefore `ExactCountsV1.semantic_event_count` is exactly zero and the signed
+`LysisResultV1.event_summary_hash` is exactly
+`H("OUTBE_OCOMP_LIST_EMPTY_V1", u16_be(5))`. Any other count/root pair causes
+abstention. This pre-result commitment is distinct from the post-activation
+`ApplyEventSummaryHash` over owner state-event digests and is never compared
+with it. A non-empty semantic-event population requires new pinned bundle
+semantics.
 
 `RootReduceSummaryV1` carries fixed-capacity positional coverage trees: 256
 slots per primary shard for each Nod/bucket/contributor list and one slot per

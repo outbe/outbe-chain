@@ -91,7 +91,9 @@ cryptographic work, the executor checks byte/count/crypto caps. It then:
    terminal states;
 3. verifies the finalized intent proof, `JobId`, attempt, bundle, committee,
    deadline and current target preconditions;
-4. reconstructs the exact `ActivationPayloadV1`/`ResultDigest`;
+4. reconstructs the exact `ActivationPayloadV1`/`ResultDigest`, requires the
+   LYSIS_V1 zero-count/canonical-empty pre-result semantic-event commitment and
+   binds every Metadosis completion field to the finalized `JobIntentV1`;
 5. verifies the `q=3/4` execution certificate;
 6. invokes the closed Lysis structural/result verifier without executing Lysis;
 7. constructs a private unforgeable `CertifiedLysisActivation`;
@@ -134,6 +136,14 @@ PromisLimit receives only a checked additive carry-over credit.
 Each activation owner returns a constant-size receipt bound to the call and
 `JobId`. Old roots/generations, new roots, counts, totals and both budget
 equations are checked before terminal commit.
+
+For `APPLIED`, receipt verification recomputes four owner state-event digests
+in the fixed order Nod, Contributor, Tribute, CarryOver and stores their
+`ApplyEventSummaryHash`. For `CONFLICT_RESOLVED`, no owner effect or owner
+receipt exists and the aggregate receipt stores
+`H("OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1", empty)`. Neither value is the signed
+pre-result empty `SemanticEventRecords` root; the equal wire field name does
+not imply equal semantics.
 
 Any owner error or receipt mismatch reverts every activation effect.
 

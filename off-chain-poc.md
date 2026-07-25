@@ -870,7 +870,7 @@ Phase E2 — bucket shuffle
     -> grouped bucket leaves
 
 Phase F — fixed root/conservation reduce
-  -> roots, exact counts, totals and event summary
+  -> roots, exact counts, totals and the frozen empty pre-result event root
 ```
 
 Both shuffle phases emit a Lysis-specific `ShuffleRunArtifactV1` tree. A leaf
@@ -1022,10 +1022,19 @@ ExecutionCertificateV1 {
 }
 ```
 
+For LYSIS_V1, `exact_input_and_output_counts.semantic_event_count` is exactly
+zero and `event_summary_hash` is the canonical empty list-kind
+`SemanticEventRecords` root. This signed pre-result commitment is distinct from
+the post-activation receipt summary: `APPLIED` hashes four validated owner
+state-event digests in the fixed order Nod, Contributor, Tribute, CarryOver;
+`CONFLICT_RESOLVED` hashes an empty payload under the apply-event-summary
+domain. The values are never compared.
+
 Every validator domain's separate compute process independently reads every
 authenticated result chunk through that typed finalizer, proves gap-free
 complete catalog coverage, and recomputes roots, counts, totals, arithmetic
-commitment and event summary before requesting its node's attestation. The node
+commitment plus the frozen empty pre-result event root before requesting its
+node's attestation. The node
 reloads finalized authority, verifies the constant-size closed signing subject
 and never scans those chunks or reruns Lysis. The activation carries only
 `LysisResultV1`; result-chunk bodies remain content-addressed artifacts for
@@ -1131,8 +1140,9 @@ Every node:
 3. loads the pinned historical OCOMP committee snapshot;
 4. verifies three distinct signatures over one `ResultDigest`;
 5. decodes the constant-size result and binds its result-chunk count/root;
-6. verifies committed roots, counts, conservation totals, arithmetic commitment
-   and event summary;
+6. verifies committed roots, counts, conservation totals, arithmetic
+   commitment, the exact LYSIS_V1 empty semantic-event commitment and every
+   completion field against the finalized intent;
 7. verifies activation byte/crypto caps and live old-root/generation
    preconditions;
 8. constructs a private `CertifiedLysisActivation`;

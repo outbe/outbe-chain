@@ -142,9 +142,11 @@ The observable semantic order is:
 7. Require emitted Nod count to equal Tribute count.
 8. Sort eligible contributor entries by raw 20-byte owner address.
 9. Derive the exact Tribute consume/retirement action.
-10. Derive the unused-Lysis carry-over and Metadosis completion actions and
-    their semantic event summary. Desis is already committed by the request
-    phase and is not a Lysis result action.
+10. Derive the unused-Lysis carry-over and Metadosis completion actions.
+    LYSIS_V1 defines no pre-activation semantic-event record population:
+    `semantic_event_count` is zero and `event_summary_hash` is the canonical
+    empty list-kind `SemanticEventRecords` root. Desis is already committed by
+    the request phase and is not a Lysis result action.
 
 Physical reads may be deduplicated, and one authenticated Fidelity/Oracle
 opening may serve repeated logical observations. Deduplication cannot alter the
@@ -370,12 +372,23 @@ the following unformed day.
 A terminal no-retry outcome credits the whole `lysis_budget` exactly once.
 Normal PoC expiry preserves the budget for retry.
 
-### 7.4 Completion and semantic events
+### 7.4 Completion and activation events
 
-Successful actions also commit:
+The signed result commits:
 
 - exact Tribute count/nominal consume and logical partition retirement;
 - Metadosis `COMPLETED`;
+- `semantic_event_count = 0`;
+- `event_summary_hash =
+  H("OUTBE_OCOMP_LIST_EMPTY_V1", u16_be(SemanticEventRecords=5))`.
+
+The completion summary fields `wwd`, `pending_nonce`, `day_type`, `status`,
+`logical_evaluation_height` and `logical_evaluation_time` are derived from and
+must be checked against the finalized `JobIntentV1`; they are not free result
+metadata.
+
+Post-activation state transitions separately produce:
+
 - removal of expiry;
 - `MetadosisExecuted` economic fields:
   total nominal, demand, supply, `lysis_budget`, `auction_base`,
@@ -383,6 +396,11 @@ Successful actions also commit:
 - owner events equivalent to Nod issuance, contributor state, Tribute
   retirement and carry-over credit;
 - the new aggregate `LysisActivated` identity/commitments.
+
+For `APPLIED`, the receipt summary hashes the four owner state-event digests in
+the fixed order Nod, Contributor, Tribute, CarryOver. A conflict has no owner
+events and uses `H("OUTBE_OCOMP_APPLY_EVENT_SUMMARY_V1", empty)`. Neither
+post-activation value is compared with the signed empty semantic-event root.
 
 Economic/event time fields use request logical time. The activation receipt
 location and `activated_at` use the actual activation block and are explicitly

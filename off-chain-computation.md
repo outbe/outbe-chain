@@ -250,7 +250,8 @@ LysisResultV1 {
   result_chunk_count, result_chunk_list_root,
   tribute_count, tribute_nominal_total,
   unused_lysis,
-  exact roots, conservation totals, arithmetic commitment and event summary
+  exact roots, conservation totals, arithmetic commitment and
+  frozen empty pre-result event root
 }
 
 ActivationPayloadV1 contains the result-chunk count/root and the recomputed job,
@@ -1360,7 +1361,8 @@ Phase E2: bucket shuffle
 
 Phase F: fixed root/conservation reduce
   raw, owner and bucket streams
-    -> output roots, exact counts, conservation totals, event summary
+    -> output roots, exact counts, conservation totals,
+       frozen empty pre-result event root
 ```
 
 Each external sort fixes run record/byte limits, merge fan-in, maximum open files,
@@ -1481,11 +1483,20 @@ ExecutionCertificateV1 {
 }
 ```
 
+LYSIS_V1 has no pre-activation semantic-event record population. Its signed
+`semantic_event_count` is zero and `event_summary_hash` is the canonical empty
+list-kind `SemanticEventRecords` root. This is not the post-activation receipt
+summary: `APPLIED` hashes four validated owner state-event digests in fixed
+order, while `CONFLICT_RESOLVED` hashes an empty payload under the
+apply-event-summary domain. The two commitments are never compared, and every
+completion field is independently bound to the finalized intent.
+
 For `PoC` and `BoundedMVP`, each signing validator domain's separate compute
 plane invokes the typed finalizer, which traverses every bounded
 `ResultChunkV1`, verifies gap-free complete coverage and recomputes the catalog
-root, output roots, counts, totals and event summary before requesting the
-node's signature. The node itself does not perform this bulk traversal. The
+root, output roots, counts and totals, then derives the frozen empty pre-result
+event root before requesting the node's signature. The node itself does not
+perform this bulk traversal. The
 activation transaction carries only the constant-size `LysisResultV1`
 commitment. This is the only valid `ResultDigest` preimage; no alternate tuple
 encoding is permitted. Thus a quorum signature cannot be detached from the
@@ -2420,8 +2431,10 @@ redefine them.
 
 Every validator domain's separate compute process uses the closed typed
 finalizer to decode the complete chunk/artifact catalogs and recompute every
-root, count, conservation total and event summary before asking its node to
-attest. The node's closed attestation gate verifies
+root, count and conservation total, derives the frozen zero-count/canonical
+empty pre-result semantic-event commitment and binds completion fields to the
+finalized intent before asking its node to attest. The node's closed
+attestation gate verifies
 only the constant-size result/job binding and sign-once subject; it never scans
 bulk chunks. The activation verifier reconstructs the committed
 `ActivationPayloadV1` and verifies its certified old-root-to-new-root
