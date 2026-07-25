@@ -102,6 +102,9 @@
 | `8` | `RawTributeCoverage` | `raw Tribute coverage (raw_ordinal, tribute_id)` |
 | `9` | `FidelityOpenings` | `Fidelity authenticated openings` |
 | `10` | `OracleOpenings` | `Oracle authenticated openings` |
+| `11` | `ResultChunkHashes` | `result-chunk hashes` |
+| `12` | `LysisLeagueFractions` | `Lysis league fractions` |
+| `13` | `LysisGratisLeafPrefixes` | `Lysis Gratis leaf prefixes` |
 
 ## Lysis V1 nested input codecs
 

@@ -86,3 +86,6 @@ list	7	UnitSpecificationsArtifacts	unit specifications/artifacts
 list	8	RawTributeCoverage	raw Tribute coverage (raw_ordinal, tribute_id)
 list	9	FidelityOpenings	Fidelity authenticated openings
 list	10	OracleOpenings	Oracle authenticated openings
+list	11	ResultChunkHashes	result-chunk hashes
+list	12	LysisLeagueFractions	Lysis league fractions
+list	13	LysisGratisLeafPrefixes	Lysis Gratis leaf prefixes

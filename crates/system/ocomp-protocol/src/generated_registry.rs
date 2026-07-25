@@ -321,6 +321,9 @@ pub enum ListKind {
     RawTributeCoverage = 8,
     FidelityOpenings = 9,
     OracleOpenings = 10,
+    ResultChunkHashes = 11,
+    LysisLeagueFractions = 12,
+    LysisGratisLeafPrefixes = 13,
 }
 
 impl ListKind {
@@ -335,6 +338,9 @@ impl ListKind {
         Self::RawTributeCoverage,
         Self::FidelityOpenings,
         Self::OracleOpenings,
+        Self::ResultChunkHashes,
+        Self::LysisLeagueFractions,
+        Self::LysisGratisLeafPrefixes,
     ];
 
     #[must_use]
@@ -355,6 +361,9 @@ impl ListKind {
             Self::RawTributeCoverage => "raw Tribute coverage (raw_ordinal, tribute_id)",
             Self::FidelityOpenings => "Fidelity authenticated openings",
             Self::OracleOpenings => "Oracle authenticated openings",
+            Self::ResultChunkHashes => "result-chunk hashes",
+            Self::LysisLeagueFractions => "Lysis league fractions",
+            Self::LysisGratisLeafPrefixes => "Lysis Gratis leaf prefixes",
         }
     }
 }
@@ -374,6 +383,9 @@ impl TryFrom<u16> for ListKind {
             8 => Ok(Self::RawTributeCoverage),
             9 => Ok(Self::FidelityOpenings),
             10 => Ok(Self::OracleOpenings),
+            11 => Ok(Self::ResultChunkHashes),
+            12 => Ok(Self::LysisLeagueFractions),
+            13 => Ok(Self::LysisGratisLeafPrefixes),
             value => Err(crate::error::ProtocolError::UnknownListKind(value)),
         }
     }

@@ -518,13 +518,16 @@ fn ordered_list_caps_fail_before_internal_tree_allocation() {
 fn generated_registry_is_complete_and_unique() {
     assert_eq!(ObjectKind::ALL.len(), 31);
     assert_eq!(HashDomain::ALL.len(), 46);
-    assert_eq!(ListKind::ALL.len(), 10);
+    assert_eq!(ListKind::ALL.len(), 13);
     assert_eq!(ObjectKind::ProtocolBundleV1.tag(), 0x0001);
     assert_eq!(ObjectKind::OcompJobRecordV1.tag(), 0x001e);
     assert_eq!(ListKind::NodActions.id(), 1);
     assert_eq!(ListKind::RawTributeCoverage.id(), 8);
     assert_eq!(ListKind::FidelityOpenings.id(), 9);
     assert_eq!(ListKind::OracleOpenings.id(), 10);
+    assert_eq!(ListKind::ResultChunkHashes.id(), 11);
+    assert_eq!(ListKind::LysisLeagueFractions.id(), 12);
+    assert_eq!(ListKind::LysisGratisLeafPrefixes.id(), 13);
     assert_eq!(
         ObjectKind::try_from(0xffff),
         Err(ProtocolError::UnknownObjectKind(0xffff))
