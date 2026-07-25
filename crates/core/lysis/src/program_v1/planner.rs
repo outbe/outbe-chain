@@ -1126,6 +1126,7 @@ impl LysisPlanTopologyV1 {
             UnitPhase::FixedReduce => full_internal,
             UnitPhase::GratisPrefix | UnitPhase::GratisPrefixDown => primary + active_internal,
             UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => primary + (primary - 1),
+            UnitPhase::RootReduce if primary == 1 => 1,
             UnitPhase::RootReduce => primary + full_internal,
         }
     }

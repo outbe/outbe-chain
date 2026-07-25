@@ -1386,6 +1386,33 @@ fn root_reduce_units_bind_exact_leaf_shuffle_roots_and_padded_summaries() {
 }
 
 #[test]
+fn one_shard_root_reduce_finishes_at_the_leaf_without_a_padded_node() {
+    let topology = LysisPlanTopologyV1::new(1).unwrap();
+    let final_position = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::RootReduce,
+        level: 0,
+        index: 0,
+    };
+
+    assert_eq!(topology.phase_unit_count(UnitPhase::RootReduce), 1);
+    assert_eq!(
+        topology
+            .phase_position_at(UnitPhase::RootReduce, 0)
+            .unwrap(),
+        final_position
+    );
+    assert_eq!(
+        topology
+            .plan_position_at(topology.plan_ordinal_of(final_position).unwrap())
+            .unwrap(),
+        final_position
+    );
+    assert!(topology
+        .phase_position_at(UnitPhase::RootReduce, 1)
+        .is_err());
+}
+
+#[test]
 fn gratis_scan_artifacts_are_typed_canonical_and_reject_trailing_bytes() {
     let limits = poc_schema_limits();
     let summary = GratisSegmentSummaryV1 {
@@ -1489,7 +1516,11 @@ fn complete_lysis_dag_has_frozen_phase_counts_and_both_prefix_directions() {
         );
         assert_eq!(
             topology.phase_unit_count(UnitPhase::RootReduce),
-            primary_count + internal
+            if primary_count == 1 {
+                1
+            } else {
+                primary_count + internal
+            }
         );
 
         let prefix = topology
