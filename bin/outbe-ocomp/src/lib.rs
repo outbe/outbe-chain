@@ -15,6 +15,7 @@ pub mod lysis_phase_replay;
 pub mod lysis_plan_audit;
 pub mod lysis_result_adoption;
 pub mod lysis_result_catalog;
+pub mod lysis_scheduler;
 pub mod lysis_shuffle_adoption;
 pub mod snapshot_client;
 pub mod supervisor;

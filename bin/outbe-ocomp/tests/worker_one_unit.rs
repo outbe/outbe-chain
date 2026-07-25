@@ -42,11 +42,12 @@ use outbe_ocomp::input_artifacts::{
     decode_verified_input_chunk, derive_input_chunk_ref, poc_input_list_limits,
     publish_input_artifact_set, InputArtifactContents, InputArtifactIdentity,
 };
+use outbe_ocomp::input_ref_catalog::VerifiedInputChunkRefCatalog;
 use outbe_ocomp::lysis_phase_replay::{
-    admit_reported_core_phase_unit, admit_reported_output_finalize_unit, verify_core_phase_replay,
-    verify_output_finalize_replay,
+    admit_reported_output_finalize_unit, verify_core_phase_replay, verify_output_finalize_replay,
 };
 use outbe_ocomp::lysis_result_adoption::verify_lysis_root_reduce_phase_replay;
+use outbe_ocomp::lysis_scheduler::admit_reported_lysis_unit_v1;
 use outbe_ocomp::lysis_shuffle_adoption::{
     adopt_lysis_shuffle_descendants, verify_lysis_shuffle_phase_replay,
 };
@@ -1288,19 +1289,29 @@ fn real_worker_processes_execute_through_output_finalize() {
         limits,
     )
     .unwrap();
-    let admitted_enumerate = admit_reported_core_phase_unit(
-        AdmissionPositionV1 { plan_ordinal: 0 },
-        &spec,
+    let pinned_bundle = PinnedProtocolBundle::decode(
+        &bundle.encode_canonical(&limits).unwrap(),
+        protocol_bundle_hash,
+        &limits,
+    )
+    .unwrap();
+    let input_ref_catalog = VerifiedInputChunkRefCatalog::reopen(
+        directory.path().join("input-refs"),
+        &reader,
+        limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admitted_enumerate = admit_reported_lysis_unit_v1(
+        0,
         &finished_reports[0],
-        &plan,
-        &manifest,
-        &replay_inputs,
-        &[],
-        &bundle,
+        &mut admission_catalog,
+        &input_ref_catalog,
+        &pinned_bundle,
         &reader,
         &replay_inbox,
+        &semantic_replay_inbox,
         &cas,
-        &mut admission_catalog,
         &limits,
     )
     .expect("admit exact supervisor-replayed Enumerate artifact");
