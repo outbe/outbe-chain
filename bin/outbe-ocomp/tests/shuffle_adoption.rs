@@ -144,7 +144,7 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
     )
     .unwrap();
     let spec = owner_shuffle_spec();
-    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, 1, 1, &limits);
     let authority_object_count = cas.object_count().unwrap();
     let mut catalog = VerifiedAdmissionCatalog::open(
         directory.path().join("catalog"),
@@ -225,7 +225,7 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
     )
     .unwrap();
     let spec = owner_shuffle_spec();
-    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, 1, 1, &limits);
     let mut catalog = VerifiedAdmissionCatalog::open(
         directory.path().join("catalog"),
         &cas,

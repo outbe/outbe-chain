@@ -1,6 +1,7 @@
 //! Fixed process, control and artifact base for the Off-chain Computation PoC.
 
 pub mod admission_catalog;
+pub mod bucket_shuffle_cursor;
 pub mod bundle;
 pub mod cas;
 pub mod control;

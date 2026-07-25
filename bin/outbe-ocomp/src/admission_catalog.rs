@@ -71,9 +71,20 @@ struct AdmissionCatalogHeaderV1 {
     input_manifest_hash: B256,
     plan_ref: CasObjectRefV1,
     plan_hash: B256,
+    tribute_count: u32,
     primary_work_unit_count: u32,
     primary_work_unit_root: B256,
     exact_plan_unit_count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct AdmissionPlanAuthorityV1 {
+    pub protocol_bundle_hash: B256,
+    pub job_id: B256,
+    pub attempt: u32,
+    pub plan_hash: B256,
+    pub tribute_count: u32,
+    pub primary_work_unit_count: u32,
 }
 
 pub struct VerifiedAdmissionCatalog {
@@ -304,6 +315,17 @@ impl VerifiedAdmissionCatalog {
         self.abstained
     }
 
+    pub(crate) const fn plan_authority(&self) -> AdmissionPlanAuthorityV1 {
+        AdmissionPlanAuthorityV1 {
+            protocol_bundle_hash: self.header.protocol_bundle_hash,
+            job_id: self.header.job_id,
+            attempt: self.header.attempt,
+            plan_hash: self.header.plan_hash,
+            tribute_count: self.header.tribute_count,
+            primary_work_unit_count: self.header.primary_work_unit_count,
+        }
+    }
+
     fn require_active(&self) -> Result<(), AdmissionCatalogError> {
         if self.abstained {
             Err(AdmissionCatalogError::Abstained)
@@ -498,6 +520,7 @@ fn expected_header(
         input_manifest_hash,
         plan_ref: plan_ref.clone(),
         plan_hash: plan.plan_hash(limits)?,
+        tribute_count: plan.tribute_count,
         primary_work_unit_count: plan.primary_work_unit_count,
         primary_work_unit_root: plan.primary_work_unit_root,
         exact_plan_unit_count,
@@ -516,6 +539,7 @@ fn encode_header(
     body.write_b256(header.input_manifest_hash)?;
     encode_object_ref(&mut body, &header.plan_ref)?;
     body.write_b256(header.plan_hash)?;
+    body.write_u32(header.tribute_count)?;
     body.write_u32(header.primary_work_unit_count)?;
     body.write_b256(header.primary_work_unit_root)?;
     body.write_u32(header.exact_plan_unit_count)?;
@@ -536,6 +560,7 @@ fn decode_header(
         input_manifest_hash: input.read_b256()?,
         plan_ref: decode_object_ref(&mut input)?,
         plan_hash: input.read_b256()?,
+        tribute_count: input.read_u32()?,
         primary_work_unit_count: input.read_u32()?,
         primary_work_unit_root: input.read_b256()?,
         exact_plan_unit_count: input.read_u32()?,
@@ -920,6 +945,7 @@ mod tests {
                 expected_ocb1_kind: None,
             },
             plan_hash: hash(4),
+            tribute_count: 1,
             primary_work_unit_count: 1,
             primary_work_unit_root: hash(23),
             exact_plan_unit_count,

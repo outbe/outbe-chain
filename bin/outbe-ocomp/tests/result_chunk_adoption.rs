@@ -212,7 +212,7 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
     )
     .unwrap();
     let spec = leaf_spec(0);
-    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, 1, 1, &limits);
     let mut catalog = VerifiedAdmissionCatalog::open(
         directory.path().join("catalog"),
         &cas,
@@ -285,7 +285,7 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
     )
     .unwrap();
     let spec = leaf_spec(0);
-    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, 1, 1, &limits);
     let authority_object_count = cas.object_count().unwrap();
     let mut catalog = VerifiedAdmissionCatalog::open(
         directory.path().join("catalog"),
