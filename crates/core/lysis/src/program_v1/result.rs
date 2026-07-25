@@ -3,12 +3,16 @@
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     list::{leaf_hash, node_hash, pad_hash},
+    result::OutputManifestEntryV1,
     CanonicalReader, CanonicalWriter, ListKind, SchemaLimits,
 };
 
 use super::{artifacts::LysisArtifactErrorV1, planner::PRIMARY_WORK_SHARD_SIZE};
 
 const ROOT_REDUCE_SUMMARY_MAGIC: [u8; 4] = *b"LYQ1";
+const ROOT_REDUCE_OUTPUT_MAGIC: [u8; 4] = *b"LYR1";
+const ROOT_REDUCE_OUTPUT_LEAF: u8 = 1;
+const ROOT_REDUCE_OUTPUT_NODE: u8 = 2;
 const MAX_LIST_SUBTREE_HEIGHT: u16 = 31;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -198,6 +202,17 @@ pub struct RootReduceSummaryV1 {
     pub first_error_ordinal: Option<u32>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RootReduceOutputV1 {
+    Leaf {
+        summary: RootReduceSummaryV1,
+        output_manifest_entry: OutputManifestEntryV1,
+    },
+    Node {
+        summary: RootReduceSummaryV1,
+    },
+}
+
 impl RootReduceSummaryV1 {
     pub fn merge_adjacent(self, right: Self) -> Result<Self, LysisArtifactErrorV1> {
         validate_root_reduce_summary(&self)?;
@@ -281,6 +296,71 @@ impl RootReduceSummaryV1 {
     }
 }
 
+pub fn encode_root_reduce_output(
+    output: &RootReduceOutputV1,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, LysisArtifactErrorV1> {
+    validate_root_reduce_output(output, limits)?;
+    let mut writer = CanonicalWriter::new(limits.codec);
+    writer.write_fixed(&ROOT_REDUCE_OUTPUT_MAGIC)?;
+    match output {
+        RootReduceOutputV1::Leaf {
+            summary,
+            output_manifest_entry,
+        } => {
+            writer.write_u8(ROOT_REDUCE_OUTPUT_LEAF)?;
+            let summary = encode_root_reduce_summary(summary, limits)?;
+            writer.write_bounded_bytes(&summary, limits.max_bounded_bytes)?;
+            let entry = output_manifest_entry.encode_canonical_record(limits)?;
+            writer.write_bounded_bytes(&entry, limits.max_bounded_bytes)?;
+        }
+        RootReduceOutputV1::Node { summary } => {
+            writer.write_u8(ROOT_REDUCE_OUTPUT_NODE)?;
+            let summary = encode_root_reduce_summary(summary, limits)?;
+            writer.write_bounded_bytes(&summary, limits.max_bounded_bytes)?;
+        }
+    }
+    Ok(writer.into_bytes())
+}
+
+pub fn decode_root_reduce_output(
+    encoded: &[u8],
+    limits: &SchemaLimits,
+) -> Result<RootReduceOutputV1, LysisArtifactErrorV1> {
+    let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+    if reader.read_fixed::<4>()? != ROOT_REDUCE_OUTPUT_MAGIC {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "root reducer output header",
+        ));
+    }
+    let tag = reader.read_u8()?;
+    let summary =
+        decode_root_reduce_summary(reader.read_bounded_bytes(limits.max_bounded_bytes)?, limits)?;
+    let output = match tag {
+        ROOT_REDUCE_OUTPUT_LEAF => RootReduceOutputV1::Leaf {
+            summary,
+            output_manifest_entry: OutputManifestEntryV1::decode_canonical_record(
+                reader.read_bounded_bytes(limits.max_bounded_bytes)?,
+                limits,
+            )?,
+        },
+        ROOT_REDUCE_OUTPUT_NODE => RootReduceOutputV1::Node { summary },
+        _ => {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "root reducer output tag",
+            ));
+        }
+    };
+    reader.finish()?;
+    validate_root_reduce_output(&output, limits)?;
+    if encode_root_reduce_output(&output, limits)? != encoded {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "root reducer output canonical re-encoding",
+        ));
+    }
+    Ok(output)
+}
+
 pub fn encode_root_reduce_summary(
     summary: &RootReduceSummaryV1,
     limits: &SchemaLimits,
@@ -315,6 +395,58 @@ pub fn encode_root_reduce_summary(
         writer.write_u32(*ordinal)
     })?;
     Ok(output.into_bytes())
+}
+
+fn validate_root_reduce_output(
+    output: &RootReduceOutputV1,
+    limits: &SchemaLimits,
+) -> Result<(), LysisArtifactErrorV1> {
+    match output {
+        RootReduceOutputV1::Leaf {
+            summary,
+            output_manifest_entry,
+        } => {
+            validate_root_reduce_summary(summary)?;
+            if summary.covered_primary_count != 1
+                || output_manifest_entry.chunk_ordinal != summary.covered_primary_start
+            {
+                return Err(LysisArtifactErrorV1::InvalidEncoding(
+                    "root reducer leaf coverage",
+                ));
+            }
+            let encoded_entry = output_manifest_entry.encode_canonical_record(limits)?;
+            let expected_manifest = LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::CompleteOutputManifest,
+                summary.covered_primary_start,
+                &[encoded_entry],
+                limits.max_bounded_bytes,
+            )?;
+            let expected_chunk_hashes = LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::ResultChunkHashes,
+                summary.covered_primary_start,
+                &[output_manifest_entry.result_chunk_hash.as_slice()],
+                B256::len_bytes(),
+            )?;
+            if summary.output_manifest_entries != expected_manifest
+                || summary.result_chunk_hashes != expected_chunk_hashes
+            {
+                return Err(LysisArtifactErrorV1::InvalidEncoding(
+                    "root reducer leaf manifest binding",
+                ));
+            }
+            Ok(())
+        }
+        RootReduceOutputV1::Node { summary } => {
+            validate_root_reduce_summary(summary)?;
+            if summary.result_chunk_hashes.subtree_height == 0 && summary.covered_primary_count != 0
+            {
+                return Err(LysisArtifactErrorV1::InvalidEncoding(
+                    "root reducer node topology",
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 pub fn decode_root_reduce_summary(
@@ -415,7 +547,7 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
     require_carrier(
         &summary.output_manifest_entries,
         ListKind::CompleteOutputManifest,
-        summary.nod_count,
+        summary.covered_primary_count,
     )?;
     require_carrier(
         &summary.result_chunk_hashes,
@@ -431,10 +563,11 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
         summary.nod_actions.subtree_height,
         summary.bucket_records.subtree_height,
         summary.contributor_actions.subtree_height,
-        summary.output_manifest_entries.subtree_height,
     ]
     .into_iter()
     .any(|height| height != action_height)
+        || summary.output_manifest_entries.subtree_height
+            != summary.result_chunk_hashes.subtree_height
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "root reducer summary carrier span",
@@ -448,7 +581,7 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
     if summary.nod_actions.start_ordinal != action_start
         || summary.bucket_records.start_ordinal != action_start
         || summary.contributor_actions.start_ordinal != action_start
-        || summary.output_manifest_entries.start_ordinal != action_start
+        || summary.output_manifest_entries.start_ordinal != summary.covered_primary_start
         || summary.result_chunk_hashes.start_ordinal != summary.covered_primary_start
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
@@ -549,11 +682,10 @@ fn validate_list_subtree_carrier(
 
 fn primary_subtree_height(list_kind: ListKind) -> Result<u16, LysisArtifactErrorV1> {
     match list_kind {
-        ListKind::NodActions
-        | ListKind::BucketRecords
-        | ListKind::ContributorActions
-        | ListKind::CompleteOutputManifest => Ok(PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16),
-        ListKind::ResultChunkHashes => Ok(0),
+        ListKind::NodActions | ListKind::BucketRecords | ListKind::ContributorActions => {
+            Ok(PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16)
+        }
+        ListKind::CompleteOutputManifest | ListKind::ResultChunkHashes => Ok(0),
         _ => Err(LysisArtifactErrorV1::InvalidEncoding(
             "Lysis list subtree kind",
         )),

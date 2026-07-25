@@ -22,6 +22,7 @@ pub struct SchemaLimits {
     pub max_action_items: usize,
     pub max_chunk_items: usize,
     pub max_unit_inputs: usize,
+    pub max_result_chunk_bytes: u64,
     pub max_control_body_bytes: usize,
 }
 

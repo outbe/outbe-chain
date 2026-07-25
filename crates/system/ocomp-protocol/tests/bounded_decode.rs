@@ -17,6 +17,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     max_action_items: 4,
     max_chunk_items: 4,
     max_unit_inputs: 4,
+    max_result_chunk_bytes: 8,
     max_control_body_bytes: 8,
 };
 

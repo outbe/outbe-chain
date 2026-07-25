@@ -27,8 +27,8 @@ use outbe_lysis::program_v1::reducers::{
     StreamingMergeErrorV1,
 };
 use outbe_lysis::program_v1::result::{
-    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
-    RootReduceSummaryV1,
+    decode_root_reduce_output, decode_root_reduce_summary, encode_root_reduce_output,
+    encode_root_reduce_summary, LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_lysis::program_v1::{
     execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
@@ -36,11 +36,13 @@ use outbe_lysis::program_v1::{
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
+    control::CasObjectRefV1,
     input::{InputChunkKind, InputChunkRefV1},
     local_control::poc_schema_limits,
     ordered_list_root,
+    result::OutputManifestEntryV1,
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
-    ListKind, OrderedListLimits,
+    ListKind, ObjectKind, OrderedListLimits,
 };
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::BTreeMap;
@@ -360,8 +362,8 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         contributor_actions: carrier(outbe_ocomp_protocol::ListKind::ContributorActions, 1, 9, 13),
         output_manifest_entries: carrier(
             outbe_ocomp_protocol::ListKind::CompleteOutputManifest,
-            257,
-            9,
+            2,
+            1,
             14,
         ),
         result_chunk_hashes: carrier(outbe_ocomp_protocol::ListKind::ResultChunkHashes, 2, 1, 15),
@@ -395,9 +397,102 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
     wrong_span.contributor_actions.subtree_height = 8;
     assert!(encode_root_reduce_summary(&wrong_span, &limits).is_err());
 
+    let mut manifest_per_nod = summary.clone();
+    manifest_per_nod.output_manifest_entries.real_count = manifest_per_nod.nod_count;
+    manifest_per_nod.output_manifest_entries.subtree_height = 9;
+    assert!(encode_root_reduce_summary(&manifest_per_nod, &limits).is_err());
+
     let mut inconsistent = summary;
     inconsistent.contributor_count = 2;
     assert!(encode_root_reduce_summary(&inconsistent, &limits).is_err());
+}
+
+#[test]
+fn root_reduce_output_is_a_closed_leaf_or_node_payload() {
+    let limits = poc_schema_limits();
+    let entry = OutputManifestEntryV1 {
+        chunk_ordinal: 0,
+        result_chunk_hash: B256::repeat_byte(0x41),
+        result_chunk_ref: CasObjectRefV1 {
+            transport_digest: B256::repeat_byte(0x42),
+            encoded_bytes: 128,
+            expected_ocb1_kind: Some(ObjectKind::ResultChunkV1.tag()),
+        },
+    };
+    let carrier = |kind, item: &[u8]| {
+        LysisListSubtreeCarrierV1::from_primary_page(kind, 0, &[item], 512).unwrap()
+    };
+    let summary = RootReduceSummaryV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 3,
+        plan_hash: B256::repeat_byte(4),
+        covered_primary_start: 0,
+        covered_primary_count: 1,
+        nod_actions: carrier(ListKind::NodActions, &[1]),
+        bucket_records: carrier(ListKind::BucketRecords, &[2]),
+        contributor_actions: carrier(ListKind::ContributorActions, &[3]),
+        output_manifest_entries: carrier(
+            ListKind::CompleteOutputManifest,
+            &entry.encode_canonical_record(&limits).unwrap(),
+        ),
+        result_chunk_hashes: carrier(
+            ListKind::ResultChunkHashes,
+            entry.result_chunk_hash.as_slice(),
+        ),
+        tribute_count: 1,
+        nod_count: 1,
+        bucket_count: 1,
+        contributor_count: 1,
+        tribute_nominal_total: U256::from(100),
+        eligible_nominal_total: U256::from(100),
+        nod_gratis_consumed: U256::from(10),
+        nod_cost_total: U256::from(90),
+        first_error_ordinal: None,
+    };
+
+    let mut node_summary = summary.clone();
+    for carrier in [
+        &mut node_summary.nod_actions,
+        &mut node_summary.bucket_records,
+        &mut node_summary.contributor_actions,
+    ] {
+        carrier.subtree_height = 9;
+    }
+    node_summary.output_manifest_entries.subtree_height = 1;
+    node_summary.result_chunk_hashes.subtree_height = 1;
+
+    for output in [
+        RootReduceOutputV1::Leaf {
+            summary: summary.clone(),
+            output_manifest_entry: entry.clone(),
+        },
+        RootReduceOutputV1::Node {
+            summary: node_summary,
+        },
+    ] {
+        let encoded = encode_root_reduce_output(&output, &limits).unwrap();
+        assert_eq!(
+            decode_root_reduce_output(&encoded, &limits).unwrap(),
+            output
+        );
+
+        let mut trailing = encoded;
+        trailing.push(0);
+        assert!(decode_root_reduce_output(&trailing, &limits).is_err());
+    }
+
+    let mut substituted_entry = entry;
+    substituted_entry.result_chunk_hash = B256::repeat_byte(0xff);
+    assert!(encode_root_reduce_output(
+        &RootReduceOutputV1::Leaf {
+            summary: summary.clone(),
+            output_manifest_entry: substituted_entry,
+        },
+        &limits,
+    )
+    .is_err());
+    assert!(encode_root_reduce_output(&RootReduceOutputV1::Node { summary }, &limits,).is_err());
 }
 
 #[test]
@@ -497,6 +592,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
                    first_error_ordinal: Option<u32>| {
         let actions = vec![vec![marker]; usize::try_from(tribute_count).unwrap()];
         let contributors = vec![vec![marker]; usize::try_from(contributor_count).unwrap()];
+        let manifest_entry = vec![vec![marker]];
         let result_hash = vec![vec![marker; 32]];
         RootReduceSummaryV1 {
             protocol_bundle_hash: B256::repeat_byte(1),
@@ -529,7 +625,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
             output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
                 ListKind::CompleteOutputManifest,
                 primary_ordinal,
-                &actions,
+                &manifest_entry,
                 16,
             )
             .unwrap(),
@@ -562,6 +658,7 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     assert_eq!(merged.tribute_nominal_total, U256::from(2_570));
     assert_eq!(merged.first_error_ordinal, Some(1));
     assert_eq!(merged.nod_actions.subtree_height, 9);
+    assert_eq!(merged.output_manifest_entries.subtree_height, 1);
     assert_eq!(merged.result_chunk_hashes.subtree_height, 1);
 
     assert!(right.clone().merge_adjacent(left.clone()).is_err());

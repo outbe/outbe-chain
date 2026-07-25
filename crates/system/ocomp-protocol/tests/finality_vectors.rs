@@ -96,6 +96,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     max_action_items: 4_096,
     max_chunk_items: 4_096,
     max_unit_inputs: 64,
+    max_result_chunk_bytes: 524_288,
     max_control_body_bytes: 262_144,
 };
 const FINALIZED_BLOCK_NUMBER: u64 = 1;

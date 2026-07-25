@@ -3,12 +3,14 @@ use std::collections::BTreeSet;
 use alloy_primitives::{Address, B256, U256};
 
 use crate::{
+    codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
     common::EntityId36,
+    control::CasObjectRefV1,
     error::ProtocolError,
     hash::hash_framed,
     intent::DayType,
-    registry::HashDomain,
-    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, SchemaLimits},
+    registry::{HashDomain, ObjectKind},
+    schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
 };
 
 wire_enum_u8! {
@@ -94,6 +96,18 @@ wire_struct! {
     validate = validate_result_chunk;
 }
 impl_top_level_codec!(ResultChunkV1, ResultChunkV1);
+
+wire_struct! {
+    /// Canonical semantic-to-transport binding for one result chunk.
+    ///
+    /// The reference deliberately carries no path or validator-local namespace.
+    pub struct OutputManifestEntryV1 {
+        pub chunk_ordinal: u32,
+        pub result_chunk_hash: B256,
+        pub result_chunk_ref: CasObjectRefV1,
+    }
+    validate = validate_output_manifest_entry;
+}
 
 wire_struct! {
     pub struct ExactCountsV1 {
@@ -244,6 +258,27 @@ impl ResultChunkV1 {
     }
 }
 
+impl OutputManifestEntryV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+
+    pub fn decode_canonical_record(
+        encoded: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+        let entry = Self::decode_nested(&mut reader, limits)?;
+        reader.finish()?;
+        <Self as NestedCodec>::validate(&entry, limits)?;
+        require_canonical_reencoding(encoded, &entry.encode_canonical_record(limits)?)?;
+        Ok(entry)
+    }
+}
+
 impl LysisResultV1 {
     #[must_use]
     pub fn arithmetic_summary(&self) -> LysisArithmeticSummaryV1 {
@@ -366,6 +401,29 @@ fn validate_result_chunk(
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
     chunk.validate_semantics(limits)
+}
+
+fn validate_output_manifest_entry(
+    value: &OutputManifestEntryV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    require(
+        !value.result_chunk_hash.is_zero(),
+        "output manifest semantic chunk hash",
+    )?;
+    require(
+        !value.result_chunk_ref.transport_digest.is_zero(),
+        "output manifest transport digest",
+    )?;
+    require(
+        value.result_chunk_ref.encoded_bytes > 0
+            && value.result_chunk_ref.encoded_bytes <= limits.max_result_chunk_bytes,
+        "output manifest exact chunk byte cap",
+    )?;
+    require(
+        value.result_chunk_ref.expected_ocb1_kind == Some(ObjectKind::ResultChunkV1.tag()),
+        "output manifest ResultChunkV1 kind",
+    )
 }
 
 fn validate_lysis_result(

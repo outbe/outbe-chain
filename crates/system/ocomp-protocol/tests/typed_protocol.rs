@@ -70,6 +70,7 @@ const LIMITS: SchemaLimits = SchemaLimits {
     max_action_items: 4_096,
     max_chunk_items: 4_096,
     max_unit_inputs: 64,
+    max_result_chunk_bytes: 524_288,
     max_control_body_bytes: 262_144,
 };
 
@@ -814,6 +815,7 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
         max_action_items: 1,
         max_chunk_items: 1,
         max_unit_inputs: 1,
+        max_result_chunk_bytes: 1,
         max_control_body_bytes: 1,
     };
     let mut proof = finality_proof();
@@ -1094,6 +1096,7 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
         max_action_items: 16,
         max_chunk_items: 16,
         max_unit_inputs: 16,
+        max_result_chunk_bytes: 16,
         max_control_body_bytes: 2,
     };
     assert!(matches!(

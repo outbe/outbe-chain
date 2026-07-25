@@ -120,6 +120,7 @@ pub fn poc_schema_limits() -> SchemaLimits {
             .expect("generated per-chunk record cap fits usize"),
         max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
             .expect("generated per-unit input cap fits usize"),
+        max_result_chunk_bytes: candidate.max_result_chunk_bytes,
         max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
             .expect("generated control cap fits usize"),
     }
