@@ -669,6 +669,25 @@ fn root_reduce_summaries_merge_only_adjacent_complete_prefixes() {
     overflowing.tribute_nominal_total = U256::MAX;
     assert!(overflowing.merge_adjacent(right.clone()).is_err());
 
+    // Contributor pages are globally owner-sorted, while Tribute totals are
+    // partitioned by the primary Tribute shard. A valid contributor page can
+    // therefore carry more nominal value than the unrelated Tribute page at
+    // the same ordinal. Conservation only becomes meaningful at the complete
+    // root, after all pages have been reduced.
+    let mut owner_paged_left = left.clone();
+    owner_paged_left.tribute_nominal_total = U256::from(1_000);
+    owner_paged_left.eligible_nominal_total = U256::from(2_000);
+    let mut owner_paged_right = right.clone();
+    owner_paged_right.tribute_nominal_total = U256::from(1_570);
+    owner_paged_right.eligible_nominal_total = U256::ZERO;
+    encode_root_reduce_summary(&owner_paged_left, &poc_schema_limits())
+        .expect("globally owner-paged leaf is a valid reducer summary");
+    let globally_conserved = owner_paged_left
+        .merge_adjacent(owner_paged_right)
+        .expect("adjacent owner pages reduce independently of primary Tribute totals");
+    assert_eq!(globally_conserved.eligible_nominal_total, U256::from(2_000));
+    assert_eq!(globally_conserved.tribute_nominal_total, U256::from(2_570));
+
     let empty_summary = |primary_ordinal| RootReduceSummaryV1 {
         protocol_bundle_hash: left.protocol_bundle_hash,
         job_id: left.job_id,

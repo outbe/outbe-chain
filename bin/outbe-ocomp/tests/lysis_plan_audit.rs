@@ -754,7 +754,22 @@ fn scheduler_prepares_manifest_bound_two_shard_worker_requests_after_cold_restar
             == Some(ObjectKind::AuthenticatedInputChunkV1.tag())));
     assert!(
         fidelity_request.ordered_input_refs.len() >= 3,
-        "FidelityMap receives its producer, exact Tribute shard and Fidelity openings"
+        "FidelityMap receives its producer, shard, bounded lookahead and Fidelity openings"
+    );
+    let fidelity_authenticated = fidelity_request.ordered_input_refs[1..]
+        .iter()
+        .map(|reference| {
+            AuthenticatedInputChunkV1::decode_canonical(
+                reader.read_verified(reference).unwrap().bytes(),
+                &fixture.limits,
+            )
+            .unwrap()
+            .kind
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        &fidelity_authenticated[..2],
+        &[InputChunkKind::Tribute, InputChunkKind::Tribute]
     );
 
     let amount_request = audit
@@ -782,7 +797,11 @@ fn scheduler_prepares_manifest_bound_two_shard_worker_requests_after_cold_restar
         .collect::<Vec<_>>();
     assert_eq!(
         authenticated,
-        vec![InputChunkKind::Tribute, InputChunkKind::Oracle]
+        vec![
+            InputChunkKind::Tribute,
+            InputChunkKind::Tribute,
+            InputChunkKind::Oracle
+        ]
     );
 }
 

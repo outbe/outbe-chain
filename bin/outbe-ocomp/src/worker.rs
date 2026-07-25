@@ -1916,27 +1916,6 @@ fn execute_root_reduce_leaf(
             VerifiedShuffleRecordV1::Bucket(_) => Err(WorkerError::UnitBindingMismatch),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let bucket_page = verified_shuffle_run_page(bucket_root, shard_ordinal, limits, |reference| {
-        reader
-            .read_verified(reference)
-            .map(|object| object.bytes().to_vec())
-            .map_err(|_| {
-                outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                    "authenticated bucket shuffle descendant",
-                )
-            })
-    })?;
-    let buckets = bucket_page
-        .into_iter()
-        .map(|record| match record {
-            VerifiedShuffleRecordV1::Bucket(bucket) => Ok(bucket),
-            VerifiedShuffleRecordV1::Owner(_) => Err(WorkerError::UnitBindingMismatch),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    if u32::try_from(buckets.len()).ok() != Some(tribute_count) {
-        return Err(WorkerError::UnitBindingMismatch);
-    }
-
     let nod_actions = finalized
         .ordered_records
         .iter()
@@ -1957,6 +1936,16 @@ fn execute_root_reduce_leaf(
             bucket_key: record.nod_action.bucket_key,
         })
         .collect::<Vec<_>>();
+    let mut buckets = nod_actions
+        .iter()
+        .map(|action| ShuffleBucketRecordV1 {
+            bucket_key: action.bucket_key,
+            raw_ordinal: action.raw_ordinal,
+            tribute_id: action.tribute_id,
+            nod_id: action.nod_id,
+        })
+        .collect::<Vec<_>>();
+    buckets.sort_by_key(|record| (record.bucket_key, record.raw_ordinal));
     let chunk = ResultChunkV1 {
         protocol_bundle_hash: spec.protocol_bundle_hash,
         job_id: spec.job_id,
@@ -1991,10 +1980,8 @@ fn execute_root_reduce_leaf(
     let chunk_hash_records = vec![chunk_hash.as_slice().to_vec()];
 
     let eligible_nominal_total = checked_sum(
-        finalized
-            .ordered_records
+        contributors
             .iter()
-            .filter_map(|record| record.contributor_action.as_ref())
             .map(|action| action.nominal_amount_minor),
         "root reducer eligible nominal total",
     )?;
@@ -2141,6 +2128,7 @@ fn require_complete_root_summary(
         plan.tribute_count,
         manifest.tribute_count,
         summary.tribute_nominal_total,
+        summary.eligible_nominal_total,
         manifest.tribute_nominal_total,
     )
 }
@@ -2154,13 +2142,15 @@ fn require_complete_root_values(
     plan_tribute_count: u32,
     manifest_tribute_count: u32,
     summary_tribute_nominal_total: U256,
+    summary_eligible_nominal_total: U256,
     manifest_tribute_nominal_total: U256,
 ) -> Result<(), WorkerError> {
     if covered_primary_start == 0
         && covered_primary_count == primary_work_unit_count
         && (summary_tribute_count != plan_tribute_count
             || summary_tribute_count != manifest_tribute_count
-            || summary_tribute_nominal_total != manifest_tribute_nominal_total)
+            || summary_tribute_nominal_total != manifest_tribute_nominal_total
+            || summary_eligible_nominal_total > summary_tribute_nominal_total)
     {
         return Err(WorkerError::UnitBindingMismatch);
     }
@@ -2657,11 +2647,34 @@ mod tests {
                 257,
                 257,
                 U256::from(256),
+                U256::from(200),
                 U256::from(257),
             )
             .is_err());
         }
-        require_complete_root_values(0, 1, 2, 256, 257, 257, U256::from(256), U256::from(257))
-            .unwrap();
+        require_complete_root_values(
+            0,
+            1,
+            2,
+            256,
+            257,
+            257,
+            U256::from(256),
+            U256::from(200),
+            U256::from(257),
+        )
+        .unwrap();
+        assert!(require_complete_root_values(
+            0,
+            2,
+            2,
+            257,
+            257,
+            257,
+            U256::from(257),
+            U256::from(258),
+            U256::from(257),
+        )
+        .is_err());
     }
 }

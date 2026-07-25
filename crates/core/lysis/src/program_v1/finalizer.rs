@@ -233,6 +233,10 @@ where
             "independently reduced ROOT_REDUCE summary",
         ));
     }
+    require_global_nominal_conservation(
+        streamed.eligible_nominal_total,
+        streamed.tribute_nominal_total,
+    )?;
 
     let frozen = &inputs.intent.frozen_metadosis_values;
     let unused_lysis = frozen
@@ -939,4 +943,31 @@ fn checked_add(
 ) -> Result<U256, LysisFinalizationErrorV1> {
     left.checked_add(right)
         .ok_or(ProtocolError::IntegerOverflow { what }.into())
+}
+
+fn require_global_nominal_conservation(
+    eligible_nominal_total: U256,
+    tribute_nominal_total: U256,
+) -> Result<(), LysisFinalizationErrorV1> {
+    if eligible_nominal_total > tribute_nominal_total {
+        return Err(LysisFinalizationErrorV1::Authority(
+            "global eligible nominal within Tribute nominal",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_global_nominal_conservation;
+    use alloy_primitives::U256;
+
+    #[test]
+    fn finalizer_enforces_nominal_conservation_only_at_the_global_root() {
+        require_global_nominal_conservation(U256::from(2_000), U256::from(2_570))
+            .expect("globally conserved totals");
+        require_global_nominal_conservation(U256::from(2_570), U256::from(2_570))
+            .expect("all Tribute can be eligible");
+        assert!(require_global_nominal_conservation(U256::from(2_571), U256::from(2_570)).is_err());
+    }
 }

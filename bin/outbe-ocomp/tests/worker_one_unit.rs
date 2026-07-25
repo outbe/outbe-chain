@@ -2397,9 +2397,9 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
             U256::from(257_u32)
         };
         let expected_eligible_nominal = if ordinal == 0 {
-            expected_tribute_nominal - U256::from(1)
+            tribute_nominal_total - U256::from(1)
         } else {
-            U256::from(257_u32)
+            U256::ZERO
         };
         assert_eq!(summary.tribute_count, expected_count);
         assert_eq!(summary.tribute_nominal_total, expected_tribute_nominal);
@@ -2577,7 +2577,13 @@ fn execute_real_worker_unit(
     );
     let frame = client.receive_response().expect("worker response");
     let finished = UnitFinishedV1::decode_body(&frame.body, &limits).expect("worker finished body");
-    assert_eq!(finished.status, UnitFinishedStatus::Success);
+    assert_eq!(
+        finished.status,
+        UnitFinishedStatus::Success,
+        "worker failed phase {:?} at plan ordinal {unit_index}; stderr={}",
+        spec.phase,
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(
         finished.unit_id,
         spec.unit_id(&limits).expect("worker UnitId")

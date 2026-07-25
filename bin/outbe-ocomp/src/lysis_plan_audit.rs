@@ -250,7 +250,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
                 )?;
             }
             UnitPhase::FidelityMap => {
-                self.push_primary_input_ref(
+                self.push_primary_input_authority_refs(
                     primary_ordinal.ok_or(ExactLysisPlanError::AuthorityMismatch(
                         "FidelityMap primary position",
                     ))?,
@@ -259,7 +259,7 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
                 self.push_input_kind_refs(InputChunkKind::Fidelity, &mut ordered_input_refs)?;
             }
             UnitPhase::AmountMap => {
-                self.push_primary_input_ref(
+                self.push_primary_input_authority_refs(
                     primary_ordinal.ok_or(ExactLysisPlanError::AuthorityMismatch(
                         "AmountMap primary position",
                     ))?,
@@ -555,6 +555,27 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             ));
         }
         output.push(input_object_ref(&verified.reference));
+        Ok(())
+    }
+
+    /// Adds the shard plus the bounded one-shard lookahead needed to rederive
+    /// the exact half-open primary interval. The lookahead is authenticated
+    /// authority only; phase semantics continue to consume the admitted
+    /// Enumerate producer for the current shard.
+    fn push_primary_input_authority_refs(
+        &self,
+        shard_ordinal: u32,
+        output: &mut Vec<CasObjectRefV1>,
+    ) -> Result<(), ExactLysisPlanError> {
+        self.push_primary_input_ref(shard_ordinal, output)?;
+        let next = shard_ordinal
+            .checked_add(1)
+            .ok_or(ExactLysisPlanError::AuthorityMismatch(
+                "primary Tribute lookahead ordinal",
+            ))?;
+        if next < self.plan.primary_work_unit_count {
+            self.push_primary_input_ref(next, output)?;
+        }
         Ok(())
     }
 

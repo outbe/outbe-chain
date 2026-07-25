@@ -619,7 +619,6 @@ fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), Lys
         || summary.nod_count != summary.tribute_count
         || summary.bucket_count != summary.nod_count
         || summary.contributor_count > summary.tribute_count
-        || summary.eligible_nominal_total > summary.tribute_nominal_total
     {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "root reducer summary counts or totals",
