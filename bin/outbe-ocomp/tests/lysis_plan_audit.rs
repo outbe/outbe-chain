@@ -27,15 +27,17 @@ use outbe_ocomp::{
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36, ProofBytes},
     input::{
-        materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
+        materialize_authenticated_openings, AuthenticatedInputChunkV1, CheckpointIdentityV1,
+        InputChunkKind, InputManifestV1,
     },
+    list::verify_ordered_list_membership,
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, RawContractOpeningProofV1,
         RawStorageSlotV1,
     },
     registry::ObjectKind,
     result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
-    unit::{UnitArtifactV1, UnitPhase, WorkOutputHeaderV1},
+    unit::{UnitArtifactV1, UnitPhase, UnitSpecV1, WorkOutputHeaderV1},
     CasObjectRefV1, ListKind,
 };
 
@@ -684,6 +686,104 @@ fn cold_restart_streams_the_complete_exact_plan_when_every_spec_matches() {
             item.spec().unit_id(&fixture.limits).unwrap()
         );
     }
+}
+
+#[test]
+fn scheduler_prepares_manifest_bound_two_shard_worker_requests_after_cold_restart() {
+    let fixture = synthetic_fixture(false, false);
+    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        &fixture.input_ref_root,
+        &reader,
+        fixture.limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admissions =
+        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
+    let audit = LocalLysisPlanAuditV1::open(
+        &admissions,
+        &input_refs,
+        &reader,
+        &fixture.bundle,
+        &fixture.limits,
+    )
+    .unwrap();
+    assert_eq!(audit.plan().tribute_count, 257);
+    assert_eq!(audit.plan().primary_work_unit_count, 2);
+
+    for (ordinal, expected_records) in [(0_u32, 256_usize), (1, 1)] {
+        let request = audit.worker_request_at(ordinal).unwrap();
+        let spec =
+            UnitSpecV1::decode_canonical(&request.canonical_unit_spec.0, &fixture.limits).unwrap();
+        assert_eq!(spec.phase, UnitPhase::Enumerate);
+        verify_ordered_list_membership(
+            ListKind::UnitSpecificationsArtifacts,
+            2,
+            ordinal,
+            &request.canonical_unit_spec.0,
+            &request.unit_membership_siblings,
+            audit.plan().primary_work_unit_root,
+        )
+        .unwrap();
+        assert_eq!(request.ordered_input_refs.len(), 1);
+        let chunk = AuthenticatedInputChunkV1::decode_canonical(
+            reader
+                .read_verified(&request.ordered_input_refs[0])
+                .unwrap()
+                .bytes(),
+            &fixture.limits,
+        )
+        .unwrap();
+        assert_eq!(chunk.kind, InputChunkKind::Tribute);
+        assert_eq!(chunk.canonical_records_or_openings.len(), expected_records);
+    }
+
+    let topology = LysisPlanTopologyV1::new(2).unwrap();
+    let fidelity_request = audit
+        .worker_request_at(topology.phase_offset(UnitPhase::FidelityMap).unwrap())
+        .unwrap();
+    assert!(fidelity_request.unit_membership_siblings.is_empty());
+    assert_eq!(
+        fidelity_request.ordered_input_refs[0].expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
+    assert!(fidelity_request.ordered_input_refs[1..]
+        .iter()
+        .all(|reference| reference.expected_ocb1_kind
+            == Some(ObjectKind::AuthenticatedInputChunkV1.tag())));
+    assert!(
+        fidelity_request.ordered_input_refs.len() >= 3,
+        "FidelityMap receives its producer, exact Tribute shard and Fidelity openings"
+    );
+
+    let amount_request = audit
+        .worker_request_at(topology.phase_offset(UnitPhase::AmountMap).unwrap())
+        .unwrap();
+    assert_eq!(
+        amount_request.ordered_input_refs[..3]
+            .iter()
+            .filter(|reference| {
+                reference.expected_ocb1_kind == Some(ObjectKind::UnitArtifactV1.tag())
+            })
+            .count(),
+        3
+    );
+    let authenticated = amount_request.ordered_input_refs[3..]
+        .iter()
+        .map(|reference| {
+            AuthenticatedInputChunkV1::decode_canonical(
+                reader.read_verified(reference).unwrap().bytes(),
+                &fixture.limits,
+            )
+            .unwrap()
+            .kind
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        authenticated,
+        vec![InputChunkKind::Tribute, InputChunkKind::Oracle]
+    );
 }
 
 #[test]

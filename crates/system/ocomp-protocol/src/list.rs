@@ -221,21 +221,46 @@ where
     I: IntoIterator<Item = T>,
     T: AsRef<[u8]>,
 {
+    try_streaming_ordered_list_membership_proof(
+        kind,
+        real_count,
+        target_index,
+        items.into_iter().map(Ok::<T, ProtocolError>),
+        max_item_bytes,
+    )
+}
+
+/// Fallible-input form of [`streaming_ordered_list_membership_proof`].
+///
+/// This lets a disk-backed catalog validate and encode each item lazily while
+/// preserving its own typed error and the same bounded frontier memory.
+pub fn try_streaming_ordered_list_membership_proof<I, T, E>(
+    kind: ListKind,
+    real_count: u32,
+    target_index: u32,
+    items: I,
+    max_item_bytes: usize,
+) -> Result<Vec<B256>, E>
+where
+    I: IntoIterator<Item = Result<T, E>>,
+    T: AsRef<[u8]>,
+    E: From<ProtocolError>,
+{
     if real_count == 0 || target_index >= real_count {
-        return Err(ProtocolError::InvalidInvariant(
-            "streaming ordered-list membership bounds",
-        ));
+        return Err(
+            ProtocolError::InvalidInvariant("streaming ordered-list membership bounds").into(),
+        );
     }
-    let padded_count =
-        real_count
-            .checked_next_power_of_two()
-            .ok_or(ProtocolError::IntegerOverflow {
-                what: "streaming ordered-list membership padded count",
-            })?;
+    let padded_count = real_count
+        .checked_next_power_of_two()
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "streaming ordered-list membership padded count",
+        })
+        .map_err(E::from)?;
     let tree_height = usize::try_from(padded_count.trailing_zeros()).map_err(|_| {
-        ProtocolError::IntegerOverflow {
+        E::from(ProtocolError::IntegerOverflow {
             what: "streaming ordered-list membership tree height",
-        }
+        })
     })?;
     let mut frontier = [None; u32::BITS as usize + 1];
     let mut siblings = Vec::new();
@@ -243,36 +268,43 @@ where
         .checked_mul(core::mem::size_of::<B256>())
         .ok_or(ProtocolError::IntegerOverflow {
             what: "streaming ordered-list membership proof bytes",
-        })?;
-    siblings
-        .try_reserve_exact(tree_height)
-        .map_err(|_| ProtocolError::AllocationFailed {
+        })
+        .map_err(E::from)?;
+    siblings.try_reserve_exact(tree_height).map_err(|_| {
+        E::from(ProtocolError::AllocationFailed {
             what: "streaming ordered-list membership proof",
             bytes: proof_bytes,
-        })?;
+        })
+    })?;
     let mut input = items.into_iter();
     for index in 0..real_count {
-        let item = input.next().ok_or(ProtocolError::InvalidInvariant(
-            "streaming ordered-list membership exact item count",
-        ))?;
+        let item = input
+            .next()
+            .ok_or(ProtocolError::InvalidInvariant(
+                "streaming ordered-list membership exact item count",
+            ))
+            .map_err(E::from)??;
         check_cap(
             "ordered-list item bytes",
             max_item_bytes,
             item.as_ref().len(),
-        )?;
+        )
+        .map_err(E::from)?;
         push_membership_hash(
             kind,
             &mut frontier,
             &mut siblings,
             index,
-            leaf_hash(kind, index, item.as_ref())?,
+            leaf_hash(kind, index, item.as_ref()).map_err(E::from)?,
             index == target_index,
-        )?;
+        )
+        .map_err(E::from)?;
     }
     if input.next().is_some() {
         return Err(ProtocolError::InvalidInvariant(
             "streaming ordered-list membership exact item count",
-        ));
+        )
+        .into());
     }
     for index in real_count..padded_count {
         push_membership_hash(
@@ -280,16 +312,18 @@ where
             &mut frontier,
             &mut siblings,
             index,
-            pad_hash(kind, index)?,
+            pad_hash(kind, index).map_err(E::from)?,
             false,
-        )?;
+        )
+        .map_err(E::from)?;
     }
     if siblings.len() != tree_height
         || frontier[tree_height].is_none_or(|node| !node.contains_target)
     {
         return Err(ProtocolError::InvalidInvariant(
             "streaming ordered-list membership complete tree",
-        ));
+        )
+        .into());
     }
     Ok(siblings)
 }

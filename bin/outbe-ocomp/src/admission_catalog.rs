@@ -89,6 +89,7 @@ pub(crate) struct AdmissionPlanAuthorityV1 {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AdmissionPinnedPlanV1 {
+    pub plan_ref: CasObjectRefV1,
     pub input_manifest_ref: CasObjectRefV1,
     pub input_manifest: InputManifestV1,
     pub plan: PlanCommitmentV1,
@@ -331,6 +332,7 @@ impl VerifiedAdmissionCatalog {
             return Err(AdmissionCatalogError::AuthorityMismatch);
         }
         Ok(AdmissionPinnedPlanV1 {
+            plan_ref: self.header.plan_ref.clone(),
             input_manifest_ref: self.header.input_manifest_ref.clone(),
             input_manifest: InputManifestV1::decode_canonical(
                 manifest_object.bytes(),

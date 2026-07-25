@@ -15,11 +15,14 @@ use outbe_lysis::program_v1::planner::{
     PlannedUnitPositionV1, PlannerErrorV1,
 };
 use outbe_ocomp_protocol::{
+    common::BoundedBytes,
+    control::RunUnitV1,
     input::{
         AuthenticatedOpeningV1, InputChunkKind, InputChunkRefV1, InputManifestV1, OpeningSourceKind,
     },
+    list::try_streaming_ordered_list_membership_proof,
     unit::{PlanCommitmentV1, UnitArtifactV1, UnitPhase, UnitSpecV1},
-    ListKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
+    CasObjectRefV1, ListKind, ObjectKind, ProtocolError, SchemaLimits, StreamingOrderedListRoot,
 };
 use thiserror::Error;
 
@@ -45,6 +48,8 @@ pub struct LocalLysisPlanAuditV1<'a> {
     reader: &'a FilesystemCasReader,
     bundle: &'a PinnedProtocolBundle,
     limits: &'a SchemaLimits,
+    plan_ref: CasObjectRefV1,
+    manifest_ref: CasObjectRefV1,
     manifest: InputManifestV1,
     plan: PlanCommitmentV1,
     planner: LysisPlannerV1,
@@ -195,6 +200,8 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             reader,
             bundle,
             limits,
+            plan_ref: pinned.plan_ref,
+            manifest_ref: pinned.input_manifest_ref,
             manifest: pinned.input_manifest,
             plan: pinned.plan,
             planner,
@@ -205,6 +212,98 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
     /// Produces a scheduler candidate. It is not a finalization input.
     pub fn candidate_spec_at(&self, plan_ordinal: u32) -> Result<UnitSpecV1, ExactLysisPlanError> {
         self.derive_spec_at(plan_ordinal)
+    }
+
+    /// Prepares the exact bounded worker request for one ready plan member.
+    ///
+    /// Producer references come only from durable verified admissions. Input
+    /// references come only from the closed manifest-bound input catalog.
+    /// Enumerate membership is generated with a bounded streaming frontier.
+    pub fn worker_request_at(&self, plan_ordinal: u32) -> Result<RunUnitV1, ExactLysisPlanError> {
+        let position = self.topology.plan_position_at(plan_ordinal)?;
+        let spec = self.derive_spec_at(plan_ordinal)?;
+        let mut ordered_input_refs = Vec::new();
+        for producer in self.topology.required_producers(position)? {
+            if let PlannedProducerV1::Unit(producer) = producer {
+                let producer_ordinal = self.topology.plan_ordinal_of(producer)?;
+                if producer_ordinal >= plan_ordinal {
+                    return Err(ExactLysisPlanError::AuthorityMismatch(
+                        "worker producer topological order",
+                    ));
+                }
+                ordered_input_refs
+                    .push(self.plan_bound_admission_at(producer_ordinal)?.artifact_ref);
+            }
+        }
+
+        let primary_ordinal = match position {
+            PlannedUnitPositionV1::Primary { ordinal, .. } => Some(ordinal),
+            _ => None,
+        };
+        match spec.phase {
+            UnitPhase::Enumerate => {
+                self.push_primary_input_ref(
+                    primary_ordinal.ok_or(ExactLysisPlanError::AuthorityMismatch(
+                        "Enumerate primary position",
+                    ))?,
+                    &mut ordered_input_refs,
+                )?;
+            }
+            UnitPhase::FidelityMap => {
+                self.push_primary_input_ref(
+                    primary_ordinal.ok_or(ExactLysisPlanError::AuthorityMismatch(
+                        "FidelityMap primary position",
+                    ))?,
+                    &mut ordered_input_refs,
+                )?;
+                self.push_input_kind_refs(InputChunkKind::Fidelity, &mut ordered_input_refs)?;
+            }
+            UnitPhase::AmountMap => {
+                self.push_primary_input_ref(
+                    primary_ordinal.ok_or(ExactLysisPlanError::AuthorityMismatch(
+                        "AmountMap primary position",
+                    ))?,
+                    &mut ordered_input_refs,
+                )?;
+                self.push_input_kind_refs(InputChunkKind::Oracle, &mut ordered_input_refs)?;
+            }
+            UnitPhase::FixedReduce
+            | UnitPhase::GratisPrefix
+            | UnitPhase::GratisPrefixDown
+            | UnitPhase::OutputFinalize
+            | UnitPhase::OwnerShuffle
+            | UnitPhase::BucketShuffle
+            | UnitPhase::RootReduce => {}
+        }
+
+        let canonical_spec = spec.encode_canonical(self.limits)?;
+        let unit_membership_siblings = if spec.phase == UnitPhase::Enumerate {
+            try_streaming_ordered_list_membership_proof(
+                ListKind::UnitSpecificationsArtifacts,
+                self.plan.primary_work_unit_count,
+                plan_ordinal,
+                (0..self.plan.primary_work_unit_count).map(|ordinal| {
+                    self.primary_spec_from_catalog(ordinal)?
+                        .encode_canonical(self.limits)
+                        .map_err(ExactLysisPlanError::from)
+                }),
+                self.limits.codec.max_body_bytes,
+            )?
+        } else {
+            Vec::new()
+        };
+        Ok(RunUnitV1 {
+            protocol_bundle_hash: self.plan.protocol_bundle_hash,
+            job_id: self.plan.job_id,
+            attempt: self.plan.attempt,
+            plan_hash: self.plan.plan_hash(self.limits)?,
+            unit_index: plan_ordinal,
+            canonical_unit_spec: BoundedBytes(canonical_spec),
+            unit_membership_siblings,
+            plan_ref: self.plan_ref.clone(),
+            input_manifest_ref: self.manifest_ref.clone(),
+            ordered_input_refs,
+        })
     }
 
     pub fn audit_cursor(&'a self) -> Result<LysisPlanAuditCursorV1<'a>, ExactLysisPlanError> {
@@ -440,6 +539,51 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             .map_err(Into::into)
     }
 
+    fn push_primary_input_ref(
+        &self,
+        shard_ordinal: u32,
+        output: &mut Vec<CasObjectRefV1>,
+    ) -> Result<(), ExactLysisPlanError> {
+        let verified = self.input_refs.verified_reference_at(
+            shard_ordinal,
+            self.reader,
+            self.bundle.bundle(),
+        )?;
+        if verified.reference.kind != InputChunkKind::Tribute {
+            return Err(ExactLysisPlanError::AuthorityMismatch(
+                "primary Tribute input kind",
+            ));
+        }
+        output.push(input_object_ref(&verified.reference));
+        Ok(())
+    }
+
+    fn push_input_kind_refs(
+        &self,
+        kind: InputChunkKind,
+        output: &mut Vec<CasObjectRefV1>,
+    ) -> Result<(), ExactLysisPlanError> {
+        let mut matched = 0_u32;
+        for verified in self
+            .input_refs
+            .exact_verified_cursor(self.reader, self.bundle.bundle())?
+        {
+            let verified = verified?;
+            if verified.reference.kind == kind {
+                output.push(input_object_ref(&verified.reference));
+                matched = matched
+                    .checked_add(1)
+                    .ok_or(PlannerErrorV1::IntegerOverflow)?;
+            }
+        }
+        if matched == 0 {
+            return Err(ExactLysisPlanError::AuthorityMismatch(
+                "required authenticated input kind",
+            ));
+        }
+        Ok(())
+    }
+
     fn producer_unit_ids(
         &self,
         position: PlannedUnitPositionV1,
@@ -479,6 +623,14 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
             return Err(ExactLysisPlanError::AuthorityMismatch("producer admission"));
         }
         Ok(())
+    }
+}
+
+fn input_object_ref(reference: &InputChunkRefV1) -> CasObjectRefV1 {
+    CasObjectRefV1 {
+        transport_digest: reference.transport_digest,
+        encoded_bytes: reference.encoded_bytes,
+        expected_ocb1_kind: Some(ObjectKind::AuthenticatedInputChunkV1.tag()),
     }
 }
 
