@@ -39,6 +39,20 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "populated OCOMP Tribute input requires certified retirement".into(),
+            ));
+        }
+        self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
+    }
+
+    pub(crate) fn consume_lysis_partition_inner(
+        &mut self,
+        day: WorldwideDay,
+        verified_count: u32,
+        verified_nominal: alloy_primitives::U256,
+    ) -> Result<()> {
         let mut totals = self.get_day_totals(day)?;
         if !totals.initialized
             || !totals.is_sealed
@@ -66,18 +80,28 @@ impl TributeContract<'_> {
         self.store_day_totals(&totals)
     }
 
-    /// Requests the one authenticated Catalog delete only after Metadosis has
-    /// committed COMPLETED and the sealed DayTotals are zero.
+    /// Requests the one authenticated Catalog retirement after the sealed
+    /// DayTotals are empty. The legacy terminal path calls this after
+    /// completion; certified activation calls the private inner transition
+    /// inside the same outer checkpoint as terminal completion.
     pub fn retire_completed_partition(
         &mut self,
         scope: &ExecutionScope,
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
+        if self.ocomp_profile_ready.read()? {
+            let admission = self.pre_admission_projection(day)?;
+            if admission.is_sealed && admission.tribute_count != 0 {
+                return Err(outbe_primitives::error::PrecompileError::Revert(
+                    "populated OCOMP Tribute input requires certified retirement".into(),
+                ));
+            }
+        }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
     }
 
-    fn retire_completed_partition_inner(
+    pub(crate) fn retire_completed_partition_inner(
         &mut self,
         scope: &ExecutionScope,
         day: WorldwideDay,

@@ -268,12 +268,42 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     )
     .is_err());
 
-    let mut wrong_tribute = receipts.clone();
-    wrong_tribute.tribute.retired_generation += 1;
+    let mut wrong_tribute_generation = receipts.clone();
+    wrong_tribute_generation.tribute.retired_generation += 1;
     assert!(verify_receipts(
         &plan,
         &fixture.request_receipt,
-        &wrong_tribute,
+        &wrong_tribute_generation,
+        &fixture.limits
+    )
+    .is_err());
+
+    let mut wrong_tribute_root = receipts.clone();
+    wrong_tribute_root.tribute.sealed_collection_root = hash(214);
+    assert!(verify_receipts(
+        &plan,
+        &fixture.request_receipt,
+        &wrong_tribute_root,
+        &fixture.limits
+    )
+    .is_err());
+
+    let mut wrong_tribute_count = receipts.clone();
+    wrong_tribute_count.tribute.consumed_count += 1;
+    assert!(verify_receipts(
+        &plan,
+        &fixture.request_receipt,
+        &wrong_tribute_count,
+        &fixture.limits
+    )
+    .is_err());
+
+    let mut wrong_tribute_nominal = receipts.clone();
+    wrong_tribute_nominal.tribute.consumed_nominal_total += U256::from(1);
+    assert!(verify_receipts(
+        &plan,
+        &fixture.request_receipt,
+        &wrong_tribute_nominal,
         &fixture.limits
     )
     .is_err());

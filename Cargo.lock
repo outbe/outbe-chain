@@ -8407,6 +8407,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "revm",
  "serde",
  "tempfile",
  "thiserror 2.0.18",
