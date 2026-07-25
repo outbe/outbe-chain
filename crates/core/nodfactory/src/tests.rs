@@ -325,3 +325,27 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         ]
     );
 }
+
+#[test]
+fn certified_generation_has_no_public_installation_selector() {
+    let mut world = World::new();
+    let selector_hash = alloy_primitives::keccak256("installCertifiedGeneration(bytes)".as_bytes());
+    let calldata = selector_hash[..4].to_vec();
+    let storage_before = world.provider.storage.clone();
+    let events_before = world.provider.get_ordered_events().to_vec();
+
+    let result = world.enter(|storage, scope, parent| {
+        crate::precompile::dispatch(
+            storage,
+            scope,
+            parent,
+            &calldata,
+            Address::repeat_byte(0x91),
+            U256::ZERO,
+        )
+    });
+
+    assert!(result.is_err());
+    assert_eq!(world.provider.storage, storage_before);
+    assert_eq!(world.provider.get_ordered_events(), events_before);
+}

@@ -527,9 +527,24 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
         tribute.day_pre_admission.update(&admission).unwrap();
 
         let nod = NodContract::new(storage.clone());
-        nod.ocomp_target_generation.write(7).unwrap();
+        nod.ocomp_target_generation.write(&fixture.wwd, 7).unwrap();
         nod.ocomp_namespace_root
-            .write(B256::repeat_byte(0x77))
+            .write(&fixture.wwd, B256::repeat_byte(0x77))
+            .unwrap();
+        nod.ocomp_bucket_root
+            .write(&fixture.wwd, B256::repeat_byte(0x78))
+            .unwrap();
+        nod.ocomp_output_manifest_root
+            .write(&fixture.wwd, B256::repeat_byte(0x79))
+            .unwrap();
+        nod.ocomp_generation_metadata
+            .write(
+                &fixture.wwd,
+                U256::from(1_u64)
+                    | (U256::from(1_u32) << 64)
+                    | (U256::from(1_u32) << 96)
+                    | (U256::from(1_u32) << 128),
+            )
             .unwrap();
 
         outbe_intex::api::create_series(

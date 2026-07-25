@@ -15,7 +15,8 @@ pub use repository::{
     NodRepositoryWriter,
 };
 pub use schema::{
-    NodBucketState, NodContract, NodIssueParams, NodItemState, NodOcompTargetProjection,
+    NodBucketState, NodCertifiedGenerationProjection, NodContract, NodIssueParams, NodItemState,
+    NodOcompTargetProjection,
 };
 
 #[cfg(test)]

@@ -8021,11 +8021,13 @@ dependencies = [
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-nod",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultprovider",
+ "revm",
  "thiserror 2.0.18",
 ]
 

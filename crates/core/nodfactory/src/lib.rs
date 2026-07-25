@@ -6,6 +6,7 @@
 //! NodFactory carries no storage of its own.
 
 pub mod api;
+pub mod certified;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;

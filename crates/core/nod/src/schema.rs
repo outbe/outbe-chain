@@ -99,6 +99,41 @@ pub struct NodOcompTargetProjection {
     pub namespace_root_before: B256,
 }
 
+/// Constant-size public state of one installed certified Nod generation.
+///
+/// Nod bodies and bucket bodies remain in authenticated result chunks. This
+/// projection is the on-chain root authority used to select and prove those
+/// bodies without materializing one storage record per Nod during activation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodCertifiedGenerationProjection {
+    pub worldwide_day: WorldwideDay,
+    pub generation: u64,
+    pub nod_root: B256,
+    pub bucket_root: B256,
+    pub output_manifest_root: B256,
+    pub tribute_count: u32,
+    pub nod_count: u32,
+    pub bucket_count: u32,
+    pub nod_amount_total: U256,
+    pub nod_gratis_consumed: U256,
+    pub issued_at: u64,
+}
+
+impl NodCertifiedGenerationProjection {
+    /// Packs the owner-specific counts and logical issuance time into one slot.
+    ///
+    /// Layout, from least-significant bits: `issued_at:u64`,
+    /// `tribute_count:u32`, `nod_count:u32`, `bucket_count:u32`; the upper
+    /// 96 bits are reserved and must remain zero.
+    #[must_use]
+    pub fn metadata_word(&self) -> U256 {
+        U256::from(self.issued_at)
+            | (U256::from(self.tribute_count) << 64)
+            | (U256::from(self.nod_count) << 96)
+            | (U256::from(self.bucket_count) << 128)
+    }
+}
+
 /// EVM storage layout for the Nod NFT contract.
 ///
 /// NodItem fields keyed by nod_id (U256).
@@ -156,15 +191,35 @@ pub struct NodContract {
     #[attribute(order = 18)]
     pub bucket_worldwide_day: Mapping<B256, WorldwideDay>,
 
-    /// Global certified Nod namespace generation. Legacy issuance does not
+    /// Per-WWD certified Nod namespace generation. Legacy issuance does not
     /// touch it; OCM-18 compare-and-sets it only through certified activation.
     #[attribute(order = 19)]
-    pub ocomp_target_generation: outbe_primitives::storage::dsl::Value<u64>,
+    pub ocomp_target_generation: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
     /// Root of the certified Nod namespace at the generation above. Generation
     /// zero is represented canonically by the zero root.
     #[attribute(order = 20)]
-    pub ocomp_namespace_root: outbe_primitives::storage::dsl::Value<B256>,
+    pub ocomp_namespace_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Certified bucket root paired with `ocomp_namespace_root`.
+    #[attribute(order = 21)]
+    pub ocomp_bucket_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Root of the authenticated result-chunk manifest for this generation.
+    #[attribute(order = 22)]
+    pub ocomp_output_manifest_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Packed logical issuance time and exact Tribute/Nod/bucket counts.
+    #[attribute(order = 23)]
+    pub ocomp_generation_metadata: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+
+    /// Exact certified Nod amount total.
+    #[attribute(order = 24)]
+    pub ocomp_nod_amount_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+
+    /// Exact certified Gratis consumed by the Nod generation.
+    #[attribute(order = 25)]
+    pub ocomp_nod_gratis_consumed: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -196,17 +251,84 @@ impl<'storage> NodContract<'storage> {
         &self,
         worldwide_day: WorldwideDay,
     ) -> outbe_primitives::error::Result<NodOcompTargetProjection> {
-        let target_generation = self.ocomp_target_generation.read()?;
-        let namespace_root_before = self.ocomp_namespace_root.read()?;
-        if (target_generation == 0) != namespace_root_before.is_zero() {
+        Ok(match self.ocomp_certified_generation(worldwide_day)? {
+            Some(generation) => NodOcompTargetProjection {
+                worldwide_day,
+                target_generation: generation.generation,
+                namespace_root_before: generation.nod_root,
+            },
+            None => NodOcompTargetProjection {
+                worldwide_day,
+                target_generation: 0,
+                namespace_root_before: B256::ZERO,
+            },
+        })
+    }
+
+    /// Reads the constant-size active certified generation used by proof-backed
+    /// Nod and bucket readers.
+    pub fn ocomp_certified_generation(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> outbe_primitives::error::Result<Option<NodCertifiedGenerationProjection>> {
+        let generation = self.ocomp_target_generation.read(&worldwide_day)?;
+        let nod_root = self.ocomp_namespace_root.read(&worldwide_day)?;
+        let bucket_root = self.ocomp_bucket_root.read(&worldwide_day)?;
+        let output_manifest_root = self.ocomp_output_manifest_root.read(&worldwide_day)?;
+        let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
+        let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
+        let nod_gratis_consumed = self.ocomp_nod_gratis_consumed.read(&worldwide_day)?;
+
+        if generation == 0 {
+            if !nod_root.is_zero()
+                || !bucket_root.is_zero()
+                || !output_manifest_root.is_zero()
+                || !metadata.is_zero()
+                || !nod_amount_total.is_zero()
+                || !nod_gratis_consumed.is_zero()
+            {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "absent Nod OCOMP generation has residual state".into(),
+                ));
+            }
+            return Ok(None);
+        }
+
+        if nod_root.is_zero()
+            || bucket_root.is_zero()
+            || output_manifest_root.is_zero()
+            || !(metadata >> 160usize).is_zero()
+        {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "Nod OCOMP target generation/root mismatch".into(),
+                "installed Nod OCOMP generation is malformed".into(),
             ));
         }
-        Ok(NodOcompTargetProjection {
+        let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
+        let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
+        let nod_count = ((metadata >> 96usize) & U256::from(u32::MAX)).to::<u32>();
+        let bucket_count = ((metadata >> 128usize) & U256::from(u32::MAX)).to::<u32>();
+        if issued_at == 0
+            || tribute_count == 0
+            || nod_count != tribute_count
+            || bucket_count > nod_count
+        {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "installed Nod OCOMP generation metadata is malformed".into(),
+            ));
+        }
+
+        Ok(Some(NodCertifiedGenerationProjection {
             worldwide_day,
-            target_generation,
-            namespace_root_before,
-        })
+            generation,
+            nod_root,
+            bucket_root,
+            output_manifest_root,
+            tribute_count,
+            nod_count,
+            bucket_count,
+            nod_amount_total,
+            nod_gratis_consumed,
+            issued_at,
+        }))
     }
 }
