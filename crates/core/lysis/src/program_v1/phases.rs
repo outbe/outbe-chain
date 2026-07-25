@@ -95,6 +95,7 @@ pub struct FinalizedOutputRunV1 {
     pub start_ordinal: u32,
     pub end_ordinal: u32,
     pub ordered_records: Vec<FinalizedOutputRecordV1>,
+    pub checked_tribute_nominal_total: U256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -660,6 +661,7 @@ pub fn output_finalize(
     }
     let mut remaining = prefix.incoming_remaining;
     let mut ordered_records = Vec::with_capacity(amounts.ordered_records.len());
+    let mut checked_tribute_nominal_total = U256::ZERO;
     for amount in &amounts.ordered_records {
         if amount.raw_ordinal
             != amounts
@@ -677,6 +679,11 @@ pub fn output_finalize(
             amount.gratis_load_minor,
             amount.raw_ordinal as usize,
         )?;
+        checked_tribute_nominal_total = checked_tribute_nominal_total
+            .checked_add(amount.nominal_amount_minor)
+            .ok_or(ProgramErrorV1::TotalNominalOverflow {
+                ordinal: amount.raw_ordinal as usize,
+            })?;
         let nod_id = derive_poseidon_entity_id(amount.owner, amount.worldwide_day).map_err(
             |error| ProgramErrorV1::Arithmetic {
                 message: error.to_string(),
@@ -726,6 +733,7 @@ pub fn output_finalize(
         start_ordinal: amounts.start_ordinal,
         end_ordinal: amounts.end_ordinal,
         ordered_records,
+        checked_tribute_nominal_total,
     })
 }
 

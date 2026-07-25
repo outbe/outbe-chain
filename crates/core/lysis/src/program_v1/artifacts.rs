@@ -709,6 +709,7 @@ pub fn encode_finalized_output_run(
             writer.write_u256(contributor.nominal_amount_minor)
         })?;
     }
+    encoded.write_u256(run.checked_tribute_nominal_total)?;
     Ok(encoded.into_bytes())
 }
 
@@ -781,11 +782,13 @@ pub fn decode_finalized_output_run(
             contributor_action,
         });
     }
+    let checked_tribute_nominal_total = input.read_u256()?;
     input.finish()?;
     let run = FinalizedOutputRunV1 {
         start_ordinal,
         end_ordinal,
         ordered_records,
+        checked_tribute_nominal_total,
     };
     validate_finalized_output_run(&run)?;
     if encode_finalized_output_run(&run, limits)? != encoded {
@@ -1262,6 +1265,7 @@ fn validate_finalized_output_run(run: &FinalizedOutputRunV1) -> Result<(), Lysis
     let count = u32::try_from(run.ordered_records.len())
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
     if !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
+        || run.checked_tribute_nominal_total.is_zero()
         || run.end_ordinal
             != run
                 .start_ordinal

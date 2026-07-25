@@ -13,9 +13,9 @@ use outbe_lysis::program_v1::artifacts::{
 use outbe_lysis::program_v1::phases::{
     amount_map, fidelity_map, fidelity_reduce, fidelity_reduce_pair, finalize_fi_fraction_table,
     finalize_gratis_leaf, gratis_prefix_down, gratis_summary, gratis_summary_reduce_pair,
-    output_finalize, shuffle_buckets, shuffle_owners, FidelityAggregateV1, FidelityLeaguePartialV1,
-    FidelityReduceValueV1, GratisIncomingV1, GratisLeafPrefixV1, GratisSegmentSummaryV1,
-    GratisSummaryValueV1,
+    output_finalize, shuffle_buckets, shuffle_owners, AmountRecordV1, AmountRunV1,
+    FidelityAggregateV1, FidelityLeaguePartialV1, FidelityReduceValueV1, GratisIncomingV1,
+    GratisLeafPrefixV1, GratisSegmentSummaryV1, GratisSummaryValueV1,
 };
 use outbe_lysis::program_v1::planner::{
     primary_work_unit_count, LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
@@ -32,7 +32,7 @@ use outbe_lysis::program_v1::result::{
 };
 use outbe_lysis::program_v1::{
     execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
-    TributeInputV1,
+    ProgramErrorV1, TributeInputV1,
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
@@ -2054,6 +2054,29 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     .unwrap();
     let finalized_left = output_finalize(&amount_left, &left_prefix, logical_time).unwrap();
     let finalized_right = output_finalize(&amount_right, &right_prefix, logical_time).unwrap();
+    assert_eq!(
+        finalized_left.checked_tribute_nominal_total,
+        amount_left
+            .ordered_records
+            .iter()
+            .map(|record| record.nominal_amount_minor)
+            .sum::<U256>()
+    );
+    assert_eq!(
+        finalized_right.checked_tribute_nominal_total,
+        amount_right
+            .ordered_records
+            .iter()
+            .map(|record| record.nominal_amount_minor)
+            .sum::<U256>()
+    );
+    assert_eq!(
+        finalized_left
+            .checked_tribute_nominal_total
+            .checked_add(finalized_right.checked_tribute_nominal_total)
+            .unwrap(),
+        total_nominal
+    );
     let encoded_finalized = encode_finalized_output_run(&finalized_right, &limits).unwrap();
     assert_eq!(
         decode_finalized_output_run(&encoded_finalized, &limits).unwrap(),
@@ -2261,6 +2284,82 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
     let mut wrong_amount_summary = amount_left;
     wrong_amount_summary.checked_segment_gratis_total += U256::from(1);
     assert!(output_finalize(&wrong_amount_summary, &left_prefix, logical_time).is_err());
+}
+
+#[test]
+fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overflow() {
+    let day = WorldwideDay::new(20_260_724);
+    let make_record = |seed: u8| {
+        let owner = Address::repeat_byte(seed);
+        AmountRecordV1 {
+            raw_ordinal: 0,
+            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            owner,
+            worldwide_day: day,
+            league_id: 7,
+            nominal_amount_minor: U256::ZERO,
+            gratis_fraction_fp: SCALE_1E18,
+            gratis_load_minor: U256::from(1),
+            entry_price_minor: SCALE_1E18,
+            floor_price_minor: SCALE_1E18,
+            cost_amount_minor: U256::from(1),
+            issuance_currency: 840,
+            reference_currency: 978,
+            exclude_from_intex_issuance: true,
+        }
+    };
+    let run = |nominals: [U256; 2]| {
+        let mut ordered_records = vec![make_record(1), make_record(2)];
+        ordered_records.sort_by_key(|record| record.tribute_id);
+        for (ordinal, record) in ordered_records.iter_mut().enumerate() {
+            record.raw_ordinal = u32::try_from(ordinal).unwrap();
+            record.nominal_amount_minor = nominals[ordinal];
+        }
+        AmountRunV1 {
+            start_ordinal: 0,
+            end_ordinal: 2,
+            ordered_records,
+            checked_segment_gratis_total: U256::from(2),
+        }
+    };
+    let prefix = GratisLeafPrefixV1 {
+        segment_ordinal: 0,
+        incoming_remaining: U256::from(10),
+        outgoing_remaining: U256::from(8),
+        first_error_ordinal: None,
+    };
+
+    let finalized = output_finalize(
+        &run([U256::from(7), U256::from(11)]),
+        &prefix,
+        1_784_765_900,
+    )
+    .unwrap();
+    assert_eq!(
+        finalized.checked_tribute_nominal_total,
+        U256::from(18)
+    );
+    assert!(
+        finalized
+            .ordered_records
+            .iter()
+            .all(|record| record.contributor_action.is_none())
+    );
+    let limits = poc_schema_limits();
+    let encoded = encode_finalized_output_run(&finalized, &limits).unwrap();
+    assert_eq!(
+        decode_finalized_output_run(&encoded, &limits).unwrap(),
+        finalized
+    );
+
+    assert!(matches!(
+        output_finalize(
+            &run([U256::MAX, U256::from(1)]),
+            &prefix,
+            1_784_765_900,
+        ),
+        Err(ProgramErrorV1::TotalNominalOverflow { ordinal: 1 })
+    ));
 }
 
 #[test]

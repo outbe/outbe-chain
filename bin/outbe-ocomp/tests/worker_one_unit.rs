@@ -1044,6 +1044,10 @@ fn real_worker_processes_execute_through_output_finalize() {
     .expect("decode OutputFinalize artifact");
     assert_eq!(finalized.ordered_records.len(), 1);
     assert_eq!(
+        finalized.checked_tribute_nominal_total,
+        tribute.nominal_amount_minor
+    );
+    assert_eq!(
         finalized.ordered_records[0].nod_action.issued_at,
         plan.logical_evaluation_time
     );
