@@ -108,20 +108,16 @@ impl StreamingOrderedListRoot {
                 self.frontier[level] = Some(hash);
                 return Ok(());
             }
-            let left = self.frontier[level].take().ok_or(
-                ProtocolError::InvalidInvariant("streaming ordered-list left sibling"),
-            )?;
+            let left = self.frontier[level]
+                .take()
+                .ok_or(ProtocolError::InvalidInvariant(
+                    "streaming ordered-list left sibling",
+                ))?;
             let parent_level =
                 u16::try_from(level + 1).map_err(|_| ProtocolError::IntegerOverflow {
                     what: "streaming ordered-list parent level",
                 })?;
-            hash = node_hash(
-                self.kind,
-                parent_level,
-                position >> 1,
-                left,
-                hash,
-            )?;
+            hash = node_hash(self.kind, parent_level, position >> 1, left, hash)?;
             position >>= 1;
             level += 1;
         }
@@ -209,6 +205,138 @@ pub fn ordered_list_root<T: AsRef<[u8]>>(
     }
 
     root_hash(kind, real_count, tree_height, nodes[0])
+}
+
+/// Builds one bottom-up membership path while streaming the exact ordered
+/// population once. Memory is bounded by the tree height and does not grow
+/// with `real_count`.
+pub fn streaming_ordered_list_membership_proof<I, T>(
+    kind: ListKind,
+    real_count: u32,
+    target_index: u32,
+    items: I,
+    max_item_bytes: usize,
+) -> Result<Vec<B256>, ProtocolError>
+where
+    I: IntoIterator<Item = T>,
+    T: AsRef<[u8]>,
+{
+    if real_count == 0 || target_index >= real_count {
+        return Err(ProtocolError::InvalidInvariant(
+            "streaming ordered-list membership bounds",
+        ));
+    }
+    let padded_count =
+        real_count
+            .checked_next_power_of_two()
+            .ok_or(ProtocolError::IntegerOverflow {
+                what: "streaming ordered-list membership padded count",
+            })?;
+    let tree_height = usize::try_from(padded_count.trailing_zeros()).map_err(|_| {
+        ProtocolError::IntegerOverflow {
+            what: "streaming ordered-list membership tree height",
+        }
+    })?;
+    let mut frontier = [None; u32::BITS as usize + 1];
+    let mut siblings = Vec::new();
+    let proof_bytes = tree_height
+        .checked_mul(core::mem::size_of::<B256>())
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "streaming ordered-list membership proof bytes",
+        })?;
+    siblings
+        .try_reserve_exact(tree_height)
+        .map_err(|_| ProtocolError::AllocationFailed {
+            what: "streaming ordered-list membership proof",
+            bytes: proof_bytes,
+        })?;
+    let mut input = items.into_iter();
+    for index in 0..real_count {
+        let item = input.next().ok_or(ProtocolError::InvalidInvariant(
+            "streaming ordered-list membership exact item count",
+        ))?;
+        check_cap(
+            "ordered-list item bytes",
+            max_item_bytes,
+            item.as_ref().len(),
+        )?;
+        push_membership_hash(
+            kind,
+            &mut frontier,
+            &mut siblings,
+            index,
+            leaf_hash(kind, index, item.as_ref())?,
+            index == target_index,
+        )?;
+    }
+    if input.next().is_some() {
+        return Err(ProtocolError::InvalidInvariant(
+            "streaming ordered-list membership exact item count",
+        ));
+    }
+    for index in real_count..padded_count {
+        push_membership_hash(
+            kind,
+            &mut frontier,
+            &mut siblings,
+            index,
+            pad_hash(kind, index)?,
+            false,
+        )?;
+    }
+    if siblings.len() != tree_height
+        || frontier[tree_height].is_none_or(|node| !node.contains_target)
+    {
+        return Err(ProtocolError::InvalidInvariant(
+            "streaming ordered-list membership complete tree",
+        ));
+    }
+    Ok(siblings)
+}
+
+#[derive(Clone, Copy)]
+struct MembershipFrontierNode {
+    hash: B256,
+    contains_target: bool,
+}
+
+fn push_membership_hash(
+    kind: ListKind,
+    frontier: &mut [Option<MembershipFrontierNode>; u32::BITS as usize + 1],
+    siblings: &mut Vec<B256>,
+    index: u32,
+    mut hash: B256,
+    mut contains_target: bool,
+) -> Result<(), ProtocolError> {
+    let mut position = index;
+    let mut level = 0_usize;
+    loop {
+        if position & 1 == 0 {
+            frontier[level] = Some(MembershipFrontierNode {
+                hash,
+                contains_target,
+            });
+            return Ok(());
+        }
+        let left = frontier[level]
+            .take()
+            .ok_or(ProtocolError::InvalidInvariant(
+                "streaming ordered-list membership left sibling",
+            ))?;
+        if left.contains_target {
+            siblings.push(hash);
+        } else if contains_target {
+            siblings.push(left.hash);
+        }
+        contains_target |= left.contains_target;
+        let parent_level =
+            u16::try_from(level + 1).map_err(|_| ProtocolError::IntegerOverflow {
+                what: "streaming ordered-list membership parent level",
+            })?;
+        hash = node_hash(kind, parent_level, position >> 1, left.hash, hash)?;
+        position >>= 1;
+        level += 1;
+    }
 }
 
 pub fn leaf_hash(kind: ListKind, index: u32, item: &[u8]) -> Result<B256, ProtocolError> {
