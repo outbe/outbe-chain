@@ -26,6 +26,10 @@ use outbe_lysis::program_v1::reducers::{
     merge_bucket_runs_streaming, merge_owner_runs_streaming, CanonicalRunSpanV1,
     StreamingMergeErrorV1,
 };
+use outbe_lysis::program_v1::result::{
+    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
+    RootReduceSummaryV1,
+};
 use outbe_lysis::program_v1::{
     execute, LeagueFractionV1, ObservationValueV1, ObservedTributeV1, ProgramInputV1,
     TributeInputV1,
@@ -329,6 +333,77 @@ fn fixed_reduce_output_is_canonical_and_binds_aggregate_carrier_and_fractions() 
     let mut mismatched = output;
     mismatched.coverage.end_ordinal = 256;
     assert!(encode_fixed_reduce_output(&mismatched, &limits).is_err());
+}
+
+#[test]
+fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution() {
+    let limits = poc_schema_limits();
+    let carrier = |list_kind, real_count, subtree_height, marker| {
+        LysisListSubtreeCarrierV1 {
+            list_kind,
+            start_ordinal: 0,
+            real_count,
+            subtree_height,
+            subtree_index: 0,
+            tree_root: B256::repeat_byte(marker),
+        }
+    };
+    let summary = RootReduceSummaryV1 {
+        protocol_bundle_hash: B256::repeat_byte(1),
+        job_id: B256::repeat_byte(2),
+        attempt: 3,
+        plan_hash: B256::repeat_byte(4),
+        covered_primary_start: 0,
+        covered_primary_count: 2,
+        nod_actions: carrier(outbe_ocomp_protocol::ListKind::NodActions, 257, 9, 11),
+        bucket_records: carrier(outbe_ocomp_protocol::ListKind::BucketRecords, 257, 9, 12),
+        contributor_actions: carrier(
+            outbe_ocomp_protocol::ListKind::ContributorActions,
+            1,
+            0,
+            13,
+        ),
+        output_manifest_entries: carrier(
+            outbe_ocomp_protocol::ListKind::CompleteOutputManifest,
+            257,
+            9,
+            14,
+        ),
+        result_chunk_hashes: carrier(
+            outbe_ocomp_protocol::ListKind::ResultChunkHashes,
+            2,
+            1,
+            15,
+        ),
+        tribute_count: 257,
+        nod_count: 257,
+        bucket_count: 257,
+        contributor_count: 1,
+        tribute_nominal_total: U256::from(10_000),
+        eligible_nominal_total: U256::from(100),
+        nod_gratis_consumed: U256::from(90),
+        nod_cost_total: U256::from(9_000),
+        first_error_ordinal: None,
+    };
+
+    let encoded = encode_root_reduce_summary(&summary, &limits).unwrap();
+    assert!(encoded.len() < 512);
+    assert_eq!(
+        decode_root_reduce_summary(&encoded, &limits).unwrap(),
+        summary
+    );
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert!(decode_root_reduce_summary(&trailing, &limits).is_err());
+
+    let mut substituted = summary.clone();
+    substituted.nod_actions.list_kind = outbe_ocomp_protocol::ListKind::BucketRecords;
+    assert!(encode_root_reduce_summary(&substituted, &limits).is_err());
+
+    let mut inconsistent = summary;
+    inconsistent.contributor_count = 2;
+    assert!(encode_root_reduce_summary(&inconsistent, &limits).is_err());
 }
 
 #[test]

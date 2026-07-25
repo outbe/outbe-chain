@@ -8,6 +8,7 @@ mod execute;
 pub mod phases;
 pub mod planner;
 pub mod reducers;
+pub mod result;
 mod types;
 
 pub use execute::execute;
