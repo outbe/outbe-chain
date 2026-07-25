@@ -2,14 +2,18 @@ mod admission_support;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_lysis::program_v1::result::{
-    encode_root_reduce_output, LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1,
+    decode_root_reduce_output, encode_root_reduce_output, LysisListSubtreeCarrierV1,
+    RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_ocomp::{
     admission_catalog::{AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog},
     cas::{CasLimits, CasWriterRole, FilesystemCas},
     control::poc_schema_limits,
     inbox::{WorkerInbox, WorkerInboxLimits},
-    lysis_result_adoption::{admit_reported_lysis_root_reduce_leaf, adopt_lysis_result_chunk},
+    lysis_result_adoption::{
+        admit_reported_lysis_root_reduce_leaf, admit_reported_lysis_root_reduce_node,
+        adopt_lysis_result_chunk,
+    },
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
@@ -121,7 +125,18 @@ fn root_leaf_artifact(
     entry: OutputManifestEntryV1,
     limits: &SchemaLimits,
 ) -> UnitArtifactV1 {
-    let action_records = vec![vec![0x31]];
+    root_leaf_artifact_with_count(spec, entry, 1, limits)
+}
+
+fn root_leaf_artifact_with_count(
+    spec: &UnitSpecV1,
+    entry: OutputManifestEntryV1,
+    tribute_count: u32,
+    limits: &SchemaLimits,
+) -> UnitArtifactV1 {
+    let action_records = (0..tribute_count)
+        .map(|ordinal| ordinal.to_be_bytes().to_vec())
+        .collect::<Vec<_>>();
     let manifest_records = vec![entry.encode_canonical_record(limits).unwrap()];
     let result_hashes = vec![entry.result_chunk_hash.as_slice().to_vec()];
     let summary = RootReduceSummaryV1 {
@@ -135,21 +150,21 @@ fn root_leaf_artifact(
             ListKind::NodActions,
             entry.chunk_ordinal,
             &action_records,
-            1,
+            4,
         )
         .unwrap(),
         bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
             ListKind::BucketRecords,
             entry.chunk_ordinal,
             &action_records,
-            1,
+            4,
         )
         .unwrap(),
         contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
             ListKind::ContributorActions,
             entry.chunk_ordinal,
             &action_records,
-            1,
+            4,
         )
         .unwrap(),
         output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
@@ -166,14 +181,14 @@ fn root_leaf_artifact(
             32,
         )
         .unwrap(),
-        tribute_count: 1,
-        nod_count: 1,
-        bucket_count: 1,
-        contributor_count: 1,
-        tribute_nominal_total: U256::from(6),
-        eligible_nominal_total: U256::from(6),
-        nod_gratis_consumed: U256::from(3),
-        nod_cost_total: U256::from(5),
+        tribute_count,
+        nod_count: tribute_count,
+        bucket_count: tribute_count,
+        contributor_count: tribute_count,
+        tribute_nominal_total: U256::from(tribute_count) * U256::from(6),
+        eligible_nominal_total: U256::from(tribute_count) * U256::from(6),
+        nod_gratis_consumed: U256::from(tribute_count) * U256::from(3),
+        nod_cost_total: U256::from(tribute_count) * U256::from(5),
         first_error_ordinal: None,
     };
     let coverage_root = summary.result_chunk_hashes.tree_root;
@@ -182,8 +197,8 @@ fn root_leaf_artifact(
         WorkOutputHeaderV1 {
             source_coverage_root: coverage_root,
             output_coverage_root: coverage_root,
-            source_coverage_count: 1,
-            output_coverage_count: 1,
+            source_coverage_count: tribute_count,
+            output_coverage_count: tribute_count,
         },
         BoundedBytes(
             encode_root_reduce_output(
@@ -198,6 +213,131 @@ fn root_leaf_artifact(
         limits,
     )
     .unwrap()
+}
+
+fn internal_spec() -> UnitSpecV1 {
+    let mut spec = leaf_spec(0);
+    spec.interval = UnitInterval::BinaryReducerNode(BinaryReducerNode { level: 1, index: 0 });
+    spec.canonical_ordered_inputs.truncate(1);
+    spec.canonical_ordered_inputs.extend(
+        [B256::repeat_byte(0x21), B256::repeat_byte(0x22)]
+            .into_iter()
+            .map(|source_id| CanonicalInputRefV1 {
+                purpose: InputPurpose::RootSummary,
+                source_kind: InputSourceKind::UnitOutput,
+                source_id,
+                record_count_limit: 1,
+                max_encoded_bytes: 1_048_576,
+                max_decoded_bytes: 1_048_576,
+            }),
+    );
+    spec
+}
+
+fn manifest_entry(chunk_ordinal: u32, marker: u8) -> OutputManifestEntryV1 {
+    OutputManifestEntryV1 {
+        chunk_ordinal,
+        result_chunk_hash: B256::repeat_byte(marker),
+        result_chunk_ref: outbe_ocomp_protocol::CasObjectRefV1 {
+            transport_digest: B256::repeat_byte(marker.wrapping_add(1)),
+            encoded_bytes: 1,
+            expected_ocb1_kind: Some(ObjectKind::ResultChunkV1.tag()),
+        },
+    }
+}
+
+#[test]
+fn supervisor_admits_internal_root_reduce_node_without_a_result_chunk() {
+    let directory = tempdir().unwrap();
+    let limits = poc_schema_limits();
+    let inbox = WorkerInbox::open(directory.path().join("inbox"), INBOX_LIMITS).unwrap();
+    let cas = FilesystemCas::open(
+        directory.path().join("cas"),
+        CasWriterRole::Supervisor,
+        CAS_LIMITS,
+    )
+    .unwrap();
+    let spec = internal_spec();
+    let authority = admission_support::publish_admission_authority(&cas, &spec, 257, 2, &limits);
+    let mut catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("catalog"),
+        &cas,
+        &authority.plan_ref,
+        &authority.manifest_ref,
+        limits,
+    )
+    .unwrap();
+
+    let leaf_spec = leaf_spec(0);
+    let left = root_leaf_artifact_with_count(&leaf_spec, manifest_entry(0, 0x31), 256, &limits);
+    let mut right_spec = leaf_spec.clone();
+    right_spec.interval = UnitInterval::BinaryReducerNode(BinaryReducerNode { level: 0, index: 1 });
+    let right = root_leaf_artifact(&right_spec, manifest_entry(1, 0x41), &limits);
+    let RootReduceOutputV1::Leaf { summary: left, .. } =
+        decode_root_reduce_output(left.phase_payload(&limits).unwrap(), &limits).unwrap()
+    else {
+        unreachable!()
+    };
+    let RootReduceOutputV1::Leaf { summary: right, .. } =
+        decode_root_reduce_output(right.phase_payload(&limits).unwrap(), &limits).unwrap()
+    else {
+        unreachable!()
+    };
+    let summary = left.merge_adjacent(right).unwrap();
+    let coverage_root = summary.result_chunk_hashes.tree_root;
+    let artifact = UnitArtifactV1::from_canonical_output(
+        &spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: 2,
+            output_coverage_count: 2,
+        },
+        BoundedBytes(
+            encode_root_reduce_output(&RootReduceOutputV1::Node { summary }, &limits).unwrap(),
+        ),
+        &limits,
+    )
+    .unwrap();
+    let artifact_bytes = artifact.encode_canonical(&limits).unwrap();
+    let staged = inbox
+        .adopt(spec.unit_id(&limits).unwrap(), &artifact_bytes)
+        .unwrap();
+    let report_ref = staged.reference();
+    let finished = UnitFinishedV1 {
+        unit_id: spec.unit_id(&limits).unwrap(),
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: report_ref.encoded_bytes,
+        transport_digest: report_ref.transport_digest,
+    };
+    let final_ordinal = outbe_lysis::program_v1::planner::LysisPlanTopologyV1::new(2)
+        .unwrap()
+        .total_unit_count()
+        - 1;
+
+    let admitted = admit_reported_lysis_root_reduce_node(
+        AdmissionPositionV1 {
+            plan_ordinal: final_ordinal,
+        },
+        &spec,
+        &finished,
+        &inbox,
+        &cas,
+        &mut catalog,
+        &limits,
+    )
+    .unwrap();
+    assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
+    assert_eq!(
+        admitted.artifact_ref.expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
+    let durable = catalog.read(final_ordinal).unwrap();
+    assert!(durable.result_chunk.is_none());
+    assert_eq!(
+        cas.read_verified(&durable.artifact_ref).unwrap().bytes(),
+        artifact_bytes
+    );
 }
 
 #[test]

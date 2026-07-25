@@ -40,6 +40,12 @@ pub struct AdmittedLysisRootReduceLeafV1 {
     pub admission: AdmissionOutcome,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedLysisRootReduceNodeV1 {
+    pub artifact_ref: CasObjectRefV1,
+    pub admission: AdmissionOutcome,
+}
+
 #[derive(Debug, Error)]
 pub enum LysisResultAdoptionError {
     #[error(transparent)]
@@ -144,6 +150,61 @@ pub fn admit_reported_lysis_root_reduce_leaf(
     Ok(AdmittedLysisRootReduceLeafV1 {
         artifact_ref,
         chunk,
+        admission,
+    })
+}
+
+/// Makes one already-replayed internal ROOT_REDUCE node authoritative.
+///
+/// Unlike a leaf, an internal node carries no output-manifest entry and
+/// therefore must not discover, publish or journal a ResultChunkV1.
+pub fn admit_reported_lysis_root_reduce_node(
+    position: AdmissionPositionV1,
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    catalog: &mut VerifiedAdmissionCatalog,
+    limits: &SchemaLimits,
+) -> Result<AdmittedLysisRootReduceNodeV1, LysisResultAdoptionError> {
+    spec.validate_semantics(limits)?;
+    let UnitInterval::BinaryReducerNode(BinaryReducerNode { level, .. }) = spec.interval else {
+        return Err(ProtocolError::InvalidInvariant("internal ROOT_REDUCE position").into());
+    };
+    if spec.phase != UnitPhase::RootReduce || level == 0 {
+        return Err(ProtocolError::InvalidInvariant("internal ROOT_REDUCE position").into());
+    }
+    let unit_id = spec.unit_id(limits)?;
+    if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
+        return Err(ProtocolError::InvalidInvariant("successful ROOT_REDUCE node report").into());
+    }
+    let reported = inbox.read_reported(
+        finished.unit_id,
+        finished.exact_staged_bytes,
+        finished.transport_digest,
+    )?;
+    let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
+    artifact.validate_against(spec, limits)?;
+    if !matches!(
+        decode_root_reduce_output(artifact.phase_payload(limits)?, limits)?,
+        RootReduceOutputV1::Node { .. }
+    ) {
+        return Err(ProtocolError::InvalidInvariant("internal ROOT_REDUCE NODE payload").into());
+    }
+
+    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(
+            ProtocolError::InvalidInvariant("published ROOT_REDUCE node descriptor").into(),
+        );
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    Ok(AdmittedLysisRootReduceNodeV1 {
+        artifact_ref,
         admission,
     })
 }
