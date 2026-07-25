@@ -442,9 +442,10 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         proof: proof_fixture.proof,
         opening_provider,
     });
+    let retention_root = directory.path().join("ocomp-retention");
     let retention = Arc::new(OcompRetentionCoordinator::open(
-        directory.path().join("ocomp-retention"),
-        source,
+        retention_root.clone(),
+        source.clone(),
     ));
     retention
         .prepare_candidate(&finalized_block)
@@ -456,11 +457,11 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let node = Arc::new(
         OcompControlServer::new(retention, uid, endpoint_identity(), 1, poc_schema_limits())
             .expect("node OCOMP control")
-            .with_snapshot_export(service.clone(), projection_containment, uid),
+            .with_snapshot_export(service.clone(), projection_containment.clone(), uid),
     );
     let supervisor_socket = directory.path().join("supervisor-node.sock");
     let exporter_socket = directory.path().join("exporter-node.sock");
-    let _controls = RunningNodeControls::start(node, &supervisor_socket, &exporter_socket);
+    let controls = RunningNodeControls::start(node, &supervisor_socket, &exporter_socket);
     let handoff = open_snapshot_from_supervisor(&supervisor_socket, uid);
     assert_eq!(handoff.job_id, job_id);
 
@@ -557,6 +558,51 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         !String::from_utf8_lossy(&mutation.stdout).contains("OCM_EXP_OPENED="),
         "mutated Mongo transport must not yield an authenticated export"
     );
+
+    drop(controls);
+    let restarted_retention = Arc::new(OcompRetentionCoordinator::open(retention_root, source));
+    let restarted_node = Arc::new(
+        OcompControlServer::new(
+            restarted_retention,
+            uid,
+            endpoint_identity(),
+            2,
+            poc_schema_limits(),
+        )
+        .expect("restart node OCOMP control")
+        .with_snapshot_export(service, projection_containment, uid),
+    );
+    let restarted_supervisor_socket = directory.path().join("supervisor-node-restarted.sock");
+    let restarted_exporter_socket = directory.path().join("exporter-node-restarted.sock");
+    let _restarted_controls = RunningNodeControls::start(
+        restarted_node,
+        &restarted_supervisor_socket,
+        &restarted_exporter_socket,
+    );
+    let mut restarted_exporter = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
+        node_socket: restarted_exporter_socket,
+        expected_node_uid: uid,
+        identity: endpoint_identity(),
+        limits: poc_schema_limits(),
+    })
+    .expect("connect restarted exporter control");
+    let replayed = restarted_exporter
+        .commit(CommitSnapshotExportV1 {
+            job_id,
+            pin_generation: handoff.pin_generation,
+            lease_generation: handoff.lease_generation,
+            manifest_hash,
+        })
+        .expect("lost commit response replays from durable exported state after restart");
+    assert_eq!(replayed.job_id, job_id);
+    assert_eq!(
+        replayed.pin_generation,
+        handoff
+            .pin_generation
+            .checked_add(1)
+            .expect("fixture export generation")
+    );
+    assert_eq!(replayed.record_hash, commit_record_hash);
 }
 
 fn run_exporter_child(

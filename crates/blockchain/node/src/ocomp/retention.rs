@@ -935,23 +935,21 @@ impl OcompRetentionCoordinator {
     ) -> Result<DurablePinAck, RetentionError> {
         let mut inner = self.lock()?;
         let record = ready_record(&inner.status)?;
+        if exact_export_replay(
+            record,
+            job_id,
+            expected_generation,
+            lease_generation,
+            manifest_hash,
+        ) {
+            return Ok(ack_for(record));
+        }
         ensure_generation(record, expected_generation)?;
         let candidate = match record.state {
             PinStateV1::Finalized {
                 candidate,
                 job_id: existing,
             } if existing == job_id => candidate,
-            PinStateV1::Exported {
-                job_id: existing,
-                lease_generation: existing_lease,
-                manifest_hash: existing_manifest,
-                ..
-            } if existing == job_id
-                && existing_lease == lease_generation
-                && existing_manifest == manifest_hash =>
-            {
-                return Ok(ack_for(record));
-            }
             _ => {
                 return Err(RetentionError::InvalidTransition(
                     "export requires the exact finalized job",
@@ -968,6 +966,25 @@ impl OcompRetentionCoordinator {
                 manifest_hash,
             },
         )
+    }
+
+    pub(crate) fn replay_exported(
+        &self,
+        job_id: B256,
+        source_generation: u64,
+        lease_generation: u64,
+        manifest_hash: B256,
+    ) -> Result<Option<DurablePinAck>, RetentionError> {
+        let inner = self.lock()?;
+        let record = ready_record(&inner.status)?;
+        Ok(exact_export_replay(
+            record,
+            job_id,
+            source_generation,
+            lease_generation,
+            manifest_hash,
+        )
+        .then(|| ack_for(record)))
     }
 
     pub fn build_finalized_intent_proof(
@@ -1129,6 +1146,19 @@ impl OcompRetentionCoordinator {
         matches!(
             inner.status,
             RetentionStatus::Ready(PinRecordV1 {
+                state: PinStateV1::Exported { job_id: current, .. },
+                ..
+            }) if current == job_id
+        )
+    }
+
+    pub fn is_exportable(&self, job_id: B256) -> bool {
+        let Ok(inner) = self.lock() else {
+            return false;
+        };
+        matches!(
+            inner.status,
+            RetentionStatus::Ready(PinRecordV1 {
                 state:
                     PinStateV1::Finalized {
                         job_id: current, ..
@@ -1138,10 +1168,6 @@ impl OcompRetentionCoordinator {
                 ..
             }) if current == job_id
         )
-    }
-
-    pub fn is_exportable(&self, job_id: B256) -> bool {
-        self.is_signable(job_id)
     }
 
     fn live_candidate(&self, job_id: B256) -> Result<CandidatePinV1, RetentionError> {
@@ -1363,6 +1389,27 @@ fn ack_for(record: PinRecordV1) -> DurablePinAck {
         generation: record.generation,
         record_hash: keccak256(encode_record(record)),
     }
+}
+
+fn exact_export_replay(
+    record: PinRecordV1,
+    job_id: B256,
+    source_generation: u64,
+    lease_generation: u64,
+    manifest_hash: B256,
+) -> bool {
+    matches!(
+        record.state,
+        PinStateV1::Exported {
+            job_id: existing,
+            lease_generation: existing_lease,
+            manifest_hash: existing_manifest,
+            ..
+        } if existing == job_id
+            && existing_lease == lease_generation
+            && existing_manifest == manifest_hash
+            && source_generation.checked_add(1) == Some(record.generation)
+    )
 }
 
 fn candidate_job_id(candidate: CandidatePinV1) -> Result<B256, RetentionError> {

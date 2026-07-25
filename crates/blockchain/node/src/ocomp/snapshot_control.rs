@@ -276,6 +276,18 @@ impl SnapshotExportAuthority {
         request: &CommitSnapshotExportV1,
     ) -> Result<SnapshotExportCommittedV1, SnapshotExportError> {
         let _ = request.encode_body(&self.limits)?;
+        if let Some(durable) = self.retention.replay_exported(
+            request.job_id,
+            request.pin_generation,
+            request.lease_generation,
+            request.manifest_hash,
+        )? {
+            return Ok(SnapshotExportCommittedV1 {
+                job_id: request.job_id,
+                pin_generation: durable.generation,
+                record_hash: durable.record_hash,
+            });
+        }
         let handoff = self.get(&GetSnapshotHandoffV1 {
             job_id: request.job_id,
             lease_generation: request.lease_generation,

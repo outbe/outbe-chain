@@ -479,7 +479,8 @@ fn ocm_pin_001_missing_finality_keeps_the_job_non_signable_and_can_reconcile_lat
             state: PinStateV1::Finalized { candidate, job_id },
         }
     );
-    assert!(coordinator.is_signable(job_id));
+    assert!(!coordinator.is_signable(job_id));
+    assert!(coordinator.is_exportable(job_id));
 }
 
 #[test]
@@ -507,7 +508,8 @@ fn ocm_pin_001_restart_reconciles_a_canonical_tentative_from_the_next_finalizati
             state: PinStateV1::Finalized { candidate, job_id },
         }
     );
-    assert!(restarted.is_signable(job_id));
+    assert!(!restarted.is_signable(job_id));
+    assert!(restarted.is_exportable(job_id));
 }
 
 #[test]
@@ -748,7 +750,7 @@ fn ocm_pin_001_tentative_is_durable_before_four_positive_votes_and_finalizes_exa
                 state: PinStateV1::Finalized { candidate, job_id },
             }
         );
-        assert!(coordinator.is_signable(job_id));
+        assert!(!coordinator.is_signable(job_id));
         assert!(coordinator.is_exportable(job_id));
     }
 }
@@ -1063,6 +1065,8 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         1
     );
     let finalized = ready_record(&coordinator);
+    assert!(!coordinator.is_signable(job_id));
+    assert!(coordinator.is_exportable(job_id));
     assert!(matches!(
         coordinator.record_exported(job_id, finalized.generation - 1, 9, B256::repeat_byte(0x65),),
         Err(RetentionError::StaleGeneration { .. })
@@ -1071,6 +1075,22 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
         .record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x65))
         .expect("exact exporter CAS");
     assert!(coordinator.is_signable(job_id));
+    drop(coordinator);
+
+    let coordinator = OcompRetentionCoordinator::open_with_retained_tributes(
+        root.path(),
+        source.clone(),
+        Arc::new(RetainedTributeWriter::new(storage.clone(), storage.clone())),
+    );
+    let replayed = coordinator
+        .record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x65))
+        .expect("lost export response replays after restart");
+    assert_eq!(replayed, exported);
+    assert!(coordinator.is_signable(job_id));
+    assert!(matches!(
+        coordinator.record_exported(job_id, finalized.generation, 9, B256::repeat_byte(0x66)),
+        Err(RetentionError::StaleGeneration { .. })
+    ));
     let terminal = coordinator
         .observe_terminal(job_id, exported.generation, 120)
         .expect("terminal finality");
