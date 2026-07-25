@@ -984,13 +984,20 @@ producer membership/coverage before CAS adoption. No phase may collapse all
 `K` ranges into one unit or input vector.
 
 The final `ROOT_REDUCE` worker emits only bounded `RootReduceSummaryV1`.
+Its five list carriers are fixed-capacity positional evidence: 256 slots per
+primary shard for Nod/bucket/contributor/output-manifest records and one slot
+per shard for the result-chunk hash. Frozen globally indexed pad hashes fill
+unused slots, canonical empty leaves are all-pad trees, and internal units
+merge only equal-height adjacent carriers. These carrier roots are never
+wrapped or installed as canonical dense result-list roots.
 After all required artifacts/chunks are durably verified, the supervisor opens
 bounded exact-order cursors and invokes the closed
 `LysisProgramV1::finalize_v1`. The finalizer reloads canonical
 `FinalizedJobSpecV1`, manifest and plan authority, revalidates every streamed
-CAS object, derives all unit/chunk/fraction/prefix/result/event roots and emits
-`LysisResultV1`. It accepts no caller-built result/root/scalar and is neither a
-schedulable unit nor a generic program interface.
+CAS object, independently derives all unit/chunk/fraction/prefix/dense-result/
+event roots, verifies the summary carriers/counts/totals and emits
+`LysisResultV1`. It accepts no caller-built result/root/scalar and is neither
+a schedulable unit nor a generic program interface.
 
 Shuffle workers embed one bounded `ShuffleRunArtifactV1` root in their
 `UnitArtifactV1` and stage every bounded descendant by content digest. The
@@ -1030,7 +1037,8 @@ interfaces: `OCM-SEM-002` plan-commitment/lazy-reducer vectors including
 then `OCM-DET-001` real 1/2/4-worker randomized kill/retry/order runs over the
 `S+1` multi-shard fixture. Add behavioral cases for missing/duplicate/reordered/
 substituted artifact or chunk, changed finalized intent scalar, stale manifest,
-included final carrier, malformed summary, exact replay and conflicting retry.
+included final carrier, malformed summary, sparse fixed-capacity carrier versus
+canonical dense root, exact replay and conflicting retry.
 Crash after CAS-before-journal and journal-before-finalize must restart to the
 same result. No test may inspect source text.
 

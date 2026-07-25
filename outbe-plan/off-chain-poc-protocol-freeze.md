@@ -1342,14 +1342,24 @@ RootReduceSummaryV1 {
 }
 ```
 
-A leaf covers one exact primary shard. An internal `ROOT_REDUCE` unit accepts
-only adjacent equal-height summaries at its two producer positions, combines
-each list carrier with the frozen ordered-list node formula, checked-adds
-counts/totals and selects the lowest error ordinal. Canonical padded leaves
-contain the position-bound empty carriers and zero totals. The final summary
-must cover all primary shards exactly once. Its carriers are wrapped with the
-frozen list-root formula only after their exact final counts/heights have been
-validated.
+A leaf covers one exact primary shard. Every list carrier is a fixed-capacity
+coverage commitment, not a canonical result-list root. The base capacity is
+256 position-bound slots for `NOD`, `BUCKET`, `CONTRIBUTOR` and
+`OUTPUT_MANIFEST`, and one slot for `RESULT_CHUNK_HASH`. A real leaf places its
+canonical records in its shard-local prefix and fills every remaining slot
+with the frozen `pad_hash(list_kind, global_slot)` value. A canonical padded
+primary leaf contains the all-pad carrier for that exact position and zero
+counts/totals.
+
+An internal `ROOT_REDUCE` unit accepts only adjacent equal-height summaries at
+its two producer positions and combines each pair of equal-capacity carriers
+once with the frozen ordered-list node formula. It checked-adds counts/totals
+and selects the lowest error ordinal. The final summary must cover every real
+and padded primary position exactly once. A carrier's `tree_root` commits this
+fixed-capacity positional tree without the ordered-list root wrapper. It is
+never installed as `nod_root`, `bucket_root`, `contributor_root`,
+`output_manifest_root` or `result_chunk_list_root`: sparse shard-local records
+make those canonical dense lists semantically different trees.
 
 `RootReduceSummaryV1` intentionally contains no `unit_artifact_root`,
 `fidelity_fraction_root`, `gratis_prefix_root`, finalized Metadosis scalar,
@@ -1576,10 +1586,14 @@ reordered, substituted or conflicting entries, and computes:
 2. list-kind `11` `result_chunk_list_root`;
 3. list-kind `12` `fidelity_fraction_root`;
 4. list-kind `13` `gratis_prefix_root`;
-5. final list roots/counts/totals from `RootReduceSummaryV1`;
-6. carry-over and completion fields from canonical finalized intent plus
+5. canonical Nod, bucket, contributor and output-manifest roots by streaming
+   the exact verified records in their frozen dense order, independently of
+   the fixed-capacity carriers;
+6. every fixed-capacity carrier, count and total in `RootReduceSummaryV1`
+   against those exact streamed records, abstaining on any mismatch;
+7. carry-over and completion fields from canonical finalized intent plus
    computation-derived totals; and
-7. arithmetic and semantic event commitments from the resulting explicit
+8. arithmetic and semantic event commitments from the resulting explicit
    fields.
 
 It accepts no precomputed item above. Partial output is non-authoritative and

@@ -147,6 +147,16 @@ hosts one pure `LysisProgramV1` finalizer. The finalizer:
 - derives all catalog, fraction, prefix, result and event roots itself; and
 - emits canonical `LysisResultV1` or abstains.
 
+`RootReduceSummaryV1` carries fixed-capacity positional coverage trees: 256
+slots per primary shard for each action/output list and one slot per primary
+shard for the result-chunk hash list. Real records occupy the shard-local
+prefix and frozen globally indexed pad hashes occupy the remaining positions;
+canonical empty leaves are all-pad trees. Reducers merge only equal-height
+adjacent carriers. These carrier roots prove complete reducer coverage but are
+not canonical dense result-list roots and receive no ordered-list root wrapper.
+The finalizer independently streams the exact verified records to derive every
+canonical result root and cross-checks all summary carriers, counts and totals.
+
 The finalizer accepts no caller-built `LysisResultV1` and no precomputed result
 root. Its semantic author is the pinned Lysis program; the supervisor is only
 the invocation/admission host. The finalizer is not a schedulable unit, new

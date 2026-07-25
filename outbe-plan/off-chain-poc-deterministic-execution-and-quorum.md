@@ -470,10 +470,17 @@ root artifacts. All inputs are position-bound by the derived `UnitSpecV1`.
 Across the fixed tree the phase:
 
 - verifies producer artifacts and gap-free source/output coverage;
-- combines adjacent result-chunk subtree carriers;
-- constructs output roots, exact counts and computation-derived totals;
-- combines the semantic action/event carriers; and
+- combines adjacent equal-capacity result-chunk and semantic coverage carriers;
+- accumulates exact counts and computation-derived totals;
 - emits bounded canonical `RootReduceSummaryV1` only at the root.
+
+Each primary leaf carrier has a fixed positional capacity: 256 slots for Nod,
+bucket, contributor and output-manifest records, and one slot for its result
+chunk hash. Missing positions use the frozen globally indexed pad hash, so a
+canonical empty primary leaf is still a non-zero all-pad tree. Internal units
+merge only equal-height sibling carriers with one frozen list-node hash.
+These carriers prove complete fixed-capacity reducer coverage; they are not
+wrapped or reused as the canonical dense result-list roots.
 
 `ROOT_REDUCE` does not receive canonical `JobIntentV1`, the complete artifact
 catalog or a population-sized input vector, and it does not emit
@@ -535,11 +542,14 @@ caller-built result, root or scalar override. The implementation:
 4. traverses final fixed-reduce and Gratis prefix-down outputs to construct
    their frozen ordered roots;
 5. traverses result chunks in exact ordinal order, checks deterministic Nod and
-   contributor slicing, and constructs `result_chunk_list_root`;
-6. combines only computation-derived values from `RootReduceSummaryV1` with
+   contributor slicing, and constructs every canonical dense result-list root
+   plus `result_chunk_list_root`;
+6. reconstructs and verifies the fixed-capacity carrier trees, counts and
+   totals committed by `RootReduceSummaryV1`;
+7. combines only verified computation-derived values with
    finalized frozen scalars from canonical `JobIntentV1`;
-7. derives the completion, conservation, arithmetic and event commitments; and
-8. emits canonical `LysisResultV1` or abstains.
+8. derives the completion, conservation, arithmetic and event commitments; and
+9. emits canonical `LysisResultV1` or abstains.
 
 This module belongs to the closed Lysis program. It is not a schedulable unit,
 second program, generic finalizer interface or signer. The supervisor is its
