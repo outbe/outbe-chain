@@ -8,7 +8,10 @@ use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, Tr
 use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas},
     control::poc_schema_limits,
-    input_artifacts::{derive_input_chunk_ref, verify_input_artifact_set},
+    input_artifacts::{
+        derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
+        verify_input_artifact_set, InputArtifactContents, InputArtifactIdentity,
+    },
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
@@ -17,7 +20,8 @@ use outbe_ocomp_protocol::{
         CheckpointIdentityV1, Compression, InputChunkKind, InputManifestV1, OpeningSourceKind,
     },
     opening::{
-        LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
+        partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1,
+        RawContractOpeningProofV1, RawStorageSlotV1,
     },
     registry::ObjectKind,
     ListKind, OrderedListLimits,
@@ -210,4 +214,136 @@ fn worker_reconstructs_the_complete_manifest_from_exact_cas_streams() {
         list_limits,
     )
     .is_err());
+}
+
+#[test]
+fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
+    let limits = poc_schema_limits();
+    let bundle = support::protocol_bundle();
+    let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
+    let job_id = B256::repeat_byte(0x60);
+    let finalized_state_root = B256::repeat_byte(0x61);
+    let day = WorldwideDay::new(20_260_725);
+
+    let mut tributes = (0..257_u32)
+        .map(|index| {
+            let mut owner_bytes = [0_u8; 20];
+            owner_bytes[16..].copy_from_slice(&(index + 1).to_be_bytes());
+            let owner = Address::from(owner_bytes);
+            TributeBodyV1 {
+                tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                owner,
+                worldwide_day: day,
+                issuance_amount_minor: U256::from(1),
+                issuance_currency: 840,
+                nominal_amount_minor: U256::from(1),
+                reference_currency: 978,
+                tribute_price_minor: U256::from(1),
+                exclude_from_intex_issuance: false,
+            }
+        })
+        .collect::<Vec<_>>();
+    tributes.sort_by_key(|tribute| tribute.tribute_id);
+    let owners = tributes
+        .iter()
+        .map(|tribute| tribute.owner)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let raw_opening = |address, slot_byte| RawContractOpeningProofV1 {
+        contract_address: address,
+        state_root: finalized_state_root,
+        ordered_slots: vec![RawStorageSlotV1 {
+            slot: B256::repeat_byte(slot_byte),
+            value: U256::from(1),
+        }],
+        account_proof: ProofBytes(vec![0xa1]),
+        storage_proof: ProofBytes(vec![0xb1]),
+    };
+    let mut fidelity_openings = Vec::new();
+    let mut oracle_opening = None;
+    for subjects in partition_lysis_opening_subjects(&owners, &[840, 978], &limits).unwrap() {
+        let openings = materialize_authenticated_openings(
+            &LysisOpeningsProofV1 {
+                protocol_bundle_hash: bundle_hash,
+                job_id,
+                finalized_block_hash: B256::repeat_byte(0x62),
+                finalized_state_root,
+                wwd: day.value(),
+                subjects,
+                fidelity: raw_opening(Address::repeat_byte(0x63), 0x64),
+                oracle: raw_opening(Address::repeat_byte(0x65), 0x66),
+            },
+            &bundle,
+            &limits,
+        )
+        .unwrap();
+        fidelity_openings.push(openings.fidelity);
+        match &oracle_opening {
+            None => oracle_opening = Some(openings.oracle),
+            Some(existing) => assert_eq!(existing, &openings.oracle),
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let cas = FilesystemCas::open(
+        directory.path(),
+        CasWriterRole::SnapshotExporter,
+        CasLimits {
+            max_object_bytes: 1_048_576,
+            max_total_bytes: 64 * 1_048_576,
+        },
+    )
+    .unwrap();
+    let published = publish_input_artifact_set(
+        &cas,
+        &bundle,
+        InputArtifactContents {
+            identity: InputArtifactIdentity {
+                job_id,
+                attempt: 1,
+                checkpoint: CheckpointIdentityV1 {
+                    finalized_block_number: 91,
+                    finalized_block_hash: B256::repeat_byte(0x62),
+                    finalized_state_root,
+                    finalized_ce_root: B256::repeat_byte(0x67),
+                    ce_schema_version: 1,
+                },
+                wwd: day.value(),
+                sealed_tribute_collection_key: B256::repeat_byte(0x68),
+                sealed_tribute_collection_root: B256::repeat_byte(0x69),
+            },
+            canonical_tributes: tributes
+                .iter()
+                .map(|tribute| encode_tribute_v1(tribute).unwrap())
+                .collect(),
+            fidelity_openings,
+            oracle_opening: oracle_opening.unwrap(),
+        },
+        &limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+
+    let chunks = published
+        .ordered_chunk_refs
+        .iter()
+        .map(|reference| {
+            AuthenticatedInputChunkV1::decode_canonical(
+                cas.read_verified(reference).unwrap().bytes(),
+                &limits,
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let tribute_chunks = chunks
+        .iter()
+        .filter(|chunk| chunk.kind == InputChunkKind::Tribute)
+        .collect::<Vec<_>>();
+    assert_eq!(tribute_chunks.len(), 2);
+    assert_eq!(tribute_chunks[0].ordinal, 0);
+    assert_eq!(tribute_chunks[0].canonical_records_or_openings.len(), 256);
+    assert_eq!(tribute_chunks[1].ordinal, 1);
+    assert_eq!(tribute_chunks[1].canonical_records_or_openings.len(), 1);
 }

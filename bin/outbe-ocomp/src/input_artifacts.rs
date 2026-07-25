@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
+use outbe_lysis::program_v1::planner::PRIMARY_WORK_SHARD_SIZE;
 use outbe_ocomp_protocol::{
     control::CasObjectRefV1,
     input::{
@@ -145,8 +146,10 @@ pub fn publish_input_artifact_set(
     let mut chunk_objects = Vec::new();
     let mut chunk_references = Vec::new();
     let mut ordinal = 0_u32;
+    let tribute_chunk_items =
+        usize::try_from(PRIMARY_WORK_SHARD_SIZE).map_err(|_| InputArtifactError::CountOverflow)?;
 
-    for records in canonical_tributes.chunks(limits.max_chunk_items) {
+    for records in canonical_tributes.chunks(tribute_chunk_items) {
         publish_chunk(
             cas,
             bundle,
