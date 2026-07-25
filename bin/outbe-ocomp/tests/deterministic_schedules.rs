@@ -1,3 +1,5 @@
+// OCOMP-TEST-ID: OCM-DET-001
+
 mod support;
 
 use std::env;
