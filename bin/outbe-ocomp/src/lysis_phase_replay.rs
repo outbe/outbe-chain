@@ -22,6 +22,9 @@ use outbe_ocomp_protocol::{
 use thiserror::Error;
 
 use crate::{
+    admission_catalog::{
+        AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
+    },
     cas::{CasError, FilesystemCas},
     inbox::{WorkerInbox, WorkerInboxError},
 };
@@ -29,6 +32,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdmittedOutputFinalizeUnitV1 {
     pub artifact_ref: CasObjectRefV1,
+    pub admission: AdmissionOutcome,
 }
 
 #[derive(Debug, Error)]
@@ -47,12 +51,15 @@ pub enum LysisPhaseReplayError {
     Inbox(#[from] WorkerInboxError),
     #[error(transparent)]
     Cas(#[from] CasError),
+    #[error(transparent)]
+    AdmissionCatalog(#[from] AdmissionCatalogError),
 }
 
 /// Makes one reported OUTPUT_FINALIZE unit authoritative only after exact
 /// semantic replay from its already-admitted producer artifacts.
 #[allow(clippy::too_many_arguments)]
 pub fn admit_reported_output_finalize_unit(
+    position: AdmissionPositionV1,
     shard_ordinal: u32,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
@@ -63,6 +70,7 @@ pub fn admit_reported_output_finalize_unit(
     bundle: &ProtocolBundleV1,
     inbox: &WorkerInbox,
     cas: &FilesystemCas,
+    catalog: &mut VerifiedAdmissionCatalog,
     limits: &SchemaLimits,
 ) -> Result<AdmittedOutputFinalizeUnitV1, LysisPhaseReplayError> {
     spec.validate_semantics(limits)?;
@@ -96,7 +104,11 @@ pub fn admit_reported_output_finalize_unit(
     }
     artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     cas.read_verified(&artifact_ref)?;
-    Ok(AdmittedOutputFinalizeUnitV1 { artifact_ref })
+    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    Ok(AdmittedOutputFinalizeUnitV1 {
+        artifact_ref,
+        admission,
+    })
 }
 
 /// Re-executes one OUTPUT_FINALIZE unit from its exact already-verified

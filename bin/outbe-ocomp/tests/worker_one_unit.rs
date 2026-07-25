@@ -22,6 +22,9 @@ use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
 use outbe_lysis::program_v1::result::{decode_root_reduce_output, RootReduceOutputV1};
+use outbe_ocomp::admission_catalog::{
+    AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
+};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -1075,7 +1078,24 @@ fn real_worker_processes_execute_through_output_finalize() {
         transport_digest: keccak256(&output_finalize_bytes),
     };
     let replay_inbox = WorkerInbox::open(&inbox_root, inbox_limits).unwrap();
+    let mut admission_catalog =
+        VerifiedAdmissionCatalog::open(directory.path().join("admissions"), limits).unwrap();
+    let output_finalize_plan_ordinal = [
+        UnitPhase::Enumerate,
+        UnitPhase::FidelityMap,
+        UnitPhase::FixedReduce,
+        UnitPhase::AmountMap,
+        UnitPhase::GratisPrefix,
+        UnitPhase::GratisPrefixDown,
+    ]
+    .into_iter()
+    .map(|phase| topology.phase_unit_count(phase))
+    .sum();
     let admitted_output_finalize = admit_reported_output_finalize_unit(
+        AdmissionPositionV1 {
+            plan_hash: plan.plan_hash(&limits).unwrap(),
+            plan_ordinal: output_finalize_plan_ordinal,
+        },
         0,
         &output_finalize_spec,
         &output_finalize_finished,
@@ -1086,12 +1106,17 @@ fn real_worker_processes_execute_through_output_finalize() {
         &bundle,
         &replay_inbox,
         &cas,
+        &mut admission_catalog,
         &limits,
     )
     .expect("admit exact replayed OutputFinalize artifact");
     assert_eq!(
         admitted_output_finalize.artifact_ref.expected_ocb1_kind,
         Some(ObjectKind::UnitArtifactV1.tag())
+    );
+    assert_eq!(
+        admitted_output_finalize.admission,
+        AdmissionOutcome::NewlyAdmitted
     );
     assert_eq!(
         cas.read_verified(&admitted_output_finalize.artifact_ref)

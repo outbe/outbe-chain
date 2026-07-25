@@ -8,6 +8,9 @@ use outbe_ocomp_protocol::{
 use thiserror::Error;
 
 use crate::{
+    admission_catalog::{
+        AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
+    },
     cas::{CasError, FilesystemCas},
     inbox::{WorkerInbox, WorkerInboxError},
 };
@@ -22,6 +25,7 @@ pub struct AdoptedLysisShuffleClosureV1 {
 pub struct AdmittedLysisShuffleUnitV1 {
     pub artifact_ref: CasObjectRefV1,
     pub closure: AdoptedLysisShuffleClosureV1,
+    pub admission: AdmissionOutcome,
 }
 
 #[derive(Debug, Error)]
@@ -32,15 +36,19 @@ pub enum LysisShuffleAdoptionError {
     Inbox(#[from] WorkerInboxError),
     #[error(transparent)]
     Cas(#[from] CasError),
+    #[error(transparent)]
+    AdmissionCatalog(#[from] AdmissionCatalogError),
 }
 
 /// Makes one reported shuffle unit ready only after its complete descendant
 /// closure has been verified and copied into authoritative CAS.
 pub fn admit_reported_lysis_shuffle_unit(
+    position: AdmissionPositionV1,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
     inbox: &WorkerInbox,
     cas: &FilesystemCas,
+    catalog: &mut VerifiedAdmissionCatalog,
     limits: &SchemaLimits,
 ) -> Result<AdmittedLysisShuffleUnitV1, LysisShuffleAdoptionError> {
     spec.validate_semantics(limits)?;
@@ -93,9 +101,11 @@ pub fn admit_reported_lysis_shuffle_unit(
     }
     artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     cas.read_verified(&artifact_ref)?;
+    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
     Ok(AdmittedLysisShuffleUnitV1 {
         artifact_ref,
         closure,
+        admission,
     })
 }
 

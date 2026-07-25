@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp::{
+    admission_catalog::{AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog},
     cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader},
     control::poc_schema_limits,
     inbox::{WorkerInbox, WorkerInboxLimits},
@@ -140,6 +141,8 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         CAS_LIMITS,
     )
     .unwrap();
+    let mut catalog =
+        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = owner_shuffle_spec();
     let unit_id = spec.unit_id(&limits).unwrap();
     let root = build_owner_shuffle_run(
@@ -187,9 +190,19 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         transport_digest: reference.transport_digest,
     };
 
-    assert!(
-        admit_reported_lysis_shuffle_unit(&spec, &finished, &empty_inbox, &cas, &limits).is_err()
-    );
+    assert!(admit_reported_lysis_shuffle_unit(
+        AdmissionPositionV1 {
+            plan_hash: B256::repeat_byte(90),
+            plan_ordinal: 9,
+        },
+        &spec,
+        &finished,
+        &empty_inbox,
+        &cas,
+        &mut catalog,
+        &limits,
+    )
+    .is_err());
     assert_eq!(cas.object_count().unwrap(), 0);
 }
 
@@ -204,6 +217,8 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
         CAS_LIMITS,
     )
     .unwrap();
+    let mut catalog =
+        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = owner_shuffle_spec();
     let unit_id = spec.unit_id(&limits).unwrap();
     let root = build_owner_shuffle_run(
@@ -250,9 +265,21 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
         transport_digest: reference.transport_digest,
     };
 
-    let admitted =
-        admit_reported_lysis_shuffle_unit(&spec, &finished, &inbox, &cas, &limits).unwrap();
+    let admitted = admit_reported_lysis_shuffle_unit(
+        AdmissionPositionV1 {
+            plan_hash: B256::repeat_byte(90),
+            plan_ordinal: 9,
+        },
+        &spec,
+        &finished,
+        &inbox,
+        &cas,
+        &mut catalog,
+        &limits,
+    )
+    .unwrap();
     assert_eq!(admitted.closure.verified_record_count, 257);
+    assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
     assert_eq!(
         admitted.artifact_ref.expected_ocb1_kind,
         Some(ObjectKind::UnitArtifactV1.tag())
