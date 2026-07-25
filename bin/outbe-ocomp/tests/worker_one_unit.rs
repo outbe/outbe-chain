@@ -202,6 +202,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     .expect("materialize fixture openings");
     let published = publish_input_artifact_set(
         &cas,
+        directory.path().join("input-refs"),
         &bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {

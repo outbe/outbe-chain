@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::Path};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
@@ -16,7 +16,10 @@ use outbe_ocomp_protocol::{
 };
 use thiserror::Error;
 
-use crate::cas::{CasError, FilesystemCas, VerifiedCasObject};
+use crate::{
+    cas::{CasError, FilesystemCas, VerifiedCasObject},
+    input_ref_catalog::{InputRefCatalogError, VerifiedInputChunkRefCatalog},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DerivedInputChunk {
@@ -73,6 +76,8 @@ pub enum InputArtifactError {
     ByteCountOverflow,
     #[error("Tribute nominal total overflow")]
     NominalTotalOverflow,
+    #[error(transparent)]
+    InputRefCatalog(#[from] InputRefCatalogError),
 }
 
 struct DerivedChunk {
@@ -125,6 +130,7 @@ pub fn decode_verified_input_chunk(
 
 pub fn publish_input_artifact_set(
     cas: &FilesystemCas,
+    input_ref_catalog_root: impl AsRef<Path>,
     bundle: &ProtocolBundleV1,
     contents: InputArtifactContents,
     limits: &SchemaLimits,
@@ -299,6 +305,17 @@ pub fn publish_input_artifact_set(
         limits,
         list_limits,
     )?;
+    let mut input_ref_catalog = VerifiedInputChunkRefCatalog::open(
+        input_ref_catalog_root,
+        &manifest_ref,
+        &manifest,
+        *limits,
+        list_limits,
+    )?;
+    for reference in &chunk_references {
+        let _ = input_ref_catalog.admit(reference)?;
+    }
+    let _ = input_ref_catalog.exact_cursor()?;
 
     Ok(PublishedInputArtifacts {
         manifest_ref,

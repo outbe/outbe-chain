@@ -255,6 +255,7 @@ fn ocm_exp_001_child() {
     .expect("open production CAS writer boundary");
     let published = publish_input_artifact_set(
         &cas,
+        Path::new(&datadir).join("ocomp-input-refs-v1"),
         &support::protocol_bundle(),
         InputArtifactContents {
             identity: InputArtifactIdentity {

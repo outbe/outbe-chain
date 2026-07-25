@@ -12,6 +12,7 @@ use outbe_ocomp::{
         derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
         verify_input_artifact_set, InputArtifactContents, InputArtifactIdentity,
     },
+    input_ref_catalog::VerifiedInputChunkRefCatalog,
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
@@ -296,8 +297,10 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
         },
     )
     .unwrap();
+    let input_ref_catalog_path = directory.path().join("input-refs");
     let published = publish_input_artifact_set(
         &cas,
+        &input_ref_catalog_path,
         &bundle,
         InputArtifactContents {
             identity: InputArtifactIdentity {
@@ -346,4 +349,22 @@ fn exporter_starts_a_second_tribute_chunk_at_the_frozen_256_record_boundary() {
     assert_eq!(tribute_chunks[0].canonical_records_or_openings.len(), 256);
     assert_eq!(tribute_chunks[1].ordinal, 1);
     assert_eq!(tribute_chunks[1].canonical_records_or_openings.len(), 1);
+
+    let manifest = InputManifestV1::decode_canonical(
+        cas.read_verified(&published.manifest_ref).unwrap().bytes(),
+        &limits,
+    )
+    .unwrap();
+    let catalog = VerifiedInputChunkRefCatalog::open(
+        &input_ref_catalog_path,
+        &published.manifest_ref,
+        &manifest,
+        limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    assert_eq!(
+        catalog.exact_cursor().unwrap().count(),
+        published.ordered_chunk_refs.len()
+    );
 }
