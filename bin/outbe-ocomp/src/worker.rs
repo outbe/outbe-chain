@@ -105,16 +105,16 @@ struct ExpectedPlanBindingsV1 {
     reducer_spec_version: u16,
 }
 
-struct UnitExecutionAuthority<'a> {
-    plan: &'a PlanCommitmentV1,
-    unit_index: u32,
-    manifest: &'a InputManifestV1,
-    input_chunks: &'a [(InputChunkRefV1, AuthenticatedInputChunkV1)],
-    producer_artifacts: &'a [UnitArtifactV1],
-    bundle: &'a outbe_ocomp_protocol::profile::ProtocolBundleV1,
-    limits: &'a SchemaLimits,
-    reader: &'a FilesystemCasReader,
-    inbox: &'a WorkerInbox,
+pub(crate) struct UnitExecutionAuthority<'a> {
+    pub(crate) plan: &'a PlanCommitmentV1,
+    pub(crate) unit_index: u32,
+    pub(crate) manifest: &'a InputManifestV1,
+    pub(crate) input_chunks: &'a [(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    pub(crate) producer_artifacts: &'a [UnitArtifactV1],
+    pub(crate) bundle: &'a outbe_ocomp_protocol::profile::ProtocolBundleV1,
+    pub(crate) limits: &'a SchemaLimits,
+    pub(crate) reader: &'a FilesystemCasReader,
+    pub(crate) inbox: &'a WorkerInbox,
 }
 
 #[derive(Debug, Error)]
@@ -309,7 +309,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     Ok(WorkerOutcome { unit_id })
 }
 
-fn execute_unit(
+pub(crate) fn execute_unit(
     spec: &UnitSpecV1,
     authority: UnitExecutionAuthority<'_>,
 ) -> Result<UnitArtifactV1, WorkerError> {

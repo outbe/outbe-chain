@@ -11,7 +11,7 @@ use outbe_lysis::program_v1::{
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
-    input::InputManifestV1,
+    input::{AuthenticatedInputChunkV1, InputChunkRefV1, InputManifestV1},
     profile::ProtocolBundleV1,
     unit::{
         BinaryReducerNode, InputPurpose, InputSourceKind, PlanCommitmentV1, UnitArtifactV1,
@@ -25,12 +25,19 @@ use crate::{
     admission_catalog::{
         AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
     },
-    cas::{CasError, FilesystemCas},
+    cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
+    worker::{execute_unit, UnitExecutionAuthority},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdmittedOutputFinalizeUnitV1 {
+    pub artifact_ref: CasObjectRefV1,
+    pub admission: AdmissionOutcome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedReplayedCoreUnitV1 {
     pub artifact_ref: CasObjectRefV1,
     pub admission: AdmissionOutcome,
 }
@@ -47,12 +54,125 @@ pub enum LysisPhaseReplayError {
     ReplayMismatch,
     #[error("OUTPUT_FINALIZE replay authority or producer binding mismatch")]
     BindingMismatch,
+    #[error("worker-independent core phase replay failed")]
+    ReplayExecutionFailed,
+    #[error("phase {0:?} requires its dedicated replay/adoption boundary")]
+    DedicatedReplayRequired(UnitPhase),
     #[error(transparent)]
     Inbox(#[from] WorkerInboxError),
     #[error(transparent)]
     Cas(#[from] CasError),
     #[error(transparent)]
     AdmissionCatalog(#[from] AdmissionCatalogError),
+}
+
+/// Re-executes one bounded non-shuffle core phase through the same canonical
+/// pure execution path used by the worker and requires byte-identical output.
+///
+/// Shuffle and ROOT_REDUCE have dedicated descendant/result adoption
+/// boundaries. OUTPUT_FINALIZE keeps its stricter typed helper below because
+/// its subtotal is an explicit final conservation authority.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_core_phase_replay(
+    plan_ordinal: u32,
+    spec: &UnitSpecV1,
+    reported: &UnitArtifactV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    producer_artifacts: &[UnitArtifactV1],
+    bundle: &ProtocolBundleV1,
+    reader: &FilesystemCasReader,
+    inbox: &WorkerInbox,
+    limits: &SchemaLimits,
+) -> Result<(), LysisPhaseReplayError> {
+    if !matches!(
+        spec.phase,
+        UnitPhase::Enumerate
+            | UnitPhase::FidelityMap
+            | UnitPhase::FixedReduce
+            | UnitPhase::AmountMap
+            | UnitPhase::GratisPrefix
+            | UnitPhase::GratisPrefixDown
+    ) {
+        return Err(LysisPhaseReplayError::DedicatedReplayRequired(spec.phase));
+    }
+    reported.validate_against(spec, limits)?;
+    let expected = execute_unit(
+        spec,
+        UnitExecutionAuthority {
+            plan,
+            unit_index: plan_ordinal,
+            manifest,
+            input_chunks,
+            producer_artifacts,
+            bundle,
+            limits,
+            reader,
+            inbox,
+        },
+    )
+    .map_err(|_| LysisPhaseReplayError::ReplayExecutionFailed)?;
+    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
+        return Err(LysisPhaseReplayError::ReplayMismatch);
+    }
+    Ok(())
+}
+
+/// Publishes and admits a worker report only after supervisor-side semantic
+/// re-execution of the exact plan-bound phase.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_reported_core_phase_unit(
+    position: AdmissionPositionV1,
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    input_chunks: &[(InputChunkRefV1, AuthenticatedInputChunkV1)],
+    producer_artifacts: &[UnitArtifactV1],
+    bundle: &ProtocolBundleV1,
+    reader: &FilesystemCasReader,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    catalog: &mut VerifiedAdmissionCatalog,
+    limits: &SchemaLimits,
+) -> Result<AdmittedReplayedCoreUnitV1, LysisPhaseReplayError> {
+    let unit_id = spec.unit_id(limits)?;
+    if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    let reported = inbox.read_reported(
+        finished.unit_id,
+        finished.exact_staged_bytes,
+        finished.transport_digest,
+    )?;
+    let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
+    verify_core_phase_replay(
+        position.plan_ordinal,
+        spec,
+        &artifact,
+        plan,
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        bundle,
+        reader,
+        inbox,
+        limits,
+    )?;
+    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    let admission = catalog.admit_verified_unit(position, spec, artifact_ref.clone(), None)?;
+    Ok(AdmittedReplayedCoreUnitV1 {
+        artifact_ref,
+        admission,
+    })
 }
 
 /// Makes one reported OUTPUT_FINALIZE unit authoritative only after exact

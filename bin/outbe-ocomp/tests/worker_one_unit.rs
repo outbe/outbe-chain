@@ -11,9 +11,9 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_fidelity::fidelity_opening_slot_plan_v1;
 use outbe_lysis::program_v1::artifacts::{
-    decode_amount_run, decode_finalized_output_run, decode_fixed_reduce_output,
-    decode_gratis_prefix_down_output, decode_gratis_segment_summary, encode_finalized_output_run,
-    GratisPrefixDownOutputV1,
+    decode_amount_run, decode_enumerated_run, decode_finalized_output_run,
+    decode_fixed_reduce_output, decode_gratis_prefix_down_output, decode_gratis_segment_summary,
+    encode_enumerated_run, encode_finalized_output_run, GratisPrefixDownOutputV1,
 };
 use outbe_lysis::program_v1::phases::{
     output_finalize, AmountRecordV1, AmountRunV1, GratisLeafPrefixV1,
@@ -26,18 +26,19 @@ use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
 use outbe_ocomp::bundle::PinnedProtocolBundle;
-use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
+use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas, FilesystemCasReader};
 use outbe_ocomp::control::{
     effective_uid, effective_user_name, poc_schema_limits, ClientPolicy, ControlClientSession,
     EndpointIdentity,
 };
 use outbe_ocomp::inbox::{WorkerInbox, WorkerInboxLimits};
 use outbe_ocomp::input_artifacts::{
-    derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
-    InputArtifactContents, InputArtifactIdentity,
+    decode_verified_input_chunk, derive_input_chunk_ref, poc_input_list_limits,
+    publish_input_artifact_set, InputArtifactContents, InputArtifactIdentity,
 };
 use outbe_ocomp::lysis_phase_replay::{
-    admit_reported_output_finalize_unit, verify_output_finalize_replay,
+    admit_reported_core_phase_unit, admit_reported_output_finalize_unit, verify_core_phase_replay,
+    verify_output_finalize_replay,
 };
 use outbe_ocomp::lysis_shuffle_adoption::adopt_lysis_shuffle_descendants;
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
@@ -422,6 +423,63 @@ fn real_worker_processes_execute_through_output_finalize() {
     let artifact = UnitArtifactV1::decode_canonical(verified.bytes(), &limits)
         .expect("decode staged unit artifact");
     artifact.validate_against(&spec, &limits).unwrap();
+    let manifest = InputManifestV1::decode_canonical(
+        cas.read_verified(&published.manifest_ref)
+            .expect("read fixture manifest")
+            .bytes(),
+        &limits,
+    )
+    .expect("decode fixture manifest");
+    let reader =
+        FilesystemCasReader::open(directory.path(), cas_limits).expect("open replay CAS reader");
+    let tribute_chunk = decode_verified_input_chunk(&tribute_object, &bundle, &limits)
+        .expect("decode authenticated Tribute chunk");
+    let replay_inputs = vec![(derived_tribute.clone(), tribute_chunk)];
+    verify_core_phase_replay(
+        0,
+        &spec,
+        &artifact,
+        &plan,
+        &manifest,
+        &replay_inputs,
+        &[],
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact Enumerate bytes");
+
+    let mut forged_enumerated =
+        decode_enumerated_run(artifact.phase_payload(&limits).unwrap(), &limits)
+            .expect("decode Enumerate output");
+    forged_enumerated.ordered_records[0]
+        .tribute
+        .nominal_amount_minor += U256::from(1);
+    let forged_enumerate_artifact = UnitArtifactV1::from_canonical_output(
+        &spec,
+        artifact.output_header(&limits).unwrap(),
+        BoundedBytes(
+            encode_enumerated_run(&forged_enumerated, &limits)
+                .expect("encode digest-valid forged Enumerate output"),
+        ),
+        &limits,
+    )
+    .expect("build digest-valid forged Enumerate artifact");
+    assert!(verify_core_phase_replay(
+        0,
+        &spec,
+        &forged_enumerate_artifact,
+        &plan,
+        &manifest,
+        &replay_inputs,
+        &[],
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .is_err());
 
     let mut producer_ref = cas
         .publish_bytes(verified.bytes())
@@ -438,13 +496,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         })
         .cloned()
         .expect("fixture Fidelity input reference");
-    let manifest = InputManifestV1::decode_canonical(
-        cas.read_verified(&published.manifest_ref)
-            .expect("read fixture manifest")
-            .bytes(),
-        &limits,
-    )
-    .expect("decode fixture manifest");
     let planner = LysisPlannerV1::new(LysisPlannerBindingsV1 {
         protocol_bundle_hash,
         job_id,
@@ -531,7 +582,11 @@ fn real_worker_processes_execute_through_output_finalize() {
                 unit_membership_siblings: Vec::new(),
                 plan_ref: plan_ref.clone(),
                 input_manifest_ref: published.manifest_ref.clone(),
-                ordered_input_refs: vec![producer_ref.clone(), tribute_ref.clone(), fidelity_ref],
+                ordered_input_refs: vec![
+                    producer_ref.clone(),
+                    tribute_ref.clone(),
+                    fidelity_ref.clone(),
+                ],
             }
             .encode_body(&limits)
             .expect("Fidelity RunUnit body"),
@@ -563,6 +618,31 @@ fn real_worker_processes_execute_through_output_finalize() {
     fidelity_artifact
         .validate_against(&fidelity_spec, &limits)
         .expect("validate Fidelity artifact");
+    let fidelity_object = cas
+        .read_verified(&fidelity_ref)
+        .expect("read authenticated Fidelity chunk");
+    let fidelity_input = (
+        derive_input_chunk_ref(&fidelity_object, &bundle, &limits)
+            .expect("derive Fidelity reference")
+            .reference,
+        decode_verified_input_chunk(&fidelity_object, &bundle, &limits)
+            .expect("decode authenticated Fidelity chunk"),
+    );
+    let fidelity_inputs = vec![replay_inputs[0].clone(), fidelity_input];
+    verify_core_phase_replay(
+        plan.primary_work_unit_count,
+        &fidelity_spec,
+        &fidelity_artifact,
+        &plan,
+        &manifest,
+        &fidelity_inputs,
+        std::slice::from_ref(&artifact),
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact FidelityMap bytes");
 
     let mut fidelity_producer_ref = cas
         .publish_bytes(
@@ -680,6 +760,20 @@ fn real_worker_processes_execute_through_output_finalize() {
             .expect("decode FixedReduce phase output");
     assert_eq!(reduced.aggregate.unwrap().tribute_count, 1);
     assert!(!reduced.ordered_fractions.is_empty());
+    verify_core_phase_replay(
+        plan.primary_work_unit_count * 2,
+        &reduce_spec,
+        &reduce_artifact,
+        &plan,
+        &manifest,
+        &[],
+        std::slice::from_ref(&fidelity_artifact),
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact FixedReduce bytes");
 
     let mut reduce_producer_ref = cas
         .publish_bytes(
@@ -822,6 +916,35 @@ fn real_worker_processes_execute_through_output_finalize() {
         amount.ordered_records[0].entry_price_minor,
         scale * U256::from(2)
     );
+    let oracle_object = cas
+        .read_verified(&oracle_ref)
+        .expect("read authenticated Oracle chunk");
+    let oracle_input = (
+        derive_input_chunk_ref(&oracle_object, &bundle, &limits)
+            .expect("derive Oracle reference")
+            .reference,
+        decode_verified_input_chunk(&oracle_object, &bundle, &limits)
+            .expect("decode authenticated Oracle chunk"),
+    );
+    let amount_inputs = vec![replay_inputs[0].clone(), oracle_input];
+    verify_core_phase_replay(
+        3,
+        &amount_spec,
+        &amount_artifact,
+        &plan,
+        &manifest,
+        &amount_inputs,
+        &[
+            artifact.clone(),
+            fidelity_artifact.clone(),
+            reduce_artifact.clone(),
+        ],
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact AmountMap bytes");
 
     let topology =
         LysisPlanTopologyV1::new(plan.primary_work_unit_count).expect("fixture plan topology");
@@ -865,6 +988,20 @@ fn real_worker_processes_execute_through_output_finalize() {
     prefix_leaf_artifact
         .validate_against(&prefix_leaf_spec, &limits)
         .expect("validate GratisPrefix leaf artifact");
+    verify_core_phase_replay(
+        prefix_offset,
+        &prefix_leaf_spec,
+        &prefix_leaf_artifact,
+        &plan,
+        &manifest,
+        &[],
+        std::slice::from_ref(&amount_artifact),
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact GratisPrefix leaf bytes");
     let leaf_summary = decode_gratis_segment_summary(
         prefix_leaf_artifact.phase_payload(&limits).unwrap(),
         &limits,
@@ -906,6 +1043,20 @@ fn real_worker_processes_execute_through_output_finalize() {
     prefix_root_artifact
         .validate_against(&prefix_root_spec, &limits)
         .expect("validate GratisPrefix root artifact");
+    verify_core_phase_replay(
+        prefix_offset + 1,
+        &prefix_root_spec,
+        &prefix_root_artifact,
+        &plan,
+        &manifest,
+        &[],
+        std::slice::from_ref(&prefix_leaf_artifact),
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact GratisPrefix root bytes");
     assert_eq!(
         decode_gratis_segment_summary(
             prefix_root_artifact.phase_payload(&limits).unwrap(),
@@ -938,6 +1089,20 @@ fn real_worker_processes_execute_through_output_finalize() {
     prefix_down_root_artifact
         .validate_against(&prefix_down_root_spec, &limits)
         .expect("validate GratisPrefixDown root artifact");
+    verify_core_phase_replay(
+        prefix_down_offset,
+        &prefix_down_root_spec,
+        &prefix_down_root_artifact,
+        &plan,
+        &manifest,
+        &[],
+        std::slice::from_ref(&prefix_leaf_artifact),
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact GratisPrefixDown root bytes");
     assert!(matches!(
         decode_gratis_prefix_down_output(
             prefix_down_root_artifact.phase_payload(&limits).unwrap(),
@@ -985,6 +1150,23 @@ fn real_worker_processes_execute_through_output_finalize() {
     prefix_down_leaf_artifact
         .validate_against(&prefix_down_leaf_spec, &limits)
         .expect("validate GratisPrefixDown leaf artifact");
+    verify_core_phase_replay(
+        prefix_down_offset + 1,
+        &prefix_down_leaf_spec,
+        &prefix_down_leaf_artifact,
+        &plan,
+        &manifest,
+        &[],
+        &[
+            prefix_down_root_artifact.clone(),
+            prefix_leaf_artifact.clone(),
+        ],
+        &bundle,
+        &reader,
+        &inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact GratisPrefixDown leaf bytes");
     let GratisPrefixDownOutputV1::Leaf(prefix) = decode_gratis_prefix_down_output(
         prefix_down_leaf_artifact.phase_payload(&limits).unwrap(),
         &limits,
@@ -1087,6 +1269,30 @@ fn real_worker_processes_execute_through_output_finalize() {
         limits,
     )
     .unwrap();
+    let admitted_enumerate = admit_reported_core_phase_unit(
+        AdmissionPositionV1 { plan_ordinal: 0 },
+        &spec,
+        &finished_reports[0],
+        &plan,
+        &manifest,
+        &replay_inputs,
+        &[],
+        &bundle,
+        &reader,
+        &replay_inbox,
+        &cas,
+        &mut admission_catalog,
+        &limits,
+    )
+    .expect("admit exact supervisor-replayed Enumerate artifact");
+    assert_eq!(
+        admitted_enumerate.admission,
+        AdmissionOutcome::NewlyAdmitted
+    );
+    assert_eq!(
+        admitted_enumerate.artifact_ref.expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
     let output_finalize_plan_ordinal = [
         UnitPhase::Enumerate,
         UnitPhase::FidelityMap,
