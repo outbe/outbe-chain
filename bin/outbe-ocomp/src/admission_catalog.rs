@@ -438,6 +438,7 @@ fn persist_atomic(root: &Path, target: &Path, bytes: &[u8]) -> Result<(), Admiss
         .write(true)
         .create_new(true)
         .mode(CATALOG_FILE_MODE)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
         .open(&temp)
         .map_err(|source| io_error("create temporary admission", &temp, source))?;
     file.write_all(bytes)
@@ -449,11 +450,17 @@ fn persist_atomic(root: &Path, target: &Path, bytes: &[u8]) -> Result<(), Admiss
 }
 
 fn read_bounded(path: &Path, max_bytes: usize) -> Result<Vec<u8>, AdmissionCatalogError> {
-    let file = File::open(path).map_err(|source| io_error("open admission", path, source))?;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|source| io_error("open admission", path, source))?;
     let metadata = file
         .metadata()
         .map_err(|source| io_error("inspect admission", path, source))?;
-    if metadata.len() > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
+    if !metadata.file_type().is_file()
+        || metadata.len() > u64::try_from(max_bytes).unwrap_or(u64::MAX)
+    {
         return Err(AdmissionCatalogError::ObjectTooLarge);
     }
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
@@ -512,6 +519,7 @@ impl CatalogLock {
             .write(true)
             .create(true)
             .mode(CATALOG_FILE_MODE)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(&path)
             .map_err(|source| io_error("open catalog lock", &path, source))?;
         // SAFETY: `file` owns a live descriptor for the complete flock call.
@@ -632,6 +640,29 @@ mod tests {
         assert!(matches!(
             cursor.next().unwrap(),
             Err(AdmissionCatalogError::MissingAdmission { plan_ordinal: 1 })
+        ));
+    }
+
+    #[test]
+    fn admission_read_rejects_a_symlink_substitution() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let limits = poc_schema_limits();
+        {
+            let mut catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
+            catalog.admit(&record(0)).unwrap();
+        }
+        let entry = root.path().join(format!("{:010}{ENTRY_SUFFIX}", 0));
+        let substitute = root.path().join("substitute");
+        fs::write(&substitute, b"not an admission").unwrap();
+        fs::remove_file(&entry).unwrap();
+        symlink(&substitute, &entry).unwrap();
+
+        let catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
+        assert!(matches!(
+            catalog.read(0),
+            Err(AdmissionCatalogError::InvalidEnvelope)
         ));
     }
 }
