@@ -27,7 +27,7 @@ finalized JobId + verified InputManifestV1
   -> local scheduler runs them in any order allowed by the derived DAG
   -> phase verifier accepts only exact producer-bound artifacts
   -> fixed streaming reducers publish bounded ResultChunkV1 objects
-  -> ROOT_REDUCE produces bounded RootReduceSummaryV1
+  -> ROOT_REDUCE produces bounded LEAF(entry + summary) / NODE(summary)
   -> pure LysisProgramV1 finalizer streams exact verified catalogs
   -> finalizer produces constant-size LysisResultV1
   -> supervisor sends the result commitment with constant-size chunk count/root
@@ -173,7 +173,8 @@ K x ENUMERATE
   -> bounded OWNER_SHUFFLE run/merge tree
   -> bounded BUCKET_SHUFFLE run/merge tree
   -> padded binary ROOT_REDUCE tree
-  -> RootReduceSummaryV1
+  -> one OutputManifestEntryV1 per ResultChunkV1
+  -> RootReduceOutputV1
   -> typed streaming finalization
   -> LysisResultV1
 ```
@@ -198,11 +199,12 @@ top-down half: every unit receives one bounded parent prefix plus at most two
 child summaries and emits child prefixes. Leaves therefore learn their exact
 incoming remaining Gratis without any unit reading all `K` segments.
 
-`ROOT_REDUCE` uses the same fixed padded binary topology. Each unit consumes at
-most two child commitments; only the final root unit emits bounded
-`RootReduceSummaryV1`. The later typed finalizer consumes catalogs through
-bounded cursors. No worker input vector or finalizer allocation grows with
-`K`.
+`ROOT_REDUCE` uses the same fixed padded binary topology. Each real leaf emits
+one bounded `LEAF` payload containing its summary and manifest entry; padded
+leaves and internal units emit bounded `NODE` payloads containing only a
+summary. The final root remains one bounded `RootReduceOutputV1`. The later
+typed finalizer consumes catalogs through bounded cursors. No worker input
+vector or finalizer allocation grows with `K`.
 
 `OWNER_SHUFFLE` and `BUCKET_SHUFFLE` first emit one bounded sorted run per
 primary range, then merge adjacent run spans in a fixed binary hierarchy.
@@ -464,23 +466,37 @@ materialization; bucket output is never empty.
 
 Leaf units consume one finalized-output artifact plus the matching
 owner/bucket commitments, emit the primary shard's bounded `ResultChunkV1` and
-commit its hash in the leaf summary. Internal units consume at most two child
-root artifacts. All inputs are position-bound by the derived `UnitSpecV1`.
+commit its hash and typed transport descriptor in the leaf output. The closed
+phase payload is `LEAF(RootReduceSummaryV1, OutputManifestEntryV1)` or
+`NODE(RootReduceSummaryV1)`. Internal units consume at most two child root
+artifacts, use only their summaries and emit `NODE`; for a single primary shard
+the root remains `LEAF`. All inputs are position-bound by the derived
+`UnitSpecV1`.
 
 Across the fixed tree the phase:
 
 - verifies producer artifacts and gap-free source/output coverage;
 - combines adjacent equal-capacity result-chunk and semantic coverage carriers;
 - accumulates exact counts and computation-derived totals;
-- emits bounded canonical `RootReduceSummaryV1` only at the root.
+- closes the tree with one bounded root payload whose summary covers every
+  primary position.
 
 Each primary leaf carrier has a fixed positional capacity: 256 slots for Nod,
-bucket, contributor and output-manifest records, and one slot for its result
-chunk hash. Missing positions use the frozen globally indexed pad hash, so a
-canonical empty primary leaf is still a non-zero all-pad tree. Internal units
-merge only equal-height sibling carriers with one frozen list-node hash.
-These carriers prove complete fixed-capacity reducer coverage; they are not
-wrapped or reused as the canonical dense result-list roots.
+bucket and contributor records, and one slot each for its output-manifest entry
+and result-chunk hash. Missing positions use the frozen globally indexed pad
+hash, so a canonical empty primary leaf is still a non-zero all-pad tree.
+Internal units merge only equal-height sibling carriers with one frozen
+list-node hash. These carriers prove complete fixed-capacity reducer coverage;
+they are not wrapped or reused as the canonical dense result-list roots.
+
+`OutputManifestEntryV1(chunk_ordinal, result_chunk_hash, result_chunk_ref)` is
+one canonical semantic-to-transport binding per chunk. The typed ref binds
+non-zero exact length, transport digest and `ResultChunkV1` OCB1 kind, never a
+path or local namespace. The leaf artifact is the only discovery channel:
+before the unit becomes `VERIFIED`, the supervisor reopens the staged object,
+recomputes both digests, validates bundle/job/attempt/ordinal, publishes the
+exact bytes to authoritative CAS and durably admits the entry. Inbox scans and
+implicit side indexes are forbidden.
 
 `ROOT_REDUCE` does not receive canonical `JobIntentV1`, the complete artifact
 catalog or a population-sized input vector, and it does not emit
@@ -527,6 +543,10 @@ Artifact adoption also durably records
 An entry becomes visible to finalization only after the artifact and journal
 record are durable. Exact replay returns the adopted entry; a second valid byte
 sequence for the same `UnitId` causes abstention and is never overwritten.
+For a `ROOT_REDUCE` leaf, the same durability boundary additionally records
+`(chunk_ordinal, OutputManifestEntryV1, authoritative CAS ref)` after verifying
+the embedded entry against the exact staged chunk. The leaf artifact cannot
+become visible to reducers or finalization before both records are durable.
 
 After all plan units and result chunks are durably `VERIFIED`, the supervisor
 hosts the pure typed `LysisProgramV1::finalize_v1` module. Its interface accepts
@@ -541,9 +561,10 @@ caller-built result, root or scalar override. The implementation:
    `unit_artifact_root`;
 4. traverses final fixed-reduce and Gratis prefix-down outputs to construct
    their frozen ordered roots;
-5. traverses result chunks in exact ordinal order, checks deterministic Nod and
-   contributor slicing, and constructs every canonical dense result-list root
-   plus `result_chunk_list_root`;
+5. traverses admitted manifest entries and result chunks in exact ordinal
+   order, checks descriptor/bytes/hash equality plus deterministic Nod and
+   contributor slicing, and constructs every canonical dense result-list root,
+   `output_manifest_root` and `result_chunk_list_root`;
 6. reconstructs and verifies the fixed-capacity carrier trees, counts and
    totals committed by `RootReduceSummaryV1`;
 7. combines only verified computation-derived values with

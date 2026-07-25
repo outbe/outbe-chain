@@ -40,7 +40,8 @@ JobId + authenticated input
   -> bounded ShuffleRunArtifactV1 trees for owner/bucket runs
   -> fixed streaming reduction tree/order
   -> bounded ResultChunkV1 objects
-  -> bounded RootReduceSummaryV1
+  -> one OutputManifestEntryV1 per ResultChunkV1
+  -> bounded ROOT_REDUCE LEAF(entry + summary) / NODE(summary)
   -> pure LysisProgramV1 finalization over exact verified catalogs
   -> LysisResultV1(result_chunk_count, result_chunk_list_root)
   -> ActivationPayloadV1 / ResultDigest
@@ -131,9 +132,11 @@ result and digest.
 
 ### Typed result finalization
 
-The final `ROOT_REDUCE` worker emits a bounded
-`RootReduceSummaryV1`; it does not emit `LysisResultV1` and does not receive the
-complete artifact catalog or canonical `JobIntentV1` through `RunUnitV1`.
+The final `ROOT_REDUCE` worker emits a bounded closed payload:
+`LEAF(RootReduceSummaryV1, OutputManifestEntryV1)` when the whole plan has one
+primary shard, otherwise `NODE(RootReduceSummaryV1)`. It does not emit
+`LysisResultV1` and does not receive the complete artifact catalog or canonical
+`JobIntentV1` through `RunUnitV1`.
 
 After every required unit and result chunk is durably `VERIFIED`, the supervisor
 hosts one pure `LysisProgramV1` finalizer. The finalizer:
@@ -148,14 +151,25 @@ hosts one pure `LysisProgramV1` finalizer. The finalizer:
 - emits canonical `LysisResultV1` or abstains.
 
 `RootReduceSummaryV1` carries fixed-capacity positional coverage trees: 256
-slots per primary shard for each action/output list and one slot per primary
-shard for the result-chunk hash list. Real records occupy the shard-local
-prefix and frozen globally indexed pad hashes occupy the remaining positions;
-canonical empty leaves are all-pad trees. Reducers merge only equal-height
-adjacent carriers. These carrier roots prove complete reducer coverage but are
-not canonical dense result-list roots and receive no ordered-list root wrapper.
-The finalizer independently streams the exact verified records to derive every
-canonical result root and cross-checks all summary carriers, counts and totals.
+slots per primary shard for each Nod/bucket/contributor list and one slot per
+primary shard for both the output-manifest entry and result-chunk hash lists.
+Real records occupy the shard-local prefix and frozen globally indexed pad
+hashes occupy the remaining positions; canonical empty leaves are all-pad
+trees. Reducers merge only equal-height adjacent carriers. These carrier roots
+prove complete reducer coverage but are not canonical dense result-list roots
+and receive no ordered-list root wrapper.
+
+`OutputManifestEntryV1` binds one chunk ordinal and semantic `ResultChunkHash`
+to one typed content-addressed reference containing only exact length,
+transport digest and `ResultChunkV1` OCB1 kind. It contains no path or
+validator-local namespace. A leaf stages the chunk and includes the entry in
+its durable semantic artifact; the supervisor must reopen and verify those
+exact bytes and durably admit both artifact and chunk before the leaf becomes
+`VERIFIED`. No inbox scan or control-only descendant reference is accepted.
+The finalizer independently streams the exact admitted entries/records to
+derive `output_manifest_root`, `result_chunk_list_root` and every canonical
+result root, and cross-checks all summary carriers, counts and totals. The
+manifest proves addressing integrity, not data availability.
 
 The finalizer accepts no caller-built `LysisResultV1` and no precomputed result
 root. Its semantic author is the pinned Lysis program; the supervisor is only

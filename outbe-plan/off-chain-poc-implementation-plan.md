@@ -983,21 +983,33 @@ bounded-run owner/bucket merge trees, result chunks and root reducer; verify
 producer membership/coverage before CAS adoption. No phase may collapse all
 `K` ranges into one unit or input vector.
 
-The final `ROOT_REDUCE` worker emits only bounded `RootReduceSummaryV1`.
-Its five list carriers are fixed-capacity positional evidence: 256 slots per
-primary shard for Nod/bucket/contributor/output-manifest records and one slot
-per shard for the result-chunk hash. Frozen globally indexed pad hashes fill
-unused slots, canonical empty leaves are all-pad trees, and internal units
+The final `ROOT_REDUCE` worker emits only the bounded closed payload
+`LEAF(RootReduceSummaryV1, OutputManifestEntryV1)` for a one-shard plan or
+`NODE(RootReduceSummaryV1)` otherwise. Its five list carriers are
+fixed-capacity positional evidence: 256 slots per primary shard for
+Nod/bucket/contributor records and one slot per shard for both the
+output-manifest entry and result-chunk hash. Frozen globally indexed pad hashes
+fill unused slots, canonical empty leaves are all-pad trees, and internal units
 merge only equal-height adjacent carriers. These carrier roots are never
 wrapped or installed as canonical dense result-list roots.
+
+Each real leaf stages one canonical `ResultChunkV1` and embeds one
+`OutputManifestEntryV1(chunk_ordinal, result_chunk_hash, typed CAS ref)` in its
+unit artifact. Before the leaf becomes `VERIFIED`, the supervisor must discover
+the chunk only through that reported artifact, reopen and validate its exact
+length/digests/kind/job/attempt/ordinal, publish the bytes to authoritative CAS
+and durably admit the entry plus chunk. Directory scans, control-only refs and
+uncommitted side indexes are forbidden. Internal nodes consume either child
+tag, merge only the summaries and never accumulate entry vectors.
 After all required artifacts/chunks are durably verified, the supervisor opens
 bounded exact-order cursors and invokes the closed
 `LysisProgramV1::finalize_v1`. The finalizer reloads canonical
 `FinalizedJobSpecV1`, manifest and plan authority, revalidates every streamed
-CAS object, independently derives all unit/chunk/fraction/prefix/dense-result/
-event roots, verifies the summary carriers/counts/totals and emits
-`LysisResultV1`. It accepts no caller-built result/root/scalar and is neither
-a schedulable unit nor a generic program interface.
+CAS object, independently derives all unit/chunk/manifest/fraction/prefix/
+dense-result/event roots, verifies every descriptor against its exact chunk
+bytes plus the summary carriers/counts/totals and emits `LysisResultV1`. It
+accepts no caller-built result/root/scalar and is neither a schedulable unit nor
+a generic program interface.
 
 Shuffle workers embed one bounded `ShuffleRunArtifactV1` root in their
 `UnitArtifactV1` and stage every bounded descendant by content digest. The
@@ -1038,7 +1050,8 @@ then `OCM-DET-001` real 1/2/4-worker randomized kill/retry/order runs over the
 `S+1` multi-shard fixture. Add behavioral cases for missing/duplicate/reordered/
 substituted artifact or chunk, changed finalized intent scalar, stale manifest,
 included final carrier, malformed summary, sparse fixed-capacity carrier versus
-canonical dense root, exact replay and conflicting retry.
+canonical dense root, wrong/missing/reordered/duplicate manifest entry,
+descriptor kind/length/digest/hash mismatch, exact replay and conflicting retry.
 Crash after CAS-before-journal and journal-before-finalize must restart to the
 same result. No test may inspect source text.
 

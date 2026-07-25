@@ -1318,6 +1318,12 @@ LysisListSubtreeCarrierV1 {
   tree_root: Hash
 }
 
+OutputManifestEntryV1 {
+  chunk_ordinal: u32,
+  result_chunk_hash: Hash,
+  result_chunk_ref: CasObjectRefV1
+}
+
 RootReduceSummaryV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
@@ -1340,16 +1346,26 @@ RootReduceSummaryV1 {
   nod_cost_total: U256,
   first_error_ordinal: Option<u32>
 }
+
+RootReduceOutputV1 =
+  LEAF(1, {
+    summary: RootReduceSummaryV1,
+    output_manifest_entry: OutputManifestEntryV1
+  }) |
+  NODE(2, {
+    summary: RootReduceSummaryV1
+  })
 ```
 
 A leaf covers one exact primary shard. Every list carrier is a fixed-capacity
 coverage commitment, not a canonical result-list root. The base capacity is
-256 position-bound slots for `NOD`, `BUCKET`, `CONTRIBUTOR` and
-`OUTPUT_MANIFEST`, and one slot for `RESULT_CHUNK_HASH`. A real leaf places its
-canonical records in its shard-local prefix and fills every remaining slot
-with the frozen `pad_hash(list_kind, global_slot)` value. A canonical padded
-primary leaf contains the all-pad carrier for that exact position and zero
-counts/totals.
+256 position-bound slots for `NOD`, `BUCKET` and `CONTRIBUTOR`, and one slot
+for both `OUTPUT_MANIFEST` and `RESULT_CHUNK_HASH`. A real leaf places its
+canonical action records in their shard-local prefixes, places its one manifest
+entry and one result-chunk hash at the primary ordinal, and fills every
+remaining action slot with the frozen `pad_hash(list_kind, global_slot)` value.
+A canonical padded primary leaf contains the all-pad carriers for that exact
+position and zero counts/totals.
 
 An internal `ROOT_REDUCE` unit accepts only adjacent equal-height summaries at
 its two producer positions and combines each pair of equal-capacity carriers
@@ -1360,6 +1376,26 @@ fixed-capacity positional tree without the ordered-list root wrapper. It is
 never installed as `nod_root`, `bucket_root`, `contributor_root`,
 `output_manifest_root` or `result_chunk_list_root`: sparse shard-local records
 make those canonical dense lists semantically different trees.
+
+There is exactly one `OutputManifestEntryV1` per real primary shard and
+`ResultChunkV1`. Its `chunk_ordinal` equals the primary ordinal.
+`result_chunk_ref` must have a non-zero transport digest, non-zero exact byte
+length within `max_result_chunk_bytes` and
+`expected_ocb1_kind = Some(ResultChunkV1/0x000c)`. It contains no path, URI,
+validator identity, compression, encryption or CAS namespace. All domains hash
+the same exact canonical OCB1 bytes, so the descriptor is deterministic across
+their independent directories.
+
+The leaf worker stages the canonical chunk first and places the resulting
+descriptor and recomputed semantic `ResultChunkHash` in the `LEAF` payload.
+The supervisor discovers the chunk only through the reported leaf
+`UnitArtifactV1`; directory scanning and an uncommitted side index are
+forbidden. It reopens the exact staged bytes, verifies length, transport digest,
+OCB1 kind, bundle, job, attempt, ordinal and semantic hash, publishes them to
+the authoritative CAS, and durably admits the manifest entry and chunk before
+the leaf unit becomes `VERIFIED`. Internal reducers accept either child tag,
+consume only its summary and emit `NODE`; they never accumulate manifest-entry
+vectors. For `K = 1`, the root output remains `LEAF`.
 
 `RootReduceSummaryV1` intentionally contains no `unit_artifact_root`,
 `fidelity_fraction_root`, `gratis_prefix_root`, finalized Metadosis scalar,
@@ -1426,6 +1462,12 @@ ResultChunkV1 {
   ordered_nod_actions: Vec<NodActionV1>,
   ordered_eligible_contributors: Vec<ContributorActionV1>
 }
+
+OutputManifestEntryV1 {
+  chunk_ordinal: u32,
+  result_chunk_hash: Hash,
+  result_chunk_ref: CasObjectRefV1
+}
 ```
 
 Within each result chunk, Nod actions are strictly ordered by
@@ -1450,7 +1492,13 @@ max_tributes_per_work_shard = 256`; changing that equality is a bundle/version
 change because it changes chunk slicing.
 
 `result_chunk_list_root` is list-kind `11` over the exact 32-byte
-`ResultChunkHash` values in chunk ordinal order.
+`ResultChunkHash` values in chunk ordinal order. `output_manifest_root` is
+list-kind `4` over canonical `OutputManifestEntryV1` records in the same order.
+The former commits semantic chunk identities; the latter commits the exact
+semantic-to-transport retrieval bindings. Both have population
+`result_chunk_count`, and every entry/hash pair must open the same canonical
+chunk bytes. The manifest is an addressing-integrity commitment, not proof of
+custody or data availability.
 `fidelity_fraction_root` is list-kind `12` over canonical
 `LeagueFractionV1` records in strictly increasing league order.
 `gratis_prefix_root` is list-kind `13` over canonical `GratisLeafPrefixV1`
@@ -1569,7 +1617,8 @@ VerifiedLysisFinalizationInputsV1 {
   plan: verified PlanCommitmentV1,
   root_reduce_summary: verified RootReduceSummaryV1,
   unit_artifacts: exact-plan-order bounded cursor,
-  result_chunks: exact-chunk-order bounded cursor
+  result_chunks: exact-chunk-order bounded cursor of
+                 (OutputManifestEntryV1, exact verified ResultChunkV1 bytes)
 }
 
 finalize_v1(VerifiedLysisFinalizationInputsV1)
@@ -1586,9 +1635,10 @@ reordered, substituted or conflicting entries, and computes:
 2. list-kind `11` `result_chunk_list_root`;
 3. list-kind `12` `fidelity_fraction_root`;
 4. list-kind `13` `gratis_prefix_root`;
-5. canonical Nod, bucket, contributor and output-manifest roots by streaming
-   the exact verified records in their frozen dense order, independently of
-   the fixed-capacity carriers;
+5. canonical Nod, bucket and contributor roots plus list-kind `4`
+   `output_manifest_root` by streaming the exact verified chunks and their
+   admitted manifest entries in frozen dense order, independently of the
+   fixed-capacity carriers;
 6. every fixed-capacity carrier, count and total in `RootReduceSummaryV1`
    against those exact streamed records, abstaining on any mismatch;
 7. carry-over and completion fields from canonical finalized intent plus
