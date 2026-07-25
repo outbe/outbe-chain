@@ -8218,7 +8218,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
+ "revm",
 ]
 
 [[package]]

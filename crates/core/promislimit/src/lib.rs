@@ -1,3 +1,4 @@
+pub mod certified;
 pub mod ocomp_budget;
 pub mod precompile;
 pub mod runtime;
