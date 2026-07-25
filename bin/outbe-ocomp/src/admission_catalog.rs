@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 
 use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::{
-    result::OutputManifestEntryV1, CanonicalReader, CanonicalWriter, CasObjectRefV1, ObjectKind,
-    ProtocolError, SchemaLimits,
+    result::OutputManifestEntryV1,
+    unit::{UnitInterval, UnitPhase, UnitSpecV1},
+    CanonicalReader, CanonicalWriter, CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits,
 };
 use thiserror::Error;
 
@@ -50,6 +51,12 @@ pub enum AdmissionOutcome {
     ExactReplay,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AdmissionPositionV1 {
+    pub plan_hash: B256,
+    pub plan_ordinal: u32,
+}
+
 pub struct VerifiedAdmissionCatalog {
     root: PathBuf,
     limits: SchemaLimits,
@@ -75,7 +82,46 @@ impl VerifiedAdmissionCatalog {
         })
     }
 
-    pub fn admit(
+    pub fn admit_verified_unit(
+        &mut self,
+        position: AdmissionPositionV1,
+        spec: &UnitSpecV1,
+        artifact_ref: CasObjectRefV1,
+        result_chunk_entry: Option<OutputManifestEntryV1>,
+    ) -> Result<AdmissionOutcome, AdmissionCatalogError> {
+        spec.validate_semantics(&self.limits)?;
+        if position.plan_hash.is_zero() {
+            return Err(ProtocolError::InvalidInvariant("verified admission plan hash").into());
+        }
+        match (&spec.phase, &spec.interval, &result_chunk_entry) {
+            (UnitPhase::RootReduce, UnitInterval::BinaryReducerNode(node), Some(entry))
+                if node.level == 0 && node.index == entry.chunk_ordinal => {}
+            (UnitPhase::RootReduce, UnitInterval::BinaryReducerNode(node), None)
+                if node.level > 0 => {}
+            (_, _, None) if spec.phase != UnitPhase::RootReduce => {}
+            _ => {
+                return Err(ProtocolError::InvalidInvariant(
+                    "verified admission result chunk position",
+                )
+                .into());
+            }
+        }
+        let record = VerifiedAdmissionRecordV1 {
+            protocol_bundle_hash: spec.protocol_bundle_hash,
+            job_id: spec.job_id,
+            attempt: spec.attempt,
+            plan_hash: position.plan_hash,
+            plan_ordinal: position.plan_ordinal,
+            unit_id: spec.unit_id(&self.limits)?,
+            artifact_ref,
+            result_chunk: result_chunk_entry.map(|output_manifest_entry| AdmittedResultChunkV1 {
+                output_manifest_entry,
+            }),
+        };
+        self.admit(&record)
+    }
+
+    fn admit(
         &mut self,
         record: &VerifiedAdmissionRecordV1,
     ) -> Result<AdmissionOutcome, AdmissionCatalogError> {

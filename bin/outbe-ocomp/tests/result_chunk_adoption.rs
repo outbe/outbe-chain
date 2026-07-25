@@ -3,6 +3,7 @@ use outbe_lysis::program_v1::result::{
     encode_root_reduce_output, LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_ocomp::{
+    admission_catalog::{AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog},
     cas::{CasLimits, CasWriterRole, FilesystemCas},
     control::poc_schema_limits,
     inbox::{WorkerInbox, WorkerInboxLimits},
@@ -208,6 +209,8 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
         CAS_LIMITS,
     )
     .unwrap();
+    let mut catalog =
+        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = leaf_spec(0);
     let chunk = chunk(&spec, 0);
     let bytes = chunk.encode_canonical(&limits).unwrap();
@@ -230,12 +233,25 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
         transport_digest: artifact_reference.transport_digest,
     };
 
-    let admitted =
-        admit_reported_lysis_root_reduce_leaf(&spec, &finished, &inbox, &cas, &limits).unwrap();
+    let admitted = admit_reported_lysis_root_reduce_leaf(
+        AdmissionPositionV1 {
+            plan_hash: B256::repeat_byte(90),
+            plan_ordinal: 9,
+        },
+        &spec,
+        &finished,
+        &inbox,
+        &cas,
+        &mut catalog,
+        &limits,
+    )
+    .unwrap();
     assert_eq!(admitted.chunk.chunk_ordinal, 0);
     assert_eq!(admitted.chunk.nod_count, 1);
     assert_eq!(admitted.chunk.contributor_count, 1);
     assert_eq!(admitted.chunk.authoritative_ref, entry.result_chunk_ref);
+    assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
+    assert_eq!(catalog.read(9).unwrap().unit_id, finished.unit_id);
     assert_eq!(
         admitted.artifact_ref.expected_ocb1_kind,
         Some(ObjectKind::UnitArtifactV1.tag())
@@ -260,6 +276,8 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         CAS_LIMITS,
     )
     .unwrap();
+    let mut catalog =
+        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = leaf_spec(0);
     let chunk = chunk(&spec, 0);
     let bytes = chunk.encode_canonical(&limits).unwrap();
@@ -288,10 +306,19 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         transport_digest: artifact_reference.transport_digest,
     };
 
-    assert!(
-        admit_reported_lysis_root_reduce_leaf(&spec, &finished, &empty_inbox, &cas, &limits)
-            .is_err()
-    );
+    assert!(admit_reported_lysis_root_reduce_leaf(
+        AdmissionPositionV1 {
+            plan_hash: B256::repeat_byte(90),
+            plan_ordinal: 9,
+        },
+        &spec,
+        &finished,
+        &empty_inbox,
+        &cas,
+        &mut catalog,
+        &limits,
+    )
+    .is_err());
     let mut substituted = entry;
     substituted.result_chunk_hash = B256::repeat_byte(99);
     let substituted_artifact = root_leaf_artifact(&spec, substituted, &limits);

@@ -12,6 +12,9 @@ use outbe_ocomp_protocol::{
 use thiserror::Error;
 
 use crate::{
+    admission_catalog::{
+        AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
+    },
     cas::{CasError, FilesystemCas},
     inbox::{WorkerInbox, WorkerInboxError},
 };
@@ -22,12 +25,14 @@ pub struct AdoptedLysisResultChunkV1 {
     pub nod_count: u32,
     pub contributor_count: u32,
     pub authoritative_ref: CasObjectRefV1,
+    pub output_manifest_entry: outbe_ocomp_protocol::result::OutputManifestEntryV1,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdmittedLysisRootReduceLeafV1 {
     pub artifact_ref: CasObjectRefV1,
     pub chunk: AdoptedLysisResultChunkV1,
+    pub admission: AdmissionOutcome,
 }
 
 #[derive(Debug, Error)]
@@ -40,15 +45,19 @@ pub enum LysisResultAdoptionError {
     Cas(#[from] CasError),
     #[error(transparent)]
     LysisArtifact(#[from] LysisArtifactErrorV1),
+    #[error(transparent)]
+    AdmissionCatalog(#[from] AdmissionCatalogError),
 }
 
 /// Makes one reported ROOT_REDUCE leaf ready only after its manifest-discovered
 /// result chunk has been verified and published into authoritative CAS.
 pub fn admit_reported_lysis_root_reduce_leaf(
+    position: AdmissionPositionV1,
     spec: &UnitSpecV1,
     finished: &UnitFinishedV1,
     inbox: &WorkerInbox,
     cas: &FilesystemCas,
+    catalog: &mut VerifiedAdmissionCatalog,
     limits: &SchemaLimits,
 ) -> Result<AdmittedLysisRootReduceLeafV1, LysisResultAdoptionError> {
     spec.validate_semantics(limits)?;
@@ -74,9 +83,16 @@ pub fn admit_reported_lysis_root_reduce_leaf(
     }
     artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
     cas.read_verified(&artifact_ref)?;
+    let admission = catalog.admit_verified_unit(
+        position,
+        spec,
+        artifact_ref.clone(),
+        Some(chunk.output_manifest_entry.clone()),
+    )?;
     Ok(AdmittedLysisRootReduceLeafV1 {
         artifact_ref,
         chunk,
+        admission,
     })
 }
 
@@ -150,6 +166,7 @@ pub fn adopt_lysis_result_chunk(
                 what: "adopted result chunk contributor count",
             },
         )?,
-        authoritative_ref: entry.result_chunk_ref,
+        authoritative_ref: entry.result_chunk_ref.clone(),
+        output_manifest_entry: entry,
     })
 }
