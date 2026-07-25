@@ -7,7 +7,7 @@ use outbe_lysis::program_v1::{
 use outbe_ocomp_protocol::{
     result::ResultChunkV1,
     unit::{BinaryReducerNode, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1},
-    CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits,
+    CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use thiserror::Error;
 
@@ -24,6 +24,12 @@ pub struct AdoptedLysisResultChunkV1 {
     pub authoritative_ref: CasObjectRefV1,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedLysisRootReduceLeafV1 {
+    pub artifact_ref: CasObjectRefV1,
+    pub chunk: AdoptedLysisResultChunkV1,
+}
+
 #[derive(Debug, Error)]
 pub enum LysisResultAdoptionError {
     #[error(transparent)]
@@ -34,6 +40,44 @@ pub enum LysisResultAdoptionError {
     Cas(#[from] CasError),
     #[error(transparent)]
     LysisArtifact(#[from] LysisArtifactErrorV1),
+}
+
+/// Makes one reported ROOT_REDUCE leaf ready only after its manifest-discovered
+/// result chunk has been verified and published into authoritative CAS.
+pub fn admit_reported_lysis_root_reduce_leaf(
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    limits: &SchemaLimits,
+) -> Result<AdmittedLysisRootReduceLeafV1, LysisResultAdoptionError> {
+    spec.validate_semantics(limits)?;
+    let unit_id = spec.unit_id(limits)?;
+    if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
+        return Err(ProtocolError::InvalidInvariant("successful ROOT_REDUCE leaf report").into());
+    }
+    let reported = inbox.read_reported(
+        finished.unit_id,
+        finished.exact_staged_bytes,
+        finished.transport_digest,
+    )?;
+    let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
+    let chunk = adopt_lysis_result_chunk(spec, &artifact, inbox, cas, limits)?;
+
+    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(
+            ProtocolError::InvalidInvariant("published ROOT_REDUCE leaf descriptor").into(),
+        );
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    Ok(AdmittedLysisRootReduceLeafV1 {
+        artifact_ref,
+        chunk,
+    })
 }
 
 /// Reopens and verifies the exact typed chunk reported by one admitted

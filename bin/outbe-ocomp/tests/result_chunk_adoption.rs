@@ -6,7 +6,7 @@ use outbe_ocomp::{
     cas::{CasLimits, CasWriterRole, FilesystemCas},
     control::poc_schema_limits,
     inbox::{WorkerInbox, WorkerInboxLimits},
-    lysis_result_adoption::adopt_lysis_result_chunk,
+    lysis_result_adoption::{admit_reported_lysis_root_reduce_leaf, adopt_lysis_result_chunk},
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
@@ -15,7 +15,7 @@ use outbe_ocomp_protocol::{
         BinaryReducerNode, CanonicalInputRefV1, InputPurpose, InputSourceKind, UnitArtifactV1,
         UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
-    ListKind, ObjectKind, SchemaLimits,
+    ListKind, ObjectKind, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use tempfile::tempdir;
 
@@ -218,12 +218,28 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
         result_chunk_ref: reference,
     };
     let artifact = root_leaf_artifact(&spec, entry.clone(), &limits);
+    let artifact_bytes = artifact.encode_canonical(&limits).unwrap();
+    let staged = inbox
+        .adopt(spec.unit_id(&limits).unwrap(), &artifact_bytes)
+        .unwrap();
+    let artifact_reference = staged.reference();
+    let finished = UnitFinishedV1 {
+        unit_id: spec.unit_id(&limits).unwrap(),
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: artifact_reference.encoded_bytes,
+        transport_digest: artifact_reference.transport_digest,
+    };
 
-    let adopted = adopt_lysis_result_chunk(&spec, &artifact, &inbox, &cas, &limits).unwrap();
-    assert_eq!(adopted.chunk_ordinal, 0);
-    assert_eq!(adopted.nod_count, 1);
-    assert_eq!(adopted.contributor_count, 1);
-    assert_eq!(adopted.authoritative_ref, entry.result_chunk_ref);
+    let admitted =
+        admit_reported_lysis_root_reduce_leaf(&spec, &finished, &inbox, &cas, &limits).unwrap();
+    assert_eq!(admitted.chunk.chunk_ordinal, 0);
+    assert_eq!(admitted.chunk.nod_count, 1);
+    assert_eq!(admitted.chunk.contributor_count, 1);
+    assert_eq!(admitted.chunk.authoritative_ref, entry.result_chunk_ref);
+    assert_eq!(
+        admitted.artifact_ref.expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
     assert_eq!(
         cas.read_verified(&entry.result_chunk_ref).unwrap().bytes(),
         bytes
@@ -258,8 +274,24 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         result_chunk_ref: reference,
     };
     let artifact = root_leaf_artifact(&spec, entry.clone(), &limits);
+    let staged = empty_inbox
+        .adopt(
+            spec.unit_id(&limits).unwrap(),
+            &artifact.encode_canonical(&limits).unwrap(),
+        )
+        .unwrap();
+    let artifact_reference = staged.reference();
+    let finished = UnitFinishedV1 {
+        unit_id: spec.unit_id(&limits).unwrap(),
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: artifact_reference.encoded_bytes,
+        transport_digest: artifact_reference.transport_digest,
+    };
 
-    assert!(adopt_lysis_result_chunk(&spec, &artifact, &empty_inbox, &cas, &limits).is_err());
+    assert!(
+        admit_reported_lysis_root_reduce_leaf(&spec, &finished, &empty_inbox, &cas, &limits)
+            .is_err()
+    );
     let mut substituted = entry;
     substituted.result_chunk_hash = B256::repeat_byte(99);
     let substituted_artifact = root_leaf_artifact(&spec, substituted, &limits);
