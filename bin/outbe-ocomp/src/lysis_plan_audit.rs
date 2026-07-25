@@ -264,6 +264,53 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
         &self.manifest
     }
 
+    pub(crate) fn verified_artifact_at(
+        &self,
+        plan_ordinal: u32,
+    ) -> Result<PlanBoundLysisArtifactV1, ExactLysisPlanError> {
+        let admission = self.plan_bound_admission_at(plan_ordinal)?;
+        let position = self.topology.plan_position_at(plan_ordinal)?;
+        let spec = self.derive_spec_at(plan_ordinal)?;
+        if admission.unit_id != spec.unit_id(self.limits)? {
+            return Err(ExactLysisPlanError::UnexpectedUnitId { plan_ordinal });
+        }
+        let object = self.reader.read_verified(&admission.artifact_ref)?;
+        let artifact = UnitArtifactV1::decode_canonical(object.bytes(), self.limits)?;
+        artifact.validate_against(&spec, self.limits)?;
+        Ok(PlanBoundLysisArtifactV1 {
+            plan_ordinal,
+            position,
+            spec,
+            artifact,
+            admission,
+        })
+    }
+
+    pub(crate) fn plan_bound_admission_at(
+        &self,
+        plan_ordinal: u32,
+    ) -> Result<VerifiedAdmissionRecordV1, ExactLysisPlanError> {
+        let admission = self.admissions.read(plan_ordinal)?;
+        self.require_admission_authority(&admission)?;
+        Ok(admission)
+    }
+
+    pub(crate) const fn reader(&self) -> &FilesystemCasReader {
+        self.reader
+    }
+
+    pub(crate) const fn limits(&self) -> &SchemaLimits {
+        self.limits
+    }
+
+    pub(crate) fn bounded_admission_directory_cursor(
+        &self,
+    ) -> Result<AdmissionDirectoryCursorV1<'_>, ExactLysisPlanError> {
+        self.admissions
+            .bounded_directory_cursor()
+            .map_err(Into::into)
+    }
+
     fn derive_spec_at(&self, plan_ordinal: u32) -> Result<UnitSpecV1, ExactLysisPlanError> {
         let position = self.topology.plan_position_at(plan_ordinal)?;
         let phase = position.phase();
@@ -851,24 +898,8 @@ impl LysisPlanAuditCursorV1<'_> {
         if self.next_artifact_ordinal < self.audit.topology.total_unit_count() {
             let plan_ordinal = self.next_artifact_ordinal;
             self.next_artifact_ordinal += 1;
-            let admission = self.audit.admissions.read(plan_ordinal)?;
-            self.audit.require_admission_authority(&admission)?;
-            let position = self.audit.topology.plan_position_at(plan_ordinal)?;
-            let spec = self.audit.derive_spec_at(plan_ordinal)?;
-            if admission.unit_id != spec.unit_id(self.audit.limits)? {
-                return Err(ExactLysisPlanError::UnexpectedUnitId { plan_ordinal });
-            }
-            let object = self.audit.reader.read_verified(&admission.artifact_ref)?;
-            let artifact = UnitArtifactV1::decode_canonical(object.bytes(), self.audit.limits)?;
-            artifact.validate_against(&spec, self.audit.limits)?;
             return Ok(LysisPlanAuditStepV1::Artifact(Box::new(
-                PlanBoundLysisArtifactV1 {
-                    plan_ordinal,
-                    position,
-                    spec,
-                    artifact,
-                    admission,
-                },
+                self.audit.verified_artifact_at(plan_ordinal)?,
             )));
         }
         self.admission_catalog = Some(self.audit.admissions.bounded_directory_cursor()?);
