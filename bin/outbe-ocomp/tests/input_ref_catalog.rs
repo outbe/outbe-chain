@@ -169,6 +169,35 @@ fn partial_input_ref_catalog_never_opens_an_exact_cursor() {
 }
 
 #[test]
+fn input_ref_state_without_its_header_is_never_rebound_to_a_manifest() {
+    let fixture = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    {
+        let mut catalog = VerifiedInputChunkRefCatalog::open(
+            directory.path(),
+            &fixture.manifest_ref,
+            &fixture.manifest,
+            fixture.limits,
+            fixture.list_limits,
+        )
+        .unwrap();
+        catalog.admit(&fixture.references[0]).unwrap();
+    }
+    std::fs::remove_file(directory.path().join("catalog.header")).unwrap();
+
+    assert!(matches!(
+        VerifiedInputChunkRefCatalog::open(
+            directory.path(),
+            &fixture.manifest_ref,
+            &fixture.manifest,
+            fixture.limits,
+            fixture.list_limits,
+        ),
+        Err(InputRefCatalogError::MissingHeader)
+    ));
+}
+
+#[test]
 fn cold_restart_reopens_each_input_chunk_from_authoritative_cas_and_rederives_its_ref() {
     let limits = poc_schema_limits();
     let list_limits = OrderedListLimits::new(16, 4096, 4096);

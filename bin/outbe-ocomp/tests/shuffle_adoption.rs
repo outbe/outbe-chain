@@ -1,3 +1,5 @@
+mod admission_support;
+
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp::{
     admission_catalog::{AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog},
@@ -141,9 +143,17 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         CAS_LIMITS,
     )
     .unwrap();
-    let mut catalog =
-        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = owner_shuffle_spec();
+    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority_object_count = cas.object_count().unwrap();
+    let mut catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("catalog"),
+        &cas,
+        &authority.plan_ref,
+        &authority.manifest_ref,
+        limits,
+    )
+    .unwrap();
     let unit_id = spec.unit_id(&limits).unwrap();
     let root = build_owner_shuffle_run(
         ShuffleRunBuildContextV1 {
@@ -191,10 +201,7 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
     };
 
     assert!(admit_reported_lysis_shuffle_unit(
-        AdmissionPositionV1 {
-            plan_hash: B256::repeat_byte(90),
-            plan_ordinal: 9,
-        },
+        AdmissionPositionV1 { plan_ordinal: 9 },
         &spec,
         &finished,
         &empty_inbox,
@@ -203,7 +210,7 @@ fn adoption_fails_closed_when_a_referenced_worker_object_is_missing() {
         &limits,
     )
     .is_err());
-    assert_eq!(cas.object_count().unwrap(), 0);
+    assert_eq!(cas.object_count().unwrap(), authority_object_count);
 }
 
 #[test]
@@ -217,9 +224,16 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
         CAS_LIMITS,
     )
     .unwrap();
-    let mut catalog =
-        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = owner_shuffle_spec();
+    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let mut catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("catalog"),
+        &cas,
+        &authority.plan_ref,
+        &authority.manifest_ref,
+        limits,
+    )
+    .unwrap();
     let unit_id = spec.unit_id(&limits).unwrap();
     let root = build_owner_shuffle_run(
         ShuffleRunBuildContextV1 {
@@ -266,10 +280,7 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
     };
 
     let admitted = admit_reported_lysis_shuffle_unit(
-        AdmissionPositionV1 {
-            plan_hash: B256::repeat_byte(90),
-            plan_ordinal: 9,
-        },
+        AdmissionPositionV1 { plan_ordinal: 9 },
         &spec,
         &finished,
         &inbox,
@@ -280,6 +291,7 @@ fn reported_shuffle_unit_becomes_authoritative_only_after_full_closure_adoption(
     .unwrap();
     assert_eq!(admitted.closure.verified_record_count, 257);
     assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
+    assert_eq!(catalog.read(9).unwrap().plan_hash, authority.plan_hash);
     assert_eq!(
         admitted.artifact_ref.expected_ocb1_kind,
         Some(ObjectKind::UnitArtifactV1.tag())

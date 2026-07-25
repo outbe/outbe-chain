@@ -1079,8 +1079,14 @@ fn real_worker_processes_execute_through_output_finalize() {
         transport_digest: keccak256(&output_finalize_bytes),
     };
     let replay_inbox = WorkerInbox::open(&inbox_root, inbox_limits).unwrap();
-    let mut admission_catalog =
-        VerifiedAdmissionCatalog::open(directory.path().join("admissions"), limits).unwrap();
+    let mut admission_catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("admissions"),
+        &cas,
+        &plan_ref,
+        &published.manifest_ref,
+        limits,
+    )
+    .unwrap();
     let output_finalize_plan_ordinal = [
         UnitPhase::Enumerate,
         UnitPhase::FidelityMap,
@@ -1094,7 +1100,6 @@ fn real_worker_processes_execute_through_output_finalize() {
     .sum();
     let admitted_output_finalize = admit_reported_output_finalize_unit(
         AdmissionPositionV1 {
-            plan_hash: plan.plan_hash(&limits).unwrap(),
             plan_ordinal: output_finalize_plan_ordinal,
         },
         0,

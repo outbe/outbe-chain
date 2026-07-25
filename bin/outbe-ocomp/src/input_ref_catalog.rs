@@ -87,6 +87,7 @@ impl VerifiedInputChunkRefCatalog {
                 return Err(InputRefCatalogError::AuthorityMismatch);
             }
         } else {
+            require_fresh_catalog_without_header(&root)?;
             persist_atomic(&root, &header_path, &encode_header(&expected, &limits)?)?;
         }
         let abstained = path_exists(&root.join(CONFLICT_FILE))?;
@@ -630,6 +631,18 @@ fn reject_orphaned_temps(root: &Path) -> Result<(), InputRefCatalogError> {
             .is_some_and(|name| name.ends_with(TEMP_SUFFIX))
         {
             return Err(InputRefCatalogError::AmbiguousTemporary(path));
+        }
+    }
+    Ok(())
+}
+
+fn require_fresh_catalog_without_header(root: &Path) -> Result<(), InputRefCatalogError> {
+    let entries =
+        fs::read_dir(root).map_err(|source| io_error("list catalog directory", root, source))?;
+    for entry in entries {
+        let entry = entry.map_err(|source| io_error("read catalog directory", root, source))?;
+        if entry.file_name() != LOCK_FILE {
+            return Err(InputRefCatalogError::MissingHeader);
         }
     }
     Ok(())

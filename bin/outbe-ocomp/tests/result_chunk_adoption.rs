@@ -1,3 +1,5 @@
+mod admission_support;
+
 use alloy_primitives::{Address, B256, U256};
 use outbe_lysis::program_v1::result::{
     encode_root_reduce_output, LysisListSubtreeCarrierV1, RootReduceOutputV1, RootReduceSummaryV1,
@@ -209,9 +211,16 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
         CAS_LIMITS,
     )
     .unwrap();
-    let mut catalog =
-        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = leaf_spec(0);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let mut catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("catalog"),
+        &cas,
+        &authority.plan_ref,
+        &authority.manifest_ref,
+        limits,
+    )
+    .unwrap();
     let chunk = chunk(&spec, 0);
     let bytes = chunk.encode_canonical(&limits).unwrap();
     let reference = inbox.stage_result_chunk(&bytes, &limits).unwrap();
@@ -234,10 +243,7 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
     };
 
     let admitted = admit_reported_lysis_root_reduce_leaf(
-        AdmissionPositionV1 {
-            plan_hash: B256::repeat_byte(90),
-            plan_ordinal: 9,
-        },
+        AdmissionPositionV1 { plan_ordinal: 9 },
         &spec,
         &finished,
         &inbox,
@@ -251,7 +257,9 @@ fn supervisor_adopts_only_the_exact_manifest_bound_result_chunk() {
     assert_eq!(admitted.chunk.contributor_count, 1);
     assert_eq!(admitted.chunk.authoritative_ref, entry.result_chunk_ref);
     assert_eq!(admitted.admission, AdmissionOutcome::NewlyAdmitted);
-    assert_eq!(catalog.read(9).unwrap().unit_id, finished.unit_id);
+    let durable_admission = catalog.read(9).unwrap();
+    assert_eq!(durable_admission.unit_id, finished.unit_id);
+    assert_eq!(durable_admission.plan_hash, authority.plan_hash);
     assert_eq!(
         admitted.artifact_ref.expected_ocb1_kind,
         Some(ObjectKind::UnitArtifactV1.tag())
@@ -276,9 +284,17 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         CAS_LIMITS,
     )
     .unwrap();
-    let mut catalog =
-        VerifiedAdmissionCatalog::open(directory.path().join("catalog"), limits).unwrap();
     let spec = leaf_spec(0);
+    let authority = admission_support::publish_admission_authority(&cas, &spec, &limits);
+    let authority_object_count = cas.object_count().unwrap();
+    let mut catalog = VerifiedAdmissionCatalog::open(
+        directory.path().join("catalog"),
+        &cas,
+        &authority.plan_ref,
+        &authority.manifest_ref,
+        limits,
+    )
+    .unwrap();
     let chunk = chunk(&spec, 0);
     let bytes = chunk.encode_canonical(&limits).unwrap();
     let reference = source_inbox.stage_result_chunk(&bytes, &limits).unwrap();
@@ -307,10 +323,7 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
     };
 
     assert!(admit_reported_lysis_root_reduce_leaf(
-        AdmissionPositionV1 {
-            plan_hash: B256::repeat_byte(90),
-            plan_ordinal: 9,
-        },
+        AdmissionPositionV1 { plan_ordinal: 9 },
         &spec,
         &finished,
         &empty_inbox,
@@ -326,5 +339,5 @@ fn adoption_rejects_missing_or_semantically_substituted_result_chunk() {
         adopt_lysis_result_chunk(&spec, &substituted_artifact, &source_inbox, &cas, &limits)
             .is_err()
     );
-    assert_eq!(cas.object_count().unwrap(), 0);
+    assert_eq!(cas.object_count().unwrap(), authority_object_count);
 }
