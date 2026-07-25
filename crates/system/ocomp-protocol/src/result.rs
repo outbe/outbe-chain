@@ -8,8 +8,8 @@ use crate::{
     control::CasObjectRefV1,
     error::ProtocolError,
     hash::hash_framed,
-    intent::DayType,
-    registry::{HashDomain, ObjectKind},
+    intent::{DayType, JobIntentV1},
+    registry::{HashDomain, ListKind, ObjectKind},
     schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
 };
 
@@ -203,6 +203,24 @@ wire_struct! {
 }
 impl_top_level_codec!(ActivationPayloadV1, ActivationPayloadV1);
 
+pub fn lysis_v1_empty_semantic_event_root() -> Result<B256, ProtocolError> {
+    hash_framed(
+        HashDomain::ListEmpty,
+        &ListKind::SemanticEventRecords.id().to_be_bytes(),
+    )
+}
+
+fn validate_lysis_v1_event_commitment(
+    counts: &ExactCountsV1,
+    event_summary_hash: B256,
+) -> Result<(), ProtocolError> {
+    require(
+        counts.semantic_event_count == 0
+            && event_summary_hash == lysis_v1_empty_semantic_event_root()?,
+        "LYSIS_V1 empty semantic event commitment",
+    )
+}
+
 impl ResultChunkV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
         require(
@@ -326,6 +344,7 @@ impl LysisResultV1 {
                 && self.counts.bucket_count <= self.tribute_count,
             "result exact counts",
         )?;
+        validate_lysis_v1_event_commitment(&self.counts, self.event_summary_hash)?;
         require(
             self.tribute_nominal_total == self.conservation.tribute_nominal_total
                 && self.unused_lysis == self.conservation.unused_lysis,
@@ -402,6 +421,29 @@ impl LysisResultV1 {
             event_summary_hash: self.event_summary_hash,
         })
     }
+
+    pub fn validate_finalized_intent(&self, intent: &JobIntentV1) -> Result<(), ProtocolError> {
+        let completion = &self.metadosis_completion_summary;
+        let frozen = &intent.frozen_metadosis_values;
+        require(
+            self.protocol_bundle_hash == intent.protocol_bundle_hash
+                && self.attempt == intent.attempt
+                && self.tribute_count == intent.authenticated_day_count
+                && self.tribute_nominal_total == intent.authenticated_day_nominal
+                && completion.wwd == intent.wwd
+                && completion.pending_nonce == intent.pending_nonce
+                && completion.day_type == frozen.day_type
+                && completion.day_limit == frozen.day_limit
+                && completion.gratis_demand == frozen.gratis_demand
+                && completion.gratis_supply == frozen.gratis_supply
+                && completion.lysis_budget == frozen.lysis_budget
+                && completion.auction_base == frozen.auction_base
+                && completion.status == CompletionStatus::Completed
+                && completion.logical_evaluation_height == intent.logical_evaluation_height
+                && completion.logical_evaluation_time == intent.logical_evaluation_time,
+            "result finalized intent binding",
+        )
+    }
 }
 
 impl ActivationPayloadV1 {
@@ -458,5 +500,6 @@ fn validate_activation_payload(
     require(
         payload.result_chunk_count > 0 && !payload.result_chunk_list_root.is_zero(),
         "activation committed result chunks",
-    )
+    )?;
+    validate_lysis_v1_event_commitment(&payload.counts, payload.event_summary_hash)
 }

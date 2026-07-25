@@ -314,7 +314,29 @@ impl AggregateActivationReceiptV1 {
         } else {
             hash_framed(HashDomain::Effects, &[])?
         };
-        require(expected == self.effect_commitment, "effect commitment")
+        require(expected == self.effect_commitment, "effect commitment")?;
+        if self.outcome == ActivationOutcome::ConflictResolved {
+            require(
+                self.event_summary_hash == empty_apply_event_summary_hash()?,
+                "conflict receipt empty apply event summary",
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_applied_event_summary(
+        &self,
+        owner_digests: [B256; 4],
+    ) -> Result<(), ProtocolError> {
+        self.validate_semantics()?;
+        require(
+            self.outcome == ActivationOutcome::Applied,
+            "applied receipt outcome",
+        )?;
+        require(
+            self.event_summary_hash == apply_event_summary_hash(owner_digests)?,
+            "applied receipt event summary",
+        )
     }
 
     pub fn terminal_receipt_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
@@ -329,6 +351,10 @@ pub fn apply_event_summary_hash(owner_digests: [B256; 4]) -> Result<B256, Protoc
         payload.extend_from_slice(digest.as_slice());
     }
     hash_framed(HashDomain::ApplyEventSummary, &payload)
+}
+
+pub fn empty_apply_event_summary_hash() -> Result<B256, ProtocolError> {
+    hash_framed(HashDomain::ApplyEventSummary, &[])
 }
 
 pub fn desis_request_brief_hash(

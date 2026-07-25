@@ -5,7 +5,7 @@ use crate::{
     committee::{verify_low_s_prehash, OcompCommitteeSnapshotV1, POC_KEY_EPOCH},
     error::ProtocolError,
     hash::hash_framed,
-    intent::FinalizedIntentProofV1,
+    intent::{FinalizedIntentProofV1, JobIntentV1},
     registry::HashDomain,
     result::{ActivationPayloadV1, LysisResultV1},
     schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, SchemaLimits},
@@ -97,6 +97,7 @@ impl PoCActivationV1 {
                 && self.result.attempt == intent.attempt,
             "activation result intent binding",
         )?;
+        self.result.validate_finalized_intent(&intent)?;
         let reconstructed_payload = self.result.activation_payload(limits)?;
         require(
             self.activation_payload == reconstructed_payload,
@@ -122,16 +123,26 @@ impl PoCActivationV1 {
 impl CandidateAnnouncementV1 {
     pub fn verify(
         &self,
+        finalized_intent: &JobIntentV1,
+        expected_job_id: B256,
         committee: &OcompCommitteeSnapshotV1,
         current_height: u64,
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
+        finalized_intent.validate_semantics()?;
         require(
             self.protocol_bundle_hash == self.result.protocol_bundle_hash
                 && self.job_id == self.result.job_id
                 && self.attempt == self.result.attempt,
             "candidate result binding",
         )?;
+        require(
+            self.protocol_bundle_hash == finalized_intent.protocol_bundle_hash
+                && self.job_id == expected_job_id
+                && self.attempt == finalized_intent.attempt,
+            "candidate finalized job binding",
+        )?;
+        self.result.validate_finalized_intent(finalized_intent)?;
         require(self.key_epoch == POC_KEY_EPOCH, "candidate key epoch")?;
         let payload = self.result.activation_payload(limits)?;
         require(
@@ -147,6 +158,10 @@ impl CandidateAnnouncementV1 {
                 && member.valid_from_height <= current_height
                 && current_height < member.valid_until_height_exclusive,
             "candidate member validity",
+        )?;
+        require(
+            finalized_intent.result_committee_snapshot_hash == committee.snapshot_hash(limits)?,
+            "candidate intent committee binding",
         )?;
         verify_low_s_prehash(
             &member.ocomp_public_key_sec1,

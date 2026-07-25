@@ -39,15 +39,17 @@ use outbe_ocomp_protocol::{
     opening::OpeningSubjectsV1,
     profile::{CapacityProfileV1, CorrectnessProfileV1, ProgramId, ProtocolBundleV1},
     receipts::{
-        desis_request_brief_hash, ActivationOutcome, AggregateActivationReceiptV1,
-        BudgetSplitDestination, CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1,
-        NodBatchReceiptV1, RequestBudgetSplitReceiptV1, TributeReceiptV1,
+        apply_event_summary_hash, desis_request_brief_hash, empty_apply_event_summary_hash,
+        ActivationOutcome, AggregateActivationReceiptV1, BudgetSplitDestination,
+        CarryOverReceiptV1, ContributorReceiptV1, EffectBindingV1, NodBatchReceiptV1,
+        RequestBudgetSplitReceiptV1, TributeReceiptV1,
     },
-    registry::{HashDomain, ObjectKind},
+    registry::{HashDomain, ListKind, ObjectKind},
     result::{
-        ActivationPayloadV1, CarryOverCreditActionV1, CarryOverReason, CompletionStatus,
-        ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1, LysisResultV1,
-        MetadosisCompletionSummaryV1, ResultChunkV1, ResultRootsV1,
+        lysis_v1_empty_semantic_event_root, ActivationPayloadV1, CarryOverCreditActionV1,
+        CarryOverReason, CompletionStatus, ConservationTotalsV1, ExactCountsV1,
+        LysisArithmeticSummaryV1, LysisResultV1, MetadosisCompletionSummaryV1, ResultChunkV1,
+        ResultRootsV1,
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
@@ -128,19 +130,19 @@ fn preconditions() -> ActivationPreconditionsV1 {
             source_generation: 3,
             collection_key: hash(30),
             sealed_collection_root: hash(31),
-            exact_count: 0,
+            exact_count: 1,
             exact_nominal_total: U256::ZERO,
         },
         nod: NodTargetPreconditionV1 {
             wwd: 7,
             target_generation: 5,
             namespace_root_before: hash(32),
-            max_nod_count: 0,
+            max_nod_count: 1,
         },
         contributors: ContributorTargetPreconditionV1 {
             series_id: 7,
             expected_series_version: 8,
-            max_contributor_count: 0,
+            max_contributor_count: 1,
             max_eligible_nominal_total: U256::ZERO,
         },
         metadosis: MetadosisAttemptPreconditionV1 {
@@ -164,7 +166,7 @@ fn intent() -> JobIntentV1 {
         ce_sealed_root: hash(42),
         sealed_tribute_collection_key: hash(30),
         sealed_tribute_collection_root: hash(31),
-        authenticated_day_count: 0,
+        authenticated_day_count: 1,
         authenticated_day_nominal: U256::ZERO,
         pre_admission_envelope_hash: hash(43),
         source_availability_policy_id: hash(44),
@@ -304,7 +306,7 @@ fn result() -> LysisResultV1 {
         counts,
         conservation,
         arithmetic_commitment,
-        event_summary_hash: hash(60),
+        event_summary_hash: lysis_v1_empty_semantic_event_root().unwrap(),
     }
 }
 
@@ -412,7 +414,7 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         request_budget_split_receipt_hash: hash(113),
         active_generation_hash: None,
         effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
-        event_summary_hash: hash(84),
+        event_summary_hash: empty_apply_event_summary_hash().unwrap(),
         activated_at_height: 101,
         activated_at_time: 1_001,
     }
@@ -843,6 +845,165 @@ fn typed_caps_and_semantic_invariants_reject_before_acceptance() {
 }
 
 #[test]
+fn lysis_v1_result_requires_canonical_empty_semantic_event_commitment() {
+    let mut valid = result();
+    valid.event_summary_hash = lysis_v1_empty_semantic_event_root().unwrap();
+    valid.validate_semantics(&LIMITS).unwrap();
+
+    let mut wrong_root = valid.clone();
+    wrong_root.event_summary_hash = hash(60);
+    assert!(matches!(
+        wrong_root.validate_semantics(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "LYSIS_V1 empty semantic event commitment"
+        ))
+    ));
+}
+
+#[test]
+fn activation_payload_rejects_a_noncanonical_lysis_event_commitment() {
+    let mut payload = result().activation_payload(&LIMITS).unwrap();
+    payload.event_summary_hash = hash(60);
+
+    assert!(matches!(
+        payload.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "LYSIS_V1 empty semantic event commitment"
+        ))
+    ));
+}
+
+#[test]
+fn result_and_apply_empty_event_commitments_use_distinct_frozen_domains() {
+    assert_eq!(
+        lysis_v1_empty_semantic_event_root().unwrap(),
+        hash_framed(
+            HashDomain::ListEmpty,
+            &ListKind::SemanticEventRecords.id().to_be_bytes(),
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        empty_apply_event_summary_hash().unwrap(),
+        hash_framed(HashDomain::ApplyEventSummary, &[]).unwrap()
+    );
+    assert_ne!(
+        lysis_v1_empty_semantic_event_root().unwrap(),
+        empty_apply_event_summary_hash().unwrap()
+    );
+}
+
+#[test]
+fn lysis_completion_is_bound_to_the_finalized_job_intent() {
+    let finalized_intent = intent();
+    let valid = result();
+    valid.validate_finalized_intent(&finalized_intent).unwrap();
+
+    let mut wrong_day = valid.clone();
+    wrong_day.metadosis_completion_summary.wwd += 1;
+    let mut wrong_nonce = valid.clone();
+    wrong_nonce.metadosis_completion_summary.pending_nonce += 1;
+    let mut wrong_type = valid.clone();
+    wrong_type.metadosis_completion_summary.day_type = DayType::Red;
+    let mut wrong_height = valid.clone();
+    wrong_height
+        .metadosis_completion_summary
+        .logical_evaluation_height += 1;
+    let mut wrong_time = valid.clone();
+    wrong_time
+        .metadosis_completion_summary
+        .logical_evaluation_time += 1;
+
+    for invalid in [wrong_day, wrong_nonce, wrong_type, wrong_height, wrong_time] {
+        assert!(matches!(
+            invalid.validate_finalized_intent(&finalized_intent),
+            Err(ProtocolError::InvalidInvariant(
+                "result finalized intent binding"
+            ))
+        ));
+    }
+}
+
+#[test]
+fn activation_rejects_completion_fields_not_bound_by_the_signed_payload() {
+    let snapshot = committee();
+    let mut finalized_intent = intent();
+    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let mut proof = finality_proof();
+    proof.canonical_job_intent = BoundedBytes(finalized_intent.encode_canonical(&LIMITS).unwrap());
+    let finalized_request_state_root = hash(49);
+    let job_id = finalized_intent
+        .job_id(
+            proof.parent_accounting.finalized_block_hash,
+            finalized_request_state_root,
+            &LIMITS,
+        )
+        .unwrap();
+    let mut valid_result = result();
+    valid_result.job_id = job_id;
+    let activation_payload = valid_result.activation_payload(&LIMITS).unwrap();
+    let result_digest = activation_payload.result_digest(&LIMITS).unwrap();
+    let certificate = certificate(result_digest);
+
+    let mut activation = PoCActivationV1 {
+        intent_id: finalized_intent.intent_id(&LIMITS).unwrap(),
+        finalized_intent_proof: proof,
+        activation_payload,
+        result: valid_result,
+        certificate,
+    };
+    activation
+        .verify(finalized_request_state_root, &snapshot, 100, &LIMITS)
+        .unwrap();
+
+    activation
+        .result
+        .metadosis_completion_summary
+        .logical_evaluation_time += 1;
+    assert!(matches!(
+        activation.verify(finalized_request_state_root, &snapshot, 100, &LIMITS,),
+        Err(ProtocolError::InvalidInvariant(
+            "result finalized intent binding"
+        ))
+    ));
+}
+
+#[test]
+fn validator_candidate_verification_requires_the_finalized_intent_binding() {
+    let snapshot = committee();
+    let mut finalized_intent = intent();
+    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let valid_result = result();
+    let payload = valid_result.activation_payload(&LIMITS).unwrap();
+    let result_digest = payload.result_digest(&LIMITS).unwrap();
+    let mut candidate = CandidateAnnouncementV1 {
+        protocol_bundle_hash: valid_result.protocol_bundle_hash,
+        job_id: valid_result.job_id,
+        attempt: valid_result.attempt,
+        result: valid_result,
+        result_digest,
+        validator_index: 0,
+        key_epoch: 1,
+        signature_rs: sign(&signing_key(0), result_digest),
+    };
+
+    candidate
+        .verify(&finalized_intent, candidate.job_id, &snapshot, 100, &LIMITS)
+        .unwrap();
+
+    candidate
+        .result
+        .metadosis_completion_summary
+        .logical_evaluation_time += 1;
+    assert!(matches!(
+        candidate.verify(&finalized_intent, candidate.job_id, &snapshot, 100, &LIMITS,),
+        Err(ProtocolError::InvalidInvariant(
+            "result finalized intent binding"
+        ))
+    ));
+}
+
+#[test]
 fn plan_commitment_scales_the_population_into_bounded_work_units_without_a_total_cap() {
     for (tribute_count, expected_units) in [(10_000, 40), (1_000_000_000, 3_906_250)] {
         let plan = PlanCommitmentV1 {
@@ -988,6 +1149,56 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
         partial_conflict.encode_canonical(&LIMITS),
         Err(ProtocolError::InvalidInvariant(
             "aggregate receipt outcome shape"
+        ))
+    ));
+}
+
+#[test]
+fn conflict_receipt_requires_the_empty_apply_event_summary() {
+    conflict_receipt().validate_semantics().unwrap();
+
+    let mut wrong_summary = conflict_receipt();
+    wrong_summary.event_summary_hash = hash(84);
+    assert!(matches!(
+        wrong_summary.validate_semantics(),
+        Err(ProtocolError::InvalidInvariant(
+            "conflict receipt empty apply event summary"
+        ))
+    ));
+}
+
+#[test]
+fn applied_receipt_validates_the_fixed_owner_event_order() {
+    let owner_digests = [hash(110), hash(111), hash(112), hash(115)];
+    let receipt_hashes = [hash(120), hash(121), hash(122), hash(123)];
+    let mut effect_payload = Vec::with_capacity(128);
+    for digest in receipt_hashes {
+        effect_payload.extend_from_slice(digest.as_slice());
+    }
+    let mut receipt = conflict_receipt();
+    receipt.outcome = ActivationOutcome::Applied;
+    receipt.nod_receipt_hash = Some(receipt_hashes[0]);
+    receipt.contributor_receipt_hash = Some(receipt_hashes[1]);
+    receipt.tribute_receipt_hash = Some(receipt_hashes[2]);
+    receipt.carry_over_receipt_hash = Some(receipt_hashes[3]);
+    receipt.active_generation_hash = Some(hash(124));
+    receipt.effect_commitment = hash_framed(HashDomain::Effects, &effect_payload).unwrap();
+    receipt.event_summary_hash = apply_event_summary_hash(owner_digests).unwrap();
+
+    receipt
+        .validate_applied_event_summary(owner_digests)
+        .unwrap();
+
+    let reordered = [
+        owner_digests[1],
+        owner_digests[0],
+        owner_digests[2],
+        owner_digests[3],
+    ];
+    assert!(matches!(
+        receipt.validate_applied_event_summary(reordered),
+        Err(ProtocolError::InvalidInvariant(
+            "applied receipt event summary"
         ))
     ));
 }
