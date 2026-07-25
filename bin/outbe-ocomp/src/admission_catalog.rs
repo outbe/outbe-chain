@@ -167,15 +167,62 @@ impl VerifiedAdmissionCatalog {
         Ok(record)
     }
 
-    pub fn exact_order_cursor(
+    pub fn exact_plan_cursor(
         &self,
+        expected_plan_hash: B256,
         expected_count: u32,
     ) -> Result<AdmissionCursor<'_>, AdmissionCatalogError> {
         self.require_active()?;
+        if expected_plan_hash.is_zero() || expected_count == 0 {
+            return Err(ProtocolError::InvalidInvariant("closed admission plan").into());
+        }
+        let mut actual_count = 0_u32;
+        let entries = fs::read_dir(&self.root)
+            .map_err(|source| io_error("list catalog directory", &self.root, source))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|source| io_error("read catalog directory", &self.root, source))?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+            if name == LOCK_FILE {
+                continue;
+            }
+            let Some(prefix) = name.strip_suffix(ENTRY_SUFFIX) else {
+                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
+            };
+            let plan_ordinal = parse_entry_ordinal(prefix)
+                .ok_or_else(|| AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()))?;
+            if !entry
+                .file_type()
+                .map_err(|source| io_error("inspect catalog entry", &entry.path(), source))?
+                .is_file()
+            {
+                return Err(AdmissionCatalogError::UnexpectedCatalogEntry(entry.path()));
+            }
+            if plan_ordinal >= expected_count {
+                return Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal });
+            }
+            actual_count = actual_count
+                .checked_add(1)
+                .ok_or(ProtocolError::IntegerOverflow {
+                    what: "closed admission count",
+                })?;
+        }
+        if actual_count != expected_count {
+            for plan_ordinal in 0..expected_count {
+                if !path_exists(&self.entry_path(plan_ordinal))? {
+                    return Err(AdmissionCatalogError::MissingAdmission { plan_ordinal });
+                }
+            }
+            return Err(ProtocolError::InvalidInvariant("closed admission count").into());
+        }
         Ok(AdmissionCursor {
             catalog: self,
             next_ordinal: 0,
             expected_count,
+            expected_plan_hash,
         })
     }
 
@@ -218,6 +265,7 @@ pub struct AdmissionCursor<'a> {
     catalog: &'a VerifiedAdmissionCatalog,
     next_ordinal: u32,
     expected_count: u32,
+    expected_plan_hash: B256,
 }
 
 impl Iterator for AdmissionCursor<'_> {
@@ -229,7 +277,16 @@ impl Iterator for AdmissionCursor<'_> {
         }
         let ordinal = self.next_ordinal;
         self.next_ordinal += 1;
-        Some(self.catalog.read(ordinal))
+        Some(self.catalog.read(ordinal).and_then(|record| {
+            if record.plan_hash != self.expected_plan_hash {
+                return Err(AdmissionCatalogError::PlanBinding {
+                    plan_ordinal: ordinal,
+                    expected: self.expected_plan_hash,
+                    actual: record.plan_hash,
+                });
+            }
+            Ok(record)
+        }))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -251,6 +308,18 @@ pub enum AdmissionCatalogError {
     ConflictingAdmission { plan_ordinal: u32 },
     #[error("verified admission for plan ordinal {plan_ordinal} is missing")]
     MissingAdmission { plan_ordinal: u32 },
+    #[error("verified admission for plan ordinal {plan_ordinal} is outside the closed plan")]
+    UnexpectedAdmission { plan_ordinal: u32 },
+    #[error(
+        "admission plan binding mismatch at ordinal {plan_ordinal}: expected {expected}, got {actual}"
+    )]
+    PlanBinding {
+        plan_ordinal: u32,
+        expected: B256,
+        actual: B256,
+    },
+    #[error("unexpected entry exists in the admission catalog at {0}")]
+    UnexpectedCatalogEntry(PathBuf),
     #[error("admission ordinal binding mismatch: requested {requested}, encoded {encoded}")]
     OrdinalBinding { requested: u32, encoded: u32 },
     #[error("ambiguous temporary admission file remains at {0}")]
@@ -300,6 +369,14 @@ fn validate_record(
         }
     }
     Ok(())
+}
+
+fn parse_entry_ordinal(prefix: &str) -> Option<u32> {
+    if prefix.len() != 10 || !prefix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let ordinal = prefix.parse::<u32>().ok()?;
+    (format!("{ordinal:010}") == prefix).then_some(ordinal)
 }
 
 fn catalog_byte_cap(limits: &SchemaLimits) -> usize {
@@ -590,7 +667,7 @@ mod tests {
         assert_eq!(catalog.read(0).unwrap(), admitted);
         assert_eq!(
             catalog
-                .exact_order_cursor(1)
+                .exact_plan_cursor(hash(4), 1)
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap(),
@@ -622,24 +699,72 @@ mod tests {
         let catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
         assert!(catalog.is_abstained());
         assert!(matches!(
-            catalog.exact_order_cursor(1),
+            catalog.exact_plan_cursor(hash(4), 1),
             Err(AdmissionCatalogError::Abstained)
         ));
     }
 
     #[test]
-    fn exact_order_cursor_stops_on_a_missing_plan_ordinal() {
+    fn exact_plan_cursor_rejects_a_missing_plan_ordinal_before_iteration() {
         let root = tempfile::tempdir().unwrap();
         let limits = poc_schema_limits();
         let mut catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
         catalog.admit(&record(0)).unwrap();
         catalog.admit(&record(2)).unwrap();
 
-        let mut cursor = catalog.exact_order_cursor(3).unwrap();
-        assert_eq!(cursor.next().unwrap().unwrap().plan_ordinal, 0);
+        assert!(matches!(
+            catalog.exact_plan_cursor(hash(4), 3),
+            Err(AdmissionCatalogError::MissingAdmission { plan_ordinal: 1 })
+        ));
+    }
+
+    #[test]
+    fn exact_plan_cursor_rejects_an_admission_outside_the_closed_plan() {
+        let root = tempfile::tempdir().unwrap();
+        let limits = poc_schema_limits();
+        let mut catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
+        catalog.admit(&record(0)).unwrap();
+        catalog.admit(&record(1)).unwrap();
+        catalog.admit(&record(7)).unwrap();
+
+        assert!(matches!(
+            catalog.exact_plan_cursor(hash(4), 2),
+            Err(AdmissionCatalogError::UnexpectedAdmission { plan_ordinal: 7 })
+        ));
+    }
+
+    #[test]
+    fn exact_plan_cursor_rejects_a_record_from_another_plan() {
+        let root = tempfile::tempdir().unwrap();
+        let limits = poc_schema_limits();
+        let mut catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
+        let mut wrong_plan = record(0);
+        wrong_plan.plan_hash = hash(99);
+        catalog.admit(&wrong_plan).unwrap();
+
+        let mut cursor = catalog.exact_plan_cursor(hash(4), 1).unwrap();
         assert!(matches!(
             cursor.next().unwrap(),
-            Err(AdmissionCatalogError::MissingAdmission { plan_ordinal: 1 })
+            Err(AdmissionCatalogError::PlanBinding {
+                plan_ordinal: 0,
+                expected,
+                actual,
+            }) if expected == hash(4) && actual == hash(99)
+        ));
+    }
+
+    #[test]
+    fn exact_plan_cursor_rejects_an_uncommitted_side_index() {
+        let root = tempfile::tempdir().unwrap();
+        let limits = poc_schema_limits();
+        let mut catalog = VerifiedAdmissionCatalog::open(root.path(), limits).unwrap();
+        catalog.admit(&record(0)).unwrap();
+        let side_index = root.path().join("completion-order.index");
+        fs::write(&side_index, b"0").unwrap();
+
+        assert!(matches!(
+            catalog.exact_plan_cursor(hash(4), 1),
+            Err(AdmissionCatalogError::UnexpectedCatalogEntry(path)) if path == side_index
         ));
     }
 
