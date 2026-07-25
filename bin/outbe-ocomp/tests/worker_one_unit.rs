@@ -21,7 +21,9 @@ use outbe_lysis::program_v1::phases::{
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
-use outbe_lysis::program_v1::result::{decode_root_reduce_output, RootReduceOutputV1};
+use outbe_lysis::program_v1::result::{
+    decode_root_reduce_output, encode_root_reduce_output, RootReduceOutputV1,
+};
 use outbe_ocomp::admission_catalog::{
     AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
 };
@@ -40,7 +42,10 @@ use outbe_ocomp::lysis_phase_replay::{
     admit_reported_core_phase_unit, admit_reported_output_finalize_unit, verify_core_phase_replay,
     verify_output_finalize_replay,
 };
-use outbe_ocomp::lysis_shuffle_adoption::adopt_lysis_shuffle_descendants;
+use outbe_ocomp::lysis_result_adoption::verify_lysis_root_reduce_phase_replay;
+use outbe_ocomp::lysis_shuffle_adoption::{
+    adopt_lysis_shuffle_descendants, verify_lysis_shuffle_phase_replay,
+};
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
 use outbe_ocomp_protocol::input::{
@@ -432,6 +437,11 @@ fn real_worker_processes_execute_through_output_finalize() {
     .expect("decode fixture manifest");
     let reader =
         FilesystemCasReader::open(directory.path(), cas_limits).expect("open replay CAS reader");
+    let semantic_replay_inbox = WorkerInbox::open(
+        directory.path().join("supervisor-semantic-replay-inbox"),
+        inbox_limits,
+    )
+    .expect("open supervisor semantic replay inbox");
     let tribute_chunk = decode_verified_input_chunk(&tribute_object, &bundle, &limits)
         .expect("decode authenticated Tribute chunk");
     let replay_inputs = vec![(derived_tribute.clone(), tribute_chunk)];
@@ -445,7 +455,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         &[],
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact Enumerate bytes");
@@ -476,7 +486,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         &[],
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .is_err());
@@ -639,7 +649,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         std::slice::from_ref(&artifact),
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact FidelityMap bytes");
@@ -770,7 +780,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         std::slice::from_ref(&fidelity_artifact),
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact FixedReduce bytes");
@@ -941,7 +951,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         ],
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact AmountMap bytes");
@@ -998,7 +1008,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         std::slice::from_ref(&amount_artifact),
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefix leaf bytes");
@@ -1053,7 +1063,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         std::slice::from_ref(&prefix_leaf_artifact),
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefix root bytes");
@@ -1099,7 +1109,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         std::slice::from_ref(&prefix_leaf_artifact),
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefixDown root bytes");
@@ -1163,7 +1173,7 @@ fn real_worker_processes_execute_through_output_finalize() {
         ],
         &bundle,
         &reader,
-        &inbox,
+        &semantic_replay_inbox,
         &limits,
     )
     .expect("supervisor semantic replay accepts exact GratisPrefixDown leaf bytes");
@@ -1411,6 +1421,21 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("validate OwnerShuffle root");
     assert_eq!(owner_root.kind, ShuffleRunKindV1::Owner);
     assert_eq!(owner_root.record_count, 1);
+    verify_lysis_shuffle_phase_replay(
+        owner_offset,
+        &owner_spec,
+        &owner_artifact,
+        &plan,
+        &manifest,
+        std::slice::from_ref(&output_finalize_artifact),
+        &bundle,
+        &reader,
+        &semantic_replay_inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact OwnerShuffle bytes");
+    adopt_lysis_shuffle_descendants(owner_root.clone(), &inbox, &cas, &limits)
+        .expect("publish exact OwnerShuffle descendants to authoritative CAS");
 
     let bucket_spec = planner
         .shuffle_unit_at(
@@ -1453,6 +1478,21 @@ fn real_worker_processes_execute_through_output_finalize() {
         .expect("validate BucketShuffle root");
     assert_eq!(bucket_root.kind, ShuffleRunKindV1::Bucket);
     assert_eq!(bucket_root.record_count, 1);
+    verify_lysis_shuffle_phase_replay(
+        bucket_offset,
+        &bucket_spec,
+        &bucket_artifact,
+        &plan,
+        &manifest,
+        std::slice::from_ref(&output_finalize_artifact),
+        &bundle,
+        &reader,
+        &semantic_replay_inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact BucketShuffle bytes");
+    adopt_lysis_shuffle_descendants(bucket_root.clone(), &inbox, &cas, &limits)
+        .expect("publish exact BucketShuffle descendants to authoritative CAS");
 
     let mut owner_ref = cas
         .publish_bytes(
@@ -1504,11 +1544,61 @@ fn real_worker_processes_execute_through_output_finalize() {
     root_reduce_artifact
         .validate_against(&root_reduce_spec, &limits)
         .expect("validate RootReduce leaf artifact");
+    verify_lysis_root_reduce_phase_replay(
+        root_reduce_offset,
+        &root_reduce_spec,
+        &root_reduce_artifact,
+        &plan,
+        &manifest,
+        &[
+            output_finalize_artifact.clone(),
+            owner_artifact.clone(),
+            bucket_artifact.clone(),
+        ],
+        &bundle,
+        &reader,
+        &semantic_replay_inbox,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact RootReduce bytes and ResultChunk");
     let reduced = decode_root_reduce_output(
         root_reduce_artifact.phase_payload(&limits).unwrap(),
         &limits,
     )
     .expect("decode RootReduce leaf");
+    let mut forged_reduced = reduced.clone();
+    match &mut forged_reduced {
+        RootReduceOutputV1::Leaf { summary, .. } | RootReduceOutputV1::Node { summary } => {
+            summary.nod_cost_total += U256::from(1);
+        }
+    }
+    let forged_root_reduce_artifact = UnitArtifactV1::from_canonical_output(
+        &root_reduce_spec,
+        root_reduce_artifact.output_header(&limits).unwrap(),
+        BoundedBytes(
+            encode_root_reduce_output(&forged_reduced, &limits)
+                .expect("encode digest-valid forged RootReduce output"),
+        ),
+        &limits,
+    )
+    .expect("build digest-valid forged RootReduce artifact");
+    assert!(verify_lysis_root_reduce_phase_replay(
+        root_reduce_offset,
+        &root_reduce_spec,
+        &forged_root_reduce_artifact,
+        &plan,
+        &manifest,
+        &[
+            output_finalize_artifact.clone(),
+            owner_artifact.clone(),
+            bucket_artifact.clone(),
+        ],
+        &bundle,
+        &reader,
+        &semantic_replay_inbox,
+        &limits,
+    )
+    .is_err());
     let RootReduceOutputV1::Leaf {
         summary,
         output_manifest_entry,

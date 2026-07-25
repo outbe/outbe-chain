@@ -5,8 +5,12 @@ use outbe_lysis::program_v1::{
     result::{decode_root_reduce_output, RootReduceOutputV1},
 };
 use outbe_ocomp_protocol::{
+    input::InputManifestV1,
+    profile::ProtocolBundleV1,
     result::ResultChunkV1,
-    unit::{BinaryReducerNode, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1},
+    unit::{
+        BinaryReducerNode, PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
+    },
     CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use thiserror::Error;
@@ -15,8 +19,9 @@ use crate::{
     admission_catalog::{
         AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
     },
-    cas::{CasError, FilesystemCas},
+    cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
+    worker::{execute_unit, UnitExecutionAuthority},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,6 +52,53 @@ pub enum LysisResultAdoptionError {
     LysisArtifact(#[from] LysisArtifactErrorV1),
     #[error(transparent)]
     AdmissionCatalog(#[from] AdmissionCatalogError),
+    #[error("worker-independent ROOT_REDUCE replay failed")]
+    ReplayExecutionFailed,
+    #[error("reported ROOT_REDUCE artifact differs from deterministic replay")]
+    ReplayMismatch,
+}
+
+/// Re-executes one ROOT_REDUCE unit against exact admitted producer artifacts.
+///
+/// A leaf writes its expected ResultChunkV1 only into the supervisor-owned
+/// replay inbox. Byte equality of the root artifact therefore also proves that
+/// the worker-reported manifest entry names the deterministic chunk bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_lysis_root_reduce_phase_replay(
+    plan_ordinal: u32,
+    spec: &UnitSpecV1,
+    reported: &UnitArtifactV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    producer_artifacts: &[UnitArtifactV1],
+    bundle: &ProtocolBundleV1,
+    reader: &FilesystemCasReader,
+    replay_inbox: &WorkerInbox,
+    limits: &SchemaLimits,
+) -> Result<(), LysisResultAdoptionError> {
+    if spec.phase != UnitPhase::RootReduce {
+        return Err(ProtocolError::InvalidInvariant("ROOT_REDUCE replay phase").into());
+    }
+    reported.validate_against(spec, limits)?;
+    let expected = execute_unit(
+        spec,
+        UnitExecutionAuthority {
+            plan,
+            unit_index: plan_ordinal,
+            manifest,
+            input_chunks: &[],
+            producer_artifacts,
+            bundle,
+            limits,
+            reader,
+            inbox: replay_inbox,
+        },
+    )
+    .map_err(|_| LysisResultAdoptionError::ReplayExecutionFailed)?;
+    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
+        return Err(LysisResultAdoptionError::ReplayMismatch);
+    }
+    Ok(())
 }
 
 /// Makes one reported ROOT_REDUCE leaf ready only after its manifest-discovered

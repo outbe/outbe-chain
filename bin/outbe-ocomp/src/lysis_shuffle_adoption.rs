@@ -1,8 +1,10 @@
 //! Supervisor-side adoption of one verified Lysis shuffle object closure.
 
 use outbe_ocomp_protocol::{
+    input::InputManifestV1,
+    profile::ProtocolBundleV1,
     shuffle::{verified_shuffle_run_records, ShuffleRunArtifactV1},
-    unit::{UnitArtifactV1, UnitPhase, UnitSpecV1},
+    unit::{PlanCommitmentV1, UnitArtifactV1, UnitPhase, UnitSpecV1},
     CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use thiserror::Error;
@@ -11,8 +13,9 @@ use crate::{
     admission_catalog::{
         AdmissionCatalogError, AdmissionOutcome, AdmissionPositionV1, VerifiedAdmissionCatalog,
     },
-    cas::{CasError, FilesystemCas},
+    cas::{CasError, FilesystemCas, FilesystemCasReader},
     inbox::{WorkerInbox, WorkerInboxError},
+    worker::{execute_unit, UnitExecutionAuthority},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,6 +41,57 @@ pub enum LysisShuffleAdoptionError {
     Cas(#[from] CasError),
     #[error(transparent)]
     AdmissionCatalog(#[from] AdmissionCatalogError),
+    #[error("worker-independent shuffle replay failed")]
+    ReplayExecutionFailed,
+    #[error("reported shuffle artifact differs from deterministic replay")]
+    ReplayMismatch,
+}
+
+/// Re-executes one complete shuffle unit into a supervisor-owned replay inbox
+/// and requires the worker's root artifact to match byte-for-byte.
+///
+/// Descendant adoption remains a separate pass below: replay proves the
+/// deterministic transform, while adoption proves the exact reported
+/// content-addressed closure is available and well formed.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_lysis_shuffle_phase_replay(
+    plan_ordinal: u32,
+    spec: &UnitSpecV1,
+    reported: &UnitArtifactV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    producer_artifacts: &[UnitArtifactV1],
+    bundle: &ProtocolBundleV1,
+    reader: &FilesystemCasReader,
+    replay_inbox: &WorkerInbox,
+    limits: &SchemaLimits,
+) -> Result<(), LysisShuffleAdoptionError> {
+    if !matches!(
+        spec.phase,
+        UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle
+    ) {
+        return Err(ProtocolError::InvalidInvariant("shuffle replay phase").into());
+    }
+    reported.validate_against(spec, limits)?;
+    let expected = execute_unit(
+        spec,
+        UnitExecutionAuthority {
+            plan,
+            unit_index: plan_ordinal,
+            manifest,
+            input_chunks: &[],
+            producer_artifacts,
+            bundle,
+            limits,
+            reader,
+            inbox: replay_inbox,
+        },
+    )
+    .map_err(|_| LysisShuffleAdoptionError::ReplayExecutionFailed)?;
+    if expected.encode_canonical(limits)? != reported.encode_canonical(limits)? {
+        return Err(LysisShuffleAdoptionError::ReplayMismatch);
+    }
+    Ok(())
 }
 
 /// Makes one reported shuffle unit ready only after its complete descendant
