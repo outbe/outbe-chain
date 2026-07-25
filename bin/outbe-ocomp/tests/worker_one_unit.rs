@@ -33,7 +33,9 @@ use outbe_ocomp::input_artifacts::{
     derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
     InputArtifactContents, InputArtifactIdentity,
 };
-use outbe_ocomp::lysis_phase_replay::verify_output_finalize_replay;
+use outbe_ocomp::lysis_phase_replay::{
+    admit_reported_output_finalize_unit, verify_output_finalize_replay,
+};
 use outbe_ocomp::lysis_shuffle_adoption::adopt_lysis_shuffle_descendants;
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
@@ -1065,6 +1067,38 @@ fn real_worker_processes_execute_through_output_finalize() {
         &limits,
     )
     .expect("supervisor semantic replay accepts exact OutputFinalize bytes");
+    let output_finalize_bytes = output_finalize_artifact.encode_canonical(&limits).unwrap();
+    let output_finalize_finished = UnitFinishedV1 {
+        unit_id: output_finalize_artifact.unit_id,
+        status: UnitFinishedStatus::Success,
+        exact_staged_bytes: u64::try_from(output_finalize_bytes.len()).unwrap(),
+        transport_digest: keccak256(&output_finalize_bytes),
+    };
+    let replay_inbox = WorkerInbox::open(&inbox_root, inbox_limits).unwrap();
+    let admitted_output_finalize = admit_reported_output_finalize_unit(
+        0,
+        &output_finalize_spec,
+        &output_finalize_finished,
+        &amount_artifact,
+        &prefix_down_leaf_artifact,
+        &plan,
+        &manifest,
+        &bundle,
+        &replay_inbox,
+        &cas,
+        &limits,
+    )
+    .expect("admit exact replayed OutputFinalize artifact");
+    assert_eq!(
+        admitted_output_finalize.artifact_ref.expected_ocb1_kind,
+        Some(ObjectKind::UnitArtifactV1.tag())
+    );
+    assert_eq!(
+        cas.read_verified(&admitted_output_finalize.artifact_ref)
+            .unwrap()
+            .bytes(),
+        output_finalize_bytes
+    );
     let mut forged_finalized = finalized.clone();
     forged_finalized.checked_tribute_nominal_total += U256::from(1);
     let output_header = output_finalize_artifact.output_header(&limits).unwrap();

@@ -17,9 +17,19 @@ use outbe_ocomp_protocol::{
         BinaryReducerNode, InputPurpose, InputSourceKind, PlanCommitmentV1, UnitArtifactV1,
         UnitInterval, UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
     },
-    ProtocolError, SchemaLimits,
+    CasObjectRefV1, ObjectKind, ProtocolError, SchemaLimits, UnitFinishedStatus, UnitFinishedV1,
 };
 use thiserror::Error;
+
+use crate::{
+    cas::{CasError, FilesystemCas},
+    inbox::{WorkerInbox, WorkerInboxError},
+};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedOutputFinalizeUnitV1 {
+    pub artifact_ref: CasObjectRefV1,
+}
 
 #[derive(Debug, Error)]
 pub enum LysisPhaseReplayError {
@@ -33,6 +43,60 @@ pub enum LysisPhaseReplayError {
     ReplayMismatch,
     #[error("OUTPUT_FINALIZE replay authority or producer binding mismatch")]
     BindingMismatch,
+    #[error(transparent)]
+    Inbox(#[from] WorkerInboxError),
+    #[error(transparent)]
+    Cas(#[from] CasError),
+}
+
+/// Makes one reported OUTPUT_FINALIZE unit authoritative only after exact
+/// semantic replay from its already-admitted producer artifacts.
+#[allow(clippy::too_many_arguments)]
+pub fn admit_reported_output_finalize_unit(
+    shard_ordinal: u32,
+    spec: &UnitSpecV1,
+    finished: &UnitFinishedV1,
+    amount_artifact: &UnitArtifactV1,
+    prefix_artifact: &UnitArtifactV1,
+    plan: &PlanCommitmentV1,
+    manifest: &InputManifestV1,
+    bundle: &ProtocolBundleV1,
+    inbox: &WorkerInbox,
+    cas: &FilesystemCas,
+    limits: &SchemaLimits,
+) -> Result<AdmittedOutputFinalizeUnitV1, LysisPhaseReplayError> {
+    spec.validate_semantics(limits)?;
+    let unit_id = spec.unit_id(limits)?;
+    if finished.status != UnitFinishedStatus::Success || finished.unit_id != unit_id {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    let reported = inbox.read_reported(
+        finished.unit_id,
+        finished.exact_staged_bytes,
+        finished.transport_digest,
+    )?;
+    let artifact = UnitArtifactV1::decode_canonical(reported.bytes(), limits)?;
+    verify_output_finalize_replay(
+        shard_ordinal,
+        spec,
+        &artifact,
+        amount_artifact,
+        prefix_artifact,
+        plan,
+        manifest,
+        bundle,
+        limits,
+    )?;
+
+    let mut artifact_ref = cas.publish_bytes(reported.bytes())?;
+    if artifact_ref.transport_digest != finished.transport_digest
+        || artifact_ref.encoded_bytes != finished.exact_staged_bytes
+    {
+        return Err(LysisPhaseReplayError::BindingMismatch);
+    }
+    artifact_ref.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+    cas.read_verified(&artifact_ref)?;
+    Ok(AdmittedOutputFinalizeUnitV1 { artifact_ref })
 }
 
 /// Re-executes one OUTPUT_FINALIZE unit from its exact already-verified
