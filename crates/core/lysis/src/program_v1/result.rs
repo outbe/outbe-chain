@@ -2,6 +2,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
+    list::{leaf_hash, node_hash, pad_hash},
     CanonicalReader, CanonicalWriter, ListKind, SchemaLimits,
 };
 
@@ -18,6 +19,159 @@ pub struct LysisListSubtreeCarrierV1 {
     pub subtree_height: u16,
     pub subtree_index: u32,
     pub tree_root: B256,
+}
+
+impl LysisListSubtreeCarrierV1 {
+    pub fn from_primary_page<T: AsRef<[u8]>>(
+        list_kind: ListKind,
+        primary_ordinal: u32,
+        canonical_items: &[T],
+        max_item_bytes: usize,
+    ) -> Result<Self, LysisArtifactErrorV1> {
+        let subtree_height = primary_subtree_height(list_kind)?;
+        let capacity = 1_u32
+            .checked_shl(u32::from(subtree_height))
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        let real_count = u32::try_from(canonical_items.len())
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        if real_count > capacity
+            || canonical_items
+                .iter()
+                .any(|item| item.as_ref().len() > max_item_bytes)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Lysis primary list carrier item bounds",
+            ));
+        }
+        let start_ordinal = primary_ordinal
+            .checked_mul(capacity)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        let capacity_usize =
+            usize::try_from(capacity).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        let mut nodes = Vec::new();
+        nodes
+            .try_reserve_exact(capacity_usize)
+            .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
+        for offset in 0..capacity {
+            let global_ordinal = start_ordinal
+                .checked_add(offset)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+            if offset < real_count {
+                nodes.push(leaf_hash(
+                    list_kind,
+                    global_ordinal,
+                    canonical_items[usize::try_from(offset)
+                        .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?]
+                    .as_ref(),
+                )?);
+            } else {
+                nodes.push(pad_hash(list_kind, global_ordinal)?);
+            }
+        }
+
+        let mut width = capacity_usize;
+        let mut level = 1_u16;
+        while width > 1 {
+            let parent_count = width / 2;
+            let global_parent_start = start_ordinal
+                .checked_shr(u32::from(level))
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+            for index in 0..parent_count {
+                let global_parent_index = global_parent_start
+                    .checked_add(
+                        u32::try_from(index).map_err(|_| LysisArtifactErrorV1::LengthOverflow)?,
+                    )
+                    .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+                nodes[index] = node_hash(
+                    list_kind,
+                    level,
+                    global_parent_index,
+                    nodes[index * 2],
+                    nodes[index * 2 + 1],
+                )?;
+            }
+            width = parent_count;
+            level = level
+                .checked_add(1)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        }
+
+        let carrier = Self {
+            list_kind,
+            start_ordinal,
+            real_count,
+            subtree_height,
+            subtree_index: primary_ordinal,
+            tree_root: nodes[0],
+        };
+        validate_list_subtree_carrier(&carrier)?;
+        Ok(carrier)
+    }
+
+    pub fn canonical_empty_primary_page(
+        list_kind: ListKind,
+        primary_ordinal: u32,
+    ) -> Result<Self, LysisArtifactErrorV1> {
+        Self::from_primary_page::<&[u8]>(list_kind, primary_ordinal, &[], 0)
+    }
+
+    pub fn merge_adjacent(self, right: Self) -> Result<Self, LysisArtifactErrorV1> {
+        validate_list_subtree_carrier(&self)?;
+        validate_list_subtree_carrier(&right)?;
+        if self.list_kind != right.list_kind
+            || self.subtree_height != right.subtree_height
+            || self.subtree_index & 1 != 0
+            || self
+                .subtree_index
+                .checked_add(1)
+                .is_none_or(|expected| right.subtree_index != expected)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Lysis list subtree sibling binding",
+            ));
+        }
+        let capacity = 1_u32
+            .checked_shl(u32::from(self.subtree_height))
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        if self
+            .start_ordinal
+            .checked_add(capacity)
+            .is_none_or(|expected| right.start_ordinal != expected)
+        {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Lysis list subtree adjacency",
+            ));
+        }
+        let subtree_height = self
+            .subtree_height
+            .checked_add(1)
+            .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+        if subtree_height > MAX_LIST_SUBTREE_HEIGHT {
+            return Err(LysisArtifactErrorV1::InvalidEncoding(
+                "Lysis list subtree parent height",
+            ));
+        }
+        let subtree_index = self.subtree_index >> 1;
+        let carrier = Self {
+            list_kind: self.list_kind,
+            start_ordinal: self.start_ordinal,
+            real_count: self
+                .real_count
+                .checked_add(right.real_count)
+                .ok_or(LysisArtifactErrorV1::LengthOverflow)?,
+            subtree_height,
+            subtree_index,
+            tree_root: node_hash(
+                self.list_kind,
+                subtree_height,
+                subtree_index,
+                self.tree_root,
+                right.tree_root,
+            )?,
+        };
+        validate_list_subtree_carrier(&carrier)?;
+        Ok(carrier)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -151,9 +305,7 @@ fn decode_list_subtree_carrier(
     Ok(carrier)
 }
 
-fn validate_root_reduce_summary(
-    summary: &RootReduceSummaryV1,
-) -> Result<(), LysisArtifactErrorV1> {
+fn validate_root_reduce_summary(summary: &RootReduceSummaryV1) -> Result<(), LysisArtifactErrorV1> {
     if summary.protocol_bundle_hash.is_zero()
         || summary.job_id.is_zero()
         || summary.plan_hash.is_zero()
@@ -187,6 +339,24 @@ fn validate_root_reduce_summary(
         ListKind::ResultChunkHashes,
         summary.covered_primary_count,
     )?;
+    let action_height = summary
+        .result_chunk_hashes
+        .subtree_height
+        .checked_add(primary_subtree_height(ListKind::NodActions)?)
+        .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
+    if [
+        summary.nod_actions.subtree_height,
+        summary.bucket_records.subtree_height,
+        summary.contributor_actions.subtree_height,
+        summary.output_manifest_entries.subtree_height,
+    ]
+    .into_iter()
+    .any(|height| height != action_height)
+    {
+        return Err(LysisArtifactErrorV1::InvalidEncoding(
+            "root reducer summary carrier span",
+        ));
+    }
 
     let action_start = summary
         .covered_primary_start
@@ -268,15 +438,8 @@ fn require_carrier(
 fn validate_list_subtree_carrier(
     carrier: &LysisListSubtreeCarrierV1,
 ) -> Result<(), LysisArtifactErrorV1> {
-    if !matches!(
-        carrier.list_kind,
-        ListKind::NodActions
-            | ListKind::BucketRecords
-            | ListKind::ContributorActions
-            | ListKind::CompleteOutputManifest
-            | ListKind::ResultChunkHashes
-    ) || carrier.subtree_height > MAX_LIST_SUBTREE_HEIGHT
-    {
+    let primary_height = primary_subtree_height(carrier.list_kind)?;
+    if carrier.subtree_height < primary_height || carrier.subtree_height > MAX_LIST_SUBTREE_HEIGHT {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
             "Lysis list subtree kind or height",
         ));
@@ -293,26 +456,23 @@ fn validate_list_subtree_carrier(
             "Lysis list subtree position",
         ));
     }
-    if carrier.real_count == 0 {
-        if !carrier.tree_root.is_zero() || carrier.subtree_height != 0 {
-            return Err(LysisArtifactErrorV1::InvalidEncoding(
-                "Lysis empty list subtree",
-            ));
-        }
-        return Ok(());
-    }
-    let minimum_count = capacity
-        .checked_shr(1)
-        .unwrap_or_default()
-        .checked_add(1)
-        .ok_or(LysisArtifactErrorV1::LengthOverflow)?;
-    if carrier.real_count < minimum_count
-        || carrier.real_count > capacity
-        || carrier.tree_root.is_zero()
-    {
+    if carrier.real_count > capacity || carrier.tree_root.is_zero() {
         return Err(LysisArtifactErrorV1::InvalidEncoding(
-            "Lysis list subtree canonical size",
+            "Lysis list subtree fixed capacity",
         ));
     }
     Ok(())
+}
+
+fn primary_subtree_height(list_kind: ListKind) -> Result<u16, LysisArtifactErrorV1> {
+    match list_kind {
+        ListKind::NodActions
+        | ListKind::BucketRecords
+        | ListKind::ContributorActions
+        | ListKind::CompleteOutputManifest => Ok(PRIMARY_WORK_SHARD_SIZE.trailing_zeros() as u16),
+        ListKind::ResultChunkHashes => Ok(0),
+        _ => Err(LysisArtifactErrorV1::InvalidEncoding(
+            "Lysis list subtree kind",
+        )),
+    }
 }

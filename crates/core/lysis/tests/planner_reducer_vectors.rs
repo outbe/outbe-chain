@@ -38,7 +38,9 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36},
     input::{InputChunkKind, InputChunkRefV1},
     local_control::poc_schema_limits,
+    ordered_list_root,
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
+    ListKind, OrderedListLimits,
 };
 use outbe_primitives::units::SCALE_1E18;
 use std::collections::BTreeMap;
@@ -338,15 +340,13 @@ fn fixed_reduce_output_is_canonical_and_binds_aggregate_carrier_and_fractions() 
 #[test]
 fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution() {
     let limits = poc_schema_limits();
-    let carrier = |list_kind, real_count, subtree_height, marker| {
-        LysisListSubtreeCarrierV1 {
-            list_kind,
-            start_ordinal: 0,
-            real_count,
-            subtree_height,
-            subtree_index: 0,
-            tree_root: B256::repeat_byte(marker),
-        }
+    let carrier = |list_kind, real_count, subtree_height, marker| LysisListSubtreeCarrierV1 {
+        list_kind,
+        start_ordinal: 0,
+        real_count,
+        subtree_height,
+        subtree_index: 0,
+        tree_root: B256::repeat_byte(marker),
     };
     let summary = RootReduceSummaryV1 {
         protocol_bundle_hash: B256::repeat_byte(1),
@@ -357,24 +357,14 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
         covered_primary_count: 2,
         nod_actions: carrier(outbe_ocomp_protocol::ListKind::NodActions, 257, 9, 11),
         bucket_records: carrier(outbe_ocomp_protocol::ListKind::BucketRecords, 257, 9, 12),
-        contributor_actions: carrier(
-            outbe_ocomp_protocol::ListKind::ContributorActions,
-            1,
-            0,
-            13,
-        ),
+        contributor_actions: carrier(outbe_ocomp_protocol::ListKind::ContributorActions, 1, 9, 13),
         output_manifest_entries: carrier(
             outbe_ocomp_protocol::ListKind::CompleteOutputManifest,
             257,
             9,
             14,
         ),
-        result_chunk_hashes: carrier(
-            outbe_ocomp_protocol::ListKind::ResultChunkHashes,
-            2,
-            1,
-            15,
-        ),
+        result_chunk_hashes: carrier(outbe_ocomp_protocol::ListKind::ResultChunkHashes, 2, 1, 15),
         tribute_count: 257,
         nod_count: 257,
         bucket_count: 257,
@@ -401,9 +391,101 @@ fn root_reduce_summary_is_bounded_canonical_and_rejects_cross_list_substitution(
     substituted.nod_actions.list_kind = outbe_ocomp_protocol::ListKind::BucketRecords;
     assert!(encode_root_reduce_summary(&substituted, &limits).is_err());
 
+    let mut wrong_span = summary.clone();
+    wrong_span.contributor_actions.subtree_height = 8;
+    assert!(encode_root_reduce_summary(&wrong_span, &limits).is_err());
+
     let mut inconsistent = summary;
     inconsistent.contributor_count = 2;
     assert!(encode_root_reduce_summary(&inconsistent, &limits).is_err());
+}
+
+#[test]
+fn fixed_capacity_result_carriers_merge_by_position_without_becoming_dense_roots() {
+    let first_items = (0_u16..256)
+        .map(|value| value.to_be_bytes().to_vec())
+        .collect::<Vec<_>>();
+    let second_items = vec![b"last".to_vec()];
+    let first = LysisListSubtreeCarrierV1::from_primary_page(
+        ListKind::ContributorActions,
+        0,
+        &first_items,
+        16,
+    )
+    .unwrap();
+    let second = LysisListSubtreeCarrierV1::from_primary_page(
+        ListKind::ContributorActions,
+        1,
+        &second_items,
+        16,
+    )
+    .unwrap();
+    let merged = first.merge_adjacent(second).unwrap();
+
+    assert_eq!(first.subtree_height, 8);
+    assert_eq!(second.start_ordinal, PRIMARY_WORK_SHARD_SIZE);
+    assert_eq!(merged.real_count, 257);
+    assert_eq!(merged.subtree_height, 9);
+    assert_eq!(merged.subtree_index, 0);
+
+    let mut dense_items = first_items;
+    dense_items.extend(second_items);
+    let dense_root = ordered_list_root(
+        ListKind::ContributorActions,
+        &dense_items,
+        OrderedListLimits::new(512, 16, 512 * 32),
+    )
+    .unwrap();
+    let merged_dense_root = outbe_ocomp_protocol::list::root_hash(
+        ListKind::ContributorActions,
+        257,
+        merged.subtree_height,
+        merged.tree_root,
+    )
+    .unwrap();
+    assert_eq!(merged_dense_root, dense_root);
+
+    let sparse_items = vec![b"only".to_vec()];
+    let sparse = LysisListSubtreeCarrierV1::from_primary_page(
+        ListKind::ContributorActions,
+        0,
+        &sparse_items,
+        16,
+    )
+    .unwrap();
+    let empty =
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 1)
+            .unwrap();
+    assert!(!empty.tree_root.is_zero());
+    assert_eq!(
+        empty,
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 1,)
+            .unwrap()
+    );
+
+    let sparse_coverage = sparse.merge_adjacent(empty).unwrap();
+    let sparse_wrapped = outbe_ocomp_protocol::list::root_hash(
+        ListKind::ContributorActions,
+        1,
+        sparse_coverage.subtree_height,
+        sparse_coverage.tree_root,
+    )
+    .unwrap();
+    let canonical_sparse = ordered_list_root(
+        ListKind::ContributorActions,
+        &sparse_items,
+        OrderedListLimits::new(1, 16, 32),
+    )
+    .unwrap();
+    assert_ne!(sparse_wrapped, canonical_sparse);
+
+    let non_adjacent =
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::ContributorActions, 2)
+            .unwrap();
+    assert!(sparse.merge_adjacent(non_adjacent).is_err());
+    let wrong_kind =
+        LysisListSubtreeCarrierV1::canonical_empty_primary_page(ListKind::NodActions, 1).unwrap();
+    assert!(sparse.merge_adjacent(wrong_kind).is_err());
 }
 
 #[test]
