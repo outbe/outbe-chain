@@ -137,6 +137,7 @@ impl OcompControlServer {
             Arc::clone(&self.retention),
             tree,
             projection_containment,
+            self.identity.boot_nonce,
             self.limits,
         )));
         self.expected_snapshot_exporter_uid = Some(expected_snapshot_exporter_uid);

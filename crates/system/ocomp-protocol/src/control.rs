@@ -19,7 +19,7 @@ pub const NODE_CONTROL_MAGIC: [u8; 4] = *b"OCL1";
 pub const WORKER_CONTROL_MAGIC: [u8; 4] = *b"OWR1";
 pub const MAX_FINALIZED_JOBS_PER_RESPONSE: u16 = 1;
 pub const MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE: u16 = 1;
-pub const SNAPSHOT_LEASE_WIRE_BYTES: usize = 88;
+pub const SNAPSHOT_LEASE_WIRE_BYTES: usize = 120;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControlMagic {

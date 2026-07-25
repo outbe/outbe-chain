@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use alloy_primitives::B256;
+use alloy_primitives::{keccak256, B256};
 use outbe_compressed_entities::{CompressedTreeService, ExportLeaseStatus, TreeServiceError};
 use outbe_ocomp_protocol::{
     common::BoundedBytes,
@@ -28,6 +28,8 @@ use thiserror::Error;
 use crate::projection::{ocomp_projection_contains, OcompProjectionContainment};
 
 use super::retention::{OcompRetentionCoordinator, PinStateV1, RetentionError, RetentionStatus};
+
+const EXPORT_LEASE_CHALLENGE_DOMAIN: &[u8] = b"OUTBE_OCOMP_EXPORT_LEASE_CHALLENGE_V1";
 
 /// Node-owned canonical-history authority for one Mongo projection checkpoint.
 pub trait ProjectionContainmentAuthority: Send + Sync {
@@ -79,6 +81,7 @@ pub struct SnapshotExportAuthority {
     retention: Arc<OcompRetentionCoordinator>,
     tree: Arc<CompressedTreeService>,
     projection_containment: Arc<dyn ProjectionContainmentAuthority>,
+    boot_nonce: B256,
     limits: SchemaLimits,
     handoff: Mutex<Option<SnapshotHandoffV1>>,
 }
@@ -89,12 +92,14 @@ impl SnapshotExportAuthority {
         retention: Arc<OcompRetentionCoordinator>,
         tree: Arc<CompressedTreeService>,
         projection_containment: Arc<dyn ProjectionContainmentAuthority>,
+        boot_nonce: B256,
         limits: SchemaLimits,
     ) -> Self {
         Self {
             retention,
             tree,
             projection_containment,
+            boot_nonce,
             limits,
             handoff: Mutex::new(None),
         }
@@ -146,7 +151,13 @@ impl SnapshotExportAuthority {
                 .local_storage_schema_version,
         )
         .map_err(|_| SnapshotExportError::CeSchemaVersionOverflow)?;
-        let offer = self.tree.arm_finalized_export(marker)?;
+        let lease_challenge = export_lease_challenge(
+            self.boot_nonce,
+            job_id,
+            pin_generation,
+            candidate.block_hash,
+        );
+        let offer = self.tree.arm_finalized_export(marker, lease_challenge)?;
         let handoff = SnapshotHandoffV1 {
             job_id,
             pin_generation,
@@ -321,6 +332,21 @@ impl SnapshotExportAuthority {
             .lock()
             .map_err(|_| SnapshotExportError::Poisoned)
     }
+}
+
+fn export_lease_challenge(
+    boot_nonce: B256,
+    job_id: B256,
+    pin_generation: u64,
+    finalized_block_hash: B256,
+) -> B256 {
+    let mut preimage = Vec::with_capacity(EXPORT_LEASE_CHALLENGE_DOMAIN.len() + 32 + 32 + 8 + 32);
+    preimage.extend_from_slice(EXPORT_LEASE_CHALLENGE_DOMAIN);
+    preimage.extend_from_slice(boot_nonce.as_slice());
+    preimage.extend_from_slice(job_id.as_slice());
+    preimage.extend_from_slice(&pin_generation.to_be_bytes());
+    preimage.extend_from_slice(finalized_block_hash.as_slice());
+    keccak256(preimage)
 }
 
 #[derive(Debug, Error)]

@@ -35,7 +35,7 @@ use crate::{
 pub const DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
 const EXPORT_LEASE_OFFER_DOMAIN: [u8; 4] = *b"OCEO";
 const EXPORT_LEASE_OPEN_ACK_DOMAIN: [u8; 4] = *b"OCEA";
-const EXPORT_LEASE_WIRE_LEN: usize = 4 + 8 + 4 + 8 + 32 + 32;
+const EXPORT_LEASE_WIRE_LEN: usize = 4 + 8 + 32 + 4 + 8 + 32 + 32;
 
 /// Observable state of one opaque CE export lease generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +50,7 @@ pub enum ExportLeaseStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExportLeaseOffer {
     generation: u64,
+    challenge: B256,
     identity: ExactParentIdentity,
 }
 
@@ -66,13 +67,20 @@ impl ExportLeaseOffer {
 
     #[must_use]
     pub fn encode_fixed(self) -> [u8; EXPORT_LEASE_WIRE_LEN] {
-        encode_export_lease(EXPORT_LEASE_OFFER_DOMAIN, self.generation, self.identity)
+        encode_export_lease(
+            EXPORT_LEASE_OFFER_DOMAIN,
+            self.generation,
+            self.challenge,
+            self.identity,
+        )
     }
 
     pub fn decode_fixed(bytes: &[u8]) -> Result<Self, TreeServiceError> {
-        let (generation, identity) = decode_export_lease(bytes, EXPORT_LEASE_OFFER_DOMAIN)?;
+        let (generation, challenge, identity) =
+            decode_export_lease(bytes, EXPORT_LEASE_OFFER_DOMAIN)?;
         Ok(Self {
             generation,
+            challenge,
             identity,
         })
     }
@@ -92,6 +100,7 @@ impl ExportLeaseOffer {
         }
         Ok(ExportLeaseOpenAck {
             generation: self.generation,
+            challenge: self.challenge,
             identity: self.identity,
         })
     }
@@ -101,19 +110,27 @@ impl ExportLeaseOffer {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExportLeaseOpenAck {
     generation: u64,
+    challenge: B256,
     identity: ExactParentIdentity,
 }
 
 impl ExportLeaseOpenAck {
     #[must_use]
     pub fn encode_fixed(self) -> [u8; EXPORT_LEASE_WIRE_LEN] {
-        encode_export_lease(EXPORT_LEASE_OPEN_ACK_DOMAIN, self.generation, self.identity)
+        encode_export_lease(
+            EXPORT_LEASE_OPEN_ACK_DOMAIN,
+            self.generation,
+            self.challenge,
+            self.identity,
+        )
     }
 
     fn decode_fixed(bytes: &[u8]) -> Result<Self, TreeServiceError> {
-        let (generation, identity) = decode_export_lease(bytes, EXPORT_LEASE_OPEN_ACK_DOMAIN)?;
+        let (generation, challenge, identity) =
+            decode_export_lease(bytes, EXPORT_LEASE_OPEN_ACK_DOMAIN)?;
         Ok(Self {
             generation,
+            challenge,
             identity,
         })
     }
@@ -122,22 +139,24 @@ impl ExportLeaseOpenAck {
 fn encode_export_lease(
     domain: [u8; 4],
     generation: u64,
+    challenge: B256,
     identity: ExactParentIdentity,
 ) -> [u8; EXPORT_LEASE_WIRE_LEN] {
     let mut bytes = [0_u8; EXPORT_LEASE_WIRE_LEN];
     bytes[..4].copy_from_slice(&domain);
     bytes[4..12].copy_from_slice(&generation.to_be_bytes());
-    bytes[12..16].copy_from_slice(&identity.commitment_scheme_version.to_be_bytes());
-    bytes[16..24].copy_from_slice(&identity.block_number.to_be_bytes());
-    bytes[24..56].copy_from_slice(identity.block_hash.as_slice());
-    bytes[56..88].copy_from_slice(identity.root.as_slice());
+    bytes[12..44].copy_from_slice(challenge.as_slice());
+    bytes[44..48].copy_from_slice(&identity.commitment_scheme_version.to_be_bytes());
+    bytes[48..56].copy_from_slice(&identity.block_number.to_be_bytes());
+    bytes[56..88].copy_from_slice(identity.block_hash.as_slice());
+    bytes[88..120].copy_from_slice(identity.root.as_slice());
     bytes
 }
 
 fn decode_export_lease(
     bytes: &[u8],
     expected_domain: [u8; 4],
-) -> Result<(u64, ExactParentIdentity), TreeServiceError> {
+) -> Result<(u64, B256, ExactParentIdentity), TreeServiceError> {
     if bytes.len() != EXPORT_LEASE_WIRE_LEN || bytes[..4] != expected_domain {
         return Err(TreeServiceError::MalformedExportLease);
     }
@@ -149,23 +168,28 @@ fn decode_export_lease(
     if generation == 0 {
         return Err(TreeServiceError::MalformedExportLease);
     }
+    let challenge = B256::from_slice(&bytes[12..44]);
+    if challenge.is_zero() {
+        return Err(TreeServiceError::MalformedExportLease);
+    }
     let commitment_scheme_version = u32::from_be_bytes(
-        bytes[12..16]
+        bytes[44..48]
             .try_into()
             .map_err(|_| TreeServiceError::MalformedExportLease)?,
     );
     let block_number = u64::from_be_bytes(
-        bytes[16..24]
+        bytes[48..56]
             .try_into()
             .map_err(|_| TreeServiceError::MalformedExportLease)?,
     );
     Ok((
         generation,
+        challenge,
         ExactParentIdentity {
             commitment_scheme_version,
             block_number,
-            block_hash: B256::from_slice(&bytes[24..56]),
-            root: B256::from_slice(&bytes[56..88]),
+            block_hash: B256::from_slice(&bytes[56..88]),
+            root: B256::from_slice(&bytes[88..120]),
         },
     ))
 }
@@ -180,7 +204,7 @@ struct ActiveExportLease {
 struct ExportLeaseState {
     next_generation: u64,
     active: Option<ActiveExportLease>,
-    last: Option<(u64, ExportLeaseStatus)>,
+    last: Option<(ExportLeaseOffer, ExportLeaseStatus)>,
 }
 
 #[derive(Debug)]
@@ -206,11 +230,18 @@ impl ExportLeaseGate {
         })
     }
 
-    fn arm(&self, identity: ExactParentIdentity) -> Result<ExportLeaseOffer, TreeServiceError> {
+    fn arm(
+        &self,
+        identity: ExactParentIdentity,
+        challenge: B256,
+    ) -> Result<ExportLeaseOffer, TreeServiceError> {
+        if challenge.is_zero() {
+            return Err(TreeServiceError::ZeroExportLeaseChallenge);
+        }
         let mut state = self.lock()?;
         expire_if_due(&mut state, Instant::now());
         if let Some(active) = state.active {
-            if active.offer.identity == identity {
+            if active.offer.identity == identity && active.offer.challenge == challenge {
                 return Ok(active.offer);
             }
             return Err(TreeServiceError::ConflictingExportLease {
@@ -227,10 +258,11 @@ impl ExportLeaseGate {
             .ok_or(TreeServiceError::InvalidExportLeaseTimeout)?;
         let offer = ExportLeaseOffer {
             generation,
+            challenge,
             identity,
         };
         state.active = Some(ActiveExportLease { offer, deadline });
-        state.last = Some((generation, ExportLeaseStatus::Pending));
+        state.last = Some((offer, ExportLeaseStatus::Pending));
         Ok(offer)
     }
 
@@ -238,6 +270,14 @@ impl ExportLeaseGate {
         let mut state = self.lock()?;
         expire_if_due(&mut state, Instant::now());
         let Some(active) = state.active else {
+            if let Some((last, ExportLeaseStatus::Opened)) = state.last {
+                if last.generation == ack.generation
+                    && last.challenge == ack.challenge
+                    && last.identity == ack.identity
+                {
+                    return Ok(());
+                }
+            }
             return Err(stale_export_lease(&state, ack.generation));
         };
         if active.offer.generation != ack.generation {
@@ -249,8 +289,11 @@ impl ExportLeaseGate {
                 actual: ack.identity,
             });
         }
+        if active.offer.challenge != ack.challenge {
+            return Err(TreeServiceError::ExportLeaseChallengeMismatch);
+        }
         state.active = None;
-        state.last = Some((ack.generation, ExportLeaseStatus::Opened));
+        state.last = Some((active.offer, ExportLeaseStatus::Opened));
         self.changed.notify_all();
         Ok(())
     }
@@ -265,7 +308,7 @@ impl ExportLeaseGate {
             return Ok(ExportLeaseStatus::Pending);
         }
         match state.last {
-            Some((actual, status)) if actual == generation => Ok(status),
+            Some((actual, status)) if actual.generation == generation => Ok(status),
             _ => Err(stale_export_lease(&state, generation)),
         }
     }
@@ -308,7 +351,7 @@ fn expire_if_due(state: &mut ExportLeaseState, now: Instant) {
     if let Some(active) = state.active {
         if now >= active.deadline {
             state.active = None;
-            state.last = Some((active.offer.generation, ExportLeaseStatus::TimedOut));
+            state.last = Some((active.offer, ExportLeaseStatus::TimedOut));
         }
     }
 }
@@ -317,7 +360,7 @@ fn stale_export_lease(state: &ExportLeaseState, requested: u64) -> TreeServiceEr
     let actual = state
         .active
         .map(|active| active.offer.generation)
-        .or_else(|| state.last.map(|(generation, _)| generation));
+        .or_else(|| state.last.map(|(offer, _)| offer.generation));
     TreeServiceError::StaleExportLease { requested, actual }
 }
 
@@ -390,6 +433,7 @@ impl CompressedTreeService {
     pub fn arm_finalized_export(
         &self,
         required: FinalizedMarker,
+        challenge: B256,
     ) -> Result<ExportLeaseOffer, TreeServiceError> {
         let _guard = self
             .finalization
@@ -402,7 +446,7 @@ impl CompressedTreeService {
                 current,
             });
         }
-        self.export_lease.arm(exact_identity(required))
+        self.export_lease.arm(exact_identity(required), challenge)
     }
 
     /// Returns the fixed identity of the CE environment owned by this service.
@@ -655,6 +699,10 @@ pub enum TreeServiceError {
     InvalidExportLeaseTimeout,
     #[error("CE export lease generation overflow")]
     ExportLeaseGenerationOverflow,
+    #[error("CE export lease challenge cannot be zero")]
+    ZeroExportLeaseChallenge,
+    #[error("CE export lease acknowledgement challenge does not match the active offer")]
+    ExportLeaseChallengeMismatch,
     #[error("CE export lease fixed-size encoding is malformed")]
     MalformedExportLease,
     #[error(
@@ -841,7 +889,11 @@ mod tests {
         directory: &std::path::Path,
         offer: ExportLeaseOffer,
     ) -> ReadOnlyExporterChild {
-        let control = directory.join(format!("lease-{}", offer.generation()));
+        let control = directory.join(format!(
+            "lease-{}-{:#x}",
+            offer.generation(),
+            offer.challenge
+        ));
         std::fs::create_dir_all(&control).unwrap();
         let offer_path = control.join("offer");
         let acknowledgement_path = control.join("ack");
@@ -1156,7 +1208,7 @@ mod tests {
     fn ocm_exporter_opens_one_exact_read_only_snapshot_before_the_writer_advances() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
-        let offer = service.arm_finalized_export(genesis()).unwrap();
+        let offer = service.arm_finalized_export(genesis(), b256(70)).unwrap();
         let mut exporter = spawn_read_only_exporter(directory.path(), offer);
         let opened = exporter.wait_for_ack();
         service.acknowledge_export_open(opened).unwrap();
@@ -1191,7 +1243,7 @@ mod tests {
     fn ocm_export_offer_bytes_cannot_acknowledge_an_unopened_snapshot() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
-        let offer = service.arm_finalized_export(genesis()).unwrap();
+        let offer = service.arm_finalized_export(genesis(), b256(71)).unwrap();
 
         assert!(matches!(
             service.acknowledge_export_open_bytes(&offer.encode_fixed()),
@@ -1207,6 +1259,9 @@ mod tests {
         service
             .acknowledge_export_open_bytes(&opened.encode_fixed())
             .unwrap();
+        service
+            .acknowledge_export_open_bytes(&opened.encode_fixed())
+            .expect("lost acknowledgement response must replay exactly");
         assert_eq!(
             service.export_lease_status(offer.generation()).unwrap(),
             ExportLeaseStatus::Opened
@@ -1215,11 +1270,43 @@ mod tests {
     }
 
     #[test]
+    fn ocm_lease_restart_challenge_rejects_an_old_ack_at_a_reused_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let (old_offer, old_ack) = {
+            let service = service(directory.path());
+            let offer = service.arm_finalized_export(genesis(), b256(80)).unwrap();
+            let mut exporter = spawn_read_only_exporter(directory.path(), offer);
+            let ack = exporter.wait_for_ack();
+            service.acknowledge_export_open(ack).unwrap();
+            exporter.release_and_wait();
+            (offer, ack)
+        };
+
+        let restarted = service(directory.path());
+        let fresh = restarted.arm_finalized_export(genesis(), b256(81)).unwrap();
+        assert_eq!(fresh.generation(), old_offer.generation());
+        assert_ne!(fresh.encode_fixed(), old_offer.encode_fixed());
+        assert!(matches!(
+            restarted.acknowledge_export_open(old_ack),
+            Err(TreeServiceError::ExportLeaseChallengeMismatch)
+        ));
+        assert_eq!(
+            restarted.export_lease_status(fresh.generation()).unwrap(),
+            ExportLeaseStatus::Pending
+        );
+
+        let mut exporter = spawn_read_only_exporter(directory.path(), fresh);
+        let fresh_ack = exporter.wait_for_ack();
+        restarted.acknowledge_export_open(fresh_ack).unwrap();
+        exporter.release_and_wait();
+    }
+
+    #[test]
     fn ocm_lease_generation_rejects_stale_ack_and_marker_races() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
 
-        let first = service.arm_finalized_export(genesis()).unwrap();
+        let first = service.arm_finalized_export(genesis(), b256(72)).unwrap();
         let mut first_exporter = spawn_read_only_exporter(directory.path(), first);
         let first_ack = first_exporter.wait_for_ack();
         service.acknowledge_export_open(first_ack).unwrap();
@@ -1239,11 +1326,11 @@ mod tests {
             .marker();
 
         assert!(matches!(
-            service.arm_finalized_export(genesis()),
+            service.arm_finalized_export(genesis(), b256(73)),
             Err(TreeServiceError::ExportLeaseMarkerAdvanced { .. })
         ));
 
-        let second = service.arm_finalized_export(marker).unwrap();
+        let second = service.arm_finalized_export(marker, b256(74)).unwrap();
         assert!(second.generation() > first.generation());
         assert!(matches!(
             service.acknowledge_export_open(first_ack),
@@ -1273,7 +1360,7 @@ mod tests {
         let block_hash = b256(2);
         let root = provisional.new_root();
         service.publish_candidate(block_hash, provisional).unwrap();
-        let offer = service.arm_finalized_export(genesis()).unwrap();
+        let offer = service.arm_finalized_export(genesis(), b256(75)).unwrap();
 
         let started = std::time::Instant::now();
         service.apply_finalized(1, block_hash, root).unwrap();
