@@ -5,22 +5,29 @@
 //! (`markQualified` / `markCalled`). There is no precompile dispatch for writes
 //! and access is Rust-to-Rust only, so no trusted-caller checks are needed.
 //!
-//! The registry is a thin ledger: the only thing it validates is the
-//! `issued_at` existence sentinel. Business validation (caps, defaults, zero
-//! economic parameters) belongs to the caller (IntexFactory).
+//! The legacy registry remains a thin ledger whose record validation is the
+//! `issued_at` existence sentinel. Once a certified contributor generation is
+//! installed, its series identity is closed to legacy contributor writes so
+//! the two storage models cannot become competing authorities. Independent
+//! series creation remains valid because activation may precede auction
+//! completion. Other business validation (caps, defaults, zero economic
+//! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::IntexError;
-use crate::schema::{CreateSeriesParams, DistProgress, IntexContract, IntexState, SeriesRecord};
+use crate::schema::{
+    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexContract,
+    IntexState, SeriesRecord,
+};
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
 ///
-/// PoC contributor recording is create-only: an absent series is version 0,
-/// while any existing series is version 1. No reservation/version field is
-/// added to Intex storage.
+/// An absent legacy series starts at version 0 and an existing legacy series
+/// at version 1. A certified root installation advances that exact version
+/// once; the version is active output authority, not reservation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompContributorTargetProjection {
     pub series_id: u32,
@@ -115,19 +122,55 @@ pub fn ocomp_contributor_target_projection(
 ) -> Result<OcompContributorTargetProjection> {
     let registry = IntexContract::new(storage.clone());
     let exists = registry.series_exists(series_id)?;
-    let contributor_count = registry.read_contributor_count(series_id)?;
-    let contributor_total = registry.read_contributor_total(series_id)?;
-    if !exists && (contributor_count != 0 || !contributor_total.is_zero()) {
+    let legacy_count = registry.read_contributor_count(series_id)?;
+    let legacy_total = registry.read_contributor_total(series_id)?;
+    if (legacy_count == 0) != legacy_total.is_zero() {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex legacy contributor aggregate is malformed".into(),
+        ));
+    }
+    let certified = registry.ocomp_certified_contributor_generation(series_id)?;
+    if certified.is_some() && (legacy_count != 0 || !legacy_total.is_zero()) {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex series has conflicting legacy and certified contributor authority".into(),
+        ));
+    }
+    if !exists && certified.is_none() && (legacy_count != 0 || !legacy_total.is_zero()) {
         return Err(outbe_primitives::error::PrecompileError::Fatal(
             "Intex absent series has residual contributor state".into(),
         ));
     }
+
+    let base_version = u64::from(exists);
+    let (expected_series_version, contributor_count, contributor_total) = match certified {
+        Some(certified) => {
+            if certified.series_version < base_version {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "Intex certified contributor version precedes the series ledger".into(),
+                ));
+            }
+            (
+                certified.series_version,
+                certified.contributor_count,
+                certified.eligible_nominal_total,
+            )
+        }
+        None => (base_version, legacy_count, legacy_total),
+    };
     Ok(OcompContributorTargetProjection {
         series_id,
-        expected_series_version: u64::from(exists),
+        expected_series_version,
         contributor_count,
         contributor_total,
     })
+}
+
+/// Reads the constant-size certified contributor proof authority for a series.
+pub fn certified_contributor_generation(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<Option<CertifiedContributorGenerationProjection>> {
+    IntexContract::new(storage.clone()).ocomp_certified_contributor_generation(series_id)
 }
 
 /// Number of series ever created (for dense enumeration).
@@ -144,15 +187,25 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<u32> {
 // Creator-reward: contributors + paginated distribution
 // -------------------------------------------------------------------------
 
-/// Record the (pre-deduplicated) contributor list for a series. Called once
-/// per series by lysis, before the tributes are burned. Each entry is
-/// `(tribute owner, Σ nominal_amount_minor)`.
+/// Record the (pre-deduplicated) legacy contributor list for a series. Called
+/// once per series by legacy Lysis, before the tributes are burned. Each entry
+/// is `(tribute owner, Σ nominal_amount_minor)`. A certified generation closes
+/// this path for that exact series identity.
 pub fn record_contributors(
     storage: &StorageHandle<'_>,
     series_id: u32,
     contributors: &[(Address, U256)],
 ) -> Result<()> {
-    IntexContract::new(storage.clone()).write_contributors(series_id, contributors)
+    let mut registry = IntexContract::new(storage.clone());
+    if registry
+        .ocomp_certified_contributor_generation(series_id)?
+        .is_some()
+    {
+        return Err(PrecompileError::Revert(
+            "legacy contributors cannot replace certified contributor authority".into(),
+        ));
+    }
+    registry.write_contributors(series_id, contributors)
 }
 
 /// Number of contributors recorded for a series (0 if none).

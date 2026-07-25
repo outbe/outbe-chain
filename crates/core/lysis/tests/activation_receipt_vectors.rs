@@ -248,6 +248,26 @@ fn receipt_verifier_rejects_owner_projection_and_request_mutations() {
     )
     .is_err());
 
+    let mut wrong_contributor_root = receipts.clone();
+    wrong_contributor_root.contributor.contributor_root = hash(213);
+    assert!(verify_receipts(
+        &plan,
+        &fixture.request_receipt,
+        &wrong_contributor_root,
+        &fixture.limits
+    )
+    .is_err());
+
+    let mut wrong_contributor_nominal = receipts.clone();
+    wrong_contributor_nominal.contributor.eligible_nominal_total += U256::from(1);
+    assert!(verify_receipts(
+        &plan,
+        &fixture.request_receipt,
+        &wrong_contributor_nominal,
+        &fixture.limits
+    )
+    .is_err());
+
     let mut wrong_tribute = receipts.clone();
     wrong_tribute.tribute.retired_generation += 1;
     assert!(verify_receipts(
