@@ -21,6 +21,10 @@ use outbe_lysis::program_v1::phases::{
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
+use outbe_lysis::program_v1::result::{
+    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
+    RootReduceSummaryV1,
+};
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::{CasLimits, CasWriterRole, FilesystemCas};
 use outbe_ocomp::control::{
@@ -1552,8 +1556,8 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         &bucket_merge_spec,
         bucket_offset + 2,
         plan_hash,
-        plan_ref,
-        manifest_ref,
+        plan_ref.clone(),
+        manifest_ref.clone(),
         bucket_refs,
     );
     merged_bucket_artifact
@@ -1587,6 +1591,151 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
     .collect::<Result<Vec<_>, _>>()
     .expect("traverse adopted bucket merge");
     assert_eq!(bucket_records.len(), tribute_count as usize);
+
+    let mut root_reduce_leaf_artifacts = Vec::new();
+    for (ordinal, finalized_artifact) in finalized_artifacts.iter().enumerate() {
+        let ordinal = u32::try_from(ordinal).expect("root reduce leaf ordinal");
+        let leaf_spec = planner
+            .root_reduce_unit_at(
+                ordinal,
+                &[
+                    Some(finalized_artifact.unit_id),
+                    Some(merged_artifact.unit_id),
+                    Some(merged_bucket_artifact.unit_id),
+                ],
+                &limits,
+            )
+            .expect("derive root reduce leaf");
+        let shard_count = if ordinal == 0 { 256 } else { 1 };
+        let records = vec![vec![0xc0 + u8::try_from(ordinal).unwrap()]; shard_count];
+        let result_hash = vec![B256::repeat_byte(0xd0 + u8::try_from(ordinal).unwrap())
+            .as_slice()
+            .to_vec()];
+        let summary = RootReduceSummaryV1 {
+            protocol_bundle_hash,
+            job_id,
+            attempt,
+            plan_hash,
+            covered_primary_start: ordinal,
+            covered_primary_count: 1,
+            nod_actions: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::NodActions,
+                ordinal,
+                &records,
+                1,
+            )
+            .expect("root reduce Nod carrier"),
+            bucket_records: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::BucketRecords,
+                ordinal,
+                &records,
+                1,
+            )
+            .expect("root reduce bucket carrier"),
+            contributor_actions: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::ContributorActions,
+                ordinal,
+                &records,
+                1,
+            )
+            .expect("root reduce contributor carrier"),
+            output_manifest_entries: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::CompleteOutputManifest,
+                ordinal,
+                &records,
+                1,
+            )
+            .expect("root reduce output manifest carrier"),
+            result_chunk_hashes: LysisListSubtreeCarrierV1::from_primary_page(
+                ListKind::ResultChunkHashes,
+                ordinal,
+                &result_hash,
+                32,
+            )
+            .expect("root reduce result chunk carrier"),
+            tribute_count: u32::try_from(shard_count).unwrap(),
+            nod_count: u32::try_from(shard_count).unwrap(),
+            bucket_count: u32::try_from(shard_count).unwrap(),
+            contributor_count: u32::try_from(shard_count).unwrap(),
+            tribute_nominal_total: U256::from(shard_count),
+            eligible_nominal_total: U256::from(shard_count),
+            nod_gratis_consumed: U256::from(shard_count),
+            nod_cost_total: U256::from(shard_count) * U256::from(4),
+            first_error_ordinal: None,
+        };
+        let root = summary.result_chunk_hashes.tree_root;
+        root_reduce_leaf_artifacts.push(
+            UnitArtifactV1::from_canonical_output(
+                &leaf_spec,
+                outbe_ocomp_protocol::unit::WorkOutputHeaderV1 {
+                    source_coverage_root: root,
+                    output_coverage_root: root,
+                    source_coverage_count: 1,
+                    output_coverage_count: 1,
+                },
+                BoundedBytes(
+                    encode_root_reduce_summary(&summary, &limits)
+                        .expect("encode root reduce leaf summary"),
+                ),
+                &limits,
+            )
+            .expect("build root reduce leaf artifact"),
+        );
+    }
+
+    let mut root_reduce_leaf_refs = Vec::new();
+    for artifact in &root_reduce_leaf_artifacts {
+        let mut reference = cas
+            .publish_bytes(
+                &artifact
+                    .encode_canonical(&limits)
+                    .expect("canonical root reduce leaf producer"),
+            )
+            .expect("publish root reduce leaf producer");
+        reference.expected_ocb1_kind = Some(ObjectKind::UnitArtifactV1.tag());
+        root_reduce_leaf_refs.push(reference);
+    }
+    let root_reduce_spec = planner
+        .root_reduce_unit_at(
+            2,
+            &[
+                Some(root_reduce_leaf_artifacts[0].unit_id),
+                Some(root_reduce_leaf_artifacts[1].unit_id),
+            ],
+            &limits,
+        )
+        .expect("derive internal root reduce unit");
+    let root_reduce_offset = bucket_offset
+        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
+        .expect("RootReduce offset");
+    let root_reduce_artifact = execute_real_worker_unit(
+        706,
+        0xa6,
+        &user,
+        uid,
+        directory.path(),
+        cas_limits,
+        &inbox_root,
+        inbox_limits,
+        limits,
+        &root_reduce_spec,
+        root_reduce_offset + 2,
+        plan_hash,
+        plan_ref,
+        manifest_ref,
+        root_reduce_leaf_refs,
+    );
+    root_reduce_artifact
+        .validate_against(&root_reduce_spec, &limits)
+        .expect("validate internal RootReduce artifact");
+    let reduced = decode_root_reduce_summary(
+        root_reduce_artifact.phase_payload(&limits).unwrap(),
+        &limits,
+    )
+    .expect("decode internal RootReduce summary");
+    assert_eq!(reduced.covered_primary_count, 2);
+    assert_eq!(reduced.tribute_count, tribute_count);
+    assert_eq!(reduced.result_chunk_hashes.subtree_height, 1);
 }
 
 #[allow(clippy::too_many_arguments)]

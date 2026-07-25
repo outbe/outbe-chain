@@ -5,7 +5,7 @@ use std::os::fd::{FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
 use outbe_fidelity::{evaluate_fidelity_opening_v1, FidelityOpeningEvaluationError};
@@ -26,6 +26,10 @@ use outbe_lysis::program_v1::phases::{
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1, PlannedProducerV1,
     PlannedUnitPositionV1, PlannerErrorV1, PRIMARY_WORK_SHARD_SIZE,
+};
+use outbe_lysis::program_v1::result::{
+    decode_root_reduce_summary, encode_root_reduce_summary, LysisListSubtreeCarrierV1,
+    RootReduceSummaryV1,
 };
 use outbe_lysis::program_v1::{ObservationValueV1, ObservedTributeV1, TributeInputV1};
 use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36 as ProtocolEntityId36};
@@ -319,7 +323,7 @@ fn execute_unit(
         UnitPhase::GratisPrefixDown => execute_gratis_prefix_down_unit(spec, authority),
         UnitPhase::OutputFinalize => execute_output_finalize_unit(spec, authority),
         UnitPhase::OwnerShuffle | UnitPhase::BucketShuffle => execute_shuffle_unit(spec, authority),
-        phase => Err(WorkerError::UnsupportedPhase(phase)),
+        UnitPhase::RootReduce => execute_root_reduce_unit(spec, authority),
     }
 }
 
@@ -1742,6 +1746,183 @@ fn finish_shuffle_unit_artifact(
     .map_err(WorkerError::from)
 }
 
+fn execute_root_reduce_unit(
+    spec: &UnitSpecV1,
+    authority: UnitExecutionAuthority<'_>,
+) -> Result<UnitArtifactV1, WorkerError> {
+    let UnitExecutionAuthority {
+        plan,
+        unit_index,
+        manifest,
+        input_chunks,
+        producer_artifacts,
+        bundle,
+        limits,
+        ..
+    } = authority;
+    if !input_chunks.is_empty() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
+    let phase_ordinal = unit_index
+        .checked_sub(root_reduce_offset(plan, topology)?)
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let position = topology.phase_position_at(UnitPhase::RootReduce, phase_ordinal)?;
+    let PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::RootReduce,
+        level,
+        ..
+    } = position
+    else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    if level == 0 {
+        return Err(WorkerError::UnsupportedPhase(UnitPhase::RootReduce));
+    }
+
+    let producer_inputs = scan_producer_inputs(spec, InputPurpose::RootSummary)?;
+    let producer_ids = producer_inputs
+        .iter()
+        .map(|input| unit_or_empty_id(input))
+        .collect::<Result<Vec<_>, _>>()?;
+    let planner = planner_from_authority(plan, manifest, bundle, limits)?;
+    if planner.root_reduce_unit_at(phase_ordinal, &producer_ids, limits)? != spec.clone() {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    let expected = topology.required_producers(position)?;
+    let resolved = resolve_scan_artifacts(
+        spec,
+        &expected,
+        &producer_inputs,
+        producer_artifacts,
+        limits,
+    )?;
+    if resolved.len() != 2 {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+
+    let plan_hash = plan.plan_hash(limits)?;
+    let mut summaries = Vec::with_capacity(2);
+    for (producer, artifact) in expected.into_iter().zip(resolved) {
+        match (producer, artifact) {
+            (
+                position @ PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+                    phase: UnitPhase::RootReduce,
+                    ..
+                }),
+                Some(artifact),
+            ) => summaries.push(decode_root_reduce_producer(
+                spec, position, artifact, plan_hash, limits,
+            )?),
+            (
+                PlannedProducerV1::CanonicalEmpty {
+                    purpose: InputPurpose::RootSummary,
+                    padded_ordinal,
+                },
+                None,
+            ) => summaries.push(empty_root_reduce_leaf(spec, plan_hash, padded_ordinal)?),
+            _ => return Err(WorkerError::UnitBindingMismatch),
+        }
+    }
+    let right = summaries.pop().ok_or(WorkerError::UnitBindingMismatch)?;
+    let left = summaries.pop().ok_or(WorkerError::UnitBindingMismatch)?;
+    let summary = left.merge_adjacent(right)?;
+    let coverage_root = summary.result_chunk_hashes.tree_root;
+    UnitArtifactV1::from_canonical_output(
+        spec,
+        WorkOutputHeaderV1 {
+            source_coverage_root: coverage_root,
+            output_coverage_root: coverage_root,
+            source_coverage_count: summary.covered_primary_count,
+            output_coverage_count: summary.covered_primary_count,
+        },
+        BoundedBytes(encode_root_reduce_summary(&summary, limits)?),
+        limits,
+    )
+    .map_err(WorkerError::from)
+}
+
+fn decode_root_reduce_producer(
+    consumer: &UnitSpecV1,
+    expected: PlannedProducerV1,
+    artifact: &UnitArtifactV1,
+    plan_hash: B256,
+    limits: &SchemaLimits,
+) -> Result<RootReduceSummaryV1, WorkerError> {
+    let PlannedProducerV1::Unit(PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::RootReduce,
+        level,
+        index,
+    }) = expected
+    else {
+        return Err(WorkerError::UnitBindingMismatch);
+    };
+    let summary = decode_root_reduce_summary(artifact.phase_payload(limits)?, limits)?;
+    let expected_start = index
+        .checked_shl(u32::from(level))
+        .ok_or(WorkerError::UnitBindingMismatch)?;
+    let header = artifact.output_header(limits)?;
+    if summary.protocol_bundle_hash != consumer.protocol_bundle_hash
+        || summary.job_id != consumer.job_id
+        || summary.attempt != consumer.attempt
+        || summary.plan_hash != plan_hash
+        || summary.covered_primary_start != expected_start
+        || summary.result_chunk_hashes.subtree_height != level
+        || summary.result_chunk_hashes.subtree_index != index
+        || header.source_coverage_root != summary.result_chunk_hashes.tree_root
+        || header.output_coverage_root != summary.result_chunk_hashes.tree_root
+        || header.source_coverage_count != summary.covered_primary_count
+        || header.output_coverage_count != summary.covered_primary_count
+    {
+        return Err(WorkerError::UnitBindingMismatch);
+    }
+    Ok(summary)
+}
+
+fn empty_root_reduce_leaf(
+    spec: &UnitSpecV1,
+    plan_hash: B256,
+    padded_ordinal: u32,
+) -> Result<RootReduceSummaryV1, WorkerError> {
+    Ok(RootReduceSummaryV1 {
+        protocol_bundle_hash: spec.protocol_bundle_hash,
+        job_id: spec.job_id,
+        attempt: spec.attempt,
+        plan_hash,
+        covered_primary_start: padded_ordinal,
+        covered_primary_count: 0,
+        nod_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::NodActions,
+            padded_ordinal,
+        )?,
+        bucket_records: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::BucketRecords,
+            padded_ordinal,
+        )?,
+        contributor_actions: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::ContributorActions,
+            padded_ordinal,
+        )?,
+        output_manifest_entries: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::CompleteOutputManifest,
+            padded_ordinal,
+        )?,
+        result_chunk_hashes: LysisListSubtreeCarrierV1::canonical_empty_primary_page(
+            ListKind::ResultChunkHashes,
+            padded_ordinal,
+        )?,
+        tribute_count: 0,
+        nod_count: 0,
+        bucket_count: 0,
+        contributor_count: 0,
+        tribute_nominal_total: U256::ZERO,
+        eligible_nominal_total: U256::ZERO,
+        nod_gratis_consumed: U256::ZERO,
+        nod_cost_total: U256::ZERO,
+        first_error_ordinal: None,
+    })
+}
+
 fn decode_shuffle_producer_root(
     consumer: &UnitSpecV1,
     artifact: &UnitArtifactV1,
@@ -1832,6 +2013,15 @@ fn bucket_shuffle_offset(
 ) -> Result<u32, WorkerError> {
     owner_shuffle_offset(plan, topology)?
         .checked_add(topology.phase_unit_count(UnitPhase::OwnerShuffle))
+        .ok_or(WorkerError::UnitBindingMismatch)
+}
+
+fn root_reduce_offset(
+    plan: &PlanCommitmentV1,
+    topology: LysisPlanTopologyV1,
+) -> Result<u32, WorkerError> {
+    bucket_shuffle_offset(plan, topology)?
+        .checked_add(topology.phase_unit_count(UnitPhase::BucketShuffle))
         .ok_or(WorkerError::UnitBindingMismatch)
 }
 
