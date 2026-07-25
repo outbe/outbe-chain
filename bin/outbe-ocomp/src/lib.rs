@@ -18,6 +18,7 @@ pub mod lysis_result_adoption;
 pub mod lysis_result_catalog;
 pub mod lysis_scheduler;
 pub mod lysis_shuffle_adoption;
+pub mod relay;
 pub mod snapshot_client;
 pub mod snapshot_exporter;
 pub mod supervisor;

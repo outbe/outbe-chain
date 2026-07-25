@@ -10,6 +10,8 @@ name = "outbe-ocomp"
 path = "src/main.rs"
 
 [dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 clap.workspace = true
 hex.workspace = true
@@ -23,7 +25,11 @@ outbe-ocomp-protocol.workspace = true
 outbe-offchain-data.workspace = true
 outbe-offchain-storage.workspace = true
 outbe-oracle.workspace = true
+outbe-primitives.workspace = true
 outbe-tribute.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+serde.workspace = true
+serde_json.workspace = true
 sha3.workspace = true
 thiserror.workspace = true
 
@@ -32,7 +38,6 @@ alloy-sol-types.workspace = true
 k256.workspace = true
 outbe-consensus.workspace = true
 outbe-e2e-harness = { path = "../../crates/testing/e2e-harness", features = ["ocomp-integration"] }
-outbe-primitives.workspace = true
 reth-ethereum.workspace = true
 tempfile.workspace = true
 

@@ -8033,6 +8033,8 @@ dependencies = [
 name = "outbe-ocomp"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "clap",
@@ -8052,7 +8054,10 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
+ "reqwest 0.12.28",
  "reth-ethereum",
+ "serde",
+ "serde_json",
  "sha3",
  "tempfile",
  "thiserror 2.0.18",

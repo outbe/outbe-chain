@@ -13,6 +13,9 @@ use outbe_ocomp::control::{
     poc_schema_limits, require_effective_user, uid_for_user, EndpointIdentity,
 };
 use outbe_ocomp::inbox::WorkerInboxLimits;
+use outbe_ocomp::relay::{
+    CandidateRelayV1, NormalActivationSubmitterV1, PublicExactBlockRpcClientV1, RelayHttpServerV1,
+};
 use outbe_ocomp::snapshot_client::SnapshotExporterNodeConfig;
 use outbe_ocomp::snapshot_exporter::{SnapshotExporter, SnapshotExporterConfig};
 use outbe_ocomp::supervisor::{SupervisorDiscovery, SupervisorDiscoveryConfig};
@@ -20,7 +23,11 @@ use outbe_ocomp::supervisor_export::{
     SupervisorExportAdoption, SupervisorExportAdoptionConfig, SupervisorExportAdoptionOutcome,
 };
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
+use outbe_ocomp_protocol::{
+    committee::OcompCommitteeSnapshotV1, intent::ExpectedFinalizedIntentBindingV1,
+};
 use outbe_offchain_storage::MongoStorageConfig;
+use outbe_primitives::signer::OutbeEvmSigner;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -78,6 +85,9 @@ const PROJECTION_START_BLOCK: u64 = 1;
 const CE_TREE_FORMAT: &str = "ckb-smt-v0.6.1-poseidon-catalog-v3";
 const CE_VENDOR_REVISION: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
 const PROTOCOL_BUNDLE_PATH: &str = "/etc/outbe/ocomp/protocol-bundle-v1.ocb1";
+const RELAY_COMMITTEE_PATH: &str = "/etc/outbe/ocomp/relay-committee-v1.ocb1";
+const RELAY_PAYER_KEY_PATH: &str = "/etc/outbe/ocomp/relay-payer.key";
+const RELAY_MAX_RPC_RESPONSE_BYTES: usize = 1_048_576;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().role {
@@ -116,8 +126,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Role::Supervisor => run_supervisor(),
         Role::SnapshotExporter => run_snapshot_exporter(),
-        Role::Relay => run_resident(RELAY_USER),
+        Role::Relay => run_relay(),
     }
+}
+
+fn run_relay() -> Result<(), Box<dyn std::error::Error>> {
+    require_effective_user(RELAY_USER)?;
+    let limits = poc_schema_limits();
+    let rpc_url = required_env("OUTBE_OCOMP_RELAY_RPC_URL")?;
+    let bind = required_env("OUTBE_OCOMP_RELAY_BIND")?;
+    let request_height = required_env("OUTBE_OCOMP_RELAY_REQUEST_HEIGHT")?.parse::<u64>()?;
+    let intent_id = required_env("OUTBE_OCOMP_RELAY_INTENT_ID")?.parse::<B256>()?;
+    let expected = ExpectedFinalizedIntentBindingV1 {
+        chain_id: required_env("OUTBE_OCOMP_RELAY_CHAIN_ID")?.parse::<u64>()?,
+        genesis_hash: required_env("OUTBE_OCOMP_RELAY_GENESIS_HASH")?.parse::<B256>()?,
+        fork_id: required_env("OUTBE_OCOMP_RELAY_FORK_ID")?.parse::<B256>()?,
+        protocol_bundle_hash: required_env("OUTBE_OCOMP_RELAY_PROTOCOL_BUNDLE_HASH")?
+            .parse::<B256>()?,
+    };
+    let committee =
+        OcompCommitteeSnapshotV1::decode_canonical(&std::fs::read(RELAY_COMMITTEE_PATH)?, &limits)?;
+    let payer = OutbeEvmSigner::from_file(RELAY_PAYER_KEY_PATH)?;
+    let height_rpc = std::sync::Arc::new(PublicExactBlockRpcClientV1::new(
+        rpc_url.clone(),
+        RELAY_MAX_RPC_RESPONSE_BYTES,
+    )?);
+    let current_height = height_rpc.block_number()?;
+    let job = height_rpc.verified_relay_job(
+        request_height,
+        intent_id,
+        expected,
+        committee,
+        current_height,
+        limits,
+    )?;
+    let publisher_rpc = PublicExactBlockRpcClientV1::new(rpc_url, RELAY_MAX_RPC_RESPONSE_BYTES)?;
+    let publisher = std::sync::Arc::new(NormalActivationSubmitterV1::new(publisher_rpc, payer));
+    RelayHttpServerV1::bind(bind, CandidateRelayV1::new(job), publisher, height_rpc)?.serve()?;
+    Ok(())
 }
 
 fn run_supervisor() -> Result<(), Box<dyn std::error::Error>> {
@@ -233,13 +279,6 @@ fn run_snapshot_exporter() -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => eprintln!("OCOMP snapshot exporter retry: {error}"),
         }
         std::thread::sleep(SNAPSHOT_EXPORTER_RECONCILE_INTERVAL);
-    }
-}
-
-fn run_resident(expected_user: &str) -> Result<(), Box<dyn std::error::Error>> {
-    require_effective_user(expected_user)?;
-    loop {
-        std::thread::park();
     }
 }
 

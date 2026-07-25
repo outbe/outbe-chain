@@ -13,10 +13,12 @@ use outbe_consensus::{
     finalization::parent_cert_store::{
         CertifiedParentProofRecord, FinalizedParentCertStore, ProofKind,
     },
+    follow::decode_public_finalized_block,
     proof::{committee_snapshot_key, verify_v2_proof, CommitteeEntry, CommitteeSnapshot},
 };
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_ocomp_protocol::{
+    committee::POC_COMMITTEE_SIZE,
     common::{BoundedBytes, ProofBytes},
     control::{FinalizedIntentProofResponseV1, SnapshotHandoffV1},
     intent::{
@@ -35,6 +37,7 @@ use outbe_primitives::{
     header::OutbeHeader,
     storage::types::StorageKey as _,
 };
+use outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
 use reth_primitives_traits::Account;
 use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
@@ -283,6 +286,533 @@ pub enum FinalizedIntentProofBuildError {
     Verification(#[from] FinalizedIntentVerificationError),
     #[error("constructed raw opening proof failed verification: {0}")]
     RawOpeningVerification(#[source] FinalizedIntentVerifierError),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicFinalizationBytesV1 {
+    pub finalization_bytes: Vec<u8>,
+    pub block_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PublicBlockViewV1 {
+    pub hash: B256,
+    pub state_root: B256,
+    pub number: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicStorageProofV1 {
+    pub key: B256,
+    pub value: U256,
+    pub nodes: Vec<Bytes>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublicAccountProofV1 {
+    pub address: Address,
+    pub nonce: u64,
+    pub balance: U256,
+    pub storage_root: B256,
+    pub code_hash: B256,
+    pub account_nodes: Vec<Bytes>,
+    pub storage_proofs: Vec<PublicStorageProofV1>,
+}
+
+impl PublicAccountProofV1 {
+    fn to_reth_proof(&self) -> AccountProof {
+        AccountProof {
+            address: self.address,
+            info: Some(Account {
+                nonce: self.nonce,
+                balance: self.balance,
+                bytecode_hash: Some(self.code_hash),
+            }),
+            proof: self.account_nodes.clone(),
+            storage_root: self.storage_root,
+            storage_proofs: self
+                .storage_proofs
+                .iter()
+                .map(|proof| {
+                    StorageProof {
+                        key: proof.key,
+                        value: proof.value,
+                        ..StorageProof::new(proof.key)
+                    }
+                    .with_proof(proof.nodes.clone())
+                })
+                .collect(),
+        }
+    }
+
+    fn storage_value(&self, key: B256) -> Result<U256, PublicFinalizedIntentProofBuildError> {
+        let mut matching = self.storage_proofs.iter().filter(|proof| proof.key == key);
+        let value = matching
+            .next()
+            .ok_or(PublicFinalizedIntentProofBuildError::MissingStorageSlot(
+                key,
+            ))?
+            .value;
+        if matching.next().is_some() {
+            return Err(PublicFinalizedIntentProofBuildError::DuplicateStorageSlot(
+                key,
+            ));
+        }
+        Ok(value)
+    }
+}
+
+/// Public exact-block data required to reconstruct `FinalizedIntentProofV1`.
+///
+/// The source is transport only. The builder verifies every returned
+/// finalization/header/account/storage proof before returning authority.
+pub trait PublicExactBlockProofSourceV1 {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn finalization(&self, height: u64) -> Result<PublicFinalizationBytesV1, Self::Error>;
+
+    fn block_by_hash(&self, block_hash: B256) -> Result<PublicBlockViewV1, Self::Error>;
+
+    fn job_record(&self, intent_id: B256, block_hash: B256) -> Result<Vec<u8>, Self::Error>;
+
+    fn account_proof(
+        &self,
+        address: Address,
+        storage_slots: &[B256],
+        block_hash: B256,
+    ) -> Result<PublicAccountProofV1, Self::Error>;
+}
+
+pub struct PublicFinalizedIntentProofBuilderV1<'a, S> {
+    source: &'a S,
+    limits: SchemaLimits,
+}
+
+impl<'a, S> PublicFinalizedIntentProofBuilderV1<'a, S> {
+    #[must_use]
+    pub const fn new(source: &'a S, limits: SchemaLimits) -> Self {
+        Self { source, limits }
+    }
+}
+
+impl<S> PublicFinalizedIntentProofBuilderV1<'_, S>
+where
+    S: PublicExactBlockProofSourceV1,
+{
+    pub fn build_and_verify(
+        &self,
+        request_height: u64,
+        intent_id: B256,
+        expected: ExpectedFinalizedIntentBindingV1,
+    ) -> Result<
+        (FinalizedIntentProofV1, VerifiedFinalizedIntentV1),
+        PublicFinalizedIntentProofBuildError,
+    > {
+        let public_bytes = self
+            .source
+            .finalization(request_height)
+            .map_err(public_source_error)?;
+        let finalized = decode_public_finalized_block(
+            &public_bytes.finalization_bytes,
+            &public_bytes.block_bytes,
+            POC_COMMITTEE_SIZE,
+        )
+        .map_err(|error| PublicFinalizedIntentProofBuildError::Finalization(error.to_string()))?;
+        let block_hash = finalized.block.block_hash();
+        let header = finalized.block.header();
+        let block_view = self
+            .source
+            .block_by_hash(block_hash)
+            .map_err(public_source_error)?;
+        if finalized.block.number() != request_height
+            || block_view.hash != block_hash
+            || block_view.number != request_height
+            || block_view.state_root != header.state_root()
+        {
+            return Err(PublicFinalizedIntentProofBuildError::HeaderMismatch);
+        }
+
+        let finalization = &finalized.finalization;
+        if finalization.proposal.payload.0 != block_hash {
+            return Err(PublicFinalizedIntentProofBuildError::Finalization(
+                "finalization payload differs from finalized block hash".to_owned(),
+            ));
+        }
+        let finalized_epoch = finalization.proposal.round.epoch().get();
+        let committee_len = finalization.certificate.signers.len();
+        if committee_len != 4 {
+            return Err(PublicFinalizedIntentProofBuildError::CommitteeLength {
+                actual: committee_len,
+            });
+        }
+        let request_state_root = header.state_root();
+
+        let ring_slot = historical_committee_ring_slot(finalized_epoch);
+        let ring_proof = self
+            .source
+            .account_proof(VALIDATOR_SET_ADDRESS, &[ring_slot], block_hash)
+            .map_err(public_source_error)?;
+        verify_public_account_proof(
+            &ring_proof,
+            VALIDATOR_SET_ADDRESS,
+            &[ring_slot],
+            request_state_root,
+        )?;
+        let snapshot_key = B256::new(ring_proof.storage_value(ring_slot)?.to_be_bytes::<32>());
+        if snapshot_key == B256::ZERO {
+            return Err(PublicFinalizedIntentProofBuildError::MissingCommitteeSnapshot);
+        }
+
+        let base_committee_slots = historical_committee_base_slot_keys(snapshot_key, committee_len);
+        let base_committee_proof = self
+            .source
+            .account_proof(VALIDATOR_SET_ADDRESS, &base_committee_slots, block_hash)
+            .map_err(public_source_error)?;
+        verify_public_account_proof(
+            &base_committee_proof,
+            VALIDATOR_SET_ADDRESS,
+            &base_committee_slots,
+            request_state_root,
+        )?;
+        let vrf_length_slot = snapshot_key.mapping_slot(U256::from(38));
+        let vrf_length = usize::try_from(
+            base_committee_proof.storage_value(B256::new(vrf_length_slot.to_be_bytes::<32>()))?,
+        )
+        .map_err(|_| PublicFinalizedIntentProofBuildError::VrfKeyLength)?;
+        if vrf_length == 0 || vrf_length > self.limits.max_proof_bytes {
+            return Err(PublicFinalizedIntentProofBuildError::VrfKeyLength);
+        }
+
+        let full_committee_slots =
+            historical_committee_full_slot_keys(snapshot_key, committee_len, vrf_length);
+        let public_committee_proof = self
+            .source
+            .account_proof(VALIDATOR_SET_ADDRESS, &full_committee_slots, block_hash)
+            .map_err(public_source_error)?;
+        verify_public_account_proof(
+            &public_committee_proof,
+            VALIDATOR_SET_ADDRESS,
+            &full_committee_slots,
+            request_state_root,
+        )?;
+        let snapshot = reconstruct_public_committee_snapshot(
+            &public_committee_proof,
+            snapshot_key,
+            committee_len,
+            vrf_length,
+            finalized_epoch,
+        )?;
+        let committee_set_hash = snapshot.committee_set_hash_v2(finalized_epoch);
+        if committee_snapshot_key(finalized_epoch, committee_set_hash) != snapshot_key {
+            return Err(PublicFinalizedIntentProofBuildError::CommitteeSnapshotKey);
+        }
+
+        let canonical_record = self
+            .source
+            .job_record(intent_id, block_hash)
+            .map_err(public_source_error)?;
+        if canonical_record.len() > self.limits.max_bounded_bytes {
+            return Err(PublicFinalizedIntentProofBuildError::JobRecordTooLarge);
+        }
+        let record = OcompJobRecordV1::decode_canonical(&canonical_record, &self.limits)
+            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        if record.status != OcompJobStatus::OffchainPending
+            || record
+                .intent
+                .intent_id(&self.limits)
+                .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?
+                != intent_id
+        {
+            return Err(PublicFinalizedIntentProofBuildError::Intent(
+                "public exact-block job record is not the requested pending intent".to_owned(),
+            ));
+        }
+        let logical_key = outbe_ocomp_protocol::intent::intent_storage_key(intent_id)
+            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        let intent_slots = storage_bytes_slots(logical_key, &canonical_record);
+        let intent_slot_keys = slot_keys(&intent_slots);
+        let public_intent_proof = self
+            .source
+            .account_proof(METADOSIS_ADDRESS, &intent_slot_keys, block_hash)
+            .map_err(public_source_error)?;
+        verify_public_account_proof(
+            &public_intent_proof,
+            METADOSIS_ADDRESS,
+            &intent_slot_keys,
+            request_state_root,
+        )?;
+
+        let committee_account_proof = public_committee_proof.to_reth_proof();
+        let committee_slots =
+            historical_committee_storage_slots(finalized_epoch, committee_set_hash, &snapshot);
+        let intent_account_proof = public_intent_proof.to_reth_proof();
+        let mut signer_bitmap = vec![0_u8; committee_len];
+        for signer in finalization.certificate.signers.iter() {
+            let index = signer.get() as usize;
+            let Some(entry) = signer_bitmap.get_mut(index) else {
+                return Err(PublicFinalizedIntentProofBuildError::SignerIndex(index));
+            };
+            *entry = 1;
+        }
+        let vrf_material_version = u16::try_from(snapshot.vrf_material_version)
+            .map_err(|_| PublicFinalizedIntentProofBuildError::VrfMaterialVersion)?;
+        let mut canonical_request_header_rlp = Vec::new();
+        header.encode(&mut canonical_request_header_rlp);
+        let proof = FinalizedIntentProofV1 {
+            chain_id: record.intent.chain_id,
+            genesis_hash: record.intent.genesis_hash,
+            fork_id: record.intent.fork_id,
+            protocol_bundle_hash: record.intent.protocol_bundle_hash,
+            canonical_request_header_rlp: ProofBytes(canonical_request_header_rlp),
+            parent_accounting: CertifiedParentAccountingMetadataV2 {
+                finalized_block_number: request_height,
+                finalized_block_hash: block_hash,
+                finalized_epoch,
+                finalized_view: finalization.proposal.round.view().get(),
+                parent_view: finalization.proposal.parent.get(),
+                ordered_committee: snapshot
+                    .committee
+                    .iter()
+                    .map(|entry| BoundedBytes(entry.address.as_slice().to_vec()))
+                    .collect(),
+                signer_bitmap: BoundedBytes(signer_bitmap),
+                canonical_commonware_finalization_proof: ProofBytes(
+                    public_bytes.finalization_bytes,
+                ),
+                committee_set_hash,
+                vrf_material_version,
+                vrf_group_public_key_hash: keccak256(&snapshot.vrf_group_public_key_bytes),
+                proof_kind: ParentProofKind::Finalization,
+                missed_proposers: Vec::new(),
+            },
+            historical_committee_membership_proof: ProofBytes(
+                encode_historical_committee_witness(
+                    &snapshot,
+                    &committee_account_proof,
+                    &committee_slots,
+                )
+                .map_err(|error| {
+                    PublicFinalizedIntentProofBuildError::Witness(error.to_string())
+                })?,
+            ),
+            canonical_job_intent: BoundedBytes(
+                record
+                    .intent
+                    .encode_canonical(&self.limits)
+                    .map_err(|error| {
+                        PublicFinalizedIntentProofBuildError::Intent(error.to_string())
+                    })?,
+            ),
+            intent_account_proof: ProofBytes(
+                encode_account_witness(&intent_account_proof, METADOSIS_ADDRESS).map_err(
+                    |error| PublicFinalizedIntentProofBuildError::Witness(error.to_string()),
+                )?,
+            ),
+            intent_storage_proof: ProofBytes(
+                encode_storage_witness(&intent_account_proof, &intent_slots).map_err(|error| {
+                    PublicFinalizedIntentProofBuildError::Witness(error.to_string())
+                })?,
+            ),
+        };
+        proof
+            .encode_canonical(&self.limits)
+            .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
+        let verified = proof.verify(
+            expected,
+            &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
+            &self.limits,
+        )?;
+        if verified.intent_id != intent_id {
+            return Err(PublicFinalizedIntentProofBuildError::Intent(
+                "constructed proof opened a different IntentId".to_owned(),
+            ));
+        }
+        Ok((proof, verified))
+    }
+}
+
+fn public_source_error<E: std::error::Error>(error: E) -> PublicFinalizedIntentProofBuildError {
+    PublicFinalizedIntentProofBuildError::Source(error.to_string())
+}
+
+fn historical_committee_ring_slot(epoch: u64) -> B256 {
+    let ring_index = epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+    B256::new(
+        U256::from(ring_index)
+            .mapping_slot(U256::from(44))
+            .to_be_bytes::<32>(),
+    )
+}
+
+fn historical_committee_base_slot_keys(snapshot_key: B256, committee_len: usize) -> Vec<B256> {
+    let mapped = |base_slot: u64| snapshot_key.mapping_slot(U256::from(base_slot));
+    let nested = |base_slot: u64, index: u64| index.mapping_slot(mapped(base_slot));
+    let mut slots = vec![mapped(31), mapped(32)];
+    for index in 0..committee_len as u64 {
+        slots.extend([nested(33, index), nested(34, index), nested(35, index)]);
+    }
+    slots.extend([mapped(36), mapped(37), mapped(38), mapped(47)]);
+    slot_keys(
+        &slots
+            .into_iter()
+            .map(|slot| (slot, U256::ZERO))
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn historical_committee_full_slot_keys(
+    snapshot_key: B256,
+    committee_len: usize,
+    vrf_key_len: usize,
+) -> Vec<B256> {
+    let mut slots = historical_committee_base_slot_keys(snapshot_key, committee_len);
+    let mapped = snapshot_key.mapping_slot(U256::from(39));
+    for index in 0..vrf_key_len.div_ceil(32) {
+        let slot = U256::from(index).mapping_slot(mapped);
+        slots.push(B256::new(slot.to_be_bytes::<32>()));
+    }
+    slots
+}
+
+fn verify_public_account_proof(
+    proof: &PublicAccountProofV1,
+    expected_address: Address,
+    expected_slots: &[B256],
+    state_root: B256,
+) -> Result<(), PublicFinalizedIntentProofBuildError> {
+    if proof.address != expected_address {
+        return Err(PublicFinalizedIntentProofBuildError::ProofAddress);
+    }
+    if proof.storage_proofs.len() != expected_slots.len()
+        || expected_slots.iter().any(|slot| {
+            proof
+                .storage_proofs
+                .iter()
+                .filter(|candidate| candidate.key == *slot)
+                .count()
+                != 1
+        })
+    {
+        return Err(PublicFinalizedIntentProofBuildError::ProofSlotSet);
+    }
+    let reth_proof = proof.to_reth_proof();
+    reth_proof
+        .verify(state_root)
+        .map_err(|error| PublicFinalizedIntentProofBuildError::AccountProof(error.to_string()))?;
+    for storage_proof in &reth_proof.storage_proofs {
+        storage_proof.verify(proof.storage_root).map_err(|error| {
+            PublicFinalizedIntentProofBuildError::StorageProof(error.to_string())
+        })?;
+    }
+    Ok(())
+}
+
+fn reconstruct_public_committee_snapshot(
+    proof: &PublicAccountProofV1,
+    snapshot_key: B256,
+    committee_len: usize,
+    vrf_key_len: usize,
+    epoch: u64,
+) -> Result<CommitteeSnapshot, PublicFinalizedIntentProofBuildError> {
+    let mapped = |base_slot: u64| snapshot_key.mapping_slot(U256::from(base_slot));
+    let nested = |base_slot: u64, index: u64| index.mapping_slot(mapped(base_slot));
+    let value = |slot: U256| proof.storage_value(B256::new(slot.to_be_bytes::<32>()));
+    if value(mapped(31))? != U256::from(1)
+        || usize::try_from(value(mapped(32))?)
+            .ok()
+            .filter(|length| *length == committee_len)
+            .is_none()
+    {
+        return Err(PublicFinalizedIntentProofBuildError::CommitteeShape);
+    }
+    let mut committee = Vec::with_capacity(committee_len);
+    for index in 0..committee_len {
+        let address_word = value(nested(33, index as u64))?.to_be_bytes::<32>();
+        if address_word[..12].iter().any(|byte| *byte != 0) {
+            return Err(PublicFinalizedIntentProofBuildError::CommitteeShape);
+        }
+        let low = value(nested(34, index as u64))?.to_be_bytes::<32>();
+        let high = value(nested(35, index as u64))?.to_be_bytes::<32>();
+        if high[16..].iter().any(|byte| *byte != 0) {
+            return Err(PublicFinalizedIntentProofBuildError::CommitteeShape);
+        }
+        let mut consensus_pubkey = [0_u8; 48];
+        consensus_pubkey[..32].copy_from_slice(&low);
+        consensus_pubkey[32..].copy_from_slice(&high[..16]);
+        committee.push(CommitteeEntry {
+            address: Address::from_slice(&address_word[12..]),
+            consensus_pubkey,
+        });
+    }
+    let mut vrf_group_public_key_bytes = Vec::with_capacity(vrf_key_len);
+    for index in 0..vrf_key_len.div_ceil(32) {
+        vrf_group_public_key_bytes
+            .extend_from_slice(&value(nested(39, index as u64))?.to_be_bytes::<32>());
+    }
+    vrf_group_public_key_bytes.truncate(vrf_key_len);
+    if usize::try_from(value(mapped(38))?).ok() != Some(vrf_key_len)
+        || value(mapped(37))? != U256::from_be_bytes(keccak256(&vrf_group_public_key_bytes).0)
+    {
+        return Err(PublicFinalizedIntentProofBuildError::VrfKey);
+    }
+    let snapshot = CommitteeSnapshot {
+        committee,
+        vrf_material_version: u64::try_from(value(mapped(36))?)
+            .map_err(|_| PublicFinalizedIntentProofBuildError::VrfMaterialVersion)?,
+        vrf_group_public_key_bytes,
+        vrf_public_polynomial_hash: B256::new(value(mapped(47))?.to_be_bytes::<32>()),
+    };
+    let hash = snapshot.committee_set_hash_v2(epoch);
+    if committee_snapshot_key(epoch, hash) != snapshot_key {
+        return Err(PublicFinalizedIntentProofBuildError::CommitteeSnapshotKey);
+    }
+    Ok(snapshot)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublicFinalizedIntentProofBuildError {
+    #[error("public exact-block source failed: {0}")]
+    Source(String),
+    #[error("public finalization is invalid: {0}")]
+    Finalization(String),
+    #[error("public Ethereum block view differs from finalized Commonware block")]
+    HeaderMismatch,
+    #[error("PoC historical consensus committee must contain exactly four members, got {actual}")]
+    CommitteeLength { actual: usize },
+    #[error("historical committee snapshot ring entry is absent")]
+    MissingCommitteeSnapshot,
+    #[error("public proof omitted storage slot {0}")]
+    MissingStorageSlot(B256),
+    #[error("public proof repeated storage slot {0}")]
+    DuplicateStorageSlot(B256),
+    #[error("public account proof belongs to another address")]
+    ProofAddress,
+    #[error("public account proof returned a different storage-slot set")]
+    ProofSlotSet,
+    #[error("public account proof rejected: {0}")]
+    AccountProof(String),
+    #[error("public storage proof rejected: {0}")]
+    StorageProof(String),
+    #[error("historical committee snapshot has an invalid fixed shape")]
+    CommitteeShape,
+    #[error("historical committee snapshot key does not match its authenticated values")]
+    CommitteeSnapshotKey,
+    #[error("historical committee VRF key length is invalid")]
+    VrfKeyLength,
+    #[error("historical committee VRF key bytes/hash are invalid")]
+    VrfKey,
+    #[error("historical committee VRF material version exceeds the protocol shape")]
+    VrfMaterialVersion,
+    #[error("finalization signer index {0} is outside the authenticated committee")]
+    SignerIndex(usize),
+    #[error("public exact-block OCOMP job record exceeds its byte cap")]
+    JobRecordTooLarge,
+    #[error("public exact-block OCOMP job record is invalid: {0}")]
+    Intent(String),
+    #[error("failed to encode a public proof witness: {0}")]
+    Witness(String),
+    #[error(transparent)]
+    Verification(#[from] FinalizedIntentVerificationError),
 }
 
 /// Reth-backed proof builder bound to the consensus-owned finalization store.

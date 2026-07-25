@@ -7,6 +7,7 @@ StartLimitBurst=3
 Type=simple
 User=outbe-ocomp-relay
 Group=outbe-ocomp-relay
+EnvironmentFile=-/etc/outbe/ocomp/relay.env
 ExecStart=/usr/local/bin/outbe-ocomp relay
 Restart=on-failure
 RestartSec=5

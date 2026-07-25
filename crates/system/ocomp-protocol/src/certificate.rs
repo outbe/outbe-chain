@@ -1,8 +1,10 @@
 use alloy_primitives::B256;
 
 use crate::{
+    activation::CandidateAnnouncementV1,
     committee::{verify_low_s_prehash, OcompCommitteeSnapshotV1, POC_COMMITTEE_THRESHOLD},
     error::ProtocolError,
+    intent::JobIntentV1,
     schema::{impl_top_level_codec, require, wire_struct, SchemaLimits},
 };
 
@@ -79,6 +81,64 @@ impl ExecutionCertificateV1 {
         }
         Ok(())
     }
+}
+
+pub fn build_execution_certificate(
+    candidates: &[CandidateAnnouncementV1],
+    finalized_intent: &JobIntentV1,
+    expected_job_id: B256,
+    snapshot: &OcompCommitteeSnapshotV1,
+    current_height: u64,
+    limits: &SchemaLimits,
+) -> Result<ExecutionCertificateV1, ProtocolError> {
+    require(
+        candidates.len() >= usize::from(POC_COMMITTEE_THRESHOLD)
+            && candidates.len() <= snapshot.ordered_members.len(),
+        "certificate candidate count",
+    )?;
+
+    let expected_result = candidates[0].result.encode_canonical(limits)?;
+    let expected_digest = candidates[0].result_digest;
+    let mut ordered = Vec::with_capacity(candidates.len());
+    let mut seen_bitmap = 0_u8;
+    for candidate in candidates {
+        candidate.verify(
+            finalized_intent,
+            expected_job_id,
+            snapshot,
+            current_height,
+            limits,
+        )?;
+        require(
+            candidate.result_digest == expected_digest
+                && candidate.result.encode_canonical(limits)? == expected_result,
+            "certificate exact result group",
+        )?;
+        let signer_bit = 1_u8 << candidate.validator_index;
+        require(
+            seen_bitmap & signer_bit == 0,
+            "certificate duplicate candidate",
+        )?;
+        seen_bitmap |= signer_bit;
+        ordered.push(OrderedSignatureV1 {
+            validator_index: candidate.validator_index,
+            signature_rs: candidate.signature_rs,
+        });
+    }
+    ordered.sort_unstable_by_key(|signature| signature.validator_index);
+    ordered.truncate(usize::from(POC_COMMITTEE_THRESHOLD));
+    let signer_bitmap = ordered.iter().fold(0_u8, |bitmap, signature| {
+        bitmap | (1 << signature.validator_index)
+    });
+
+    let certificate = ExecutionCertificateV1 {
+        result_committee_snapshot_hash: snapshot.snapshot_hash(limits)?,
+        signer_bitmap,
+        ordered_signatures: ordered,
+        result_digest: expected_digest,
+    };
+    certificate.verify(snapshot, current_height, limits)?;
+    Ok(certificate)
 }
 
 fn validate_certificate(

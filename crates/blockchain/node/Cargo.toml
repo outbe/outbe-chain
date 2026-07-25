@@ -20,6 +20,7 @@ outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-tribute.workspace = true
+outbe-validatorset.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -66,7 +67,6 @@ alloy-eips.workspace = true
 alloy-provider.workspace = true
 alloy-trie.workspace = true
 mongodb.workspace = true
-outbe-validatorset.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-e2e-test-utils.workspace = true
 reth-node-api.workspace = true

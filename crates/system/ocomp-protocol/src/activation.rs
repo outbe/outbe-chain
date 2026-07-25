@@ -1,6 +1,7 @@
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 
 use crate::{
+    abi::ACTIVATE_LYSIS_SELECTOR,
     certificate::ExecutionCertificateV1,
     committee::{verify_low_s_prehash, OcompCommitteeSnapshotV1, POC_KEY_EPOCH},
     error::ProtocolError,
@@ -118,6 +119,42 @@ impl PoCActivationV1 {
     pub fn result_evidence_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
         hash_framed(HashDomain::ResultEvidence, &self.encode_canonical(limits)?)
     }
+}
+
+pub fn encode_activate_lysis_calldata(
+    activation: &PoCActivationV1,
+    limits: &SchemaLimits,
+) -> Result<Vec<u8>, ProtocolError> {
+    let activation_bytes = activation.encode_canonical(limits)?;
+    let activation_len = activation_bytes.len();
+    let padded_len = activation_len
+        .checked_add(31)
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "activation ABI padding",
+        })?
+        & !31;
+    let calldata_len = 4_usize
+        .checked_add(64)
+        .and_then(|fixed| fixed.checked_add(padded_len))
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "activation calldata length",
+        })?;
+    let abi_len = u64::try_from(activation_len).map_err(|_| ProtocolError::IntegerOverflow {
+        what: "activation ABI length",
+    })?;
+    let mut calldata = Vec::new();
+    calldata
+        .try_reserve_exact(calldata_len)
+        .map_err(|_| ProtocolError::AllocationFailed {
+            what: "activation calldata",
+            bytes: calldata_len,
+        })?;
+    calldata.extend_from_slice(&ACTIVATE_LYSIS_SELECTOR);
+    calldata.extend_from_slice(&U256::from(32).to_be_bytes::<32>());
+    calldata.extend_from_slice(&U256::from(abi_len).to_be_bytes::<32>());
+    calldata.extend_from_slice(&activation_bytes);
+    calldata.resize(calldata_len, 0);
+    Ok(calldata)
 }
 
 impl CandidateAnnouncementV1 {

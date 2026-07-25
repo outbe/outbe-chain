@@ -42,6 +42,7 @@ use outbe_consensus::{
 };
 use outbe_fidelity::{fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1};
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
+use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     intent::{
@@ -88,6 +89,17 @@ pub struct FinalizedIntentProofFixture {
     pub header_hash: B256,
     pub block: ConsensusBlock,
     pub canonical_history: CanonicalHistoryFixture,
+    pub public_exact_block: PublicExactBlockFixtureV1,
+}
+
+#[derive(Clone)]
+pub struct PublicExactBlockFixtureV1 {
+    pub finalization_bytes: Vec<u8>,
+    pub block_bytes: Vec<u8>,
+    pub block_view: PublicBlockViewV1,
+    pub intent_id: B256,
+    pub canonical_job_record: Vec<u8>,
+    pub account_proofs: BTreeMap<Address, PublicAccountProofV1>,
 }
 
 /// Finalized JobIntent plus an exact historical state provider for the
@@ -491,7 +503,11 @@ fn build_finalized_intent_proof_fixture(
     let snapshot = build_snapshot(&dkg);
     let committee_set_hash = snapshot.committee_set_hash_v2(FINALIZED_EPOCH);
     let committee_slots = committee_storage_slots(&snapshot, committee_set_hash);
-    let (validator_storage_root, validator_storage_proofs) = storage_trie(&committee_slots);
+    let snapshot_key = independent_snapshot_key(committee_set_hash);
+    let ring_slot = U256::from(FINALIZED_EPOCH % 8).mapping_slot(U256::from(44));
+    let mut validator_slots = committee_slots.clone();
+    validator_slots.push((ring_slot, U256::from_be_bytes(snapshot_key.0)));
+    let (validator_storage_root, validator_storage_proofs) = storage_trie(&validator_slots);
     let validator_account = TrieAccount {
         nonce: 0,
         balance: U256::ZERO,
@@ -541,7 +557,7 @@ fn build_finalized_intent_proof_fixture(
             .map(|address| BoundedBytes(address.as_slice().to_vec()))
             .collect(),
         signer_bitmap: BoundedBytes(signer_bitmap),
-        canonical_commonware_finalization_proof: ProofBytes(finalization),
+        canonical_commonware_finalization_proof: ProofBytes(finalization.clone()),
         committee_set_hash,
         vrf_material_version: VRF_MATERIAL_VERSION as u16,
         vrf_group_public_key_hash,
@@ -559,7 +575,7 @@ fn build_finalized_intent_proof_fixture(
             &snapshot,
             validator_account,
             &account_proofs[&VALIDATOR_SET_ADDRESS],
-            &validator_storage_proofs,
+            &validator_storage_proofs[..committee_slots.len()],
         )),
         canonical_job_intent: BoundedBytes(canonical_job_intent),
         intent_account_proof: ProofBytes(account_witness(
@@ -573,6 +589,59 @@ fn build_finalized_intent_proof_fixture(
         .expect("fixture JobId");
     let canonical_history =
         CanonicalHistoryFixture::new(intent.logical_evaluation_height, header_hash);
+    let mut public_account_proofs = BTreeMap::new();
+    public_account_proofs.insert(
+        METADOSIS_ADDRESS,
+        PublicAccountProofV1 {
+            address: METADOSIS_ADDRESS,
+            nonce: intent_account.nonce,
+            balance: intent_account.balance,
+            storage_root: intent_account.storage_root,
+            code_hash: intent_account.code_hash,
+            account_nodes: account_proofs[&METADOSIS_ADDRESS].clone(),
+            storage_proofs: intent_slots
+                .iter()
+                .zip(&intent_storage_proofs)
+                .map(|((slot, value), nodes)| PublicStorageProofV1 {
+                    key: B256::new(slot.to_be_bytes::<32>()),
+                    value: *value,
+                    nodes: nodes.clone(),
+                })
+                .collect(),
+        },
+    );
+    public_account_proofs.insert(
+        VALIDATOR_SET_ADDRESS,
+        PublicAccountProofV1 {
+            address: VALIDATOR_SET_ADDRESS,
+            nonce: validator_account.nonce,
+            balance: validator_account.balance,
+            storage_root: validator_account.storage_root,
+            code_hash: validator_account.code_hash,
+            account_nodes: account_proofs[&VALIDATOR_SET_ADDRESS].clone(),
+            storage_proofs: validator_slots
+                .iter()
+                .zip(&validator_storage_proofs)
+                .map(|((slot, value), nodes)| PublicStorageProofV1 {
+                    key: B256::new(slot.to_be_bytes::<32>()),
+                    value: *value,
+                    nodes: nodes.clone(),
+                })
+                .collect(),
+        },
+    );
+    let public_exact_block = PublicExactBlockFixtureV1 {
+        finalization_bytes: finalization,
+        block_bytes: block.encode().to_vec(),
+        block_view: PublicBlockViewV1 {
+            hash: header_hash,
+            state_root,
+            number: intent.logical_evaluation_height,
+        },
+        intent_id,
+        canonical_job_record: encoded_record,
+        account_proofs: public_account_proofs,
+    };
     let finalized = FinalizedIntentProofFixture {
         intent,
         intent_id,
@@ -582,6 +651,7 @@ fn build_finalized_intent_proof_fixture(
         header_hash,
         block,
         canonical_history,
+        public_exact_block,
     };
     let opening_provider = (!opening_contracts.is_empty()).then(|| {
         let mut accounts = BTreeMap::new();
