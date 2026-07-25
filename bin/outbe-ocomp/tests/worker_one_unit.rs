@@ -33,6 +33,7 @@ use outbe_ocomp::input_artifacts::{
     derive_input_chunk_ref, poc_input_list_limits, publish_input_artifact_set,
     InputArtifactContents, InputArtifactIdentity,
 };
+use outbe_ocomp::lysis_phase_replay::verify_output_finalize_replay;
 use outbe_ocomp::lysis_shuffle_adoption::adopt_lysis_shuffle_descendants;
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::common::{BoundedBytes, ProofBytes};
@@ -1052,6 +1053,43 @@ fn real_worker_processes_execute_through_output_finalize() {
         finalized.ordered_records[0].nod_action.source_tribute_id,
         tribute.tribute_id
     );
+    verify_output_finalize_replay(
+        0,
+        &output_finalize_spec,
+        &output_finalize_artifact,
+        &amount_artifact,
+        &prefix_down_leaf_artifact,
+        &plan,
+        &manifest,
+        &bundle,
+        &limits,
+    )
+    .expect("supervisor semantic replay accepts exact OutputFinalize bytes");
+    let mut forged_finalized = finalized.clone();
+    forged_finalized.checked_tribute_nominal_total += U256::from(1);
+    let output_header = output_finalize_artifact.output_header(&limits).unwrap();
+    let forged_artifact = UnitArtifactV1::from_canonical_output(
+        &output_finalize_spec,
+        output_header,
+        BoundedBytes(
+            encode_finalized_output_run(&forged_finalized, &limits)
+                .expect("canonical forged OutputFinalize payload"),
+        ),
+        &limits,
+    )
+    .expect("build digest-valid forged OutputFinalize artifact");
+    assert!(verify_output_finalize_replay(
+        0,
+        &output_finalize_spec,
+        &forged_artifact,
+        &amount_artifact,
+        &prefix_down_leaf_artifact,
+        &plan,
+        &manifest,
+        &bundle,
+        &limits,
+    )
+    .is_err());
 
     let mut finalized_ref = cas
         .publish_bytes(

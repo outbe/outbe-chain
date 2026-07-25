@@ -6,6 +6,7 @@ pub mod control;
 pub mod exporter;
 pub mod inbox;
 pub mod input_artifacts;
+pub mod lysis_phase_replay;
 pub mod lysis_result_adoption;
 pub mod lysis_shuffle_adoption;
 pub mod snapshot_client;
