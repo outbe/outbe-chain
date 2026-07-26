@@ -115,7 +115,7 @@ The fork and capacity gates are deliberately split:
 |---|---:|---|
 | `G0 EVIDENCE` | `OCM-00` | missing evidence is visible and fail-closed |
 | `G1 SHAPE FREEZE` | `OCM-04` | schemas/domains/registries/candidate ceilings frozen; no checked-in network can activate OCOMP |
-| `G2 REQUEST` | `OCM-08` | a measurement fixture can create/expire a real JobIntent with no Lysis/effects |
+| `G2 REQUEST` | `OCM-08` | a typed measurement fixture can create/expire a real JobIntent with no Lysis/effects; production chain-manifest installation closes in `OCM-24/25` |
 | `G3 ONE DOMAIN` | `OCM-15` | one domain can export, compute, verify and durably attest |
 | `G4 QUORUM` | `OCM-16` | an untrusted relay can form only a valid q=3 certificate |
 | `G5 ACTIVATION` | `OCM-23` | public certified activation atomically applies four owner effects and terminal state |
@@ -640,24 +640,32 @@ no request-time data-dependent scan is reachable.
 
 **Depends on:** `OCM-04`.
 
-**Outcome:** the executor has stable OCOMP expiry and post-CE-seal request slots
-without a second execution path.
+**Outcome:** the executor has stable fork-install/expiry and post-CE-seal
+request slots without a second execution path.
 
 **Files/symbols:**
 
 - `crates/blockchain/primitives/src/system_tx.rs`;
 - `crates/blockchain/evm/src/{executor.rs,begin_block_precompile.rs}`;
 - `crates/blockchain/node/src/payload_builder.rs`;
+- typed `OcompForkInstallV1` and its canonical validation;
 - system transaction layout/cursor tests.
 
 **Changes:** add `OcompLifecycleBegin` (`OSE2`) after
-`LateFinalizeCredits`/before `CycleTick`; add sole end-zone
-`OcompTerminalRequest` (`OSR2`); finalize compressed entities when the first end
-envelope is reached; reject missing/duplicate/misordered/user-after-end forms.
+`LateFinalizeCredits`/before `CycleTick`; at `H` its first subphase atomically
+installs the chain-manifest-bound request profile, exact bundle and complete
+committee before expiry; add sole end-zone `OcompTerminalRequest` (`OSR2`);
+finalize compressed entities when the first end envelope is reached; reject
+missing/duplicate/misordered/user-after-end forms. Preserve the empty OSE2 body
+and existing SystemTx ABI. The protocol-version-1 Update handler remains the
+sole owner-profile initializer at the same `H`.
 
-**Invariants/failures:** ordinary transactions finish before CE sealing; final
-CE root exists before request; no semantic writer follows terminal request;
-proposer/import/replay enforce identical layout and visible receipts.
+**Invariants/failures:** every path receives one immutable install parsed before
+startup; all install objects validate before the first write; install is
+idempotent only for exact replay and otherwise fatal; ordinary transactions
+finish before CE sealing; final CE root exists before request; no semantic
+writer follows terminal request; proposer/import/replay enforce identical
+layout, authority and visible receipts.
 
 **Fork impact:** pre-fork blocks contain neither envelope; measurement/final
 fork includes both. End-zone structural support remains inert without an armed
@@ -666,8 +674,10 @@ schedule.
 **Reuse/non-goals:** extend current `SystemTxLayout` and idempotent CE finalizer.
 Do not add an executor, transaction type, infinite gas or alternate block loop.
 
-**Task-local tests:** H-1/H/H+1 layout, envelope bytes/order, CE finalization
-exactly once, malformed suffix and proposer/import/replay unit parity.
+**Task-local tests:** canonical decoder and partial/hash/chain/genesis/PoP
+rejection; H-1/H/H+1 layout/state with unchanged empty envelope bytes/order;
+atomic rollback and exact replay; CE finalization exactly once, malformed
+suffix and proposer/import/replay unit parity.
 Contributes `OCM-REQ-001`, `OCM-PUB-001`, `OCM-PUB-003`.
 
 **Evidence/CI:** `OCM-FAST` structural tests and `OCM-INT` execution integration;
@@ -1543,6 +1553,9 @@ can emit one hash-indexed multi-scenario evidence bundle.
 **Changes:** add four domain handles, supervisor-only stop/restart, worker
 activator, exporter/CAS/Mongo faults, untrusted relay, exact-block OCOMP views/
 proofs, process/topology inventory and correlation across delay variants.
+Generate the disposable base genesis, bundle and committee first, then emit one
+canonical `Measurement` `OcompForkInstallV1` before node launch. All four nodes
+load that exact immutable binding; the harness cannot hot-load or override it.
 OCOMP steps reuse `Rpc::tribute_offer*`, the Mongo projection readers, the CE
 point-read verifier and the existing fixture state instead of adding a second
 Tribute sender, database reader or shell path. If step-neutral orchestration is
@@ -1551,8 +1564,9 @@ calls another step.
 
 **Invariants/failures:** harness cannot inject jobs/results/state or emulate
 worker/CAS logic; every process is owned/reaped; failure preserves bounded
-diagnostics; pass records exact binaries/configs/chain refs; mock Gramine
-substitutes SGX hardware only.
+diagnostics; pass records exact binaries/configs/chain refs and install hash;
+all validators/followers use the same install for proposal/import/replay; mock
+Gramine substitutes SGX hardware only.
 
 **Fork impact:** harness generates measurement networks before `OCM-26`; those
 manifests are marked and rejected as final evidence.
@@ -1623,11 +1637,14 @@ capacity generation.
 mutations; before/at deadline; exact/different completed retry; provisional
 activation-byte cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs;
 also prove worker-shard-cap+1 succeeds as a multi-shard parent job and synthetic
-large counts do not allocate proportional plans.
+large counts do not allocate proportional plans. Exercise the same startup
+install path planned for the final network, including restart before/at/after
+`H`, historical follower sync and rejection of a mismatched install.
 
-**Invariants/failures:** no direct executor/state injection; each failed
-activation proves scoped public pre/post equality; proposer/import/replay
-produce equal state/receipt/header/CE roots; deadline expiry precedes tx order.
+**Invariants/failures:** no direct executor/state injection or post-start
+profile load; each failed activation proves scoped public pre/post equality;
+proposer/import/replay produce equal state/receipt/header/CE roots; deadline
+expiry precedes tx order.
 
 **Fork impact:** only disposable measurement manifest is active. No checked-in
 canonical fresh-devnet schedule changes.
@@ -1665,7 +1682,8 @@ fresh four-validator devnet.
 - production capacity generator in `outbe-ocomp-protocol`;
 - final `OcompPocLimitsV1`, correctness/capacity profiles and Rust constants;
 - fresh base genesis, network binding, static committee/key registrations/PoPs,
-  final chain manifest and fork height 32;
+  canonical `Final` `OcompForkInstallV1`, final chain manifest and fork height
+  32;
 - final bundle/genesis/cap golden vectors;
 - genesis/network/profile consumers and `mise` capacity command.
 
@@ -1676,12 +1694,15 @@ activation-byte cap-1/cap/cap+1, run the five cold measurements on the frozen
 `OcompPocDevnetMachineV1` class, lower per-interface bounds until the worst run
 has at least 20% headroom, bind benchmark/machine evidence, regenerate
 bundle/genesis/committee in the frozen two-stage order and remove all
-provisional acceptance. It must not generate a total Tribute ceiling.
+provisional acceptance. The final install is loaded once before node startup
+and propagated unchanged through executor, consensus and txpool. It must not
+generate a total Tribute ceiling.
 
 **Invariants/failures:** smallest bound across every interface wins; compiled/
-genesis/network constants equal; cap+1 rejects before unbounded work; final
-public path/replay parity; no zero/missing field; no provisional manifest or
-key accepted.
+genesis/network constants equal; exact install classification/hash and all
+chain/genesis/fork/bundle/committee bindings match; cap+1 rejects before
+unbounded work; final public path/replay parity; no zero/missing field; no
+provisional manifest or key accepted.
 
 **Fork impact:** this is the only task allowed to check in/arm the canonical PoC
 fork. No supported-network rollout occurs.

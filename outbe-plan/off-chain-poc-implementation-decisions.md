@@ -283,6 +283,18 @@ second, then a final chain manifest. This removes the otherwise circular
 requirement to embed a PoP over `genesis_hash` inside the genesis being hashed,
 without adding a runtime registration API.
 
+The 2026-07-26 activation-binding amendment closes the production request gap.
+The final chain manifest carries one canonical immutable
+`OcompForkInstallV1` containing classification, `AtBlock(H)`, the complete
+request profile, exact bundle and complete result committee. Every node loads
+and validates it before startup and supplies the same typed value to proposal,
+import, replay, consensus and txpool. At `H`, the existing empty-body
+`OcompLifecycleBegin` atomically installs request and activation authority
+before expiry. No new SystemTx, local height/profile override, hot reload,
+state injection or registration API is introduced. The existing
+protocol-version-1 Update handler remains the sole owner of Tribute, Fidelity,
+Oracle and Metadosis pre-admission initialization at the same height.
+
 ## #8: How is the result activated and applied atomically?
 
 Blocked by: #3, #4, #5, #7

@@ -147,17 +147,24 @@ This journal is restart/reconciliation evidence, not chain authority.
 
 ## Preconditions
 
-1. The PoC fork/profile and one exact `ProtocolBundleV1` are active on a fresh
-   disposable devnet.
-2. Every generated page, work shard, chunk, control message and activation
+1. Before any node starts, the disposable devnet generator has produced a base
+   genesis and one canonical `Measurement` or `Final`
+   `OcompForkInstallV1`. Every node has loaded the same immutable binding to
+   the exact chain/genesis, `AtBlock(H)`, request profile, bundle and complete
+   result committee.
+2. At `H`, the existing empty-body `OcompLifecycleBegin` atomically installs
+   the complete authority before expiry. The existing protocol-version-1
+   Update handler initializes the owner pre-admission profiles at the same
+   height through `CycleTick`; no owner mutation is duplicated.
+3. Every generated page, work shard, chunk, control message and activation
    summary fits its frozen interface cap; total Tribute count is not capped.
-3. Four result-validator identities and their separate OCOMP keys are registered;
+4. Four result-validator identities and their separate OCOMP keys are registered;
    `n=4`, `q=3`.
-4. The day is READY, its Tribute collection is sealed and non-empty, and the
+5. The day is READY, its Tribute collection is sealed and non-empty, and the
    exact current attempt has no live predecessor.
-5. Oracle/Fidelity inputs, the budget split and every activation precondition
+6. Oracle/Fidelity inputs, the budget split and every activation precondition
    can be frozen at the request logical context.
-6. Every validator can either retain/reconstruct the finalized input or
+7. Every validator can either retain/reconstruct the finalized input or
    explicitly abstain; local admission cannot change chain eligibility.
 
 For every shard `j`, `AMOUNT_MAP(j)` reads the matching `FIDELITY_MAP(j)`

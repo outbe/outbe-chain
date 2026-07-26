@@ -2467,7 +2467,12 @@ ARMED @ H
 ACTIVE_DUAL and later -> FORWARD_FIX_PENDING    never downgrade
 ```
 
-PoC starts from a fresh devnet genesis already prepared for its bundle.
+PoC starts from a reproducible fresh base genesis. After its exact hash exists,
+the generator creates the bundle, committee/PoPs and canonical
+`OcompForkInstallV1` chain binding before node startup. At `H`, the existing
+empty-body `OcompLifecycleBegin` atomically installs the complete authority;
+the protocol-version-1 Update handler initializes owner pre-admission profiles
+through `CycleTick` at the same height.
 BoundedMVP on a network with existing state uses two governed stages:
 
 1. a dormant preparation version adds versioned OCOMP records/indexes and runs

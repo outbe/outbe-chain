@@ -76,6 +76,25 @@ not copied from an existing network. The static committee is assembled only
 after that hash and `ProtocolBundleHash` exist; the final chain manifest binds
 both plus the committee snapshot without regenerating the genesis header.
 
+The chain manifest carries one canonical consensus input:
+
+```text
+OcompForkInstallV1 {
+  classification: Measurement | Final,
+  activation: AtBlock(H),
+  request_profile: OcompRequestProfile,
+  protocol_bundle: ProtocolBundleV1,
+  result_committee: OcompCommitteeSnapshotV1,
+}
+```
+
+This is a startup chain binding, not user calldata, a new SystemTx body or an
+operational OCOMP setting. The node validates its canonical hash, exact
+chain/genesis identity and all profile/bundle/committee cross-bindings before
+starting block production/import/replay, then retains one immutable parsed
+value. Every execution path receives that same typed value. A node-local
+height/profile override or runtime reload is invalid.
+
 The semantic profile constants are:
 
 | Constant | Value |
@@ -2133,8 +2152,10 @@ The stable phase slots are:
 begin-zone:
   existing begin kinds through LateFinalizeCredits
   OcompLifecycleBegin:
-    1. reserved mode/revocation barrier (PoC no-op)
-    2. bounded OCOMP expiry/reset
+    1. at H only, atomically install the complete chain-manifest-bound
+       request profile, protocol bundle and result committee
+    2. reserved future pause/revocation barrier
+    3. bounded OCOMP expiry/reset
   CycleTick
 ordinary transactions, including activateLysis
 CE sealing
@@ -2146,6 +2167,13 @@ commit; no later semantic writer
 `OcompLifecycleBegin` is SystemTx V2 with exact four-byte selector ASCII
 `OSE2` (`0x4f534532`) and an empty body. It is mandatory on the active fork,
 ordered after `LateFinalizeCredits` and before `CycleTick`.
+At exactly `H`, it validates all three install objects before the first write
+and commits them under one outer checkpoint; exact replay is idempotent and a
+partial or different authority is fatal. On later active blocks the install
+subphase is an exact no-op and bounded lifecycle/expiry continues. The
+protocol-version-1 Update handler remains the only initializer of
+Tribute/Fidelity/Oracle/Metadosis pre-admission profiles and is scheduled for
+the same `H` through the existing `CycleTick` path.
 `OcompTerminalRequest` is SystemTx V2 with selector ASCII `OSR2`
 (`0x4f535232`) and an empty body. It is the sole end-zone system kind. Import
 and replay reject missing, duplicated, misordered or non-empty envelopes.

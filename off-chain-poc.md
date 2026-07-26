@@ -214,7 +214,8 @@ public adapter and second domain program are not PoC deliverables.
 
 These are PoC-SCAFFOLD, not architectural shortcuts:
 
-- a fresh disposable devnet genesis prepared for exactly one bundle;
+- a fresh disposable base genesis followed by one canonical chain manifest
+  prepared for exactly one fork profile and bundle;
 - one pending job;
 - a static four-member result committee;
 - protected local OCOMP key files;
@@ -384,9 +385,14 @@ them as a total population ceiling.
 An immutable PoC build/deployment manifest records the tested node, supervisor,
 exporter, worker and relay artifacts. A PoC network manifest records every
 compatible RPC, transaction-input, txpool, P2P, block-body, gas,
-internal-work/job/byte/count limit and the minimum devnet hardware class. These
-manifests are reproducibility artifacts, not the signed BoundedMVP release gate;
-the smallest recorded layer limit is the protocol cap.
+internal-work/job/byte/count limit and the minimum devnet hardware class. Its
+consensus-bearing `OcompForkInstallV1` binding contains the classification,
+`AtBlock(H)`, complete request profile, exact protocol bundle and complete
+result committee. It is generated after the base genesis hash exists, loaded
+once before node startup and used unchanged by proposer, importer, historical
+replay, consensus and txpool. CLI/environment overrides and runtime reload are
+forbidden. These manifests are reproducibility artifacts, not the signed
+BoundedMVP release gate; the smallest recorded layer limit is the protocol cap.
 
 An ineligible or over-limit WWD stays `READY` or the created job expires. It
 never falls back to on-chain Lysis.
@@ -621,17 +627,26 @@ The PoC implements these stable phase slots:
 
 ```text
 begin-zone:
-  1. reserved protocol/mode barrier slot (no-op in PoC)
-  2. expire/reset jobs due at this height
+  1. at H only, atomically install the chain-manifest-bound request profile,
+     protocol bundle and complete result committee
+  2. reserved future pause/revocation barrier
+  3. expire/reset jobs due at this height
 ordinary transactions, including activateLysis
 CE sealing
 terminal READY inspection/request creation
 commit; no later semantic writer
 ```
 
-MVP may populate the earlier revocation, pause and upgrade barriers without
-moving expiry, activation or request creation. This is how the PoC core evolves
-without changing its lifecycle ordering.
+The install reuses the existing empty-body `OcompLifecycleBegin` envelope; it
+does not add a SystemTx or change its ABI. Exact replay is idempotent, while a
+partial or different authority is fatal. The existing protocol-version-1
+Update handler initializes Tribute/Fidelity/Oracle/Metadosis pre-admission
+profiles at the same height through `CycleTick`; those mutations are not
+duplicated in the install slot.
+
+MVP may populate the reserved revocation and pause barrier without moving
+installation, expiry, activation or request creation. This is how the PoC core
+evolves without changing its lifecycle ordering.
 
 Activation dispatch handles terminal retries before the live-job guard:
 
@@ -1726,7 +1741,10 @@ At the source revision:
 - large-state proof, DA/custody, witness state, snapshot/delta recovery and
   contributor-claims mechanisms do not exist and are outside PoC.
 
-The PoC starts from a fresh devnet genesis already prepared for its bundle.
+The PoC starts from a reproducible fresh base genesis. After its exact hash is
+known, the generator creates the bundle, committee/PoPs and one canonical
+chain-manifest-bound `OcompForkInstallV1` before any node starts. This avoids
+embedding a genesis-hash-dependent object back into the genesis being hashed.
 Supported-network migration and the full upgrade FSM are not prerequisites for
 the PoC milestone.
 

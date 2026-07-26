@@ -76,8 +76,49 @@ retains the frozen Lysis budget and never repeats the committed auction brief.
 
 A terminal no-retry outcome credits the whole `lysis_budget` to carry-over once.
 
-The block lifecycle reserves stable positions for future pause/revocation and
-protocol activation, but the PoC keeps those slots no-op.
+The block lifecycle reserves stable positions for fork-bound installation and
+future pause/revocation. On the first active block, the existing empty-body
+`OcompLifecycleBegin` envelope atomically installs the exact request profile,
+protocol bundle and complete result committee from the authenticated chain
+manifest before running bounded expiry. Later active blocks run only the
+ordinary lifecycle/expiry operation. The SystemTx selector, body and ordering
+do not change.
+
+### Fork-bound authority installation
+
+The PoC uses one immutable `OcompForkInstallV1` consensus input containing:
+
+- a `Measurement` or `Final` classification;
+- `AtBlock(H)`;
+- the complete `OcompRequestProfile`;
+- the complete `ProtocolBundleV1`;
+- the complete `OcompCommitteeSnapshotV1`.
+
+The reproducible generator creates the base genesis first, derives its exact
+hash, then creates the bundle, committee registrations/PoPs and canonical
+chain-manifest binding. The install artifact is therefore not embedded back
+into the genesis state and does not create a genesis-hash cycle.
+
+Every node loads and validates the canonical binding before it starts block
+production, import or replay. It must match the selected chain ID, exact base
+genesis hash, fork ID, activation height and every profile/bundle/committee
+cross-hash. The parsed value is immutable for the process lifetime; local
+environment variables, command-line height overrides, runtime file reload and
+OCOMP process readiness cannot select consensus semantics.
+
+At exactly `H`, all three objects are validated before the first write and are
+installed under one outer storage checkpoint. Replaying the exact install is
+idempotent; partial state or any different value is fatal. The same typed
+install and activation height are supplied to proposer, importer, historical
+replay, consensus and txpool paths. Pre-fork blocks contain no OCOMP lifecycle
+envelopes.
+
+The existing protocol-version-1 Update handler remains the sole initializer of
+Tribute, Fidelity, Oracle and Metadosis pre-admission profiles. A fresh PoC
+network schedules that Update for the same height `H`; the fork install does
+not duplicate those owner mutations. Block order is fork install and expiry,
+then `CycleTick`/Update activation, then ordinary transactions and the
+terminal request slot.
 
 ### Activation verification
 
