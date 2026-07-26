@@ -107,8 +107,8 @@ pub fn retire_certified_partition(
             input.consumed_nominal_total,
         )?;
         if tribute.retire_completed_partition_inner(scope, day)? != RetirementOutcome::Requested {
-            return Err(revert(
-                "certified Tribute collection is absent from the active generation",
+            return Err(PrecompileError::Fatal(
+                "sealed Tribute projection contradicts the authenticated CE generation".into(),
             ));
         }
 

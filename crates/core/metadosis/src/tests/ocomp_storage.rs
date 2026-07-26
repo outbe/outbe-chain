@@ -1,14 +1,21 @@
 use alloy_primitives::{B256, U256};
+use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
+    hash::hash_framed,
     intent::{
         intent_storage_key, ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
     profile::CapacityProfileV1,
-    receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
-    state::{OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
+    receipts::{
+        desis_request_brief_hash, empty_apply_event_summary_hash, ActivationOutcome,
+        AggregateActivationReceiptV1, BudgetSplitDestination, EffectBindingV1,
+        RequestBudgetSplitReceiptV1,
+    },
+    registry::HashDomain,
+    state::{OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
 };
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
@@ -16,6 +23,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::schema::PromisLimitContract;
 
+use crate::precompile::IMetadosis;
 use crate::{
     ocomp::{
         schema::{poc_schema_limits, OcompRequestProfile},
@@ -287,6 +295,125 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(terminal.outcome, OcompTerminalOutcome::Expired);
         assert_eq!(terminal.next_pending_nonce, Some(1));
         assert_eq!(terminal.completed_binding, None);
+    });
+}
+
+#[test]
+fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let fsm_limits = JobFsmLimits {
+            max_terminal_records: 2,
+        };
+        let mut contract = MetadosisContract::new(storage);
+        create_ready_day(&mut contract, WWD);
+        contract
+            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
+            .unwrap();
+
+        let request_receipt = receipt();
+        let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
+        let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, request_receipt_hash);
+        let intent_id = requested.intent_id(&limits).unwrap();
+        contract
+            .commit_ocomp_request(&requested, &request_receipt, &limits, fsm_limits)
+            .unwrap();
+
+        let job_id = B256::repeat_byte(0x51);
+        let result_digest = B256::repeat_byte(0x52);
+        let activation_call_id = B256::repeat_byte(0x53);
+        let binding = EffectBindingV1 {
+            intent_id,
+            job_id,
+            attempt: requested.attempt,
+            protocol_bundle_hash: requested.protocol_bundle_hash,
+            result_digest,
+            activation_preconditions_hash: requested
+                .activation_preconditions
+                .activation_preconditions_hash(&limits)
+                .unwrap(),
+            activation_call_id,
+        };
+        let activation_height = REQUEST_HEIGHT + 5;
+        let activation_time = REQUEST_TIME + 5;
+        let terminal_receipt = AggregateActivationReceiptV1 {
+            binding,
+            outcome: ActivationOutcome::ConflictResolved,
+            nod_receipt_hash: None,
+            contributor_receipt_hash: None,
+            tribute_receipt_hash: None,
+            carry_over_receipt_hash: None,
+            request_budget_split_receipt_hash: request_receipt_hash,
+            active_generation_hash: None,
+            effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
+            event_summary_hash: empty_apply_event_summary_hash().unwrap(),
+            activated_at_height: activation_height,
+            activated_at_time: activation_time,
+        };
+        let completed_binding = OcompCompletedBindingV1 {
+            job_id,
+            activation_call_id,
+            result_digest,
+            result_evidence_hash: B256::repeat_byte(0x54),
+            terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
+            terminal_receipt,
+        };
+
+        assert_eq!(
+            contract
+                .commit_ocomp_conflict(
+                    intent_id,
+                    completed_binding.clone(),
+                    activation_height,
+                    activation_time,
+                    &limits,
+                    fsm_limits,
+                )
+                .unwrap(),
+            1
+        );
+
+        assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::READY);
+        let projection = contract
+            .ocomp_fsm_state(WWD, &limits, fsm_limits)
+            .unwrap()
+            .projection();
+        assert_eq!(projection.phase, DayPhase::Ready);
+        assert_eq!(projection.pending_nonce, 1);
+        assert_eq!(projection.next_check_height, Some(activation_height + 1));
+        assert_eq!(projection.retained_lysis_budget, Some(LYSIS_BUDGET));
+        let terminal = contract
+            .ocomp_job_record(intent_id, &limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.status, OcompJobStatus::Conflicted);
+        assert_eq!(
+            terminal.terminal.unwrap().completed_binding,
+            Some(completed_binding.clone())
+        );
+        assert!(contract.ocomp_scheduler.is_empty().unwrap());
+
+        assert_eq!(
+            IMetadosis::getLysisTerminalReceiptCall::SELECTOR,
+            [0x20, 0xf4, 0x6b, 0xe7]
+        );
+        let encoded = crate::precompile::dispatch(
+            contract.storage.clone(),
+            &IMetadosis::getLysisTerminalReceiptCall {
+                intentId: intent_id,
+            }
+            .abi_encode(),
+            alloy_primitives::Address::repeat_byte(0x61),
+            U256::ZERO,
+        )
+        .unwrap();
+        let public_receipt =
+            IMetadosis::getLysisTerminalReceiptCall::abi_decode_returns(&encoded).unwrap();
+        assert_eq!(
+            AggregateActivationReceiptV1::decode_canonical(public_receipt.as_ref(), &limits)
+                .unwrap(),
+            completed_binding.terminal_receipt
+        );
     });
 }
 

@@ -17,6 +17,7 @@ pub enum JobFsmTransitionKind {
     Defer,
     Request,
     Expire,
+    Conflict,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,7 +27,7 @@ pub struct JobFsmTransitionRule {
     pub to: DayPhase,
 }
 
-const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 3] = [
+const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 4] = [
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Defer,
         from: DayPhase::Ready,
@@ -39,6 +40,11 @@ const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 3] = [
     },
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Expire,
+        from: DayPhase::OffchainPending,
+        to: DayPhase::Ready,
+    },
+    JobFsmTransitionRule {
+        kind: JobFsmTransitionKind::Conflict,
         from: DayPhase::OffchainPending,
         to: DayPhase::Ready,
     },
@@ -83,6 +89,10 @@ pub enum JobFsmCommand {
         at_height: u64,
         at_time: u64,
     },
+    Conflict {
+        at_height: u64,
+        at_time: u64,
+    },
 }
 
 impl JobFsmCommand {
@@ -91,6 +101,7 @@ impl JobFsmCommand {
             Self::Defer { .. } => JobFsmTransitionKind::Defer,
             Self::Request { .. } => JobFsmTransitionKind::Request,
             Self::Expire { .. } => JobFsmTransitionKind::Expire,
+            Self::Conflict { .. } => JobFsmTransitionKind::Conflict,
         }
     }
 }
@@ -108,14 +119,22 @@ pub struct JobFsmProjection {
     pub retained_lysis_budget: Option<U256>,
 }
 
-/// Immutable evidence retained for an expired attempt.
+/// Terminal retry outcome retained by the bounded FSM history.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ExpiredAttempt {
+pub enum RetryTerminalOutcome {
+    Expired,
+    Conflicted,
+}
+
+/// Immutable evidence retained for an attempt that returned the WWD to READY.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalAttempt {
     pub intent_id: B256,
     pub pending_nonce: u64,
     pub terminal_height: u64,
     pub terminal_time: u64,
     pub next_pending_nonce: u64,
+    pub outcome: RetryTerminalOutcome,
 }
 
 /// Canonical persistence projection of the immutable request-phase effect.
@@ -149,7 +168,7 @@ pub struct JobFsmSnapshot {
     pub worldwide_day: WorldwideDay,
     pub ready: Option<ReadyAttemptSnapshot>,
     pub live: Option<LiveAttemptSnapshot>,
-    pub expired: Vec<ExpiredAttempt>,
+    pub terminal: Vec<TerminalAttempt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -182,7 +201,7 @@ pub struct JobFsmState {
     worldwide_day: WorldwideDay,
     ready: Option<ReadyAttempt>,
     live: Option<LiveAttempt>,
-    expired: Vec<ExpiredAttempt>,
+    terminal: Vec<TerminalAttempt>,
 }
 
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -204,6 +223,8 @@ pub enum JobFsmError {
     RequestRequiresReady,
     #[error("OCOMP expiry requires OFFCHAIN_PENDING state")]
     ExpiryRequiresPending,
+    #[error("OCOMP certified conflict requires OFFCHAIN_PENDING state")]
+    ConflictRequiresPending,
     #[error("OCOMP intent id is the reserved zero hash")]
     ZeroIntentId,
     #[error("OCOMP request budget receipt hash is the reserved zero hash")]
@@ -249,7 +270,7 @@ impl JobFsmState {
                 retained_effect: None,
             }),
             live: None,
-            expired: Vec::new(),
+            terminal: Vec::new(),
         }
     }
 
@@ -270,7 +291,7 @@ impl JobFsmState {
                 deadline_height: live.deadline_height,
                 retained_effect: RetainedRequestEffect::from(live.retained_effect),
             }),
-            expired: snapshot.expired,
+            terminal: snapshot.terminal,
         };
         state.validate(limits)?;
         Ok(state)
@@ -294,7 +315,7 @@ impl JobFsmState {
                 deadline_height: live.deadline_height,
                 retained_effect: RetainedRequestEffectSnapshot::from(live.retained_effect),
             }),
-            expired: self.expired.clone(),
+            terminal: self.terminal.clone(),
         }
     }
 
@@ -357,6 +378,7 @@ impl JobFsmState {
         if self.phase()? != transition_rule.from {
             return Err(match transition_kind {
                 JobFsmTransitionKind::Expire => JobFsmError::ExpiryRequiresPending,
+                JobFsmTransitionKind::Conflict => JobFsmError::ConflictRequiresPending,
                 JobFsmTransitionKind::Defer | JobFsmTransitionKind::Request => {
                     JobFsmError::RequestRequiresReady
                 }
@@ -444,43 +466,71 @@ impl JobFsmState {
                         deadline_height: live.deadline_height,
                     });
                 }
-                let terminal_records = u16::try_from(self.expired.len()).map_err(|_| {
-                    JobFsmError::TerminalRecordCapExceeded {
-                        limit: limits.max_terminal_records,
-                    }
-                })?;
-                if terminal_records >= limits.max_terminal_records {
-                    return Err(JobFsmError::TerminalRecordCapExceeded {
-                        limit: limits.max_terminal_records,
-                    });
-                }
-                let next_pending_nonce = live
-                    .pending_nonce
-                    .checked_add(1)
-                    .ok_or(JobFsmError::PendingNonceOverflow)?;
-                let next_check_height = at_height
-                    .checked_add(1)
-                    .ok_or(JobFsmError::RetryHeightOverflow)?;
-                self.expired.push(ExpiredAttempt {
-                    intent_id: live.intent_id,
-                    pending_nonce: live.pending_nonce,
-                    terminal_height: at_height,
-                    terminal_time: at_time,
-                    next_pending_nonce,
-                });
-                self.ready = Some(ReadyAttempt {
-                    pending_nonce: next_pending_nonce,
-                    next_check_height,
-                    retained_effect: Some(live.retained_effect),
-                });
-                self.live = None;
-                Ok(())
+                self.retry_after_terminal(
+                    live,
+                    at_height,
+                    at_time,
+                    RetryTerminalOutcome::Expired,
+                    limits,
+                )
+            }
+            JobFsmCommand::Conflict { at_height, at_time } => {
+                let live = self.live.ok_or(JobFsmError::ConflictRequiresPending)?;
+                self.retry_after_terminal(
+                    live,
+                    at_height,
+                    at_time,
+                    RetryTerminalOutcome::Conflicted,
+                    limits,
+                )
             }
         }?;
 
         if self.phase()? != transition_rule.to {
             return Err(JobFsmError::InvalidTransitionRule);
         }
+        Ok(())
+    }
+
+    fn retry_after_terminal(
+        &mut self,
+        live: LiveAttempt,
+        at_height: u64,
+        at_time: u64,
+        outcome: RetryTerminalOutcome,
+        limits: JobFsmLimits,
+    ) -> Result<(), JobFsmError> {
+        let terminal_records = u16::try_from(self.terminal.len()).map_err(|_| {
+            JobFsmError::TerminalRecordCapExceeded {
+                limit: limits.max_terminal_records,
+            }
+        })?;
+        if terminal_records >= limits.max_terminal_records {
+            return Err(JobFsmError::TerminalRecordCapExceeded {
+                limit: limits.max_terminal_records,
+            });
+        }
+        let next_pending_nonce = live
+            .pending_nonce
+            .checked_add(1)
+            .ok_or(JobFsmError::PendingNonceOverflow)?;
+        let next_check_height = at_height
+            .checked_add(1)
+            .ok_or(JobFsmError::RetryHeightOverflow)?;
+        self.terminal.push(TerminalAttempt {
+            intent_id: live.intent_id,
+            pending_nonce: live.pending_nonce,
+            terminal_height: at_height,
+            terminal_time: at_time,
+            next_pending_nonce,
+            outcome,
+        });
+        self.ready = Some(ReadyAttempt {
+            pending_nonce: next_pending_nonce,
+            next_check_height,
+            retained_effect: Some(live.retained_effect),
+        });
+        self.live = None;
         Ok(())
     }
 
@@ -498,7 +548,7 @@ impl JobFsmState {
         if self.ready.is_some() == self.live.is_some() {
             return Err(JobFsmError::InvalidPhaseCardinality);
         }
-        let terminal_records = u16::try_from(self.expired.len()).map_err(|_| {
+        let terminal_records = u16::try_from(self.terminal.len()).map_err(|_| {
             JobFsmError::TerminalRecordCapExceeded {
                 limit: limits.max_terminal_records,
             }
@@ -509,7 +559,7 @@ impl JobFsmState {
             });
         }
 
-        for (index, terminal) in self.expired.iter().enumerate() {
+        for (index, terminal) in self.terminal.iter().enumerate() {
             let expected_nonce =
                 u64::try_from(index).map_err(|_| JobFsmError::InvalidTerminalEvidence)?;
             if terminal.pending_nonce != expected_nonce
@@ -520,7 +570,7 @@ impl JobFsmState {
             }
         }
         let expected_current_nonce =
-            u64::try_from(self.expired.len()).map_err(|_| JobFsmError::InvalidTerminalEvidence)?;
+            u64::try_from(self.terminal.len()).map_err(|_| JobFsmError::InvalidTerminalEvidence)?;
 
         let (pending_nonce, retained_effect) = if let Some(ready) = self.ready {
             if ready.pending_nonce == 0 && ready.retained_effect.is_some()
@@ -556,7 +606,7 @@ impl JobFsmState {
 
     #[must_use]
     pub fn projection(&self) -> JobFsmProjection {
-        let terminal_records = u16::try_from(self.expired.len()).unwrap_or(u16::MAX);
+        let terminal_records = u16::try_from(self.terminal.len()).unwrap_or(u16::MAX);
         match (self.ready, self.live) {
             (Some(ready), None) => JobFsmProjection {
                 worldwide_day: self.worldwide_day,
@@ -583,8 +633,8 @@ impl JobFsmState {
     }
 
     #[must_use]
-    pub fn expired_attempts(&self) -> &[ExpiredAttempt] {
-        &self.expired
+    pub fn terminal_attempts(&self) -> &[TerminalAttempt] {
+        &self.terminal
     }
 }
 
@@ -605,5 +655,58 @@ impl From<RetainedRequestEffect> for RetainedRequestEffectSnapshot {
             lysis_budget: effect.lysis_budget,
             receipt_hash: effect.receipt_hash,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LIMITS: JobFsmLimits = JobFsmLimits {
+        max_terminal_records: 2,
+    };
+
+    #[test]
+    fn certified_conflict_requeues_the_same_budget_at_the_next_height() {
+        let mut state = JobFsmState::initial_ready(WorldwideDay::new(20_260_726), 10);
+        state
+            .apply(
+                JobFsmCommand::Request {
+                    at_height: 10,
+                    intent_id: B256::repeat_byte(0x11),
+                    deadline_height: 74,
+                    lysis_budget: U256::from(900),
+                    request_budget_receipt_hash: B256::repeat_byte(0x22),
+                },
+                LIMITS,
+            )
+            .unwrap();
+
+        let projection = state
+            .apply(
+                JobFsmCommand::Conflict {
+                    at_height: 21,
+                    at_time: 1_800,
+                },
+                LIMITS,
+            )
+            .unwrap();
+
+        assert_eq!(projection.phase, DayPhase::Ready);
+        assert_eq!(projection.pending_nonce, 1);
+        assert_eq!(projection.next_check_height, Some(22));
+        assert_eq!(projection.retained_lysis_budget, Some(U256::from(900)));
+        assert_eq!(projection.terminal_records, 1);
+        assert_eq!(
+            state.terminal_attempts(),
+            &[TerminalAttempt {
+                intent_id: B256::repeat_byte(0x11),
+                pending_nonce: 0,
+                terminal_height: 21,
+                terminal_time: 1_800,
+                next_pending_nonce: 1,
+                outcome: RetryTerminalOutcome::Conflicted,
+            }]
+        );
     }
 }

@@ -10,11 +10,12 @@
 //! sub-call driver in [`crate::sub_call`].
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
     AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
@@ -27,16 +28,19 @@ use outbe_primitives::addresses::{
     VAULT_PROVIDER_ADDRESS, VOTE_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
     ZKPROOF_POSEIDON_ADDRESS,
 };
-use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use revm::{
-    handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
+    Database,
+    handler::{EthPrecompiles, PrecompileProvider, precompile_output_to_interpreter_result},
     interpreter::{CallInputs, InterpreterResult},
     precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult},
     primitives::hardfork::SpecId,
-    Database,
 };
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 
 use crate::{
     gas::SubcallGasMeter,
@@ -58,6 +62,23 @@ type DispatchFn = fn(
 /// computationally heavy stateless precompiles (Poseidon hash, zk
 /// proof verification) declare their own.
 type BaseGasFn = fn(&[u8]) -> u64;
+
+/// Consensus-local meter shared by every dispatch path in one EVM/block.
+///
+/// The reservation lives outside journaled state so a reverting first attempt
+/// still consumes the block allowance. A fresh EVM gets a fresh meter.
+#[derive(Debug, Default)]
+pub struct OcompActivationBlockMeter {
+    attempts: AtomicU8,
+}
+
+impl OcompActivationBlockMeter {
+    fn try_reserve(&self) -> bool {
+        self.attempts
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
 
 /// Default base-gas function — returns the flat `PRECOMPILE_BASE_GAS`.
 fn default_base_gas(_input: &[u8]) -> u64 {
@@ -302,6 +323,15 @@ pub fn map_outbe_precompile_result(
     }
 }
 
+fn is_lysis_activation_call(address: Address, data: &[u8], is_static: bool, value: U256) -> bool {
+    address == outbe_ocomp_protocol::abi::METADOSIS_ADDRESS
+        && data
+            .get(..4)
+            .is_some_and(|selector| selector == outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR)
+        && !is_static
+        && value.is_zero()
+}
+
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
@@ -363,10 +393,13 @@ pub fn extend_outbe_precompiles<DB>(
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_lifecycle_active: bool,
 ) where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter::default());
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
         |addr: &Address| outbe_dispatch_fn(addr).is_some(),
@@ -384,41 +417,71 @@ pub fn extend_outbe_precompiles<DB>(
             outbe_ctx_dispatch::<DB>(
                 ctx,
                 inputs,
-                spec,
-                runtime_body_readers.as_ref(),
-                &execution_scope,
+                OutbeDispatchRuntime {
+                    spec,
+                    runtime_body_readers: runtime_body_readers.as_ref(),
+                    execution_scope: &execution_scope,
+                    ocomp_finality_authority: ocomp_finality_authority.clone(),
+                    ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+                    ocomp_lifecycle_active,
+                },
             )
         },
     );
+}
+
+/// Executor-owned runtime authorities carried into one Outbe dispatch.
+struct OutbeDispatchRuntime<'a> {
+    spec: SpecId,
+    runtime_body_readers: Option<&'a RuntimeBodyReaders>,
+    execution_scope: &'a Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
 }
 
 /// Dispatch one outbe precompile call with full context access.
 fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
-    spec: SpecId,
-    runtime_body_readers: Option<&RuntimeBodyReaders>,
-    execution_scope: &Arc<ExecutionScope>,
+    runtime: OutbeDispatchRuntime<'_>,
 ) -> Result<Option<InterpreterResult>, String>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let OutbeDispatchRuntime {
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_activation_block_meter,
+        ocomp_lifecycle_active,
+    } = runtime;
+
     let address = inputs.bytecode_address;
     let Some((_name, dispatch_fn, base_gas_fn)) = outbe_dispatch_fn(&address) else {
         return Ok(None);
     };
 
-    // Pre-decode call data to evaluate the base-gas function over the
-    // exact bytes the dispatch body will see.
-    let data: Bytes = match &inputs.input {
-        revm::interpreter::CallInput::Bytes(b) => b.clone(),
-        revm::interpreter::CallInput::SharedBuffer(_) => Bytes::new(),
-    };
+    // Materialize the exact calldata before choosing the consensus gas charge.
+    // Contract -> precompile calls arrive as SharedBuffer and must pay the same
+    // activation charge as top-level Bytes calls.
+    use revm::context_interface::ContextTr;
+    let data: Bytes = inputs.input.bytes_local(ctx.local());
 
     // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
     // existing flat-cost contract still holds for default precompiles.
-    let base_gas = base_gas_fn(data.as_ref()).max(PRECOMPILE_BASE_GAS);
+    let is_active_lysis_selector = ocomp_lifecycle_active
+        && address == METADOSIS_ADDRESS
+        && data
+            .get(..4)
+            .is_some_and(|selector| selector == outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
+    let base_gas = if is_active_lysis_selector {
+        outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas
+    } else {
+        base_gas_fn(data.as_ref()).max(PRECOMPILE_BASE_GAS)
+    };
     if inputs.gas_limit < base_gas {
         let out = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0);
         return Ok(Some(precompile_output_to_interpreter_result(
@@ -447,12 +510,6 @@ where
         revm::interpreter::CallValue::Transfer(v) => v,
         revm::interpreter::CallValue::Apparent(v) => v,
     };
-    // revm hands contract -> precompile calls as `CallInput::SharedBuffer`
-    // (a range into the caller's shared memory) to skip an alloc. Use the
-    // upstream `bytes_local` helper so both variants materialize the actual calldata
-    use revm::context_interface::ContextTr;
-    let data: Bytes = inputs.input.bytes_local(ctx.local());
-
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
 
@@ -475,10 +532,33 @@ where
             spec,
             runtime_body_readers: runtime_body_readers.cloned(),
             execution_scope: execution_scope.clone(),
+            ocomp_finality_authority: ocomp_finality_authority.clone(),
+            ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+            ocomp_lifecycle_active,
+            lysis_activation_entitled: is_lysis_activation_call(
+                address,
+                data.as_ref(),
+                is_static,
+                value,
+            ) && ocomp_lifecycle_active,
         },
     );
     let storage = StorageHandle::new(&mut provider);
     let result = match (address, runtime_body_readers) {
+        (METADOSIS_ADDRESS, _) if is_active_lysis_selector => {
+            if !ocomp_activation_block_meter.try_reserve() {
+                Err(outbe_metadosis::ocomp::activation::reject_block_activation_limit())
+            } else {
+                outbe_metadosis::ocomp::activation::dispatch_public_activation(
+                    storage,
+                    execution_scope.as_ref(),
+                    ocomp_finality_authority.as_deref(),
+                    data.as_ref(),
+                    value,
+                    is_static,
+                )
+            }
+        }
         (TRIBUTE_ADDRESS, Some(readers)) => outbe_tribute::precompile::dispatch(
             storage,
             execution_scope.as_ref(),
@@ -577,6 +657,9 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
     _db: PhantomData<fn() -> DB>,
 }
 
@@ -585,12 +668,18 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         spec: SpecId,
         runtime_body_readers: Option<RuntimeBodyReaders>,
         execution_scope: Arc<ExecutionScope>,
+        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+        ocomp_lifecycle_active: bool,
     ) -> Self {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             runtime_body_readers,
             execution_scope,
+            ocomp_finality_authority,
+            ocomp_activation_block_meter,
+            ocomp_lifecycle_active,
             _db: PhantomData,
         }
     }
@@ -622,9 +711,14 @@ where
         if let Some(result) = outbe_ctx_dispatch::<DB>(
             &mut **context,
             inputs,
-            self.spec,
-            self.runtime_body_readers.as_ref(),
-            &self.execution_scope,
+            OutbeDispatchRuntime {
+                spec: self.spec,
+                runtime_body_readers: self.runtime_body_readers.as_ref(),
+                execution_scope: &self.execution_scope,
+                ocomp_finality_authority: self.ocomp_finality_authority.clone(),
+                ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
+                ocomp_lifecycle_active: self.ocomp_lifecycle_active,
+            },
         )? {
             return Ok(Some(result));
         }
@@ -643,5 +737,58 @@ where
 
     fn contains(&self, address: &Address) -> bool {
         self.eth.contains(address)
+    }
+}
+
+#[cfg(test)]
+mod lysis_activation_entitlement_tests {
+    use super::{OcompActivationBlockMeter, is_lysis_activation_call};
+    use alloy_primitives::{Address, U256};
+    use outbe_ocomp_protocol::abi::{
+        ACTIVATE_LYSIS_SELECTOR, GET_OFFCHAIN_JOB_SELECTOR, METADOSIS_ADDRESS,
+    };
+
+    #[test]
+    fn only_exact_non_static_value_free_metadosis_activation_is_entitled() {
+        assert!(is_lysis_activation_call(
+            METADOSIS_ADDRESS,
+            &ACTIVATE_LYSIS_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_activation_call(
+            Address::repeat_byte(1),
+            &ACTIVATE_LYSIS_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_activation_call(
+            METADOSIS_ADDRESS,
+            &GET_OFFCHAIN_JOB_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_activation_call(
+            METADOSIS_ADDRESS,
+            &ACTIVATE_LYSIS_SELECTOR,
+            true,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_activation_call(
+            METADOSIS_ADDRESS,
+            &ACTIVATE_LYSIS_SELECTOR,
+            false,
+            U256::from(1),
+        ));
+    }
+
+    #[test]
+    fn one_block_meter_reservation_survives_a_failed_first_attempt() {
+        let meter = OcompActivationBlockMeter::default();
+        assert!(meter.try_reserve());
+        assert!(!meter.try_reserve());
+
+        let next_block = OcompActivationBlockMeter::default();
+        assert!(next_block.try_reserve());
     }
 }

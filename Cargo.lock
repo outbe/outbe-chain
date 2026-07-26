@@ -7905,6 +7905,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
@@ -8451,6 +8452,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
+ "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-zerofee",

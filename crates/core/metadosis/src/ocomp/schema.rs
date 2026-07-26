@@ -1,22 +1,27 @@
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
+use outbe_lysis::activation_v1::LysisTerminalPermitV1;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{intent_storage_key, JobIntentV1, PreAdmissionEnvelopeV1},
     profile::CapacityProfileV1,
-    receipts::RequestBudgetSplitReceiptV1,
-    state::{OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1, OcompTerminalOutcome},
+    receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestBudgetSplitReceiptV1},
+    state::{
+        ActiveGenerationV1, OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus,
+        OcompJobTerminalV1, OcompTerminalOutcome,
+    },
     SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_promislimit::{ocomp_budget::CarryOverCredit, schema::PromisLimitContract};
 
 use crate::constants::MAX_RECORDS_KEPT;
+use crate::precompile::IMetadosis;
 use crate::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 
 use super::state::{
-    ExpiredAttempt, JobFsmCommand, JobFsmLimits, JobFsmSnapshot, JobFsmState, LiveAttemptSnapshot,
-    ReadyAttemptSnapshot, RetainedRequestEffectSnapshot,
+    JobFsmCommand, JobFsmLimits, JobFsmSnapshot, JobFsmState, LiveAttemptSnapshot,
+    ReadyAttemptSnapshot, RetainedRequestEffectSnapshot, RetryTerminalOutcome, TerminalAttempt,
 };
 
 const SCHEDULER_MAGIC: [u8; 4] = *b"OMJS";
@@ -415,11 +420,12 @@ impl MetadosisContract<'_> {
                 .apply(JobFsmCommand::Expire { at_height, at_time }, fsm_limits)
                 .map_err(|error| fatal(error.to_string()))?;
             let terminal = state
-                .expired_attempts()
+                .terminal_attempts()
                 .last()
                 .copied()
                 .ok_or_else(|| fatal("OCOMP expiry produced no terminal evidence"))?;
             if terminal.intent_id != live_intent_id
+                || terminal.outcome != RetryTerminalOutcome::Expired
                 || state.projection().terminal_records != before_terminal.saturating_add(1)
             {
                 return Err(fatal("OCOMP terminal index/count mismatch"));
@@ -483,6 +489,265 @@ impl MetadosisContract<'_> {
         })
     }
 
+    pub(crate) fn commit_ocomp_conflict(
+        &mut self,
+        intent_id: B256,
+        completed_binding: OcompCompletedBindingV1,
+        at_height: u64,
+        at_time: u64,
+        schema_limits: &SchemaLimits,
+        fsm_limits: JobFsmLimits,
+    ) -> Result<u64> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let mut state = self
+                .live_ocomp_fsm_state(schema_limits, fsm_limits)?
+                .ok_or_else(|| fatal("OCOMP conflict has no live job"))?;
+            if state.projection().live_intent_id != Some(intent_id) {
+                return Err(fatal("OCOMP conflict IntentId is not the live job"));
+            }
+            let mut record = self
+                .ocomp_job_record(intent_id, schema_limits)?
+                .ok_or_else(|| fatal("OCOMP conflict job record is missing"))?;
+            if record.status != OcompJobStatus::OffchainPending || record.terminal.is_some() {
+                return Err(fatal("OCOMP conflict requires a pending job"));
+            }
+            if at_height >= record.intent.deadline_height {
+                return Err(fatal(
+                    "OCOMP conflict is at or after the exclusive deadline",
+                ));
+            }
+
+            completed_binding
+                .validate_semantics(schema_limits)
+                .map_err(|error| fatal(format!("invalid OCOMP conflict binding: {error}")))?;
+            let receipt = &completed_binding.terminal_receipt;
+            let activation_preconditions_hash = record
+                .intent
+                .activation_preconditions
+                .activation_preconditions_hash(schema_limits)
+                .map_err(|error| fatal(format!("hash OCOMP activation preconditions: {error}")))?;
+            if receipt.outcome != ActivationOutcome::ConflictResolved
+                || receipt.binding.intent_id != intent_id
+                || receipt.binding.attempt != record.intent.attempt
+                || receipt.binding.protocol_bundle_hash != record.intent.protocol_bundle_hash
+                || receipt.binding.activation_preconditions_hash != activation_preconditions_hash
+                || receipt.request_budget_split_receipt_hash
+                    != record
+                        .intent
+                        .frozen_metadosis_values
+                        .request_budget_split_receipt_hash
+                || receipt.activated_at_height != at_height
+                || receipt.activated_at_time != at_time
+            {
+                return Err(fatal("OCOMP conflict receipt is not bound to the live job"));
+            }
+
+            let before_terminal = state.projection().terminal_records;
+            state
+                .apply(JobFsmCommand::Conflict { at_height, at_time }, fsm_limits)
+                .map_err(|error| fatal(error.to_string()))?;
+            let terminal = state
+                .terminal_attempts()
+                .last()
+                .copied()
+                .ok_or_else(|| fatal("OCOMP conflict produced no terminal evidence"))?;
+            if terminal.intent_id != intent_id
+                || terminal.outcome != RetryTerminalOutcome::Conflicted
+                || state.projection().terminal_records != before_terminal.saturating_add(1)
+            {
+                return Err(fatal("OCOMP conflict terminal index/count mismatch"));
+            }
+            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+                return Err(fatal("OCOMP terminal record cap exhausted"));
+            }
+
+            let projection = state.projection();
+            record.status = OcompJobStatus::Conflicted;
+            record.terminal = Some(OcompJobTerminalV1 {
+                outcome: OcompTerminalOutcome::Conflicted,
+                terminal_height: at_height,
+                terminal_time: at_time,
+                next_pending_nonce: Some(terminal.next_pending_nonce),
+                completed_binding: Some(completed_binding),
+            });
+            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
+            self.ocomp_terminal_intents.push(intent_id)?;
+
+            let wwd = WorldwideDay::new(record.intent.wwd);
+            self.worldwide_days
+                .entry(wwd)
+                .status()
+                .write(status::READY)?;
+            let ready_key = ReadyIndexKey::from_projection(projection)?;
+            let mut ready_index = self.read_ready_index()?;
+            insert_ready_key(&mut ready_index, ready_key)?;
+            self.write_ocomp_state(&state)?;
+            self.write_ready_index(&ready_index)?;
+            self.ocomp_scheduler.clear()?;
+            Ok(terminal.next_pending_nonce)
+        })
+    }
+
+    /// Commits the certified terminal receipt and active generation after all
+    /// four owner receipts have been verified in the same activation frame.
+    ///
+    /// The one-shot terminal permit is advanced only after every consensus
+    /// write and event succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn commit_ocomp_completed(
+        &mut self,
+        intent_id: B256,
+        active_generation: ActiveGenerationV1,
+        result_evidence_hash: B256,
+        nod_gratis_consumed: U256,
+        unused_lysis: U256,
+        activated_at_height: u64,
+        activated_at_time: u64,
+        permit: LysisTerminalPermitV1<'_, '_>,
+        schema_limits: &SchemaLimits,
+        fsm_limits: JobFsmLimits,
+    ) -> Result<OcompCompletedBindingV1> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let state = self
+                .live_ocomp_fsm_state(schema_limits, fsm_limits)?
+                .ok_or_else(|| fatal("OCOMP completion has no live job"))?;
+            let projection = state.projection();
+            if projection.live_intent_id != Some(intent_id) {
+                return Err(fatal("OCOMP completion IntentId is not the live job"));
+            }
+            let mut record = self
+                .ocomp_job_record(intent_id, schema_limits)?
+                .ok_or_else(|| fatal("OCOMP completion job record is missing"))?;
+            if record.status != OcompJobStatus::OffchainPending || record.terminal.is_some() {
+                return Err(fatal("OCOMP completion requires a pending job"));
+            }
+            if activated_at_height >= record.intent.deadline_height {
+                return Err(fatal(
+                    "OCOMP completion is at or after the exclusive deadline",
+                ));
+            }
+            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+                return Err(fatal("OCOMP terminal record cap exhausted"));
+            }
+
+            let activation_preconditions_hash = record
+                .intent
+                .activation_preconditions
+                .activation_preconditions_hash(schema_limits)
+                .map_err(|error| fatal(format!("hash OCOMP activation preconditions: {error}")))?;
+            let binding = permit.binding().clone();
+            if binding.intent_id != intent_id
+                || binding.job_id != active_generation.job_id
+                || binding.attempt != record.intent.attempt
+                || binding.protocol_bundle_hash != record.intent.protocol_bundle_hash
+                || binding.activation_preconditions_hash != activation_preconditions_hash
+                || permit.request_budget_split_receipt_hash()
+                    != record
+                        .intent
+                        .frozen_metadosis_values
+                        .request_budget_split_receipt_hash
+                || nod_gratis_consumed.checked_add(unused_lysis)
+                    != Some(record.intent.frozen_metadosis_values.lysis_budget)
+            {
+                return Err(fatal("OCOMP terminal permit is not bound to the live job"));
+            }
+            if result_evidence_hash.is_zero() {
+                return Err(fatal("OCOMP result evidence hash is zero"));
+            }
+            if active_generation.result_evidence_hash != result_evidence_hash {
+                return Err(fatal(
+                    "active Lysis generation differs from result evidence",
+                ));
+            }
+
+            let wwd = WorldwideDay::new(record.intent.wwd);
+            if self.active_lysis_generation(wwd, schema_limits)?.is_some() {
+                return Err(fatal("active Lysis generation cannot be overwritten"));
+            }
+            let active_generation_hash = active_generation
+                .active_generation_hash(schema_limits)
+                .map_err(|error| fatal(format!("hash active Lysis generation: {error}")))?;
+            let receipt = AggregateActivationReceiptV1 {
+                binding: binding.clone(),
+                outcome: ActivationOutcome::Applied,
+                nod_receipt_hash: Some(permit.nod_receipt_hash()),
+                contributor_receipt_hash: Some(permit.contributor_receipt_hash()),
+                tribute_receipt_hash: Some(permit.tribute_receipt_hash()),
+                carry_over_receipt_hash: Some(permit.carry_over_receipt_hash()),
+                request_budget_split_receipt_hash: permit.request_budget_split_receipt_hash(),
+                active_generation_hash: Some(active_generation_hash),
+                effect_commitment: permit.effect_commitment(),
+                event_summary_hash: permit.event_summary_hash(),
+                activated_at_height,
+                activated_at_time,
+            };
+            receipt
+                .validate_semantics()
+                .map_err(|error| fatal(format!("invalid applied terminal receipt: {error}")))?;
+            let terminal_receipt_hash = receipt
+                .terminal_receipt_hash(schema_limits)
+                .map_err(|error| fatal(format!("hash applied terminal receipt: {error}")))?;
+            let completed_binding = OcompCompletedBindingV1 {
+                job_id: binding.job_id,
+                activation_call_id: permit.activation_call_id(),
+                result_digest: binding.result_digest,
+                result_evidence_hash,
+                terminal_receipt_hash,
+                terminal_receipt: receipt,
+            };
+            completed_binding
+                .validate_semantics(schema_limits)
+                .map_err(|error| fatal(format!("invalid OCOMP completed binding: {error}")))?;
+
+            self.ocomp_active_lysis_generations.get_bytes(&wwd).write(
+                &active_generation
+                    .encode_canonical(schema_limits)
+                    .map_err(|error| fatal(format!("encode active Lysis generation: {error}")))?,
+            )?;
+            record.status = OcompJobStatus::Completed;
+            record.terminal = Some(OcompJobTerminalV1 {
+                outcome: OcompTerminalOutcome::Completed,
+                terminal_height: activated_at_height,
+                terminal_time: activated_at_time,
+                next_pending_nonce: None,
+                completed_binding: Some(completed_binding.clone()),
+            });
+            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
+            self.ocomp_terminal_intents.push(intent_id)?;
+            self.mark_ocomp_wwd_completed(wwd)?;
+            self.ocomp_scheduler.clear()?;
+            self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
+
+            let frozen = &record.intent.frozen_metadosis_values;
+            self.emit(IMetadosis::MetadosisExecuted {
+                worldwideDay: record.intent.wwd,
+                tributeTotals: record.intent.authenticated_day_nominal,
+                dayGratisDemand: frozen.gratis_demand,
+                dayGratisLimit: frozen.gratis_supply,
+                dayGratisAllocation: frozen.lysis_budget,
+                dayGratisAllocationRemainder: unused_lysis,
+                netDayGratisAllocation: nod_gratis_consumed,
+                dayMetadosisLimitRemainder: unused_lysis,
+                status: "COMPLETED".into(),
+                blockNumber: activated_at_height,
+            })?;
+            self.emit(IMetadosis::LysisActivated {
+                intentId: intent_id,
+                jobId: binding.job_id,
+                activationCallId: permit.activation_call_id(),
+                resultDigest: binding.result_digest,
+                terminalReceiptHash: terminal_receipt_hash,
+                wwd: record.intent.wwd,
+            })?;
+            permit
+                .commit_terminal()
+                .map_err(|error| fatal(format!("commit Lysis terminal permit: {error}")))?;
+            Ok(completed_binding)
+        })
+    }
+
     pub(crate) fn request_budget_receipt(
         &self,
         wwd: WorldwideDay,
@@ -521,6 +786,19 @@ impl MetadosisContract<'_> {
             }
         }
         Ok(record)
+    }
+
+    pub fn active_lysis_generation(
+        &self,
+        wwd: WorldwideDay,
+        limits: &SchemaLimits,
+    ) -> Result<Option<ActiveGenerationV1>> {
+        read_canonical_optional(
+            &self.ocomp_active_lysis_generations.get_bytes(&wwd),
+            max_canonical_object_bytes(limits)?,
+            |encoded| ActiveGenerationV1::decode_canonical(encoded, limits),
+            "active Lysis generation",
+        )
     }
 
     pub(crate) fn latest_terminal_job_record(
@@ -565,39 +843,47 @@ impl MetadosisContract<'_> {
             return Err(fatal("OCOMP terminal index exceeds profile cap"));
         }
         let terminal_ids = self.ocomp_terminal_intents.read_all()?;
-        let mut expired = Vec::new();
-        expired
+        let mut terminal_attempts = Vec::new();
+        terminal_attempts
             .try_reserve_exact(terminal_ids.len())
             .map_err(|_| fatal("allocate bounded OCOMP terminal evidence"))?;
         for intent_id in terminal_ids {
             let record = self
                 .ocomp_job_record(intent_id, schema_limits)?
                 .ok_or_else(|| fatal("OCOMP terminal index points to a missing job"))?;
+            if record.intent.wwd != wwd.value() {
+                continue;
+            }
             let terminal = record
                 .terminal
                 .as_ref()
                 .ok_or_else(|| fatal("OCOMP terminal job has no terminal evidence"))?;
-            if record.status != OcompJobStatus::Expired
-                || terminal.outcome != OcompTerminalOutcome::Expired
-                || terminal.completed_binding.is_some()
-            {
-                return Err(fatal("OCOMP terminal index points to a non-expired job"));
-            }
-            if record.intent.wwd != wwd.value() {
-                continue;
-            }
+            let outcome = match (record.status, terminal.outcome) {
+                (OcompJobStatus::Expired, OcompTerminalOutcome::Expired)
+                    if terminal.completed_binding.is_none() =>
+                {
+                    RetryTerminalOutcome::Expired
+                }
+                (OcompJobStatus::Conflicted, OcompTerminalOutcome::Conflicted)
+                    if terminal.completed_binding.is_some() =>
+                {
+                    RetryTerminalOutcome::Conflicted
+                }
+                _ => return Err(fatal("OCOMP terminal index points to a non-retry job")),
+            };
             let next_pending_nonce = terminal
                 .next_pending_nonce
-                .ok_or_else(|| fatal("expired OCOMP job lacks next nonce"))?;
-            expired.push(ExpiredAttempt {
+                .ok_or_else(|| fatal("retryable OCOMP terminal job lacks next nonce"))?;
+            terminal_attempts.push(TerminalAttempt {
                 intent_id,
                 pending_nonce: record.intent.pending_nonce,
                 terminal_height: terminal.terminal_height,
                 terminal_time: terminal.terminal_time,
                 next_pending_nonce,
+                outcome,
             });
         }
-        snapshot.expired = expired;
+        snapshot.terminal = terminal_attempts;
 
         let state = JobFsmState::restore(snapshot, fsm_limits)
             .map_err(|error| fatal(format!("restore OCOMP FSM: {error}")))?;
@@ -986,7 +1272,7 @@ fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
         worldwide_day,
         ready,
         live,
-        expired: Vec::new(),
+        terminal: Vec::new(),
     })
 }
 

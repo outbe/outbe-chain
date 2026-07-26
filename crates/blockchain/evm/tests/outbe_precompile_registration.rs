@@ -26,6 +26,8 @@ fn build_extended_precompiles() -> PrecompilesMap {
         spec,
         None,
         std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        None,
+        false,
     );
     precompiles
 }

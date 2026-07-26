@@ -56,6 +56,23 @@ pub fn dispatch(
                 crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
                     .map(Bytes::from)
             }),
+            getActiveLysisGeneration(c) => view(c, |c| {
+                crate::ocomp::views::get_active_lysis_generation(
+                    metadosis.storage.clone(),
+                    c.wwd.into(),
+                )
+                .map(Bytes::from)
+            }),
+            getLysisTerminalReceipt(c) => view(c, |c| {
+                crate::ocomp::views::get_lysis_terminal_receipt(
+                    metadosis.storage.clone(),
+                    c.intentId,
+                )
+                .map(Bytes::from)
+            }),
+            activateLysis(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP activation requires authenticated execution context".into(),
+            )),
         }
     })
 }

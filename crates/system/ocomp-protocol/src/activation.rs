@@ -72,11 +72,14 @@ wire_struct! {
 impl_top_level_codec!(ActivationCallCoreV1, ActivationCallCoreV1);
 
 impl PoCActivationV1 {
-    pub fn verify(
+    /// Verifies every activation binding and payload invariant except the
+    /// execution certificate. Callers that need a staged verification order
+    /// invoke this once and then verify the certificate exactly once at the
+    /// protocol-defined point.
+    pub fn verify_structure(
         &self,
         finalized_request_state_root: B256,
         committee: &OcompCommitteeSnapshotV1,
-        current_height: u64,
         limits: &SchemaLimits,
     ) -> Result<(), ProtocolError> {
         let intent = self.finalized_intent_proof.decoded_intent(limits)?;
@@ -112,7 +115,17 @@ impl PoCActivationV1 {
         require(
             intent.result_committee_snapshot_hash == committee.snapshot_hash(limits)?,
             "intent committee binding",
-        )?;
+        )
+    }
+
+    pub fn verify(
+        &self,
+        finalized_request_state_root: B256,
+        committee: &OcompCommitteeSnapshotV1,
+        current_height: u64,
+        limits: &SchemaLimits,
+    ) -> Result<(), ProtocolError> {
+        self.verify_structure(finalized_request_state_root, committee, limits)?;
         self.certificate.verify(committee, current_height, limits)
     }
 

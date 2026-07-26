@@ -190,4 +190,20 @@ pub struct MetadosisContract {
     #[attribute(order = 14)]
     pub ocomp_day_limit_formations:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, OcompDayLimitFormationState>,
+
+    /// Canonical active Lysis generation selected by completed Metadosis state.
+    /// This append-only mapping is the public authority after activation.
+    #[attribute(order = 15)]
+    pub ocomp_active_lysis_generations: Mapping<WorldwideDayKey, StorageBytes>,
+
+    /// Canonical OCB1 `ProtocolBundleV1` installed by the OCOMP fork handler.
+    /// The request profile stores its hash; activation needs the complete
+    /// immutable bundle to select the frozen LYSIS_V1 program semantics.
+    #[attribute(order = 16)]
+    pub ocomp_active_protocol_bundle: StorageBytes,
+
+    /// Canonical OCB1 `OcompCommitteeSnapshotV1` installed with the bundle.
+    /// Result certificates are verified only against this consensus state.
+    #[attribute(order = 17)]
+    pub ocomp_result_committee_snapshot: StorageBytes,
 }

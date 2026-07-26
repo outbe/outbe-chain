@@ -30,11 +30,14 @@ use reth_evm::{
 use reth_primitives_traits::{
     AlloyBlockHeader as _, Recovered, SealedBlock, SealedHeader, SignedTransaction as _,
 };
-use reth_provider::HeaderProvider;
+use reth_provider::{BlockHashReader, BlockIdReader, HeaderProvider};
 use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
 use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
+use outbe_metadosis::ocomp::activation::{
+    OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
+};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
@@ -58,6 +61,68 @@ use crate::{
         SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
+
+/// Live execution wrapper that first binds the relayer-carried request header
+/// to this node's canonical finalized chain, then delegates cryptographic and
+/// storage-proof verification to the protocol authority.
+struct ProviderAnchoredOcompFinalityAuthority<P> {
+    provider: P,
+    inner: Arc<dyn OcompFinalizedIntentAuthority>,
+}
+
+impl<P> ProviderAnchoredOcompFinalityAuthority<P> {
+    fn new(provider: P, inner: Arc<dyn OcompFinalizedIntentAuthority>) -> Self {
+        Self { provider, inner }
+    }
+}
+
+impl<P> OcompFinalizedIntentAuthority for ProviderAnchoredOcompFinalityAuthority<P>
+where
+    P: BlockHashReader + BlockIdReader + Send + Sync,
+{
+    fn verify(
+        &self,
+        proof: &outbe_ocomp_protocol::intent::FinalizedIntentProofV1,
+        expected: outbe_ocomp_protocol::intent::ExpectedFinalizedIntentBindingV1,
+        limits: &outbe_ocomp_protocol::SchemaLimits,
+    ) -> Result<
+        outbe_ocomp_protocol::intent::VerifiedFinalizedIntentV1,
+        OcompFinalityAuthorityError,
+    > {
+        let claimed = &proof.parent_accounting;
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
+            .ok_or_else(|| {
+                OcompFinalityAuthorityError::LocalAuthority(
+                    "finalized checkpoint is unavailable".into(),
+                )
+            })?;
+        if claimed.finalized_block_number > finalized.number {
+            return Err(OcompFinalityAuthorityError::LocalAuthority(format!(
+                "claimed request height {} is above local finalized height {}",
+                claimed.finalized_block_number, finalized.number
+            )));
+        }
+        let canonical_hash = self
+            .provider
+            .block_hash(claimed.finalized_block_number)
+            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
+            .ok_or_else(|| {
+                OcompFinalityAuthorityError::LocalAuthority(format!(
+                    "canonical hash at finalized height {} is unavailable",
+                    claimed.finalized_block_number
+                ))
+            })?;
+        if canonical_hash != claimed.finalized_block_hash {
+            return Err(OcompFinalityAuthorityError::InvalidProof(
+                outbe_ocomp_protocol::intent::FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch,
+            ));
+        }
+        self.inner.verify(proof, expected, limits)
+    }
+}
 
 /// cache-side helper. Pulls an exact `(block_number, block_hash)`
 /// entry from the consensus bridge's execution-summary cache.
@@ -597,6 +662,10 @@ impl OutbeEvmConfig {
     /// Installs structural OCOMP lifecycle activation. The default remains
     /// disabled until OCM-26 supplies the canonical fresh-devnet schedule.
     pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_lifecycle_activation(activation);
         self.ocomp_lifecycle_activation = activation;
         self
     }
@@ -621,6 +690,17 @@ impl OutbeEvmConfig {
             .evm_factory()
             .install_compressed_tree_service(service.clone());
         self.compressed_tree_service = Some(service);
+        self
+    }
+
+    fn with_ocomp_finality_authority(
+        self,
+        authority: Arc<dyn OcompFinalizedIntentAuthority>,
+    ) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_finality_authority(authority);
         self
     }
 
@@ -1458,6 +1538,8 @@ pub struct OutbeExecutorBuilder {
     pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
     /// Inert until the canonical OCM-26 devnet schedule is supplied.
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,
+    /// Production finalized JobIntent proof authority supplied by the node.
+    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1477,6 +1559,10 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "ocomp_lifecycle_activation",
                 &self.ocomp_lifecycle_activation,
             )
+            .field(
+                "ocomp_finality_authority",
+                &self.ocomp_finality_authority.is_some(),
+            )
             .finish()
     }
 }
@@ -1490,6 +1576,7 @@ impl OutbeExecutorBuilder {
             runtime_body_readers: None,
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_finality_authority: None,
         }
     }
 
@@ -1513,6 +1600,14 @@ impl OutbeExecutorBuilder {
         self.ocomp_lifecycle_activation = activation;
         self
     }
+
+    pub fn with_ocomp_finality_authority(
+        mut self,
+        authority: Arc<dyn OcompFinalizedIntentAuthority>,
+    ) -> Self {
+        self.ocomp_finality_authority = Some(authority);
+        self
+    }
 }
 
 impl<Node> ExecutorBuilder<Node> for OutbeExecutorBuilder
@@ -1520,7 +1615,13 @@ where
     Node: FullNodeTypes<
         Types: NodeTypes<ChainSpec = ChainSpec<OutbeHeader>, Primitives = OutbePrimitives>,
     >,
-    Node::Provider: HeaderProvider<Header = OutbeHeader> + Clone + Send + Sync + 'static,
+    Node::Provider: HeaderProvider<Header = OutbeHeader>
+        + BlockHashReader
+        + BlockIdReader
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     type EVM = OutbeEvmConfig;
 
@@ -1558,9 +1659,14 @@ where
             ),
         };
 
-        let config = config
+        let mut config = config
             .with_compressed_tree_service(compressed_tree_service)
             .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
+        if let Some(authority) = self.ocomp_finality_authority {
+            config = config.with_ocomp_finality_authority(Arc::new(
+                ProviderAnchoredOcompFinalityAuthority::new(ctx.provider().clone(), authority),
+            ));
+        }
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,
@@ -1571,8 +1677,25 @@ where
 #[cfg(test)]
 mod tests {
     use std::ops::RangeBounds;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, Bytes, B256, U256};
+    use outbe_metadosis::ocomp::activation::{
+        OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
+    };
+    use outbe_ocomp_protocol::{
+        common::{BoundedBytes, ProofBytes},
+        intent::{
+            CertifiedParentAccountingMetadataV2, ExpectedFinalizedIntentBindingV1,
+            FinalizedIntentProofV1, FinalizedIntentVerificationError, ParentProofKind,
+            VerifiedFinalizedIntentV1,
+        },
+        SchemaLimits,
+    };
     use outbe_primitives::{
         consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
         reshare_artifact::{
@@ -1587,6 +1710,10 @@ mod tests {
         chainspec::MAINNET,
         primitives::{Header, SealedHeader},
     };
+    use reth_provider::{
+        BlockHashReader, BlockIdReader, BlockNumReader, ProviderResult,
+    };
+    use reth_chainspec::ChainInfo;
     #[test]
     fn new_with_bridge_installs_cache_summary_provider() {
         let bridge = ConsensusExecutionBridge::new();
@@ -1609,12 +1736,12 @@ mod tests {
     }
 
     use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
-    use reth_provider::{HeaderProvider, ProviderResult};
+    use reth_provider::HeaderProvider;
     use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 
     use super::{
         AccountedParentArtifactProvider, OutbeEvmConfig, OutbeNextBlockEnvAttributes,
-        RethAccountedParentArtifactProvider,
+        ProviderAnchoredOcompFinalityAuthority, RethAccountedParentArtifactProvider,
     };
 
     #[derive(Clone, Default)]
@@ -1895,5 +2022,160 @@ mod tests {
 
         assert_eq!(resolved.summary, summary);
         assert_eq!(resolved.timestamp, 123);
+    }
+
+    #[derive(Clone)]
+    struct FinalityAnchorProvider {
+        finalized: BlockNumHash,
+        canonical: B256,
+    }
+
+    impl BlockHashReader for FinalityAnchorProvider {
+        fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+            Ok((number == 7).then_some(self.canonical))
+        }
+
+        fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+            Ok((start..end)
+                .filter_map(|number| (number == 7).then_some(self.canonical))
+                .collect())
+        }
+    }
+
+    impl BlockNumReader for FinalityAnchorProvider {
+        fn chain_info(&self) -> ProviderResult<ChainInfo> {
+            Ok(ChainInfo {
+                best_hash: self.finalized.hash,
+                best_number: self.finalized.number,
+            })
+        }
+
+        fn best_block_number(&self) -> ProviderResult<u64> {
+            Ok(self.finalized.number)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<u64> {
+            Ok(self.finalized.number)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
+            Ok((hash == self.canonical).then_some(7))
+        }
+    }
+
+    impl BlockIdReader for FinalityAnchorProvider {
+        fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(Some(self.finalized))
+        }
+
+        fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(Some(self.finalized))
+        }
+    }
+
+    struct CountingFinality {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl OcompFinalizedIntentAuthority for CountingFinality {
+        fn verify(
+            &self,
+            _proof: &FinalizedIntentProofV1,
+            _expected: ExpectedFinalizedIntentBindingV1,
+            _limits: &SchemaLimits,
+        ) -> Result<VerifiedFinalizedIntentV1, OcompFinalityAuthorityError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Err(FinalizedIntentVerificationError::WrongChain.into())
+        }
+    }
+
+    fn anchor_proof(block_number: u64, block_hash: B256) -> FinalizedIntentProofV1 {
+        FinalizedIntentProofV1 {
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            fork_id: B256::ZERO,
+            protocol_bundle_hash: B256::ZERO,
+            canonical_request_header_rlp: ProofBytes(Vec::new()),
+            parent_accounting: CertifiedParentAccountingMetadataV2 {
+                finalized_block_number: block_number,
+                finalized_block_hash: block_hash,
+                finalized_epoch: 0,
+                finalized_view: 0,
+                parent_view: 0,
+                ordered_committee: Vec::new(),
+                signer_bitmap: BoundedBytes(Vec::new()),
+                canonical_commonware_finalization_proof: ProofBytes(Vec::new()),
+                committee_set_hash: B256::ZERO,
+                vrf_material_version: 0,
+                vrf_group_public_key_hash: B256::ZERO,
+                proof_kind: ParentProofKind::Finalization,
+                missed_proposers: Vec::new(),
+            },
+            historical_committee_membership_proof: ProofBytes(Vec::new()),
+            canonical_job_intent: BoundedBytes(Vec::new()),
+            intent_account_proof: ProofBytes(Vec::new()),
+            intent_storage_proof: ProofBytes(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn production_finality_wrapper_requires_node_owned_canonical_finalized_anchor() {
+        let canonical = B256::repeat_byte(0x77);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let authority = ProviderAnchoredOcompFinalityAuthority::new(
+            FinalityAnchorProvider {
+                finalized: BlockNumHash::new(10, B256::repeat_byte(0xAA)),
+                canonical,
+            },
+            Arc::new(CountingFinality {
+                calls: calls.clone(),
+            }),
+        );
+        let expected = ExpectedFinalizedIntentBindingV1 {
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            fork_id: B256::ZERO,
+            protocol_bundle_hash: B256::ZERO,
+        };
+        let limits = outbe_metadosis::ocomp::schema::poc_schema_limits();
+
+        let side_chain = authority
+            .verify(
+                &anchor_proof(7, B256::repeat_byte(0x88)),
+                expected,
+                &limits,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            side_chain,
+            OcompFinalityAuthorityError::InvalidProof(
+                FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch
+            )
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let above_finalized = authority
+            .verify(&anchor_proof(11, canonical), expected, &limits)
+            .unwrap_err();
+        assert!(matches!(
+            above_finalized,
+            OcompFinalityAuthorityError::LocalAuthority(_)
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let delegated = authority
+            .verify(&anchor_proof(7, canonical), expected, &limits)
+            .unwrap_err();
+        assert!(matches!(
+            delegated,
+            OcompFinalityAuthorityError::InvalidProof(
+                FinalizedIntentVerificationError::WrongChain
+            )
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 }

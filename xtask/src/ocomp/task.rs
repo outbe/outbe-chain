@@ -1600,6 +1600,132 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-23" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-metadosis",
+                    "-p",
+                    "outbe-nodfactory",
+                    "-p",
+                    "outbe-intex",
+                    "-p",
+                    "outbe-tribute",
+                    "-p",
+                    "outbe-promislimit",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-primitives",
+                    "--test",
+                    "trybuild",
+                ],
+            )?;
+            for test in ["activation_receipt_vectors", "certified_boundary"] {
+                cargo(
+                    repository_root,
+                    &["test", "--locked", "-p", "outbe-lysis", "--test", test],
+                )?;
+            }
+            for test in ["ocomp_atomic_apply", "ocomp_logical_time"] {
+                cargo(
+                    repository_root,
+                    &["test", "--locked", "-p", "outbe-evm", "--test", test],
+                )?;
+            }
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "outbe-txpool", "ocomp_", "--lib"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-evm",
+                    "production_finality_wrapper_requires_node_owned_canonical_finalized_anchor",
+                    "--lib",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-metadosis",
+                    "-p",
+                    "outbe-nodfactory",
+                    "-p",
+                    "outbe-intex",
+                    "-p",
+                    "outbe-tribute",
+                    "-p",
+                    "outbe-promislimit",
+                    "-p",
+                    "outbe-lysis",
+                    "-p",
+                    "outbe-primitives",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "outbe-evm",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-txpool",
+                    "-p",
+                    "xtask",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                    "OCM-CRT-001",
+                    "OCM-APL-001",
+                    "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,

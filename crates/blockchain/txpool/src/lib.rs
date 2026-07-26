@@ -6,11 +6,12 @@
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
-    addresses::OUTBE_SYSTEM_TX_ADDRESS,
+    addresses::{METADOSIS_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
+    system_tx::OcompLifecycleActivation,
     OutbePrimitives,
 };
 use outbe_zerofee::{ZeroFeeHookId, ZeroFeeTransaction};
@@ -21,7 +22,7 @@ use reth_node_builder::{
     node::{FullNodeTypes, NodeTypes},
     BuilderContext,
 };
-use reth_storage_api::{StateProvider, StateProviderFactory};
+use reth_storage_api::{BlockNumReader, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore,
     error::{InvalidPoolTransactionError, PoolTransactionError},
@@ -37,6 +38,42 @@ where
     T: alloy_consensus::Transaction + ?Sized,
 {
     tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
+}
+
+fn ocomp_activation_shape_error<T>(tx: &T) -> Option<OutbeOcompActivationPoolError>
+where
+    T: PoolTransaction,
+{
+    ocomp_activation_shape_error_for(tx.to(), tx.input(), tx.encoded_length())
+}
+
+fn ocomp_activation_shape_error_for(
+    to: Option<Address>,
+    input: &[u8],
+    encoded_length: usize,
+) -> Option<OutbeOcompActivationPoolError> {
+    if to != Some(METADOSIS_ADDRESS)
+        || input.get(..4) != Some(outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR.as_slice())
+    {
+        return None;
+    }
+
+    let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
+    let input_len = u64::try_from(input.len()).unwrap_or(u64::MAX);
+    if input_len > candidate.max_activation_calldata_bytes {
+        return Some(OutbeOcompActivationPoolError::Calldata {
+            actual: input.len(),
+            maximum: usize::try_from(candidate.max_activation_calldata_bytes).unwrap_or(usize::MAX),
+        });
+    }
+    let encoded_len = u64::try_from(encoded_length).unwrap_or(u64::MAX);
+    if encoded_len > candidate.max_transaction_rlp_bytes {
+        return Some(OutbeOcompActivationPoolError::Envelope {
+            actual: encoded_length,
+            maximum: usize::try_from(candidate.max_transaction_rlp_bytes).unwrap_or(usize::MAX),
+        });
+    }
+    None
 }
 
 fn zero_fee_transaction<'a, T>(tx: &'a T, signer: Address) -> ZeroFeeTransaction<'a>
@@ -121,7 +158,20 @@ where
 
 /// Builds the transaction pool used by Outbe nodes.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct OutbePoolBuilder;
+pub struct OutbePoolBuilder {
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+}
+
+impl OutbePoolBuilder {
+    #[must_use]
+    pub const fn with_ocomp_lifecycle_activation(
+        mut self,
+        activation: OcompLifecycleActivation,
+    ) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+}
 
 impl<Types, Node, Evm> PoolBuilder<Node, Evm> for OutbePoolBuilder
 where
@@ -170,7 +220,9 @@ where
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .disable_balance_check()
                 .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(OutbeTransactionValidator::new);
+                .map(|inner| {
+                    OutbeTransactionValidator::new(inner, self.ocomp_lifecycle_activation)
+                });
 
         if validator.validator().inner().eip4844() {
             let kzg_settings = validator.validator().inner().kzg_settings().clone();
@@ -273,11 +325,18 @@ where
 /// Transaction validator that keeps reth's Ethereum checks and adds Outbe policy.
 pub struct OutbeTransactionValidator<Client, Tx, Evm> {
     inner: EthTransactionValidator<Client, Tx, Evm>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm> {
-    fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
-        Self { inner }
+    fn new(
+        inner: EthTransactionValidator<Client, Tx, Evm>,
+        ocomp_lifecycle_activation: OcompLifecycleActivation,
+    ) -> Self {
+        Self {
+            inner,
+            ocomp_lifecycle_activation,
+        }
     }
 
     fn inner(&self) -> &EthTransactionValidator<Client, Tx, Evm> {
@@ -292,6 +351,10 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OutbeTransactionValidator")
             .field("inner", &self.inner)
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
+            )
             .finish()
     }
 }
@@ -299,7 +362,7 @@ where
 impl<Client, Tx, Evm> TransactionValidator for OutbeTransactionValidator<Client, Tx, Evm>
 where
     EthTransactionValidator<Client, Tx, Evm>: TransactionValidator<Transaction = Tx>,
-    Client: StateProviderFactory,
+    Client: StateProviderFactory + BlockNumReader,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
 {
     type Transaction = Tx;
@@ -321,7 +384,7 @@ where
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm>
 where
-    Client: StateProviderFactory,
+    Client: StateProviderFactory + BlockNumReader,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
 {
     fn apply_outbe_policy(
@@ -337,6 +400,23 @@ where
             ReservedSystemTxPolicy::Continue(parts) => parts,
             ReservedSystemTxPolicy::Reject(outcome) => return outcome,
         };
+
+        let next_block = self
+            .inner
+            .client()
+            .best_block_number()
+            .ok()
+            .and_then(|height| height.checked_add(1));
+        if next_block.is_some_and(|height| {
+            self.ocomp_lifecycle_activation.is_active_at(height)
+        }) {
+            if let Some(error) = ocomp_activation_shape_error(parts.transaction.transaction()) {
+                return TransactionValidationOutcome::Invalid(
+                    parts.transaction.into_transaction(),
+                    InvalidPoolTransactionError::other(error),
+                );
+            }
+        }
 
         let tx = parts.transaction.transaction();
         let signer = tx.sender();
@@ -549,6 +629,24 @@ impl PoolTransactionError for OutbeReservedSystemTxPoolError {
 }
 
 #[derive(Debug, thiserror::Error)]
+enum OutbeOcompActivationPoolError {
+    #[error("OCOMP activation calldata exceeds consensus cap: {actual} > {maximum}")]
+    Calldata { actual: usize, maximum: usize },
+    #[error("OCOMP activation transaction envelope exceeds consensus cap: {actual} > {maximum}")]
+    Envelope { actual: usize, maximum: usize },
+}
+
+impl PoolTransactionError for OutbeOcompActivationPoolError {
+    fn is_bad_transaction(&self) -> bool {
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 #[error("zero-fee policy rejected transaction: {0}")]
 struct OutbeZeroFeePoolError(String);
 
@@ -566,7 +664,7 @@ impl PoolTransactionError for OutbeZeroFeePoolError {
 mod tests {
     use super::*;
     use alloy_consensus::{SignableTransaction as _, TxEip1559};
-    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
     use alloy_primitives::{Bytes, Signature, TxKind};
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
@@ -595,11 +693,12 @@ mod tests {
         .into_signed(Signature::test_signature())
         .into();
 
+        let encoded_length = tx.encode_2718_len();
         let recovered = tx
             .try_into_recovered()
             .expect("test transaction signer should recover");
 
-        EthPooledTransaction::new(recovered, 0)
+        EthPooledTransaction::new(recovered, encoded_length)
     }
 
     fn oracle_submit_vote_input() -> Bytes {
@@ -698,6 +797,82 @@ mod tests {
             }
             other => panic!("expected reserved-address invalid outcome, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ocomp_activation_pool_admission_enforces_calldata_and_envelope_caps() {
+        let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let calldata_cap = usize::try_from(candidate.max_activation_calldata_bytes).unwrap();
+        let envelope_cap = usize::try_from(candidate.max_transaction_rlp_bytes).unwrap();
+        let mut activation_input = vec![0_u8; calldata_cap];
+        activation_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
+
+        assert!(ocomp_activation_shape_error_for(
+            Some(METADOSIS_ADDRESS),
+            &activation_input,
+            envelope_cap,
+        )
+        .is_none());
+        assert!(matches!(
+            ocomp_activation_shape_error_for(
+                Some(METADOSIS_ADDRESS),
+                &activation_input,
+                envelope_cap + 1,
+            ),
+            Some(OutbeOcompActivationPoolError::Envelope { .. })
+        ));
+
+        activation_input.push(0);
+        assert!(matches!(
+            ocomp_activation_shape_error_for(
+                Some(METADOSIS_ADDRESS),
+                &activation_input,
+                envelope_cap,
+            ),
+            Some(OutbeOcompActivationPoolError::Calldata { .. })
+        ));
+
+        let mut real_input = vec![0_u8; calldata_cap];
+        real_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
+        let at_cap = pooled_tx(
+            METADOSIS_ADDRESS,
+            Bytes::from(real_input),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            1,
+        );
+        assert!(ocomp_activation_shape_error(&at_cap).is_none());
+
+        let mut over_cap_input = vec![0_u8; calldata_cap + 1];
+        over_cap_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
+        let over_cap = pooled_tx(
+            METADOSIS_ADDRESS,
+            Bytes::from(over_cap_input),
+            MIN_PROTOCOL_BASE_FEE as u128,
+            1,
+        );
+        assert!(matches!(
+            ocomp_activation_shape_error(&over_cap),
+            Some(OutbeOcompActivationPoolError::Calldata { .. })
+        ));
+    }
+
+    #[test]
+    fn ocomp_pool_caps_do_not_classify_other_calls() {
+        let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
+        let oversize = usize::try_from(candidate.max_activation_calldata_bytes)
+            .unwrap()
+            .saturating_add(1);
+        let mut input = vec![0_u8; oversize];
+        input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
+
+        assert!(
+            ocomp_activation_shape_error_for(Some(Address::ZERO), &input, usize::MAX,).is_none()
+        );
+        input[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+        assert!(
+            ocomp_activation_shape_error_for(Some(METADOSIS_ADDRESS), &input, usize::MAX,)
+                .is_none()
+        );
     }
 
     // -----------------------------------------------------------------

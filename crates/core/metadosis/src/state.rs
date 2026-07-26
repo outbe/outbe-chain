@@ -175,6 +175,20 @@ impl MetadosisContract<'_> {
         self.retire_terminal_wwd(wwd)
     }
 
+    /// Completes the exact OCOMP-owned day after the certified terminal
+    /// receipt is durable in the same outer checkpoint.
+    pub(crate) fn mark_ocomp_wwd_completed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
+        let current = self.get_wwd_status(wwd)?;
+        if current != status::OFFCHAIN_PENDING {
+            return Err(MetadosisError::InvalidTransitionToCompleted { wwd, current }.into());
+        }
+        self.worldwide_days
+            .entry(wwd)
+            .status()
+            .write(status::COMPLETED)?;
+        self.retire_terminal_wwd(wwd)
+    }
+
     pub fn mark_wwd_failed(&mut self, wwd: WorldwideDayKey) -> Result<()> {
         let current = self.get_wwd_status(wwd)?;
         if current == status::COMPLETED {

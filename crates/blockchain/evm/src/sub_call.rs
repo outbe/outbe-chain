@@ -20,6 +20,7 @@ use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
@@ -49,6 +50,37 @@ pub fn run<DB>(
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
+    input: SubCallInput,
+) -> std::result::Result<SubCallOutput, SubCallError>
+where
+    DB: Database + Debug,
+    DB::Error: Debug,
+{
+    run_with_ocomp_context(
+        ctx,
+        self_address,
+        outer_is_static,
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        None,
+        Arc::new(crate::precompiles::OcompActivationBlockMeter::default()),
+        false,
+        input,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_with_ocomp_context<DB>(
+    ctx: &mut EthEvmContext<DB>,
+    self_address: Address,
+    outer_is_static: bool,
+    spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<crate::precompiles::OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
@@ -103,6 +135,9 @@ where
         spec,
         runtime_body_readers,
         execution_scope,
+        ocomp_finality_authority,
+        ocomp_activation_block_meter,
+        ocomp_lifecycle_active,
     );
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<

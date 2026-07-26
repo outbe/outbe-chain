@@ -35,6 +35,7 @@ outbe-vote.workspace = true
 outbe-update.workspace = true
 outbe-agentreward.workspace = true
 outbe-metadosis.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-validatorset.workspace = true
 outbe-consensus.workspace = true
 outbe-slashindicator.workspace = true
@@ -78,7 +79,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-node.workspace = true
-outbe-ocomp-protocol.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-nod = { workspace = true, features = ["test-utils"] }
 alloy-sol-types.workspace = true
 alloy-rpc-types-engine.workspace = true

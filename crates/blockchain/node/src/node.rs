@@ -128,11 +128,14 @@ where
         };
         let executor = executor
             .with_runtime_body_readers(self.runtime_body_readers.clone())
-            .with_compressed_tree_service(self.compressed_tree_service.clone());
+            .with_compressed_tree_service(self.compressed_tree_service.clone())
+            .with_ocomp_finality_authority(std::sync::Arc::new(
+                crate::ocomp::finality::ProductionOcompFinalizedIntentAuthority,
+            ));
 
         ComponentsBuilder::default()
             .node_types::<N>()
-            .pool(OutbePoolBuilder)
+            .pool(OutbePoolBuilder::default())
             .executor(executor)
             .payload(BasicPayloadServiceBuilder::new(OutbePayloadBuilderBuilder))
             .network(EthereumNetworkBuilder::default())

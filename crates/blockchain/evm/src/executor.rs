@@ -5,7 +5,7 @@
 
 use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
-use alloy_eips::eip7685::Requests;
+use alloy_eips::{eip2718::Encodable2718 as _, eip7685::Requests};
 use alloy_evm::{
     block::{
         state_changes::{balance_increment_state, post_block_balance_increments},
@@ -3139,6 +3139,33 @@ where
             );
         if is_ocomp_terminal_request {
             return self.execute_ocomp_terminal_request(recovered, f);
+        }
+        if self.ocomp_lifecycle_active {
+            let tx = recovered.tx();
+            let is_activation = tx.to() == Some(outbe_primitives::addresses::METADOSIS_ADDRESS)
+                && tx.input().get(..4).is_some_and(|selector| {
+                    selector == outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR
+                });
+            let encoded_len = tx.encode_2718_len();
+            let cap = usize::try_from(
+                outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
+                    .max_transaction_rlp_bytes,
+            )
+            .unwrap_or(usize::MAX);
+            if is_activation && encoded_len > cap {
+                return Err(BlockExecutionError::Validation(
+                    BlockValidationError::InvalidTx {
+                        hash: tx.signature_hash(),
+                        error: Box::new(InvalidTransaction::Str(
+                            format!(
+                                "OCOMP activation transaction envelope exceeds consensus cap: \
+                                 {encoded_len} > {cap}"
+                            )
+                            .into(),
+                        )),
+                    },
+                ));
+            }
         }
 
         let ce_scope = self.compressed_entities_scope.clone();

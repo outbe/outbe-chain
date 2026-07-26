@@ -220,6 +220,23 @@ impl IndependentModel {
                     retained_effect: true,
                 }
             }
+            (
+                ModelPhase::Pending {
+                    pending_nonce,
+                    deadline_height: _,
+                },
+                JobFsmCommand::Conflict {
+                    at_height,
+                    at_time: _,
+                },
+            ) if self.terminal_records < limits.max_terminal_records => {
+                self.terminal_records += 1;
+                ModelPhase::Ready {
+                    pending_nonce: pending_nonce.checked_add(1).ok_or(())?,
+                    next_check_height: at_height.checked_add(1).ok_or(())?,
+                    retained_effect: true,
+                }
+            }
             _ => return Err(()),
         };
         self.phase = next;
@@ -236,7 +253,7 @@ fn next_random(state: &mut u64) -> u64 {
 
 #[test]
 fn generated_sequences_match_independent_model_and_registered_transition_table() {
-    assert_eq!(transition_rules().len(), 3);
+    assert_eq!(transition_rules().len(), 4);
     assert_eq!(transition_rules()[0].kind, JobFsmTransitionKind::Defer);
     assert_eq!(transition_rules()[0].from, DayPhase::Ready);
     assert_eq!(transition_rules()[0].to, DayPhase::Ready);
@@ -246,6 +263,9 @@ fn generated_sequences_match_independent_model_and_registered_transition_table()
     assert_eq!(transition_rules()[2].kind, JobFsmTransitionKind::Expire);
     assert_eq!(transition_rules()[2].from, DayPhase::OffchainPending);
     assert_eq!(transition_rules()[2].to, DayPhase::Ready);
+    assert_eq!(transition_rules()[3].kind, JobFsmTransitionKind::Conflict);
+    assert_eq!(transition_rules()[3].from, DayPhase::OffchainPending);
+    assert_eq!(transition_rules()[3].to, DayPhase::Ready);
 
     let limits = JobFsmLimits {
         max_terminal_records: 16,
@@ -305,6 +325,11 @@ fn generated_sequences_match_independent_model_and_registered_transition_table()
                         deadline_height: projection.deadline_height.unwrap() + 1,
                         lysis_budget: LYSIS_BUDGET,
                         request_budget_receipt_hash: RECEIPT_HASH,
+                    }
+                } else if value & 0x10 == 0 {
+                    JobFsmCommand::Conflict {
+                        at_height: projection.deadline_height.unwrap().saturating_sub(1),
+                        at_time: 1_753_315_200 + operation_index,
                     }
                 } else {
                     let deadline = projection.deadline_height.unwrap();
@@ -422,11 +447,11 @@ fn restored_snapshot_rejects_corrupted_status_index_and_budget_equivalences() {
         )
         .unwrap();
     let mut skipped_nonce = expired.snapshot();
-    skipped_nonce.expired[0].next_pending_nonce = 2;
+    skipped_nonce.terminal[0].next_pending_nonce = 2;
     assert!(JobFsmState::restore(skipped_nonce, limits).is_err());
 
     let mut over_terminal_cap = expired.snapshot();
-    let terminal = over_terminal_cap.expired[0];
-    over_terminal_cap.expired.extend([terminal; 4]);
+    let terminal = over_terminal_cap.terminal[0];
+    over_terminal_cap.terminal.extend([terminal; 4]);
     assert!(JobFsmState::restore(over_terminal_cap, limits).is_err());
 }

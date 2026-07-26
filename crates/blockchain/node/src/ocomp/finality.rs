@@ -202,6 +202,34 @@ pub struct FinalizedIntentVerifier<A> {
     historical_committees: A,
 }
 
+/// Node-owned production adapter injected into every live EVM instance.
+///
+/// It reuses the same self-contained proof verifier used by finalized export;
+/// activation does not carry a weaker or relay-provided authority.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProductionOcompFinalizedIntentAuthority;
+
+impl outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority
+    for ProductionOcompFinalizedIntentAuthority
+{
+    fn verify(
+        &self,
+        proof: &FinalizedIntentProofV1,
+        expected: ExpectedFinalizedIntentBindingV1,
+        limits: &SchemaLimits,
+    ) -> Result<
+        VerifiedFinalizedIntentV1,
+        outbe_metadosis::ocomp::activation::OcompFinalityAuthorityError,
+    > {
+        proof.verify(
+            expected,
+            &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
+            limits,
+        )
+        .map_err(Into::into)
+    }
+}
+
 impl<A> FinalizedIntentVerifier<A> {
     pub const fn new(historical_committees: A) -> Self {
         Self {
