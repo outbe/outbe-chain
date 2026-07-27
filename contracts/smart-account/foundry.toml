@@ -58,9 +58,10 @@ show_metrics = true
 # Linting
 [lint]
 exclude_lints = ["mixed-case-function", "mixed-case-variable", "pascal-case-struct", "unsafe-cheatcode"]
-# The linter (solar) does not honor the context remapping that scopes kernel-7579-plugins' bare
-# `src/...` imports to its own dir, so it fails to parse those third-party files during build.
-# solc compiles them correctly; keep lint off the build and run `forge lint` on first-party paths.
+# kernel-7579-plugins vendors its ERC-7579 sources and self-imports them via bare `src/...`. solc
+# resolves those through the context-scoped remapping above, but `forge lint` (solar) ignores
+# context-scoped/`src/` remappings and include_paths, so it cannot build the import graph for any
+# file that reaches the plugin (the kernel modules + factory)
 lint_on_build = false
 
 [rpc_endpoints]
