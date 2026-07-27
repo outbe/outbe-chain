@@ -16,10 +16,15 @@ clap.workspace = true
 eyre.workspace = true
 filetime.workspace = true
 hex.workspace = true
+k256.workspace = true
+outbe-metadosis.workspace = true
+outbe-node.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-e2e-harness = { path = "../crates/testing/e2e-harness", features = ["ocomp-integration"] }
 outbe-primitives.workspace = true
+reth-chainspec.workspace = true
+reth-ethereum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

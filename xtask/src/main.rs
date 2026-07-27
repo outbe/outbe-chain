@@ -60,6 +60,24 @@ enum OcompCommand {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Generate or verify the final chain-bound OCM-26 artifact set.
+    FinalArtifacts {
+        /// Generated capacity manifest produced from the five cold runs.
+        #[arg(long)]
+        capacity: PathBuf,
+        /// Fresh base genesis without an OCOMP fork-install extension.
+        #[arg(long)]
+        base_genesis: PathBuf,
+        /// Exact four-validator public bootstrap manifest.
+        #[arg(long)]
+        validators: PathBuf,
+        /// Directory containing the complete generated final artifact set.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Fail if the existing output differs from deterministic generation.
+        #[arg(long)]
+        check: bool,
+    },
     /// Generate or check the OCOMP V1 object/domain/list registry.
     Registry {
         /// Fail if checked-in generated files differ from the TSV authority.
@@ -208,6 +226,22 @@ fn main() -> Result<()> {
                 output,
             } => {
                 ocomp::capacity::run(&repo_root, &evidence, &scenarios, &limits_manifest, &output)?;
+            }
+            OcompCommand::FinalArtifacts {
+                capacity,
+                base_genesis,
+                validators,
+                output_dir,
+                check,
+            } => {
+                ocomp::finalize::run(
+                    &repo_root,
+                    &capacity,
+                    &base_genesis,
+                    &validators,
+                    &output_dir,
+                    check,
+                )?;
             }
             OcompCommand::Registry { check } => {
                 ocomp::registry::run(&repo_root, check)?;
