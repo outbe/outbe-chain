@@ -50,6 +50,19 @@ fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
 
 #[given("the canonical four-validator OCOMP Final devnet")]
 fn canonical_ocomp_final_devnet(world: &mut World) {
+    start_canonical_ocomp_final_devnet(world, true, false);
+}
+
+#[given("the canonical four-validator OCOMP Final devnet before H")]
+fn canonical_ocomp_final_devnet_before_h(world: &mut World) {
+    start_canonical_ocomp_final_devnet(world, false, true);
+}
+
+fn start_canonical_ocomp_final_devnet(
+    world: &mut World,
+    wait_for_activation: bool,
+    activate_workers: bool,
+) {
     bootstrap_final_ocomp_localnet(world, 6);
     world.state.ocomp_capacity_tribute_private_keys = world
         .ocomp
@@ -74,8 +87,10 @@ fn canonical_ocomp_final_devnet(world: &mut World) {
         .ocomp
         .prepare_final_fork_install()
         .expect("load canonical OCOMP Final install");
-    launch_prepared_ocomp(world, &mut start_opts, &prepared, false);
-    wait_for_finalized_ocomp_activation(world);
+    launch_prepared_ocomp(world, &mut start_opts, &prepared, activate_workers);
+    if wait_for_activation {
+        wait_for_finalized_ocomp_activation(world);
+    }
 }
 
 fn start_ocomp_measurement_localnet(

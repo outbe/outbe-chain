@@ -11,12 +11,12 @@ Feature: Off-chain computation process topology
 
   @ocomp-fork-restart
   Scenario: Validator recovery preserves the fork across every height boundary
-    Given a fresh four-validator OCOMP measurement localnet
+    Given the canonical four-validator OCOMP Final devnet before H
     When validator 0 restarts before, across, and after the OCOMP fork height
     Then the OCOMP evidence records successful H-1, H, and H+1 recovery
 
   @ocomp-fork-mismatch
   Scenario: A distinct immutable fork install cannot join the canonical committee
-    Given a fresh four-validator OCOMP measurement localnet
+    Given the canonical four-validator OCOMP Final devnet before H
     When validator 0 restarts with a different valid immutable OCOMP fork install
     Then the canonical committee finalizes through H while the mismatched validator stays before H
