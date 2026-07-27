@@ -1630,8 +1630,8 @@ fn certified_generation_contains_only_original_tribute(world: &mut World) {
     );
     assert_eq!(
         world.rpc.supply(world.validators.primary_port()).as_deref(),
-        Some("1"),
-        "the rejected duplicate changed finalized Tribute supply"
+        Some("0"),
+        "certified Lysis activation did not retire the original Tribute generation"
     );
 }
 
