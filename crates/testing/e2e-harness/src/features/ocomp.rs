@@ -1518,6 +1518,123 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
         .expect("verify four independent completed production job footprints");
 }
 
+#[then(
+    "the empty Tribute day completes without a JobIntent or Nod and records its direct remainder"
+)]
+fn empty_tribute_day_uses_terminal_compatibility(world: &mut World) {
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("canonical Final WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric canonical Final WorldwideDay");
+    let ports = world.validators.committee_ports();
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let outcome = loop {
+        let statuses = ports
+            .iter()
+            .copied()
+            .map(|port| world.rpc.wwd_status(port, &worldwide_day.to_string()))
+            .collect::<Vec<_>>();
+        let outcomes = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world.rpc.finalized_ocomp_compatibility_outcome_on(
+                    port,
+                    worldwide_day,
+                    OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+                )
+            })
+            .collect::<Vec<_>>();
+        if statuses.iter().all(|status| status.as_deref() == Some("6"))
+            && outcomes.iter().all(Option::is_some)
+        {
+            let first = outcomes[0]
+                .clone()
+                .expect("all compatibility receipts are present");
+            assert!(
+                outcomes
+                    .iter()
+                    .all(|observed| observed.as_ref() == Some(&first)),
+                "validators expose different finalized empty-day receipts"
+            );
+            break first;
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("OCOMP roles stay alive while the empty day reaches terminal state");
+        assert!(
+            Instant::now() < deadline,
+            "empty Tribute day did not complete before the bounded Final deadline; \
+             statuses={statuses:?}, outcomes={outcomes:?}"
+        );
+        sleep(Duration::from_millis(500));
+    };
+
+    assert_eq!(outcome.worldwide_day, worldwide_day);
+    assert_eq!(outcome.status, "COMPLETED");
+    assert_eq!(outcome.action, "no tributes");
+    assert!(
+        !outcome.day_limit.is_zero(),
+        "the empty-day fixture must exercise the non-zero direct-remainder branch"
+    );
+    assert!(
+        outcome.direct_remainder <= outcome.day_limit,
+        "the empty-day direct remainder exceeds its finalized day limit"
+    );
+
+    for port in ports {
+        assert!(
+            world
+                .rpc
+                .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
+                .is_none(),
+            "empty Tribute day created an OCOMP JobIntent on port {port}"
+        );
+        let finalized_height = world
+            .rpc
+            .finalized(port)
+            .expect("validator finalized height after empty-day completion");
+        assert_eq!(
+            world
+                .rpc
+                .nod_certified_generation_exists_on(port, worldwide_day, finalized_height),
+            Some(false),
+            "empty Tribute day created a Nod generation on port {port}"
+        );
+        assert_eq!(
+            world.rpc.supply(port).as_deref(),
+            Some("0"),
+            "empty Tribute day changed Tribute supply on port {port}"
+        );
+    }
+}
+
+#[then("the certified Lysis generation contains only the original Tribute")]
+fn certified_generation_contains_only_original_tribute(world: &mut World) {
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .expect("certified Lysis generation");
+    assert_eq!(
+        generation.tribute_count, 1,
+        "the rejected duplicate entered the certified Lysis input"
+    );
+    assert_eq!(
+        generation.nod_count, 1,
+        "the rejected duplicate changed the certified Nod output count"
+    );
+    assert_eq!(
+        world.rpc.supply(world.validators.primary_port()).as_deref(),
+        Some("1"),
+        "the rejected duplicate changed finalized Tribute supply"
+    );
+}
+
 #[when("validator 0 OCOMP supervisor is stopped through the typed fault control")]
 fn stop_validator_zero_supervisor(world: &mut World) {
     let primary = world.validators.primary_port();
