@@ -1711,10 +1711,7 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
 
     let mismatched = world
         .ocomp
-        .prepare_mismatched_fork_manifest(
-            VALIDATOR_INDEX as u8,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT.saturating_add(1),
-        )
+        .prepare_mismatched_fork_manifest(VALIDATOR_INDEX as u8)
         .expect("create a valid same-genesis manifest with a distinct install");
     world
         .localnet

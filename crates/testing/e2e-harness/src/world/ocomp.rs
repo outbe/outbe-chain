@@ -197,7 +197,7 @@ impl OcompForkMismatchEvidenceV1 {
             || self.mismatched_install_hash.is_empty()
             || self.canonical_install_hash == self.mismatched_install_hash
             || self.canonical_activation_height == 0
-            || self.mismatched_activation_height == self.canonical_activation_height
+            || self.mismatched_activation_height != self.canonical_activation_height
         {
             eyre::bail!("OCOMP fork mismatch evidence has no distinct valid install");
         }
@@ -627,7 +627,6 @@ impl OcompTopology {
     pub fn prepare_mismatched_fork_manifest(
         &self,
         validator_index: u8,
-        mismatched_activation_height: u64,
     ) -> Result<OcompMismatchedForkManifestV1> {
         if validator_index >= OCOMP_VALIDATOR_DOMAINS {
             eyre::bail!("mismatched fork validator index is outside the committee");
@@ -636,15 +635,18 @@ impl OcompTopology {
         let canonical_spec = parse_outbe_chain_spec(&canonical_path)?;
         let canonical_genesis_hash = canonical_spec.genesis_hash();
         let canonical = outbe_node::ocomp::fork::load_ocomp_fork_install(&canonical_spec)?
-            .ok_or_else(|| eyre::eyre!("canonical measurement manifest has no OCOMP install"))?;
-        if mismatched_activation_height == canonical.activation_height {
-            eyre::bail!("mismatched OCOMP activation height equals the canonical height");
-        }
-
+            .ok_or_else(|| eyre::eyre!("canonical chain manifest has no OCOMP install"))?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let canonical_install_hash = canonical.install_hash(&limits)?;
         let mut mismatched = canonical.as_ref().clone();
-        mismatched.activation_height = mismatched_activation_height;
+        mismatched.request_profile.source_availability_policy_id = alloy_primitives::keccak256(
+            b"OUTBE_OCOMP_FINAL_MISMATCHED_SOURCE_AVAILABILITY_POLICY_V1\0",
+        );
+        if mismatched.request_profile.source_availability_policy_id
+            == canonical.request_profile.source_availability_policy_id
+        {
+            eyre::bail!("mismatched OCOMP source-availability policy equals the canonical policy");
+        }
         mismatched.validate_for_chain(
             canonical.request_profile.chain_id,
             canonical_genesis_hash,
@@ -688,7 +690,7 @@ impl OcompTopology {
             canonical_install_hash,
             mismatched_install_hash,
             canonical_activation_height: canonical.activation_height,
-            mismatched_activation_height,
+            mismatched_activation_height: mismatched.activation_height,
         })
     }
 
@@ -2095,7 +2097,7 @@ mod tests {
                 canonical_install_hash: format!("{:#x}", B256::repeat_byte(1)),
                 mismatched_install_hash: format!("{:#x}", B256::repeat_byte(2)),
                 canonical_activation_height: 32,
-                mismatched_activation_height: 33,
+                mismatched_activation_height: 32,
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 31,
                 canonical_finalized_after_fork: 33,
@@ -2124,7 +2126,7 @@ mod tests {
                 canonical_install_hash: format!("{:#x}", B256::repeat_byte(1)),
                 mismatched_install_hash: format!("{:#x}", B256::repeat_byte(2)),
                 canonical_activation_height: 32,
-                mismatched_activation_height: 33,
+                mismatched_activation_height: 32,
                 canonical_head_before_restart: 7,
                 mismatched_head_after_fork: 32,
                 canonical_finalized_after_fork: 33,
@@ -2395,12 +2397,7 @@ mod tests {
         let topology = topology();
         prepare_measurement_genesis_fixture(&topology);
         let canonical = topology.prepare_measurement_fork_install().unwrap();
-        let mismatched = topology
-            .prepare_mismatched_fork_manifest(
-                0,
-                OCOMP_MEASUREMENT_ACTIVATION_HEIGHT.saturating_add(1),
-            )
-            .unwrap();
+        let mismatched = topology.prepare_mismatched_fork_manifest(0).unwrap();
 
         assert_eq!(mismatched.canonical_install_hash, canonical.install_hash);
         assert_ne!(mismatched.mismatched_install_hash, canonical.install_hash);
@@ -2416,7 +2413,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             loaded.activation_height,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT.saturating_add(1)
+            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
+        );
+        assert_ne!(
+            loaded.request_profile.source_availability_policy_id,
+            canonical
+                .install
+                .request_profile
+                .source_availability_policy_id
         );
     }
 
