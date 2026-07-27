@@ -1,0 +1,30 @@
+{
+  "generator": "Foundry cast 1.7.1",
+  "factory": "0x000000000000000000000000000000000000ee0f",
+  "policyRegistry": "0x000000000000000000000000000000000000ee10",
+  "prefix": "0x53c0",
+  "marker": "0xef",
+  "networks": [
+    {
+      "name": "outbe-devnet-1",
+      "chainId": 424242,
+      "issuer": "0x1111111111111111111111111111111111111111",
+      "ticker": "EXUSD",
+      "preimage": "0x4f555442455f535441424c45434f494e5f56310000000000067932000000000000000000000000000000000000ee0f1111111111111111111111111111111111111111054558555344",
+      "tokenId": "0x45928048f5675847861b3e4b2b1e438d2aa31f9642f6718ce7b1ab3253c7f350",
+      "token": "0x53c0438d2aa31f9642f6718ce7b1ab3253c7f350"
+    },
+    {
+      "name": "outbe-testnet-1",
+      "chainId": 54322345,
+      "issuer": "0x1111111111111111111111111111111111111111",
+      "ticker": "EXUSD",
+      "preimage": "0x4f555442455f535441424c45434f494e5f563100000000033ce4a9000000000000000000000000000000000000ee0f1111111111111111111111111111111111111111054558555344",
+      "tokenId": "0x1475db0beb7c468b43f3776740f3f7f0acaf4c6a42867edc0cfedd65ee90c97f",
+      "token": "0x53c0f7f0acaf4c6a42867edc0cfedd65ee90c97f"
+    }
+  ],
+  "mainnet": {
+    "status": "unsupported-until-chain-id-and-fresh-genesis-are-frozen"
+  }
+}

@@ -143,6 +143,16 @@ offer caller is a registered L1 operator address and its network has
 commonware `sign_message` recipe) or the call reverts; unregistered callers and
 zk-disabled networks pass empty bytes.
 
+**Current implementation note — Stablecoin Factory V1 reservation.** The fixed
+Factory and shared Policy Registry accounts are reserved at `0x...EE0F` and
+`0x...EE10`. Dynamic stablecoin addresses use `0x53c0` followed by the rightmost
+144 bits of the full token id; their exact native marker is `0xef`. These constants
+are staged for the Stablecoin V1 hard fork, but token/Factory/Policy dispatch is not
+yet active. Devnet/testnet activation requires a destructive fresh-genesis reset and
+a genesis-active CREATE/CREATE2 class guard; in-place activation over earlier chain
+state and mainnet activation are unsupported until their remaining gates close. See
+`docs/plans/stablecoin-factory-v1-implementation-plan.md`.
+
 ## Stateful Runtime Module Contract
 
 Stateful runtime modules (validator set, staking, rewards, slashing, emission,

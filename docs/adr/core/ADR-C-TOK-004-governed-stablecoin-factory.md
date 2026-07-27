@@ -22,7 +22,8 @@ oracle, fee-asset registry or endorsement service.
 
 ### Factory-only creation through Vote
 
-`STABLECOIN_FACTORY_ADDRESS` is a fixed stateful precompile and a compile-time
+`STABLECOIN_FACTORY_ADDRESS` is the fixed stateful precompile
+`0x000000000000000000000000000000000000EE0F` and a compile-time
 `VoteTargetRegistry` target. Direct public `create` is not exposed. The only creation
 path is:
 
@@ -155,9 +156,11 @@ The EVM address uses a protocol-reserved two-byte prefix followed by the rightmo
 collision with a different full id is rejected deterministically; it never aliases
 or overwrites an existing token.
 
-The exact prefix and Factory address are selected only after a repository/genesis,
-Ethereum-precompile, system-address and reserved-range collision scan. The complete
-class is reserved from genesis, before any user transaction: contract creation into
+The reserved class prefix is exactly `0x53c0`, so token addresses are
+`0x53c0 || tokenId[14..32]`. The exact marker bytecode is `0xef`. Repository-declared
+addresses, Ethereum built-ins and genesis allocations are collision-scanned against
+the fixed addresses and complete class. The class is reserved from genesis, before
+any user transaction: contract creation into
 the class is rejected and calls to an unregistered member fail closed. The class
 cannot be activated late over arbitrary pre-existing code, nonce or storage. Native
 COEN may still be forced to a future address and is treated as unrelated surplus,
@@ -266,10 +269,19 @@ reserves that address class and requires a collision scan before activation.
   restrictive; no-prefix routing was rejected because current native dispatch
   requires a reserved class.
 
+### Genesis and activation classification
+
+Stablecoin V1 may activate on devnet/testnet only after a coordinated destructive
+pre-production reset that regenerates one identical genesis containing the Factory
+and Policy marker accounts. A restart that preserves old chain state is insufficient:
+the class must have been protected from CREATE/CREATE2 since block 1. Existing state
+that executed without the class guard is unsupported. Mainnet remains unsupported
+until its chain id, fresh genesis and activation manifest are separately frozen.
+
 ## Open questions and technical debt
 
-- Choose the exact `STABLECOIN_FACTORY_ADDRESS`, two-byte prefix, marker bytecode and
-  activation version after the mandatory collision scan.
+- Choose the activation protocol version after SCF-021 implements and verifies the
+  genesis-active CREATE/CREATE2 class guard.
 - Before activation, verify that the fixed 1,000,000 COEN bond is representable and
   transferred/burned as exactly `10^24` native base units in ABI and balance vectors.
 - Define and benchmark the Factory page cap and creation gas schedule.

@@ -22,8 +22,8 @@ freeze amounts, allowances, reserves, issuer credentials or fee-asset status.
 
 ### Permanent policy identities
 
-`STABLECOIN_POLICY_REGISTRY_ADDRESS` is a fixed Rust precompile and the sole policy
-state owner. Policy ids are monotonic `U256` values. Two protocol policies always
+`STABLECOIN_POLICY_REGISTRY_ADDRESS` is the fixed Rust precompile
+`0x000000000000000000000000000000000000EE10` and the sole policy state owner. Policy ids are monotonic `U256` values. Two protocol policies always
 exist:
 
 - `DENY_ALL = 0`; and
@@ -162,8 +162,8 @@ eventing are protocol requirements rather than UI conveniences.
 
 ## Open questions and technical debt
 
-- Choose the fixed Registry address and activation protocol version after the normal
-  address/genesis collision scan.
+- Choose the activation protocol version after the fixed `0xEE10` Registry address
+  and genesis reservation are integrated into the fork manifest.
 - Benchmark and set the maximum member batch, optional page cap and gas schedule;
   all become pre-activation hard-fork constants.
 - Keep add/remove `MembershipUnchanged` behavior and the exact event/error ABI aligned

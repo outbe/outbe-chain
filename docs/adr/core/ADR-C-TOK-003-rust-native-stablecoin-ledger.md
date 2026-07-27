@@ -27,7 +27,7 @@ proofs, ERC-3009 authorization and ERC-7802 bridging are separate future decisio
 Every registered stablecoin address is a stateful dynamic native precompile instance,
 not deployed Solidity bytecode. The reserved address-class dispatcher passes the
 actual callee address to one compiled Rust precompile implementation; that address
-selects the token's isolated storage account. Marker code exists for EVM
+selects the token's isolated storage account. The exact marker code is the one-byte legacy sequence `0xef`. It exists for EVM
 introspection and EIP-161 preservation, but execution is handled by the Rust
 precompile rather than by that bytecode.
 
@@ -250,8 +250,9 @@ compatibility vectors and bounded lazy migrations for every upgrade.
   with `contracts/precompiles/src/IStablecoin.sol`; any change reopens protocol lock.
 - Benchmark and assign protocol gas for policy reads, permit recovery and storage
   mutation; flat precompile base gas is insufficient evidence.
-- Define the first `schemaVersion`, marker bytecode, activation protocol version and
-  canonical protocol-version resolver in the implementation fork manifest.
+- Define the first `schemaVersion`, activation protocol version and canonical
+  protocol-version resolver in the implementation fork manifest; marker bytecode is
+  frozen as `0xef`.
 - Add frozen-transition vectors for `F < B`, `F == B`, `F > B`, mixed
   unfrozen/frozen consumption, full movement, ordinary self-transfer and rejected
   forced self-transfer.
