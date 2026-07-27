@@ -282,7 +282,11 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
 
 /// Burn the ownerless proceeds of a series with no recorded contributors:
 /// destroy the native COEN held by the factory, reducing total supply.
-fn burn_ownerless_proceeds(storage: &StorageHandle<'_>, series_id: u32, amount: U256) -> Result<()> {
+fn burn_ownerless_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    amount: U256,
+) -> Result<()> {
     storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
     emit_event(
         storage,
