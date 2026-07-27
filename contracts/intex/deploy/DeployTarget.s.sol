@@ -19,7 +19,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 ///         deploy, and the bridge meshes only with OTHER targets, so it never self-peers.
 /// @dev Env: DEPLOYER_PRIVATE_KEY, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE (proceeds
-///      route). The deployer is admin + delegate; app wiring (escrow/compact/vault, roles) is a
+///      route). The deployer is admin + delegate; app wiring (escrow/compact, roles) is a
 ///      separate step. Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     function run() external {

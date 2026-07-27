@@ -10,7 +10,7 @@ const AUCTION_STAGE = ["CommittingBids", "RevealingBids", "Issuance", "Completed
 const INTEX_STATE = ["Issued", "Qualified", "Called"];
 const INTEX_STATUS = ["Issued", "Settled"];
 const DESIS_STAGE = ["None", "Briefed", "Started", "Revealing", "Clearing", "Cleared", "Cancelled"];
-const LOCK_STATUS = ["None", "Locked", "Finalized", "RefundClaimed"];
+const LOCK_STATUS = ["None", "Locked", "Finalized"];
 
 function label(table: string[], code: number | bigint): { code: number; name: string } {
   const c = Number(code);

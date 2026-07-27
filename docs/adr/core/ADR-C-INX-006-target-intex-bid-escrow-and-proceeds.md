@@ -3,7 +3,7 @@
 - **Status:** Proposed; current Solidity implementation profiled
 - **Date:** 2026-07-17
 - **Owners/scope:** `contracts/intex/src/target/EscrowAdapter.sol`, The Compact seam
-- **Depends on:** ADR-C-INX-005, ADR-C-VLT-001, ADR-B-CAP-001
+- **Depends on:** ADR-C-INX-005, ADR-B-CAP-001
 - **Related flow:** PFS-004
 
 ## Context
@@ -40,8 +40,8 @@ Compact claim.
 - `refunded + paid == locked` for every successful finalization instruction.
 - Auction total locked equals the sum of its nonterminal bidder locks.
 - A finalization item and receive identity can succeed at most once.
-- Proceeds recipient, payment token, Compact and allocator are valid, versioned wiring
-  and cannot change while outstanding locks exist.
+- Payment token and Compact cannot rotate while outstanding locks exist; proceeds
+  recipient and auction wiring are admin-mutable at any time.
 
 ## Atomicity, replay and failure
 
@@ -60,8 +60,8 @@ settlement cannot force unbounded work.
 ## Compatibility, trust and activation
 
 Payment token, Compact lock id/tag, allocator, reset period, auction/router roles and
-UUPS layout form one deployment manifest. Rewiring is forbidden with outstanding locks
-and uses governed two-step activation.
+UUPS layout form one deployment manifest. Token/Compact rewiring is forbidden with
+outstanding locks; wiring is a single admin step.
 
 ## Production-interface verification evidence
 

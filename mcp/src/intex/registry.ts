@@ -181,7 +181,7 @@ export const ESCROW_ABI: Abi = parseAbi([
   "function getBidLock(uint32 worldwideDay, address bidder) view returns ((uint128 lockedAmount, uint32 lockedAt, uint8 status, uint128 failedRefund, bool splitRecorded) lock)",
   "function getCommitBond(uint32 worldwideDay, address bidder) view returns ((uint128 amount, uint32 lockedAt) bond)",
   "function auctionEscrowState(uint32 worldwideDay) view returns (uint128 totalLocked, uint32 lockCount, uint32 finalizedAt, bool finalized)",
-  "function REFUND_DELAY() view returns (uint32)",
+  "function UNFINALIZED_REFUND_DELAY() view returns (uint32)",
   "function claimRefund(uint32 worldwideDay, address bidder)",
 ]);
 
