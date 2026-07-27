@@ -22,12 +22,18 @@ proofs, ERC-3009 authorization and ERC-7802 bridging are separate future decisio
 
 ## Decision
 
-### One implementation, one address-scoped ledger
+### One dynamic precompile implementation, one address-scoped ledger
 
-Every registered stablecoin address dispatches to the same compiled Rust runtime.
-The callee address selects that token's storage account. The active Outbe hard fork
-determines behavior for every stablecoin; there are no per-token implementation
-pointers, proxy admins, issuer-selected templates or coexisting runtime versions.
+Every registered stablecoin address is a stateful dynamic native precompile instance,
+not deployed Solidity bytecode. The reserved address-class dispatcher passes the
+actual callee address to one compiled Rust precompile implementation; that address
+selects the token's isolated storage account. Marker code exists for EVM
+introspection and EIP-161 preservation, but execution is handled by the Rust
+precompile rather than by that bytecode.
+
+The active Outbe hard fork determines behavior for every stablecoin; there are no
+per-token implementation pointers, proxy admins, issuer-selected templates or
+coexisting runtime versions.
 
 Each token stores `schemaVersion` and `creationProtocolVersion`. One canonical
 protocol-version resolver is propagated through canonical execution, payload build,
@@ -66,9 +72,14 @@ ledger.
 ### Fixed authority topology
 
 The fixed roles are `ADMIN`, `ISSUER`, `CAP_MANAGER`, `GUARDIAN`, `COMPLIANCE` and
-`ENFORCER`. The creation issuer is the sole initial `ADMIN` and initially holds all
-five operational roles. `ADMIN` may grant or revoke operational role memberships;
-it cannot create new role kinds or renounce the token into an adminless state.
+`ENFORCER`. Their canonical `bytes32` ids are respectively `keccak256("ADMIN")`,
+`keccak256("ISSUER")`, `keccak256("CAP_MANAGER")`, `keccak256("GUARDIAN")`,
+`keccak256("COMPLIANCE")` and `keccak256("ENFORCER")`; the checked-in ABI vectors pin
+the resulting bytes. The creation issuer is the sole initial `ADMIN` and initially
+holds all five operational roles. `ADMIN` may grant or revoke operational role
+memberships; `grantRole` and `revokeRole` reject the `ADMIN` id with
+`UnsupportedRole`. ADMIN changes exclusively through the two-step transfer, so those
+role selectors cannot create multiple admins or bypass acceptance.
 
 Admin replacement is two-step:
 
@@ -109,7 +120,9 @@ The active shared policy is the sole account-policy source of truth:
   effects.
 
 `COMPLIANCE` may bind only an existing policy. There is no embedded whitelist,
-legacy fallback or implicit policy creation.
+legacy fallback or implicit policy creation. The `PolicyDenied` ABI error uses the
+stable `uint8` operation encoding `Send = 0`, `Receive = 1`, `Mint = 2`; ordinary burn
+uses Send, recipient checks use Receive and mint uses Mint.
 
 ### ERC-7943 enforcement
 
@@ -231,8 +244,8 @@ compatibility vectors and bounded lazy migrations for every upgrade.
 
 ## Open questions and technical debt
 
-- Fix the exact ABI errors, event ordering and ERC-165 golden interface vectors in
-  the implementation task before the activation fork is named.
+- Keep the checked-in ABI error, event, role-id, ERC-165 and EIP-712 vectors aligned
+  with `contracts/precompiles/src/IStablecoin.sol`; any change reopens protocol lock.
 - Benchmark and assign protocol gas for policy reads, permit recovery and storage
   mutation; flat precompile base gas is insufficient evidence.
 - Define the first `schemaVersion`, marker bytecode, activation protocol version and

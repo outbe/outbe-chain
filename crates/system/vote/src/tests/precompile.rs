@@ -37,6 +37,8 @@ fn precompile_abi_compiles() {
     let _ = IVote::createProposalCall::SIGNATURE;
     let _ = IVote::castVoteCall::SIGNATURE;
     let _ = IVote::getProposalCall::SIGNATURE;
+    let _ = IVote::getProposalBondCall::SIGNATURE;
+    let _ = IVote::unsettledBondLiabilitiesCall::SIGNATURE;
 }
 
 #[test]
@@ -92,6 +94,28 @@ fn dispatch_rejects_non_zero_value() {
         assert!(matches!(
             err,
             PrecompileError::Revert(msg) if msg.contains("non-payable")
+        ));
+    });
+}
+
+#[test]
+fn future_bond_views_revert_before_accounting_activation() {
+    with_vote_provider(100, |storage| {
+        let bond_data = IVote::getProposalBondCall {
+            proposalId: U256::from(1),
+        }
+        .abi_encode();
+        let bond_err = dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap_err();
+        assert!(matches!(
+            bond_err,
+            PrecompileError::Revert(msg) if msg == "proposal bond accounting is not active"
+        ));
+
+        let liability_data = IVote::unsettledBondLiabilitiesCall {}.abi_encode();
+        let liability_err = dispatch(storage, &liability_data, PROPOSER, U256::ZERO).unwrap_err();
+        assert!(matches!(
+            liability_err,
+            PrecompileError::Revert(msg) if msg == "proposal bond accounting is not active"
         ));
     });
 }

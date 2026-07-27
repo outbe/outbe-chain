@@ -117,18 +117,18 @@ and pending admin, and membership mappings for simple policies.
 - membership mutation is authorized only by that policy's current admin; and
 - no query performs recursion or collection materialization.
 
-Policy member sets may be indexed for bounded pagination only if one source updates
-mapping and index atomically. Runtime authorization always uses direct membership
-lookup, never an unbounded scan.
+V1 exposes no member pagination and stores no enumerable member index. Runtime
+authorization uses direct membership lookup and never an unbounded scan. A future
+bounded discovery surface requires a separate ABI decision and one source that updates
+mapping and index atomically.
 
 ## Atomicity, replay and failure
 
 The revm frame journal owns atomicity. A batch is fully validated for authority,
 bounds, duplicates and address validity before its first write. Failed creation,
 member update or admin transfer leaves descriptor, membership, next id and logs
-unchanged. Repeating an already-applied add/remove may either return a typed
-`MembershipUnchanged` revert or be explicitly idempotent, but one behavior must be
-fixed in ABI vectors before activation; silent partial batches are forbidden.
+unchanged. Repeating an already-applied add/remove returns the typed `MembershipUnchanged`
+revert. Silent idempotency and partial batches are forbidden.
 
 Policy denial in ADR-C-TOK-003 is a typed token revert and creates no Registry
 receipt or custody state.
@@ -166,9 +166,7 @@ eventing are protocol requirements rather than UI conveniences.
   address/genesis collision scan.
 - Benchmark and set the maximum member batch, optional page cap and gas schedule;
   all become pre-activation hard-fork constants.
-- Fix add/remove idempotency and exact event/error ABI in golden vectors before
-  implementation acceptance.
-- Decide whether bounded member pagination is required in V1; it is not needed by
-  consensus authorization and must not introduce `readAll`.
+- Keep add/remove `MembershipUnchanged` behavior and the exact event/error ABI aligned
+  with the checked-in golden vectors.
 - Policy content does not prove KYC, sanctions screening or legal validity; those are
   issuer/admin responsibilities and must not be implied by Factory or README wording.
