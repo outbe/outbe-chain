@@ -130,6 +130,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 | SCF-012 | Done | `a81c22e1` | Actual unsupported set_code, nested checkpoint/storage/balance/event rollback, account/change-set preservation, transfer underflow and current overflow wrap; primitives 279/279; clippy/LSP clean |
 | SCF-013 | Done | `8c0eea17` | ACTIVE/PENDING guards and zero-value legacy tests retained; raw payload state/log, validator-change quorum, handler rejection, terminal replay and outer rollback snapshots; Vote 36/36; clippy/LSP clean |
+| SCF-014 | Done | `67d6f2a2` | Behavioral H-1/H/H+1 snapshots: Update activates at begin-block H but history is exact-height sparse; canonical/build/validation stay chain-spec sourced; nested call currently accepts PUSH0 under London and Shanghai; RPC dispatch reflects caller-selected state; Update 56/56, EVM 244/244 (1 skipped), RPC 10/10; review APPROVE |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
