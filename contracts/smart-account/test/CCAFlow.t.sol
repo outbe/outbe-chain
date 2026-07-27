@@ -2,12 +2,16 @@
 pragma solidity ^0.8.30;
 import {BaseAATest} from "./BaseAATest.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
+import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
+import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
+import {MockFeeToken} from "src/mocks/MockFeeToken.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {PermissionId} from "@zerodev/kernel/types/Types.sol";
 
 contract CCAFlow is BaseAATest {
     // -------------------------------------------------------------------------
@@ -234,6 +238,89 @@ contract CCAFlow is BaseAATest {
         // Withdraw 900e6 of token2 via CCA permission for token2 — separate limit
         _ccaWithdrawToken(smartAccount, recipient.addr, 900e6, address(token2));
         assertEq(token2.balanceOf(recipient.addr), 900e6);
+    }
+
+    /// @dev T-02: a fee-on-transfer bundle token must credit the measured delta (2×(amount−fee)),
+    ///      not the nominal 2×amount the pre-transfer credit produced (which over-stated the reserve).
+    function test_W02_FeeOnTransfer_CreditsActualReceived() external {
+        MockFeeToken feeToken = new MockFeeToken(100); // 1% fee
+
+        address[] memory bundleTokens = new address[](1);
+        bundleTokens[0] = address(feeToken);
+        address[] memory bundleSenders = new address[](1);
+        bundleSenders[0] = vault;
+
+        address smartAccount = factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 0);
+
+        uint256 amount = 1000e6;
+        uint256 fee = amount / 100; // 1%
+        // Pre-fund SA (user's own funds) and vault; mint carries no fee.
+        feeToken.mint(smartAccount, amount);
+        feeToken.mint(vault, amount);
+        vm.startPrank(vault);
+        feeToken.approve(smartAccount, amount);
+        ITokenBundle(smartAccount).topUp(vault, address(feeToken), amount);
+        vm.stopPrank();
+
+        assertEq(
+            bundlePlugin.balanceOf(smartAccount, address(feeToken)),
+            2 * (amount - fee),
+            "bundle must credit 2x the received amount, not 2x the nominal amount"
+        );
+    }
+
+    /// @dev T-03: the daily-limit debit is committed in the ERC-4337 validation phase, on purpose.
+    ///      It is the safe failure mode — it can over-restrict (a reverted execution still consumes the
+    ///      limit until the window resets) but two bundled ops can never over-spend, because the
+    ///      EntryPoint validates every op before executing any. This test pins that intent: a withdraw
+    ///      that passes validation (amount <= DAILY_LIMIT) but reverts in execution (account holds no
+    ///      tokens to transfer) still leaves usedAmount debited.
+    function test_W04_RevertingExec_StillDebits() external {
+        address smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+        // No topUp: the account holds 0 bundle tokens, so the transfer reverts on insufficient balance.
+        uint256 amount = 500e6; // <= DAILY_LIMIT (1000e6): validation passes; > 0 balance: execution reverts.
+
+        _ccaWithdraw(smartAccount, recipient.addr, amount);
+
+        // Execution reverted (recipient received nothing) but the validation-phase debit persists.
+        assertEq(token.balanceOf(recipient.addr), 0, "transfer must have reverted");
+        bytes32 permId = bytes32(PermissionId.unwrap(_ccaPermId(address(token))));
+        (uint256 used,) = withdrawalLimitPolicy.states(permId, smartAccount);
+        assertEq(used, amount, "usedAmount is debited in validation and survives the reverted execution");
+    }
+
+    /// @dev T-01/T-08: the offset guard must reject a non-canonical offset in the withdraw-hook parser,
+    ///      not only in the policy. callData[4]=0x00 (SINGLE) clears the call-type check; offset word 96
+    ///      then trips NonCanonicalOffset before any fixed-window parse. 100 bytes = selector + ExecMode +
+    ///      offset + length.
+    function test_W01_WithdrawHook_NonCanonicalOffset_Reverts() external {
+        bytes memory callData = abi.encodePacked(bytes4(0), bytes32(0), uint256(96), uint256(0));
+        vm.expectRevert(abi.encodeWithSelector(BundleWithdrawHook.NonCanonicalOffset.selector, uint256(96)));
+        bundleWithdrawHook.preCheck(address(0), 0, callData);
+    }
+
+    /// @dev T-01/T-08: the offset guard must reject a non-canonical offset in the spend-protector parser
+    ///      too, so a crafted execution can't evade the approve-grant scan.
+    function test_W01_SpendProtector_NonCanonicalOffset_Reverts() external {
+        bytes memory msgData = abi.encodePacked(bytes4(0), bytes32(0), uint256(96), uint256(0));
+        vm.expectRevert(abi.encodeWithSelector(BundleSpendProtectorHook.NonCanonicalOffset.selector, uint256(96)));
+        bundleSpendProtectorHook.preCheck(address(0), 0, msgData);
+    }
+
+    /// @dev T-06: a Credis spend (CCA withdraw) emits BundleBalanceDecreased so the reserve movement
+    ///      on the fund-holding account is observable off-chain (previously a silent mutation).
+    function test_W07_DecreaseEmits() external {
+        address smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+        _topUp(smartAccount, 1000e6); // bundle = 2000e6
+        uint256 withdrawAmount = 200e6;
+
+        vm.expectEmit(true, true, false, true, address(bundlePlugin));
+        emit BundleModulePlugin.BundleBalanceDecreased(
+            smartAccount, address(token), withdrawAmount * 2, 2000e6 - withdrawAmount * 2
+        );
+        _ccaWithdraw(smartAccount, recipient.addr, withdrawAmount);
     }
 
     // -------------------------------------------------------------------------
