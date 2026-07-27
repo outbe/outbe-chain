@@ -2,6 +2,8 @@
 pragma solidity ^0.8.30;
 import {BaseAATest} from "./BaseAATest.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
+import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
+import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 import {MockFeeToken} from "src/mocks/MockFeeToken.sol";
@@ -286,6 +288,24 @@ contract CCAFlow is BaseAATest {
         bytes32 permId = bytes32(PermissionId.unwrap(_ccaPermId(address(token))));
         (uint256 used,) = withdrawalLimitPolicy.states(permId, smartAccount);
         assertEq(used, amount, "usedAmount is debited in validation and survives the reverted execution");
+    }
+
+    /// @dev T-01/T-08: the offset guard must reject a non-canonical offset in the withdraw-hook parser,
+    ///      not only in the policy. callData[4]=0x00 (SINGLE) clears the call-type check; offset word 96
+    ///      then trips NonCanonicalOffset before any fixed-window parse. 100 bytes = selector + ExecMode +
+    ///      offset + length.
+    function test_W01_WithdrawHook_NonCanonicalOffset_Reverts() external {
+        bytes memory callData = abi.encodePacked(bytes4(0), bytes32(0), uint256(96), uint256(0));
+        vm.expectRevert(abi.encodeWithSelector(BundleWithdrawHook.NonCanonicalOffset.selector, uint256(96)));
+        bundleWithdrawHook.preCheck(address(0), 0, callData);
+    }
+
+    /// @dev T-01/T-08: the offset guard must reject a non-canonical offset in the spend-protector parser
+    ///      too, so a crafted execution can't evade the approve-grant scan.
+    function test_W01_SpendProtector_NonCanonicalOffset_Reverts() external {
+        bytes memory msgData = abi.encodePacked(bytes4(0), bytes32(0), uint256(96), uint256(0));
+        vm.expectRevert(abi.encodeWithSelector(BundleSpendProtectorHook.NonCanonicalOffset.selector, uint256(96)));
+        bundleSpendProtectorHook.preCheck(address(0), 0, msgData);
     }
 
     /// @dev T-06: a Credis spend (CCA withdraw) emits BundleBalanceDecreased so the reserve movement

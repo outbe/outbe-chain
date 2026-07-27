@@ -122,9 +122,7 @@ contract WithdrawalLimitPolicyTest is Test {
     function _buildBatchUserOpTargeting(address target) internal view returns (PackedUserOperation memory) {
         Execution[] memory execs = new Execution[](1);
         execs[0] = Execution({
-            target: target,
-            value: 0,
-            callData: abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1))
+            target: target, value: 0, callData: abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1))
         });
         bytes32 batchMode = bytes32(bytes1(0x01)); // CALLTYPE_BATCH
         bytes memory callData = abi.encodeWithSelector(bytes4(0), batchMode, abi.encode(execs));
