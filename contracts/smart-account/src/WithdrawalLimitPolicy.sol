@@ -169,6 +169,15 @@ contract WithdrawalLimitPolicy is PolicyBase {
         uint256 newUsed = state.usedAmount + amount;
         if (newUsed > cfg.amountLimit) revert WithdrawalLimitExceeded(newUsed, cfg.amountLimit);
 
+        // TODO: NB The debit is committed here in the ERC-4337 validation phase, on purpose. The
+        // EntryPoint validates every op in a bundle before executing any, so committing at validation
+        // is what prevents two bundled ops from each passing a stale-headroom check and together
+        // over-spending the daily limit — the exact protection this limit exists to give the owner
+        // against a compromised CCA. The accepted trade-off is over-restriction: if the execution
+        // later reverts, the debit still stands until the window resets (a misbehaving CCA can waste
+        // its own daily headroom). Moving this to a post-execution commit would reopen the
+        // intra-bundle over-spend, so it is deliberately kept in validation. See
+        // test_W04_RevertingExec_StillDebits.
         state.usedAmount = newUsed;
 
         // validAfter = 0, validUntil = windowEnd, sigFailed = false (account-abstraction v0.9 packing).

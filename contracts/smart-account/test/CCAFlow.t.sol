@@ -9,6 +9,7 @@ import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {PermissionId} from "@zerodev/kernel/types/Types.sol";
 
 contract CCAFlow is BaseAATest {
     // -------------------------------------------------------------------------
@@ -264,6 +265,27 @@ contract CCAFlow is BaseAATest {
             2 * (amount - fee),
             "bundle must credit 2x the received amount, not 2x the nominal amount"
         );
+    }
+
+    /// @dev T-03: the daily-limit debit is committed in the ERC-4337 validation phase, on purpose.
+    ///      It is the safe failure mode — it can over-restrict (a reverted execution still consumes the
+    ///      limit until the window resets) but two bundled ops can never over-spend, because the
+    ///      EntryPoint validates every op before executing any. This test pins that intent: a withdraw
+    ///      that passes validation (amount <= DAILY_LIMIT) but reverts in execution (account holds no
+    ///      tokens to transfer) still leaves usedAmount debited.
+    function test_W04_RevertingExec_StillDebits() external {
+        address smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+        // No topUp: the account holds 0 bundle tokens, so the transfer reverts on insufficient balance.
+        uint256 amount = 500e6; // <= DAILY_LIMIT (1000e6): validation passes; > 0 balance: execution reverts.
+
+        _ccaWithdraw(smartAccount, recipient.addr, amount);
+
+        // Execution reverted (recipient received nothing) but the validation-phase debit persists.
+        assertEq(token.balanceOf(recipient.addr), 0, "transfer must have reverted");
+        bytes32 permId = bytes32(PermissionId.unwrap(_ccaPermId(address(token))));
+        (uint256 used,) = withdrawalLimitPolicy.states(permId, smartAccount);
+        assertEq(used, amount, "usedAmount is debited in validation and survives the reverted execution");
     }
 
     // -------------------------------------------------------------------------
