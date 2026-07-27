@@ -32,6 +32,11 @@ use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
 const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 8;
+// The immutable Final fixture closes its public offering 360 logical seconds
+// after genesis. A one-Tribute scenario reaches this step much sooner than the
+// 257-Tribute capacity scenario, so its bounded wait must include the remaining
+// offering interval plus finalization/request publication slack.
+const OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
@@ -357,7 +362,7 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
         .expect("measurement WorldwideDay")
         .parse::<u32>()
         .expect("numeric measurement WorldwideDay");
-    let deadline = Instant::now() + Duration::from_secs(240);
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
     let request = loop {
         let observed = world
             .validators
