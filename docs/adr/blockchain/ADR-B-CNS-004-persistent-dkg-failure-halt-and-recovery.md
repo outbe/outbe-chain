@@ -26,12 +26,21 @@ condition may combine a finalized failure budget with an independently justified
 unique-reveal threshold. Proposal and vote production stop at one finalized halt
 checkpoint while diagnostic RPC and operator observability remain available.
 
-Recovery may resume only the exact frozen target. It requires a deterministic
-recovery manifest authorized by the current halted committee quorum using
-domain-separated individual consensus BLS signatures. The quorum is computed by
-the same committee policy as consensus; it is not a separately hard-coded literal.
-Each signer durably signs at most one manifest per halt checkpoint and recovery
-generation.
+Recovery under this ADR may resume only the exact frozen target. It requires a
+deterministic recovery manifest authorized by the current halted committee quorum
+using domain-separated individual consensus BLS signatures. The quorum is computed
+by the same committee policy as consensus; it is not a separately hard-coded
+literal. Each signer durably signs at most one manifest per halt checkpoint and
+recovery generation.
+
+This authority model does not recover a network that has already lost more than
+its BFT availability budget and therefore cannot produce the required old-committee
+quorum. It also does not authorize a surviving minority to infer failure from local
+timeouts and choose a new active set: that would permit conflicting partitions to
+self-certify conflicting committees. Quorum-loss active-set reconstruction is a
+separate planned decision, `ADR-B-CNS-006`, after predecessor-authenticated committee
+chaining in `ADR-B-CNS-005`. Until that decision has an accepted safety proof, the
+quorum-loss behavior remains fail-closed and requires an explicit network hard fork.
 
 The manifest binds chain ID, finalized halt height/hash, frozen-target hash,
 recovery generation, next deterministic attempt, protocol version and schema
@@ -73,7 +82,9 @@ certificate hash.
 
 This is a new protocol feature, not a correction for infinite retry. Until it is
 implemented and activated, ADR-B-CNS-002's VRF-expiry process termination remains
-the normative fail-closed behavior.
+the normative fail-closed behavior. Even after this same-target mechanism is
+implemented, it does not claim automatic recovery after unplanned `>f` committee
+loss; that trust-model change belongs to the separately accepted ADR-B-CNS-006.
 
 ## Open questions and technical debt
 
@@ -82,3 +93,8 @@ the normative fail-closed behavior.
 - Recovery certificate codec/domain and special recovery-block FSM are not implemented.
 - Node supervision currently exits with the consensus task and cannot preserve diagnostic RPC.
 - Operator signing/distribution tooling and runbook do not exist.
+- Quorum-loss recovery must distinguish finalized voluntary downgrade/exit consent
+  from crash or partition, define a genesis/checkpoint-rooted replacement authority,
+  and prove that two partitions cannot both activate different sets. This is queued
+  as remediation-plan task F1 and future ADR-B-CNS-006, not solved by lowering the
+  old committee quorum in this ADR.

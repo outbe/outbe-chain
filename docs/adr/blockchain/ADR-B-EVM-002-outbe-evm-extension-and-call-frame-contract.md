@@ -6,6 +6,7 @@
 - **Scope:** `crates/blockchain/evm` factory, precompile registry, dispatch and child-call driver
 - **Depends on:** ADR-B-CNS-003, ADR-S-FEE-001, ADR-B-WIR-001, ADR-B-OCD-007, ADR-B-EVM-001
 - **Related:** ADR-B-CNS-002, ADR-B-TXP-001, ADR-B-EVM-003, ADR-S-ZKP-001
+- **Used by:** ADR-C-TOK-004
 
 ## Context
 
@@ -26,7 +27,8 @@ state machines belong to their module ADRs.
 
 Maintain one compile-time manifest whose entries contain:
 
-- canonical address and stable symbolic name;
+- either one canonical exact address or one non-overlapping protocol-reserved address
+  class, plus a stable symbolic name;
 - activation/deactivation protocol version;
 - dispatch function and ABI/schema identity;
 - base/dynamic gas policy;
@@ -35,10 +37,19 @@ Maintain one compile-time manifest whose entries contain:
 - implementation crate/owner ADR.
 
 The manifest generates address lookup, enumeration, warm-address handling,
-diagnostics and conformance tests. Duplicate addresses or names, overlap with
+diagnostics and conformance tests. Exact routes dispatch through the existing fixed
+handler adapter. An address-class route receives the actual callee address and must
+fail closed unless its owning registry, schema and exact marker code recognize that
+instance. The complete class is reserved from genesis, before user execution:
+contract creation into it is rejected and an unregistered matching address cannot
+fall through to ordinary bytecode. A class cannot be introduced late over
+potentially occupied code, nonce or storage.
+
+Duplicate addresses or names, exact/class or class/class overlap, overlap with
 Ethereum precompiles/reserved system addresses, missing capability declarations and
-unmapped entries are compile-time failures. An address cannot silently change
-meaning; registry changes require protocol activation under ADR-S-GOV-003 and ADR-B-WIR-001.
+unmapped entries are compile-time failures. An address or class cannot silently
+change meaning; registry changes require protocol activation under ADR-S-GOV-003 and
+ADR-B-WIR-001.
 
 ### EVM construction is fail-closed
 
@@ -121,7 +132,7 @@ handler for equivalent bytecode calls.
 
 | Responsibility | Authority |
 |---|---|
-| Active Outbe address/dispatch/capability table | versioned EVM extension manifest |
+| Active exact addresses and reserved address classes | versioned EVM extension manifest |
 | Chain/spec/mode and capability assembly | `OutbeEvmConfig` / `OutbeEvmFactory` |
 | Context-to-provider adapter | EVM dispatch seam governed by ADR-B-EVM-002 |
 | Top-level and nested precompile resolution | one generated registry dispatcher |
@@ -130,8 +141,10 @@ handler for equivalent bytecode calls.
 
 ## Invariants
 
-- Every active Outbe address resolves to exactly one manifest entry at a protocol
-  version, and every manifest entry is registered and enumerable.
+- Every active Outbe exact address or reserved-class member resolves to exactly one
+  manifest entry at a protocol version, with no exact/class overlap.
+- Dynamic instance validity requires its owning registry, schema and exact marker;
+  prefix/class membership alone never authenticates an instance.
 - All validators derive identical factory configuration from canonical inputs.
 - A production EVM cannot execute with a missing mandatory capability.
 - Top-level and nested calls observe the same registry, block identity and protocol
@@ -275,3 +288,17 @@ and generated evidence rather than several synchronized match arms and lists.
 26. Handler registries for Vote and Update are additional compile-time tables wired
     from this crate. Their ownership remains ADR-S-GOV-002 and ADR-S-GOV-003, but EVM conformance must
     prove their exact active version is bound to the same protocol schedule.
+27. `DispatchFn` and `outbe_dispatch_fn` currently lose the actual callee and only
+    recognize fixed addresses. Implement the reserved-class route required by
+    ADR-C-TOK-004 without changing every fixed module signature; add two-instance,
+    unregistered-prefix, top-level/nested and storage-isolation tests.
+28. The executor's fixed marker list cannot enumerate dynamic stablecoin addresses.
+    A successfully installed nonempty marker already prevents EIP-161 pruning, so do
+    not invent a per-block Factory scan as a discovery mechanism. Add journaled
+    `DirectStorageProvider::set_code`, include code in hook state-root notification,
+    prove rollback on failed initialization and add Factory logs to the mandatory
+    `HookEvents` receipt whitelist.
+29. Define one canonical Outbe protocol-version resolver and propagate its exact-block
+    result through canonical execution, payload build, validation, nested dispatch and
+    RPC. Ethereum `SpecId` or token-local schema alone is not sufficient authority for
+    global stablecoin hard-fork behavior.
