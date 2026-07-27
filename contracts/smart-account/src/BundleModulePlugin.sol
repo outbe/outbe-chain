@@ -12,6 +12,9 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     // --- State (keyed by Kernel account address = msg.sender during lifecycle calls) ---
     mapping(address => bool) private installed;
     mapping(address account => address[]) private bundleTokens;
+    /// @dev token-minor units. Stores 2× the deposited amount (purchase leg + COEN-buy leg); topUp
+    ///      credits `received * 2` and decreaseBundleBalance burns `amount * 2`. BundleSpendProtectorHook
+    ///      reads it as the reserve in `freeBalance = totalBalance − bundleBalance`.
     mapping(address account => mapping(address token => uint256)) private bundleBalance;
 
     error HasBundleBalance(address token);

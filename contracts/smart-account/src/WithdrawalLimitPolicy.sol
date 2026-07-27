@@ -25,14 +25,14 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     /// @notice Configuration stored per (id, wallet) pair on install.
     struct WithdrawalLimitConfig {
-        uint256 amountLimit; // Max cumulative transfer amount per interval
+        uint256 amountLimit; // token-minor units (e.g. 6-dec); max cumulative transfer per interval
         uint48 interval; // Time window length in seconds
         address token; // ERC20 token address this policy governs
     }
 
     /// @notice Rolling-window state tracked per (id, wallet) pair.
     struct WithdrawalLimitState {
-        uint256 usedAmount; // Cumulative amount spent in current window
+        uint256 usedAmount; // token-minor units (e.g. 6-dec); cumulative spent in current window
         uint48 windowEnd; // Timestamp when current window expires
     }
 
