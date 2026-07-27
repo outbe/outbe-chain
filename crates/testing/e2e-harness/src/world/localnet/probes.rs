@@ -41,6 +41,17 @@ pub struct CeStartupReplayObservationV1 {
     pub elapsed_micros: u64,
 }
 
+/// One structured OCOMP execution-boundary marker parsed from a node's real
+/// runtime log. The producer emits only consensus-observational fields; this
+/// probe never infers behavior from source code or mutates node state.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompRuntimeTraceMarkerV1 {
+    pub node: String,
+    pub kind: String,
+    pub origin: Option<String>,
+    pub block_number: u64,
+}
+
 #[cfg(any(test, feature = "ocomp-integration"))]
 struct TrackedRethLog {
     file: File,
@@ -463,6 +474,82 @@ impl Localnet {
     fn node_log(&self, node: &str) -> String {
         let path = self.cfg.dir.join(node).join("node.log");
         fs::read_to_string(path).unwrap_or_default()
+    }
+
+    /// Parse bounded OCOMP runtime markers for one exact owned node.
+    pub fn ocomp_runtime_trace_markers(
+        &self,
+        node: &str,
+    ) -> Result<Vec<OcompRuntimeTraceMarkerV1>> {
+        ensure!(
+            node == "follower"
+                || node
+                    .strip_prefix("validator-")
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .is_some_and(|index| index < self.committee_size()),
+            "OCOMP trace probe refuses unknown node {node}"
+        );
+        let log = self.node_log(node);
+        let mut markers = Vec::new();
+        for line in log.lines() {
+            let Some(payload) = line.split_once("OCOMP_TRACE_V1 ").map(|(_, value)| value) else {
+                continue;
+            };
+            let fields = payload
+                .split_whitespace()
+                .filter_map(|field| field.split_once('='))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let kind = fields
+                .get("kind")
+                .ok_or_else(|| eyre::eyre!("OCOMP trace marker has no kind in {node}"))?
+                .trim_matches(|character: char| {
+                    !character.is_ascii_alphanumeric() && character != '_'
+                })
+                .to_owned();
+            let block_number = fields
+                .get("block")
+                .ok_or_else(|| eyre::eyre!("OCOMP trace marker has no block in {node}"))?
+                .trim_matches(|character: char| !character.is_ascii_digit())
+                .parse::<u64>()
+                .wrap_err_with(|| format!("decode OCOMP trace block in {node}"))?;
+            let origin = fields.get("origin").map(|value| {
+                value
+                    .trim_matches(|character: char| {
+                        !character.is_ascii_alphanumeric() && character != '_'
+                    })
+                    .to_owned()
+            });
+            markers.push(OcompRuntimeTraceMarkerV1 {
+                node: node.to_owned(),
+                kind,
+                origin,
+                block_number,
+            });
+        }
+        ensure!(
+            markers.len() <= 4_096,
+            "OCOMP trace marker count exceeds the bounded per-node evidence cap"
+        );
+        Ok(markers)
+    }
+
+    /// Decode the exact validator-owned OCOMP pin journal using the production
+    /// bounded codec. This is read-only evidence, not a state-injection seam.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_retention_journal(
+        &self,
+        validator_index: usize,
+    ) -> Result<outbe_node::ocomp::retention::RetentionJournalSnapshotV1> {
+        ensure!(
+            validator_index < self.committee_size(),
+            "retention journal validator is outside the committee"
+        );
+        let root = self
+            .cfg
+            .validator_dir(validator_index)
+            .join("data/consensus/ocomp_retention");
+        outbe_node::ocomp::retention::inspect_retention_journal(&root)
+            .wrap_err_with(|| format!("inspect production retention journal {}", root.display()))
     }
 
     /// Whether validator `index`'s owned node process has already exited.

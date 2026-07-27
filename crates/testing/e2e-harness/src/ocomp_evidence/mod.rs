@@ -6,6 +6,8 @@
 
 #[cfg(feature = "ocomp-integration")]
 mod capacity;
+mod closure;
+mod command_lane;
 mod discovery;
 mod io;
 mod lane;
@@ -18,12 +20,19 @@ mod verify;
 pub use capacity::{
     assemble_capacity_evidence, assemble_capacity_run, verify_capacity_run_preimage,
 };
+pub use closure::{
+    assemble_closure, closure_manifest_in, lane_manifest_in, verify_closure_semantics,
+    verify_retained_semantics,
+};
+pub use command_lane::{
+    assemble_command_lane, run_command_lane, CommandBatchV1, CommandLaneRunV1, CommandObservationV1,
+};
 pub use discovery::{discover, validate_discovery, TEST_ID_MARKER};
 pub use io::{
     capture_source_identity, hash_file, publish_assertions, publish_manifest, publish_member,
     publish_report, sha256_hex,
 };
-pub use lane::assemble_lane;
+pub use lane::{assemble_lane, verify_lane_semantics};
 pub use ledger::{PlanningLedger, LEDGER_KIND};
 pub use runtime::{
     CorrelatedTributeFixtureV1, CorrelationError, JobIntentCorrelationV1,

@@ -138,6 +138,16 @@ pub struct PinRecordV1 {
     pub state: PinStateV1,
 }
 
+/// Read-only decoded view of one durable retention journal. This is used by
+/// operational diagnostics and behavioral evidence; it shares the production
+/// decoder and never creates, repairs or rewrites journal state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetentionJournalSnapshotV1 {
+    pub generation: u64,
+    pub last_updated: B256,
+    pub records: Vec<(B256, PinRecordV1)>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 // `Ready` deliberately returns the complete bounded durable record. Boxing it
 // would make a read-only status observation depend on a heap allocation.
@@ -1976,6 +1986,45 @@ fn decode_registry(encoded: &[u8]) -> Result<JobRegistryV1, RetentionError> {
         generation,
         last_updated,
         records,
+    })
+}
+
+/// Decode one exact production journal through the same bounded codec used at
+/// node startup. `root` is the node's `ocomp_retention` directory.
+pub fn inspect_retention_journal(
+    root: impl AsRef<Path>,
+) -> Result<RetentionJournalSnapshotV1, RetentionError> {
+    let path = root.as_ref().join(JOURNAL_FILENAME);
+    let metadata = fs::symlink_metadata(&path).map_err(|source| RetentionError::Io {
+        operation: "stat",
+        path: path.clone(),
+        source,
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(RetentionError::AmbiguousJournal(
+            "journal is not a regular file",
+        ));
+    }
+    if metadata.len() > JOURNAL_MAX_BYTES as u64 {
+        return Err(RetentionError::MalformedJournal("journal exceeds byte cap"));
+    }
+    let mut file = File::open(&path).map_err(|source| RetentionError::Io {
+        operation: "open",
+        path: path.clone(),
+        source,
+    })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)
+        .map_err(|source| RetentionError::Io {
+            operation: "read",
+            path: path.clone(),
+            source,
+        })?;
+    let registry = decode_registry(&bytes)?;
+    Ok(RetentionJournalSnapshotV1 {
+        generation: registry.generation,
+        last_updated: registry.last_updated,
+        records: registry.records.into_iter().collect(),
     })
 }
 

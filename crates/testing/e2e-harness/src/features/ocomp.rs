@@ -12,10 +12,15 @@ use std::{
 
 use alloy_primitives::B256;
 use cucumber::{given, then, when};
+use outbe_node::ocomp::retention::{PinReleaseReason, PinStateV1};
 use outbe_ocomp_protocol::{
+    intent::job_id_from_intent_id,
     profile::poc_schema_limits,
     state::{OcompJobStatus, OcompTerminalOutcome},
     vote::ResultVoteV1,
+};
+use outbe_primitives::addresses::{
+    INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS,
 };
 
 use crate::features::common::{
@@ -25,13 +30,20 @@ use crate::internal::eth;
 use crate::world::localnet::StartOpts;
 use crate::world::ocomp::OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS;
 use crate::world::ocomp::{
-    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
-    OcompProcessFault, OcompProcessRole, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompIsolationRoleV1,
+    OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole, OcompTopology,
+    OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+};
+use crate::world::state::OcompOwnerRollbackObservationV1;
+use crate::world::state::{
+    OcompExecutionTraceObservationV1, OcompOrphanRecoveryObservationV1,
+    OcompTentativeCandidateObservationV1,
 };
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
 const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 8;
+const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // The immutable Final fixture closes its public offering 360 logical seconds
 // after genesis. A one-Tribute scenario reaches this step much sooner than the
 // 257-Tribute capacity scenario, so its bounded wait must include the remaining
@@ -40,33 +52,50 @@ const OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None);
+    start_ocomp_measurement_localnet(world, None, false);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0));
+    start_ocomp_measurement_localnet(world, Some(0), false);
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), false);
+}
+
+#[given("a fresh four-validator OCOMP zero-limit compatibility localnet")]
+fn fresh_ocomp_zero_limit_compatibility_localnet(world: &mut World) {
+    start_ocomp_measurement_localnet(world, Some(0), true);
 }
 
 #[given("the canonical four-validator OCOMP Final devnet")]
 fn canonical_ocomp_final_devnet(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false);
+    start_canonical_ocomp_final_devnet(world, true, false, None, false);
+}
+
+#[given("the canonical four-validator OCOMP Final devnet with the Nod owner failpoint")]
+fn canonical_ocomp_final_devnet_with_nod_owner_failpoint(world: &mut World) {
+    start_canonical_ocomp_final_devnet(world, true, false, Some("nod_receipt_root"), false);
 }
 
 #[given("the canonical four-validator OCOMP Final devnet before H")]
 fn canonical_ocomp_final_devnet_before_h(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, false, true);
+    start_canonical_ocomp_final_devnet(world, false, true, None, false);
+}
+
+#[given("four OCOMP domains are running through the production systemd profile")]
+fn four_ocomp_domains_run_through_systemd(world: &mut World) {
+    start_canonical_ocomp_final_devnet(world, true, false, None, true);
 }
 
 fn start_canonical_ocomp_final_devnet(
     world: &mut World,
     wait_for_activation: bool,
     activate_workers: bool,
+    owner_failpoint: Option<&str>,
+    systemd_isolation: bool,
 ) {
     bootstrap_final_ocomp_localnet(world, 6);
     world.state.ocomp_capacity_tribute_private_keys = world
@@ -87,12 +116,21 @@ fn start_canonical_ocomp_final_devnet(
         ),
         genesis_timestamp_pre_shifted: true,
         ocomp_protocol_bundle_hash: None,
+        ocomp_owner_failpoint: owner_failpoint.map(str::to_owned),
+        ocomp_supervisor_uid: None,
+        ocomp_snapshot_exporter_uid: None,
     };
     let prepared = world
         .ocomp
         .prepare_final_fork_install()
         .expect("load canonical OCOMP Final install");
-    launch_prepared_ocomp(world, &mut start_opts, &prepared, activate_workers);
+    launch_prepared_ocomp(
+        world,
+        &mut start_opts,
+        &prepared,
+        activate_workers,
+        systemd_isolation,
+    );
     if wait_for_activation {
         wait_for_finalized_ocomp_activation(world);
     }
@@ -101,7 +139,12 @@ fn start_canonical_ocomp_final_devnet(
 fn start_ocomp_measurement_localnet(
     world: &mut World,
     public_capacity_tribute_count: Option<usize>,
+    zero_day_limit: bool,
 ) {
+    assert!(
+        !zero_day_limit || public_capacity_tribute_count == Some(0),
+        "zero-limit compatibility uses the one-Tribute public fixture"
+    );
     let shorten_public_day = public_capacity_tribute_count.is_some();
     bootstrap_localnet(world, 6, &[]);
     let mut start_opts = if shorten_public_day {
@@ -128,6 +171,10 @@ fn start_ocomp_measurement_localnet(
         StartOpts::default()
     };
     let measurement_fork = match public_capacity_tribute_count {
+        Some(0) if zero_day_limit => world
+            .ocomp
+            .prepare_zero_limit_public_measurement_fork_install()
+            .expect("publish the immutable zero-limit compatibility fork before node launch"),
         Some(0) => world
             .ocomp
             .prepare_public_measurement_fork_install()
@@ -150,6 +197,7 @@ fn start_ocomp_measurement_localnet(
         &mut start_opts,
         &measurement_fork,
         !shorten_public_day,
+        false,
     );
     if shorten_public_day {
         wait_for_finalized_ocomp_activation(world);
@@ -161,10 +209,17 @@ fn launch_prepared_ocomp(
     start_opts: &mut StartOpts,
     prepared: &OcompMeasurementForkV1,
     activate_workers: bool,
+    systemd_isolation: bool,
 ) {
     let expected_identity = prepared.launch_identity();
     start_opts.ocomp_protocol_bundle_hash =
         Some(format!("{:#x}", expected_identity.protocol_bundle_hash));
+    if systemd_isolation {
+        let (supervisor_uid, snapshot_exporter_uid) = OcompTopology::systemd_node_peer_uids()
+            .expect("resolve fixed OCOMP systemd node peers");
+        start_opts.ocomp_supervisor_uid = Some(supervisor_uid);
+        start_opts.ocomp_snapshot_exporter_uid = Some(snapshot_exporter_uid);
+    }
     start_bootstrapped_localnet(world, start_opts);
 
     let primary = world.validators.primary_port();
@@ -180,10 +235,17 @@ fn launch_prepared_ocomp(
     assert_eq!(chain_id, expected_identity.chain_id);
     assert_eq!(genesis_hash, expected_identity.genesis_hash);
     let identity = expected_identity;
-    world
-        .ocomp
-        .start_validator_roles(identity)
-        .expect("start all production node-facing OCOMP roles");
+    if systemd_isolation {
+        world
+            .ocomp
+            .start_systemd_validator_roles(identity)
+            .expect("start all production OCOMP roles through systemd");
+    } else {
+        world
+            .ocomp
+            .start_validator_roles(identity)
+            .expect("start all production node-facing OCOMP roles");
+    }
     if activate_workers {
         for validator_index in 0..4_u8 {
             world
@@ -458,6 +520,196 @@ fn validator_supervisors_submit_results_directly(world: &mut World) {
         .ocomp
         .ensure_validator_roles_alive()
         .expect("validator supervisors remain alive for direct ResultVote submission");
+}
+
+#[then("the named Nod owner failure leaves two vote slots and no activation effect")]
+fn named_nod_owner_failure_rolls_back_activation(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("finalized public JobIntent");
+    let primary = world.validators.primary_port();
+    let timeout = Instant::now() + Duration::from_secs(180);
+    let transactions = loop {
+        let finalized = world.rpc.finalized(primary).unwrap_or_default();
+        let observed = world
+            .rpc
+            .finalized_ocomp_result_vote_transactions_on(primary, request.request_height, finalized)
+            .unwrap_or_default();
+        let distinct_signers = observed
+            .iter()
+            .map(|transaction| transaction.signer)
+            .collect::<std::collections::BTreeSet<_>>();
+        if distinct_signers.len() == 4 {
+            break observed;
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("all four OCOMP domains stay live through the named owner failure");
+        assert!(
+            Instant::now() < timeout,
+            "four validators did not publish ResultVote transactions before the owner-failure timeout"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    let mut first_by_signer = std::collections::BTreeMap::new();
+    for transaction in &transactions {
+        first_by_signer
+            .entry(transaction.signer)
+            .or_insert_with(|| transaction.clone());
+    }
+    let first_attempts = first_by_signer.into_values().collect::<Vec<_>>();
+    let successful = first_attempts
+        .iter()
+        .filter(|transaction| transaction.success)
+        .collect::<Vec<_>>();
+    let failed = first_attempts
+        .iter()
+        .filter(|transaction| !transaction.success)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        successful.len(),
+        2,
+        "exactly two first votes must commit before every later vote becomes q-forming"
+    );
+    assert_eq!(
+        failed.len(),
+        2,
+        "both remaining validators must exercise the same named q-forming owner failure"
+    );
+    let post_block = failed
+        .iter()
+        .map(|transaction| transaction.block_number)
+        .max()
+        .expect("two failed q-forming votes");
+    assert!(
+        world.rpc.wait_finalized_at_least(primary, post_block, 60),
+        "the q-forming failure blocks did not finalize"
+    );
+
+    let effect_owners = [
+        NOD_ADDRESS,
+        INTEX_ADDRESS,
+        TRIBUTE_ADDRESS,
+        PROMIS_LIMIT_ADDRESS,
+    ];
+    let ports = world.validators.committee_ports();
+    let mut canonical_before = Vec::with_capacity(effect_owners.len());
+    let mut canonical_after = Vec::with_capacity(effect_owners.len());
+    for owner in effect_owners {
+        let before = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world
+                    .rpc
+                    .ocomp_owner_storage_root_on(port, owner, request.request_height)
+            })
+            .collect::<Vec<_>>();
+        let after = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world
+                    .rpc
+                    .ocomp_owner_storage_root_on(port, owner, post_block)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            before.iter().all(Option::is_some) && after.iter().all(Option::is_some),
+            "one validator could not prove owner {owner} storage before/after rollback"
+        );
+        let before_first = before[0].clone().expect("checked above");
+        let after_first = after[0].clone().expect("checked above");
+        assert!(
+            before
+                .iter()
+                .all(|observed| observed.as_ref() == Some(&before_first)),
+            "validators disagree on owner {owner} pre-failure storage commitment"
+        );
+        assert!(
+            after
+                .iter()
+                .all(|observed| observed.as_ref() == Some(&after_first)),
+            "validators disagree on owner {owner} post-failure storage commitment"
+        );
+        assert_eq!(
+            before_first.storage_hash, after_first.storage_hash,
+            "q-forming owner failure changed storage owned by {owner}"
+        );
+        canonical_before.push(before_first);
+        canonical_after.push(after_first);
+    }
+
+    let record = world
+        .rpc
+        .finalized_ocomp_job_record_on(primary, request.intent_id)
+        .expect("job record after q-forming owner failure");
+    assert!(
+        matches!(
+            record.status,
+            OcompJobStatus::VotingOpen | OcompJobStatus::Expired
+        ),
+        "owner failure produced an unexpected terminal job state: {:?}",
+        record.status
+    );
+    assert!(
+        record
+            .terminal
+            .as_ref()
+            .is_none_or(|terminal| terminal.outcome == OcompTerminalOutcome::Expired),
+        "owner failure installed a completed/conflicted terminal binding"
+    );
+    let finalized = record.finalized.expect("finalized job after owner failure");
+    assert!(
+        finalized.quorum.is_none(),
+        "a reverted q-forming vote left quorum evidence behind"
+    );
+    let accountability = world
+        .rpc
+        .finalized_ocomp_vote_accountability_on(primary, finalized.job_id)
+        .expect("vote accountability after owner failure");
+    assert_eq!(
+        accountability.slot_validator_indexes.len(),
+        2,
+        "a reverted q-forming vote slot remained committed"
+    );
+    assert!(
+        accountability.quorum_result_digest.is_none(),
+        "owner failure left a quorum digest"
+    );
+    for port in ports {
+        assert!(
+            world
+                .rpc
+                .finalized_ocomp_activation_on(port, request.request_height, request.intent_id)
+                .is_none(),
+            "owner failure emitted an activation on port {port}"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .nod_certified_generation_exists_on(port, request.worldwide_day, post_block,),
+            Some(false),
+            "owner failure created a Nod generation on port {port}"
+        );
+    }
+
+    world.state.ocomp_result_vote_transactions = first_attempts.clone();
+    world.state.ocomp_vote_accountability = Some(accountability.clone());
+    world.state.ocomp_owner_rollback_observation = Some(OcompOwnerRollbackObservationV1 {
+        failed_vote_transactions: failed
+            .iter()
+            .map(|transaction| transaction.transaction_hash)
+            .collect(),
+        successful_vote_count: u8::try_from(successful.len()).expect("two successful votes"),
+        retained_slot_validator_indexes: accountability.slot_validator_indexes,
+        before: canonical_before,
+        after: canonical_after,
+    });
 }
 
 #[when("validator 2 prepares one valid vote without broadcasting it")]
@@ -930,6 +1182,32 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
             world.state.ocomp_vote_accountability = Some(accountability);
             world.state.ocomp_validator_balances_after = balances_after;
             world.state.ocomp_atomic_quorum_apply_verified = true;
+            if world.ocomp.systemd_isolation_active() {
+                let node_pids = (0..4_u8)
+                    .map(|validator_index| {
+                        (
+                            validator_index,
+                            world
+                                .localnet
+                                .validator_pid(usize::from(validator_index))
+                                .unwrap_or_else(|error| {
+                                    panic!(
+                                        "read validator-{validator_index} pid for ISO evidence: \
+                                         {error:#}"
+                                    )
+                                }),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                world
+                    .ocomp
+                    .capture_systemd_isolation_inventory(
+                        &node_pids,
+                        u8::try_from(expected_vote_count)
+                            .expect("four-validator vote count fits u8"),
+                    )
+                    .expect("capture real systemd/cgroup/mount/quota/worker inventory");
+            }
             return;
         }
         world
@@ -1635,6 +1913,76 @@ fn empty_tribute_day_uses_terminal_compatibility(world: &mut World) {
             "empty Tribute day changed Tribute supply on port {port}"
         );
     }
+    world.state.ocomp_empty_compatibility_verified = Some(true);
+}
+
+#[then("the zero-limit day fails without a JobIntent, auction brief, Tribute retirement or Nod")]
+fn zero_limit_day_uses_failed_compatibility_branch(world: &mut World) {
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("zero-limit WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric zero-limit WorldwideDay");
+    let ports = world.validators.committee_ports();
+    let timeout = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let finalized_heights = loop {
+        let statuses = ports
+            .iter()
+            .copied()
+            .map(|port| world.rpc.wwd_status(port, &worldwide_day.to_string()))
+            .collect::<Vec<_>>();
+        let finalized = ports
+            .iter()
+            .copied()
+            .map(|port| world.rpc.finalized(port))
+            .collect::<Vec<_>>();
+        if statuses.iter().all(|status| status.as_deref() == Some("7"))
+            && finalized.iter().all(Option::is_some)
+        {
+            break finalized
+                .into_iter()
+                .map(|height| height.expect("checked above"))
+                .collect::<Vec<_>>();
+        }
+        assert!(
+            Instant::now() < timeout,
+            "zero-limit day did not reach the pinned FAILED branch: statuses={statuses:?}, \
+             finalized={finalized:?}"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    for (port, finalized_height) in ports.into_iter().zip(finalized_heights) {
+        assert!(
+            world
+                .rpc
+                .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
+                .is_none(),
+            "zero-limit day created a JobIntent on port {port}"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .desis_auction_stage_on(port, worldwide_day, finalized_height),
+            Some(0),
+            "zero-limit day created an auction brief on port {port}"
+        );
+        assert_eq!(
+            world.rpc.supply(port).as_deref(),
+            Some("1"),
+            "zero-limit day retired or changed Tribute supply on port {port}"
+        );
+        assert_eq!(
+            world
+                .rpc
+                .nod_certified_generation_exists_on(port, worldwide_day, finalized_height,),
+            Some(false),
+            "zero-limit day created a Nod generation on port {port}"
+        );
+    }
+    world.state.ocomp_zero_limit_compatibility_verified = Some(true);
 }
 
 #[then("the certified Lysis generation contains only the original Tribute")]
@@ -1657,6 +2005,234 @@ fn certified_generation_contains_only_original_tribute(world: &mut World) {
         Some("0"),
         "certified Lysis activation did not retire the original Tribute generation"
     );
+    world.state.ocomp_duplicate_exclusion_verified = Some(true);
+}
+
+#[when("validator 0 is isolated before the JobIntent request block")]
+fn isolate_validator_zero_before_request(world: &mut World) {
+    for validator_index in [1, 2, 3] {
+        world
+            .localnet
+            .kill_validator(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("stop validator-{validator_index} before tentative request: {error:#}")
+            });
+    }
+    assert!(
+        !world.localnet.validator_exited(0),
+        "isolated validator-0 stopped unexpectedly"
+    );
+}
+
+#[then("validator 0 durably pins one tentative JobIntent candidate")]
+fn isolated_validator_pins_tentative_candidate(world: &mut World) {
+    let expected_wwd = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("tentative candidate WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric tentative candidate WorldwideDay");
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    loop {
+        if let Ok(snapshot) = world.localnet.ocomp_retention_journal(0) {
+            let tentative = snapshot
+                .records
+                .iter()
+                .find_map(|(_, record)| match record.state {
+                    PinStateV1::Tentative { candidate } if candidate.wwd == expected_wwd => {
+                        Some(candidate)
+                    }
+                    _ => None,
+                });
+            if let Some(candidate) = tentative {
+                assert_eq!(candidate.wwd, expected_wwd);
+                assert_ne!(candidate.block_hash, B256::ZERO);
+                assert_ne!(candidate.state_root, B256::ZERO);
+                assert_ne!(candidate.intent_id, B256::ZERO);
+                world.state.ocomp_tentative_candidate =
+                    Some(OcompTentativeCandidateObservationV1 {
+                        block_number: candidate.block_number,
+                        block_hash: candidate.block_hash,
+                        state_root: candidate.state_root,
+                        intent_id: candidate.intent_id,
+                        worldwide_day: candidate.wwd,
+                    });
+                return;
+            }
+        }
+        assert!(
+            !world.localnet.validator_exited(0),
+            "isolated validator-0 exited before persisting a tentative pin"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "isolated validator-0 did not persist the request candidate before the bounded deadline"
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+#[when("validator 0 stops and the other three validators finalize a competing request block")]
+fn competing_committee_finalizes_request(world: &mut World) {
+    let orphan = world
+        .state
+        .ocomp_tentative_candidate
+        .as_ref()
+        .expect("persisted tentative candidate")
+        .clone();
+    world
+        .localnet
+        .kill_validator(0)
+        .expect("stop isolated validator-0");
+    for validator_index in [1, 2, 3] {
+        world
+            .localnet
+            .restart_validator(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart competing validator-{validator_index}: {error:#}")
+            });
+    }
+
+    let ports = [1, 2, 3].map(|index| world.validators.http_port(index));
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let request = loop {
+        let observed = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
+            })
+            .collect::<Vec<_>>();
+        if observed.iter().all(Option::is_some) {
+            let first = observed[0].clone().expect("all competing requests present");
+            assert!(
+                observed.iter().all(|value| value.as_ref() == Some(&first)),
+                "three-validator committee finalized different request blocks"
+            );
+            break first;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "three-validator committee did not finalize the competing request"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    assert_eq!(request.worldwide_day, orphan.worldwide_day);
+    assert_eq!(request.request_height, orphan.block_number);
+    assert_ne!(
+        request.request_block_hash, orphan.block_hash,
+        "the resumed committee finalized the isolated candidate instead of a competing block"
+    );
+    world.state.ocomp_job_request = Some(request);
+}
+
+#[then("validator 0 rejoins and releases the exact orphaned tentative pin")]
+fn validator_zero_releases_orphaned_pin(world: &mut World) {
+    let orphan = world
+        .state
+        .ocomp_tentative_candidate
+        .as_ref()
+        .expect("persisted tentative candidate")
+        .clone();
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("competing finalized request")
+        .clone();
+    world
+        .localnet
+        .restart_validator(0)
+        .expect("restart validator-0 against competing finality");
+    let port = world.validators.http_port(0);
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(port, request.finality_recorded_height, 120),
+        "validator-0 did not catch up to competing finality"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let release_height = loop {
+        let snapshot = world
+            .localnet
+            .ocomp_retention_journal(0)
+            .expect("decode validator-0 retention journal after rejoin");
+        let released = snapshot.records.iter().find_map(|(key, record)| {
+            if *key != orphan.block_hash {
+                return None;
+            }
+            match record.state {
+                PinStateV1::Released {
+                    candidate,
+                    job_id,
+                    reason: PinReleaseReason::Orphaned,
+                    observed_height,
+                } if candidate.block_hash == orphan.block_hash && job_id.is_none() => {
+                    Some(observed_height)
+                }
+                _ => None,
+            }
+        });
+        if let Some(observed_height) = released {
+            break observed_height;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "validator-0 did not release the exact orphan after competing finality"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    assert!(release_height >= request.request_height);
+    let orphan_job_id =
+        job_id_from_intent_id(orphan.intent_id, orphan.block_hash, orphan.state_root)
+            .expect("derive orphan candidate JobId");
+    world.state.ocomp_orphan_recovery_observation = Some(OcompOrphanRecoveryObservationV1 {
+        orphan_candidate: orphan,
+        canonical_request_block_hash: request.request_block_hash,
+        release_observed_height: release_height,
+        release_reason: "orphaned".to_owned(),
+        orphan_job_id,
+        attestation_error_code: 0,
+        attestation_retryable: true,
+    });
+}
+
+#[then("the orphaned candidate cannot obtain node attestation")]
+fn orphan_candidate_cannot_obtain_attestation(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("canonical q-forming activation");
+    let primary = world.validators.primary_port();
+    let vote_bytes = world
+        .rpc
+        .ocomp_result_vote_bytes_on(primary, activation.transaction_hash)
+        .expect("canonical q-forming ResultVoteV1 bytes");
+    let vote = ResultVoteV1::decode_canonical(&vote_bytes, &poc_schema_limits())
+        .expect("canonical q-forming ResultVoteV1");
+    let observation = world
+        .state
+        .ocomp_orphan_recovery_observation
+        .as_mut()
+        .expect("orphan release observation");
+    let mut orphan_result = vote.result;
+    orphan_result.job_id = observation.orphan_job_id;
+    let error = world
+        .ocomp
+        .require_orphan_attestation_refusal(
+            0,
+            orphan_result
+                .encode_canonical(&poc_schema_limits())
+                .expect("canonical orphan-bound LysisResultV1"),
+        )
+        .expect("node-owned attestation gate rejects orphan");
+    observation.attestation_error_code = error.error_code;
+    observation.attestation_retryable = error.retryable;
 }
 
 #[when("validator 0 OCOMP supervisor is stopped through the typed fault control")]
@@ -2199,4 +2775,285 @@ fn completed_generation_survives_restart_and_replay(world: &mut World) {
         after_generation, generation,
         "exact replay changed the certified generation"
     );
+    world.state.ocomp_restart_replay_verified = Some(true);
+}
+
+#[when("a late follower replays the finalized OCOMP request and quorum blocks")]
+fn late_follower_replays_ocomp_history(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized activation before historical replay");
+    world
+        .localnet
+        .launch_follower("follower", OCOMP_TRACE_FOLLOWER_SLOT, 0, 0)
+        .expect("launch late historical-replay follower");
+    let follower_port = world.validators.http_port(OCOMP_TRACE_FOLLOWER_SLOT);
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(follower_port, activation.block_number, 120),
+        "late follower did not replay through q-forming block {}",
+        activation.block_number
+    );
+}
+
+#[then("runtime traces prove proposal import and historical replay without on-chain calculation")]
+fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("finalized JobIntent for trace evidence");
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("q-forming activation for trace evidence");
+    let validator_nodes = (0..4)
+        .map(|index| format!("validator-{index}"))
+        .collect::<Vec<_>>();
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    let (validator_markers, follower_markers) = loop {
+        let validator_markers = validator_nodes
+            .iter()
+            .map(|node| {
+                world
+                    .localnet
+                    .ocomp_runtime_trace_markers(node)
+                    .unwrap_or_else(|error| panic!("parse {node} OCOMP trace: {error:#}"))
+            })
+            .collect::<Vec<_>>();
+        let follower_markers = world
+            .localnet
+            .ocomp_runtime_trace_markers("follower")
+            .expect("parse late follower OCOMP trace");
+        let historical_request_observed = follower_markers.iter().any(|marker| {
+            marker.kind == "terminal_request_committed"
+                && marker.block_number == request.request_height
+                && marker.origin.as_deref() == Some("canonical")
+        });
+        let historical_q_vote_observed = follower_markers.iter().any(|marker| {
+            marker.kind == "result_vote_committed" && marker.block_number == activation.block_number
+        });
+        if historical_request_observed && historical_q_vote_observed {
+            break (validator_markers, follower_markers);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "late follower reached finality but did not expose both historical OCOMP boundaries"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    let proposal_request_nodes = validator_nodes
+        .iter()
+        .zip(&validator_markers)
+        .filter(|(_, markers)| {
+            markers.iter().any(|marker| {
+                marker.kind == "terminal_request_committed"
+                    && marker.block_number == request.request_height
+                    && marker.origin.as_deref() == Some("proposal")
+            })
+        })
+        .map(|(node, _)| node.clone())
+        .collect::<Vec<_>>();
+    let canonical_request_nodes = validator_nodes
+        .iter()
+        .zip(&validator_markers)
+        .filter(|(_, markers)| {
+            markers.iter().any(|marker| {
+                marker.kind == "terminal_request_committed"
+                    && marker.block_number == request.request_height
+                    && marker.origin.as_deref() == Some("canonical")
+            })
+        })
+        .map(|(node, _)| node.clone())
+        .collect::<Vec<_>>();
+    let canonical_q_vote_nodes = validator_nodes
+        .iter()
+        .zip(&validator_markers)
+        .filter(|(_, markers)| {
+            markers.iter().any(|marker| {
+                marker.kind == "result_vote_committed"
+                    && marker.block_number == activation.block_number
+            })
+        })
+        .map(|(node, _)| node.clone())
+        .collect::<Vec<_>>();
+    let forbidden_calculation_entries = validator_markers
+        .iter()
+        .flatten()
+        .chain(follower_markers.iter())
+        .filter(|marker| marker.kind == "forbidden_calculation_entry")
+        .count();
+
+    assert!(
+        !proposal_request_nodes.is_empty(),
+        "no committee node recorded proposal execution of the exact JobIntent block"
+    );
+    assert!(
+        canonical_request_nodes.len() >= 3,
+        "fewer than three importer nodes executed the exact JobIntent block: \
+         {canonical_request_nodes:?}"
+    );
+    assert_eq!(
+        canonical_q_vote_nodes.len(),
+        4,
+        "not every validator executed the q-forming result-vote block"
+    );
+    assert_eq!(
+        forbidden_calculation_entries, 0,
+        "an execution path entered legacy on-chain Lysis/Fidelity/Oracle calculation"
+    );
+
+    world.state.ocomp_execution_trace_observation = Some(OcompExecutionTraceObservationV1 {
+        request_height: request.request_height,
+        q_forming_height: activation.block_number,
+        proposal_request_nodes,
+        canonical_request_nodes,
+        canonical_q_vote_nodes,
+        historical_replay_node: "follower".to_owned(),
+        historical_request_observed: true,
+        historical_q_vote_observed: true,
+        forbidden_calculation_entries: 0,
+    });
+}
+
+#[then("every domain has distinct node supervisor exporter and worker process boundaries")]
+fn systemd_process_boundaries_are_distinct(world: &mut World) {
+    let snapshot = world
+        .ocomp
+        .evidence_snapshot()
+        .expect("capture OCOMP systemd topology evidence");
+    let isolation = snapshot
+        .systemd_isolation
+        .as_ref()
+        .expect("systemd isolation inventory after public Lysis activation");
+    assert_eq!(isolation.processes.len(), 16);
+    let mut pids = isolation
+        .processes
+        .iter()
+        .map(|process| process.pid)
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    assert_eq!(pids.len(), 16, "every ISO role must have a distinct pid");
+    for validator_index in 0..4_u8 {
+        let roles = isolation
+            .processes
+            .iter()
+            .filter(|process| process.validator_index == validator_index)
+            .map(|process| process.role)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            roles,
+            [
+                OcompIsolationRoleV1::Node,
+                OcompIsolationRoleV1::Supervisor,
+                OcompIsolationRoleV1::SnapshotExporter,
+                OcompIsolationRoleV1::Worker,
+            ]
+            .into_iter()
+            .collect(),
+            "validator-{validator_index} has an incomplete process boundary"
+        );
+    }
+}
+
+#[then(
+    "the runtime inventory proves role UIDs cgroup v2 mount isolation quotas and UDS credentials"
+)]
+fn systemd_runtime_inventory_is_complete(world: &mut World) {
+    let snapshot = world
+        .ocomp
+        .evidence_snapshot()
+        .expect("capture OCOMP systemd runtime inventory");
+    snapshot
+        .validate()
+        .expect("validate systemd UID/cgroup/mount/quota/UDS runtime evidence");
+    let isolation = snapshot
+        .systemd_isolation
+        .expect("systemd isolation evidence");
+    assert_eq!(isolation.cgroup_version, 2);
+    assert_eq!(isolation.node_control_handshakes, 8);
+    assert_eq!(isolation.worker_handshakes, 4);
+    assert_eq!(isolation.quota_mounts.len(), 16);
+    assert_eq!(isolation.unit_policies.len(), 12);
+}
+
+#[when("one supervisor CAS path and one socket-activated worker are failed")]
+fn fail_one_systemd_supervisor_and_worker(world: &mut World) {
+    let primary = world.validators.primary_port();
+    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+    world
+        .ocomp
+        .apply_systemd_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
+        .expect("stop validator-0 systemd Supervisor/CAS path");
+    world
+        .ocomp
+        .apply_systemd_process_fault(OcompProcessFault::StopWorker {
+            validator_index: 1,
+            worker_ordinal: 0,
+        })
+        .expect("stop validator-1 systemd worker activation socket");
+}
+
+#[then("both faults stay inside their OCOMP domains and all four nodes continue finalizing")]
+fn systemd_faults_do_not_stop_consensus(world: &mut World) {
+    let before = world
+        .state
+        .ocomp_finality_before_fault
+        .expect("finality captured before systemd OCOMP faults");
+    let primary = world.validators.primary_port();
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
+        "consensus finality did not advance through systemd OCOMP faults"
+    );
+    let after = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized height after faults");
+    for validator_index in 0..4 {
+        assert_ne!(
+            world
+                .localnet
+                .validator_pid(validator_index)
+                .unwrap_or_else(|error| panic!(
+                    "validator-{validator_index} stopped during OCOMP fault: {error:#}"
+                )),
+            0
+        );
+    }
+    world
+        .ocomp
+        .record_systemd_fault_finality(before, after)
+        .expect("record bounded OCOMP fault/finality evidence");
+}
+
+#[then("worker concurrency and aggregate resource limits remain within the PoC profile")]
+fn systemd_worker_and_slice_limits_hold(world: &mut World) {
+    let snapshot = world
+        .ocomp
+        .evidence_snapshot()
+        .expect("capture completed OCOMP ISO evidence");
+    snapshot
+        .validate()
+        .expect("validate completed OCOMP ISO evidence");
+    let isolation = snapshot
+        .systemd_isolation
+        .expect("completed systemd isolation evidence");
+    assert!(isolation.max_live_workers_total <= 16);
+    assert!(isolation
+        .max_live_workers_per_domain
+        .iter()
+        .all(|(_, observed)| (1..=4).contains(observed)));
+    assert!(isolation
+        .finality_after_faults
+        .zip(isolation.finality_before_faults)
+        .is_some_and(|(after, before)| after > before));
 }

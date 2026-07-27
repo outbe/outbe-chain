@@ -95,6 +95,20 @@ enum OcompCommand {
         /// Exact task identifier, for example OCM-02.
         task: String,
     },
+    /// Execute one exact OCOMP evidence lane without claiming full closure.
+    Lane {
+        /// Registered execution lane: OCM-FAST, OCM-INT, OCM-PUBLIC, OCM-E2E or OCM-ISO.
+        lane: String,
+        /// New root for the artifact set and immutable lane evidence.
+        #[arg(long, alias = "evidence-dir")]
+        output_dir: Option<PathBuf>,
+    },
+    /// Execute all exact OCM-27 lanes and publish one independently verified closure.
+    Closure {
+        /// New root retaining the artifact set, lane bundles and closure reports.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -251,6 +265,12 @@ fn main() -> Result<()> {
             }
             OcompCommand::Task { task } => {
                 ocomp::task::run(&repo_root, &task)?;
+            }
+            OcompCommand::Lane { lane, output_dir } => {
+                ocomp::task::run_lane(&repo_root, &lane, output_dir.as_deref())?;
+            }
+            OcompCommand::Closure { output_dir } => {
+                ocomp::task::run_closure(&repo_root, output_dir.as_deref())?;
             }
         },
         Command::Release(release) => match release.command {

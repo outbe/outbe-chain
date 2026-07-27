@@ -1,9 +1,10 @@
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
 
 use eyre::{bail, Context, Result};
+use outbe_e2e_harness::ocomp_evidence::run_command_lane;
 
 use super::registry;
 
@@ -2093,6 +2094,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-27" => {
+            run_closure(repository_root, None)?;
+        }
         _ => {
             cargo(
                 repository_root,
@@ -2110,6 +2114,123 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
             bail!("{task} is MISSING: its implementation gate has not been wired yet");
         }
     }
+    Ok(())
+}
+
+pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> Result<PathBuf> {
+    let run_root = match requested_output {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => repository_root.join(path),
+        None => fresh_task_output_dir("ocm27")?,
+    };
+    if run_root.exists() {
+        bail!(
+            "exact closure output root already exists: {}",
+            run_root.display()
+        );
+    }
+    build_ocomp_e2e_binaries(repository_root)?;
+    let artifact_set = snapshot_ocomp_artifact_set(repository_root, &run_root)?;
+    let ledger = outbe_e2e_harness::ocomp_evidence::PlanningLedger::parse(
+        &repository_root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"),
+    )?;
+
+    for lane in ["OCM-FAST", "OCM-INT"] {
+        let evidence_dir = run_root.join("lanes").join(lane);
+        run_command_lane(repository_root, &ledger, lane, &artifact_set, &evidence_dir)?;
+        run_evidence_binary(
+            repository_root,
+            &artifact_set,
+            &["lane", lane, "--evidence-dir", path_str(&evidence_dir)?],
+        )?;
+    }
+
+    for (lane, tag, no_sudo) in [
+        (
+            "OCM-PUBLIC",
+            "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
+             @ocomp-public-mutation",
+            true,
+        ),
+        ("OCM-E2E", "@ocomp-e2e", true),
+        ("OCM-ISO", "@ocomp-isolation", false),
+    ] {
+        let evidence_dir = run_root.join("lanes").join(lane);
+        run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag, no_sudo)?;
+        run_evidence_binary(
+            repository_root,
+            &artifact_set,
+            &["lane", lane, "--evidence-dir", path_str(&evidence_dir)?],
+        )?;
+    }
+
+    run_evidence_binary(
+        repository_root,
+        &artifact_set,
+        &["closure", "--evidence-dir", path_str(&run_root)?],
+    )?;
+    eprintln!(
+        "OCM-27 exact immutable closure retained at {}",
+        run_root.display()
+    );
+    Ok(run_root)
+}
+
+pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Path>) -> Result<()> {
+    let run_root = match requested_output {
+        Some(path) if path.is_absolute() => path.to_path_buf(),
+        Some(path) => repository_root.join(path),
+        None => fresh_task_output_dir(&lane.to_ascii_lowercase().replace('-', "_"))?,
+    };
+    if run_root.exists() {
+        bail!(
+            "exact lane output root already exists: {}",
+            run_root.display()
+        );
+    }
+    build_ocomp_e2e_binaries(repository_root)?;
+    let artifact_set = snapshot_ocomp_artifact_set(repository_root, &run_root)?;
+    let ledger = outbe_e2e_harness::ocomp_evidence::PlanningLedger::parse(
+        &repository_root.join("outbe-plan/off-chain-poc-evidence-ledger.yaml"),
+    )?;
+    let evidence_dir = run_root.join("lanes").join(lane);
+    match lane {
+        "OCM-FAST" | "OCM-INT" => {
+            run_command_lane(repository_root, &ledger, lane, &artifact_set, &evidence_dir)?;
+        }
+        "OCM-PUBLIC" => run_exact_scenario(
+            repository_root,
+            &artifact_set,
+            &evidence_dir,
+            "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
+             @ocomp-public-mutation",
+            true,
+        )?,
+        "OCM-E2E" => run_exact_scenario(
+            repository_root,
+            &artifact_set,
+            &evidence_dir,
+            "@ocomp-e2e",
+            true,
+        )?,
+        "OCM-ISO" => run_exact_scenario(
+            repository_root,
+            &artifact_set,
+            &evidence_dir,
+            "@ocomp-isolation",
+            false,
+        )?,
+        _ => bail!("unsupported exact OCOMP execution lane {lane}"),
+    }
+    run_evidence_binary(
+        repository_root,
+        &artifact_set,
+        &["lane", lane, "--evidence-dir", path_str(&evidence_dir)?],
+    )?;
+    eprintln!(
+        "{lane} exact immutable evidence retained at {}",
+        run_root.display()
+    );
     Ok(())
 }
 
@@ -2188,6 +2309,18 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
         &[
             "build",
             "--locked",
+            "-p",
+            "outbe-e2e-harness",
+            "--features",
+            "ocomp-integration",
+            "--bins",
+        ],
+    )?;
+    cargo(
+        repository_root,
+        &[
+            "build",
+            "--locked",
             "--release",
             "-p",
             "outbe-tee-enclave",
@@ -2197,6 +2330,37 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "outbe-tee-enclave-mock",
         ],
     )
+}
+
+fn snapshot_ocomp_artifact_set(repository_root: &Path, run_root: &Path) -> Result<PathBuf> {
+    let artifact_set = run_root.join("artifact-set");
+    std::fs::create_dir_all(&artifact_set)
+        .wrap_err_with(|| format!("create exact artifact set {}", artifact_set.display()))?;
+    for (source, name) in [
+        ("target/debug/outbe-chain", "outbe-chain"),
+        ("target/debug/outbe-cli", "outbe-cli"),
+        ("target/debug/outbe-e2e", "outbe-e2e"),
+        ("target/debug/outbe-e2e-evidence", "outbe-e2e-evidence"),
+        ("target/debug/outbe-keygen", "outbe-keygen"),
+        ("target/debug/outbe-ocomp", "outbe-ocomp"),
+        (
+            "target/release/outbe-tee-enclave-mock",
+            "outbe-tee-enclave-mock",
+        ),
+    ] {
+        let source = repository_root.join(source);
+        let destination = artifact_set.join(name);
+        if std::fs::hard_link(&source, &destination).is_err() {
+            std::fs::copy(&source, &destination).wrap_err_with(|| {
+                format!(
+                    "snapshot exact artifact {} -> {}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+        }
+    }
+    Ok(artifact_set)
 }
 
 fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
@@ -2244,6 +2408,16 @@ fn run_exact_final_scenario(
 ) -> Result<()> {
     let artifact_set = run_root.join("artifact-set");
     let evidence_dir = run_root.join(format!("final-{name}-evidence"));
+    run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag, true)
+}
+
+fn run_exact_scenario(
+    repository_root: &Path,
+    artifact_set: &Path,
+    evidence_dir: &Path,
+    tag: &str,
+    no_sudo: bool,
+) -> Result<()> {
     if evidence_dir.exists() {
         bail!(
             "Final scenario evidence directory already exists: {}",
@@ -2252,38 +2426,36 @@ fn run_exact_final_scenario(
     }
     let chain_binary = artifact_set.join("outbe-chain");
     let ocomp_binary = artifact_set.join("outbe-ocomp");
+    let cli_binary = artifact_set.join("outbe-cli");
+    let keygen_binary = artifact_set.join("outbe-keygen");
     let mock_binary = artifact_set.join("outbe-tee-enclave-mock");
-    let arguments = [
+    let mut arguments = vec![
         "--tags",
         tag,
         "--concurrency",
         "1",
         "--no-resolve-ports",
-        "--no-sudo",
         "--tee",
         "mock",
         "--all",
         "--repo",
-        repository_root
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("repository path is not UTF-8"))?,
+        path_str(repository_root)?,
         "--evidence-dir",
-        evidence_dir
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("evidence path is not UTF-8"))?,
+        path_str(evidence_dir)?,
         "--chain-bin",
-        chain_binary
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("chain binary path is not UTF-8"))?,
+        path_str(&chain_binary)?,
         "--ocomp-bin",
-        ocomp_binary
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("OCOMP binary path is not UTF-8"))?,
+        path_str(&ocomp_binary)?,
+        "--cli-bin",
+        path_str(&cli_binary)?,
+        "--keygen-bin",
+        path_str(&keygen_binary)?,
         "--mock-bin",
-        mock_binary
-            .to_str()
-            .ok_or_else(|| eyre::eyre!("mock enclave path is not UTF-8"))?,
+        path_str(&mock_binary)?,
     ];
+    if no_sudo {
+        arguments.push("--no-sudo");
+    }
     eprintln!(
         "+ {} {}",
         artifact_set.join("outbe-e2e").display(),
@@ -2293,16 +2465,48 @@ fn run_exact_final_scenario(
         .args(arguments)
         .current_dir(repository_root)
         .status()
-        .wrap_err_with(|| format!("start exact Final scenario {name}"))?;
+        .wrap_err_with(|| format!("start exact scenario tag {tag}"))?;
     if !status.success() {
         bail!(
-            "exact Final scenario {name} failed with {}",
+            "exact scenario tag {tag} failed with {} (evidence {})",
             status
                 .code()
-                .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+                .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
+            evidence_dir.display()
         );
     }
     Ok(())
+}
+
+fn run_evidence_binary(
+    repository_root: &Path,
+    artifact_set: &Path,
+    arguments: &[&str],
+) -> Result<()> {
+    let binary = artifact_set.join("outbe-e2e-evidence");
+    eprintln!("+ {} {}", binary.display(), arguments.join(" "));
+    let status = Command::new(&binary)
+        .arg("--repo")
+        .arg(repository_root)
+        .args(arguments)
+        .current_dir(repository_root)
+        .status()
+        .wrap_err_with(|| format!("start exact evidence binary {}", binary.display()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        bail!(
+            "exact evidence binary failed with {}",
+            status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+        )
+    }
+}
+
+fn path_str(path: &Path) -> Result<&str> {
+    path.to_str()
+        .ok_or_else(|| eyre::eyre!("path is not UTF-8: {}", path.display()))
 }
 
 fn task_progress(repository_root: &Path, task: &str, passed: &[&str]) -> Result<()> {

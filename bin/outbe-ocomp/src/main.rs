@@ -80,6 +80,19 @@ struct RuntimeArgs {
     /// Exact development node SnapshotExporter socket; artifacts remain under root.
     #[arg(long, hide = true, value_name = "PATH", requires = "development_root")]
     development_node_snapshot_exporter_socket: Option<PathBuf>,
+
+    /// Debug-only peer UID overrides used by the real systemd isolation lane.
+    #[arg(long, hide = true, requires = "development_root")]
+    development_node_uid: Option<u32>,
+    #[arg(long, hide = true, requires = "development_root")]
+    development_supervisor_uid: Option<u32>,
+    #[arg(long, hide = true, requires = "development_root")]
+    development_worker_uid: Option<u32>,
+
+    /// Use the configured worker activation socket instead of spawning a
+    /// development child. Reserved for the real systemd isolation lane.
+    #[arg(long, hide = true, requires = "development_root")]
+    development_external_worker: bool,
 }
 
 const SUPERVISOR_USER: &str = "outbe-ocomp-supervisor";
@@ -233,11 +246,14 @@ impl RuntimeProfile {
             _ => root.join("unused-node-snapshot-exporter.sock"),
         };
         let uid = effective_uid()?;
+        let node_uid = args.development_node_uid.unwrap_or(uid);
+        let supervisor_uid = args.development_supervisor_uid.unwrap_or(uid);
+        let worker_uid = args.development_worker_uid.unwrap_or(uid);
         Ok(Self {
             effective_role_uid: uid,
-            supervisor_uid: uid,
-            worker_uid: uid,
-            node_uid: uid,
+            supervisor_uid,
+            worker_uid,
+            node_uid,
             node_supervisor_socket,
             node_snapshot_exporter_socket,
             worker_socket: root.join("worker.sock"),
@@ -350,16 +366,19 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         identity,
         protocol_bundle,
         limits,
-        development_worker: args
-            .development_root
-            .as_ref()
-            .map(|root| {
-                Ok::<_, Box<dyn std::error::Error>>(DevelopmentWorkerLaunchV1 {
-                    binary: std::env::current_exe()?,
-                    root: root.clone(),
+        development_worker: if args.development_external_worker {
+            None
+        } else {
+            args.development_root
+                .as_ref()
+                .map(|root| {
+                    Ok::<_, Box<dyn std::error::Error>>(DevelopmentWorkerLaunchV1 {
+                        binary: std::env::current_exe()?,
+                        root: root.clone(),
+                    })
                 })
-            })
-            .transpose()?,
+                .transpose()?
+        },
     })?;
     let validator_address: Address = required_env("OUTBE_OCOMP_VALIDATOR_EVM_ADDRESS")?.parse()?;
     let vote_rpc = PublicVoteRpcClientV1::new(
@@ -590,6 +609,7 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: Some(supervisor_socket.clone()),
             development_node_snapshot_exporter_socket: None,
+            ..RuntimeArgs::default()
         };
         let profile = RuntimeProfile::resolve(&args, ProcessRole::Supervisor).unwrap();
 
@@ -607,6 +627,7 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: None,
             development_node_snapshot_exporter_socket: None,
+            ..RuntimeArgs::default()
         };
         assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
     }

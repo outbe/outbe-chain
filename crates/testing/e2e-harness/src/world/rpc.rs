@@ -37,7 +37,7 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
+        self, IDesis, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
         IValidatorSet, IVote, IWorldwideDay, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
@@ -132,6 +132,16 @@ pub struct OcompPublicVoteAccountabilityV1 {
     pub divergent_bitmap: Option<u8>,
     pub missing_bitmap: Option<u8>,
     pub equivocation_bitmap: Option<u8>,
+}
+
+/// Exact public `eth_getProof` account-storage commitment for one activation
+/// effect owner at one canonical block.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompOwnerStorageRootV1 {
+    pub owner: Address,
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub storage_hash: B256,
 }
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
@@ -247,6 +257,47 @@ impl Rpc {
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_owner_storage_root_on(
+        &self,
+        port: u16,
+        owner: Address,
+        block_number: u64,
+    ) -> Option<OcompOwnerStorageRootV1> {
+        let rpc_url = self.url(port);
+        let block_hash = eth::block_hash(&rpc_url, block_number)?
+            .parse::<B256>()
+            .ok()?;
+        let proof = eth::raw_json_with_params(
+            &rpc_url,
+            "eth_getProof",
+            serde_json::json!([format!("{owner:#x}"), [], format!("0x{block_number:x}")]),
+        )?;
+        Some(OcompOwnerStorageRootV1 {
+            owner,
+            block_number,
+            block_hash,
+            storage_hash: proof.get("storageHash")?.as_str()?.parse::<B256>().ok()?,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn desis_auction_stage_on(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        block_number: u64,
+    ) -> Option<u8> {
+        eth::read_call_at(
+            &self.url(port),
+            addresses::DESIS_ADDR,
+            &IDesis::getAuctionStageCall {
+                worldwideDay: worldwide_day,
+            },
+            block_number,
+        )
     }
 
     /// Canonical block hash at `height` on the node at `port`.

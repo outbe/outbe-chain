@@ -151,6 +151,10 @@ sol! {
             returns (bytes memory activeGenerationV1);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IDesis {
+        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IStaking {
         function stake(address v, uint256 amount) external payable;
         function claimUnbonded() external;

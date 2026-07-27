@@ -107,7 +107,6 @@ wire_enum_u8! {
         Supervisor = 2,
         SnapshotExporter = 3,
         Worker = 4,
-        Relay = 5,
     }
 }
 

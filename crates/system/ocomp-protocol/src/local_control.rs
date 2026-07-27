@@ -20,7 +20,6 @@ pub enum ControlRole {
     Supervisor,
     SnapshotExporter,
     Worker,
-    Relay,
 }
 
 impl ControlRole {
@@ -30,7 +29,6 @@ impl ControlRole {
             Self::Supervisor => ControlRoleV1::Supervisor,
             Self::SnapshotExporter => ControlRoleV1::SnapshotExporter,
             Self::Worker => ControlRoleV1::Worker,
-            Self::Relay => ControlRoleV1::Relay,
         }
     }
 

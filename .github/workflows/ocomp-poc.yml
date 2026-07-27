@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "outbe-plan/**"
+      - "bin/outbe-ocomp/**"
+      - "crates/blockchain/evm/**"
+      - "crates/blockchain/node/**"
       - "crates/core/lysis/**"
       - "crates/core/desis/**"
       - "crates/core/metadosis/**"
@@ -11,6 +14,7 @@ on:
       - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
       - "crates/testing/lysis-v1-reference/**"
+      - "deploy/systemd/**"
       - "xtask/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -20,6 +24,9 @@ on:
     branches: ["main", "feat/ocomp-poc"]
     paths:
       - "outbe-plan/**"
+      - "bin/outbe-ocomp/**"
+      - "crates/blockchain/evm/**"
+      - "crates/blockchain/node/**"
       - "crates/core/lysis/**"
       - "crates/core/desis/**"
       - "crates/core/metadosis/**"
@@ -27,6 +34,7 @@ on:
       - "crates/system/ocomp-protocol/**"
       - "crates/testing/e2e-harness/**"
       - "crates/testing/lysis-v1-reference/**"
+      - "deploy/systemd/**"
       - "xtask/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -39,13 +47,15 @@ on:
         required: true
         type: boolean
         default: false
+  schedule:
+    - cron: "17 3 * * 0"
 
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   ocm-task-progress:
@@ -67,9 +77,11 @@ jobs:
 
   poc-closure:
     name: PoC closure (fail closed)
-    if: github.event_name == 'workflow_dispatch' && inputs.run_closure
-    runs-on: depot-ubuntu-latest
-    timeout-minutes: 240
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_closure)
+    runs-on: [self-hosted, linux, ocomp-systemd-cgroup-v2]
+    timeout-minutes: 360
+    env:
+      OUTBE_PROJECTION_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true
     steps:
       - uses: actions/checkout@v6
       - name: Install system dependencies
@@ -81,5 +93,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Verify exact-artifact closure
-        run: mise run ocomp-poc-closure -- --evidence-dir "$RUNNER_TEMP/ocomp-evidence"
+      - name: Start transaction-capable MongoDB
+        run: |
+          docker run --detach --name outbe-ocomp-mongodb --publish 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          until docker exec outbe-ocomp-mongodb mongosh --quiet --eval 'db.runCommand({ping:1}).ok' | grep -q 1; do sleep 1; done
+          docker exec outbe-ocomp-mongodb mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          until docker exec outbe-ocomp-mongodb mongosh --quiet --eval 'rs.status().myState' | grep -q 1; do sleep 1; done
+      - name: Install isolated OCOMP service identities
+        run: sudo systemd-sysusers deploy/systemd/outbe-ocomp.sysusers
+      - name: Execute exact-artifact closure once
+        run: mise run ocomp-poc-closure-run -- --output-dir "$RUNNER_TEMP/ocomp-evidence"
+      - name: Retain first-attempt lanes, manifests and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocomp-poc-closure-${{ github.sha }}
+          path: ${{ runner.temp }}/ocomp-evidence
+          if-no-files-found: warn
+          retention-days: 14

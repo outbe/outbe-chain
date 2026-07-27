@@ -75,6 +75,41 @@ impl Localnet {
         self.start(&opts)
     }
 
+    /// Relaunch one exact stopped committee validator while leaving every other
+    /// stopped validator down. This is the bounded network-partition primitive
+    /// used by the real tentative-candidate orphan scenario.
+    pub fn restart_validator(&mut self, i: usize) -> Result<()> {
+        if i >= self.committee_size() {
+            bail!("validator index {i} is outside the committee");
+        }
+        if self
+            .validators
+            .get_mut(&i)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("validator-{i} is already running");
+        }
+        self.validators.remove(&i);
+        let opts = self.start_opts.clone();
+        let bootnodes = self.bootnodes();
+        if self.tee_enabled() && !self.enclaves.contains_key(&i) {
+            let chain_id_hex = self.chain_id_hex()?;
+            self.start_enclave(i, &chain_id_hex)?;
+        }
+        self.launch_validator(i, &opts, bootnodes.as_deref())?;
+        sleep(Duration::from_secs(2));
+        if self
+            .validators
+            .get_mut(&i)
+            .is_some_and(|guard| guard.exited())
+        {
+            let tail = self.tail_log(i, 20);
+            self.validators.remove(&i);
+            bail!("validator-{i} exited during isolated restart:\n{tail}");
+        }
+        Ok(())
+    }
+
     /// Stop and relaunch the entire committee, including every enclave, while
     /// preserving validator datadirs and sealed enclave state. This models an
     /// operator-level localnet stop/start rather than a single node restart.
@@ -285,6 +320,9 @@ impl Localnet {
         if let Some(w) = opts.voting_window {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
+        if let Some(failpoint) = opts.ocomp_owner_failpoint.as_deref() {
+            cmd.env("OUTBE_E2E_OCOMP_OWNER_FAILPOINT", failpoint);
+        }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
         }
@@ -293,6 +331,8 @@ impl Localnet {
             fs::create_dir_all(&domain)?;
             fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
             let effective_uid = fs::metadata("/proc/self")?.uid();
+            let supervisor_uid = opts.ocomp_supervisor_uid.unwrap_or(effective_uid);
+            let snapshot_exporter_uid = opts.ocomp_snapshot_exporter_uid.unwrap_or(effective_uid);
             let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
             a.extend(args![
                 "--ocomp.supervisor-socket",
@@ -300,9 +340,9 @@ impl Localnet {
                 "--ocomp.snapshot-exporter-socket",
                 self.cfg.ocomp_snapshot_exporter_socket(i).display(),
                 "--ocomp.supervisor-uid",
-                effective_uid,
+                supervisor_uid,
                 "--ocomp.snapshot-exporter-uid",
-                effective_uid,
+                snapshot_exporter_uid,
                 "--ocomp.protocol-bundle-hash",
                 protocol_bundle_hash,
                 "--ocomp.boot-nonce",

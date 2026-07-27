@@ -17,7 +17,6 @@ fn ocomp_units() -> Vec<PathBuf> {
         "outbe-ocomp-supervisor.service",
         "outbe-ocomp-worker.socket",
         "outbe-ocomp-worker@.service",
-        "outbe-ocomp-relay.service",
     ]
     .into_iter()
     .map(|name| unit_dir().join(name))
@@ -184,12 +183,6 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
         .contains(&"/var/lib/outbe-ocomp/cas-v1/objects"));
     assert!(values(&supervisor, "Service", "ReadWritePaths")
         .contains(&"/var/lib/outbe-ocomp/worker-inbox-v1"));
-
-    let relay = parse_unit(&unit_dir().join("outbe-ocomp-relay.service"));
-    assert_eq!(
-        values(&relay, "Service", "Slice"),
-        vec!["outbe-ocomp.slice"]
-    );
 }
 
 #[test]

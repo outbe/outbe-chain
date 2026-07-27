@@ -449,15 +449,17 @@ where
         ocomp_fork_install,
     } = runtime;
 
+    use revm::context_interface::{Block as _, ContextTr};
+
     let address = inputs.bytecode_address;
     let Some((_name, dispatch_fn, base_gas_fn)) = outbe_dispatch_fn(&address) else {
         return Ok(None);
     };
+    let block_number = ctx.block().number().saturating_to::<u64>();
 
     // Materialize the exact calldata before choosing the consensus gas charge.
     // Contract -> precompile calls arrive as SharedBuffer and must pay the same
     // activation charge as top-level Bytes calls.
-    use revm::context_interface::ContextTr;
     let data: Bytes = inputs.input.bytes_local(ctx.local());
 
     // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
@@ -492,6 +494,15 @@ where
 
     let is_static = inputs.is_static;
     let caller = inputs.caller;
+    if caller == METADOSIS_ADDRESS && matches!(address, FIDELITY_ADDRESS | ORACLE_ADDRESS) {
+        let selector = data.get(..4).map(alloy_primitives::hex::encode);
+        tracing::warn!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=forbidden_calculation_entry block={block_number} \
+             target={address:#x} selector={}",
+            selector.as_deref().unwrap_or("missing")
+        );
+    }
     let value = match inputs.value {
         revm::interpreter::CallValue::Transfer(v) => v,
         revm::interpreter::CallValue::Apparent(v) => v,
@@ -590,6 +601,12 @@ where
         }
         _ => dispatch_fn(storage, data.as_ref(), caller, value),
     };
+    if result.is_ok() && is_active_result_vote_selector {
+        tracing::info!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
+        );
+    }
 
     if let Some(readers) = runtime_body_readers {
         if let Err(error) = &result {

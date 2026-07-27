@@ -1645,6 +1645,17 @@ where
         }
         let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
         self.ocomp_terminal_request_consumed = true;
+        let execution_origin = if self.block_hash.is_some() {
+            "canonical"
+        } else {
+            "proposal"
+        };
+        tracing::info!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=terminal_request_committed origin={execution_origin} \
+             block={block_number} tx={:#x}",
+            tx.tx_hash()
+        );
         Ok(Some(gas))
     }
 

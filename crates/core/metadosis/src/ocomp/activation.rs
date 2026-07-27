@@ -427,7 +427,20 @@ fn inject_test_receipt_fault(
 ) {
     #[cfg(feature = "test-utils")]
     super::test_support::inject_receipt_fault(request_receipt, receipts);
-    #[cfg(not(feature = "test-utils"))]
+    #[cfg(all(not(feature = "test-utils"), debug_assertions))]
+    {
+        const OWNER_FAILPOINT_ENV: &str = "OUTBE_E2E_OCOMP_OWNER_FAILPOINT";
+        match std::env::var(OWNER_FAILPOINT_ENV).ok().as_deref() {
+            Some("nod_receipt_root") => {
+                receipts.nod.nod_root = B256::repeat_byte(0xd2);
+            }
+            Some(_) => {
+                request_receipt.logical_anchor = request_receipt.logical_anchor.wrapping_add(1);
+            }
+            None => {}
+        }
+    }
+    #[cfg(all(not(feature = "test-utils"), not(debug_assertions)))]
     {
         let _ = (request_receipt, receipts);
     }

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use outbe_e2e_harness::ocomp_evidence::{
     capture_source_identity, discover, publish_assertions, publish_manifest, publish_member,
-    publish_report, task_progress_report, verify_manifest, AssertionRecordV1, AssertionStatus,
-    ClosureReportV1, EvidenceMode, PlanningLedger, RunManifestV1, RUNTIME_SCHEMA_VERSION,
-    TEST_ID_MARKER,
+    publish_report, task_progress_report, verify_manifest, verify_retained_semantics,
+    AssertionRecordV1, AssertionStatus, ClosureReportV1, EvidenceMode, PlanningLedger,
+    RunManifestV1, RUNTIME_SCHEMA_VERSION, TEST_ID_MARKER,
 };
 use serde_json::json;
 use tempfile::TempDir;
@@ -85,13 +85,23 @@ fn unknown_requirement_reference_is_rejected() {
 }
 
 #[test]
-fn complete_synthetic_bundle_passes_independent_closure() {
+fn complete_synthetic_bundle_passes_manifest_coverage_layer() {
     let fixture = Fixture::new(FixtureMutation::None);
     let report = fixture.verify().expect("complete fixture verifies");
     assert!(report.passed(), "{report:#?}");
     assert_eq!(report.passed_test_ids.len(), fixture.ledger.tests.len());
     assert!(report.missing_test_ids.is_empty());
     assert!(report.requirement_gaps.is_empty());
+}
+
+#[test]
+fn self_declared_closure_without_embedded_lane_evidence_is_rejected() {
+    let fixture = Fixture::new(FixtureMutation::None);
+    fixture.verify().expect("generic manifest layer");
+    assert_error_contains(
+        verify_retained_semantics(&fixture.repo, &fixture.ledger, &fixture.manifest_path),
+        "embedded lane",
+    );
 }
 
 #[test]

@@ -281,31 +281,28 @@ description = "Run one OCOMP implementation task merge gate without claiming PoC
 run = "cargo xtask ocomp task"
 
 [tasks.ocomp-poc-fast]
-description = "Run the OCOMP fast lane; fails while any planned fast evidence is missing"
-run = """
-cargo test --locked -p outbe-e2e-harness --test ocomp_evidence_verifier
-cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-FAST
-"""
+description = "Run and independently verify the exact OCOMP fast lane"
+run = 'cargo xtask ocomp lane OCM-FAST "$@"'
 
 [tasks.ocomp-poc-integration]
-description = "Run the OCOMP process/integration lane; currently fail-closed on MISSING"
-run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-INT"
+description = "Run and independently verify the exact OCOMP process/integration lane"
+run = 'cargo xtask ocomp lane OCM-INT "$@"'
 
 [tasks.ocomp-poc-public-path]
 description = "Run and independently verify the exact OCOMP public execution lane"
-run = "cargo xtask ocomp task OCM-25"
+run = 'cargo xtask ocomp lane OCM-PUBLIC "$@"'
 
 [tasks.ocomp-poc-capacity]
 description = "Run the complete immutable OCM-26 capacity and Final-arming gate"
 run = "cargo xtask ocomp task OCM-26"
 
 [tasks.ocomp-poc-e2e]
-description = "Run the four-domain OCOMP E2E lane; currently fail-closed on MISSING"
-run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-E2E"
+description = "Run and independently verify the exact four-domain OCOMP E2E lane"
+run = 'cargo xtask ocomp lane OCM-E2E "$@"'
 
 [tasks.ocomp-poc-isolation]
-description = "Run the OCOMP systemd/cgroup isolation lane; currently fail-closed on MISSING"
-run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-ISO"
+description = "Run and independently verify the exact systemd/cgroup isolation lane"
+run = 'cargo xtask ocomp lane OCM-ISO "$@"'
 
 [tasks.ocomp-poc-evidence-verify]
 description = "Independently verify one OCOMP run-manifest.json"
@@ -314,6 +311,10 @@ run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- verif
 [tasks.ocomp-poc-closure]
 description = "Verify complete exact-artifact OCOMP PoC evidence; missing evidence is failure"
 run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- closure "$@"'
+
+[tasks.ocomp-poc-closure-run]
+description = "Execute all exact OCM-27 lanes once and retain the independently verified closure"
+run = 'cargo xtask ocomp closure "$@"'
 
 # The hardware lane must be distinct from `e2e`: the default suite intentionally
 # uses gramine-direct/mock so it runs on developer machines. This task builds the

@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use eyre::{ensure, Result, WrapErr};
 use outbe_e2e_harness::ocomp_evidence::{
-    assemble_lane, discover, manifest_in, missing_bundle_report, publish_report, require_pass,
-    task_progress_report, verify_manifest, EvidenceMode, PlanningLedger,
+    assemble_closure, assemble_lane, closure_manifest_in, discover, manifest_in, publish_report,
+    require_pass, task_progress_report, verify_manifest, verify_retained_semantics, PlanningLedger,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_e2e_harness::{
@@ -151,6 +151,7 @@ fn main() -> Result<()> {
         } => {
             let manifest = resolve_from_current(&manifest)?;
             let report = verify_manifest(&repo, &ledger, &manifest)?;
+            verify_retained_semantics(&repo, &ledger, &manifest)?;
             if let Some(report_dir) = report_dir {
                 publish_report(&report_dir, &report)?;
             }
@@ -168,24 +169,29 @@ fn main() -> Result<()> {
             let evidence_dir = resolve_from_current(&evidence_dir)?;
             let manifest = assemble_lane(&repo, &ledger, &lane, &evidence_dir)?;
             let report = verify_manifest(&repo, &ledger, &manifest)?;
+            verify_retained_semantics(&repo, &ledger, &manifest)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             require_pass(&report)
         }
         Command::Closure { evidence_dir } => {
-            let manifest = manifest_in(&evidence_dir);
-            if !manifest.is_file() {
-                let discovery = discover(&repo, &ledger)?;
-                let report = missing_bundle_report(
-                    &ledger,
-                    EvidenceMode::PocClosure,
-                    discovery,
-                    format!("missing {}", manifest.display()),
-                );
-                println!("{}", serde_json::to_string_pretty(&report)?);
-                return require_pass(&report);
-            }
+            let evidence_dir = resolve_from_current(&evidence_dir)?;
+            let direct_manifest = manifest_in(&evidence_dir);
+            let manifest = if direct_manifest.is_file() {
+                direct_manifest
+            } else {
+                let closure_manifest = closure_manifest_in(&evidence_dir);
+                if closure_manifest.is_file() {
+                    closure_manifest
+                } else {
+                    assemble_closure(&repo, &ledger, &evidence_dir)?
+                }
+            };
             let report = verify_manifest(&repo, &ledger, &manifest)?;
-            publish_report(&evidence_dir, &report)?;
+            verify_retained_semantics(&repo, &ledger, &manifest)?;
+            let report_dir = manifest
+                .parent()
+                .ok_or_else(|| eyre::eyre!("closure manifest has no parent directory"))?;
+            publish_report(report_dir, &report)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             require_pass(&report)
         }
