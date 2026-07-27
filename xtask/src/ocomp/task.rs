@@ -2324,18 +2324,6 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "--release",
             "-p",
             "outbe-tee-enclave",
-            "--bin",
-            "outbe-tee-enclave",
-        ],
-    )?;
-    cargo(
-        repository_root,
-        &[
-            "build",
-            "--locked",
-            "--release",
-            "-p",
-            "outbe-tee-enclave",
             "--features",
             "mock",
             "--bin",
@@ -2355,7 +2343,10 @@ fn snapshot_ocomp_artifact_set(repository_root: &Path, run_root: &Path) -> Resul
         ("target/debug/outbe-e2e-evidence", "outbe-e2e-evidence"),
         ("target/debug/outbe-keygen", "outbe-keygen"),
         ("target/debug/outbe-ocomp", "outbe-ocomp"),
-        ("target/release/outbe-tee-enclave", "outbe-tee-enclave"),
+        (
+            "target/release/outbe-tee-enclave-mock",
+            "outbe-tee-enclave-mock",
+        ),
     ] {
         let source = repository_root.join(source);
         let destination = artifact_set.join(name);
@@ -2437,7 +2428,7 @@ fn run_exact_scenario(
     let ocomp_binary = artifact_set.join("outbe-ocomp");
     let cli_binary = artifact_set.join("outbe-cli");
     let keygen_binary = artifact_set.join("outbe-keygen");
-    let real_enclave_binary = artifact_set.join("outbe-tee-enclave");
+    let mock_binary = artifact_set.join("outbe-tee-enclave-mock");
     let mut arguments = vec![
         "--tags",
         tag,
@@ -2445,7 +2436,7 @@ fn run_exact_scenario(
         "1",
         "--no-resolve-ports",
         "--tee",
-        "real",
+        "mock",
         "--all",
         "--repo",
         path_str(repository_root)?,
@@ -2459,8 +2450,8 @@ fn run_exact_scenario(
         path_str(&cli_binary)?,
         "--keygen-bin",
         path_str(&keygen_binary)?,
-        "--real-enclave-bin",
-        path_str(&real_enclave_binary)?,
+        "--mock-bin",
+        path_str(&mock_binary)?,
     ];
     if no_sudo {
         arguments.push("--no-sudo");

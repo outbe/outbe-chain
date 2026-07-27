@@ -2255,12 +2255,6 @@ OcompPocDevnetMachineV1
   enclave_mode                  mock Gramine; no SGX claim
 ```
 
-`enclave_mode` above describes only the frozen OCM-26 capacity-measurement
-profile and therefore does not overstate SGX throughput. OCM-PUBLIC, OCM-E2E and
-the final correctness closure run four production enclave binaries through
-`gramine-sgx` on real SGX hardware; production DCAP policy remains outside the
-PoC claim.
-
 This matches the repository's already-used
 [`depot-ubuntu-24.04-4`](https://depot.dev/docs/github-actions/runner-types)
 class while making the actual minimum independent of a mutable provider label.

@@ -28,7 +28,7 @@ const REQUIRED_ARTIFACTS: [(&str, &str); 6] = [
     ("outbe_e2e", "outbe-e2e"),
     ("outbe_keygen", "outbe-keygen"),
     ("outbe_ocomp", "outbe-ocomp"),
-    ("outbe_tee_enclave", "outbe-tee-enclave"),
+    ("outbe_tee_enclave_mock", "outbe-tee-enclave-mock"),
 ];
 
 /// One closed command and the stable IDs whose executable tests it runs.

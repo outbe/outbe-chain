@@ -1751,9 +1751,8 @@ calls another step.
 **Invariants/failures:** harness cannot inject jobs/results/state or emulate
 worker/CAS logic; every process is owned/reaped; failure preserves bounded
 diagnostics; pass records exact binaries/configs/chain refs and install hash;
-all validators/followers use the same install for proposal/import/replay; every
-closure enclave runs the exact retained production binary through hardware SGX.
-Production DCAP policy remains outside the PoC claim.
+all validators/followers use the same install for proposal/import/replay; mock
+Gramine substitutes SGX hardware only.
 
 **Fork impact:** harness generates measurement networks before `OCM-26`; those
 manifests are marked and rejected as final evidence.
@@ -1963,8 +1962,8 @@ closure verification.
 - final `mise run ocomp-poc-{e2e,isolation,evidence-verify,closure}`;
 - CI closure workflows/artifact retention.
 
-**Changes:** implement all stable Gherkin scenarios/tags, final hardware-SGX
-Gramine encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
+**Changes:** implement all stable Gherkin scenarios/tags, final mock-Gramine
+encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
 `S+1` multi-shard 1/2/4-worker schedules, finality+4 window,
 Supervisor zero-fee submit/reorg, sign-once/restart, healthy `4/4`,
 one-down `3/4`, two-down q<3, late/conflicting/minority fourth votes, delayed

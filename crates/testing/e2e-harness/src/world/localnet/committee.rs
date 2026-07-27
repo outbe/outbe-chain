@@ -414,14 +414,19 @@ impl Localnet {
         Ok(format!("0x{id:064x}"))
     }
 
-    /// Resolve the exact real (non-mock) enclave binary selected by the harness.
+    /// Resolve the real (non-mock) enclave binary from the build tree.
     pub(super) fn real_enclave_bin(&self) -> Result<PathBuf> {
-        if self.cfg.bin_real_enclave.exists() {
-            return Ok(self.cfg.bin_real_enclave.clone());
+        for rel in [
+            "target/debug/outbe-tee-enclave",
+            "target/release/outbe-tee-enclave",
+        ] {
+            let p = self.cfg.repo.join(rel);
+            if p.exists() {
+                return Ok(p);
+            }
         }
         Err(eyre::eyre!(
-            "real enclave binary not found at {}",
-            self.cfg.bin_real_enclave.display()
+            "real enclave binary `outbe-tee-enclave` not found under target/{{debug,release}}"
         ))
     }
 

@@ -7,7 +7,7 @@ use cucumber::gherkin::{Feature, Scenario};
 use eyre::{Result, WrapErr};
 use serde_json::json;
 
-use crate::env::{Environment, TeeMode};
+use crate::env::Environment;
 use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
@@ -39,15 +39,6 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
     let (sha, tracked_dirty, untracked_dirty) = git_identity(&input.env.repo);
     let exact_ocomp_binaries = if input.ocomp.launch_identity.is_some() {
         let current_exe = std::env::current_exe().wrap_err("resolve exact outbe-e2e binary")?;
-        let (enclave_name, enclave_path) = match input.env.tee_mode {
-            TeeMode::Real => ("outbe_tee_enclave", input.env.real_enclave_bin.as_path()),
-            TeeMode::Mock => ("outbe_tee_enclave_mock", input.env.mock_bin.as_path()),
-            TeeMode::None => {
-                return Err(eyre::eyre!(
-                    "OCOMP scenario evidence requires an enabled TEE mode"
-                ));
-            }
-        };
         Some(json!({
             "outbe_chain": hash_file(&input.env.chain_bin)
                 .wrap_err("hash exact outbe-chain binary")?,
@@ -57,8 +48,8 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
                 .wrap_err("hash exact outbe-cli binary")?,
             "outbe_keygen": hash_file(&input.env.keygen_bin)
                 .wrap_err("hash exact outbe-keygen binary")?,
-            (enclave_name): hash_file(enclave_path)
-                .wrap_err("hash exact selected outbe-tee-enclave binary")?,
+            "outbe_tee_enclave_mock": hash_file(&input.env.mock_bin)
+                .wrap_err("hash exact outbe-tee-enclave-mock binary")?,
             "outbe_e2e": hash_file(&current_exe)
                 .wrap_err("hash exact outbe-e2e binary")?,
         }))

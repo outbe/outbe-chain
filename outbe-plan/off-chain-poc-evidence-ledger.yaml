@@ -75,7 +75,7 @@ lanes:
     automatic_retries: 0
   OCM-E2E:
     command: mise run ocomp-poc-e2e -- --evidence-dir <dir>
-    platform: privileged_linux_four_validator_hardware_sgx
+    platform: privileged_linux_four_validator_mock_gramine
     frequency: closure_candidate_and_scheduled_main
     timeout_minutes: 120
     required: true
@@ -776,7 +776,7 @@ tests:
       projection harness path to Nod
     real_components:
       - four_validator_nodes
-      - four_hardware_sgx_gramine_enclaves
+      - four_mock_gramine_enclaves
       - four_supervisors
       - four_exporters
       - four_cas_domains
@@ -787,13 +787,11 @@ tests:
       - public_rpc_p2p_finality
       - public_result_vote_transactions
     substitutions:
-      - development_signing_identity_and_dev_quote_policy_do_not_claim_production_dcap
+      - mock_gramine_substitutes_only_sgx_hardware_not_validator_or_ocomp_domain
     substitution_justification: >
       The current encrypted public Tribute path requires the Gramine protocol.
-      Closure executes every enclave through gramine-sgx on the retained
-      production enclave binary and real SGX hardware. Production DCAP policy is
-      outside PoC; all nodes and OCOMP domains remain separate production-form
-      processes.
+      SGX hardware and attestation are outside PoC; all nodes and OCOMP domains
+      remain separate production-form processes.
     oracles:
       - REFERENCE_DIFF
       - FINALITY_PROOF
