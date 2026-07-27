@@ -87,6 +87,42 @@ fn precompile_addresses_match_eth_call_targets() {
 }
 
 #[test]
+fn eth_call_active_version_reflects_the_selected_state_snapshot() {
+    let data = IUpdate::getActiveVersionCall {}.abi_encode();
+
+    let mut before_provider = HashMapStorageProvider::new(1);
+    let before = {
+        let storage = StorageHandle::new(&mut before_provider);
+        let ret = eth_call_update(storage, &data);
+        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
+    };
+
+    let mut activation_provider = HashMapStorageProvider::new(1);
+    let at_activation = {
+        let storage = StorageHandle::new(&mut activation_provider);
+        Update::new(storage.clone())
+            .set_active_version(V1_2, 500)
+            .unwrap();
+        let ret = eth_call_update(storage, &data);
+        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
+    };
+
+    let mut after_provider = HashMapStorageProvider::new(1);
+    let after_activation = {
+        let storage = StorageHandle::new(&mut after_provider);
+        Update::new(storage.clone())
+            .set_active_version(V1_2, 500)
+            .unwrap();
+        let ret = eth_call_update(storage, &data);
+        IUpdate::getActiveVersionCall::abi_decode_returns(&ret).unwrap()
+    };
+
+    assert_eq!(before, ProtocolVersion::ZERO.raw());
+    assert_eq!(at_activation, V1_2.raw());
+    assert_eq!(after_activation, V1_2.raw());
+}
+
+#[test]
 fn eth_call_get_update_active_version() {
     with_storage(|storage| {
         let mut update = Update::new(storage.clone());
