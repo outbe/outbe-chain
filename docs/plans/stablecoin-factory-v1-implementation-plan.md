@@ -101,7 +101,10 @@ Default completion rules for every implementation task:
 | T5 | Stablecoin-specific four-validator localnet E2E with restart and RPC checks |
 
 A later T4/T5 task does not excuse missing T1-T3 evidence in the behavior task that
-introduced the invariant.
+introduced the invariant. T5 localnet/product E2E is executed only in Phase 7 after
+implementation and T4 parity are complete. On machines without SGX it runs with
+`--tee none`; SGX-specific attestation evidence is environment-gated and collected at
+the release gate rather than blocking earlier implementation tasks.
 
 ## Execution ledger
 
@@ -112,7 +115,8 @@ reviewing the task's scoped diff and verification evidence.
 | --- | --- | --- | --- |
 | SCF-001 | Done | `5614296` | Forge 7/7; Alloy/golden 4/4; Vote 32/32; `cargo check` vote+CLI; independent ABI review READY |
 | SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
-| SCF-G0 | Blocked | — | Requires SCF-003 and SCF-004 |
+| SCF-003 | Done | `6e948d2` | Rust 3/3; Python 7/7; scanner+generated-genesis integration; release build; review READY |
+| SCF-G0 | Blocked | — | Requires SCF-004 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -183,9 +187,11 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Done when:** Factory/Policy addresses, prefix and exact marker are collision-free
   against Ethereum/Outbe/predeploy/genesis/planned ranges; each target network is
   explicitly classified as new genesis/reset-compatible or unsupported.
-- **Tests:** T1 prefix/overlap checks; T3 generated-genesis scan; T5 fresh localnet
-  starts with fixed accounts and namespace reservation.
-- **Verification:** collision script, genesis tests, `mise run localnet-smoke`.
+- **Tests:** T1 prefix/overlap and fixed-vector checks; T3 complete seeder output is
+  rescanned and contains exact marker accounts. Fresh-localnet/reset evidence is
+  deferred to SCF-083 under the Phase 7 T5 policy.
+- **Verification:** collision script, Rust namespace vectors, Python genesis tests and
+  generated-genesis scan.
 - **Exit gate:** **reset gate** — V1 cannot activate on state that executed before the
   address-class creation guard.
 
