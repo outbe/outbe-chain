@@ -1880,7 +1880,9 @@ fresh four-validator devnet.
   canonical `Final` `OcompForkInstallV1`, final chain manifest and fork height
   32;
 - final bundle/genesis/cap golden vectors;
-- genesis/network/profile consumers and `mise` capacity command.
+- genesis/network/profile consumers, the checked-in
+  `crates/testing/e2e-harness/fixtures/ocomp-final-v1/{base,artifacts}` fixture
+  and `mise` capacity command.
 
 **Changes:** start with worker-shard `S<=256`, construct maximum-shaped
 individual chunks, full-result `ResultVoteV1`, four-slot/accountability state and
@@ -1892,7 +1894,10 @@ has at least 20% headroom, bind benchmark/machine evidence, regenerate
 bundle/genesis/committee in the frozen two-stage order and remove all
 provisional acceptance. The final install is loaded once before node startup
 and propagated unchanged through executor, consensus and txpool. It must not
-generate a total Tribute ceiling.
+generate a total Tribute ceiling. Final public/E2E scenarios copy the exact
+four-validator base identities and armed chain manifest; the harness rewrites
+only scenario loopback ports and applies a process-local logical-clock offset.
+It does not regenerate DKG/validator identity or mutate final genesis.
 
 **Invariants/failures:** smallest bound across every interface wins; compiled/
 genesis/network constants equal; exact install classification/hash and all

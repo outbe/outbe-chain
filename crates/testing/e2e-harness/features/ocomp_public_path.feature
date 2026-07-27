@@ -33,6 +33,18 @@ Feature: Off-chain computation public path
     And validator 0 reconstructs that certified generation from canonical history
     And all four OCOMP domains run their node-facing production roles
 
+  @ocomp-final-capacity
+  Scenario: The canonical Final devnet processes a shard-cap-plus-one population
+    Given the canonical four-validator OCOMP Final devnet
+    When all 257 capacity owners submit one encrypted Tribute each
+    Then all validators observe exactly 257 public Tributes for the capacity day
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    And the certified generation contains exactly 257 Tribute and Nod records
+    And validator 0 reconstructs that certified generation from canonical history
+    And all four OCOMP domains run their node-facing production roles
+
   @ocomp-public-replay
   # OCOMP-TEST-ID: OCM-PUB-004
   Scenario: Completed result-vote replay is idempotent and changed binding is rejected

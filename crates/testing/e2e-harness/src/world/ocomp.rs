@@ -470,6 +470,72 @@ impl OcompTopology {
         Ok((prepared, private_keys))
     }
 
+    /// Load the checked-in canonical `Final` install and publish only its
+    /// node-local bundle and test-validator signing material.
+    ///
+    /// Unlike the measurement helpers, this path never mutates genesis,
+    /// committee membership, capacity, schedule or fork bindings.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_final_fork_install(&self) -> Result<OcompMeasurementForkV1> {
+        let genesis_path = self.cfg.dir.join("genesis.json");
+        let spec = parse_outbe_chain_spec(&genesis_path)?;
+        let chain_id = spec.chain().id();
+        let genesis_hash = spec.genesis_hash();
+        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&spec)?
+            .ok_or_else(|| eyre::eyre!("canonical Final genesis omitted its OCOMP install"))?;
+        let install = loaded.as_ref().clone();
+        if install.classification != OcompForkInstallClassification::Final {
+            eyre::bail!(
+                "canonical OCOMP fixture contains a non-Final fork install: {:?}",
+                install.classification
+            );
+        }
+        if install.activation_height != OCOMP_MEASUREMENT_ACTIVATION_HEIGHT {
+            eyre::bail!(
+                "canonical OCOMP fixture activates at {}, expected {}",
+                install.activation_height,
+                OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
+            );
+        }
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        install.validate_for_chain(chain_id, genesis_hash, &limits)?;
+        let install_hash = install.install_hash(&limits)?;
+        self.publish_validator_domain_material(&install)?;
+        Ok(OcompMeasurementForkV1 {
+            install,
+            install_hash,
+        })
+    }
+
+    /// Recover the deterministic public capacity-owner keys funded by the
+    /// canonical Final fixture. Keys remain harness-only test material.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn final_capacity_tribute_private_keys(&self, count: usize) -> Result<Vec<String>> {
+        capacity_tribute_private_keys(count)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn publish_validator_domain_material(&self, install: &OcompForkInstallV1) -> Result<()> {
+        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+        let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
+        for (validator_index, domain) in self.domains.iter().enumerate() {
+            fs::create_dir_all(&domain.root)?;
+            publish_exact_file(
+                &domain.root.join("protocol-bundle-v1.ocb1"),
+                &canonical_bundle,
+                0o640,
+            )?;
+            let key = measurement_signing_key(u8::try_from(validator_index)?);
+            let key_bytes = format!("{}\n", hex::encode(key.to_bytes()));
+            publish_exact_file(
+                &domain.root.join("ocomp-key-v1.hex"),
+                key_bytes.as_bytes(),
+                0o600,
+            )?;
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "ocomp-integration")]
     fn prepare_measurement_fork_install_inner(
         &self,
@@ -514,23 +580,7 @@ impl OcompTopology {
         install.validate_for_chain(chain_id, base_genesis_hash, &limits)?;
         let canonical_install = install.encode_canonical(&limits)?;
         let install_hash = install.install_hash(&limits)?;
-        let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
-
-        for (validator_index, domain) in self.domains.iter().enumerate() {
-            fs::create_dir_all(&domain.root)?;
-            publish_exact_file(
-                &domain.root.join("protocol-bundle-v1.ocb1"),
-                &canonical_bundle,
-                0o640,
-            )?;
-            let key = measurement_signing_key(u8::try_from(validator_index)?);
-            let key_bytes = format!("{}\n", hex::encode(key.to_bytes()));
-            publish_exact_file(
-                &domain.root.join("ocomp-key-v1.hex"),
-                key_bytes.as_bytes(),
-                0o600,
-            )?;
-        }
+        self.publish_validator_domain_material(&install)?;
 
         let config = genesis
             .get_mut("config")

@@ -373,6 +373,14 @@ enabled, a generator must construct the maximum-shaped:
 - non-q-forming and q-forming result-vote transactions;
 - typed receipts, logs and all mandatory block artifacts.
 
+The resulting `Final` capacity/profile/bundle/install is armed only in one
+checked-in four-validator fresh-devnet fixture. Every final E2E run copies the
+same base genesis, committee/DKG identities and validator keys; it may rewrite
+only allocated loopback ports and set a process-local logical-clock offset.
+It does not rerun DKG, shift genesis or synthesize a new fork identity. The
+fixture keys remain harness-only test material and are not part of release
+binaries.
+
 The generator must exercise `cap-1`, `cap` and `cap+1` through:
 
 ```text

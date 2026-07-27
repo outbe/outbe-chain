@@ -160,6 +160,14 @@ cross-hash. The parsed value is immutable for the process lifetime; local
 environment variables, command-line height overrides, runtime file reload and
 OCOMP process readiness cannot select consensus semantics.
 
+The PoC closure network uses one checked-in four-validator `Final` fixture.
+Its genesis, committee identities, DKG material and validator keys are copied
+unchanged into each fresh scenario. The harness may rewrite only loopback
+consensus/reth endpoint ports and apply a process-local logical-clock offset;
+it must not regenerate identities, mutate the chain manifest or replace the
+install. Fixture private keys are test-only data under the E2E crate and are
+not embedded in release binaries.
+
 At exactly `H`, all three objects are validated before the first write and are
 installed under one outer storage checkpoint. Replaying the exact install is
 idempotent; partial state or any different value is fatal. The same typed

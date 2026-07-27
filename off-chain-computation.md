@@ -570,6 +570,13 @@ reinterpret them as total-population admission. Resource exhaustion causes a
 missing local vote and possible no-quorum expiry; it never falls back to
 on-chain Lysis.
 
+The final PoC profile is armed only in a checked-in four-validator fresh-devnet
+fixture. Final runs copy the same genesis, committee/DKG identities, validator
+keys and `Final` install. The harness may rewrite allocated loopback endpoint
+ports and apply a process-local logical-clock offset, but it does not rerun DKG,
+shift genesis or create a new chain/install identity. Test private keys remain
+inside the E2E fixture and are not embedded in release binaries.
+
 ### 1.6 Demonstration that defines PoC success
 
 The acceptance demonstration starts four validator deployments, then:

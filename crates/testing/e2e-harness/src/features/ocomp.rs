@@ -18,13 +18,15 @@ use outbe_ocomp_protocol::{
     vote::ResultVoteV1,
 };
 
-use crate::features::common::{bootstrap_localnet, start_bootstrapped_localnet};
+use crate::features::common::{
+    bootstrap_final_ocomp_localnet, bootstrap_localnet, start_bootstrapped_localnet,
+};
 use crate::internal::eth;
 use crate::world::localnet::StartOpts;
 use crate::world::ocomp::OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS;
 use crate::world::ocomp::{
-    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompProcessFault, OcompProcessRole,
-    OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
+    OcompProcessFault, OcompProcessRole, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
 };
 use crate::world::World;
 
@@ -44,6 +46,36 @@ fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
+}
+
+#[given("the canonical four-validator OCOMP Final devnet")]
+fn canonical_ocomp_final_devnet(world: &mut World) {
+    bootstrap_final_ocomp_localnet(world, 6);
+    world.state.ocomp_capacity_tribute_private_keys = world
+        .ocomp
+        .final_capacity_tribute_private_keys(OCOMP_CAPACITY_TRIBUTE_COUNT)
+        .expect("derive funded canonical capacity owners");
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_secs();
+    let mut start_opts = StartOpts {
+        voting_window: Some(6),
+        unix_time_offset_secs: Some(
+            world
+                .localnet
+                .ocomp_final_clock_offset(now_secs)
+                .expect("derive canonical OCOMP logical clock"),
+        ),
+        genesis_timestamp_pre_shifted: true,
+        ocomp_protocol_bundle_hash: None,
+    };
+    let prepared = world
+        .ocomp
+        .prepare_final_fork_install()
+        .expect("load canonical OCOMP Final install");
+    launch_prepared_ocomp(world, &mut start_opts, &prepared, false);
+    wait_for_finalized_ocomp_activation(world);
 }
 
 fn start_ocomp_measurement_localnet(
@@ -93,10 +125,27 @@ fn start_ocomp_measurement_localnet(
             .prepare_measurement_fork_install()
             .expect("publish the immutable measurement fork before node launch"),
     };
-    let expected_identity = measurement_fork.launch_identity();
+    launch_prepared_ocomp(
+        world,
+        &mut start_opts,
+        &measurement_fork,
+        !shorten_public_day,
+    );
+    if shorten_public_day {
+        wait_for_finalized_ocomp_activation(world);
+    }
+}
+
+fn launch_prepared_ocomp(
+    world: &mut World,
+    start_opts: &mut StartOpts,
+    prepared: &OcompMeasurementForkV1,
+    activate_workers: bool,
+) {
+    let expected_identity = prepared.launch_identity();
     start_opts.ocomp_protocol_bundle_hash =
         Some(format!("{:#x}", expected_identity.protocol_bundle_hash));
-    start_bootstrapped_localnet(world, &start_opts);
+    start_bootstrapped_localnet(world, start_opts);
 
     let primary = world.validators.primary_port();
     let chain_id = world
@@ -115,7 +164,7 @@ fn start_ocomp_measurement_localnet(
         .ocomp
         .start_validator_roles(identity)
         .expect("start all production node-facing OCOMP roles");
-    if !shorten_public_day {
+    if activate_workers {
         for validator_index in 0..4_u8 {
             world
                 .ocomp
@@ -124,9 +173,6 @@ fn start_ocomp_measurement_localnet(
                     panic!("activate validator-{validator_index} production worker: {error}")
                 });
         }
-    }
-    if shorten_public_day {
-        wait_for_finalized_ocomp_activation(world);
     }
 }
 

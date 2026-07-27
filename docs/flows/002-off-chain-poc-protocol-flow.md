@@ -50,7 +50,9 @@ budget, no repeated auction and no Nod. There is no synchronous fallback.
   under the active PoC protocol bundle.
 - **Environment:** Four independently configured validator domains with
   finalizing consensus, separate OCOMP processes/artifacts, valid Oracle and
-  Fidelity state, retained CE/Mongo inputs and generated PoC caps.
+  Fidelity state, retained CE/Mongo inputs and generated PoC caps. Final
+  closure starts from the checked-in four-validator `Final` fixture; only
+  loopback ports and a process-local logical clock offset vary per run.
 - **Canonical inputs:** Finalized `JobIntentV1`, request block/state root,
   sealed CE/WWD roots, exact count/nominal, frozen Metadosis values,
   budget split, apply preconditions, authenticated Tribute bodies,

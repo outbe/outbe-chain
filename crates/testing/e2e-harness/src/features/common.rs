@@ -64,6 +64,28 @@ pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str
         .expect("bootstrap localnet");
 }
 
+/// Materialize the checked-in canonical four-validator OCOMP `Final` fixture
+/// without regenerating committee, DKG or genesis identities.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn bootstrap_final_ocomp_localnet(world: &mut World, window: u64) {
+    assert_eq!(
+        world.validators.size(),
+        4,
+        "canonical OCOMP fixture requires four validators"
+    );
+    world.state.voting_window = window;
+    world
+        .localnet
+        .bootstrap_ocomp_final()
+        .expect("materialize canonical OCOMP Final fixture");
+    world.state.wwd = Some(
+        world
+            .localnet
+            .ocomp_final_worldwide_day()
+            .expect("read canonical OCOMP fixture WorldwideDay"),
+    );
+}
+
 /// Start and prove reachable a network prepared by [`bootstrap_localnet`].
 pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
     if let Some(offset) = opts
