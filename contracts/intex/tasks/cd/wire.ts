@@ -241,7 +241,7 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
   if (empty.length > 0) {
     throw new Error(
       `TargetRouter wire requires non-empty addresses. Missing: ${empty.join(", ")}. ` +
-        `Post-deploy workflow uses load-addresses from @outbe/intex-contracts package - ensure package has Auction, IntexNFT1155, EscrowAdapter, IntexNFT1155Bridge.`
+        `The deploy workflow reads them from dist/addresses/<network>.json - ensure the deploy step captured IntexAuction, IntexNFT1155, EscrowAdapter, IntexNFT1155Bridge.`
     );
   }
 
