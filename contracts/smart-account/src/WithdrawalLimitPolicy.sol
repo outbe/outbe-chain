@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {PolicyBase} from "kernel-7579-plugins/base/PolicyBase.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {CallType} from "@zerodev/kernel/types/Types.sol";
-import {CALLTYPE_SINGLE} from "@zerodev/kernel/types/Constants.sol";
+import {CALLTYPE_SINGLE, CALLTYPE_BATCH} from "@zerodev/kernel/types/Constants.sol";
 import {LibERC7579} from "solady/accounts/LibERC7579.sol";
 import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -25,14 +25,14 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     /// @notice Configuration stored per (id, wallet) pair on install.
     struct WithdrawalLimitConfig {
-        uint256 amountLimit; // Max cumulative transfer amount per interval
+        uint256 amountLimit; // token-minor units (e.g. 6-dec); max cumulative transfer per interval
         uint48 interval; // Time window length in seconds
         address token; // ERC20 token address this policy governs
     }
 
     /// @notice Rolling-window state tracked per (id, wallet) pair.
     struct WithdrawalLimitState {
-        uint256 usedAmount; // Cumulative amount spent in current window
+        uint256 usedAmount; // token-minor units (e.g. 6-dec); cumulative spent in current window
         uint48 windowEnd; // Timestamp when current window expires
     }
 
@@ -48,6 +48,18 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     error WithdrawalLimitExceeded(uint256 used, uint256 limit);
     error WithdrawalLimitAlreadyInitialized();
+    error NonCanonicalOffset(uint256 offset);
+    error BatchTargetsConfiguredToken(address token);
+
+    // -------------------------------------------------------------------------
+    // Events
+    // -------------------------------------------------------------------------
+
+    /// @notice Emitted when a metered transfer consumes daily-limit headroom, so off-chain monitoring
+    ///         can observe the limit nearing exhaustion on a (possibly compromised) CCA.
+    event LimitConsumed(bytes32 indexed id, address indexed wallet, uint256 amount, uint256 used, uint48 windowEnd);
+    /// @notice Emitted when an expired window is reset before metering a new transfer.
+    event WindowReset(bytes32 indexed id, address indexed wallet, uint48 windowEnd);
 
     // -------------------------------------------------------------------------
     // State
@@ -127,22 +139,46 @@ contract WithdrawalLimitPolicy is PolicyBase {
         // Minimum: selector(4) + ExecMode(32) = 36 bytes
         if (uopCallData.length < 36) return 0;
 
-        // Call type is the first byte of the ExecMode word (at [4]); preserve the fixed-offset
-        // parsing of the surrounding execution calldata unchanged from the Kernel v3.3 version.
+        // Call type is the first byte of the ExecMode word (at [4]).
         CallType callType = CallType.wrap(bytes1(uopCallData[4]));
-        if (callType != CALLTYPE_SINGLE) return 0;
+        // SINGLE is metered below; BATCH is checked fail-closed against the configured token; any other
+        // call type carries no ERC20 transfer target here and is genuinely unrelated (pass-through).
+        if (callType != CALLTYPE_SINGLE && callType != CALLTYPE_BATCH) return 0;
 
         // ABI-encoded params: [4:36]=ExecMode(static), [36:68]=offset=64, [68:100]=execLen, [100:]=execCalldata
         if (uopCallData.length < 100) return 0;
+        // Kernel.execute decodes its `bytes calldata` param by following this offset, so a non-canonical
+        // value would let execution move a different amount than this policy validates. Reject it rather
+        // than pass-through (returning 0 here would be the bypass). Applies to SINGLE and BATCH alike.
+        uint256 offset = uint256(bytes32(uopCallData[36:68]));
+        if (offset != 64) revert NonCanonicalOffset(offset);
         uint256 execLen = uint256(bytes32(uopCallData[68:100]));
         if (uopCallData.length < 100 + execLen) return 0;
         bytes calldata execCalldata = uopCallData[100:100 + execLen];
 
-        // decodeSingle requires at least 52 bytes (target + value)
+        WithdrawalLimitConfig storage cfg = configs[id][msg.sender];
+
+        // Fail-closed for BATCH. This policy meters cumulative amounts only on the SINGLE transfer
+        // path (below) and cannot meter a batch atomically, so a batch that moves the configured token
+        // must not slip past unmetered — revert if any sub-call targets cfg.token. A batch that touches
+        // no configured token is genuinely unrelated and passes through. (In this deployment
+        // BundleWithdrawHook already blocks non-SINGLE on every CCA permission, but the policy must be
+        // self-contained if reused without that hook.) A batch too short to be a valid Execution[]
+        // encoding cannot target the token and would revert at execution anyway, so it passes through.
+        if (callType == CALLTYPE_BATCH) {
+            if (execCalldata.length < 64) return 0; // not a valid abi.encode(Execution[])
+            bytes32[] calldata pointers = LibERC7579.decodeBatch(execCalldata);
+            for (uint256 i; i < pointers.length; ++i) {
+                (address batchTarget,,) = LibERC7579.getExecution(pointers, i);
+                if (batchTarget == cfg.token) revert BatchTargetsConfiguredToken(cfg.token);
+            }
+            return 0; // batch touches no configured token → unrelated
+        }
+
+        // SINGLE path: decodeSingle requires at least 52 bytes (target + value)
         if (execCalldata.length < 52) return 0;
         (address target,, bytes calldata innerCallData) = LibERC7579.decodeSingle(execCalldata);
 
-        WithdrawalLimitConfig storage cfg = configs[id][msg.sender];
         if (target != cfg.token) return 0;
 
         // innerCallData: [0:4]=selector, [4:36]=recipient, [36:68]=amount
@@ -158,12 +194,23 @@ contract WithdrawalLimitPolicy is PolicyBase {
             state.usedAmount = 0;
             uint48 nowTs = uint48(block.timestamp);
             state.windowEnd = cfg.interval > type(uint48).max - nowTs ? type(uint48).max : nowTs + cfg.interval;
+            emit WindowReset(id, msg.sender, state.windowEnd);
         }
 
         uint256 newUsed = state.usedAmount + amount;
         if (newUsed > cfg.amountLimit) revert WithdrawalLimitExceeded(newUsed, cfg.amountLimit);
 
+        // TODO: NB The debit is committed here in the ERC-4337 validation phase, on purpose. The
+        // EntryPoint validates every op in a bundle before executing any, so committing at validation
+        // is what prevents two bundled ops from each passing a stale-headroom check and together
+        // over-spending the daily limit — the exact protection this limit exists to give the owner
+        // against a compromised CCA. The accepted trade-off is over-restriction: if the execution
+        // later reverts, the debit still stands until the window resets (a misbehaving CCA can waste
+        // its own daily headroom). Moving this to a post-execution commit would reopen the
+        // intra-bundle over-spend, so it is deliberately kept in validation. See
+        // test_W04_RevertingExec_StillDebits.
         state.usedAmount = newUsed;
+        emit LimitConsumed(id, msg.sender, amount, newUsed, state.windowEnd);
 
         // validAfter = 0, validUntil = windowEnd, sigFailed = false (account-abstraction v0.9 packing).
         return _packValidationData(false, state.windowEnd, 0);

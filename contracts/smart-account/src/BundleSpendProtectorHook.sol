@@ -36,6 +36,7 @@ import {IERC20} from "forge-std/interfaces/IERC20.sol";
 ///      that moves ERC20s would not be covered here.
 contract BundleSpendProtectorHook is IHook {
     error InsufficientFreeBalance();
+    error NonCanonicalOffset(uint256 offset);
 
     /// @dev Pre-op snapshot of a bundled token, used to bound the owner's outflow to freeBalance.
     struct TokenSnapshot {
@@ -135,6 +136,10 @@ contract BundleSpendProtectorHook is IHook {
     {
         // Need: selector(4) + ExecMode(32) + offset(32) + length(32) = 100 bytes minimum.
         if (msgData.length < 100) return new ApproveGrant[](0);
+        // Kernel.execute follows this offset when decoding, so reject a non-canonical value to keep the
+        // approve-grant scan in sync with execution (returning an empty set here would be the bypass).
+        uint256 offset = uint256(bytes32(msgData[36:68]));
+        if (offset != 64) revert NonCanonicalOffset(offset);
         uint256 execLen = uint256(bytes32(msgData[68:100]));
         if (msgData.length < 100 + execLen) return new ApproveGrant[](0);
         bytes calldata execCalldata = msgData[100:100 + execLen];
