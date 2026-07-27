@@ -50,6 +50,9 @@ enum OcompCommand {
         /// Typed `CapacityEvidenceV1` JSON from the Rust E2E capacity runner.
         #[arg(long)]
         evidence: PathBuf,
+        /// Five immutable public scenario preimages, ordered by cold-run ordinal.
+        #[arg(long = "scenario", required = true, num_args = 5)]
+        scenarios: Vec<PathBuf>,
         /// Exact generated-limits manifest bound into the capacity profile.
         #[arg(long)]
         limits_manifest: PathBuf,
@@ -200,10 +203,11 @@ fn main() -> Result<()> {
             }
             OcompCommand::Capacity {
                 evidence,
+                scenarios,
                 limits_manifest,
                 output,
             } => {
-                ocomp::capacity::run(&repo_root, &evidence, &limits_manifest, &output)?;
+                ocomp::capacity::run(&repo_root, &evidence, &scenarios, &limits_manifest, &output)?;
             }
             OcompCommand::Registry { check } => {
                 ocomp::registry::run(&repo_root, check)?;

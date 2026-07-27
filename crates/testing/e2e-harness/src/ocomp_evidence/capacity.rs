@@ -3,12 +3,14 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use eyre::{ensure, Context, Result};
 use outbe_ocomp_protocol::capacity::{
-    CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityRunBindingV1,
+    CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityHistoricalReplayBindingV1,
+    CapacityRecoveredGenerationBindingV1, CapacityRunBindingV1, CapacityValidatorBlockProcessingV1,
     CapacityWorkBillV1, ObservedMachineFactsV1, VerifiedCapacityEvidenceV1,
 };
+use outbe_ocomp_protocol::committee::POC_COMMITTEE_SIZE;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -72,6 +74,7 @@ struct BinaryIdentityV1 {
 struct CapacityPublicPathV1 {
     capacity_resources: CapacityResourcesV1,
     capacity_public_path: CapacityPublicObservationV1,
+    capacity_historical_replay: CapacityHistoricalReplayObservationV1,
     #[serde(flatten)]
     _other: BTreeMap<String, serde_json::Value>,
 }
@@ -108,8 +111,49 @@ struct CapacityPublicObservationV1 {
     block_bytes: u64,
     gas: u64,
     internal_work: u64,
+    block_processing_micros_by_validator: Vec<u64>,
     block_processing_micros: u64,
     finality_latency_micros: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapacityHistoricalReplayObservationV1 {
+    recovery: CapacityHistoricalReplaySpanV1,
+    recovered_result_digest: B256,
+    recovered_generation: CapacityRecoveredGenerationObservationV1,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapacityRecoveredGenerationObservationV1 {
+    worldwide_day: u32,
+    generation: u64,
+    job_id: B256,
+    program_semantics_hash: B256,
+    nod_root: B256,
+    bucket_root: B256,
+    output_manifest_root: B256,
+    tribute_count: u32,
+    nod_count: u32,
+    bucket_count: u32,
+    nod_amount_total: U256,
+    nod_gratis_consumed: U256,
+    issued_at: u64,
+    result_evidence_hash: B256,
+    block_number: u64,
+    block_hash: B256,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CapacityHistoricalReplaySpanV1 {
+    validator_index: u8,
+    first_missing_block_number: u64,
+    target_block_number: u64,
+    target_block_hash: B256,
+    replayed_block_count: u64,
+    elapsed_micros: u64,
 }
 
 /// Converts one immutable public capacity scenario into a protocol work bill.
@@ -151,6 +195,7 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
     );
     let artifact_set_hash = artifact_set_hash(&scenario.ocomp.exact_binaries)?;
     let public = scenario.ocomp.public_path.capacity_public_path;
+    let historical_replay = scenario.ocomp.public_path.capacity_historical_replay;
     let resources = scenario.ocomp.public_path.capacity_resources;
     ensure!(
         resources.cgroup_path.contains("outbe-ocomp-capacity-")
@@ -164,6 +209,40 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
         public.finalized_block_number >= public.q_forming_block_number,
         "capacity finalized capture precedes the q-forming block"
     );
+    ensure!(
+        public.block_processing_micros_by_validator.len() == 4
+            && public
+                .block_processing_micros_by_validator
+                .iter()
+                .all(|value| *value > 0)
+            && public
+                .block_processing_micros_by_validator
+                .iter()
+                .copied()
+                .max()
+                == Some(public.block_processing_micros),
+        "capacity block-processing maximum is not bound to four live validator observations"
+    );
+    ensure!(
+        historical_replay.recovered_generation.job_id == public.job_id
+            && historical_replay.recovered_result_digest == public.result_digest
+            && u64::from(historical_replay.recovered_generation.tribute_count)
+                == public.tribute_count
+            && u64::from(historical_replay.recovered_generation.nod_count) == public.nod_count
+            && historical_replay.recovered_generation.block_number == public.q_forming_block_number
+            && historical_replay.recovered_generation.block_hash == public.q_forming_block_hash,
+        "historical CE replay did not recover the exact certified public generation"
+    );
+    let validator_timings: [u64; POC_COMMITTEE_SIZE] = public
+        .block_processing_micros_by_validator
+        .try_into()
+        .map_err(|values: Vec<u64>| {
+            eyre::eyre!(
+                "capacity block-processing observation count is {}, expected {}",
+                values.len(),
+                POC_COMMITTEE_SIZE
+            )
+        })?;
 
     Ok(CapacityColdRunV1 {
         ordinal,
@@ -178,11 +257,55 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             job_id: public.job_id,
             result_digest: public.result_digest,
             q_forming_transaction_hash: public.q_forming_transaction_hash,
+            q_forming_block_number: public.q_forming_block_number,
             q_forming_block_hash: public.q_forming_block_hash,
+            finalized_block_number: public.finalized_block_number,
             finalized_block_hash: public.finalized_block_hash,
             tribute_count: public.tribute_count,
             nod_count: public.nod_count,
             worker_shard_count: public.worker_shard_count,
+            validator_block_processing: std::array::from_fn(|validator_index| {
+                CapacityValidatorBlockProcessingV1 {
+                    validator_index: u8::try_from(validator_index)
+                        .expect("fixed PoC committee index fits u8"),
+                    block_number: public.q_forming_block_number,
+                    block_hash: public.q_forming_block_hash,
+                    elapsed_micros: validator_timings[validator_index],
+                }
+            }),
+            historical_replay: CapacityHistoricalReplayBindingV1 {
+                validator_index: historical_replay.recovery.validator_index,
+                first_missing_block_number: historical_replay.recovery.first_missing_block_number,
+                target_block_number: historical_replay.recovery.target_block_number,
+                target_block_hash: historical_replay.recovery.target_block_hash,
+                replayed_block_count: historical_replay.recovery.replayed_block_count,
+                elapsed_micros: historical_replay.recovery.elapsed_micros,
+                recovered_result_digest: historical_replay.recovered_result_digest,
+                recovered_generation: CapacityRecoveredGenerationBindingV1 {
+                    worldwide_day: historical_replay.recovered_generation.worldwide_day,
+                    generation: historical_replay.recovered_generation.generation,
+                    job_id: historical_replay.recovered_generation.job_id,
+                    program_semantics_hash: historical_replay
+                        .recovered_generation
+                        .program_semantics_hash,
+                    nod_root: historical_replay.recovered_generation.nod_root,
+                    bucket_root: historical_replay.recovered_generation.bucket_root,
+                    output_manifest_root: historical_replay
+                        .recovered_generation
+                        .output_manifest_root,
+                    tribute_count: historical_replay.recovered_generation.tribute_count,
+                    nod_count: historical_replay.recovered_generation.nod_count,
+                    bucket_count: historical_replay.recovered_generation.bucket_count,
+                    nod_amount_total: historical_replay.recovered_generation.nod_amount_total,
+                    nod_gratis_consumed: historical_replay.recovered_generation.nod_gratis_consumed,
+                    issued_at: historical_replay.recovered_generation.issued_at,
+                    result_evidence_hash: historical_replay
+                        .recovered_generation
+                        .result_evidence_hash,
+                    block_number: historical_replay.recovered_generation.block_number,
+                    block_hash: historical_replay.recovered_generation.block_hash,
+                },
+            },
         },
         succeeded: true,
         retried: false,
@@ -200,6 +323,22 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
             finality_latency_micros: public.finality_latency_micros,
         },
     })
+}
+
+/// Re-derives one cold run from its immutable public scenario preimage and
+/// requires exact equality with the typed capacity evidence.
+pub fn verify_capacity_run_preimage(
+    expected: &CapacityColdRunV1,
+    scenario_path: &Path,
+) -> Result<()> {
+    let actual = assemble_capacity_run(expected.ordinal, scenario_path)?;
+    ensure!(
+        actual == *expected,
+        "capacity run {} differs from its public scenario preimage {}",
+        expected.ordinal,
+        scenario_path.display()
+    );
+    Ok(())
 }
 
 /// Assembles and verifies exactly five distinct cold scenario records.
@@ -399,8 +538,38 @@ mod tests {
                         "block_bytes": 7,
                         "gas": 8,
                         "internal_work": 9,
+                        "block_processing_micros_by_validator": [8, 9, 10, 7],
                         "block_processing_micros": 10,
                         "finality_latency_micros": 11,
+                    },
+                    "capacity_historical_replay": {
+                        "recovery": {
+                            "validator_index": 0,
+                            "first_missing_block_number": 1,
+                            "target_block_number": 44,
+                            "target_block_hash": B256::repeat_byte(6),
+                            "replayed_block_count": 44,
+                            "elapsed_micros": 12,
+                        },
+                        "recovered_result_digest": B256::repeat_byte(2),
+                        "recovered_generation": {
+                            "worldwide_day": 20260728,
+                            "generation": 1,
+                            "job_id": B256::repeat_byte(1),
+                            "program_semantics_hash": B256::repeat_byte(7),
+                            "nod_root": B256::repeat_byte(8),
+                            "bucket_root": B256::repeat_byte(9),
+                            "output_manifest_root": B256::repeat_byte(10),
+                            "tribute_count": 257,
+                            "nod_count": 257,
+                            "bucket_count": 1,
+                            "nod_amount_total": U256::from(100),
+                            "nod_gratis_consumed": U256::ZERO,
+                            "issued_at": 1,
+                            "result_evidence_hash": B256::repeat_byte(11),
+                            "block_number": 40,
+                            "block_hash": B256::repeat_byte(4),
+                        },
                     }
                 }
             }
@@ -409,10 +578,16 @@ mod tests {
         fs::write(&path, serde_json::to_vec_pretty(&scenario).unwrap()).unwrap();
 
         let run = assemble_capacity_run(1, &path).unwrap();
+        verify_capacity_run_preimage(&run, &path).unwrap();
         assert_eq!(run.binding.tribute_count, 257);
         assert_eq!(run.binding.worker_shard_count, 2);
+        assert_eq!(run.binding.historical_replay.replayed_block_count, 44);
         assert_eq!(run.work.cpu_micros, 1);
         assert_eq!(run.work.finality_latency_micros, 11);
+
+        let mut invented = run.clone();
+        invented.binding.validator_block_processing[0].elapsed_micros += 1;
+        assert!(verify_capacity_run_preimage(&invented, &path).is_err());
 
         let mut dirty = scenario;
         dirty["source"]["dirty"] = json!(true);

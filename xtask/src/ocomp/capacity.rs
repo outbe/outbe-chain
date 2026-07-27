@@ -15,6 +15,7 @@ use outbe_consensus::{
     config::MAX_P2P_MESSAGE_SIZE,
     timing::{DEFAULT_CERTIFICATION_TIMEOUT_MS, DEFAULT_LEADER_TIMEOUT_MS},
 };
+use outbe_e2e_harness::ocomp_evidence::verify_capacity_run_preimage;
 use outbe_ocomp_protocol::{
     capacity::{
         CapacityBudgetV1, CapacityEvidenceV1, VerifiedCapacityEvidenceV1, OCOMP_POC_CAS_QUOTA_BYTES,
@@ -100,6 +101,7 @@ impl From<CapacityProfileV1> for CapacityProfileDocumentV1 {
 pub fn run(
     repository_root: &Path,
     evidence_path: &Path,
+    scenario_paths: &[PathBuf],
     limits_manifest_path: &Path,
     output_path: &Path,
 ) -> Result<()> {
@@ -118,6 +120,29 @@ pub fn run(
     let verified = evidence
         .verify()
         .wrap_err("verify five cold OCOMP capacity runs")?;
+    ensure!(
+        scenario_paths.len() == evidence.runs.len(),
+        "capacity generation requires one public scenario preimage per cold run"
+    );
+    let run_count = u8::try_from(evidence.runs.len()).wrap_err("capacity run count exceeds u8")?;
+    for ordinal in 1_u8..=run_count {
+        let expected = evidence
+            .runs
+            .iter()
+            .find(|run| run.ordinal == ordinal)
+            .ok_or_else(|| eyre::eyre!("capacity evidence is missing ordinal {ordinal}"))?;
+        let scenario = scenario_paths
+            .get(usize::from(ordinal - 1))
+            .ok_or_else(|| {
+                eyre::eyre!("capacity scenario preimage is missing ordinal {ordinal}")
+            })?;
+        verify_capacity_run_preimage(expected, scenario).wrap_err_with(|| {
+            format!(
+                "verify capacity cold run {ordinal} from {}",
+                scenario.display()
+            )
+        })?;
+    }
 
     let limits_bytes = std::fs::read(&limits_manifest_path).wrap_err_with(|| {
         format!(
@@ -238,6 +263,7 @@ pub fn measure(
     run(
         repository_root,
         &capacity_evidence_path,
+        &scenario_paths,
         limits_manifest_path,
         generated_capacity_path,
     )
@@ -609,7 +635,7 @@ fn publish_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 mod tests {
     use outbe_ocomp_protocol::capacity::{
         CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityRunBindingV1,
-        CapacityWorkBillV1, ObservedMachineFactsV1,
+        CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
     };
 
     use super::*;
@@ -773,11 +799,50 @@ mod tests {
                     job_id: B256::repeat_byte(3),
                     result_digest: B256::repeat_byte(4),
                     q_forming_transaction_hash: B256::repeat_byte(5),
+                    q_forming_block_number: 40,
                     q_forming_block_hash: B256::repeat_byte(6),
+                    finalized_block_number: 42,
                     finalized_block_hash: B256::repeat_byte(7),
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
+                    validator_block_processing: std::array::from_fn(|validator_index| {
+                        CapacityValidatorBlockProcessingV1 {
+                            validator_index: u8::try_from(validator_index).unwrap(),
+                            block_number: 40,
+                            block_hash: B256::repeat_byte(6),
+                            elapsed_micros: if validator_index == 3 { 800 } else { 100 },
+                        }
+                    }),
+                    historical_replay:
+                        outbe_ocomp_protocol::capacity::CapacityHistoricalReplayBindingV1 {
+                            validator_index: 0,
+                            first_missing_block_number: 1,
+                            target_block_number: 44,
+                            target_block_hash: B256::repeat_byte(8),
+                            replayed_block_count: 44,
+                            elapsed_micros: 100,
+                            recovered_result_digest: B256::repeat_byte(4),
+                            recovered_generation:
+                                outbe_ocomp_protocol::capacity::CapacityRecoveredGenerationBindingV1 {
+                                    worldwide_day: 20260728,
+                                    generation: 1,
+                                    job_id: B256::repeat_byte(3),
+                                    program_semantics_hash: B256::repeat_byte(9),
+                                    nod_root: B256::repeat_byte(10),
+                                    bucket_root: B256::repeat_byte(11),
+                                    output_manifest_root: B256::repeat_byte(12),
+                                    tribute_count: 257,
+                                    nod_count: 257,
+                                    bucket_count: 1,
+                                    nod_amount_total: alloy_primitives::U256::from(100),
+                                    nod_gratis_consumed: alloy_primitives::U256::ZERO,
+                                    issued_at: 1,
+                                    result_evidence_hash: B256::repeat_byte(13),
+                                    block_number: 40,
+                                    block_hash: B256::repeat_byte(6),
+                                },
+                        },
                 },
                 succeeded: true,
                 retried: false,

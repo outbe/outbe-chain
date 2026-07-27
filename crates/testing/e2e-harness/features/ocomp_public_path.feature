@@ -30,6 +30,7 @@ Feature: Off-chain computation public path
     When the validator supervisors submit results directly for that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified generation contains exactly 257 Tribute and Nod records
+    And validator 0 reconstructs that certified generation from canonical history
     And all four OCOMP domains run their node-facing production roles
 
   @ocomp-public-replay

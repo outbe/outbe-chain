@@ -3,12 +3,16 @@
 
 use std::fs;
 use std::os::unix::fs::MetadataExt as _;
+#[cfg(any(test, feature = "ocomp-integration"))]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
 use eyre::{bail, Result};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use eyre::{ensure, WrapErr};
 
 use crate::env::TeeMode;
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
@@ -210,6 +214,29 @@ impl Localnet {
         Ok(())
     }
 
+    /// Rebuild one validator's derived CE database from its preserved canonical
+    /// Reth history. Only the scenario-owned CE directory is removed, after the
+    /// owned node has stopped; chain DB, keys, consensus state and OCOMP state
+    /// remain untouched.
+    #[cfg(feature = "ocomp-integration")]
+    pub(super) fn restart_validator_after_ce_reset(&mut self, i: usize) -> Result<()> {
+        verified_compressed_entities_reconstruction_path(&self.cfg.dir, self.committee_size(), i)?;
+        self.kill_validator(i)?;
+        let ce_dir = verified_compressed_entities_reconstruction_path(
+            &self.cfg.dir,
+            self.committee_size(),
+            i,
+        )?;
+        fs::remove_dir_all(&ce_dir)
+            .wrap_err_with(|| format!("remove test-owned CE database {}", ce_dir.display()))?;
+        ensure!(
+            !ce_dir.exists(),
+            "test-owned CE database remains after removal: {}",
+            ce_dir.display()
+        );
+        self.restart()
+    }
+
     /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
     /// `--consensus.use-local-defaults`, signing-key + evm-key only (peers come
     /// from the on-chain ValidatorSet), no `run-supervised` wrapper.
@@ -402,9 +429,81 @@ fn cargo_package_version(protocol_version: &str) -> Result<String> {
     Ok(format!("{major}.{minor}.0"))
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn compressed_entities_reconstruction_path(
+    scenario_dir: &Path,
+    committee_size: usize,
+    validator_index: usize,
+) -> Result<PathBuf> {
+    if !scenario_dir.is_absolute()
+        || scenario_dir == Path::new("/")
+        || validator_index >= committee_size
+    {
+        bail!(
+            "refuse compressed-entity reconstruction outside one exact committee validator: \
+             scenario={}, validator={validator_index}, committee={committee_size}",
+            scenario_dir.display()
+        );
+    }
+    let path = scenario_dir
+        .join(format!("validator-{validator_index}"))
+        .join("data")
+        .join("compressed_entities");
+    if !path.starts_with(scenario_dir)
+        || path.file_name().and_then(|name| name.to_str()) != Some("compressed_entities")
+    {
+        bail!("compressed-entity reconstruction path escaped its scenario owner");
+    }
+    Ok(path)
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn verified_compressed_entities_reconstruction_path(
+    scenario_dir: &Path,
+    committee_size: usize,
+    validator_index: usize,
+) -> Result<PathBuf> {
+    let path =
+        compressed_entities_reconstruction_path(scenario_dir, committee_size, validator_index)?;
+    let validator_dir = scenario_dir.join(format!("validator-{validator_index}"));
+    let data_dir = validator_dir.join("data");
+    for component in [
+        scenario_dir,
+        validator_dir.as_path(),
+        data_dir.as_path(),
+        path.as_path(),
+    ] {
+        let metadata = fs::symlink_metadata(component)
+            .wrap_err_with(|| format!("inspect CE reconstruction owner {}", component.display()))?;
+        ensure!(
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+            "CE reconstruction owner is not one real directory: {}",
+            component.display()
+        );
+    }
+    let canonical_scenario = fs::canonicalize(scenario_dir)
+        .wrap_err_with(|| format!("canonicalize scenario owner {}", scenario_dir.display()))?;
+    let canonical_target = fs::canonicalize(&path)
+        .wrap_err_with(|| format!("canonicalize CE reconstruction target {}", path.display()))?;
+    let expected = canonical_scenario
+        .join(format!("validator-{validator_index}"))
+        .join("data")
+        .join("compressed_entities");
+    ensure!(
+        canonical_target == expected && canonical_target.starts_with(&canonical_scenario),
+        "CE reconstruction target escaped its canonical scenario owner: target={}, owner={}",
+        canonical_target.display(),
+        canonical_scenario.display()
+    );
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{cargo_package_version, rewrite_workspace_version};
+    use super::{
+        cargo_package_version, compressed_entities_reconstruction_path, rewrite_workspace_version,
+        verified_compressed_entities_reconstruction_path,
+    };
 
     #[test]
     fn expands_protocol_version_to_cargo_semver() {
@@ -429,5 +528,38 @@ example = { version = "9.9.9" }
         let rewritten = rewrite_workspace_version(manifest, "3.0.0").unwrap();
         assert!(rewritten.contains("[workspace.package]\nversion = \"3.0.0\""));
         assert!(rewritten.contains("example = { version = \"9.9.9\" }"));
+    }
+
+    #[test]
+    fn ce_reconstruction_path_is_exact_and_committee_bounded() {
+        let scenario = std::path::Path::new("/tmp/outbe-e2e/scenario-1");
+        assert_eq!(
+            compressed_entities_reconstruction_path(scenario, 4, 2).unwrap(),
+            scenario.join("validator-2/data/compressed_entities")
+        );
+        assert!(compressed_entities_reconstruction_path(scenario, 4, 4).is_err());
+        assert!(compressed_entities_reconstruction_path(std::path::Path::new("/"), 4, 0).is_err());
+    }
+
+    #[test]
+    fn ce_reconstruction_target_rejects_an_intermediate_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let scenario = root.path().join("scenario-1");
+        let outside = root.path().join("outside-validator");
+        std::fs::create_dir_all(outside.join("data/compressed_entities")).unwrap();
+        std::fs::create_dir_all(&scenario).unwrap();
+        std::os::unix::fs::symlink(&outside, scenario.join("validator-0")).unwrap();
+
+        assert!(
+            verified_compressed_entities_reconstruction_path(&scenario, 4, 0).is_err(),
+            "an intermediate symlink must never authorize recursive CE deletion"
+        );
+
+        std::fs::remove_file(scenario.join("validator-0")).unwrap();
+        std::fs::create_dir_all(scenario.join("validator-0/data/compressed_entities")).unwrap();
+        assert_eq!(
+            verified_compressed_entities_reconstruction_path(&scenario, 4, 0).unwrap(),
+            scenario.join("validator-0/data/compressed_entities")
+        );
     }
 }

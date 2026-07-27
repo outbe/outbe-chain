@@ -16024,6 +16024,7 @@ dependencies = [
  "filetime",
  "hex",
  "outbe-consensus",
+ "outbe-e2e-harness",
  "outbe-ocomp-protocol",
  "outbe-primitives",
  "serde",

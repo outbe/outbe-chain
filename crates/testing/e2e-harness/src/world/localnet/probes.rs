@@ -2,15 +2,201 @@
 //! recovery/promotion scenarios.
 
 use std::fs;
+#[cfg(any(test, feature = "ocomp-integration"))]
+use std::fs::File;
+#[cfg(feature = "ocomp-integration")]
+use std::io::{BufRead as _, BufReader};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use std::io::{Read as _, Seek as _, SeekFrom};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "ocomp-integration")]
+use std::thread::sleep;
+#[cfg(feature = "ocomp-integration")]
+use std::time::{Duration, Instant};
 
+use alloy_primitives::B256;
+#[cfg(any(test, feature = "ocomp-integration"))]
+use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
+use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::internal::proc::{first_hex, run_capture};
 use crate::internal::shell::Sh;
 
 use super::Localnet;
+
+/// One successful production startup-recovery span observed from a validator.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CeStartupReplayObservationV1 {
+    pub validator_index: u8,
+    pub first_missing_block_number: u64,
+    pub target_block_number: u64,
+    pub target_block_hash: B256,
+    pub replayed_block_count: u64,
+    pub elapsed_micros: u64,
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+struct TrackedRethLog {
+    file: File,
+    offset: u64,
+    anchor: Vec<u8>,
+    pending_line: Vec<u8>,
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+const RETH_LOG_ANCHOR_BYTES: u64 = 64;
+#[cfg(any(test, feature = "ocomp-integration"))]
+const MAX_RETH_LOG_LINE_BYTES: usize = 256 * 1024;
+#[cfg(any(test, feature = "ocomp-integration"))]
+const MAX_RETH_LOG_POLL_BYTES: usize = 4 * 1024 * 1024;
+#[cfg(any(test, feature = "ocomp-integration"))]
+const MAX_TRACKED_RETH_LOG_FILES: usize = 16;
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+struct RethLogTail {
+    root: PathBuf,
+    files: std::collections::BTreeMap<(u64, u64), TrackedRethLog>,
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+impl RethLogTail {
+    fn at_end(root: &Path) -> Result<Self> {
+        let mut tail = Self {
+            root: root.to_path_buf(),
+            files: std::collections::BTreeMap::new(),
+        };
+        tail.refresh(true)?;
+        Ok(tail)
+    }
+
+    fn read_new_complete_lines(&mut self) -> Result<String> {
+        self.refresh(false)?;
+        let mut output = String::new();
+        for tracked in self.files.values_mut() {
+            let length = tracked
+                .file
+                .metadata()
+                .wrap_err("inspect tracked Reth runtime log")?
+                .len();
+            let reset = if length < tracked.offset {
+                true
+            } else {
+                read_reth_log_anchor(&mut tracked.file, tracked.offset)? != tracked.anchor
+            };
+            if reset {
+                tracked.offset = 0;
+                tracked.anchor.clear();
+                tracked.pending_line.clear();
+            }
+            tracked
+                .file
+                .seek(SeekFrom::Start(tracked.offset))
+                .wrap_err("seek tracked Reth runtime log")?;
+            let mut bytes = Vec::new();
+            (&mut tracked.file)
+                .take(
+                    u64::try_from(MAX_RETH_LOG_POLL_BYTES + 1)
+                        .expect("fixed Reth log poll cap fits u64"),
+                )
+                .read_to_end(&mut bytes)
+                .wrap_err("read tracked Reth runtime log")?;
+            ensure!(
+                bytes.len() <= MAX_RETH_LOG_POLL_BYTES,
+                "Reth runtime log grew by more than {MAX_RETH_LOG_POLL_BYTES} bytes in one poll"
+            );
+            tracked.offset = tracked
+                .offset
+                .checked_add(
+                    u64::try_from(bytes.len()).wrap_err("Reth log suffix length exceeds u64")?,
+                )
+                .ok_or_else(|| eyre::eyre!("Reth log cursor overflow"))?;
+            tracked.anchor = read_reth_log_anchor(&mut tracked.file, tracked.offset)?;
+            tracked.pending_line.extend_from_slice(&bytes);
+            let Some(complete_len) = tracked
+                .pending_line
+                .iter()
+                .rposition(|byte| *byte == b'\n')
+                .map(|index| index + 1)
+            else {
+                ensure!(
+                    tracked.pending_line.len() <= MAX_RETH_LOG_LINE_BYTES,
+                    "Reth runtime log contains an over-cap incomplete line"
+                );
+                continue;
+            };
+            ensure!(
+                complete_len <= MAX_RETH_LOG_POLL_BYTES
+                    && tracked.pending_line.len() - complete_len <= MAX_RETH_LOG_LINE_BYTES,
+                "Reth runtime log poll or incomplete line exceeds its bounded evidence cap"
+            );
+            ensure!(
+                output
+                    .len()
+                    .checked_add(complete_len)
+                    .is_some_and(|length| length <= MAX_RETH_LOG_POLL_BYTES),
+                "combined Reth runtime log poll exceeds its bounded evidence cap"
+            );
+            output.push_str(
+                std::str::from_utf8(&tracked.pending_line[..complete_len])
+                    .wrap_err("Reth runtime log suffix is not UTF-8")?,
+            );
+            tracked.pending_line.drain(..complete_len);
+        }
+        Ok(output)
+    }
+
+    fn refresh(&mut self, seed_at_end: bool) -> Result<()> {
+        let paths = reth_log_paths(&self.root)?;
+        ensure!(
+            paths.len() <= MAX_TRACKED_RETH_LOG_FILES,
+            "Reth runtime log file count exceeds {MAX_TRACKED_RETH_LOG_FILES}"
+        );
+        for path in paths {
+            let file = File::open(&path)
+                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
+            let metadata = file
+                .metadata()
+                .wrap_err_with(|| format!("inspect validator runtime log {}", path.display()))?;
+            let identity = (metadata.dev(), metadata.ino());
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.files.entry(identity) {
+                let offset = if seed_at_end { metadata.len() } else { 0 };
+                entry.insert(TrackedRethLog {
+                    anchor: read_reth_log_anchor_from_file(&file, offset)?,
+                    file,
+                    offset,
+                    pending_line: Vec::new(),
+                });
+            }
+        }
+        ensure!(
+            self.files.len() <= MAX_TRACKED_RETH_LOG_FILES,
+            "tracked Reth runtime log file count exceeds {MAX_TRACKED_RETH_LOG_FILES}"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn read_reth_log_anchor(file: &mut File, offset: u64) -> Result<Vec<u8>> {
+    let start = offset.saturating_sub(RETH_LOG_ANCHOR_BYTES);
+    file.seek(SeekFrom::Start(start))
+        .wrap_err("seek Reth runtime log anchor")?;
+    let length = usize::try_from(offset - start).expect("fixed Reth log anchor fits usize");
+    let mut anchor = vec![0_u8; length];
+    file.read_exact(&mut anchor)
+        .wrap_err("read Reth runtime log anchor")?;
+    Ok(anchor)
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn read_reth_log_anchor_from_file(file: &File, offset: u64) -> Result<Vec<u8>> {
+    let mut file = file.try_clone().wrap_err("clone Reth runtime log handle")?;
+    read_reth_log_anchor(&mut file, offset)
+}
 
 impl Localnet {
     /// Audit every scenario log after its assertions and before teardown. The
@@ -95,6 +281,94 @@ impl Localnet {
 
     pub(crate) fn scenario_dir(&self) -> &Path {
         &self.cfg.dir
+    }
+
+    /// Returns the real Reth processing duration for one exact canonical block
+    /// on one validator. This observes the runtime record emitted by the block
+    /// import path; it does not re-execute the block through debug RPC.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn validator_block_processing_micros(
+        &self,
+        validator_index: usize,
+        block_number: u64,
+        block_hash: B256,
+    ) -> Result<u64> {
+        ensure!(
+            validator_index < self.committee_size(),
+            "validator index {validator_index} is outside the committee"
+        );
+        let mut observed = None;
+        let root = self.cfg.validator_dir(validator_index).join("logs");
+        for path in reth_log_paths(&root)? {
+            let file = File::open(&path)
+                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
+            for line in BufReader::new(file).lines() {
+                let line = line
+                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
+                let Some(micros) =
+                    parse_canonical_block_processing_micros(&line, block_number, block_hash)
+                        .wrap_err_with(|| {
+                            format!("parse canonical block record in {}", path.display())
+                        })?
+                else {
+                    continue;
+                };
+                ensure!(
+                    observed.replace(micros).is_none(),
+                    "validator {validator_index} has multiple canonical block records for \
+                     {block_number}/{block_hash:#x}"
+                );
+            }
+        }
+        observed.ok_or_else(|| {
+            eyre::eyre!(
+                "validator {validator_index} has no canonical block record for \
+                 {block_number}/{block_hash:#x}"
+            )
+        })
+    }
+
+    /// Forces one validator to reconstruct CE from preserved canonical Reth
+    /// history and returns the exact successful replay span emitted by the
+    /// production startup gate.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn reconstruct_validator_ce_from_canonical_history(
+        &mut self,
+        validator_index: usize,
+    ) -> Result<CeStartupReplayObservationV1> {
+        ensure!(
+            validator_index < self.committee_size(),
+            "validator index {validator_index} is outside the committee"
+        );
+        let root = self.cfg.validator_dir(validator_index).join("logs");
+        let mut tail = RethLogTail::at_end(&root)?;
+        self.restart_validator_after_ce_reset(validator_index)?;
+
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let content = tail.read_new_complete_lines()?;
+            let validator_index_u8 =
+                u8::try_from(validator_index).wrap_err("validator index exceeds u8")?;
+            let mut observed = None;
+            for line in content.lines() {
+                let Some(observation) = parse_ce_startup_replay(line, validator_index_u8)? else {
+                    continue;
+                };
+                ensure!(
+                    observed.replace(observation).is_none(),
+                    "validator {validator_index} emitted multiple successful CE startup replay spans"
+                );
+            }
+            if let Some(observation) = observed {
+                return Ok(observation);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "validator {validator_index} emitted no successful CE startup replay span after \
+                 reconstructing its test-owned CE database"
+            );
+            sleep(Duration::from_millis(100));
+        }
     }
 
     /// Relocate a datadir under the data dir (warm promotion reuses synced state).
@@ -279,6 +553,41 @@ fn collect_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn reth_log_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut logs = Vec::new();
+    collect_reth_logs(root, &mut logs)?;
+    logs.sort();
+    logs.dedup();
+    ensure!(
+        !logs.is_empty(),
+        "no Reth runtime log found under {}",
+        root.display()
+    );
+    Ok(logs)
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn collect_reth_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir).wrap_err_with(|| format!("scan {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_reth_logs(&path, logs)?;
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "reth.log" || name.starts_with("reth.log."))
+        {
+            logs.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn is_runtime_log(path: &Path) -> bool {
     matches!(
         path.file_name().and_then(|name| name.to_str()),
@@ -367,13 +676,149 @@ fn unexpected_log_line(line: &str) -> bool {
     line.contains("fatal") || contains_nonfatal_alarm(&line)
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_canonical_block_processing_micros(
+    line: &str,
+    expected_number: u64,
+    expected_hash: B256,
+) -> Result<Option<u64>> {
+    if !line.contains("Block added to canonical chain") {
+        return Ok(None);
+    }
+    let Some(number) = structured_field(line, "number") else {
+        bail!("canonical block record has no number");
+    };
+    let number = number
+        .parse::<u64>()
+        .wrap_err("canonical block number is not u64")?;
+    let Some(hash) = structured_field(line, "hash") else {
+        bail!("canonical block record has no hash");
+    };
+    let hash = hash
+        .parse::<B256>()
+        .wrap_err("canonical block hash is not B256")?;
+    if number != expected_number || hash != expected_hash {
+        return Ok(None);
+    }
+    let Some(elapsed) = structured_field(line, "elapsed") else {
+        bail!("canonical block record has no elapsed duration");
+    };
+    Ok(Some(parse_duration_micros_ceil(elapsed)?))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_ce_startup_replay(
+    line: &str,
+    validator_index: u8,
+) -> Result<Option<CeStartupReplayObservationV1>> {
+    if !line.contains("compressed-entity startup replay completed") {
+        return Ok(None);
+    }
+    let first_missing_block_number = required_u64_field(line, "first_missing")?;
+    let target_block_number = required_u64_field(line, "target_height")?;
+    let replayed_block_count = required_u64_field(line, "replayed_blocks")?;
+    let elapsed_micros = required_u64_field(line, "elapsed_micros")?;
+    let target_block_hash = structured_field(line, "target_hash")
+        .ok_or_else(|| eyre::eyre!("CE startup replay record has no target_hash"))?
+        .parse::<B256>()
+        .wrap_err("CE startup replay target_hash is not B256")?;
+    let expected_count = target_block_number
+        .checked_sub(first_missing_block_number)
+        .and_then(|span| span.checked_add(1))
+        .ok_or_else(|| eyre::eyre!("CE startup replay span is inverted or overflows"))?;
+    ensure!(
+        first_missing_block_number > 0
+            && target_block_hash != B256::ZERO
+            && replayed_block_count == expected_count
+            && elapsed_micros > 0,
+        "CE startup replay record is not a complete positive canonical span"
+    );
+    Ok(Some(CeStartupReplayObservationV1 {
+        validator_index,
+        first_missing_block_number,
+        target_block_number,
+        target_block_hash,
+        replayed_block_count,
+        elapsed_micros,
+    }))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn required_u64_field(line: &str, name: &str) -> Result<u64> {
+    structured_field(line, name)
+        .ok_or_else(|| eyre::eyre!("CE startup replay record has no {name}"))?
+        .parse::<u64>()
+        .wrap_err_with(|| format!("CE startup replay {name} is not u64"))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn structured_field<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    line.split_ascii_whitespace()
+        .filter_map(|token| token.split_once('='))
+        .find_map(|(field, value)| (field == name).then_some(value))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_duration_micros_ceil(encoded: &str) -> Result<u64> {
+    let (number, nanos_per_unit) = [
+        ("ms", 1_000_000_u128),
+        ("µs", 1_000_u128),
+        ("us", 1_000_u128),
+        ("ns", 1_u128),
+        ("s", 1_000_000_000_u128),
+    ]
+    .into_iter()
+    .find_map(|(suffix, scale)| encoded.strip_suffix(suffix).map(|value| (value, scale)))
+    .ok_or_else(|| eyre::eyre!("unsupported duration unit in {encoded}"))?;
+    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    ensure!(
+        !whole.is_empty()
+            && whole.bytes().all(|byte| byte.is_ascii_digit())
+            && fraction.bytes().all(|byte| byte.is_ascii_digit())
+            && fraction.len() <= 18,
+        "malformed duration {encoded}"
+    );
+    let whole = whole.parse::<u128>().wrap_err("duration whole overflow")?;
+    let whole_nanos = whole
+        .checked_mul(nanos_per_unit)
+        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
+    let fraction_nanos = if fraction.is_empty() {
+        0
+    } else {
+        let numerator = fraction
+            .parse::<u128>()
+            .wrap_err("duration fraction overflow")?
+            .checked_mul(nanos_per_unit)
+            .ok_or_else(|| eyre::eyre!("duration fraction nanoseconds overflow"))?;
+        let denominator = 10_u128
+            .checked_pow(u32::try_from(fraction.len()).wrap_err("duration precision overflow")?)
+            .ok_or_else(|| eyre::eyre!("duration denominator overflow"))?;
+        numerator
+            .checked_add(denominator - 1)
+            .ok_or_else(|| eyre::eyre!("duration fraction rounding overflow"))?
+            / denominator
+    };
+    let nanos = whole_nanos
+        .checked_add(fraction_nanos)
+        .ok_or_else(|| eyre::eyre!("duration nanoseconds overflow"))?;
+    let micros = nanos
+        .checked_add(999)
+        .ok_or_else(|| eyre::eyre!("duration microsecond rounding overflow"))?
+        / 1_000;
+    let micros = u64::try_from(micros).wrap_err("duration exceeds u64 microseconds")?;
+    ensure!(micros > 0, "duration must be positive");
+    Ok(micros)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use super::{
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
-        exact_expected_update_fatal, is_runtime_log, unexpected_log_line, LogCounts,
+        exact_expected_update_fatal, is_runtime_log, parse_canonical_block_processing_micros,
+        parse_ce_startup_replay, unexpected_log_line, CeStartupReplayObservationV1, LogCounts,
+        RethLogTail,
     };
 
     #[test]
@@ -494,5 +939,108 @@ mod tests {
             &mut counts,
         ));
         assert_eq!(counts, [0, 1]);
+    }
+
+    #[test]
+    fn exact_canonical_block_record_reports_conservative_processing_micros() {
+        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
+            .parse()
+            .unwrap();
+        let record = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
+            Block added to canonical chain number=162 \
+            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
+            peers=3 txs=11 elapsed=590.757245ms";
+
+        assert_eq!(
+            parse_canonical_block_processing_micros(record, 162, block_hash).unwrap(),
+            Some(590_758)
+        );
+        assert_eq!(
+            parse_canonical_block_processing_micros(record, 163, block_hash).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn completed_ce_startup_replay_record_decodes_the_exact_span() {
+        let target_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
+            .parse()
+            .unwrap();
+        let record = "2026-07-27T10:44:12.172399Z INFO outbe_engine::ce_recovery: \
+            compressed-entity startup replay completed first_missing=1 target_height=166 \
+            target_hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
+            replayed_blocks=166 elapsed_micros=912345";
+
+        assert_eq!(
+            parse_ce_startup_replay(record, 0).unwrap(),
+            Some(CeStartupReplayObservationV1 {
+                validator_index: 0,
+                first_missing_block_number: 1,
+                target_block_number: 166,
+                target_block_hash: target_hash,
+                replayed_block_count: 166,
+                elapsed_micros: 912_345,
+            })
+        );
+    }
+
+    #[test]
+    fn reth_log_tail_is_incremental_and_keeps_rotated_files_open() {
+        use std::io::Write as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("chain");
+        std::fs::create_dir_all(&log_dir).unwrap();
+        let current = log_dir.join("reth.log");
+        std::fs::write(&current, "old record\n").unwrap();
+        let mut tail = RethLogTail::at_end(root.path()).unwrap();
+
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&current)
+            .unwrap();
+        writeln!(writer, "replay record one").unwrap();
+        writer.flush().unwrap();
+        assert_eq!(
+            tail.read_new_complete_lines().unwrap(),
+            "replay record one\n"
+        );
+        assert!(tail.read_new_complete_lines().unwrap().is_empty());
+
+        std::fs::rename(&current, log_dir.join("reth.log.1")).unwrap();
+        std::fs::write(&current, "replay record two\n").unwrap();
+        assert_eq!(
+            tail.read_new_complete_lines().unwrap(),
+            "replay record two\n"
+        );
+        assert!(tail.read_new_complete_lines().unwrap().is_empty());
+
+        std::fs::write(
+            &current,
+            "replay record after copy-truncate and rapid refill\n",
+        )
+        .unwrap();
+        assert_eq!(
+            tail.read_new_complete_lines().unwrap(),
+            "replay record after copy-truncate and rapid refill\n"
+        );
+
+        std::fs::write(&current, "partial").unwrap();
+        assert!(tail.read_new_complete_lines().unwrap().is_empty());
+        let mut writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&current)
+            .unwrap();
+        writeln!(writer, " record").unwrap();
+        writer.flush().unwrap();
+        assert_eq!(tail.read_new_complete_lines().unwrap(), "partial record\n");
+
+        let discovered = super::reth_log_paths(root.path()).unwrap();
+        assert!(
+            discovered
+                .iter()
+                .any(|path| path.file_name().unwrap() == "reth.log.1"),
+            "already-rotated Reth logs must remain discoverable"
+        );
     }
 }

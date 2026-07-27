@@ -768,22 +768,30 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                     .checked_sub(q_forming_timestamp)
                     .and_then(|seconds| seconds.checked_mul(1_000_000))
                     .expect("capacity finality timestamp delta");
-                let block_processing_micros = ports
+                let block_processing_micros_by_validator = ports
                     .iter()
-                    .copied()
-                    .map(|port| {
+                    .enumerate()
+                    .map(|(validator_index, _)| {
                         world
-                            .rpc
-                            .replay_block_processing_micros_on(port, q_forming.block_hash)
+                            .localnet
+                            .validator_block_processing_micros(
+                                validator_index,
+                                q_forming.block_number,
+                                q_forming.block_hash,
+                            )
                             .unwrap_or_else(|error| {
                                 panic!(
-                                    "replay q-forming capacity block on validator port {port}: \
-                                     {error:#}"
+                                    "observe q-forming capacity block on validator \
+                                     {validator_index}: {error:#}"
                                 )
                             })
                     })
+                    .collect::<Vec<_>>();
+                let block_processing_micros = block_processing_micros_by_validator
+                    .iter()
+                    .copied()
                     .max()
-                    .expect("four validator replay timings");
+                    .expect("four validator block-processing timings");
                 world.state.ocomp_capacity_observation =
                     Some(crate::world::state::OcompPublicCapacityObservationV1 {
                         job_id: activation.job_id,
@@ -812,6 +820,7 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                             .expect("q-forming block length fits u64"),
                         gas: q_forming.gas_used,
                         internal_work,
+                        block_processing_micros_by_validator,
                         block_processing_micros,
                         finality_latency_micros,
                     });
@@ -866,6 +875,95 @@ fn certified_generation_contains_257_records(world: &mut World) {
         2,
         "the public S+1 population must be covered by two worker shards"
     );
+}
+
+#[then("validator 0 reconstructs that certified generation from canonical history")]
+fn validator_zero_reconstructs_certified_generation(world: &mut World) {
+    let capacity = world
+        .state
+        .ocomp_capacity_observation
+        .clone()
+        .expect("capacity public-path observation");
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("capacity finalized JobIntent");
+    let activation = world
+        .state
+        .ocomp_activation
+        .clone()
+        .expect("capacity finalized activation");
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("capacity certified generation");
+    let recovery = world
+        .localnet
+        .reconstruct_validator_ce_from_canonical_history(0)
+        .unwrap_or_else(|error| {
+            panic!("reconstruct validator-0 CE from canonical history: {error:#}")
+        });
+    assert!(
+        recovery.first_missing_block_number <= capacity.q_forming_block_number
+            && recovery.target_block_number >= capacity.finalized_block_number,
+        "historical CE replay span does not cover the q-forming/finalized capacity blocks: \
+         recovery={recovery:?}, capacity={capacity:?}"
+    );
+    assert_eq!(
+        recovery.replayed_block_count,
+        recovery.target_block_number - recovery.first_missing_block_number + 1
+    );
+
+    let primary = world.validators.primary_port();
+    let canonical_target_hash = world
+        .rpc
+        .block_hash(primary, recovery.target_block_number)
+        .and_then(|value| value.parse::<B256>().ok())
+        .expect("restarted validator exposes replay target block");
+    assert_eq!(
+        canonical_target_hash, recovery.target_block_hash,
+        "startup replay target is not the restarted validator's canonical block"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let (recovered_activation, recovered_generation) = loop {
+        let recovered_activation = world.rpc.finalized_ocomp_activation_on(
+            primary,
+            request.request_height,
+            request.intent_id,
+        );
+        let recovered_generation = recovered_activation.as_ref().and_then(|observed| {
+            world
+                .rpc
+                .finalized_ocomp_certified_generation_on(primary, observed)
+        });
+        if let (Some(recovered_activation), Some(recovered_generation)) =
+            (recovered_activation, recovered_generation)
+        {
+            break (recovered_activation, recovered_generation);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "restarted validator did not expose the recovered certified generation"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    assert_eq!(
+        recovered_activation, activation,
+        "historical CE replay changed the finalized activation"
+    );
+    assert_eq!(
+        recovered_generation, generation,
+        "historical CE replay changed the certified generation"
+    );
+    world.state.ocomp_historical_replay_observation =
+        Some(crate::world::state::OcompHistoricalReplayObservationV1 {
+            recovery,
+            recovered_result_digest: recovered_activation.result_digest,
+            recovered_generation,
+        });
 }
 
 #[when("the completed full-result vote is retried and then mutated through public RPC")]

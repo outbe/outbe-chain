@@ -6,10 +6,11 @@
 
 use std::collections::BTreeSet;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    committee::POC_COMMITTEE_SIZE,
     generated_shape::{
         OCOMP_POC_CANDIDATE_LIMITS_V1, OCOMP_POC_DEVNET_MACHINE_V1, OCOMP_POC_HEADROOM_POLICY_V1,
     },
@@ -179,8 +180,90 @@ impl ObservedMachineFactsV1 {
     }
 }
 
-/// One cold public-path observation. A failed run stays failed; it cannot be
-/// retried away or replaced by another ordinal.
+/// One validator's exact canonical q-forming block-processing observation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapacityValidatorBlockProcessingV1 {
+    pub validator_index: u8,
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub elapsed_micros: u64,
+}
+
+/// Exact production startup-recovery outcome retained by one cold run.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapacityRecoveredGenerationBindingV1 {
+    pub worldwide_day: u32,
+    pub generation: u64,
+    pub job_id: B256,
+    pub program_semantics_hash: B256,
+    pub nod_root: B256,
+    pub bucket_root: B256,
+    pub output_manifest_root: B256,
+    pub tribute_count: u32,
+    pub nod_count: u32,
+    pub bucket_count: u32,
+    pub nod_amount_total: U256,
+    pub nod_gratis_consumed: U256,
+    pub issued_at: u64,
+    pub result_evidence_hash: B256,
+    pub block_number: u64,
+    pub block_hash: B256,
+}
+
+/// Exact production startup-recovery outcome retained by one cold run.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapacityHistoricalReplayBindingV1 {
+    pub validator_index: u8,
+    pub first_missing_block_number: u64,
+    pub target_block_number: u64,
+    pub target_block_hash: B256,
+    pub replayed_block_count: u64,
+    pub elapsed_micros: u64,
+    pub recovered_result_digest: B256,
+    pub recovered_generation: CapacityRecoveredGenerationBindingV1,
+}
+
+impl CapacityHistoricalReplayBindingV1 {
+    fn validate(&self, run: &CapacityRunBindingV1) -> Result<(), CapacityEvidenceError> {
+        let expected_count = self
+            .target_block_number
+            .checked_sub(self.first_missing_block_number)
+            .and_then(|span| span.checked_add(1));
+        let generation = &self.recovered_generation;
+        if usize::from(self.validator_index) >= POC_COMMITTEE_SIZE
+            || self.first_missing_block_number == 0
+            || self.first_missing_block_number > run.q_forming_block_number
+            || self.target_block_number < run.finalized_block_number
+            || self.target_block_hash.is_zero()
+            || expected_count != Some(self.replayed_block_count)
+            || self.elapsed_micros == 0
+            || self.recovered_result_digest != run.result_digest
+            || generation.worldwide_day == 0
+            || generation.generation == 0
+            || generation.job_id != run.job_id
+            || generation.program_semantics_hash.is_zero()
+            || generation.nod_root.is_zero()
+            || generation.bucket_root.is_zero()
+            || generation.output_manifest_root.is_zero()
+            || u64::from(generation.tribute_count) != run.tribute_count
+            || u64::from(generation.nod_count) != run.nod_count
+            || generation.bucket_count == 0
+            || generation.nod_amount_total.is_zero()
+            || generation.issued_at == 0
+            || generation.result_evidence_hash.is_zero()
+            || generation.block_number != run.q_forming_block_number
+            || generation.block_hash != run.q_forming_block_hash
+        {
+            return Err(CapacityEvidenceError::InvalidHistoricalReplayBinding { ordinal: 0 });
+        }
+        Ok(())
+    }
+}
+
+/// Exact public and historical-recovery identity for one cold run.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CapacityRunBindingV1 {
@@ -188,11 +271,15 @@ pub struct CapacityRunBindingV1 {
     pub job_id: B256,
     pub result_digest: B256,
     pub q_forming_transaction_hash: B256,
+    pub q_forming_block_number: u64,
     pub q_forming_block_hash: B256,
+    pub finalized_block_number: u64,
     pub finalized_block_hash: B256,
     pub tribute_count: u64,
     pub nod_count: u64,
     pub worker_shard_count: u64,
+    pub validator_block_processing: [CapacityValidatorBlockProcessingV1; POC_COMMITTEE_SIZE],
+    pub historical_replay: CapacityHistoricalReplayBindingV1,
 }
 
 impl CapacityRunBindingV1 {
@@ -210,6 +297,21 @@ impl CapacityRunBindingV1 {
         {
             return Err(CapacityEvidenceError::MissingIdentity);
         }
+        if self.q_forming_block_number == 0
+            || self.finalized_block_number < self.q_forming_block_number
+            || self
+                .validator_block_processing
+                .iter()
+                .enumerate()
+                .any(|(index, observation)| {
+                    usize::from(observation.validator_index) != index
+                        || observation.block_number != self.q_forming_block_number
+                        || observation.block_hash != self.q_forming_block_hash
+                        || observation.elapsed_micros == 0
+                })
+        {
+            return Err(CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 0 });
+        }
         let shard_capacity =
             u32::try_from(OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?;
@@ -222,6 +324,7 @@ impl CapacityRunBindingV1 {
         {
             return Err(CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 0 });
         }
+        self.historical_replay.validate(self)?;
         Ok(())
     }
 }
@@ -312,6 +415,11 @@ impl CapacityEvidenceV1 {
                             ordinal: run.ordinal,
                         }
                     }
+                    CapacityEvidenceError::InvalidHistoricalReplayBinding { .. } => {
+                        CapacityEvidenceError::InvalidHistoricalReplayBinding {
+                            ordinal: run.ordinal,
+                        }
+                    }
                     other => other,
                 });
             }
@@ -327,6 +435,18 @@ impl CapacityEvidenceV1 {
             }
             if !run.work.all_positive() {
                 return Err(CapacityEvidenceError::ZeroWorkBill {
+                    ordinal: run.ordinal,
+                });
+            }
+            if run
+                .binding
+                .validator_block_processing
+                .iter()
+                .map(|observation| observation.elapsed_micros)
+                .max()
+                != Some(run.work.block_processing_micros)
+            {
+                return Err(CapacityEvidenceError::InvalidPublicCapacityBinding {
                     ordinal: run.ordinal,
                 });
             }
@@ -529,6 +649,8 @@ pub enum CapacityEvidenceError {
     ReusedScenarioEvidence,
     #[error("capacity cold run {ordinal} is not bound to the public S+1 path")]
     InvalidPublicCapacityBinding { ordinal: u8 },
+    #[error("capacity cold run {ordinal} lacks an exact historical CE replay span")]
+    InvalidHistoricalReplayBinding { ordinal: u8 },
     #[error("capacity cold run {ordinal} failed")]
     FailedRun { ordinal: u8 },
     #[error("capacity cold run {ordinal} was retried")]

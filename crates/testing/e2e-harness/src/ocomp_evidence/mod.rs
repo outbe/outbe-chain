@@ -15,7 +15,9 @@ mod schema;
 mod verify;
 
 #[cfg(feature = "ocomp-integration")]
-pub use capacity::{assemble_capacity_evidence, assemble_capacity_run};
+pub use capacity::{
+    assemble_capacity_evidence, assemble_capacity_run, verify_capacity_run_preimage,
+};
 pub use discovery::{discover, validate_discovery, TEST_ID_MARKER};
 pub use io::{
     capture_source_identity, hash_file, publish_assertions, publish_manifest, publish_member,

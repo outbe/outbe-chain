@@ -231,25 +231,6 @@ impl Rpc {
         .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
     }
 
-    /// Replays one finalized block through Reth's debug path and returns the
-    /// observed end-to-end processing duration. The noop tracer still executes
-    /// the block while avoiding a population-sized trace artifact.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn replay_block_processing_micros_on(&self, port: u16, block_hash: B256) -> Result<u64> {
-        let started = Instant::now();
-        eth::raw_json_result(
-            &self.url(port),
-            "debug_traceBlockByHash",
-            serde_json::json!([
-                format!("{block_hash:#x}"),
-                {"tracer": "noopTracer"}
-            ]),
-        )
-        .wrap_err_with(|| format!("replay finalized block {block_hash:#x} on port {port}"))?;
-        u64::try_from(started.elapsed().as_micros())
-            .map_err(|_| eyre!("block replay duration exceeds u64 microseconds"))
-    }
-
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)

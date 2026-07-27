@@ -21,6 +21,7 @@ mod follower;
 mod joiner;
 mod probes;
 
+pub use probes::CeStartupReplayObservationV1;
 pub(crate) use probes::LogAudit;
 
 use std::collections::HashMap;

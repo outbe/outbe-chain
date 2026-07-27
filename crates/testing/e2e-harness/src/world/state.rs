@@ -23,8 +23,18 @@ pub struct OcompPublicCapacityObservationV1 {
     pub block_bytes: u64,
     pub gas: u64,
     pub internal_work: u64,
+    pub block_processing_micros_by_validator: Vec<u64>,
     pub block_processing_micros: u64,
     pub finality_latency_micros: u64,
+}
+
+/// Public outcome recovered after one validator discards only its derived CE
+/// database and rebuilds it from preserved canonical Reth history.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompHistoricalReplayObservationV1 {
+    pub recovery: crate::world::localnet::CeStartupReplayObservationV1,
+    pub recovered_result_digest: alloy_primitives::B256,
+    pub recovered_generation: crate::world::rpc::OcompCertifiedGenerationV1,
 }
 
 /// Public-path observations retained after behavioral assertions complete.
@@ -53,6 +63,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub late_vote_inclusion_height: Option<u64>,
     pub capacity_resources: Option<crate::ocomp_capacity::OcompCapacityResourceObservationV1>,
     pub capacity_public_path: Option<OcompPublicCapacityObservationV1>,
+    pub capacity_historical_replay: Option<OcompHistoricalReplayObservationV1>,
 }
 
 /// Per-scenario state accumulated as the steps run.
@@ -148,6 +159,7 @@ pub struct FixtureState {
     pub ocomp_late_vote_reverted: Option<bool>,
     pub ocomp_late_vote_inclusion_height: Option<u64>,
     pub ocomp_capacity_observation: Option<OcompPublicCapacityObservationV1>,
+    pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
     /// Encoded BLS MinPk private key the harness registered as the L2 network key.
@@ -236,6 +248,7 @@ impl Default for FixtureState {
             ocomp_late_vote_reverted: None,
             ocomp_late_vote_inclusion_height: None,
             ocomp_capacity_observation: None,
+            ocomp_historical_replay_observation: None,
             l2_bls_private_hex: None,
             l2_chain_id: None,
             l2_rejected_offer_tx_hash: None,
@@ -290,6 +303,7 @@ impl FixtureState {
             late_vote_inclusion_height: self.ocomp_late_vote_inclusion_height,
             capacity_resources: None,
             capacity_public_path: self.ocomp_capacity_observation.clone(),
+            capacity_historical_replay: self.ocomp_historical_replay_observation.clone(),
         }
     }
 }

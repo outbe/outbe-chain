@@ -1,11 +1,12 @@
 // OCOMP-TEST-ID: OCM-CAP-001
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     capacity::{
         result_vote_internal_work, worker_shard_count, CapacityBudgetV1, CapacityColdRunV1,
-        CapacityEvidenceError, CapacityEvidenceV1, CapacityRunBindingV1, CapacityWorkBillV1,
-        ObservedMachineFactsV1,
+        CapacityEvidenceError, CapacityEvidenceV1, CapacityHistoricalReplayBindingV1,
+        CapacityRecoveredGenerationBindingV1, CapacityRunBindingV1,
+        CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
     },
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     profile::poc_schema_limits,
@@ -76,11 +77,52 @@ fn evidence(work_value: u64) -> CapacityEvidenceV1 {
                     job_id: B256::repeat_byte(ordinal.saturating_add(30)),
                     result_digest: B256::repeat_byte(ordinal.saturating_add(40)),
                     q_forming_transaction_hash: B256::repeat_byte(ordinal.saturating_add(50)),
+                    q_forming_block_number: 40,
                     q_forming_block_hash: B256::repeat_byte(ordinal.saturating_add(60)),
+                    finalized_block_number: 42,
                     finalized_block_hash: B256::repeat_byte(ordinal.saturating_add(70)),
                     tribute_count: 257,
                     nod_count: 257,
                     worker_shard_count: 2,
+                    validator_block_processing: std::array::from_fn(|validator_index| {
+                        CapacityValidatorBlockProcessingV1 {
+                            validator_index: u8::try_from(validator_index).unwrap(),
+                            block_number: 40,
+                            block_hash: B256::repeat_byte(ordinal.saturating_add(60)),
+                            elapsed_micros: if validator_index == 3 {
+                                work_value
+                            } else {
+                                100
+                            },
+                        }
+                    }),
+                    historical_replay: CapacityHistoricalReplayBindingV1 {
+                        validator_index: 0,
+                        first_missing_block_number: 1,
+                        target_block_number: 44,
+                        target_block_hash: B256::repeat_byte(ordinal.saturating_add(80)),
+                        replayed_block_count: 44,
+                        elapsed_micros: 100,
+                        recovered_result_digest: B256::repeat_byte(ordinal.saturating_add(40)),
+                        recovered_generation: CapacityRecoveredGenerationBindingV1 {
+                            worldwide_day: 20260728,
+                            generation: 1,
+                            job_id: B256::repeat_byte(ordinal.saturating_add(30)),
+                            program_semantics_hash: B256::repeat_byte(90),
+                            nod_root: B256::repeat_byte(91),
+                            bucket_root: B256::repeat_byte(92),
+                            output_manifest_root: B256::repeat_byte(93),
+                            tribute_count: 257,
+                            nod_count: 257,
+                            bucket_count: 1,
+                            nod_amount_total: U256::from(100),
+                            nod_gratis_consumed: U256::ZERO,
+                            issued_at: 1,
+                            result_evidence_hash: B256::repeat_byte(94),
+                            block_number: 40,
+                            block_hash: B256::repeat_byte(ordinal.saturating_add(60)),
+                        },
+                    },
                 },
                 succeeded: true,
                 retried: false,
@@ -223,6 +265,36 @@ fn ocm_cap_001_rejects_a_cold_run_not_bound_to_the_public_s_plus_one_path() {
     assert_eq!(
         reused_scenario.verify().unwrap_err(),
         CapacityEvidenceError::ReusedScenarioEvidence
+    );
+
+    let mut replay_misses_quorum = evidence(800);
+    replay_misses_quorum.runs[1]
+        .binding
+        .historical_replay
+        .first_missing_block_number = 41;
+    assert_eq!(
+        replay_misses_quorum.verify().unwrap_err(),
+        CapacityEvidenceError::InvalidHistoricalReplayBinding { ordinal: 2 }
+    );
+
+    let mut invented_validator_timing = evidence(800);
+    invented_validator_timing.runs[2]
+        .binding
+        .validator_block_processing[2]
+        .block_hash = B256::repeat_byte(1);
+    assert_eq!(
+        invented_validator_timing.verify().unwrap_err(),
+        CapacityEvidenceError::InvalidPublicCapacityBinding { ordinal: 3 }
+    );
+
+    let mut recovered_other_generation = evidence(800);
+    recovered_other_generation.runs[3]
+        .binding
+        .historical_replay
+        .recovered_result_digest = B256::repeat_byte(1);
+    assert_eq!(
+        recovered_other_generation.verify().unwrap_err(),
+        CapacityEvidenceError::InvalidHistoricalReplayBinding { ordinal: 4 }
     );
 }
 
