@@ -20,6 +20,9 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     error UnauthorizedHook();
 
     event BundleTransfer(address indexed from, address indexed to, address indexed token, uint256 value);
+    /// @notice Emitted when a Credis spend decrements the bundle reserve, so off-chain monitoring can
+    ///         observe reserve movement on the fund-holding account.
+    event BundleBalanceDecreased(address indexed account, address indexed token, uint256 burned, uint256 newBalance);
 
     constructor() {}
 
@@ -112,7 +115,9 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         uint256 bal = bundleBalance[thisAccount][token];
         // NB: decrease twice more balance from bundle
         uint256 bandleAmount = amount * 2;
-        bundleBalance[thisAccount][token] = bal > bandleAmount ? bal - bandleAmount : 0;
+        uint256 newBalance = bal > bandleAmount ? bal - bandleAmount : 0;
+        bundleBalance[thisAccount][token] = newBalance;
+        emit BundleBalanceDecreased(thisAccount, token, bal - newBalance, newBalance);
         // TODO: implement spending bundle for buying COENs
     }
 

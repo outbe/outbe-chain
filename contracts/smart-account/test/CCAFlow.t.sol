@@ -288,6 +288,21 @@ contract CCAFlow is BaseAATest {
         assertEq(used, amount, "usedAmount is debited in validation and survives the reverted execution");
     }
 
+    /// @dev T-06: a Credis spend (CCA withdraw) emits BundleBalanceDecreased so the reserve movement
+    ///      on the fund-holding account is observable off-chain (previously a silent mutation).
+    function test_W07_DecreaseEmits() external {
+        address smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+        _topUp(smartAccount, 1000e6); // bundle = 2000e6
+        uint256 withdrawAmount = 200e6;
+
+        vm.expectEmit(true, true, false, true, address(bundlePlugin));
+        emit BundleModulePlugin.BundleBalanceDecreased(
+            smartAccount, address(token), withdrawAmount * 2, 2000e6 - withdrawAmount * 2
+        );
+        _ccaWithdraw(smartAccount, recipient.addr, withdrawAmount);
+    }
+
     // -------------------------------------------------------------------------
     // Security tests
     // -------------------------------------------------------------------------

@@ -52,6 +52,16 @@ contract WithdrawalLimitPolicy is PolicyBase {
     error BatchTargetsConfiguredToken(address token);
 
     // -------------------------------------------------------------------------
+    // Events
+    // -------------------------------------------------------------------------
+
+    /// @notice Emitted when a metered transfer consumes daily-limit headroom, so off-chain monitoring
+    ///         can observe the limit nearing exhaustion on a (possibly compromised) CCA.
+    event LimitConsumed(bytes32 indexed id, address indexed wallet, uint256 amount, uint256 used, uint48 windowEnd);
+    /// @notice Emitted when an expired window is reset before metering a new transfer.
+    event WindowReset(bytes32 indexed id, address indexed wallet, uint48 windowEnd);
+
+    // -------------------------------------------------------------------------
     // State
     // -------------------------------------------------------------------------
 
@@ -184,6 +194,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
             state.usedAmount = 0;
             uint48 nowTs = uint48(block.timestamp);
             state.windowEnd = cfg.interval > type(uint48).max - nowTs ? type(uint48).max : nowTs + cfg.interval;
+            emit WindowReset(id, msg.sender, state.windowEnd);
         }
 
         uint256 newUsed = state.usedAmount + amount;
@@ -199,6 +210,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
         // intra-bundle over-spend, so it is deliberately kept in validation. See
         // test_W04_RevertingExec_StillDebits.
         state.usedAmount = newUsed;
+        emit LimitConsumed(id, msg.sender, amount, newUsed, state.windowEnd);
 
         // validAfter = 0, validUntil = windowEnd, sigFailed = false (account-abstraction v0.9 packing).
         return _packValidationData(false, state.windowEnd, 0);

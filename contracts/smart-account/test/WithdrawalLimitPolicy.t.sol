@@ -299,6 +299,31 @@ contract WithdrawalLimitPolicyTest is Test {
         assertEq(result, 0, "unrelated batch must pass through");
     }
 
+    /// @dev T-06: metering a transfer emits LimitConsumed so monitoring can watch limit exhaustion.
+    function test_W07_LimitConsumedEmits() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+        (, uint48 windowEnd) = policy.states(DEFAULT_ID, kernelAccount); // unchanged (no reset this block)
+
+        PackedUserOperation memory userOp = _buildUserOp(address(token), recipient, 300e6);
+        vm.expectEmit(true, true, false, true, address(policy));
+        emit WithdrawalLimitPolicy.LimitConsumed(DEFAULT_ID, kernelAccount, 300e6, 300e6, windowEnd);
+        vm.prank(kernelAccount);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-06: the first transfer after the window expires emits WindowReset with the new window.
+    function test_W07_WindowResetEmits() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+        vm.warp(block.timestamp + DEFAULT_INTERVAL + 1);
+        uint48 expectedWindowEnd = uint48(block.timestamp) + DEFAULT_INTERVAL;
+
+        PackedUserOperation memory userOp = _buildUserOp(address(token), recipient, 100e6);
+        vm.expectEmit(true, true, false, true, address(policy));
+        emit WithdrawalLimitPolicy.WindowReset(DEFAULT_ID, kernelAccount, expectedWindowEnd);
+        vm.prank(kernelAccount);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
     function test_CheckUserOpPolicy_CumulativeExceedsLimit() public {
         _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
 
