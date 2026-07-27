@@ -59,6 +59,14 @@ contract DeploySmartAccountStack is BaseScript {
         _deployBundleWithdrawHook();
         console.log("");
 
+        // Authorize BundleWithdrawHook as the sole dispatchDecreaseBalance caller (OIP-00074).
+        // Idempotent on re-run; the broadcast tx must originate from OWNER_ADDRESS (the plugin owner).
+        if (bundleModulePlugin.withdrawHook() != address(bundleWithdrawHook)) {
+            bundleModulePlugin.setWithdrawHook(address(bundleWithdrawHook));
+            console.log("BundleModulePlugin.withdrawHook wired:", address(bundleWithdrawHook));
+            console.log("");
+        }
+
         _deploySudoPolicy();
         console.log("");
 
@@ -104,7 +112,8 @@ contract DeploySmartAccountStack is BaseScript {
 
         // 1) Predict
         bytes32 salt = generateSalt("BundleModulePlugin");
-        bytes memory creationCode = type(BundleModulePlugin).creationCode;
+        // owner gates setWithdrawHook; can't use msg.sender (= CREATE2 proxy under always_use_create_2_factory).
+        bytes memory creationCode = abi.encodePacked(type(BundleModulePlugin).creationCode, abi.encode(ownerAddress));
         address predicted = Create2.computeAddress(salt, keccak256(creationCode), CREATE2_FACTORY);
 
         // 2) Deploy or warn
