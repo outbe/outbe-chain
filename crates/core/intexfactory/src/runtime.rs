@@ -345,7 +345,7 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
             // A straggler (or a chain sending its proceeds in parts) can top the
             // pot up while this final round drains. finalize clears the map, so
             // pay any such top-up over it first and finalize only once the pot is
-            // empty — otherwise the top-up is later swept to the reserve.
+            // empty — otherwise the top-up is later burned as ownerless.
             let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
             if pot.is_zero() {
                 outbe_intex::api::finalize_proceeds(storage, series_id)?;

@@ -60,7 +60,7 @@ their source chain. Deliveries accumulate in the day's pot; a distribution round
 over stored contributors opens once every winning chain has arrived, or at the
 fan-in deadline with whatever the pot holds — a late arrival after a forced
 partial round tops the retained map up with a supplementary round. A pot with no
-recorded contributors sweeps to the reserve. Begin-block drain snapshots active
+recorded contributors is burned. Begin-block drain snapshots active
 ids, advances each in a checkpoint and pays bounded chunks proportionally; the
 final contributor receives division remainder so payouts equal delivery exactly.
 

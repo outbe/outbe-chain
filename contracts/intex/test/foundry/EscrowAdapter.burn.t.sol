@@ -106,10 +106,12 @@ contract EscrowAdapterBurnTest is Test {
 
     function test_ClaimRefund_PostFinalize_FullRefundSplit_BurnsNothing() public {
         _strandWithSplit(LOCK_AMOUNT, 0);
+        uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
         vm.warp(block.timestamp + escrow.POST_FINALIZE_REFUND_DELAY());
         escrow.claimRefund(worldwideDay1, bidder1);
 
+        assertEq(paymentToken.balanceOf(bidder1), balanceBefore + LOCK_AMOUNT, "full principal refunded");
         assertEq(paymentToken.balanceOf(escrow.BURN_ADDRESS()), 0, "nothing to burn");
         assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
     }

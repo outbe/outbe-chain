@@ -100,7 +100,7 @@ stages absorb late traffic silently. A silent chain is excluded at the fan-in
 deadline and its bidders refund through the escrow's never-finalized path. A
 failed clearing day stays gate-active and retries next block. Proceeds
 deliveries are per-chain idempotent contributions to the pot; a pot with no
-contributors sweeps to the reserve; a late delivery after a deadline-forced
+contributors is burned; a late delivery after a deadline-forced
 round funds a supplementary round over the retained map.
 
 ## E2E scenario matrix

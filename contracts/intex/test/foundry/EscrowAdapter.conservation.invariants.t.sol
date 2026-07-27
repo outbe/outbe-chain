@@ -117,6 +117,8 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(paymentToken));
+        vm.prank(admin);
+        escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
 
         bidders.push(address(0xB1));

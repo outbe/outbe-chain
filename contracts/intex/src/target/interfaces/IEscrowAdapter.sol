@@ -290,9 +290,11 @@ interface IEscrowAdapter {
 
     // --- Recovery ---
 
-    /// @notice Permissionless principal refund: when the relayer never finalizes, or — for a finalized
-    ///         series — once `NO_SPLIT_REFUND_DELAY` elapses for an omitted/mismatched `Locked` bidder. Pays the
-    ///         stored `bidder`, not `msg.sender`.
+    /// @notice Permissionless refund: full principal when the relayer never finalizes
+    ///         (`UNFINALIZED_REFUND_DELAY`) or once `NO_SPLIT_REFUND_DELAY` elapses for an
+    ///         omitted/mismatched `Locked` bidder; the recorded refund portion — with the
+    ///         remainder burned — for a failed bidder with a validated split
+    ///         (`POST_FINALIZE_REFUND_DELAY`). Pays the stored `bidder`, not `msg.sender`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     function claimRefund(uint32 worldwideDay, address bidder) external;
