@@ -118,7 +118,9 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-001 | Done | `5614296` | Forge 7/7; Alloy/golden 4/4; Vote 32/32; `cargo check` vote+CLI; independent ABI review READY |
 | SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
 | SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
-| SCF-G0 | Blocked | — | Requires SCF-004 |
+| SCF-004 | Done | `50ebcb2` | Primitives 275/275; Vote 33/33; Forge 8/8; clippy/fmt/LSP; independent review READY |
+| SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
+| SCF-G0 | Review | — | Independent protocol-lock gate running over SCF-001..004 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
