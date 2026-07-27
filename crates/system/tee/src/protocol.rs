@@ -376,9 +376,18 @@ pub enum EnclaveRequest {
     /// Off-chain key delivery: derive `account`'s view + modify keys from the
     /// resident state key and seal them to the requester's ephemeral X25519 key.
     /// NOT a consensus path — served only over RPC, never during block execution.
+    ///
+    /// `owner_sig` is the 65-byte (`r||s||v`) EIP-191 `personal_sign` signature by
+    /// `account` over `derive_gratis_keys_message(account, requester_ephemeral_pubkey)`.
+    /// The enclave recovers it and rejects unless the signer equals `account`, so the
+    /// keys are released only to the account owner — the trust boundary is the
+    /// enclave, not the (untrusted) host RPC that also checks it as a fast reject.
+    /// Carried as `Vec<u8>` because serde does not derive for `[u8; 65]`; the enclave
+    /// validates the length.
     DeriveAccountKeys {
         account: Address,
         requester_ephemeral_pubkey: [u8; 32],
+        owner_sig: Vec<u8>,
     },
 }
 
@@ -404,6 +413,30 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.push(u8::from(offer.exclude_from_intex_issuance));
         buf.extend_from_slice(&offer.tribute_price_minor.to_be_bytes::<32>());
     }
+    alloy_primitives::keccak256(buf)
+}
+
+/// Domain-tagged message a caller personal-signs to prove control of `account`
+/// before `DeriveAccountKeys` reveals its keys:
+/// `"outbe/gratis/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
+///
+/// SHARED by the host RPC (fast reject) and the enclave (the trust boundary) so
+/// the two hash an identical preimage — a divergence would let one accept a
+/// signature the other rejects.
+pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
+    let mut m = Vec::with_capacity(27 + 20 + 32);
+    m.extend_from_slice(b"outbe/gratis/derive-keys/v1");
+    m.extend_from_slice(account.as_slice());
+    m.extend_from_slice(ephemeral_pubkey.as_slice());
+    m
+}
+
+/// EIP-191 `personal_sign` digest of `message` — matches ethers `signMessage`.
+pub fn eip191_hash(message: &[u8]) -> B256 {
+    let mut buf = Vec::with_capacity(message.len() + 40);
+    buf.extend_from_slice(b"\x19Ethereum Signed Message:\n");
+    buf.extend_from_slice(message.len().to_string().as_bytes());
+    buf.extend_from_slice(message);
     alloy_primitives::keccak256(buf)
 }
 
