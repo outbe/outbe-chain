@@ -12,4 +12,4 @@ Feature: Off-chain computation PoC closure
     When the validator supervisors submit results directly for that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And all four OCOMP domains run their node-facing production roles
-    And each OCOMP domain owns one authenticated production worker
+    And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent

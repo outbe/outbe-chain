@@ -13,7 +13,7 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 #[cfg(feature = "ocomp-integration")]
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
@@ -55,7 +55,9 @@ use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 #[cfg(feature = "ocomp-integration")]
 use std::os::fd::OwnedFd;
 #[cfg(feature = "ocomp-integration")]
-use std::os::unix::fs::{FileTypeExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{
+    FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+};
 #[cfg(feature = "ocomp-integration")]
 use std::os::unix::net::UnixStream;
 #[cfg(feature = "ocomp-integration")]
@@ -359,6 +361,90 @@ impl OcompTopology {
     /// Scenario-owned root for one validator domain.
     pub fn domain_root(&self, validator_index: u8) -> Result<&Path> {
         Ok(&self.domain(validator_index)?.root)
+    }
+
+    /// Verify the durable footprint left by one completed production job in
+    /// every isolated validator domain.
+    ///
+    /// Development workers are deliberately short-lived: the Supervisor
+    /// authenticates one, executes one unit, waits for it to exit, and then
+    /// admits its output. Consequently, a post-activation E2E assertion must
+    /// inspect the admitted worker outputs rather than require idle worker
+    /// processes to remain alive.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_completed_job_artifacts(&self, job_id: B256) -> Result<()> {
+        let job_component = hex::encode(job_id);
+        let mut expected_admissions = None;
+        let mut expected_worker_outputs = None;
+        let mut physical_files = BTreeMap::<String, Vec<(u64, u64)>>::new();
+
+        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+            let root = self.domain_root(validator_index)?;
+            let job_root = root.join("supervisor-v1").join("jobs").join(&job_component);
+            let admissions = fingerprint_regular_directory(
+                &job_root.join("admissions"),
+                "admission",
+                validator_index,
+                &mut physical_files,
+            )?;
+            eyre::ensure!(
+                admissions
+                    .iter()
+                    .any(|entry| entry.name.ends_with(".admission")),
+                "validator-{validator_index} has no admitted units for job {job_id:#x}"
+            );
+
+            let worker_outputs = fingerprint_regular_directory(
+                &root.join("worker-inbox-v1").join("artifacts"),
+                "worker-output",
+                validator_index,
+                &mut physical_files,
+            )?;
+            eyre::ensure!(
+                !worker_outputs.is_empty(),
+                "validator-{validator_index} has no authenticated worker outputs for job \
+                 {job_id:#x}"
+            );
+
+            let vote_path = root
+                .join("supervisor-v1")
+                .join("vote-submissions")
+                .join(format!("{job_component}.vote.v1"));
+            let vote_metadata = fs::symlink_metadata(&vote_path)?;
+            eyre::ensure!(
+                vote_metadata.file_type().is_file()
+                    && !vote_metadata.file_type().is_symlink()
+                    && vote_metadata.len() > 0,
+                "validator-{validator_index} has no durable vote submission for job {job_id:#x}"
+            );
+
+            match &expected_admissions {
+                Some(expected) => eyre::ensure!(
+                    expected == &admissions,
+                    "validator-{validator_index} admitted a different deterministic job trace"
+                ),
+                None => expected_admissions = Some(admissions),
+            }
+            match &expected_worker_outputs {
+                Some(expected) => eyre::ensure!(
+                    expected == &worker_outputs,
+                    "validator-{validator_index} retained different deterministic worker outputs"
+                ),
+                None => expected_worker_outputs = Some(worker_outputs),
+            }
+        }
+
+        for (logical_file, identities) in physical_files {
+            let unique = identities
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>();
+            eyre::ensure!(
+                unique.len() == usize::from(OCOMP_VALIDATOR_DOMAINS),
+                "{logical_file} is shared by hard link across validator domains"
+            );
+        }
+        Ok(())
     }
 
     pub fn node_supervisor_socket(&self, validator_index: u8) -> Result<PathBuf> {
@@ -1967,6 +2053,55 @@ fn unix_time_millis() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DurableFileFingerprintV1 {
+    name: String,
+    encoded_bytes: u64,
+    transport_digest: B256,
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn fingerprint_regular_directory(
+    directory: &Path,
+    logical_kind: &str,
+    validator_index: u8,
+    physical_files: &mut BTreeMap<String, Vec<(u64, u64)>>,
+) -> Result<Vec<DurableFileFingerprintV1>> {
+    let directory_metadata = fs::symlink_metadata(directory)?;
+    eyre::ensure!(
+        directory_metadata.file_type().is_dir() && !directory_metadata.file_type().is_symlink(),
+        "validator-{validator_index} {logical_kind} directory is not a safe directory"
+    );
+
+    let mut fingerprints = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        eyre::ensure!(
+            metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+            "validator-{validator_index} {logical_kind} entry is not a regular file: {}",
+            path.display()
+        );
+        let name = entry.file_name().into_string().map_err(|_| {
+            eyre::eyre!("validator-{validator_index} {logical_kind} file name is not UTF-8")
+        })?;
+        let bytes = fs::read(&path)?;
+        physical_files
+            .entry(format!("{logical_kind}/{name}"))
+            .or_default()
+            .push((metadata.dev(), metadata.ino()));
+        fingerprints.push(DurableFileFingerprintV1 {
+            name,
+            encoded_bytes: metadata.len(),
+            transport_digest: keccak256(bytes),
+        });
+    }
+    fingerprints.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(fingerprints)
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -2022,6 +2157,64 @@ mod tests {
             .arg("--nocapture")
             .env(CHILD_MODE, "1");
         ChildGuard::spawn("ocomp topology child", command).unwrap()
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn stage_completed_job_footprint(topology: &OcompTopology, job_id: B256) {
+        let job_component = hex::encode(job_id);
+        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+            let root = topology.domain_root(validator_index).unwrap();
+            let admissions = root
+                .join("supervisor-v1")
+                .join("jobs")
+                .join(&job_component)
+                .join("admissions");
+            let worker_outputs = root.join("worker-inbox-v1").join("artifacts");
+            let votes = root.join("supervisor-v1").join("vote-submissions");
+            fs::create_dir_all(&admissions).unwrap();
+            fs::create_dir_all(&worker_outputs).unwrap();
+            fs::create_dir_all(&votes).unwrap();
+            fs::write(admissions.join("0000000000.admission"), b"same-admission").unwrap();
+            fs::write(worker_outputs.join("unit.ocb1"), b"same-worker-output").unwrap();
+            fs::write(
+                votes.join(format!("{job_component}.vote.v1")),
+                [validator_index],
+            )
+            .unwrap();
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn completed_job_artifacts_prove_four_isolated_deterministic_footprints() {
+        let topology = topology();
+        let job_id = B256::repeat_byte(0x42);
+        stage_completed_job_footprint(&topology, job_id);
+
+        topology.verify_completed_job_artifacts(job_id).unwrap();
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn completed_job_artifacts_reject_one_domain_with_different_worker_output() {
+        let topology = topology();
+        let job_id = B256::repeat_byte(0x43);
+        stage_completed_job_footprint(&topology, job_id);
+        let changed = topology
+            .domain_root(3)
+            .unwrap()
+            .join("worker-inbox-v1")
+            .join("artifacts")
+            .join("unit.ocb1");
+        fs::write(changed, b"different-worker-output").unwrap();
+
+        let error = topology.verify_completed_job_artifacts(job_id).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("retained different deterministic worker outputs"),
+            "{error:#}"
+        );
     }
 
     #[test]

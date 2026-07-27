@@ -1505,6 +1505,19 @@ fn four_domains_own_authenticated_workers(world: &mut World) {
     }
 }
 
+#[then("each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent")]
+fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized public Lysis activation");
+    world
+        .ocomp
+        .verify_completed_job_artifacts(activation.job_id)
+        .expect("verify four independent completed production job footprints");
+}
+
 #[when("validator 0 OCOMP supervisor is stopped through the typed fault control")]
 fn stop_validator_zero_supervisor(world: &mut World) {
     let primary = world.validators.primary_port();
