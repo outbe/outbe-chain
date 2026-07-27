@@ -44,6 +44,12 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
                 .wrap_err("hash exact outbe-chain binary")?,
             "outbe_ocomp": hash_file(&input.env.ocomp_bin)
                 .wrap_err("hash exact outbe-ocomp binary")?,
+            "outbe_cli": hash_file(&input.env.cli_bin)
+                .wrap_err("hash exact outbe-cli binary")?,
+            "outbe_keygen": hash_file(&input.env.keygen_bin)
+                .wrap_err("hash exact outbe-keygen binary")?,
+            "outbe_tee_enclave_mock": hash_file(&input.env.mock_bin)
+                .wrap_err("hash exact outbe-tee-enclave-mock binary")?,
             "outbe_e2e": hash_file(&current_exe)
                 .wrap_err("hash exact outbe-e2e binary")?,
         }))

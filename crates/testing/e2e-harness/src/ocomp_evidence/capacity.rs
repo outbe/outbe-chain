@@ -21,7 +21,14 @@ use super::hash_file;
 const SOURCE_REVISION_DOMAIN: &[u8] = b"OUTBE_OCOMP_SOURCE_REVISION_V1";
 const ARTIFACT_SET_DOMAIN: &[u8] = b"OUTBE_OCOMP_CAPACITY_ARTIFACT_SET_V1";
 const COLD_NAMESPACE_DOMAIN: &[u8] = b"OUTBE_OCOMP_COLD_NAMESPACE_V1";
-const REQUIRED_BINARIES: [&str; 3] = ["outbe_chain", "outbe_e2e", "outbe_ocomp"];
+const REQUIRED_BINARIES: [&str; 6] = [
+    "outbe_chain",
+    "outbe_cli",
+    "outbe_e2e",
+    "outbe_keygen",
+    "outbe_ocomp",
+    "outbe_tee_enclave_mock",
+];
 
 #[derive(Debug, Deserialize)]
 struct CapacityScenarioV1 {
@@ -429,7 +436,7 @@ fn artifact_set_hash(binaries: &BTreeMap<String, BinaryIdentityV1>) -> Result<B2
             && REQUIRED_BINARIES
                 .iter()
                 .all(|name| binaries.contains_key(*name)),
-        "capacity evidence does not contain the exact three OCOMP binaries"
+        "capacity evidence does not contain the exact OCOMP workload binaries"
     );
     let mut preimage = Vec::new();
     preimage.extend_from_slice(ARTIFACT_SET_DOMAIN);

@@ -287,6 +287,14 @@ fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
         "--bin",
         "outbe-ocomp",
         "-p",
+        "outbe-cli",
+        "--bin",
+        "outbe-cli",
+        "-p",
+        "outbe-keygen",
+        "--bin",
+        "outbe-keygen",
+        "-p",
         "outbe-e2e-harness",
         "--features",
         "ocomp-integration",
@@ -358,6 +366,8 @@ fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
 struct CapacityBinariesV1 {
     chain: PathBuf,
     ocomp: PathBuf,
+    cli: PathBuf,
+    keygen: PathBuf,
     e2e: PathBuf,
     evidence: PathBuf,
     mock_enclave: PathBuf,
@@ -368,6 +378,8 @@ impl CapacityBinariesV1 {
         Ok(Self {
             chain: repository_root.join("target/debug/outbe-chain"),
             ocomp: repository_root.join("target/debug/outbe-ocomp"),
+            cli: repository_root.join("target/debug/outbe-cli"),
+            keygen: repository_root.join("target/debug/outbe-keygen"),
             e2e: repository_root.join("target/debug/outbe-e2e"),
             evidence: repository_root.join("target/debug/outbe-e2e-evidence"),
             mock_enclave: repository_root.join("target/release/outbe-tee-enclave-mock"),
@@ -378,6 +390,8 @@ impl CapacityBinariesV1 {
         for (name, path) in [
             ("outbe-chain", &self.chain),
             ("outbe-ocomp", &self.ocomp),
+            ("outbe-cli", &self.cli),
+            ("outbe-keygen", &self.keygen),
             ("outbe-e2e", &self.e2e),
             ("outbe-e2e-evidence", &self.evidence),
             ("outbe-tee-enclave-mock", &self.mock_enclave),
@@ -403,6 +417,8 @@ impl CapacityBinariesV1 {
         let snapshot = Self {
             chain: root.join("outbe-chain"),
             ocomp: root.join("outbe-ocomp"),
+            cli: root.join("outbe-cli"),
+            keygen: root.join("outbe-keygen"),
             e2e: root.join("outbe-e2e"),
             evidence: root.join("outbe-e2e-evidence"),
             mock_enclave: root.join("outbe-tee-enclave-mock"),
@@ -410,6 +426,8 @@ impl CapacityBinariesV1 {
         for (source, destination) in [
             (&self.chain, &snapshot.chain),
             (&self.ocomp, &snapshot.ocomp),
+            (&self.cli, &snapshot.cli),
+            (&self.keygen, &snapshot.keygen),
             (&self.e2e, &snapshot.e2e),
             (&self.evidence, &snapshot.evidence),
             (&self.mock_enclave, &snapshot.mock_enclave),
@@ -498,6 +516,10 @@ fn capacity_systemd_command(
         .arg(&binaries.chain)
         .arg("--ocomp-bin")
         .arg(&binaries.ocomp)
+        .arg("--cli-bin")
+        .arg(&binaries.cli)
+        .arg("--keygen-bin")
+        .arg(&binaries.keygen)
         .arg("--mock-bin")
         .arg(&binaries.mock_enclave);
     command
@@ -766,6 +788,8 @@ mod tests {
         let source = CapacityBinariesV1 {
             chain: source_root.join("outbe-chain"),
             ocomp: source_root.join("outbe-ocomp"),
+            cli: source_root.join("outbe-cli"),
+            keygen: source_root.join("outbe-keygen"),
             e2e: source_root.join("outbe-e2e"),
             evidence: source_root.join("outbe-e2e-evidence"),
             mock_enclave: source_root.join("outbe-tee-enclave-mock"),
@@ -773,6 +797,8 @@ mod tests {
         for (ordinal, path) in [
             &source.chain,
             &source.ocomp,
+            &source.cli,
+            &source.keygen,
             &source.e2e,
             &source.evidence,
             &source.mock_enclave,
@@ -787,7 +813,7 @@ mod tests {
         let snapshot = source.snapshot_into(&artifact_root).unwrap();
         fs::write(&source.e2e, b"changed").unwrap();
 
-        assert_eq!(fs::read(&snapshot.e2e).unwrap(), [2]);
+        assert_eq!(fs::read(&snapshot.e2e).unwrap(), [4]);
         assert_ne!(snapshot.e2e, source.e2e);
         assert_eq!(
             fs::metadata(&snapshot.e2e).unwrap().permissions().mode() & 0o222,
@@ -842,6 +868,8 @@ mod tests {
         let binaries = CapacityBinariesV1 {
             chain: root.join("target/debug/outbe-chain"),
             ocomp: root.join("target/debug/outbe-ocomp"),
+            cli: root.join("target/debug/outbe-cli"),
+            keygen: root.join("target/debug/outbe-keygen"),
             e2e: root.join("target/debug/outbe-e2e"),
             evidence: root.join("target/debug/outbe-e2e-evidence"),
             mock_enclave: root.join("target/release/outbe-tee-enclave-mock"),
@@ -872,6 +900,12 @@ mod tests {
         assert!(!arguments.contains(&"--user".to_owned()));
         assert!(arguments.contains(&"--property=Delegate=yes".to_owned()));
         assert!(arguments.contains(&format!("--property=MemoryMax={CAPACITY_MEMORY_MAX_BYTES}")));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--cli-bin", "/repo/target/debug/outbe-cli"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--keygen-bin", "/repo/target/debug/outbe-keygen"]));
         assert_eq!(
             arguments
                 .iter()

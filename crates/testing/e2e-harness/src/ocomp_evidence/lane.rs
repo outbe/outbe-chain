@@ -18,6 +18,15 @@ use super::{
     PlanningLedger, RunManifestV1, RUNTIME_SCHEMA_VERSION,
 };
 
+const REQUIRED_SCENARIO_BINARIES: [&str; 6] = [
+    "outbe_chain",
+    "outbe_cli",
+    "outbe_e2e",
+    "outbe_keygen",
+    "outbe_ocomp",
+    "outbe_tee_enclave_mock",
+];
+
 const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-PUB-001",
@@ -223,7 +232,13 @@ fn validate_common_scenario(scenario: &Value, source_sha: &str) -> Result<()> {
     );
     let binaries = path(scenario, &["ocomp", "exact_binaries"])?;
     ensure!(
-        binaries.is_object() && binaries.as_object().is_some_and(|value| value.len() == 3),
+        binaries.is_object()
+            && binaries.as_object().is_some_and(|value| {
+                value.len() == REQUIRED_SCENARIO_BINARIES.len()
+                    && REQUIRED_SCENARIO_BINARIES
+                        .iter()
+                        .all(|name| value.contains_key(*name))
+            }),
         "scenario lacks exact OCOMP binary identities"
     );
     for (name, binary) in binaries
