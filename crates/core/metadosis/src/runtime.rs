@@ -172,16 +172,21 @@ fn process_ocomp_ready_candidate(
         .entry(wwd)
         .metadosis_limit_amount()
         .read()?;
-    let tribute_count = TributeContract::new(metadosis.storage.clone())
-        .get_day_totals(wwd)?
-        .tribute_count;
+    let tribute_totals = TributeContract::new(metadosis.storage.clone()).get_day_totals(wwd)?;
 
     // These branches are pinned to their pre-fork behavior and cannot invoke
     // Lysis. Populated resolved days are instead indexed for the post-seal
     // terminal request phase.
     if limit_amount.is_zero()
         || metadosis.get_wwd_day_type(wwd)? == day_type::UNKNOWN
-        || tribute_count == 0
+        || tribute_totals.tribute_count == 0
+    {
+        return process_metadosis(metadosis, ctx, scope, parent, wwd);
+    }
+    if metadosis
+        .calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?
+        .gratis_allocation
+        .is_zero()
     {
         return process_metadosis(metadosis, ctx, scope, parent, wwd);
     }
@@ -481,6 +486,30 @@ fn process_metadosis(
     let tribute_nominal_total = tribute_day_totals.tribute_nominal_amount;
     let metadosis_parameters =
         metadosis.calculate_metadosis(wwd, tribute_nominal_total, limit_amount)?;
+
+    if metadosis_parameters.gratis_allocation.is_zero() {
+        let remainder = metadosis_parameters.metadosis_limit_remainder;
+        let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, remainder)?;
+        promis_limit.add_to_total_unallocated(to_promis)?;
+
+        metadosis.mark_wwd_completed(wwd)?;
+        tribute.retire_completed_partition(scope, wwd)?;
+
+        metadosis.emit(IMetadosis::MetadosisExecuted {
+            worldwideDay: wwd.into(),
+            tributeTotals: tribute_nominal_total,
+            dayGratisDemand: metadosis_parameters.gratis_demand,
+            dayGratisLimit: metadosis_parameters.gratis_supply,
+            dayGratisAllocation: U256::ZERO,
+            dayGratisAllocationRemainder: U256::ZERO,
+            netDayGratisAllocation: U256::ZERO,
+            dayMetadosisLimitRemainder: remainder,
+            status: "COMPLETED".into(),
+            blockNumber: ctx.block.block_number,
+        })?;
+
+        return Ok(());
+    }
 
     match outbe_lysis::runtime::lysis(
         metadosis.storage.clone(),

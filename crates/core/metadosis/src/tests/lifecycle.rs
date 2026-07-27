@@ -1128,6 +1128,59 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
 }
 
 #[test]
+fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
+    with_storage(|storage| {
+        let wwd = outbe_common::WorldwideDay::new(2026_0318);
+        let nominal = U256::from(1_000);
+        // A red day divides supply by RED_DAY_REDUCTION_COEF. This non-zero
+        // day limit therefore produces an exact zero Lysis allocation.
+        let day_limit = U256::from(2);
+        let scheduled = create_waiting_day(&storage, wwd, day_type::RED, day_limit);
+        arm_ocomp_request_profile(&storage);
+
+        let tribute = TributeContract::new(storage.clone());
+        tribute.total_supply.write(1).unwrap();
+        let mut totals = outbe_tribute::schema::DayTotals::with_key(wwd);
+        totals.initialized = true;
+        totals.is_sealed = true;
+        totals.tribute_count = 1;
+        totals.tribute_nominal_amount = nominal;
+        tribute.day_totals.create(&totals).unwrap();
+        run_begin_block(storage.clone(), 2, scheduled + SECONDS_PER_HOUR);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
+        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
+        assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
+        assert_no_ocomp_job(&storage, wwd);
+
+        let series = wwd.value();
+        let desis = storage.contract::<outbe_desis::schema::DesisContract>();
+        assert_eq!(
+            desis.auction_stage.read(&series).unwrap(),
+            outbe_desis::schema::AuctionStage::Briefed as u8
+        );
+        assert_eq!(desis.brief_green.read(&series).unwrap(), 0);
+        assert_eq!(
+            desis.pending_supply_promis.read(&series).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            day_limit
+        );
+        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+        let tribute = TributeContract::new(storage);
+        assert_eq!(tribute.total_supply().unwrap(), 1);
+        let totals = tribute.get_day_totals(wwd).unwrap();
+        assert_eq!(totals.tribute_count, 1);
+        assert_eq!(totals.tribute_nominal_amount, nominal);
+    });
+}
+
+#[test]
 fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
     with_storage(|storage| {
         let wwd = outbe_common::WorldwideDay::new(2026_0315);
