@@ -296,8 +296,8 @@ description = "Run and independently verify the exact OCOMP public execution lan
 run = "cargo xtask ocomp task OCM-25"
 
 [tasks.ocomp-poc-capacity]
-description = "Build exact Rust binaries and run five immutable OCM-26 cold capacity measurements"
-run = "cargo xtask ocomp capacity-measure"
+description = "Run the complete immutable OCM-26 capacity and Final-arming gate"
+run = "cargo xtask ocomp task OCM-26"
 
 [tasks.ocomp-poc-e2e]
 description = "Run the four-domain OCOMP E2E lane; currently fail-closed on MISSING"

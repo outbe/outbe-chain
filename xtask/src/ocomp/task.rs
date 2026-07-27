@@ -1941,6 +1941,158 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
         }
+        "OCM-26" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "xtask", "ocomp::capacity"],
+            )?;
+            cargo(
+                repository_root,
+                &["test", "--locked", "-p", "xtask", "ocomp::finalize"],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "--test",
+                    "generated_capacity",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--test",
+                    "ocomp_capacity_resources",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--test",
+                    "ocomp_final_fixture",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-ocomp-protocol",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "-p",
+                    "xtask",
+                    "--features",
+                    "outbe-e2e-harness/ocomp-integration",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+
+            let fixture =
+                repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+            let checked_artifacts = fixture.join("artifacts");
+            let base = fixture.join("base");
+            let checked_capacity = checked_artifacts.join("generated-capacity-v1.json");
+            super::finalize::run(
+                repository_root,
+                &checked_capacity,
+                &base.join("genesis.json"),
+                &base.join("validators.json"),
+                &checked_artifacts,
+                true,
+            )?;
+
+            let run_root = fresh_task_output_dir("ocm26")?;
+            let generated_capacity = run_root.join("generated-capacity-v1.json");
+            super::capacity::measure(
+                repository_root,
+                &run_root,
+                &repository_root
+                    .join("crates/system/ocomp-protocol/registry/generated-shape-manifest.json"),
+                &generated_capacity,
+            )?;
+            let generated_artifacts = run_root.join("final-artifacts");
+            super::finalize::run(
+                repository_root,
+                &generated_capacity,
+                &base.join("genesis.json"),
+                &base.join("validators.json"),
+                &generated_artifacts,
+                false,
+            )?;
+            require_matching_final_consensus_artifacts(&generated_artifacts, &checked_artifacts)?;
+
+            for (name, tag) in [
+                ("final-capacity", "@ocomp-final-capacity"),
+                ("fork-restart", "@ocomp-fork-restart"),
+                ("fork-mismatch", "@ocomp-fork-mismatch"),
+            ] {
+                run_exact_final_scenario(repository_root, &run_root, name, tag)?;
+            }
+            eprintln!(
+                "OCM-26 immutable evidence retained at {}",
+                run_root.display()
+            );
+
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                    "OCM-VOT-001",
+                    "OCM-APL-001",
+                    "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
+                    "OCM-PUB-001",
+                    "OCM-PUB-002",
+                    "OCM-PUB-003",
+                    "OCM-PUB-004",
+                    "OCM-CAP-001",
+                ],
+            )?;
+        }
         _ => {
             cargo(
                 repository_root,
@@ -2045,6 +2197,112 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "outbe-tee-enclave-mock",
         ],
     )
+}
+
+fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .wrap_err("system clock precedes Unix epoch")?
+        .as_millis();
+    let path = std::env::temp_dir().join(format!(
+        "outbe-ocomp-{task}-{}-{timestamp}",
+        std::process::id()
+    ));
+    if path.exists() {
+        bail!("fresh task output already exists: {}", path.display());
+    }
+    Ok(path)
+}
+
+fn require_matching_final_consensus_artifacts(generated: &Path, checked: &Path) -> Result<()> {
+    for name in [
+        "capacity-profile-v1.ocb1",
+        "correctness-profile-v1.ocb1",
+        "fork-install-v1.ocb1",
+        "genesis-final.json",
+        "protocol-bundle-v1.ocb1",
+        "result-committee-public-v1.json",
+        "result-committee-v1.ocb1",
+        "semantic-artifacts-v1.json",
+    ] {
+        let generated_bytes = std::fs::read(generated.join(name))
+            .wrap_err_with(|| format!("read generated Final artifact {name}"))?;
+        let checked_bytes = std::fs::read(checked.join(name))
+            .wrap_err_with(|| format!("read checked-in Final artifact {name}"))?;
+        if generated_bytes != checked_bytes {
+            bail!("fresh OCM-26 measurement changes consensus-critical Final artifact {name}");
+        }
+    }
+    Ok(())
+}
+
+fn run_exact_final_scenario(
+    repository_root: &Path,
+    run_root: &Path,
+    name: &str,
+    tag: &str,
+) -> Result<()> {
+    let artifact_set = run_root.join("artifact-set");
+    let evidence_dir = run_root.join(format!("final-{name}-evidence"));
+    if evidence_dir.exists() {
+        bail!(
+            "Final scenario evidence directory already exists: {}",
+            evidence_dir.display()
+        );
+    }
+    let chain_binary = artifact_set.join("outbe-chain");
+    let ocomp_binary = artifact_set.join("outbe-ocomp");
+    let mock_binary = artifact_set.join("outbe-tee-enclave-mock");
+    let arguments = [
+        "--tags",
+        tag,
+        "--concurrency",
+        "1",
+        "--no-resolve-ports",
+        "--no-sudo",
+        "--tee",
+        "mock",
+        "--all",
+        "--repo",
+        repository_root
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("repository path is not UTF-8"))?,
+        "--evidence-dir",
+        evidence_dir
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("evidence path is not UTF-8"))?,
+        "--chain-bin",
+        chain_binary
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("chain binary path is not UTF-8"))?,
+        "--ocomp-bin",
+        ocomp_binary
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("OCOMP binary path is not UTF-8"))?,
+        "--mock-bin",
+        mock_binary
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("mock enclave path is not UTF-8"))?,
+    ];
+    eprintln!(
+        "+ {} {}",
+        artifact_set.join("outbe-e2e").display(),
+        arguments.join(" ")
+    );
+    let status = Command::new(artifact_set.join("outbe-e2e"))
+        .args(arguments)
+        .current_dir(repository_root)
+        .status()
+        .wrap_err_with(|| format!("start exact Final scenario {name}"))?;
+    if !status.success() {
+        bail!(
+            "exact Final scenario {name} failed with {}",
+            status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |code| code.to_string())
+        );
+    }
+    Ok(())
 }
 
 fn task_progress(repository_root: &Path, task: &str, passed: &[&str]) -> Result<()> {
