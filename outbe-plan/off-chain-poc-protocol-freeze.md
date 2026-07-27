@@ -1,6 +1,14 @@
 # Off-chain PoC: protocol-byte and capacity freeze
 
-Status: **resolved decision asset for ticket #4**
+Status: **REGENERATED ON 2026-07-26 — ARMING PENDING OCM-27 CLOSURE**
+
+`ExecutionCertificateV1`, relay messages, `PoCActivationV1` and public
+`activateLysis` are absent. `ActivationPayloadV1` remains only as a derived
+private owner-apply view and never supplies result identity or transaction
+input. The regenerated freeze contains a full-result `ResultVoteV1`, four
+compact vote slots, equivocation evidence, immutable quorum, one stored quorum
+result and accountability summary bytes from ADR-S-OCM-003/004. It becomes
+armable only after the exact OCM-27 closure succeeds.
 
 Scope: the disposable-devnet `LysisProgramV1` PoC only
 
@@ -31,9 +39,9 @@ PoC uses one closed, fork-pinned protocol:
 OCOMP lifecycle kernel
   + one LysisProgramV1
   + one strict OCOMP canonical binary codec
-  + one normal Ethereum activateLysis transaction
+  + four normal Ethereum submitLysisResult transactions
   + one static 3-of-4 secp256k1 result committee
-  + constant-size transaction-carried result commitment
+  + q-forming atomic typed apply
 ```
 
 There are two different classes of values:
@@ -202,11 +210,11 @@ The following `u16` tags are permanent for the PoC history:
 | `0x000b` | `UnitArtifactV1` |
 | `0x000c` | `ResultChunkV1` |
 | `0x000d` | `LysisResultV1` |
-| `0x000e` | `ActivationPayloadV1` |
+| `0x000e` | `ActivationPayloadV1` (derived private owner-apply view only) |
 | `0x000f` | `OcompCommitteeSnapshotV1` |
 | `0x0010` | `OcompKeyRegistrationV1` |
-| `0x0011` | `ExecutionCertificateV1` |
-| `0x0012` | `PoCActivationV1` |
+| `0x0011` | reserved legacy `ExecutionCertificateV1`; revised V1 rejects it |
+| `0x0012` | reserved; no V1 object is registered |
 | `0x0013` | `ActiveGenerationV1` |
 | `0x0014` | `AggregateActivationReceiptV1` |
 | `0x0015` | `NodBatchReceiptV1` |
@@ -214,18 +222,24 @@ The following `u16` tags are permanent for the PoC history:
 | `0x0017` | `TributeReceiptV1` |
 | `0x0018` | `RequestBudgetSplitReceiptV1` |
 | `0x0019` | `CarryOverReceiptV1` |
-| `0x001a` | `CandidateAnnouncementV1` |
+| `0x001a` | reserved legacy `CandidateAnnouncementV1`; revised V1 rejects it |
 | `0x001b` | `SignOnceRecordV1` |
 | `0x001c` | `ActivationCallCoreV1` |
 | `0x001d` | `LysisArithmeticSummaryV1` |
 | `0x001e` | `OcompJobRecordV1` |
 | `0x001f` | `ShuffleRunArtifactV1` |
+| `0x0020` | `ResultVoteV1` |
+| `0x0021` | `EquivocationEvidenceV1` |
+| `0x0022` | `ResultVoteSlotV1` |
+| `0x0023` | `OcompQuorumV1` |
+| `0x0024` | `OcompAccountabilitySummaryV1` |
+| `0x0025` | `OcompVoteAccountabilityV1` |
 
 The implementation task creates one machine-readable registry and generates
 Rust constants, docs and collision tests from it. Handwritten duplicate tag,
 domain, selector or codec literals fail CI.
 
-### 3.4 Public activation envelope
+### 3.4 Public full-result vote envelope
 
 The public transaction is a normal Ethereum transaction to the existing
 Metadosis precompile address
@@ -234,15 +248,15 @@ Metadosis precompile address
 The only new public write method is:
 
 ```solidity
-function activateLysis(bytes calldata pocActivationV1)
-    external
-    returns (bytes32 activationCallId, bytes32 resultDigest, uint8 outcome);
+function submitLysisResult(bytes calldata resultVoteV1) external;
 ```
 
-Its selector is `0x5b2818ca`, the first four bytes of
-`keccak256("activateLysis(bytes)")`. The dynamic bytes contain exactly one
-OCB1 `PoCActivationV1`. The selector is Lysis-specific; the bytes cannot select
-a program, call arbitrary targets or carry an opaque write set.
+The freeze generator derives the selector from
+`keccak256("submitLysisResult(bytes)")`; no handwritten selector is
+authoritative. The dynamic bytes contain exactly one OCB1 `ResultVoteV1` whose
+`result` field is the complete canonical `LysisResultV1`. The selector is
+Lysis-specific; the bytes cannot select a program, call arbitrary targets or
+carry an opaque write set.
 
 The transaction path is normal RPC -> txpool -> gossip -> proposal -> import ->
 replay. A private/direct executor injection is not a valid PoC path.
@@ -303,11 +317,10 @@ event OffchainJobRequested(
     uint32 indexed wwd,
     uint64 pendingNonce,
     uint32 attempt,
-    uint64 deadlineHeight,
     bytes32 activationPreconditionsHash
 );
 // topic0 =
-// 0x997139de4a9928090f392ef70b47db793b46eb650dd837141c0650776ea8e8ee
+// 0x69a11b11a3b39ad0968d02a67ee3b9e2d790cb9aafbc4de957beed93c39b7dad
 
 event OffchainJobExpired(
     bytes32 indexed intentId,
@@ -388,14 +401,14 @@ Registered domains are:
 | `OUTBE_OCOMP_UNIT_COVERAGE_V1` | phase, interval and work-output coverage header |
 | `OUTBE_OCOMP_UNIT_ARTIFACT_V1` | canonical `UnitArtifactV1` |
 | `OUTBE_OCOMP_RESULT_CHUNK_V1` | canonical `ResultChunkV1` |
-| `OUTBE_OCOMP_RESULT_V1` | canonical `ActivationPayloadV1` |
+| `OUTBE_OCOMP_RESULT_V1` | canonical `LysisResultV1` |
 | `OUTBE_OCOMP_VALIDATOR_IDENTITY_V1` | index, validator address and canonical consensus public key |
 | `OUTBE_OCOMP_COMMITTEE_V1` | canonical `OcompCommitteeSnapshotV1` |
 | `OUTBE_OCOMP_KEY_POP_V1` | canonical nested `OcompKeyRegistrationCoreV1` |
 | `OUTBE_OCOMP_SIGN_ONCE_SLOT_V1` | canonical sign-once key |
 | `OUTBE_OCOMP_ACTIVATION_CALL_V1` | canonical `ActivationCallCoreV1` |
 | `OUTBE_OCOMP_LYSIS_ARITHMETIC_V1` | canonical `LysisArithmeticSummaryV1` |
-| `OUTBE_OCOMP_RESULT_EVIDENCE_V1` | canonical `PoCActivationV1` |
+| `OUTBE_OCOMP_RESULT_EVIDENCE_V1` | canonical `LysisResultV1`; quorum evidence is committed separately in the terminal binding |
 | `OUTBE_OCOMP_TERMINAL_RECEIPT_V1` | canonical `AggregateActivationReceiptV1` |
 | `OUTBE_OCOMP_NOD_RECEIPT_V1` | canonical `NodBatchReceiptV1` |
 | `OUTBE_OCOMP_CONTRIBUTOR_RECEIPT_V1` | canonical `ContributorReceiptV1` |
@@ -487,7 +500,7 @@ ResultChunkHash = H(
 )
 
 ResultDigest =
-  H("OUTBE_OCOMP_RESULT_V1", canonical(ActivationPayloadV1))
+  H("OUTBE_OCOMP_RESULT_V1", canonical(LysisResultV1))
 
 InputChunkSemanticDigest =
   H("OUTBE_OCOMP_INPUT_CHUNK_V1", canonical(AuthenticatedInputChunkV1))
@@ -521,7 +534,7 @@ ActivationCallId = H(
 
 ResultEvidenceHash = H(
   "OUTBE_OCOMP_RESULT_EVIDENCE_V1",
-  canonical(PoCActivationV1)
+  canonical(LysisResultV1) || canonical(OcompQuorumV1)
 )
 
 NodReceiptHash = H(
@@ -1639,23 +1652,11 @@ LysisResultV1 {
   event_summary_hash: Hash
 }
 
-ActivationPayloadV1 {
-  protocol_bundle_hash: Hash,
-  JobId: Hash,
-  attempt: u32,
-  result_chunk_count: u32,
-  result_chunk_list_root: Hash,
-  roots: ResultRootsV1,
-  counts: ExactCountsV1,
-  conservation: ConservationTotalsV1,
-  arithmetic_commitment: Hash,
-  event_summary_hash: Hash
-}
 ```
 
-`ActivationPayloadV1` is reconstructed from the result; it is never an
-independently trusted tuple. The result-chunk count/root commit all action bytes
-without placing them in the activation transaction.
+The complete canonical `LysisResultV1` is the only `ResultDigest` preimage.
+The result-chunk count/root commit all population-sized action bytes without
+placing them in the vote transaction.
 
 For a successful result, `first_error_ordinal` is `none` and:
 
@@ -1773,35 +1774,55 @@ OcompKeyRegistrationV1 {
   proof_of_possession: [u8;64]
 }
 
-OrderedSignatureV1 {
-  validator_index: u8,
-  signature_rs: [u8;64]
-}
-
-ExecutionCertificateV1 {
-  result_committee_snapshot_hash: Hash,
-  signer_bitmap: u8,
-  ordered_signatures: Vec<OrderedSignatureV1>,
-  ResultDigest: Hash
-}
-
-PoCActivationV1 {
-  IntentId: Hash,
-  finalized_intent_proof: FinalizedIntentProofV1,
-  activation_payload: ActivationPayloadV1,
-  result: LysisResultV1,
-  certificate: ExecutionCertificateV1
-}
-
-CandidateAnnouncementV1 {
+ResultVoteV1 {
   protocol_bundle_hash: Hash,
   JobId: Hash,
   attempt: u32,
-  result: LysisResultV1,
-  ResultDigest: Hash,
+  result_committee_snapshot_hash: Hash,
   validator_index: u8,
   key_epoch: u64,
+  result: LysisResultV1,
   signature_rs: [u8;64]
+}
+
+EquivocationEvidenceV1 {
+  conflicting_ResultDigest: Hash,
+  conflicting_key_epoch: u64,
+  conflicting_signature_rs: [u8;64],
+  submitted_height: u64
+}
+
+ResultVoteSlotV1 {
+  validator_index: u8,
+  first_ResultDigest: Hash,
+  key_epoch: u64,
+  first_signature_rs: [u8;64],
+  submitted_height: u64,
+  equivocation: Option<EquivocationEvidenceV1>
+}
+
+OcompQuorumV1 {
+  ResultDigest: Hash,
+  quorum_height: u64,
+  signer_bitmap: u8,
+  evidence_hash: Hash
+}
+
+OcompAccountabilitySummaryV1 {
+  closed_height: u64,
+  timely_bitmap: u8,
+  matching_bitmap: u8,
+  divergent_bitmap: u8,
+  missing_bitmap: u8,
+  equivocation_bitmap: u8
+}
+
+OcompVoteAccountabilityV1 {
+  JobId: Hash,
+  result_committee_snapshot_hash: Hash,
+  slots: [Option<ResultVoteSlotV1>; 4],
+  quorum: Option<OcompQuorumV1>,
+  closed_summary: Option<OcompAccountabilitySummaryV1>
 }
 
 SignOnceRecordV1 {
@@ -2078,7 +2099,7 @@ contributors.max_eligible_nominal_total = tribute.exact_nominal_total
 ```
 
 These predicates are stored once in the intent. No owner reservation copy is
-written. Intex and PromisLimit change only during certified activation; Desis
+written. Intex and PromisLimit change only during certified quorum apply; Desis
 changed in the request phase.
 
 For a valid result:
@@ -2133,18 +2154,19 @@ the job pending.
 
 ## 7. Deadline and phase rules
 
-If the request is created in block `R`:
+After consensus records request finality:
 
 ```text
-deadline_height = checked_add_u64(R, 64)
+open_height = checked_add_u64(finality_recorded_height, 4)
+deadline_height = checked_add_u64(open_height, 64)
 ```
 
 The deadline is exclusive:
 
-- activation is valid only at block height `< deadline_height`;
+- result votes, including the q-forming vote, are valid only at block height
+  `< deadline_height`;
 - begin-zone at `deadline_height` expires/releases/requeues first;
-- an activation transaction in that block observes the expired nonce and
-  rejects.
+- a result vote in that block is late and rejects.
 
 The stable phase slots are:
 
@@ -2157,7 +2179,7 @@ begin-zone:
     2. reserved future pause/revocation barrier
     3. bounded OCOMP expiry/reset
   CycleTick
-ordinary transactions, including activateLysis
+ordinary transactions, including submitLysisResult
 CE sealing
 end-zone OcompTerminalRequest:
   bounded READY inspection/request creation
@@ -2259,6 +2281,32 @@ unbounded allocation, host OOM or disk exhaustion. These measurements select
 the disposable PoC cap; they are not a production SLO or supported-network
 capacity claim.
 
+`CapacityBudgetV1` is generated by Rust from existing authorities; it is not a
+hand-maintained benchmark input. For the canonical PoC devnet its dimensions
+are derived as follows:
+
+```text
+transaction_bytes       = OUTBE_MAX_BLOCK_SIZE
+block_bytes             = OUTBE_MAX_BLOCK_SIZE
+gas                     = genesis block gas limit
+internal_work           = candidate max_activation_internal_work
+block_processing_time   = certification_timeout - leader_timeout
+finality_latency        = result_deadline_blocks * certification_timeout
+cpu                     = logical_cpu_count * finality_latency
+network                 = MAX_P2P_MESSAGE_SIZE
+                          * n * (n - 1)
+                          * result_deadline_blocks
+assigned_memory         = minimum_process_memory_bytes
+disk_write              = minimum_free_workspace_bytes
+CAS                     = the production OCOMP per-domain CAS quota
+```
+
+Every multiplication/subtraction is checked. The network expression is the
+complete directed four-member message envelope over the result window, not an
+assumed provider bandwidth. The process launcher imports the same CAS-quota
+constant as the generator, so benchmark evidence cannot claim storage that the
+runtime does not grant.
+
 ### 8.3 Required generated fields
 
 The checked-in `OcompPocLimitsV1` manifest must contain exact literals for at
@@ -2272,7 +2320,7 @@ max_result_chunk_bytes
 max_result_summary_bytes
 max_activation_payload_bytes
 max_finalized_intent_proof_bytes
-max_execution_certificate_bytes
+max_result_vote_bytes
 max_activation_ocb1_bytes
 max_activation_calldata_bytes
 max_transaction_rlp_bytes

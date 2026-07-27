@@ -18,6 +18,7 @@
 pub mod env;
 pub mod features;
 pub mod mongo_fixture;
+pub mod ocomp_capacity;
 pub mod ocomp_evidence;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp_finality_fixture;
@@ -173,6 +174,32 @@ pub async fn run() {
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
+                let ocomp = match world.ocomp.evidence_snapshot() {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        world.localnet.teardown();
+                        panic!("OCOMP topology evidence could not be captured: {error:#}");
+                    }
+                };
+                let mut ocomp_public = world.state.ocomp_public_scenario_evidence();
+                if let Some(meter) = world.capacity_meter.take() {
+                    if !scenario.tags.iter().any(|tag| tag == "ocomp-capacity") {
+                        world.localnet.teardown();
+                        panic!(
+                            "dedicated OCOMP capacity meter was used for a non-capacity scenario"
+                        );
+                    }
+                    let cas_roots = ocomp
+                        .domain_roots
+                        .iter()
+                        .map(|root| std::path::PathBuf::from(root).join("cas-v1"))
+                        .collect::<Vec<_>>();
+                    ocomp_public.capacity_resources =
+                        Some(meter.finish(&cas_roots).unwrap_or_else(|error| {
+                            world.localnet.teardown();
+                            panic!("OCOMP capacity resource evidence failed: {error:#}");
+                        }));
+                }
                 if let Err(error) = evidence::write_scenario(evidence::ScenarioEvidence {
                     env: &env_evidence,
                     feature,
@@ -182,6 +209,8 @@ pub async fn run() {
                     scenario_dir: world.localnet.scenario_dir(),
                     elapsed: world.started_at.elapsed(),
                     audit: &audit,
+                    ocomp: &ocomp,
+                    ocomp_public: &ocomp_public,
                 }) {
                     world.localnet.teardown();
                     panic!("E2E evidence write failed: {error:#}");

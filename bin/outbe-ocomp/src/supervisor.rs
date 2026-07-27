@@ -12,15 +12,16 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_ocomp_protocol::local_control::{
     ClientPolicy, ControlClientSession, ControlError, EndpointIdentity,
 };
 use outbe_ocomp_protocol::{
-    activation::CandidateAnnouncementV1, common::BoundedBytes, AttestationResponseV1,
+    common::BoundedBytes, result::LysisResultV1, vote::ResultVoteV1, AttestationResponseV1,
     FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
-    RequestAttestationV1, SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1,
+    PrepareVoteTransactionV1, PreparedVoteTransactionV1, ProtocolError, RequestAttestationV1,
+    SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use thiserror::Error;
 
@@ -166,7 +167,7 @@ impl SupervisorDiscovery {
     pub fn request_attestation(
         &self,
         canonical_result: &[u8],
-    ) -> Result<CandidateAnnouncementV1, SupervisorDiscoveryError> {
+    ) -> Result<ResultVoteV1, SupervisorDiscoveryError> {
         if canonical_result.is_empty() {
             return Err(ProtocolError::InvalidInvariant("attestation result is empty").into());
         }
@@ -199,14 +200,49 @@ impl SupervisorDiscovery {
             &self.config.limits,
         )?;
         let response = AttestationResponseV1::decode_body(&body, &self.config.limits)?;
-        let candidate = CandidateAnnouncementV1::decode_canonical(
-            &response.canonical_candidate.0,
-            &self.config.limits,
-        )?;
-        if candidate.result.encode_canonical(&self.config.limits)? != canonical_result {
+        let vote = ResultVoteV1::decode_canonical(&response.canonical_vote.0, &self.config.limits)?;
+        let result = LysisResultV1::decode_canonical(canonical_result, &self.config.limits)?;
+        let expected_digest = result.result_digest(&self.config.limits)?;
+        if vote.protocol_bundle_hash != result.protocol_bundle_hash
+            || vote.job_id != result.job_id
+            || vote.attempt != result.attempt
+            || vote.result != result
+            || vote.result_digest(&self.config.limits)? != expected_digest
+        {
             return Err(SupervisorDiscoveryError::AttestationResultChanged);
         }
-        Ok(candidate)
+        Ok(vote)
+    }
+
+    pub fn prepare_vote_transaction(
+        &self,
+        canonical_result: &[u8],
+        nonce: u64,
+        max_fee_per_gas: u128,
+        gas_limit: u64,
+    ) -> Result<PreparedVoteTransactionV1, SupervisorDiscoveryError> {
+        if canonical_result.is_empty() {
+            return Err(ProtocolError::InvalidInvariant("vote transaction result is empty").into());
+        }
+        let request = PrepareVoteTransactionV1 {
+            canonical_result: BoundedBytes(canonical_result.to_vec()),
+            nonce,
+            max_fee_per_gas: U256::from(max_fee_per_gas),
+            gas_limit,
+        };
+        let mut session = self.connect()?;
+        session.send_request(
+            NodeMessageKind::PrepareVoteTransaction as u16,
+            request.encode_body(&self.config.limits)?,
+        )?;
+        let frame = session.receive_response()?;
+        let body = response_body(
+            frame.message_kind,
+            frame.body,
+            NodeMessageKind::PrepareVoteTransaction,
+            &self.config.limits,
+        )?;
+        PreparedVoteTransactionV1::decode_body(&body, &self.config.limits).map_err(Into::into)
     }
 
     fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {

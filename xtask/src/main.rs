@@ -27,6 +27,36 @@ struct OcompArgs {
 
 #[derive(Debug, Subcommand)]
 enum OcompCommand {
+    /// Emit the frozen OCM-26 budget derived from Rust authorities.
+    CapacityBudget {
+        /// Destination for the deterministic typed budget JSON.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Execute five immutable systemd/cgroup cold runs and generate capacity.
+    CapacityMeasure {
+        /// New directory that will retain all five cold namespaces and evidence.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Exact generated-limits manifest bound into the capacity profile.
+        #[arg(long)]
+        limits_manifest: PathBuf,
+        /// Destination for the deterministic generated capacity manifest.
+        #[arg(long)]
+        generated_capacity: PathBuf,
+    },
+    /// Verify five cold OCOMP runs and emit one deterministic capacity profile.
+    Capacity {
+        /// Typed `CapacityEvidenceV1` JSON from the Rust E2E capacity runner.
+        #[arg(long)]
+        evidence: PathBuf,
+        /// Exact generated-limits manifest bound into the capacity profile.
+        #[arg(long)]
+        limits_manifest: PathBuf,
+        /// Destination for the deterministic generated capacity manifest.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Generate or check the OCOMP V1 object/domain/list registry.
     Registry {
         /// Fail if checked-in generated files differ from the TSV authority.
@@ -153,6 +183,28 @@ fn main() -> Result<()> {
     let repo_root = sgx::repository_root()?;
     match cli.command {
         Command::Ocomp(ocomp_args) => match ocomp_args.command {
+            OcompCommand::CapacityBudget { output } => {
+                ocomp::capacity::publish_budget(&repo_root, &output)?;
+            }
+            OcompCommand::CapacityMeasure {
+                output_dir,
+                limits_manifest,
+                generated_capacity,
+            } => {
+                ocomp::capacity::measure(
+                    &repo_root,
+                    &output_dir,
+                    &limits_manifest,
+                    &generated_capacity,
+                )?;
+            }
+            OcompCommand::Capacity {
+                evidence,
+                limits_manifest,
+                output,
+            } => {
+                ocomp::capacity::run(&repo_root, &evidence, &limits_manifest, &output)?;
+            }
             OcompCommand::Registry { check } => {
                 ocomp::registry::run(&repo_root, check)?;
             }

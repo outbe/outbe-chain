@@ -1,7 +1,7 @@
 # ADR-C-MET-001: Metadosis owns the WorldwideDay state machine
 
 - **Status:** Proposed; OCOMP PoC target defined, current implementation is synchronous
-- **Date:** 2026-07-22
+- **Date:** 2026-07-26
 - **Decision owners:** Protocol economics maintainers
 - **Scope:** `crates/core/metadosis`, its WorldwideDay records and auction/PROMIS seams
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-CYC-001,
@@ -29,7 +29,12 @@ FORMING -> LOOKBACK_DELAY -> OFFERING -> WAITING -> READY
                                                    |  +----> COMPLETED
                                                    +------> OFFCHAIN_PENDING
                                                                |
-                                                               +-> COMPLETED
+                                                               +-> OCOMP AWAITING_FINALITY
+                                                               |      |
+                                                               |      +-> VOTING_OPEN
+                                                               |             |
+                                                               |             +-> COMPLETED
+                                                               |             +-> CONFLICTED
                                                                +-> READY(next attempt)
 ```
 
@@ -51,9 +56,9 @@ Transition side effects are owned by the transition, not Cycle:
 - a GREEN day dispatches `auction_base` to Desis before OCOMP starts;
 - a RED day credits `auction_base` to carry-over and dispatches no auction;
 - the same transition creates a bounded `JobIntentV1` for `lysis_budget`;
-- certified activation consumes the frozen request through
-  `CertifiedLysisActivation`, credits `unused_lysis` to carry-over and completes
-  the day;
+- the q-forming full-result vote consumes the frozen request through a private
+  typed apply capability, credits `unused_lysis` to carry-over and completes the
+  day in the same outer checkpoint;
 - expiry/conflict returns the day to READY without repeating the Desis brief;
 - a terminal no-retry outcome credits the full `lysis_budget` to carry-over;
 - terminal transition removes the active member and appends it to the bounded
@@ -73,12 +78,12 @@ At most one selected READY day is processed per command today:
 | no Tributes | clear supply, add remainder to Promis, retire empty partition | COMPLETED |
 | eligible GREEN | dispatch exact `auction_base`; create `JobIntentV1` for `lysis_budget` | OFFCHAIN_PENDING |
 | eligible RED | credit `auction_base`; create `JobIntentV1` for `lysis_budget` | OFFCHAIN_PENDING |
-| certified activation | apply Nod/contributors/retirement; credit `unused_lysis` | COMPLETED |
+| q-forming full-result vote | atomically apply Nod/contributors/retirement; credit `unused_lysis` | COMPLETED |
 | expiry/conflict with retry | keep Lysis budget and prior brief; create no duplicate effect | READY |
 | terminal no-retry outcome | credit full `lysis_budget` once | FAILED |
 
 Metadosis owns the day transition and frozen request values. ADR-S-OCM-004 owns
-job evidence/activation ordering. Metadosis does not own Lysis allocation
+job evidence/vote/quorum-apply ordering. Metadosis does not own Lysis allocation
 mathematics, Promis ledger rules or Tribute/Nod storage.
 
 ### Limit split and carry-over
@@ -90,7 +95,7 @@ lysis_budget = min(gratis_demand, day_limit)
 auction_base = day_limit - lysis_budget
 ```
 
-`unused_lysis` is unknown until certified Lysis completes:
+`unused_lysis` is unknown until the certified Lysis result reaches quorum:
 
 ```text
 unused_lysis = lysis_budget - sum(nod.gratis_load)
@@ -122,7 +127,10 @@ Required invariants:
 - one day has at most one live OCOMP attempt;
 - one day dispatches at most one Desis brief before all OCOMP attempts;
 - `OFFCHAIN_PENDING` has no Lysis/Nod/contributor/Tribute-retirement effect;
-- completion consumes only a certified result for that day's exact live attempt;
+- its OCOMP attempt cannot open voting before
+  `finality_recorded_height + 4`;
+- quorum is derived only from that attempt's bounded on-chain result-vote slots;
+- completion consumes only the canonical result carried by the q-forming vote;
 - retries cannot repeat the auction or credit carry-over;
 - every budget unit reaches Desis, a Nod or carry-over exactly once;
 - FIFO eviction cannot leave active/index references.
@@ -130,16 +138,28 @@ Required invariants:
 ## Atomicity, retries and failure
 
 Request creation stores the immutable split, one Desis/carry-over base effect,
-intent, expiry index, `OFFCHAIN_PENDING` and request event in one checkpoint.
+intent, OCOMP `AWAITING_FINALITY`, Metadosis `OFFCHAIN_PENDING` and request
+event in one checkpoint. It does not create a response deadline.
 
-Certified activation commits terminal state with all Lysis-owned effects and
-the `unused_lysis` carry-over credit in the outer OCOMP checkpoint.
+Four blocks after the existing consensus path records request finality, OCOMP
+atomically records `VOTING_OPEN(open_height, deadline_height)` and its deadline
+index. This internal transition does not repeat any Metadosis economic effect.
 
-Expiry/retry changes only job/FSM state. It neither rolls back nor repeats the
-already committed auction split.
+The q-forming full-result vote commits immutable terminal state with all
+Lysis-owned effects and the `unused_lysis` carry-over credit in the outer OCOMP
+checkpoint.
+It does not close the separate fourth-slot accountability record before the
+response deadline, and later accountability writes cannot change terminal
+receipt, active generation or exact-retry identity.
 
-An invalid request rolls back to READY. An invalid activation leaves
-`OFFCHAIN_PENDING` unchanged. Exact terminal retry returns the recorded receipt;
+Response-window close expires/retries only an attempt that never reached q=3.
+A timely q=3 was already applied by its q-forming vote transaction. Neither
+that apply nor expiry rolls back or repeats the already committed auction split.
+
+An invalid request rolls back to READY. An invalid vote or failed quorum apply
+leaves the first-vote/quorum and domain state unchanged as defined by
+ADR-S-OCM-003/004.
+Exact terminal retry returns the recorded receipt;
 a different result cannot re-enter Metadosis effects. No synchronous Lysis
 fallback is reachable in the PoC profile.
 
@@ -157,9 +177,10 @@ production by local environment.
 
 Production runtime and tests were inspected for creation, window advancement,
 Oracle snapshots, offer seal/unseal, synchronous terminal branches and FIFO
-cleanup. Current `process_metadosis` still invokes Lysis synchronously and does
-not implement the OCOMP states. There is not yet a complete generated transition
-model, request/expiry path or cross-module certified-activation suite.
+cleanup. The selected finality+4/direct-vote/separate-accountability OCOMP
+states are not yet implemented end to end. There is not yet a complete
+generated transition model, request/expiry path or cross-module
+certified-activation suite.
 
 ## Consequences
 

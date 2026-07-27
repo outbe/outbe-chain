@@ -1,9 +1,9 @@
 // OCOMP-TEST-ID: OCM-BND-003
 
 use outbe_ocomp_protocol::{
-    certificate::{ExecutionCertificateV1, OrderedSignatureV1},
     codec::{CanonicalReader, CodecLimits},
     control::{ControlFrameV1, ControlMagic},
+    vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
 
@@ -48,32 +48,15 @@ fn control_cap_plus_one_rejects_from_prefix_before_body_decode() {
 }
 
 #[test]
-fn certificate_shape_rejects_before_touching_invalid_crypto() {
-    let certificate = ExecutionCertificateV1 {
-        result_committee_snapshot_hash: [0; 32].into(),
-        signer_bitmap: 0b1111,
-        ordered_signatures: vec![
-            OrderedSignatureV1 {
-                validator_index: 0,
-                signature_rs: [0; 64],
-            },
-            OrderedSignatureV1 {
-                validator_index: 1,
-                signature_rs: [0; 64],
-            },
-            OrderedSignatureV1 {
-                validator_index: 2,
-                signature_rs: [0; 64],
-            },
-            OrderedSignatureV1 {
-                validator_index: 3,
-                signature_rs: [0; 64],
-            },
-        ],
-        result_digest: [0; 32].into(),
-    };
-    let error = certificate.validate_shape().unwrap_err().to_string();
-    assert_eq!(error, "invalid invariant: certificate threshold bitmap");
+fn vote_state_rejects_a_fifth_slot_before_any_crypto_work() {
+    let mut accountability =
+        OcompVoteAccountabilityV1::empty([1; 32].into(), [2; 32].into()).unwrap();
+    accountability.slots.push(None);
+    let error = accountability
+        .validate_semantics(&LIMITS)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "invalid invariant: accountability slot count");
 }
 
 #[test]

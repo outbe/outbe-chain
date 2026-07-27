@@ -1,9 +1,9 @@
-//! Job-scoped retention for finalized OCOMP Tribute inputs.
+//! Authenticated-input-lease retention for finalized OCOMP Tribute inputs.
 //!
 //! The current repository remains the execution projection. This module owns
 //! the one additional PoC namespace that preserves exact canonical body bytes
 //! across a partition retirement. Every retained key binds the node-derived
-//! `JobId`, WWD, complete `EntityId36`, and CES1 body commitment.
+//! `InputLeaseId`, WWD, complete `EntityId36`, and CES1 body commitment.
 
 use std::collections::BTreeSet;
 
@@ -38,7 +38,7 @@ const RETAINED_RELEASE_PAGE_LIMIT: usize =
 /// Node-derived selector for one OCOMP source partition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetainedTributePin {
-    pub job_id: B256,
+    pub input_lease_id: B256,
     pub worldwide_day: WorldwideDay,
 }
 
@@ -110,7 +110,7 @@ impl RetainedTributeReader {
         )?;
         if existing.next_after.is_some() || existing.entries.len() > 1 {
             return Err(TributeRepositoryError::ConflictingRetainedBody {
-                job_id: pin.job_id,
+                job_id: pin.input_lease_id,
                 tribute_id,
             });
         }
@@ -123,7 +123,7 @@ impl RetainedTributeReader {
                 || entry.value.as_bytes() != stored_body.as_bytes()
             {
                 return Err(TributeRepositoryError::ConflictingRetainedBody {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     tribute_id,
                 });
             }
@@ -140,7 +140,7 @@ impl RetainedTributeReader {
             .is_some()
         {
             return Err(TributeRepositoryError::DanglingRetainedIndex {
-                job_id: pin.job_id,
+                job_id: pin.input_lease_id,
                 tribute_id,
             });
         }
@@ -193,14 +193,14 @@ impl RetainedTributeReader {
         {
             if retained.metadata.is_some() {
                 return Err(TributeRepositoryError::RetainedMetadata {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     tribute_id,
                 });
             }
             let commitment = commitment_for_stored_bytes(tribute_id, retained.value.as_bytes())?;
             if commitment != expected_commitment {
                 return Err(TributeRepositoryError::RetainedCommitmentMismatch {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     tribute_id,
                 });
             }
@@ -210,7 +210,7 @@ impl RetainedTributeReader {
                 .is_some_and(|current| current.as_slice() != retained.value.as_bytes())
             {
                 return Err(TributeRepositoryError::ConflictingRetainedBody {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     tribute_id,
                 });
             }
@@ -222,7 +222,7 @@ impl RetainedTributeReader {
             )?;
             if !conflicting.entries.is_empty() {
                 return Err(TributeRepositoryError::ConflictingRetainedBody {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     tribute_id,
                 });
             }
@@ -231,7 +231,7 @@ impl RetainedTributeReader {
         match selected {
             Some(bytes) => StoredBody::decode(&bytes).map(Some).map_err(Into::into),
             None if current_mismatch => Err(TributeRepositoryError::RetainedCommitmentMismatch {
-                job_id: pin.job_id,
+                job_id: pin.input_lease_id,
                 tribute_id,
             }),
             None => Ok(None),
@@ -250,7 +250,7 @@ impl RetainedTributeReader {
         }
         if after.is_some_and(|cursor| cursor.tribute_id.worldwide_day() != pin.worldwide_day) {
             return Err(TributeRepositoryError::InvalidRetainedCursor {
-                job_id: pin.job_id,
+                job_id: pin.input_lease_id,
                 worldwide_day: pin.worldwide_day,
             });
         }
@@ -265,7 +265,7 @@ impl RetainedTributeReader {
         if let Some(continuation) = &page.next_after {
             if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
                 return Err(TributeRepositoryError::InvalidRetainedContinuation {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     worldwide_day: pin.worldwide_day,
                 });
             }
@@ -282,7 +282,7 @@ impl RetainedTributeReader {
                 || previous.is_some_and(|previous| record.tribute_id == previous.tribute_id)
             {
                 return Err(TributeRepositoryError::NonAscendingRetainedPage {
-                    job_id: pin.job_id,
+                    job_id: pin.input_lease_id,
                     worldwide_day: pin.worldwide_day,
                 });
             }
@@ -305,24 +305,26 @@ impl RetainedTributeReader {
         })
     }
 
-    fn plan_release_job_page(
+    fn plan_release_input_lease_page(
         &self,
-        job_id: B256,
+        input_lease_id: B256,
     ) -> Result<(AtomicWriteBatch, bool), TributeRepositoryError> {
         let (body_keys, body_has_more) = collect_job_key_page(
             &self.storage,
             OCOMP_RETAINED_TRIBUTES_NAMESPACE,
-            job_id,
+            input_lease_id,
             false,
         )?;
         let (index_keys, index_has_more) = collect_job_key_page(
             &self.storage,
             OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
-            job_id,
+            input_lease_id,
             true,
         )?;
         if body_keys != index_keys || body_has_more != index_has_more {
-            return Err(TributeRepositoryError::RetainedNamespaceMismatch { job_id });
+            return Err(TributeRepositoryError::RetainedNamespaceMismatch {
+                job_id: input_lease_id,
+            });
         }
 
         let mut batch = AtomicWriteBatch::new();
@@ -356,10 +358,13 @@ impl RetainedTributeWriter {
         }
     }
 
-    /// Idempotently deletes one bounded page of one exact job's retained bodies
+    /// Idempotently deletes one bounded page of one exact input lease's bodies
     /// and index. Returns `true` only after the final page has been deleted.
-    pub fn release_job_page(&self, job_id: B256) -> Result<bool, TributeRepositoryError> {
-        let (batch, complete) = self.reader.plan_release_job_page(job_id)?;
+    pub fn release_input_lease_page(
+        &self,
+        input_lease_id: B256,
+    ) -> Result<bool, TributeRepositoryError> {
+        let (batch, complete) = self.reader.plan_release_input_lease_page(input_lease_id)?;
         self.writer.apply_atomic(&batch)?;
         Ok(complete)
     }
@@ -371,7 +376,7 @@ fn ensure_pin_day(
 ) -> Result<(), TributeRepositoryError> {
     if tribute_id.worldwide_day() != pin.worldwide_day {
         return Err(TributeRepositoryError::RetainedDayMismatch {
-            job_id: pin.job_id,
+            job_id: pin.input_lease_id,
             tribute_id,
             worldwide_day: pin.worldwide_day,
         });
@@ -403,7 +408,7 @@ fn commitment_for_stored_bytes(
 
 fn retained_day_prefix(pin: RetainedTributePin) -> [u8; DAY_PREFIX_LEN] {
     let mut bytes = [0_u8; DAY_PREFIX_LEN];
-    bytes[..JOB_PREFIX_LEN].copy_from_slice(pin.job_id.as_slice());
+    bytes[..JOB_PREFIX_LEN].copy_from_slice(pin.input_lease_id.as_slice());
     bytes[JOB_PREFIX_LEN..].copy_from_slice(&pin.worldwide_day.value().to_be_bytes());
     bytes
 }
@@ -442,7 +447,7 @@ fn parse_retained_entry(
     }
     let bytes = entry.key.as_bytes();
     if bytes.len() != RETAINED_KEY_LEN
-        || bytes[..JOB_PREFIX_LEN] != *pin.job_id.as_slice()
+        || bytes[..JOB_PREFIX_LEN] != *pin.input_lease_id.as_slice()
         || bytes[JOB_PREFIX_LEN..DAY_PREFIX_LEN] != pin.worldwide_day.value().to_be_bytes()
     {
         return Err(TributeRepositoryError::MalformedIndexKey {
@@ -453,7 +458,7 @@ fn parse_retained_entry(
     ensure_pin_day(pin, tribute_id)?;
     if !index && entry.metadata.is_some() {
         return Err(TributeRepositoryError::RetainedMetadata {
-            job_id: pin.job_id,
+            job_id: pin.input_lease_id,
             tribute_id,
         });
     }
@@ -461,7 +466,7 @@ fn parse_retained_entry(
     if !index && commitment_for_stored_bytes(tribute_id, entry.value.as_bytes())? != body_commitment
     {
         return Err(TributeRepositoryError::RetainedCommitmentMismatch {
-            job_id: pin.job_id,
+            job_id: pin.input_lease_id,
             tribute_id,
         });
     }
@@ -482,7 +487,7 @@ fn validate_retained_index_record(
             let tribute_id = EntityId36::try_from(&key.as_bytes()[DAY_PREFIX_LEN..ID_PREFIX_LEN])
                 .expect("validated retained key");
             TributeRepositoryError::MissingRetainedIndex {
-                job_id: pin.job_id,
+                job_id: pin.input_lease_id,
                 tribute_id,
             }
         })?;
@@ -527,7 +532,7 @@ fn collect_job_key_page(
                 .expect("fixed retained day"),
         ));
         let pin = RetainedTributePin {
-            job_id,
+            input_lease_id: job_id,
             worldwide_day: day,
         };
         parse_retained_entry(entry, pin, index)?;

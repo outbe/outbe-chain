@@ -7,9 +7,10 @@ use outbe_ocomp_protocol::{
     profile::CapacityProfileV1,
     receipts::{ActivationOutcome, AggregateActivationReceiptV1, RequestBudgetSplitReceiptV1},
     state::{
-        ActiveGenerationV1, OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus,
-        OcompJobTerminalV1, OcompTerminalOutcome,
+        ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
+        OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome, RESULT_VOTE_MIN_FINALITY_DEPTH,
     },
+    vote::OcompVoteAccountabilityV1,
     SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result};
@@ -29,10 +30,19 @@ const SCHEDULER_VERSION: u16 = 1;
 const SCHEDULER_PHASE_READY: u8 = 1;
 const SCHEDULER_PHASE_PENDING: u8 = 2;
 const SCHEDULER_ENCODED_LEN: usize = 4 + 2 + 1 + 4 + 8 + 8 + 32 + 8 + 8 + 1 + 8 + 32 + 32;
+const LIVE_INDEX_MAGIC: [u8; 4] = *b"OMLI";
+const LIVE_INDEX_VERSION: u16 = 1;
+const LIVE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
+const MAX_LIVE_JOBS: usize = 2;
 const READY_INDEX_MAGIC: [u8; 4] = *b"OMRI";
 const READY_INDEX_VERSION: u16 = 1;
 const READY_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
 const READY_INDEX_KEY_LEN: usize = 8 + 4 + 8;
+const RESPONSE_INDEX_MAGIC: [u8; 4] = *b"OMDI";
+const RESPONSE_INDEX_VERSION: u16 = 1;
+const RESPONSE_INDEX_HEADER_LEN: usize = 4 + 2 + 2;
+const RESPONSE_INDEX_KEY_LEN: usize = 8 + 32 + 32;
+const MAX_RESPONSE_WINDOWS: usize = MAX_LIVE_JOBS;
 const REQUEST_PROFILE_MAGIC: [u8; 4] = *b"OMRP";
 const REQUEST_PROFILE_VERSION: u16 = 1;
 const REQUEST_PROFILE_FIXED_LEN: usize = 4 + 2 + 8 + 32 * 6 + 4;
@@ -54,6 +64,18 @@ pub struct OcompRequestProfile {
     pub result_committee_snapshot_hash: B256,
 }
 
+impl OcompRequestProfile {
+    /// Canonical fork-manifest representation of the request authority.
+    pub fn encode_canonical(&self, limits: &SchemaLimits) -> Result<Vec<u8>> {
+        encode_request_profile(self, limits)
+    }
+
+    /// Decodes and validates the canonical fork-manifest representation.
+    pub fn decode_canonical(encoded: &[u8], limits: &SchemaLimits) -> Result<Self> {
+        decode_request_profile(encoded, limits)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum OcompExpiryDisposition {
     RetryScheduled {
@@ -70,6 +92,13 @@ struct ReadyIndexKey {
     next_check_height: u64,
     worldwide_day: WorldwideDay,
     pending_nonce: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ResponseDeadlineKey {
+    pub(crate) deadline_height: u64,
+    pub(crate) job_id: B256,
+    pub(crate) intent_id: B256,
 }
 
 impl ReadyIndexKey {
@@ -340,8 +369,8 @@ impl MetadosisContract<'_> {
                 return Err(fatal("OCOMP intent/request receipt binding mismatch"));
             }
 
-            if !self.ocomp_scheduler.is_empty()? {
-                return Err(fatal("PoC permits only one live OCOMP intent"));
+            if decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?.len() >= MAX_LIVE_JOBS {
+                return Err(fatal("OCOMP live Job capacity exhausted"));
             }
             let mut state = self.ocomp_fsm_state(wwd, schema_limits, fsm_limits)?;
             let ready_key = ReadyIndexKey::from_projection(state.projection())?;
@@ -362,7 +391,6 @@ impl MetadosisContract<'_> {
                     JobFsmCommand::Request {
                         at_height: intent.logical_evaluation_height,
                         intent_id,
-                        deadline_height: intent.deadline_height,
                         lysis_budget: intent.frozen_metadosis_values.lysis_budget,
                         request_budget_receipt_hash: receipt_hash,
                     },
@@ -379,7 +407,9 @@ impl MetadosisContract<'_> {
             }
             let record = OcompJobRecordV1 {
                 intent: intent.clone(),
-                status: OcompJobStatus::OffchainPending,
+                intent_height: intent.logical_evaluation_height,
+                status: OcompJobStatus::AwaitingFinality,
+                finalized: None,
                 terminal: None,
             };
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
@@ -395,9 +425,155 @@ impl MetadosisContract<'_> {
         })
     }
 
+    /// Records the consensus-certified request block and derives the voting
+    /// window. The request itself carries no deadline.
+    pub fn record_ocomp_finality(
+        &mut self,
+        intent_id: B256,
+        finalized_request_block_hash: B256,
+        finalized_request_state_root: B256,
+        finality_recorded_height: u64,
+        response_window_blocks: u64,
+        schema_limits: &SchemaLimits,
+    ) -> Result<OcompFinalizedJobV1> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let mut record = self
+                .ocomp_job_record(intent_id, schema_limits)?
+                .ok_or_else(|| fatal("OCOMP finality record has no matching intent"))?;
+            if record.status != OcompJobStatus::AwaitingFinality || record.terminal.is_some() {
+                return Err(fatal("OCOMP finality requires AWAITING_FINALITY"));
+            }
+            if finality_recorded_height < record.intent_height || response_window_blocks == 0 {
+                return Err(fatal("OCOMP finality/window height is invalid"));
+            }
+            let open_height = finality_recorded_height
+                .checked_add(RESULT_VOTE_MIN_FINALITY_DEPTH)
+                .ok_or_else(|| fatal("OCOMP voting open height overflow"))?;
+            let deadline_height = open_height
+                .checked_add(response_window_blocks)
+                .ok_or_else(|| fatal("OCOMP response deadline overflow"))?;
+            let finalized = OcompFinalizedJobV1 {
+                job_id: record
+                    .intent
+                    .job_id(
+                        finalized_request_block_hash,
+                        finalized_request_state_root,
+                        schema_limits,
+                    )
+                    .map_err(|error| fatal(format!("derive finalized OCOMP JobId: {error}")))?,
+                finalized_request_block_hash,
+                finalized_request_state_root,
+                finality_recorded_height,
+                open_height,
+                deadline_height,
+                quorum: None,
+            };
+            finalized
+                .validate_semantics()
+                .map_err(|error| fatal(format!("invalid finalized OCOMP job: {error}")))?;
+            if let Some(existing) = &record.finalized {
+                if existing == &finalized {
+                    return Ok(existing.clone());
+                }
+                return Err(fatal("OCOMP finality binding changed"));
+            }
+            record.finalized = Some(finalized.clone());
+            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
+            Ok(finalized)
+        })
+    }
+
+    /// Opens the exact finalized job at `finality_recorded_height + 4`.
+    /// Returns `false` before the due height and fails if consensus skipped it.
+    pub(crate) fn open_due_ocomp_voting(
+        &mut self,
+        at_height: u64,
+        schema_limits: &SchemaLimits,
+        fsm_limits: JobFsmLimits,
+    ) -> Result<bool> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let mut selected = None;
+            for state in self.live_ocomp_fsm_states(schema_limits, fsm_limits)? {
+                let intent_id = state
+                    .projection()
+                    .live_intent_id
+                    .ok_or_else(|| fatal("OCOMP live scheduler has no IntentId"))?;
+                let record = self
+                    .ocomp_job_record(intent_id, schema_limits)?
+                    .ok_or_else(|| fatal("OCOMP live scheduler job is missing"))?;
+                if record.status != OcompJobStatus::AwaitingFinality {
+                    continue;
+                }
+                let Some(finalized) = record.finalized.clone() else {
+                    continue;
+                };
+                if at_height < finalized.open_height {
+                    continue;
+                }
+                if at_height > finalized.open_height {
+                    return Err(fatal(
+                        "OCOMP consensus skipped the exact voting-open height",
+                    ));
+                }
+                if selected
+                    .replace((state, intent_id, record, finalized))
+                    .is_some()
+                {
+                    return Err(fatal(
+                        "multiple OCOMP jobs are due at one bounded open height",
+                    ));
+                }
+            }
+            let Some((mut state, intent_id, mut record, finalized)) = selected else {
+                return Ok(false);
+            };
+            state
+                .apply(
+                    JobFsmCommand::OpenVoting {
+                        at_height,
+                        deadline_height: finalized.deadline_height,
+                    },
+                    fsm_limits,
+                )
+                .map_err(|error| fatal(error.to_string()))?;
+            let accountability = OcompVoteAccountabilityV1::empty(
+                finalized.job_id,
+                record.intent.result_committee_snapshot_hash,
+            )
+            .map_err(|error| fatal(format!("create OCOMP vote slots: {error}")))?;
+            let slot = self.ocomp_vote_accountability.get_bytes(&finalized.job_id);
+            if !slot.is_empty()? {
+                return Err(fatal("OCOMP vote accountability already exists"));
+            }
+            slot.write(
+                &accountability
+                    .encode_canonical(schema_limits)
+                    .map_err(|error| fatal(format!("encode OCOMP vote slots: {error}")))?,
+            )?;
+            let mut response_index = self.read_response_deadline_index()?;
+            insert_response_deadline_key(
+                &mut response_index,
+                ResponseDeadlineKey {
+                    deadline_height: finalized.deadline_height,
+                    job_id: finalized.job_id,
+                    intent_id,
+                },
+            )?;
+            record.status = OcompJobStatus::VotingOpen;
+            self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
+            self.write_ocomp_state(&state)?;
+            self.write_live_scheduler(&state)?;
+            self.write_response_deadline_index(&response_index)?;
+            Ok(true)
+        })
+    }
+
     /// Applies the exclusive begin-zone expiry to the exact live index.
     pub(crate) fn expire_ocomp_job(
         &mut self,
+        intent_id: B256,
         at_height: u64,
         at_time: u64,
         schema_limits: &SchemaLimits,
@@ -406,12 +582,15 @@ impl MetadosisContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let mut state = self
-                .live_ocomp_fsm_state(schema_limits, fsm_limits)?
+                .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
                 .ok_or_else(|| fatal("OCOMP expiry index is empty"))?;
             let live_intent_id = state
                 .projection()
                 .live_intent_id
                 .ok_or_else(|| fatal("OCOMP expiry index has no live intent"))?;
+            if live_intent_id != intent_id {
+                return Err(fatal("OCOMP expiry selected a different live job"));
+            }
             let mut record = self
                 .ocomp_job_record(live_intent_id, schema_limits)?
                 .ok_or_else(|| fatal("OCOMP live index points to a missing job"))?;
@@ -443,7 +622,7 @@ impl MetadosisContract<'_> {
             }
 
             record.status = OcompJobStatus::Expired;
-            record.terminal = Some(OcompJobTerminalV1 {
+            record.terminal = Some(LysisTerminalV1 {
                 outcome: OcompTerminalOutcome::Expired,
                 terminal_height: terminal.terminal_height,
                 terminal_time: terminal.terminal_time,
@@ -468,7 +647,7 @@ impl MetadosisContract<'_> {
                     .checked_add_carry_over(retained_lysis_budget)?;
                 self.mark_wwd_failed(wwd)?;
                 self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
-                self.ocomp_scheduler.clear()?;
+                self.remove_live_scheduler(live_intent_id)?;
                 return Ok(OcompExpiryDisposition::TerminalNoRetry {
                     next_pending_nonce,
                     carry_over,
@@ -484,15 +663,17 @@ impl MetadosisContract<'_> {
             insert_ready_key(&mut ready_index, ready_key)?;
             self.write_ocomp_state(&state)?;
             self.write_ready_index(&ready_index)?;
-            self.ocomp_scheduler.clear()?;
+            self.remove_live_scheduler(live_intent_id)?;
             Ok(OcompExpiryDisposition::RetryScheduled { next_pending_nonce })
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn commit_ocomp_conflict(
         &mut self,
         intent_id: B256,
         completed_binding: OcompCompletedBindingV1,
+        quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
         at_height: u64,
         at_time: u64,
         schema_limits: &SchemaLimits,
@@ -501,7 +682,7 @@ impl MetadosisContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let mut state = self
-                .live_ocomp_fsm_state(schema_limits, fsm_limits)?
+                .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
                 .ok_or_else(|| fatal("OCOMP conflict has no live job"))?;
             if state.projection().live_intent_id != Some(intent_id) {
                 return Err(fatal("OCOMP conflict IntentId is not the live job"));
@@ -509,17 +690,20 @@ impl MetadosisContract<'_> {
             let mut record = self
                 .ocomp_job_record(intent_id, schema_limits)?
                 .ok_or_else(|| fatal("OCOMP conflict job record is missing"))?;
-            if record.status != OcompJobStatus::OffchainPending || record.terminal.is_some() {
-                return Err(fatal("OCOMP conflict requires a pending job"));
+            if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
+                return Err(fatal("OCOMP conflict requires a voting-open job"));
             }
-            if at_height >= record.intent.deadline_height {
-                return Err(fatal(
-                    "OCOMP conflict is at or after the exclusive deadline",
-                ));
+            if record
+                .finalized
+                .as_ref()
+                .and_then(|finalized| finalized.quorum.as_ref())
+                .is_some()
+            {
+                return Err(fatal("OCOMP conflict job already has a quorum"));
             }
 
             completed_binding
-                .validate_semantics(schema_limits)
+                .validate_semantics(quorum, schema_limits)
                 .map_err(|error| fatal(format!("invalid OCOMP conflict binding: {error}")))?;
             let receipt = &completed_binding.terminal_receipt;
             let activation_preconditions_hash = record
@@ -563,8 +747,13 @@ impl MetadosisContract<'_> {
             }
 
             let projection = state.projection();
+            record
+                .finalized
+                .as_mut()
+                .ok_or_else(|| fatal("OCOMP conflict job is not finalized"))?
+                .quorum = Some(quorum.clone());
             record.status = OcompJobStatus::Conflicted;
-            record.terminal = Some(OcompJobTerminalV1 {
+            record.terminal = Some(LysisTerminalV1 {
                 outcome: OcompTerminalOutcome::Conflicted,
                 terminal_height: at_height,
                 terminal_time: at_time,
@@ -584,7 +773,7 @@ impl MetadosisContract<'_> {
             insert_ready_key(&mut ready_index, ready_key)?;
             self.write_ocomp_state(&state)?;
             self.write_ready_index(&ready_index)?;
-            self.ocomp_scheduler.clear()?;
+            self.remove_live_scheduler(intent_id)?;
             Ok(terminal.next_pending_nonce)
         })
     }
@@ -605,13 +794,14 @@ impl MetadosisContract<'_> {
         activated_at_height: u64,
         activated_at_time: u64,
         permit: LysisTerminalPermitV1<'_, '_>,
+        quorum: &outbe_ocomp_protocol::vote::OcompQuorumV1,
         schema_limits: &SchemaLimits,
         fsm_limits: JobFsmLimits,
     ) -> Result<OcompCompletedBindingV1> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let state = self
-                .live_ocomp_fsm_state(schema_limits, fsm_limits)?
+                .live_ocomp_fsm_state_by_intent(intent_id, schema_limits, fsm_limits)?
                 .ok_or_else(|| fatal("OCOMP completion has no live job"))?;
             let projection = state.projection();
             if projection.live_intent_id != Some(intent_id) {
@@ -620,13 +810,16 @@ impl MetadosisContract<'_> {
             let mut record = self
                 .ocomp_job_record(intent_id, schema_limits)?
                 .ok_or_else(|| fatal("OCOMP completion job record is missing"))?;
-            if record.status != OcompJobStatus::OffchainPending || record.terminal.is_some() {
-                return Err(fatal("OCOMP completion requires a pending job"));
+            if record.status != OcompJobStatus::VotingOpen || record.terminal.is_some() {
+                return Err(fatal("OCOMP completion requires a voting-open job"));
             }
-            if activated_at_height >= record.intent.deadline_height {
-                return Err(fatal(
-                    "OCOMP completion is at or after the exclusive deadline",
-                ));
+            if record
+                .finalized
+                .as_ref()
+                .and_then(|finalized| finalized.quorum.as_ref())
+                .is_some()
+            {
+                return Err(fatal("OCOMP completion job already has a quorum"));
             }
             if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
@@ -693,12 +886,15 @@ impl MetadosisContract<'_> {
                 job_id: binding.job_id,
                 activation_call_id: permit.activation_call_id(),
                 result_digest: binding.result_digest,
+                quorum_height: quorum.quorum_height,
+                quorum_signer_bitmap: quorum.signer_bitmap,
+                quorum_evidence_hash: quorum.evidence_hash,
                 result_evidence_hash,
                 terminal_receipt_hash,
                 terminal_receipt: receipt,
             };
             completed_binding
-                .validate_semantics(schema_limits)
+                .validate_semantics(quorum, schema_limits)
                 .map_err(|error| fatal(format!("invalid OCOMP completed binding: {error}")))?;
 
             self.ocomp_active_lysis_generations.get_bytes(&wwd).write(
@@ -706,8 +902,13 @@ impl MetadosisContract<'_> {
                     .encode_canonical(schema_limits)
                     .map_err(|error| fatal(format!("encode active Lysis generation: {error}")))?,
             )?;
+            record
+                .finalized
+                .as_mut()
+                .ok_or_else(|| fatal("OCOMP completion job is not finalized"))?
+                .quorum = Some(quorum.clone());
             record.status = OcompJobStatus::Completed;
-            record.terminal = Some(OcompJobTerminalV1 {
+            record.terminal = Some(LysisTerminalV1 {
                 outcome: OcompTerminalOutcome::Completed,
                 terminal_height: activated_at_height,
                 terminal_time: activated_at_time,
@@ -717,7 +918,7 @@ impl MetadosisContract<'_> {
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
             self.ocomp_terminal_intents.push(intent_id)?;
             self.mark_ocomp_wwd_completed(wwd)?;
-            self.ocomp_scheduler.clear()?;
+            self.remove_live_scheduler(intent_id)?;
             self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
 
             let frozen = &record.intent.frozen_metadosis_values;
@@ -786,6 +987,45 @@ impl MetadosisContract<'_> {
             }
         }
         Ok(record)
+    }
+
+    pub fn result_vote_accountability(
+        &self,
+        job_id: B256,
+        limits: &SchemaLimits,
+    ) -> Result<Option<OcompVoteAccountabilityV1>> {
+        let accountability = read_canonical_optional(
+            &self.ocomp_vote_accountability.get_bytes(&job_id),
+            max_canonical_object_bytes(limits)?,
+            |encoded| OcompVoteAccountabilityV1::decode_canonical(encoded, limits),
+            "OCOMP vote accountability",
+        )?;
+        if accountability
+            .as_ref()
+            .is_some_and(|accountability| accountability.job_id != job_id)
+        {
+            return Err(fatal(
+                "OCOMP vote accountability storage key/JobId mismatch",
+            ));
+        }
+        Ok(accountability)
+    }
+
+    pub(crate) fn write_result_vote_accountability(
+        &self,
+        accountability: &OcompVoteAccountabilityV1,
+        limits: &SchemaLimits,
+    ) -> Result<()> {
+        accountability
+            .validate_semantics(limits)
+            .map_err(|error| fatal(format!("invalid OCOMP vote accountability: {error}")))?;
+        self.ocomp_vote_accountability
+            .get_bytes(&accountability.job_id)
+            .write(
+                &accountability
+                    .encode_canonical(limits)
+                    .map_err(|error| fatal(format!("encode OCOMP vote accountability: {error}")))?,
+            )
     }
 
     pub fn active_lysis_generation(
@@ -891,23 +1131,38 @@ impl MetadosisContract<'_> {
         Ok(state)
     }
 
-    pub(crate) fn live_ocomp_fsm_state(
+    pub(crate) fn live_ocomp_fsm_state_by_intent(
         &self,
+        intent_id: B256,
         schema_limits: &SchemaLimits,
         fsm_limits: JobFsmLimits,
     ) -> Result<Option<JobFsmState>> {
-        let encoded = self.ocomp_scheduler.read()?;
-        if encoded.is_empty() {
-            return Ok(None);
+        Ok(self
+            .live_ocomp_fsm_states(schema_limits, fsm_limits)?
+            .into_iter()
+            .find(|state| state.projection().live_intent_id == Some(intent_id)))
+    }
+
+    pub(crate) fn live_ocomp_fsm_states(
+        &self,
+        schema_limits: &SchemaLimits,
+        fsm_limits: JobFsmLimits,
+    ) -> Result<Vec<JobFsmState>> {
+        let snapshots = decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?;
+        let mut states = Vec::new();
+        states
+            .try_reserve_exact(snapshots.len())
+            .map_err(|_| fatal("allocate bounded OCOMP live scheduler"))?;
+        for snapshot in snapshots {
+            let state = self.ocomp_fsm_state(snapshot.worldwide_day, schema_limits, fsm_limits)?;
+            if state.projection().phase != super::state::DayPhase::OffchainPending
+                || encode_scheduler(&state)? != encode_scheduler_snapshot(&snapshot)?
+            {
+                return Err(fatal("OCOMP live index/FSM mismatch"));
+            }
+            states.push(state);
         }
-        let snapshot = decode_scheduler(&encoded)?;
-        let state = self.ocomp_fsm_state(snapshot.worldwide_day, schema_limits, fsm_limits)?;
-        if state.projection().phase != super::state::DayPhase::OffchainPending
-            || encode_scheduler(&state)? != encoded
-        {
-            return Err(fatal("OCOMP live index/FSM mismatch"));
-        }
-        Ok(Some(state))
+        Ok(states)
     }
 
     fn validate_persisted_equivalences(
@@ -970,12 +1225,21 @@ impl MetadosisContract<'_> {
                 let record = self
                     .ocomp_job_record(intent_id, limits)?
                     .ok_or_else(|| fatal("OCOMP live scheduler key has no job record"))?;
-                if record.status != OcompJobStatus::OffchainPending
-                    || record.terminal.is_some()
+                let expected_deadline = match record.status {
+                    OcompJobStatus::AwaitingFinality => None,
+                    OcompJobStatus::VotingOpen => Some(
+                        record
+                            .finalized
+                            .as_ref()
+                            .ok_or_else(|| fatal("live OCOMP job has no finalized binding"))?
+                            .deadline_height,
+                    ),
+                    _ => return Err(fatal("terminal OCOMP job remains in the live scheduler")),
+                };
+                if record.terminal.is_some()
                     || record.intent.wwd != projection.worldwide_day.value()
                     || record.intent.pending_nonce != projection.pending_nonce
-                    || record.intent.deadline_height
-                        != projection.deadline_height.unwrap_or_default()
+                    || expected_deadline != projection.deadline_height
                 {
                     return Err(fatal("OCOMP live scheduler/job record mismatch"));
                 }
@@ -991,7 +1255,7 @@ impl MetadosisContract<'_> {
         Ok(())
     }
 
-    fn write_ocomp_job_record(
+    pub(crate) fn write_ocomp_job_record(
         &self,
         intent_id: B256,
         record: &OcompJobRecordV1,
@@ -1020,7 +1284,60 @@ impl MetadosisContract<'_> {
         if state.projection().phase != super::state::DayPhase::OffchainPending {
             return Err(fatal("OCOMP live scheduler requires pending state"));
         }
-        self.ocomp_scheduler.write(&encode_scheduler(state)?)
+        let snapshot = scheduler_snapshot(state)?;
+        let intent_id = snapshot
+            .live
+            .as_ref()
+            .ok_or_else(|| fatal("OCOMP live scheduler has no live attempt"))?
+            .intent_id;
+        let mut index = decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?;
+        if let Some(position) = index.iter().position(|existing| {
+            existing.worldwide_day == snapshot.worldwide_day
+                || existing
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.intent_id == intent_id)
+        }) {
+            let existing_intent = index[position]
+                .live
+                .as_ref()
+                .ok_or_else(|| fatal("OCOMP live index contains a non-live state"))?
+                .intent_id;
+            if index[position].worldwide_day != snapshot.worldwide_day
+                || existing_intent != intent_id
+            {
+                return Err(fatal("OCOMP live scheduler identity changed"));
+            }
+            index[position] = snapshot;
+        } else {
+            if index.len() >= MAX_LIVE_JOBS {
+                return Err(fatal("OCOMP live scheduler capacity exhausted"));
+            }
+            index.push(snapshot);
+        }
+        index.sort_by_key(live_snapshot_key);
+        self.ocomp_scheduler
+            .write(&encode_live_scheduler_index(&index)?)
+    }
+
+    fn remove_live_scheduler(&self, intent_id: B256) -> Result<()> {
+        let mut index = decode_live_scheduler_index(&self.ocomp_scheduler.read()?)?;
+        let position = index
+            .iter()
+            .position(|snapshot| {
+                snapshot
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.intent_id == intent_id)
+            })
+            .ok_or_else(|| fatal("OCOMP live scheduler is missing the exact job"))?;
+        index.remove(position);
+        if index.is_empty() {
+            self.ocomp_scheduler.clear()
+        } else {
+            self.ocomp_scheduler
+                .write(&encode_live_scheduler_index(&index)?)
+        }
     }
 
     fn read_ready_index(&self) -> Result<Vec<ReadyIndexKey>> {
@@ -1032,6 +1349,31 @@ impl MetadosisContract<'_> {
             return self.ocomp_ready_index.clear();
         }
         self.ocomp_ready_index.write(&encode_ready_index(index)?)
+    }
+
+    pub(crate) fn read_response_deadline_index(&self) -> Result<Vec<ResponseDeadlineKey>> {
+        decode_response_deadline_index(&self.ocomp_response_deadline_index.read()?)
+    }
+
+    pub(crate) fn write_response_deadline_index(
+        &self,
+        index: &[ResponseDeadlineKey],
+    ) -> Result<()> {
+        if index.is_empty() {
+            return self.ocomp_response_deadline_index.clear();
+        }
+        self.ocomp_response_deadline_index
+            .write(&encode_response_deadline_index(index)?)
+    }
+
+    pub(crate) fn response_window_for_job(
+        &self,
+        job_id: B256,
+    ) -> Result<Option<ResponseDeadlineKey>> {
+        Ok(self
+            .read_response_deadline_index()?
+            .into_iter()
+            .find(|key| key.job_id == job_id))
     }
 }
 
@@ -1167,8 +1509,146 @@ fn validate_ready_index(index: &[ReadyIndexKey]) -> Result<()> {
     Ok(())
 }
 
+fn insert_response_deadline_key(
+    index: &mut Vec<ResponseDeadlineKey>,
+    key: ResponseDeadlineKey,
+) -> Result<()> {
+    if key.job_id.is_zero() || key.intent_id.is_zero() || key.deadline_height == 0 {
+        return Err(fatal("OCOMP response index contains a reserved zero field"));
+    }
+    if index
+        .iter()
+        .any(|existing| existing.job_id == key.job_id || existing.intent_id == key.intent_id)
+    {
+        return Err(fatal("OCOMP response index already contains this job"));
+    }
+    if index.len() >= MAX_RESPONSE_WINDOWS {
+        return Err(fatal("OCOMP response index capacity exhausted"));
+    }
+    let position = index
+        .binary_search(&key)
+        .unwrap_or_else(|position| position);
+    index.insert(position, key);
+    validate_response_deadline_index(index)
+}
+
+pub(crate) fn remove_response_deadline_key(
+    index: &mut Vec<ResponseDeadlineKey>,
+    key: ResponseDeadlineKey,
+) -> Result<()> {
+    let position = index
+        .binary_search(&key)
+        .map_err(|_| fatal("OCOMP response index is missing the exact job"))?;
+    index.remove(position);
+    validate_response_deadline_index(index)
+}
+
+fn encode_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<Vec<u8>> {
+    validate_response_deadline_index(index)?;
+    let count =
+        u16::try_from(index.len()).map_err(|_| fatal("OCOMP response index count exceeds u16"))?;
+    let capacity = RESPONSE_INDEX_KEY_LEN
+        .checked_mul(index.len())
+        .and_then(|bytes| RESPONSE_INDEX_HEADER_LEN.checked_add(bytes))
+        .ok_or_else(|| fatal("OCOMP response index encoded length overflow"))?;
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(capacity)
+        .map_err(|_| fatal("allocate bounded OCOMP response index"))?;
+    encoded.extend_from_slice(&RESPONSE_INDEX_MAGIC);
+    encoded.extend_from_slice(&RESPONSE_INDEX_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&count.to_be_bytes());
+    for key in index {
+        encoded.extend_from_slice(&key.deadline_height.to_be_bytes());
+        encoded.extend_from_slice(key.job_id.as_slice());
+        encoded.extend_from_slice(key.intent_id.as_slice());
+    }
+    if encoded.len() != capacity {
+        return Err(fatal("OCOMP response index encoded length mismatch"));
+    }
+    Ok(encoded)
+}
+
+fn decode_response_deadline_index(encoded: &[u8]) -> Result<Vec<ResponseDeadlineKey>> {
+    if encoded.is_empty() {
+        return Ok(Vec::new());
+    }
+    if encoded.len() < RESPONSE_INDEX_HEADER_LEN {
+        return Err(fatal("OCOMP response index is shorter than its header"));
+    }
+    let mut reader = FixedReader::new(encoded);
+    if reader.take::<4>()? != RESPONSE_INDEX_MAGIC
+        || u16::from_be_bytes(reader.take::<2>()?) != RESPONSE_INDEX_VERSION
+    {
+        return Err(fatal("OCOMP response index magic/version mismatch"));
+    }
+    let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
+    if count > MAX_RESPONSE_WINDOWS {
+        return Err(fatal("OCOMP response index exceeds its fixed capacity"));
+    }
+    let expected_len = RESPONSE_INDEX_KEY_LEN
+        .checked_mul(count)
+        .and_then(|bytes| RESPONSE_INDEX_HEADER_LEN.checked_add(bytes))
+        .ok_or_else(|| fatal("OCOMP response index declared length overflow"))?;
+    if encoded.len() != expected_len {
+        return Err(fatal("OCOMP response index has non-canonical length"));
+    }
+    let mut index = Vec::new();
+    index
+        .try_reserve_exact(count)
+        .map_err(|_| fatal("allocate bounded OCOMP response index"))?;
+    for _ in 0..count {
+        index.push(ResponseDeadlineKey {
+            deadline_height: reader.u64()?,
+            job_id: B256::from(reader.take::<32>()?),
+            intent_id: B256::from(reader.take::<32>()?),
+        });
+    }
+    reader.finish()?;
+    validate_response_deadline_index(&index)?;
+    Ok(index)
+}
+
+fn validate_response_deadline_index(index: &[ResponseDeadlineKey]) -> Result<()> {
+    if index.len() > MAX_RESPONSE_WINDOWS {
+        return Err(fatal("OCOMP response index exceeds its fixed capacity"));
+    }
+    if index
+        .iter()
+        .any(|key| key.deadline_height == 0 || key.job_id.is_zero() || key.intent_id.is_zero())
+    {
+        return Err(fatal("OCOMP response index contains a reserved zero field"));
+    }
+    if index.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(fatal(
+            "OCOMP response index is not in strict canonical order",
+        ));
+    }
+    for (position, key) in index.iter().enumerate() {
+        if index[..position]
+            .iter()
+            .any(|existing| existing.job_id == key.job_id || existing.intent_id == key.intent_id)
+        {
+            return Err(fatal("OCOMP response index contains a duplicate job"));
+        }
+    }
+    Ok(())
+}
+
 fn encode_scheduler(state: &JobFsmState) -> Result<Vec<u8>> {
-    let snapshot = state.snapshot();
+    encode_scheduler_snapshot(&scheduler_snapshot(state)?)
+}
+
+fn scheduler_snapshot(state: &JobFsmState) -> Result<JobFsmSnapshot> {
+    let mut snapshot = state.snapshot();
+    snapshot.terminal.clear();
+    if snapshot.live.is_none() && snapshot.ready.is_none() {
+        return Err(fatal("OCOMP scheduler state has no active attempt"));
+    }
+    Ok(snapshot)
+}
+
+fn encode_scheduler_snapshot(snapshot: &JobFsmSnapshot) -> Result<Vec<u8>> {
     let mut encoded = Vec::with_capacity(SCHEDULER_ENCODED_LEN);
     encoded.extend_from_slice(&SCHEDULER_MAGIC);
     encoded.extend_from_slice(&SCHEDULER_VERSION.to_be_bytes());
@@ -1190,7 +1670,7 @@ fn encode_scheduler(state: &JobFsmState) -> Result<Vec<u8>> {
             encoded.extend_from_slice(&0_u64.to_be_bytes());
             encoded.extend_from_slice(live.intent_id.as_slice());
             encoded.extend_from_slice(&live.requested_height.to_be_bytes());
-            encoded.extend_from_slice(&live.deadline_height.to_be_bytes());
+            encoded.extend_from_slice(&live.deadline_height.unwrap_or(0).to_be_bytes());
             encode_retained_effect(&mut encoded, Some(live.retained_effect));
         }
         _ => return Err(fatal("encode invalid OCOMP scheduler phase cardinality")),
@@ -1199,6 +1679,116 @@ fn encode_scheduler(state: &JobFsmState) -> Result<Vec<u8>> {
         return Err(fatal("OCOMP scheduler encoded length mismatch"));
     }
     Ok(encoded)
+}
+
+fn live_snapshot_key(snapshot: &JobFsmSnapshot) -> (u32, B256) {
+    (
+        snapshot.worldwide_day.value(),
+        snapshot
+            .live
+            .as_ref()
+            .map_or(B256::ZERO, |live| live.intent_id),
+    )
+}
+
+fn encode_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<Vec<u8>> {
+    validate_live_scheduler_index(index)?;
+    let count =
+        u16::try_from(index.len()).map_err(|_| fatal("OCOMP live index count exceeds u16"))?;
+    let capacity = SCHEDULER_ENCODED_LEN
+        .checked_mul(index.len())
+        .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
+        .ok_or_else(|| fatal("OCOMP live index encoded length overflow"))?;
+    let mut encoded = Vec::new();
+    encoded
+        .try_reserve_exact(capacity)
+        .map_err(|_| fatal("allocate bounded OCOMP live index"))?;
+    encoded.extend_from_slice(&LIVE_INDEX_MAGIC);
+    encoded.extend_from_slice(&LIVE_INDEX_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&count.to_be_bytes());
+    for snapshot in index {
+        encoded.extend_from_slice(&encode_scheduler_snapshot(snapshot)?);
+    }
+    if encoded.len() != capacity {
+        return Err(fatal("OCOMP live index encoded length mismatch"));
+    }
+    Ok(encoded)
+}
+
+fn decode_live_scheduler_index(encoded: &[u8]) -> Result<Vec<JobFsmSnapshot>> {
+    if encoded.is_empty() {
+        return Ok(Vec::new());
+    }
+    if encoded.len() < LIVE_INDEX_HEADER_LEN {
+        return Err(fatal("OCOMP live index is shorter than its header"));
+    }
+    let mut reader = FixedReader::new(encoded);
+    if reader.take::<4>()? != LIVE_INDEX_MAGIC
+        || u16::from_be_bytes(reader.take::<2>()?) != LIVE_INDEX_VERSION
+    {
+        return Err(fatal("OCOMP live index magic/version mismatch"));
+    }
+    let count = usize::from(u16::from_be_bytes(reader.take::<2>()?));
+    if count == 0 || count > MAX_LIVE_JOBS {
+        return Err(fatal("OCOMP live index count is outside its bound"));
+    }
+    let expected_len = SCHEDULER_ENCODED_LEN
+        .checked_mul(count)
+        .and_then(|bytes| LIVE_INDEX_HEADER_LEN.checked_add(bytes))
+        .ok_or_else(|| fatal("OCOMP live index declared length overflow"))?;
+    if encoded.len() != expected_len {
+        return Err(fatal("OCOMP live index has non-canonical length"));
+    }
+    let mut index = Vec::new();
+    index
+        .try_reserve_exact(count)
+        .map_err(|_| fatal("allocate bounded OCOMP live index"))?;
+    for _ in 0..count {
+        index.push(decode_scheduler(&reader.take::<SCHEDULER_ENCODED_LEN>()?)?);
+    }
+    reader.finish()?;
+    validate_live_scheduler_index(&index)?;
+    Ok(index)
+}
+
+fn validate_live_scheduler_index(index: &[JobFsmSnapshot]) -> Result<()> {
+    if index.len() > MAX_LIVE_JOBS {
+        return Err(fatal("OCOMP live index exceeds its fixed capacity"));
+    }
+    for snapshot in index {
+        if snapshot.ready.is_some()
+            || !snapshot.terminal.is_empty()
+            || snapshot
+                .live
+                .as_ref()
+                .is_none_or(|live| live.intent_id.is_zero())
+        {
+            return Err(fatal("OCOMP live index contains a non-live state"));
+        }
+    }
+    if index
+        .windows(2)
+        .any(|pair| live_snapshot_key(&pair[0]) >= live_snapshot_key(&pair[1]))
+    {
+        return Err(fatal("OCOMP live index is not in strict canonical order"));
+    }
+    for (position, snapshot) in index.iter().enumerate() {
+        let intent_id = snapshot
+            .live
+            .as_ref()
+            .ok_or_else(|| fatal("OCOMP live index contains a non-live state"))?
+            .intent_id;
+        if index[..position].iter().any(|existing| {
+            existing.worldwide_day == snapshot.worldwide_day
+                || existing
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.intent_id == intent_id)
+        }) {
+            return Err(fatal("OCOMP live index contains a duplicate job"));
+        }
+    }
+    Ok(())
 }
 
 fn encode_retained_effect(encoded: &mut Vec<u8>, effect: Option<RetainedRequestEffectSnapshot>) {
@@ -1260,7 +1850,7 @@ fn decode_scheduler(encoded: &[u8]) -> Result<JobFsmSnapshot> {
                     intent_id,
                     pending_nonce,
                     requested_height,
-                    deadline_height,
+                    deadline_height: (deadline_height != 0).then_some(deadline_height),
                     retained_effect: retained_effect
                         .ok_or_else(|| fatal("pending OCOMP scheduler has no retained effect"))?,
                 }),
@@ -1296,7 +1886,7 @@ fn decode_retained_effect(
     }
 }
 
-fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
+pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
     let capacity = &profile.capacity_profile;
     if profile.chain_id == 0
         || profile.genesis_hash.is_zero()
@@ -1325,7 +1915,7 @@ fn validate_request_profile(profile: &OcompRequestProfile) -> Result<()> {
 
     if capacity.max_tributes_per_work_shard != max_tributes_per_work_shard
         || capacity.max_workers_per_domain != 4
-        || capacity.max_pending_jobs != 1
+        || capacity.max_pending_jobs != 2
         || capacity.max_intents_per_block != 1
         || capacity.max_activations_per_block != 1
         || capacity.max_ready_inspections_per_block != 1

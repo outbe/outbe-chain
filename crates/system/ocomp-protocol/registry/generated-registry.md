@@ -21,8 +21,6 @@
 | `0x000e` | `ActivationPayloadV1` | `ActivationPayloadV1` |
 | `0x000f` | `OcompCommitteeSnapshotV1` | `OcompCommitteeSnapshotV1` |
 | `0x0010` | `OcompKeyRegistrationV1` | `OcompKeyRegistrationV1` |
-| `0x0011` | `ExecutionCertificateV1` | `ExecutionCertificateV1` |
-| `0x0012` | `PoCActivationV1` | `PoCActivationV1` |
 | `0x0013` | `ActiveGenerationV1` | `ActiveGenerationV1` |
 | `0x0014` | `AggregateActivationReceiptV1` | `AggregateActivationReceiptV1` |
 | `0x0015` | `NodBatchReceiptV1` | `NodBatchReceiptV1` |
@@ -30,12 +28,18 @@
 | `0x0017` | `TributeReceiptV1` | `TributeReceiptV1` |
 | `0x0018` | `RequestBudgetSplitReceiptV1` | `RequestBudgetSplitReceiptV1` |
 | `0x0019` | `CarryOverReceiptV1` | `CarryOverReceiptV1` |
-| `0x001a` | `CandidateAnnouncementV1` | `CandidateAnnouncementV1` |
 | `0x001b` | `SignOnceRecordV1` | `SignOnceRecordV1` |
 | `0x001c` | `ActivationCallCoreV1` | `ActivationCallCoreV1` |
 | `0x001d` | `LysisArithmeticSummaryV1` | `LysisArithmeticSummaryV1` |
 | `0x001e` | `OcompJobRecordV1` | `OcompJobRecordV1` |
 | `0x001f` | `ShuffleRunArtifactV1` | `ShuffleRunArtifactV1` |
+| `0x0020` | `ResultVoteV1` | `ResultVoteV1` |
+| `0x0021` | `EquivocationEvidenceV1` | `EquivocationEvidenceV1` |
+| `0x0022` | `ResultVoteSlotV1` | `ResultVoteSlotV1` |
+| `0x0023` | `OcompQuorumV1` | `OcompQuorumV1` |
+| `0x0024` | `OcompAccountabilitySummaryV1` | `OcompAccountabilitySummaryV1` |
+| `0x0025` | `OcompVoteAccountabilityV1` | `OcompVoteAccountabilityV1` |
+| `0x0026` | `LysisTerminalV1` | `LysisTerminalV1` |
 
 ## Hash domains
 
@@ -47,6 +51,7 @@
 | — | `Intent` | `OUTBE_OCOMP_INTENT_V1` |
 | — | `IntentSlot` | `OUTBE_OCOMP_INTENT_SLOT_V1` |
 | — | `Job` | `OUTBE_OCOMP_JOB_V1` |
+| — | `InputLease` | `OUTBE_OCOMP_INPUT_LEASE_V1` |
 | — | `InputChunk` | `OUTBE_OCOMP_INPUT_CHUNK_V1` |
 | — | `InputManifest` | `OUTBE_OCOMP_INPUT_MANIFEST_V1` |
 | — | `CodecDescriptor` | `OUTBE_OCOMP_CODEC_DESCRIPTOR_V1` |
@@ -63,6 +68,10 @@
 | — | `ShuffleRunNode` | `OUTBE_OCOMP_SHUFFLE_RUN_NODE_V1` |
 | — | `ResultChunk` | `OUTBE_OCOMP_RESULT_CHUNK_V1` |
 | — | `Result` | `OUTBE_OCOMP_RESULT_V1` |
+| — | `ResultVoteSubject` | `OUTBE_OCOMP_RESULT_VOTE_SUBJECT_V1` |
+| — | `QuorumEvidence` | `OUTBE_OCOMP_QUORUM_EVIDENCE_V1` |
+| — | `VoteAccountability` | `OUTBE_OCOMP_VOTE_ACCOUNTABILITY_V1` |
+| — | `LysisTerminal` | `OUTBE_OCOMP_LYSIS_TERMINAL_V1` |
 | — | `ValidatorIdentity` | `OUTBE_OCOMP_VALIDATOR_IDENTITY_V1` |
 | — | `Committee` | `OUTBE_OCOMP_COMMITTEE_V1` |
 | — | `KeyPop` | `OUTBE_OCOMP_KEY_POP_V1` |

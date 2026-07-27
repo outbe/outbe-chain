@@ -6,7 +6,7 @@
 
 pub mod abi;
 pub mod activation;
-pub mod certificate;
+pub mod capacity;
 pub mod codec;
 pub mod committee;
 pub mod common;
@@ -23,10 +23,11 @@ pub mod profile;
 pub mod receipts;
 pub mod registry;
 pub mod result;
-pub mod shuffle;
 mod schema;
+pub mod shuffle;
 pub mod state;
 pub mod unit;
+pub mod vote;
 
 pub use codec::{
     decode_envelope, encode_envelope, ensure_strictly_increasing, require_canonical_reencoding,

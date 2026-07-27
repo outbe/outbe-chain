@@ -100,7 +100,10 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
             .map(|slot| (slot, slot_word(&storage, slot)))
             .collect::<Vec<_>>();
         assert_eq!(
-            raw_slots.iter().map(|(_, value)| *value).collect::<Vec<_>>(),
+            raw_slots
+                .iter()
+                .map(|(_, value)| *value)
+                .collect::<Vec<_>>(),
             vec![
                 U256::from_be_bytes(usd_denom.0),
                 U256::from_be_bytes(usd_pair.0),

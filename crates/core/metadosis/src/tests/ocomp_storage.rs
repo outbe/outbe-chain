@@ -16,9 +16,11 @@ use outbe_ocomp_protocol::{
     },
     registry::HashDomain,
     state::{OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
+    vote::OcompQuorumV1,
 };
 use outbe_primitives::{
     addresses::METADOSIS_ADDRESS,
+    block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, types::StorageKey, StorageHandle},
 };
 use outbe_promislimit::schema::PromisLimitContract;
@@ -51,7 +53,7 @@ pub(super) fn capacity_profile() -> CapacityProfileV1 {
         profile_id: B256::repeat_byte(0x22),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 1,
+        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -160,7 +162,7 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
 fn intent(
     pending_nonce: u64,
     request_height: u64,
-    deadline_height: u64,
+    _deadline_height: u64,
     receipt_hash: B256,
 ) -> JobIntentV1 {
     let attempt = u32::try_from(pending_nonce).unwrap();
@@ -223,8 +225,132 @@ fn intent(
         },
         result_committee_snapshot_hash: B256::repeat_byte(0x36),
         custody_committee_epoch_hash: None,
-        deadline_height,
     }
+}
+
+fn open_job(
+    contract: &mut MetadosisContract<'_>,
+    intent_id: B256,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+    fsm_limits: JobFsmLimits,
+) -> outbe_ocomp_protocol::state::OcompFinalizedJobV1 {
+    let finalized = contract
+        .record_ocomp_finality(
+            intent_id,
+            B256::repeat_byte(0x46),
+            B256::repeat_byte(0x98),
+            REQUEST_HEIGHT,
+            DEADLINE_HEIGHT - REQUEST_HEIGHT - 4,
+            limits,
+        )
+        .unwrap();
+    contract
+        .open_due_ocomp_voting(finalized.open_height, limits, fsm_limits)
+        .unwrap();
+    finalized
+}
+
+#[test]
+fn certified_parent_finality_records_only_the_exact_live_request_and_fails_closed_without_root() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let fsm_limits = JobFsmLimits {
+            max_terminal_records: 2,
+        };
+        let receipt = receipt();
+        let requested = intent(
+            0,
+            REQUEST_HEIGHT,
+            DEADLINE_HEIGHT,
+            receipt.receipt_hash(&limits).unwrap(),
+        );
+        let intent_id = requested.intent_id(&limits).unwrap();
+        let mut contract = MetadosisContract::new(storage.clone());
+        contract
+            .initialize_ocomp_request_profile(&request_profile(), &limits)
+            .unwrap();
+        create_ready_day(&mut contract, WWD);
+        contract
+            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
+            .unwrap();
+        contract
+            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .unwrap();
+
+        let finality_height = REQUEST_HEIGHT + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(finality_height, REQUEST_TIME + 1, 1),
+            storage,
+        );
+        assert!(
+            !crate::ocomp::expiry::record_certified_parent_finality(
+                &ctx,
+                REQUEST_HEIGHT - 1,
+                B256::repeat_byte(0x45),
+                B256::ZERO,
+            )
+            .unwrap(),
+            "an unrelated certified parent must not mutate the one live job"
+        );
+        assert!(MetadosisContract::new(ctx.storage.clone())
+            .ocomp_job_record(intent_id, &limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .is_none());
+
+        assert!(
+            crate::ocomp::expiry::record_certified_parent_finality(
+                &ctx,
+                REQUEST_HEIGHT,
+                B256::repeat_byte(0x46),
+                B256::ZERO,
+            )
+            .is_err(),
+            "the exact request cannot become final without its authenticated state root"
+        );
+        assert!(MetadosisContract::new(ctx.storage.clone())
+            .ocomp_job_record(intent_id, &limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .is_none());
+
+        let request_hash = B256::repeat_byte(0x46);
+        let request_state_root = B256::repeat_byte(0x98);
+        assert!(crate::ocomp::expiry::record_certified_parent_finality(
+            &ctx,
+            REQUEST_HEIGHT,
+            request_hash,
+            request_state_root,
+        )
+        .unwrap());
+        let finalized = MetadosisContract::new(ctx.storage.clone())
+            .ocomp_job_record(intent_id, &limits)
+            .unwrap()
+            .unwrap()
+            .finalized
+            .unwrap();
+        assert_eq!(finalized.finalized_request_block_hash, request_hash);
+        assert_eq!(finalized.finalized_request_state_root, request_state_root);
+        assert_eq!(finalized.finality_recorded_height, finality_height);
+        assert_eq!(finalized.open_height, finality_height + 4);
+        assert_eq!(
+            finalized.deadline_height,
+            finality_height + 4 + capacity_profile().result_deadline_blocks
+        );
+
+        assert!(
+            crate::ocomp::expiry::record_certified_parent_finality(
+                &ctx,
+                REQUEST_HEIGHT,
+                request_hash,
+                request_state_root,
+            )
+            .unwrap(),
+            "an exact consensus replay must be idempotent"
+        );
+    });
 }
 
 #[test]
@@ -264,11 +390,18 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
             .ocomp_job_record(first_intent_id, &limits)
             .unwrap()
             .unwrap();
-        assert_eq!(live_record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(live_record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(live_record.intent, first_intent);
 
+        open_job(&mut contract, first_intent_id, &limits, fsm_limits);
         contract
-            .expire_ocomp_job(DEADLINE_HEIGHT, REQUEST_TIME + 64, &limits, fsm_limits)
+            .expire_ocomp_job(
+                first_intent_id,
+                DEADLINE_HEIGHT,
+                REQUEST_TIME + 64,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(
@@ -319,8 +452,15 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             .commit_ocomp_request(&requested, &request_receipt, &limits, fsm_limits)
             .unwrap();
 
-        let job_id = B256::repeat_byte(0x51);
+        let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
+        let job_id = finalized.job_id;
         let result_digest = B256::repeat_byte(0x52);
+        let quorum = OcompQuorumV1 {
+            result_digest,
+            quorum_height: finalized.open_height,
+            signer_bitmap: 0b0111,
+            evidence_hash: B256::repeat_byte(0x55),
+        };
         let activation_call_id = B256::repeat_byte(0x53);
         let binding = EffectBindingV1 {
             intent_id,
@@ -354,6 +494,9 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             job_id,
             activation_call_id,
             result_digest,
+            quorum_height: quorum.quorum_height,
+            quorum_signer_bitmap: quorum.signer_bitmap,
+            quorum_evidence_hash: quorum.evidence_hash,
             result_evidence_hash: B256::repeat_byte(0x54),
             terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
             terminal_receipt,
@@ -364,6 +507,7 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
                 .commit_ocomp_conflict(
                     intent_id,
                     completed_binding.clone(),
+                    &quorum,
                     activation_height,
                     activation_time,
                     &limits,
@@ -449,7 +593,9 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
             contract.ocomp_job_record(intent_id, &limits).unwrap(),
             Some(outbe_ocomp_protocol::state::OcompJobRecordV1 {
                 intent: requested.clone(),
-                status: OcompJobStatus::OffchainPending,
+                intent_height: requested.logical_evaluation_height,
+                status: OcompJobStatus::AwaitingFinality,
+                finalized: None,
                 terminal: None,
             })
         );
@@ -485,7 +631,9 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
         let protocol_key = intent_storage_key(intent_id).unwrap();
         let original = OcompJobRecordV1 {
             intent: requested.clone(),
-            status: OcompJobStatus::OffchainPending,
+            intent_height: requested.logical_evaluation_height,
+            status: OcompJobStatus::AwaitingFinality,
+            finalized: None,
             terminal: None,
         };
         let original_bytes = original.encode_canonical(&limits).unwrap();
@@ -546,8 +694,15 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
             .commit_ocomp_request(&first_intent, &receipt, &limits, fsm_limits)
             .unwrap();
 
+        open_job(&mut contract, first_intent_id, &limits, fsm_limits);
         contract
-            .expire_ocomp_job(DEADLINE_HEIGHT, REQUEST_TIME + 64, &limits, fsm_limits)
+            .expire_ocomp_job(
+                first_intent_id,
+                DEADLINE_HEIGHT,
+                REQUEST_TIME + 64,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::FAILED);
@@ -572,7 +727,13 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         assert_eq!(terminal.next_pending_nonce, Some(1));
 
         assert!(contract
-            .expire_ocomp_job(DEADLINE_HEIGHT + 1, REQUEST_TIME + 65, &limits, fsm_limits,)
+            .expire_ocomp_job(
+                first_intent_id,
+                DEADLINE_HEIGHT + 1,
+                REQUEST_TIME + 65,
+                &limits,
+                fsm_limits,
+            )
             .is_err());
         assert_eq!(
             promis_limit.get_total_unallocated().unwrap(),

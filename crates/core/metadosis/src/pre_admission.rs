@@ -178,7 +178,7 @@ pub(crate) fn evaluate_pre_admission(
         .checked_add(candidate.max_result_summary_bytes)
         .and_then(|value| value.checked_add(candidate.max_activation_ocb1_bytes))
         .and_then(|value| value.checked_add(candidate.max_finalized_intent_proof_bytes))
-        .and_then(|value| value.checked_add(candidate.max_execution_certificate_bytes))
+        .and_then(|value| value.checked_add(candidate.max_result_vote_bytes))
     else {
         return Ok(arithmetic_overflow());
     };

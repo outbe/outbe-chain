@@ -30,7 +30,7 @@ scope:
         - source_specific_codec_mismatch_rejected
         - aggregate_opening_to_authenticated_records_and_roots
   forbidden_shortcuts:
-    - direct_activation_or_lysis_handler_for_public_claim
+    - direct_quorum_apply_or_lysis_handler_for_public_claim
     - direct_consensus_state_injection
     - direct_ocomp_fixture_job_result_or_root_injection
     - mocked_validator_domain
@@ -256,7 +256,7 @@ tests:
       - reproducible_profile_manifest
       - separate_batch_and_work_shard_caps
       - shard_cap_plus_one_two_shard_coverage
-      - whole_activation_cap_minus_one_cap_cap_plus_one_fixtures
+      - full_result_vote_cap_minus_one_cap_cap_plus_one_non_quorum_and_quorum_fixtures
       - generated_constant_parity
       - observed_minimum_machine_profile
       - five_cold_run_twenty_percent_headroom_report
@@ -265,9 +265,10 @@ tests:
     layer: BYTE
     lane: OCM-FAST
     planned_path: crates/system/ocomp-protocol/tests/finality_vectors.rs
-    production_entrypoint: FinalizedIntentProofV1 verifier
+    production_entrypoint: FinalizedIntentProofV1 verifier and consensus finality/open marker
     real_components:
       - production_finality_verifier
+      - production_ocomp_finality_open_transition
       - independent_vector_generator
     substitutions: []
     oracles:
@@ -276,6 +277,9 @@ tests:
     evidence:
       - valid_finality_vector
       - adversarial_finality_vectors
+      - finality_plus_three_remains_closed
+      - finality_plus_four_opens_exact_window
+      - open_and_deadline_checked_overflow_reject
   OCM-SEM-001:
     status: planned
     layer: PURE
@@ -284,7 +288,7 @@ tests:
     production_entrypoint: outbe_lysis::program_v1::execute
     real_components:
       - native_lysis_program
-      - independent_python_reference
+      - independent_rust_reference
     substitutions: []
     oracles:
       - REFERENCE_DIFF
@@ -357,7 +361,7 @@ tests:
     layer: MODULE
     lane: OCM-FAST
     planned_path: crates/core/lysis/tests/certified_boundary.rs
-    production_entrypoint: CertifiedLysisActivation and four activation owner APIs
+    production_entrypoint: private CertifiedLysisActivation apply capability and four owner APIs
     real_components:
       - production_capability_type
       - production_owner_signatures
@@ -374,7 +378,7 @@ tests:
     layer: MODULE
     lane: OCM-FAST
     planned_path: crates/core/lysis/tests/no_onchain_compute_boundary.rs
-    production_entrypoint: request and activation dependency graph
+    production_entrypoint: request, full-result vote and quorum-apply dependency graph
     real_components:
       - production_crate_dependencies
       - allowlisted_calculation_callers
@@ -418,11 +422,9 @@ tests:
       using an isolated provider; the public four-node path discharges storage
       and networking.
     substitution_discharge:
-      - OCM-PUB-001
       - OCM-E2E-001
     oracles:
       - STATE_ROOT_DIFF
-      - PUBLIC_TX_RECEIPT
     evidence:
       - begin_user_ce_seal_end_phase_trace
       - atomic_request_pre_post_state
@@ -450,6 +452,12 @@ tests:
     evidence:
       - tentative_before_vote_record
       - finalized_and_orphan_transitions
+      - finalized_151_terminal_219_retry_221_coexistence
+      - independent_multi_job_progress
+      - identical_input_retry_reuses_lease
+      - changed_input_retry_gets_distinct_lease
+      - last_reference_retention_gc
+      - multi_job_restart_recovery
       - restart_attestation_refusal
   OCM-DIS-001:
     status: planned
@@ -581,38 +589,46 @@ tests:
       - persistence_boundary_matrix
       - exact_retry_signature
       - different_digest_refusal_after_restart
-  OCM-CRT-001:
+  OCM-VOT-001:
     status: planned
-    layer: MODULE
+    layer: EXECUTION
     lane: OCM-INT
-    planned_path: bin/outbe-ocomp/tests/certificate_relay.rs
-    production_entrypoint: untrusted relay and ExecutionCertificateV1 verifier
+    planned_path: crates/blockchain/evm/tests/ocomp_result_votes.rs
+    production_entrypoint: public ResultVoteV1 dispatch and consensus vote/quorum/accountability state
     real_components:
-      - production_relay_builder
-      - production_certificate_verifier
-      - four_distinct_test_keys
+      - production_metadosis_vote_dispatch
+      - production_ocomp_signature_verifier
+      - production_four_slot_state
+      - production_response_window_close
     substitutions:
       - local_key_backends
     substitution_justification: >
-      Local test keys make every signer mutation reproducible; the final E2E
+      Local test keys make every voter mutation reproducible; the final E2E
       uses the four node-owned OCOMP keys.
     substitution_discharge:
       - OCM-E2E-001
     oracles:
       - CANONICAL_BYTES
+      - STATE_ROOT_DIFF
     evidence:
-      - signer_and_result_mutation_matrix
-      - exact_three_index_certificate
+      - healthy_four_of_four_slots
+      - one_unavailable_three_of_four_quorum_and_missing_bit
+      - two_unavailable_no_quorum_expiry
+      - divergent_minority_is_retained_without_automatic_slashing
+      - duplicate_wrong_late_and_equivocating_vote_matrix
+      - accountability_evidence_is_recorded_without_monetary_penalty
+      - quorum_forming_vote_atomically_applies_terminal_result
+      - terminal_identity_unchanged_by_fourth_vote_and_close
   OCM-APL-002:
     status: planned
     layer: MODULE
     lane: OCM-INT
     planned_path: crates/blockchain/evm/tests/ocomp_atomic_apply.rs
-    production_entrypoint: public ABI dispatch and one outer activation checkpoint
+    production_entrypoint: q-forming full-result vote dispatch and one outer apply checkpoint
     real_components:
       - production_metadosis_dispatch
       - production_capability
-      - four_production_activation_owner_apis
+      - four_production_quorum_apply_owner_apis
       - production_request_budget_split_receipt
       - production_checkpoint
     substitutions:
@@ -624,10 +640,10 @@ tests:
       - OCM-E2E-006
     oracles:
       - STATE_ROOT_DIFF
-      - PUBLIC_TX_RECEIPT
     evidence:
-      - four_activation_owner_failure_matrix
-      - four_activation_receipt_and_request_split_mutation_matrix
+      - q_forming_slot_and_four_owner_failure_matrix
+      - quorum_apply_receipt_and_request_split_mutation_matrix
+      - unexpected_failure_rolls_back_third_slot_quorum_and_owner_effects
       - exact_retry_and_conflict_results
       - fixed_owner_order_applied_event_summary_mutations
       - canonical_empty_conflict_event_summary
@@ -639,12 +655,12 @@ tests:
     production_entrypoint: request-pinned time through certified owner effects
     real_components:
       - production_request
-      - production_activation
+      - production_quorum_apply
       - production_owner_receipts
     substitutions:
       - repeatable_test_chain_heights
     substitution_justification: >
-      Controlled heights isolate semantic time from activation metadata; the
+      Controlled heights isolate semantic time from apply metadata; the
       closure story repeats the comparison on correlated fresh devnets.
     substitution_discharge:
       - OCM-E2E-001
@@ -659,9 +675,13 @@ tests:
     layer: EXECUTION
     lane: OCM-PUBLIC
     planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
-    production_entrypoint: RPC, txpool, P2P, proposer, import and replay
+    production_entrypoint: Supervisor ResultVote submission through validator ZeroFee RPC, txpool, P2P, proposer, import and replay
     real_components:
       - four_nodes
+      - production_supervisor_vote_submitter
+      - restricted_node_evm_signing_seam
+      - production_result_vote_zerofee_hook
+      - production_ocomp_vote_validator
       - public_rpc
       - production_txpool
       - production_p2p_and_payload_builder
@@ -674,29 +694,41 @@ tests:
     evidence:
       - cap_boundary_transactions
       - proposer_import_replay_parity
+      - supervisor_prepared_submitted_included_finalized_journal
+      - orphaned_vote_inclusion_rebroadcasts_idempotently
+      - validator_native_balance_unchanged_for_result_vote
+      - zerofee_only_waives_fee_while_ocomp_rejects_invalid_vote
+      - public_duplicate_late_minority_and_equivocation_vote_receipts
   OCM-PUB-002:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
     planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
-    production_entrypoint: public activateLysis transaction
+    production_entrypoint: public submitLysisResult transaction mutation and q-forming rollback matrix
     real_components:
       - four_nodes
       - public_rpc
-      - production_activation_verifier
+      - production_txpool
+      - production_p2p_and_payload_builder
+      - production_import_and_replay
+      - production_full_result_vote_and_quorum_apply_verifier
     substitutions: []
     oracles:
       - PUBLIC_TX_RECEIPT
+      - FINALIZED_PUBLIC_STATE
       - STATE_ROOT_DIFF
     evidence:
       - failed_mutation_transaction_receipts_and_codes
       - pre_post_public_proof_equality
+      - q_forming_vote_proposer_import_replay_parity
+      - q_forming_vote_finalized_receipt_and_state_proof
+      - unexpected_apply_failure_rolls_back_q_forming_slot
   OCM-PUB-003:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
     planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
-    production_entrypoint: begin-zone expiry and public activation
+    production_entrypoint: begin-zone finality-plus-four open, full-result vote window, no-quorum expiry and terminal accountability
     real_components:
       - four_nodes
       - production_block_lifecycle
@@ -706,14 +738,20 @@ tests:
       - PUBLIC_TX_RECEIPT
       - FINALIZED_PUBLIC_STATE
     evidence:
-      - before_deadline_success
-      - at_deadline_expiry_first
+      - vote_included_before_deadline_is_timely
+      - vote_included_at_deadline_is_late
+      - vote_at_finality_plus_three_rejects
+      - vote_at_finality_plus_four_is_admissible
+      - no_quorum_job_expires_at_deadline
+      - timely_quorum_is_applied_before_deadline
+      - fourth_slot_accountability_closes_at_deadline
+      - no_separate_post_deadline_activation_exists
   OCM-PUB-004:
     status: planned
     layer: EXECUTION
     lane: OCM-PUBLIC
     planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
-    production_entrypoint: completed public activation replay
+    production_entrypoint: completed full-result vote replay
     real_components:
       - four_nodes
       - public_rpc
@@ -744,7 +782,7 @@ tests:
       - existing_rpc_tribute_offer_and_projection_fixture_path
       - independent_finalized_ce_point_read_verifier
       - public_rpc_p2p_finality
-      - untrusted_relay
+      - public_result_vote_transactions
     substitutions:
       - mock_gramine_substitutes_only_sgx_hardware_not_validator_or_ocomp_domain
     substitution_justification: >
@@ -763,7 +801,7 @@ tests:
       - public_tribute_receipt_inclusion_and_finality_ref
       - four_validator_primary_owner_day_projection_parity
       - independently_verified_ce_package_and_mongo_body_equality
-      - fixture_to_snapshot_manifest_job_result_activation_correlation
+      - fixture_to_snapshot_manifest_job_result_vote_quorum_apply_correlation
       - thirteen_step_report
       - correlated_delay_variants
       - public_output_and_conservation
@@ -840,10 +878,10 @@ tests:
     layer: E2E
     lane: OCM-E2E
     planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: four-node public activation with owner failpoint
+    production_entrypoint: four-node public q-forming full-result vote with owner failpoint
     real_components:
       - four_nodes
-      - public_activation
+      - public_full_result_vote
       - production_owner_apis_and_checkpoint
     substitutions:
       - one_named_owner_failpoint
@@ -922,7 +960,7 @@ tests:
     real_components:
       - production_boundary_markers
       - four_nodes
-      - exact_request_and_activation_blocks
+      - exact_request_and_q_forming_vote_blocks
     substitutions: []
     oracles:
       - RUNTIME_BOUNDARY_TRACE
@@ -948,7 +986,7 @@ task_ownership:
   OCM-13: [OCM-EXP-001, OCM-CAS-001]
   OCM-14: [OCM-SEM-002, OCM-DET-001]
   OCM-15: [OCM-SIG-001]
-  OCM-16: [OCM-CRT-001]
+  OCM-16: [OCM-VOT-001]
   OCM-17: [OCM-APL-001, OCM-BND-002]
   OCM-18: []
   OCM-19: []
@@ -957,8 +995,8 @@ task_ownership:
   OCM-22: []
   OCM-23: [OCM-BND-001, OCM-APL-002, OCM-TIM-001]
   OCM-24: []
-  OCM-25: [OCM-PUB-002, OCM-PUB-003, OCM-PUB-004]
-  OCM-26: [OCM-CAP-001, OCM-PUB-001]
+  OCM-25: [OCM-PUB-001, OCM-PUB-002, OCM-PUB-003, OCM-PUB-004]
+  OCM-26: [OCM-CAP-001]
   OCM-27:
     - OCM-E2E-001
     - OCM-E2E-002
@@ -970,6 +1008,66 @@ task_ownership:
     - OCM-E2E-008
     - OCM-ISO-001
     - OCM-TRC-001
+
+task_dependencies:
+  OCM-00: []
+  OCM-01: [OCM-00]
+  OCM-02: [OCM-00]
+  OCM-03: [OCM-01, OCM-02]
+  OCM-04: [OCM-03]
+  OCM-05: [OCM-04]
+  OCM-06: [OCM-04]
+  OCM-07: [OCM-04]
+  OCM-08: [OCM-05, OCM-06, OCM-07]
+  OCM-09: [OCM-04, OCM-08]
+  OCM-10: [OCM-06, OCM-09]
+  OCM-11: [OCM-04]
+  OCM-12: [OCM-08, OCM-09, OCM-11]
+  OCM-13: [OCM-10, OCM-11, OCM-12]
+  OCM-14: [OCM-01, OCM-04, OCM-11, OCM-13]
+  OCM-15: [OCM-04, OCM-09, OCM-14]
+  OCM-16: [OCM-04, OCM-08, OCM-09, OCM-15]
+  OCM-17: [OCM-01, OCM-04, OCM-05]
+  OCM-18: [OCM-05, OCM-17]
+  OCM-19: [OCM-05, OCM-17]
+  OCM-20: [OCM-05, OCM-17]
+  OCM-21: [OCM-05, OCM-08]
+  OCM-22: [OCM-05, OCM-17]
+  OCM-23: [OCM-07, OCM-08, OCM-16, OCM-17, OCM-18, OCM-19, OCM-20, OCM-21, OCM-22]
+  OCM-24: [OCM-11, OCM-12, OCM-13, OCM-14, OCM-15, OCM-16, OCM-23]
+  OCM-25: [OCM-04, OCM-08, OCM-09, OCM-13, OCM-14, OCM-15, OCM-16, OCM-23, OCM-24]
+  OCM-26: [OCM-25]
+  OCM-27: [OCM-26]
+
+task_commands:
+  OCM-00: mise run ocomp-poc-task -- OCM-00
+  OCM-01: mise run ocomp-poc-task -- OCM-01
+  OCM-02: mise run ocomp-poc-task -- OCM-02
+  OCM-03: mise run ocomp-poc-task -- OCM-03
+  OCM-04: mise run ocomp-poc-task -- OCM-04
+  OCM-05: mise run ocomp-poc-task -- OCM-05
+  OCM-06: mise run ocomp-poc-task -- OCM-06
+  OCM-07: mise run ocomp-poc-task -- OCM-07
+  OCM-08: mise run ocomp-poc-task -- OCM-08
+  OCM-09: mise run ocomp-poc-task -- OCM-09
+  OCM-10: mise run ocomp-poc-task -- OCM-10
+  OCM-11: mise run ocomp-poc-task -- OCM-11
+  OCM-12: mise run ocomp-poc-task -- OCM-12
+  OCM-13: mise run ocomp-poc-task -- OCM-13
+  OCM-14: mise run ocomp-poc-task -- OCM-14
+  OCM-15: mise run ocomp-poc-task -- OCM-15
+  OCM-16: mise run ocomp-poc-task -- OCM-16
+  OCM-17: mise run ocomp-poc-task -- OCM-17
+  OCM-18: mise run ocomp-poc-task -- OCM-18
+  OCM-19: mise run ocomp-poc-task -- OCM-19
+  OCM-20: mise run ocomp-poc-task -- OCM-20
+  OCM-21: mise run ocomp-poc-task -- OCM-21
+  OCM-22: mise run ocomp-poc-task -- OCM-22
+  OCM-23: mise run ocomp-poc-task -- OCM-23
+  OCM-24: mise run ocomp-poc-task -- OCM-24
+  OCM-25: mise run ocomp-poc-task -- OCM-25
+  OCM-26: mise run ocomp-poc-task -- OCM-26
+  OCM-27: mise run ocomp-poc-task -- OCM-27
 
 requirements:
   meta:
@@ -983,25 +1081,40 @@ requirements:
       text: OCOMP failure cannot stop consensus or mutate domain state.
       tests: [OCM-ISO-001, OCM-E2E-001, OCM-E2E-006]
     "ADR-S-OCM-001/I-02":
-      text: Supervisor, exporter, worker, CAS and relay own no consensus authority.
+      text: Supervisor, exporter, worker, CAS and public submitters own no consensus authority.
       tests: [OCM-BND-001, OCM-E2E-001, OCM-ISO-001]
     "ADR-S-OCM-001/I-03":
-      text: Worker count never increases evidence weight.
-      tests: [OCM-DET-001, OCM-CRT-001, OCM-E2E-001]
+      text: The Supervisor may invoke the Lysis finalizer but cannot supply precomputed final roots, totals or catalogs.
+      tests: [OCM-BND-002, OCM-DET-001]
     "ADR-S-OCM-001/I-04":
-      text: Kernel cannot enumerate or interpret Lysis business state.
-      tests: [OCM-BND-002, OCM-REQ-001, OCM-TRC-001]
+      text: ROOT_REDUCE emits a bounded summary rather than a population-sized active collection.
+      tests: [OCM-DET-001, OCM-BND-003, OCM-CAP-001]
     "ADR-S-OCM-001/I-05":
+      text: Worker count never increases evidence weight.
+      tests: [OCM-DET-001, OCM-VOT-001, OCM-E2E-001]
+    "ADR-S-OCM-001/I-06":
+      text: A worker-shard capacity limits one invocation and never limits the complete Tribute population of a job.
+      tests: [OCM-SEM-002, OCM-CAP-001]
+    "ADR-S-OCM-001/I-07":
+      text: Job, manifest, plan and result objects use population-independent root/count/nominal commitments.
+      tests: [OCM-BYT-001, OCM-BND-003, OCM-CAP-001]
+    "ADR-S-OCM-001/I-08":
+      text: Every authenticated Tribute belongs to exactly one canonical shard and unit with no loss or duplication.
+      tests: [OCM-SEM-002, OCM-DET-001, OCM-E2E-001]
+    "ADR-S-OCM-001/I-09":
+      text: The kernel cannot enumerate or interpret Lysis business state.
+      tests: [OCM-BND-002, OCM-REQ-001, OCM-TRC-001]
+    "ADR-S-OCM-001/I-10":
       text: Local configuration or negotiation cannot choose consensus semantics.
       tests: [OCM-CTL-001, OCM-E2E-007]
-    "ADR-S-OCM-001/I-06":
+    "ADR-S-OCM-001/I-11":
       text: Only the fork-pinned handler verifies and applies.
       tests: [OCM-BYT-002, OCM-BND-001, OCM-PUB-002]
-    "ADR-S-OCM-001/I-07":
+    "ADR-S-OCM-001/I-12":
       text: Domain effects are unreachable through a generic write interface.
       tests: [OCM-BND-001, OCM-APL-002]
-    "ADR-S-OCM-001/I-08":
-      text: Lysis V1 bytes are never reinterpreted as a common envelope.
+    "ADR-S-OCM-001/I-13":
+      text: Lysis V1 bytes are never reinterpreted as a future common envelope.
       tests: [OCM-BYT-001, OCM-BND-001]
     "ADR-S-OCM-002/I-01":
       text: Event, Mongo, path and CAS name do not establish job authority.
@@ -1019,66 +1132,117 @@ requirements:
       text: Manifest names one JobId and one bundle.
       tests: [OCM-BYT-001, OCM-EXP-001]
     "ADR-S-OCM-002/I-06":
+      text: Work-shard ranges are adjacent, non-overlapping and cover the exact manifest count.
+      tests: [OCM-EXP-001, OCM-SEM-002, OCM-DET-001]
+    "ADR-S-OCM-002/I-07":
       text: Workers consume only digest-verified manifest members.
       tests: [OCM-CAS-001, OCM-DET-001]
-    "ADR-S-OCM-002/I-07":
+    "ADR-S-OCM-002/I-08":
       text: Fork-orphaned input is never signable.
       tests: [OCM-PIN-001, OCM-E2E-005]
-    "ADR-S-OCM-002/I-08":
+    "ADR-S-OCM-002/I-09":
       text: Export ambiguity abstains rather than reading best-effort live state.
       tests: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-01":
-      text: Equal finalized inputs and bundle produce complete byte-identical shard/unit sets and result; crossing a shard boundary loses no input.
+      text: Equal finalized inputs and bundle produce byte-identical units and result.
       tests: [OCM-SEM-002, OCM-DET-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-02":
-      text: Worker scheduling changes neither result nor evidence weight.
-      tests: [OCM-DET-001, OCM-CRT-001, OCM-E2E-001]
+      text: N authenticated Tribute produce the exact canonical shard/range set and crossing a shard boundary loses no input.
+      tests: [OCM-SEM-002, OCM-DET-001, OCM-CAP-001]
     "ADR-S-OCM-003/I-03":
-      text: One validator index contributes at most one matching signature.
-      tests: [OCM-CRT-001, OCM-E2E-001]
+      text: Worker and scheduler count change neither result bytes nor evidence weight.
+      tests: [OCM-DET-001, OCM-VOT-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-04":
-      text: OCOMP key is distinct and unavailable to compute processes.
-      tests: [OCM-CTL-001, OCM-SIG-001, OCM-ISO-001]
+      text: One validator index contributes at most one first vote to the tally.
+      tests: [OCM-VOT-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-05":
+      text: The OCOMP key is distinct from the consensus key and unavailable to compute processes.
+      tests: [OCM-CTL-001, OCM-SIG-001, OCM-ISO-001]
+    "ADR-S-OCM-003/I-06":
       text: Sign-once history is durable before signature release.
       tests: [OCM-SIG-001, OCM-E2E-001]
-    "ADR-S-OCM-003/I-06":
-      text: Certificate binds one exact typed result and job attempt.
-      tests: [OCM-BYT-001, OCM-CRT-001, OCM-PUB-002]
     "ADR-S-OCM-003/I-07":
-      text: Relay cannot turn mismatched or duplicate signatures into authority.
-      tests: [OCM-CRT-001, OCM-PUB-002, OCM-E2E-001]
+      text: A vote binds one exact result digest and one exact job attempt.
+      tests: [OCM-BYT-001, OCM-VOT-001, OCM-PUB-001]
     "ADR-S-OCM-003/I-08":
-      text: Quorum does not replace input completeness or independent semantics.
+      text: The quorum digest is set only by three matching eligible on-chain vote slots.
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
+    "ADR-S-OCM-003/I-09":
+      text: The fourth slot remains writable until the exclusive response deadline after quorum apply.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-003/I-10":
+      text: A fourth vote or deadline close cannot change terminal result, apply receipt or exact-retry identity.
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
+    "ADR-S-OCM-003/I-11":
+      text: A conflicting second vote records bounded equivocation evidence and never replaces or counts twice.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-003/I-12":
+      text: Absence and timeliness derive only from canonical inclusion heights.
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-PUB-003]
+    "ADR-S-OCM-003/I-13":
+      text: Quorum evidence never replaces input completeness, data availability or independent semantics.
       tests: [OCM-SEM-001, OCM-EXP-001, OCM-E2E-001]
     "ADR-S-OCM-004/I-01":
       text: Request creation has no Lysis or owner effect.
       tests: [OCM-REQ-001, OCM-E2E-001]
     "ADR-S-OCM-004/I-02":
-      text: Only a finalized live exact attempt can be signed or activated.
-      tests: [OCM-FIN-001, OCM-PIN-001, OCM-SIG-001, OCM-PUB-002]
+      text: Desis receives exactly auction_base before compute and is never topped up.
+      tests: [OCM-REQ-001, OCM-E2E-001]
     "ADR-S-OCM-004/I-03":
-      text: Activation at or after deadline cannot race expiry.
-      tests: [OCM-FSM-001, OCM-PUB-003]
+      text: Intex has no reservation state and contributors are created only during quorum apply.
+      tests: [OCM-REQ-001, OCM-BND-001, OCM-APL-002]
     "ADR-S-OCM-004/I-04":
+      text: Promis has no reservation state and carry-over uses checked commutative addition.
+      tests: [OCM-REQ-001, OCM-APL-002, OCM-TIM-001]
+    "ADR-S-OCM-004/I-05":
+      text: Only a finalized live exact attempt can be signed, submitted or applied.
+      tests: [OCM-FIN-001, OCM-PIN-001, OCM-SIG-001, OCM-PUB-002]
+    "ADR-S-OCM-004/I-06":
+      text: Voting opens exactly four blocks after finality_recorded_height.
+      tests: [OCM-FIN-001, OCM-PUB-003]
+    "ADR-S-OCM-004/I-07":
+      text: Only a timely eligible signed transaction can fill a result-vote slot.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-004/I-08":
+      text: The third matching first-vote slot atomically applies one canonical result and establishes COMPLETED or the defined CONFLICTED outcome; QUORUM_READY is not durable.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-004/I-09":
+      text: A timely quorum is applied by its q-forming vote transaction; there is no later activation step.
+      tests: [OCM-VOT-001, OCM-PUB-002, OCM-PUB-003]
+    "ADR-S-OCM-004/I-10":
+      text: The fourth validator can vote until the exclusive deadline after quorum apply.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-004/I-11":
+      text: Fourth-vote and accountability writes never change immutable terminal result, apply receipt, active generation or exact-retry identity.
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
+    "ADR-S-OCM-004/I-12":
+      text: Missing-response and equivocation evidence are consensus-visible and PoC applies no monetary penalty.
+      tests: [OCM-VOT-001, OCM-PUB-001]
+    "ADR-S-OCM-004/I-13":
+      text: Worker-shard completion is never a consensus terminal state.
+      tests: [OCM-FSM-001, OCM-DET-001, OCM-E2E-001]
+    "ADR-S-OCM-004/I-14":
+      text: A late vote cannot race response-window close; a non-quorum job expires at the exclusive deadline and no separate activation exists.
+      tests: [OCM-FSM-001, OCM-PUB-002, OCM-PUB-003]
+    "ADR-S-OCM-004/I-15":
       text: Evidence verification does not execute Lysis.
       tests: [OCM-BND-002, OCM-TRC-001]
-    "ADR-S-OCM-004/I-05":
-      text: Only private typed capability reaches effect methods.
+    "ADR-S-OCM-004/I-16":
+      text: Only the private typed capability reaches effect methods.
       tests: [OCM-BND-001, OCM-APL-002]
-    "ADR-S-OCM-004/I-06":
-      text: All owner effects and terminal job commit together or not at all.
+    "ADR-S-OCM-004/I-17":
+      text: All owner effects and terminal job state commit together or not at all.
       tests: [OCM-APL-002, OCM-E2E-006]
-    "ADR-S-OCM-004/I-07":
-      text: Exact terminal retry is idempotent and different replay rejects.
+    "ADR-S-OCM-004/I-18":
+      text: Exact terminal retry is idempotent and different terminal replay rejects.
       tests: [OCM-APL-002, OCM-PUB-004]
-    "ADR-S-OCM-004/I-08":
-      text: Old state remains authoritative until generation switch commits.
+    "ADR-S-OCM-004/I-19":
+      text: Old state remains authoritative until the certified generation switch commits.
       tests: [OCM-FSM-001, OCM-APL-002, OCM-E2E-008]
-    "ADR-S-OCM-004/I-09":
+    "ADR-S-OCM-004/I-20":
       text: No synchronous Lysis fallback exists in the PoC profile.
       tests: [OCM-FSM-001, OCM-E2E-001, OCM-TRC-001]
-    "ADR-S-OCM-004/I-10":
+    "ADR-S-OCM-004/I-21":
       text: Local readiness and version cannot alter consensus validity.
       tests: [OCM-CTL-001, OCM-E2E-007]
 
@@ -1092,18 +1256,18 @@ requirements:
     POC-07: [OCM-SEM-002]
     POC-08: [OCM-DET-001, OCM-E2E-001]
     POC-09: [OCM-E2E-001, OCM-ISO-001]
-    POC-10: [OCM-CRT-001, OCM-E2E-001]
+    POC-10: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
     POC-11: [OCM-FSM-001, OCM-E2E-001]
     POC-12: [OCM-SIG-001, OCM-E2E-001]
-    POC-13: [OCM-CRT-001, OCM-PUB-002]
+    POC-13: [OCM-VOT-001, OCM-PUB-001]
     POC-14: [OCM-APL-001, OCM-PUB-002]
     POC-15: [OCM-APL-002, OCM-E2E-006]
     POC-16: [OCM-APL-001, OCM-APL-002]
     POC-17: [OCM-TIM-001, OCM-E2E-001]
-    POC-18: [OCM-FSM-001, OCM-PUB-003]
+    POC-18: [OCM-FSM-001, OCM-VOT-001, OCM-PUB-003]
     POC-19: [OCM-E2E-001, OCM-ISO-001]
     POC-20: [OCM-BND-003, OCM-CAS-001, OCM-CTL-001]
-    POC-21: [OCM-CAP-001, OCM-PUB-001]
+    POC-21: [OCM-CAP-001, OCM-PUB-001, OCM-PUB-002]
     POC-22: [OCM-E2E-001, OCM-E2E-008]
     POC-23: [OCM-PIN-001, OCM-E2E-005]
     POC-24: [OCM-CTL-001, OCM-E2E-007]
@@ -1149,16 +1313,16 @@ requirements:
       tests: [OCM-DET-001, OCM-E2E-001]
     PFS-002-13:
       status: required
-      tests: [OCM-E2E-001, OCM-ISO-001]
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001, OCM-ISO-001]
     PFS-002-14:
       status: required
-      tests: [OCM-E2E-001, OCM-ISO-001, OCM-PUB-003]
+      tests: [OCM-VOT-001, OCM-E2E-001, OCM-ISO-001, OCM-PUB-003]
     PFS-002-15:
       status: required
       tests: [OCM-SIG-001, OCM-E2E-001]
     PFS-002-16:
       status: required
-      tests: [OCM-CRT-001, OCM-PUB-002]
+      tests: [OCM-VOT-001, OCM-PUB-001]
     PFS-002-17:
       status: required
       tests: [OCM-APL-001, OCM-PUB-002]
@@ -1173,7 +1337,7 @@ requirements:
       tests: [OCM-FSM-001, OCM-PUB-003]
     PFS-002-21:
       status: required
-      tests: [OCM-CAP-001, OCM-BND-003, OCM-CAS-001, OCM-CTL-001, OCM-PUB-001]
+      tests: [OCM-CAP-001, OCM-BND-003, OCM-CAS-001, OCM-CTL-001, OCM-PUB-001, OCM-PUB-002]
     PFS-002-22:
       status: required
       tests: [OCM-CTL-001, OCM-E2E-007]
@@ -1195,7 +1359,7 @@ requirements:
       tests: [OCM-E2E-001, OCM-REQ-001]
       oracle: PUBLIC_TX_RECEIPT
     "3":
-      tests: [OCM-E2E-001]
+      tests: [OCM-E2E-001, OCM-FIN-001, OCM-PUB-003]
       oracle: STATE_ROOT_DIFF
     "4":
       tests: [OCM-E2E-001, OCM-ISO-001]
@@ -1204,7 +1368,7 @@ requirements:
       tests: [OCM-E2E-001, OCM-EXP-001, OCM-DET-001]
       oracle: DIGESTED_ARTIFACT
     "6":
-      tests: [OCM-E2E-001, OCM-CRT-001, OCM-PUB-001]
+      tests: [OCM-E2E-001, OCM-VOT-001, OCM-PUB-001]
       oracle: PUBLIC_TX_RECEIPT
     "7":
       tests: [OCM-E2E-001]
@@ -1216,8 +1380,8 @@ requirements:
       tests: [OCM-E2E-001, OCM-DET-001]
       oracle: CANONICAL_BYTES
     "10":
-      tests: [OCM-E2E-001, OCM-SIG-001, OCM-PUB-002]
-      oracle: DURABLE_JOURNAL
+      tests: [OCM-E2E-001, OCM-SIG-001, OCM-PUB-001]
+      oracle: PUBLIC_TX_RECEIPT
     "11":
       tests: [OCM-E2E-001, OCM-TIM-001]
       oracle: CANONICAL_BYTES
@@ -1239,7 +1403,7 @@ closure:
       - exact_config_service_unit_and_machine_identity
       - all_member_sha256_hashes
       - protocol_semantic_and_transport_digests
-      - finality_and_execution_certificates
+      - finality_proofs_result_vote_slots_quorum_and_accountability
       - public_receipts_state_and_ce_proofs
       - owner_conservation
       - independent_reference_result

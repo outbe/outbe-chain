@@ -4,10 +4,10 @@
 
 Classification: `measurement_only`. Armable: `false`.
 
-- Generator source SHA-256: `e9a59d3a7944b280a06bb18d9657e936a770680c8b60b55d07802c653b094afe`
-- Input-set SHA-256: `2d3bc695dad4606cf708beda7f9593f43bedacb86ce6bc086926f44c4da7fb03`
-- Candidate-limit SHA-256: `a48c9f7fca72a9515e256af811a436fc3b81c97f0ddc5e8c3bf9ba43ff1eecdb`
-- Object kinds: `31`
+- Generator source SHA-256: `4d9bfc207a487b5a06393d44279181a4868d69c9246cd4e48f41861eb32c7715`
+- Input-set SHA-256: `8dbb8ed3d173a5323cad352a35d00e647a5d209bb3e37c2bef2b6414f7a6c29f`
+- Candidate-limit SHA-256: `886ca153f055177d86db1beaa9352c95d1b280b18972603e80501a317a189a7d`
+- Object kinds: `35`
 
 ## Candidate compile ceilings
 
@@ -29,7 +29,6 @@ Classification: `measurement_only`. Armable: `false`.
 | `max_active_scurve_entries` | 256 |
 | `max_bucket_records_per_result_chunk` | 256 |
 | `max_contributor_actions_per_result_chunk` | 256 |
-| `max_execution_certificate_bytes` | 512 |
 | `max_fidelity_openings_per_work_shard` | 256 |
 | `max_finalized_intent_proof_bytes` | 524288 |
 | `max_input_chunk_bytes` | 1048576 |
@@ -46,6 +45,7 @@ Classification: `measurement_only`. Armable: `false`.
 | `max_records_per_input_chunk` | 768 |
 | `max_result_chunk_bytes` | 524288 |
 | `max_result_summary_bytes` | 1048576 |
+| `max_result_vote_bytes` | 2048 |
 | `max_signature_verifications` | 3 |
 | `max_transaction_rlp_bytes` | 2097408 |
 | `max_tributes_per_work_shard` | 256 |

@@ -1,6 +1,13 @@
 # Off-chain PoC implementation-planning decision map
 
-Status: **COMPLETE — MULTI-SHARD AMENDMENT VERIFIED; READY_TO_RESUME**
+Status: **HISTORICAL DECISION MAP — SUPERSEDED ITEMS MUST NOT BE IMPLEMENTED**
+
+Decision #7 and every dependent certificate/relay/digest-only-vote/separate
+activation conclusion are historical. The authoritative replacement is a
+signed full-result vote from each validator and atomic application by the
+q-forming transaction, with no durable `QUORUM_READY` or public activator, as
+defined by ADR-S-OCM-003/004, PFS-002, `off-chain-poc.md` and the implementation
+plan.
 
 Normative inputs:
 

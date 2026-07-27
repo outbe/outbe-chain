@@ -39,7 +39,7 @@ multi-node convergence unless a matrix row explicitly says otherwise.
 ## Declared OCOMP gap
 
 No current live multi-node feature implements PFS-002's
-request→finality→export→independent execution→q-certificate→public activation
+request→finality→export→independent execution→full-result votes→q-forming apply
 path. The future harness feature must use four separate validator domains and
 map its scenario tags to PFS-002 and `POC-01..POC-26`; the existing synchronous
 in-process test cannot be relabeled as that evidence.

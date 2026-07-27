@@ -93,11 +93,11 @@ not a package or implementation claim.
 
 | Planned surface | Owning ADR(s) | Required boundary |
 |---|---|---|
-| OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate and typed activation |
+| OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate, full-result votes and typed quorum apply |
 | standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003 | cursor, planner, scheduler, reducer and journal; no key/writer |
 | standalone snapshot exporter | ADR-S-OCM-001, ADR-S-OCM-002 | opaque finalized read lease to authenticated CAS manifest |
 | standalone worker | ADR-S-OCM-001, ADR-S-OCM-003 | one immutable `UnitId`, sandboxed and retryable |
-| untrusted relay/client | ADR-S-OCM-003, ADR-S-OCM-004 | collect exact signatures and submit public activation |
+| validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004 | submit its own signed full result through the restricted ZeroFee seam; no relay or public activator |
 | OCOMP local stores | ADR-S-OCM-002 through ADR-S-OCM-004 | pin/export/CAS/supervisor/sign-once journals with separate authority |
 
 ### Executable target and command registry

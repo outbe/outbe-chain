@@ -132,16 +132,13 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         let requested = fsm.projection();
         assert_eq!(requested.phase, DayPhase::OffchainPending);
         assert_eq!(requested.pending_nonce, 0);
-        assert_eq!(
-            requested.deadline_height,
-            Some(block_number + profile.capacity_profile.result_deadline_blocks)
-        );
+        assert_eq!(requested.deadline_height, None);
         let intent_id = requested.live_intent_id.unwrap();
-        let record = metadosis
+        let mut record = metadosis
             .ocomp_job_record(intent_id, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        assert_eq!(record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(
             record.intent.ce_sealed_root,
             scope.completed_sealed_root().unwrap()
@@ -230,7 +227,28 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .pending_supply_promis
             .read(&wwd.value())
             .unwrap();
-        let expiry_height = record.intent.deadline_height;
+        let finality_recorded_height = block_number + 2;
+        let finalized = MetadosisContract::new(storage.clone())
+            .record_ocomp_finality(
+                intent_id,
+                B256::repeat_byte(0x46),
+                B256::repeat_byte(0x98),
+                finality_recorded_height,
+                profile.capacity_profile.result_deadline_blocks,
+                &poc_schema_limits(),
+            )
+            .unwrap();
+        let open = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(finalized.open_height, block_time + 6, chain::CHAIN_ID),
+            storage.clone(),
+        );
+        run_lifecycle_begin(&open).unwrap();
+        record = MetadosisContract::new(storage.clone())
+            .ocomp_job_record(intent_id, &poc_schema_limits())
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, OcompJobStatus::VotingOpen);
+        let expiry_height = finalized.deadline_height;
         let expiry = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(expiry_height, block_time + 64, chain::CHAIN_ID),
             storage.clone(),
@@ -300,17 +318,14 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .projection();
         assert_eq!(retried.phase, DayPhase::OffchainPending);
         assert_eq!(retried.pending_nonce, 1);
-        assert_eq!(
-            retried.deadline_height,
-            Some(retry_height + profile.capacity_profile.result_deadline_blocks)
-        );
+        assert_eq!(retried.deadline_height, None);
         let retry_intent_id = retried.live_intent_id.unwrap();
         assert_ne!(retry_intent_id, intent_id);
         let retried_record = metadosis
             .ocomp_job_record(retry_intent_id, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        assert_eq!(retried_record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(retried_record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(retried_record.intent.pending_nonce, 1);
         assert_eq!(retried_record.intent.attempt, 1);
         assert_eq!(
@@ -348,7 +363,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let logs = provider.get_ordered_events();
     assert_eq!(
         IMetadosis::OffchainJobRequested::SIGNATURE_HASH,
-        b256!("997139de4a9928090f392ef70b47db793b46eb650dd837141c0650776ea8e8ee")
+        b256!("69a11b11a3b39ad0968d02a67ee3b9e2d790cb9aafbc4de957beed93c39b7dad")
     );
     assert_eq!(
         IMetadosis::OffchainJobExpired::SIGNATURE_HASH,
@@ -494,7 +509,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
             .unwrap()
             .unwrap();
         assert_eq!(record.intent.wwd, fixture.later_wwd.value());
-        assert_eq!(record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(
             metadosis
                 .worldwide_days
@@ -513,6 +528,123 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
         .collect::<Vec<_>>();
     assert_eq!(requested.len(), 1);
     assert_eq!(requested[0].data.wwd, fixture.later_wwd.value());
+}
+
+#[test]
+fn two_eligible_days_create_independently_progressing_live_jobs() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_two_ready_days_fixture(&mut provider);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        FidelityContract::new(storage.clone())
+            .initialize_fresh_ocomp_profile()
+            .unwrap();
+
+        for (block_number, block_time) in [
+            (fixture.block_number, fixture.block_time),
+            (fixture.block_number + 1, fixture.block_time + 1),
+        ] {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
+                storage.clone(),
+            );
+            run_terminal_request(&ctx, &fixture.scope).unwrap();
+        }
+
+        let mut metadosis = MetadosisContract::new(storage);
+        let first = metadosis
+            .ocomp_fsm_state(
+                fixture.first_wwd,
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap()
+            .projection();
+        let second = metadosis
+            .ocomp_fsm_state(
+                fixture.later_wwd,
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap()
+            .projection();
+
+        assert_eq!(first.phase, DayPhase::OffchainPending);
+        assert_eq!(second.phase, DayPhase::OffchainPending);
+        assert_ne!(first.live_intent_id, second.live_intent_id);
+        let first_intent_id = first.live_intent_id.unwrap();
+        let second_intent_id = second.live_intent_id.unwrap();
+        for projection in [first, second] {
+            let record = metadosis
+                .ocomp_job_record(projection.live_intent_id.unwrap(), &poc_schema_limits())
+                .unwrap()
+                .unwrap();
+            assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
+        }
+
+        let finalized = metadosis
+            .record_ocomp_finality(
+                first_intent_id,
+                B256::repeat_byte(0x81),
+                B256::repeat_byte(0x82),
+                fixture.block_number + 2,
+                request_profile().capacity_profile.result_deadline_blocks,
+                &poc_schema_limits(),
+            )
+            .unwrap();
+        assert!(metadosis
+            .open_due_ocomp_voting(
+                finalized.open_height,
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap());
+        metadosis
+            .expire_ocomp_job(
+                first_intent_id,
+                finalized.deadline_height,
+                fixture.block_time + 64,
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            metadosis
+                .ocomp_fsm_state(
+                    fixture.first_wwd,
+                    &poc_schema_limits(),
+                    JobFsmLimits {
+                        max_terminal_records: 365,
+                    },
+                )
+                .unwrap()
+                .projection()
+                .phase,
+            DayPhase::Ready
+        );
+        let survivor = metadosis
+            .live_ocomp_fsm_state_by_intent(
+                second_intent_id,
+                &poc_schema_limits(),
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap()
+            .unwrap()
+            .projection();
+        assert_eq!(survivor.phase, DayPhase::OffchainPending);
+        assert_eq!(survivor.live_intent_id, Some(second_intent_id));
+    });
 }
 
 #[test]
@@ -597,13 +729,13 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             status::OFFCHAIN_PENDING
         );
         let live = metadosis
-            .live_ocomp_fsm_state(
+            .ocomp_fsm_state(
+                fixture.wwd,
                 &poc_schema_limits(),
                 JobFsmLimits {
                     max_terminal_records: 365,
                 },
             )
-            .unwrap()
             .unwrap()
             .projection();
         let intent_id = live.live_intent_id.unwrap();
@@ -611,7 +743,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             .ocomp_job_record(intent_id, &poc_schema_limits())
             .unwrap()
             .unwrap();
-        assert_eq!(record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
         assert_eq!(
             record
                 .intent

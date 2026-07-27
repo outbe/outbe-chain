@@ -370,10 +370,7 @@ impl UnitArtifactV1 {
         Ok(header)
     }
 
-    pub fn phase_payload<'a>(
-        &'a self,
-        limits: &SchemaLimits,
-    ) -> Result<&'a [u8], ProtocolError> {
+    pub fn phase_payload<'a>(&'a self, limits: &SchemaLimits) -> Result<&'a [u8], ProtocolError> {
         let mut reader = CanonicalReader::new(&self.canonical_output_bytes.0, limits.codec)?;
         let header = WorkOutputHeaderV1::decode_nested(&mut reader, limits)?;
         <WorkOutputHeaderV1 as NestedCodec>::validate(&header, limits)?;

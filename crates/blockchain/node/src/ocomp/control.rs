@@ -13,24 +13,31 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use alloy_consensus::TxEip1559;
+use alloy_eips::Encodable2718;
+use alloy_primitives::{Bytes, TxKind, U256};
 use metrics::{counter, gauge};
 use outbe_compressed_entities::CompressedTreeService;
 use outbe_ocomp_protocol::local_control::{
     ControlError, ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
 use outbe_ocomp_protocol::{
-    committee::OcompCommitteeSnapshotV1, common::BoundedBytes, AttestationResponseV1,
-    BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
-    CommitSnapshotExportV1, FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1,
-    GetSnapshotHandoffV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, ListSnapshotHandoffsV1,
-    LocalErrorCode, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
+    abi::{encode_submit_lysis_result_calldata, METADOSIS_ADDRESS},
+    committee::OcompCommitteeSnapshotV1,
+    common::BoundedBytes,
+    AttestationResponseV1, BuildFinalizedIntentProofV1, BuildLysisOpeningsV1,
+    CheckProjectionContainmentV1, CommitSnapshotExportV1, FinalizedJobSpecV1,
+    FinalizedJobSummaryV1, GetJobSpecV1, GetSnapshotHandoffV1, ListFinalizedJobsResponseV1,
+    ListFinalizedJobsV1, ListSnapshotHandoffsV1, LocalErrorCode, LocalErrorV1, NodeMessageKind,
+    OpenSnapshotLeaseV1, PrepareVoteTransactionV1, PreparedVoteTransactionV1, ProtocolError,
     RenewSnapshotLeaseV1, RequestAttestationV1, SchemaLimits,
 };
+use outbe_primitives::signer::{SharedOutbeEvmSigner, SignerError};
 use thiserror::Error;
 
 use super::attestation::{
-    AtomicHeightSource, AttestationAuthorityError, AttestationError, OcompAttestationConfig,
-    OcompAttestationGate,
+    AtomicHeightSource, AttestationAuthorityError, AttestationError, CurrentHeightSource,
+    OcompAttestationConfig, OcompAttestationGate,
 };
 use super::retention::{FinalizedJobPinV1, OcompRetentionCoordinator, RetentionError};
 use super::sign_once::{SignOnceError, SignOnceStore};
@@ -109,6 +116,7 @@ pub struct OcompControlServer {
     expected_snapshot_exporter_uid: Option<u32>,
     attestation: Option<Arc<OcompAttestationGate>>,
     attestation_height: Option<Arc<AtomicHeightSource>>,
+    vote_transaction_signer: Option<SharedOutbeEvmSigner>,
 }
 
 #[derive(Clone, Debug)]
@@ -143,6 +151,7 @@ impl OcompControlServer {
             expected_snapshot_exporter_uid: None,
             attestation: None,
             attestation_height: None,
+            vote_transaction_signer: None,
         })
     }
 
@@ -160,8 +169,21 @@ impl OcompControlServer {
     /// closed attestation gate. The caller supplies configuration and canonical
     /// height, never a digest, purpose, signer, or signing closure.
     pub fn with_node_attestation(
+        self,
+        config: OcompNodeAttestationConfig,
+    ) -> Result<Self, NodeControlError> {
+        let height = Arc::new(AtomicHeightSource::new(config.initial_height));
+        let mut server = self.with_node_attestation_height_source(config, height.clone())?;
+        server.attestation_height = Some(height);
+        Ok(server)
+    }
+
+    /// Production variant whose height is reloaded from canonical node state
+    /// immediately before signing.
+    pub fn with_node_attestation_height_source(
         mut self,
         config: OcompNodeAttestationConfig,
+        height: Arc<dyn CurrentHeightSource>,
     ) -> Result<Self, NodeControlError> {
         let signer = OcompSigner::from_file(&config.key_path, config.expected_owner_uid)
             .map_err(AttestationError::from)?;
@@ -171,10 +193,9 @@ impl OcompControlServer {
             self.limits,
         )
         .map_err(AttestationError::from)?;
-        let height = Arc::new(AtomicHeightSource::new(config.initial_height));
         let gate = OcompAttestationGate::new(
             self.retention.clone(),
-            height.clone(),
+            height,
             OcompAttestationConfig {
                 identity: self.identity,
                 validator_index: config.validator_index,
@@ -185,8 +206,15 @@ impl OcompControlServer {
             self.limits,
         )?;
         self.attestation = Some(Arc::new(gate));
-        self.attestation_height = Some(height);
         Ok(self)
+    }
+
+    /// Installs the already validated validator EVM signer behind the
+    /// result-vote-only transaction constructor.
+    #[must_use]
+    pub fn with_vote_transaction_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
+        self.vote_transaction_signer = Some(signer);
+        self
     }
 
     /// Advances the monotonic canonical-height view checked immediately before
@@ -203,18 +231,30 @@ impl OcompControlServer {
     /// changing the existing supervisor discovery interface.
     #[must_use]
     pub fn with_snapshot_export(
-        mut self,
+        self,
         tree: Arc<CompressedTreeService>,
         projection_containment: Arc<dyn ProjectionContainmentAuthority>,
         expected_snapshot_exporter_uid: u32,
     ) -> Self {
-        self.snapshot_export = Some(Arc::new(SnapshotExportAuthority::new(
+        let authority = Arc::new(SnapshotExportAuthority::new(
             Arc::clone(&self.retention),
             tree,
             projection_containment,
             self.identity.boot_nonce,
             self.limits,
-        )));
+        ));
+        self.with_snapshot_export_authority(authority, expected_snapshot_exporter_uid)
+    }
+
+    /// Installs the same node-owned snapshot authority used by finalized-job
+    /// reconciliation, so a stopped Supervisor cannot miss the exact CE marker.
+    #[must_use]
+    pub fn with_snapshot_export_authority(
+        mut self,
+        authority: Arc<SnapshotExportAuthority>,
+        expected_snapshot_exporter_uid: u32,
+    ) -> Self {
+        self.snapshot_export = Some(authority);
         self.expected_snapshot_exporter_uid = Some(expected_snapshot_exporter_uid);
         self
     }
@@ -255,6 +295,9 @@ impl OcompControlServer {
                             error,
                             NodeControlError::Control(ControlError::NoCommonBundle)
                         ) {
+                            eprintln!(
+                                "OCOMP node local-control {peer_role:?} session failed: {error}"
+                            );
                             self.readiness.failed();
                         }
                     }
@@ -374,6 +417,38 @@ impl OcompControlServer {
                         }
                     }
                 }
+                kind if kind == NodeMessageKind::PrepareVoteTransaction as u16 => {
+                    let request =
+                        match PrepareVoteTransactionV1::decode_body(&frame.body, &self.limits) {
+                            Ok(request) => request,
+                            Err(_) => {
+                                send_local_error(
+                                    &mut session,
+                                    frame.request_id,
+                                    frame.message_kind,
+                                    LocalErrorCode::Malformed,
+                                    false,
+                                    &self.limits,
+                                )?;
+                                continue;
+                            }
+                        };
+                    match self.prepare_vote_transaction(&request) {
+                        Ok(response) => response.encode_body(&self.limits)?,
+                        Err(error) => {
+                            let (error_code, retryable) = attestation_local_error(&error);
+                            send_local_error(
+                                &mut session,
+                                frame.request_id,
+                                frame.message_kind,
+                                error_code,
+                                retryable,
+                                &self.limits,
+                            )?;
+                            continue;
+                        }
+                    }
+                }
                 kind if kind == NodeMessageKind::OpenSnapshotLease as u16 => {
                     let request = OpenSnapshotLeaseV1::decode_body(&frame.body, &self.limits)?;
                     self.snapshot_export()?
@@ -446,11 +521,66 @@ impl OcompControlServer {
         &self,
         request: &RequestAttestationV1,
     ) -> Result<AttestationResponseV1, NodeControlError> {
-        let candidate = self
+        let vote = self
             .attestation()?
             .attest_canonical_result(&request.canonical_result.0)?;
         Ok(AttestationResponseV1 {
-            canonical_candidate: BoundedBytes(candidate.encode_canonical(&self.limits)?),
+            canonical_vote: BoundedBytes(vote.encode_canonical(&self.limits)?),
+        })
+    }
+
+    pub fn prepare_vote_transaction(
+        &self,
+        request: &PrepareVoteTransactionV1,
+    ) -> Result<PreparedVoteTransactionV1, NodeControlError> {
+        let max_fee_per_gas = u128::try_from(request.max_fee_per_gas).map_err(|_| {
+            ProtocolError::InvalidInvariant("restricted result-vote max fee does not fit u128")
+        })?;
+        if request.gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+            || max_fee_per_gas < outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
+        {
+            return Err(ProtocolError::InvalidInvariant(
+                "restricted result-vote transaction fee envelope",
+            )
+            .into());
+        }
+        let signer = self
+            .vote_transaction_signer
+            .as_deref()
+            .ok_or(NodeControlError::VoteTransactionSignerUnavailable)?;
+        let vote = self
+            .attestation()?
+            .attest_canonical_result(&request.canonical_result.0)?;
+        let canonical_vote = vote.encode_canonical(&self.limits)?;
+        let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
+        if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
+            return Err(ProtocolError::InvalidInvariant(
+                "restricted result-vote transaction calldata cap",
+            )
+            .into());
+        }
+        let unsigned = TxEip1559 {
+            chain_id: self.identity.chain_id,
+            nonce: request.nonce,
+            gas_limit: request.gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: Bytes::from(calldata),
+            access_list: Default::default(),
+        };
+        let signed = signer.sign_eip1559(unsigned)?;
+        let transaction_hash = *signed.hash();
+        let mut raw_transaction = Vec::new();
+        raw_transaction
+            .try_reserve_exact(signed.encode_2718_len())
+            .map_err(|_| ProtocolError::InvalidInvariant("result-vote transaction allocation"))?;
+        signed.encode_2718(&mut raw_transaction);
+        Ok(PreparedVoteTransactionV1 {
+            canonical_vote: BoundedBytes(canonical_vote),
+            raw_transaction: BoundedBytes(raw_transaction),
+            transaction_hash,
         })
     }
 
@@ -458,23 +588,19 @@ impl OcompControlServer {
         &self,
         request: &ListFinalizedJobsV1,
     ) -> Result<ListFinalizedJobsResponseV1, NodeControlError> {
-        let Some(pin) = self.retention.finalized_live_job()? else {
-            return Ok(ListFinalizedJobsResponseV1 {
-                next_cursor: request.after_cursor,
-                jobs: Vec::new(),
-            });
-        };
-        let summary = summary(pin);
-        if summary.cursor <= request.after_cursor {
-            return Ok(ListFinalizedJobsResponseV1 {
-                next_cursor: request.after_cursor,
-                jobs: Vec::new(),
-            });
-        }
-        Ok(ListFinalizedJobsResponseV1 {
-            next_cursor: summary.cursor,
-            jobs: vec![summary],
-        })
+        let mut jobs = self
+            .retention
+            .finalized_live_jobs()?
+            .into_iter()
+            .map(summary)
+            .filter(|summary| summary.cursor > request.after_cursor)
+            .collect::<Vec<_>>();
+        jobs.sort_by_key(|summary| (summary.cursor, summary.job_id));
+        jobs.truncate(usize::from(request.limit));
+        let next_cursor = jobs
+            .last()
+            .map_or(request.after_cursor, |summary| summary.cursor);
+        Ok(ListFinalizedJobsResponseV1 { next_cursor, jobs })
     }
 
     fn get_job_spec(
@@ -483,8 +609,9 @@ impl OcompControlServer {
     ) -> Result<FinalizedJobSpecV1, NodeControlError> {
         let pin = self
             .retention
-            .finalized_live_job()?
-            .filter(|pin| pin.job_id == job_id)
+            .finalized_live_jobs()?
+            .into_iter()
+            .find(|pin| pin.job_id == job_id)
             .ok_or(NodeControlError::JobNotFound)?;
         let proof = self.retention.build_finalized_intent_proof(job_id)?;
         let intent = proof.decoded_intent(&self.limits)?;
@@ -558,6 +685,9 @@ fn attestation_local_error(error: &NodeControlError) -> (LocalErrorCode, bool) {
             | AttestationError::Authority(AttestationAuthorityError::Protocol(_)),
         )
         | NodeControlError::Protocol(_) => (LocalErrorCode::Malformed, false),
+        NodeControlError::VoteTransactionSignerUnavailable | NodeControlError::EvmSigner(_) => {
+            (LocalErrorCode::InternalOcompUnavailable, false)
+        }
         _ => (LocalErrorCode::InternalOcompUnavailable, false),
     }
 }
@@ -585,6 +715,8 @@ pub enum NodeControlError {
     SnapshotExport(#[from] SnapshotExportError),
     #[error(transparent)]
     Attestation(#[from] AttestationError),
+    #[error(transparent)]
+    EvmSigner(#[from] SignerError),
     #[error("node OCOMP control received unsupported method {0:#06x}")]
     UnexpectedMethod(u16),
     #[error("requested finalized OCOMP job is not live")]
@@ -593,6 +725,8 @@ pub enum NodeControlError {
     SnapshotExportUnavailable,
     #[error("node OCOMP attestation gate is not configured")]
     AttestationUnavailable,
+    #[error("node OCOMP result-vote transaction signer is not configured")]
+    VoteTransactionSignerUnavailable,
     #[error("node OCOMP control cannot serve peer role {0:?}")]
     UnsupportedPeerRole(ControlRole),
     #[error("node OCOMP control session generation cannot be zero")]

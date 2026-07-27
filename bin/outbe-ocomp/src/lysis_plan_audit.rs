@@ -363,6 +363,11 @@ impl<'a> LocalLysisPlanAuditV1<'a> {
         &self.manifest
     }
 
+    #[must_use]
+    pub(crate) const fn bundle(&self) -> &PinnedProtocolBundle {
+        self.bundle
+    }
+
     pub(crate) fn verified_artifact_at(
         &self,
         plan_ordinal: u32,

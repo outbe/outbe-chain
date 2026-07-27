@@ -4,10 +4,10 @@ use std::collections::BTreeSet;
 
 use alloy_primitives::keccak256;
 use outbe_ocomp_protocol::abi::{
-    ACTIVATE_LYSIS_SELECTOR, GET_ACTIVE_LYSIS_GENERATION_SELECTOR,
-    GET_LYSIS_TERMINAL_RECEIPT_SELECTOR, GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0,
-    OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0,
-    OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_REQUESTED_TOPIC0, OCOMP_TERMINAL_REQUEST_SELECTOR,
+    GET_ACTIVE_LYSIS_GENERATION_SELECTOR, GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,
+    GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0, OCOMP_ACTIVATION_REJECTED_SELECTOR,
+    OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0, OCOMP_LIFECYCLE_BEGIN_SELECTOR,
+    OCOMP_REQUESTED_TOPIC0, OCOMP_TERMINAL_REQUEST_SELECTOR, SUBMIT_LYSIS_RESULT_SELECTOR,
 };
 
 fn selector(signature: &str) -> [u8; 4] {
@@ -16,7 +16,10 @@ fn selector(signature: &str) -> [u8; 4] {
 
 #[test]
 fn abi_selectors_errors_and_topics_match_independent_keccak() {
-    assert_eq!(ACTIVATE_LYSIS_SELECTOR, selector("activateLysis(bytes)"));
+    assert_eq!(
+        SUBMIT_LYSIS_RESULT_SELECTOR,
+        selector("submitLysisResult(bytes)")
+    );
     assert_eq!(
         GET_OFFCHAIN_JOB_SELECTOR,
         selector("getOffchainJob(bytes32)")
@@ -35,7 +38,7 @@ fn abi_selectors_errors_and_topics_match_independent_keccak() {
     );
     assert_eq!(
         OCOMP_REQUESTED_TOPIC0,
-        keccak256(b"OffchainJobRequested(bytes32,uint32,uint64,uint32,uint64,bytes32)")
+        keccak256(b"OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)")
     );
     assert_eq!(
         OCOMP_EXPIRED_TOPIC0,
@@ -74,7 +77,7 @@ fn ocomp_system_selectors_are_exact_and_collision_free() {
 #[test]
 fn public_abi_selectors_do_not_alias_each_other() {
     let selectors = [
-        ACTIVATE_LYSIS_SELECTOR,
+        SUBMIT_LYSIS_RESULT_SELECTOR,
         GET_OFFCHAIN_JOB_SELECTOR,
         GET_ACTIVE_LYSIS_GENERATION_SELECTOR,
         GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,

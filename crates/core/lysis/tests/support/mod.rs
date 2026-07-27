@@ -162,7 +162,6 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
         },
         result_committee_snapshot_hash: hash(45),
         custody_committee_epoch_hash: None,
-        deadline_height: 164,
     }
 }
 

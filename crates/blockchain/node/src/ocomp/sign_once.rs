@@ -18,6 +18,7 @@ use std::{
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
     activation::{SignOncePurpose, SignOnceRecordV1},
+    vote::ResultVoteSigningSubjectV1,
     ProtocolError, SchemaLimits,
 };
 
@@ -31,23 +32,46 @@ const MAX_RECORD_BYTES: u64 = 512;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SignOnceSubjectV1 {
     pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub fork_id: B256,
     pub job_id: B256,
     pub attempt: u32,
     pub protocol_bundle_hash: B256,
     pub committee_snapshot_hash: B256,
+    pub validator_index: u8,
     pub key_epoch: u64,
     pub result_digest: B256,
 }
 
 impl SignOnceSubjectV1 {
+    fn signing_digest(self) -> Result<B256, ProtocolError> {
+        ResultVoteSigningSubjectV1 {
+            chain_id: self.chain_id,
+            genesis_hash: self.genesis_hash,
+            fork_id: self.fork_id,
+            protocol_bundle_hash: self.protocol_bundle_hash,
+            job_id: self.job_id,
+            attempt: self.attempt,
+            result_committee_snapshot_hash: self.committee_snapshot_hash,
+            validator_index: self.validator_index,
+            key_epoch: self.key_epoch,
+            purpose: SignOncePurpose::ResultSignature as u8,
+            result_digest: self.result_digest,
+        }
+        .signing_digest()
+    }
+
     fn record(self, signature_rs: [u8; 64]) -> SignOnceRecordV1 {
         SignOnceRecordV1 {
             chain_id: self.chain_id,
+            genesis_hash: self.genesis_hash,
+            fork_id: self.fork_id,
             purpose: SignOncePurpose::ResultSignature,
             job_id: self.job_id,
             attempt: self.attempt,
             protocol_bundle_hash: self.protocol_bundle_hash,
             committee_snapshot_hash: self.committee_snapshot_hash,
+            validator_index: self.validator_index,
             key_epoch: self.key_epoch,
             result_digest: self.result_digest,
             signature_rs,
@@ -56,11 +80,14 @@ impl SignOnceSubjectV1 {
 
     fn matches(self, record: &SignOnceRecordV1) -> bool {
         record.chain_id == self.chain_id
+            && record.genesis_hash == self.genesis_hash
+            && record.fork_id == self.fork_id
             && record.purpose == SignOncePurpose::ResultSignature
             && record.job_id == self.job_id
             && record.attempt == self.attempt
             && record.protocol_bundle_hash == self.protocol_bundle_hash
             && record.committee_snapshot_hash == self.committee_snapshot_hash
+            && record.validator_index == self.validator_index
             && record.key_epoch == self.key_epoch
             && record.result_digest == self.result_digest
     }
@@ -176,8 +203,8 @@ impl SignOnceStore {
             return self.require_exact_replay(&final_path, subject);
         }
 
-        let record =
-            subject.record(sign(subject.result_digest).map_err(SignOnceError::SigningFailed)?);
+        let signing_digest = subject.signing_digest()?;
+        let record = subject.record(sign(signing_digest).map_err(SignOnceError::SigningFailed)?);
         let encoded = record.encode_canonical(&self.limits)?;
         if encoded.len() > MAX_RECORD_BYTES as usize {
             return Err(SignOnceError::CorruptRecord {

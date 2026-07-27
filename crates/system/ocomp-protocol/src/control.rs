@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 
 use crate::{
     common::BoundedBytes,
@@ -9,7 +9,7 @@ use crate::{
     intent::JobIntentV1,
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     schema::{require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
-    CanonicalReader, CanonicalWriter,
+    CanonicalReader, CanonicalWriter, CodecLimits,
 };
 
 pub const CONTROL_VERSION_V1: u16 = 1;
@@ -17,8 +17,8 @@ pub const CONTROL_FRAME_HEADER_LEN: usize = 32;
 pub const CONTROL_FRAME_LEN_AFTER_PREFIX: usize = 28;
 pub const NODE_CONTROL_MAGIC: [u8; 4] = *b"OCL1";
 pub const WORKER_CONTROL_MAGIC: [u8; 4] = *b"OWR1";
-pub const MAX_FINALIZED_JOBS_PER_RESPONSE: u16 = 1;
-pub const MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE: u16 = 1;
+pub const MAX_FINALIZED_JOBS_PER_RESPONSE: u16 = 64;
+pub const MAX_SNAPSHOT_HANDOFFS_PER_RESPONSE: u16 = 64;
 pub const SNAPSHOT_LEASE_WIRE_BYTES: usize = 120;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,6 +54,7 @@ pub enum NodeMessageKind {
     RequestAttestation = 0x0019,
     GetOcompHealth = 0x001a,
     CheckProjectionContainment = 0x001b,
+    PrepareVoteTransaction = 0x001c,
     Response = 0x7ffe,
     Error = 0x7fff,
 }
@@ -178,7 +179,13 @@ impl NestedCodec for ListFinalizedJobsResponseV1 {
         for job in &self.jobs {
             job.validate(limits)?;
         }
-        if let Some(job) = self.jobs.first() {
+        require(
+            self.jobs
+                .windows(2)
+                .all(|pair| pair[0].cursor < pair[1].cursor),
+            "finalized job response order",
+        )?;
+        if let Some(job) = self.jobs.last() {
             require(
                 self.next_cursor == job.cursor,
                 "finalized job response cursor",
@@ -246,6 +253,7 @@ wire_struct! {
 wire_struct! {
     pub struct SnapshotHandoffV1 {
         pub job_id: B256,
+        pub input_lease_id: B256,
         pub pin_generation: u64,
         pub lease_generation: u64,
         pub checkpoint: CheckpointIdentityV1,
@@ -269,7 +277,14 @@ impl NestedCodec for ListSnapshotHandoffsResponseV1 {
         for handoff in &self.handoffs {
             handoff.validate(limits)?;
         }
-        if let Some(handoff) = self.handoffs.first() {
+        require(
+            self.handoffs.windows(2).all(|pair| {
+                pair[0].lease_generation < pair[1].lease_generation
+                    && pair[0].job_id != pair[1].job_id
+            }),
+            "snapshot handoff response order",
+        )?;
+        if let Some(handoff) = self.handoffs.last() {
             require(
                 self.next_lease_generation == handoff.lease_generation,
                 "snapshot handoff response cursor",
@@ -413,11 +428,36 @@ wire_struct! {
 }
 
 wire_struct! {
-    /// Node-produced signed candidate, returned as exact canonical OCB1 bytes.
+    /// Node-produced signed result vote, returned as exact canonical OCB1 bytes.
     pub struct AttestationResponseV1 {
-        pub canonical_candidate: BoundedBytes,
+        pub canonical_vote: BoundedBytes,
     }
     validate = validate_attestation_response;
+}
+
+wire_struct! {
+    /// Restricted request for the node-owned validator EVM signer.
+    ///
+    /// The caller supplies the complete result again rather than arbitrary
+    /// calldata. The node reproduces the exact sign-once vote and constructs the
+    /// fixed zero-fee transaction envelope itself.
+    pub struct PrepareVoteTransactionV1 {
+        pub canonical_result: BoundedBytes,
+        pub nonce: u64,
+        pub max_fee_per_gas: U256,
+        pub gas_limit: u64,
+    }
+    validate = validate_prepare_vote_transaction;
+}
+
+wire_struct! {
+    /// Deterministic EIP-1559 transaction produced by the restricted node seam.
+    pub struct PreparedVoteTransactionV1 {
+        pub canonical_vote: BoundedBytes,
+        pub raw_transaction: BoundedBytes,
+        pub transaction_hash: B256,
+    }
+    validate = validate_prepared_vote_transaction;
 }
 
 wire_struct! {
@@ -517,7 +557,12 @@ impl ControlFrameV1 {
             });
         }
         require(encoded.len() == frame_len + 4, "control frame exact length")?;
-        let mut input = CanonicalReader::new(&encoded[4..], limits.codec)?;
+        let frame_codec_limits = CodecLimits::new(
+            cap,
+            limits.codec.max_collection_items,
+            limits.codec.max_allocation_bytes,
+        );
+        let mut input = CanonicalReader::new(&encoded[4..], frame_codec_limits)?;
         let magic = input.read_fixed::<4>()?;
         require(magic == expected_magic.bytes(), "control frame magic")?;
         require(
@@ -599,6 +644,8 @@ impl_control_body_codec!(CommitSnapshotExportV1);
 impl_control_body_codec!(SnapshotExportCommittedV1);
 impl_control_body_codec!(RequestAttestationV1);
 impl_control_body_codec!(AttestationResponseV1);
+impl_control_body_codec!(PrepareVoteTransactionV1);
+impl_control_body_codec!(PreparedVoteTransactionV1);
 
 impl RunUnitV1 {
     pub fn validate_semantics(&self, limits: &SchemaLimits) -> Result<(), ProtocolError> {
@@ -743,7 +790,10 @@ fn validate_snapshot_handoff(
     handoff: &SnapshotHandoffV1,
     _limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
-    require(!handoff.job_id.is_zero(), "snapshot handoff job id")?;
+    require(
+        !handoff.job_id.is_zero() && !handoff.input_lease_id.is_zero(),
+        "snapshot handoff job/input lease id",
+    )?;
     require(
         handoff.pin_generation != 0 && handoff.lease_generation != 0,
         "snapshot handoff generations",
@@ -892,10 +942,40 @@ fn validate_attestation_response(
     response: &AttestationResponseV1,
     limits: &SchemaLimits,
 ) -> Result<(), ProtocolError> {
-    response.canonical_candidate.validate(limits)?;
+    response.canonical_vote.validate(limits)?;
     require(
-        !response.canonical_candidate.0.is_empty()
-            && response.canonical_candidate.0.len() <= limits.max_control_body_bytes,
-        "attestation candidate control cap",
+        !response.canonical_vote.0.is_empty()
+            && response.canonical_vote.0.len() <= limits.max_control_body_bytes,
+        "attestation result vote control cap",
+    )
+}
+
+fn validate_prepare_vote_transaction(
+    request: &PrepareVoteTransactionV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    request.canonical_result.validate(limits)?;
+    require(
+        !request.canonical_result.0.is_empty()
+            && request.canonical_result.0.len() <= limits.max_control_body_bytes
+            && !request.max_fee_per_gas.is_zero()
+            && request.gas_limit != 0,
+        "prepared vote transaction request",
+    )
+}
+
+fn validate_prepared_vote_transaction(
+    response: &PreparedVoteTransactionV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    response.canonical_vote.validate(limits)?;
+    response.raw_transaction.validate(limits)?;
+    require(
+        !response.canonical_vote.0.is_empty()
+            && response.canonical_vote.0.len() <= limits.max_control_body_bytes
+            && !response.raw_transaction.0.is_empty()
+            && response.raw_transaction.0.len() <= limits.max_control_body_bytes
+            && !response.transaction_hash.is_zero(),
+        "prepared vote transaction response",
     )
 }

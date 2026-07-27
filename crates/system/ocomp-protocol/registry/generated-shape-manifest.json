@@ -2,9 +2,9 @@
   "armable": false,
   "classification": "measurement_only",
   "generator": {
-    "input_set_sha256": "2d3bc695dad4606cf708beda7f9593f43bedacb86ce6bc086926f44c4da7fb03",
+    "input_set_sha256": "8dbb8ed3d173a5323cad352a35d00e647a5d209bb3e37c2bef2b6414f7a6c29f",
     "invocation": "cargo xtask ocomp shape",
-    "source_sha256": "e9a59d3a7944b280a06bb18d9657e936a770680c8b60b55d07802c653b094afe"
+    "source_sha256": "4d9bfc207a487b5a06393d44279181a4868d69c9246cd4e48f41861eb32c7715"
   },
   "independent_verification": {
     "method": "generated envelope vectors are independently reconstructed and decoded by OCM-BYT-001",
@@ -20,18 +20,18 @@
   },
   "profiles": {
     "bundle_template_sha256": "eee376f6916b435c9df93ae8455fe8a23ee85786144fa4656bb4963169c0c917",
-    "candidate_compile_ceiling_sha256": "a48c9f7fca72a9515e256af811a436fc3b81c97f0ddc5e8c3bf9ba43ff1eecdb",
+    "candidate_compile_ceiling_sha256": "886ca153f055177d86db1beaa9352c95d1b280b18972603e80501a317a189a7d",
     "correctness_profile_sha256": "3b5bbce51a931113f56bffae5767454c8b51008588a6020388465cd9d72edd74",
     "headroom_policy_sha256": "ec384d6b098771d4f7dc95f23cbe0995af7aeeae67539cc34151c67023a0516a",
     "minimum_devnet_hardware_profile_sha256": "335e5f46dbb86ff41a5dcbd164fd681eb79a8a3e3f4880a1af2e42166d824144"
   },
   "registries": {
-    "canonical_schema_sha256": "ac0bcf5884c065b1fb70617b6f34abd08b82f490ae4fbdd5a1090e37019f1d4f",
-    "domain_preimage_sha256": "49e73c3eb5004d40abca71e0e29cac29eb7f353637abe15927197069383c7ea6",
+    "canonical_schema_sha256": "6a0607bcbe68ccca3f31475c9acb12ab803349e04325619ce86c29aaecc9098e",
+    "domain_preimage_sha256": "0051fe8ec27f66f57a0386a04028d85182dc1f825dbc9d777649b36952384a3f",
     "fidelity_opening_codec_id": "3d3ac5818fb82e51c3041e24e9ff36cc5fdce8dbdb74da1fbf3978ff0e19de1a",
     "input_codecs_sha256": "27af1b6c7146845b7e5c54cc69804a473332e0931be3e678e98f144f41bcdfac",
-    "object_count": 31,
-    "object_domain_list_sha256": "1333ec57bfbbd0f506ef532607ae5eae5c341bbe3bd33ace1d5f38008ccb6e77",
+    "object_count": 35,
+    "object_domain_list_sha256": "4c29b853e51bdefbddcf7f978812206becbc4c65119ccd90ea35b9db527a3c0c",
     "opening_codec_registry_hash": "487366859c3d4580ccfe8a654818d5e7b014876d8e91bf7a3ce2e69183652e48",
     "oracle_opening_codec_id": "1b2805a4096d29200a86f7bfc5394b1b118d665084b6cbfef9ec41155e949726",
     "tribute_body_codec_id": "52e3d1c35620ae70cc1da8e840348c60c4b58971960badea704a37fe3340ffca"

@@ -86,7 +86,7 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(storage, data, caller, value, None)
+    dispatch_inner(storage, data, caller, value, None, None)
 }
 
 /// Dispatches begin-block work with explicit read-only body authority.
@@ -98,7 +98,28 @@ pub fn dispatch_with_readers(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(storage, data, caller, value, Some((scope, parent)))
+    dispatch_inner(storage, data, caller, value, Some((scope, parent)), None)
+}
+
+/// Production dispatch with both finalized body readers and the immutable
+/// chain-manifest fork authority.
+pub fn dispatch_with_readers_and_ocomp_install(
+    storage: StorageHandle,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        Some((scope, parent)),
+        ocomp_fork_install,
+    )
 }
 
 fn dispatch_inner(
@@ -110,6 +131,7 @@ fn dispatch_inner(
         &outbe_compressed_entities::ExecutionScope,
         &outbe_offchain_data::RuntimeBodyReaders,
     )>,
+    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
 ) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
@@ -136,7 +158,7 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompLifecycleBegin => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_ocomp_lifecycle_begin(&ctx)?;
+            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -445,6 +467,21 @@ pub(crate) fn run_finalization_and_slashing(
             metadata.finalized_block_number, metadata.finalized_block_hash
         ))
     })?;
+
+    // OCOMP finality is derived only from an actual consensus finalization
+    // certificate for the exact request parent. Certified notarization remains
+    // sufficient for ordinary parent accounting, but cannot create a JobId or
+    // open a result-vote window.
+    if metadata.proof_kind
+        == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization
+    {
+        outbe_metadosis::ocomp::expiry::record_certified_parent_finality(
+            ctx,
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+            finalized.state_root.unwrap_or(B256::ZERO),
+        )?;
+    }
 
     // the V3 Rewards fingerprint binds the canonical VRF proof
     // hash from the verified parent certificate. The executor's Phase 1
@@ -974,7 +1011,20 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Reserved OCOMP expiry/reset slot. OCM-08 wires the bounded Metadosis
 /// lifecycle handler into this already receipt-visible phase.
-pub(crate) fn run_ocomp_lifecycle_begin(ctx: &BlockRuntimeContext) -> Result<()> {
+pub(crate) fn run_ocomp_lifecycle_begin(
+    ctx: &BlockRuntimeContext,
+    fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+) -> Result<()> {
+    if let Some(install) = fork_install {
+        if ctx.block.block_number == install.activation_height {
+            outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone())
+                .initialize_ocomp_fork_install(
+                    install,
+                    ctx.block.block_number,
+                    &outbe_metadosis::ocomp::schema::poc_schema_limits(),
+                )?;
+        }
+    }
     outbe_metadosis::ocomp::expiry::run_lifecycle_begin(ctx)
 }
 
@@ -1209,6 +1259,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::repeat_byte(0xEF),
@@ -1403,6 +1454,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,
@@ -1480,6 +1532,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,

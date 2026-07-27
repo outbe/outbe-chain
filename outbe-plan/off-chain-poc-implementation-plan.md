@@ -1,13 +1,14 @@
 # Off-chain Computation PoC implementation plan
 
-Status: **READY_FOR_IMPLEMENTATION — planning audit passed**
+Status: **IMPLEMENTED ON `feat/ocomp-poc` — exact OCM-27 closure run pending**
 
 This is the canonical plan for the fresh-devnet Lysis V1 PoC over bounded
 work units and constant-size commitments, with no total Tribute cap. It plans
-implementation but does not claim that any new OCOMP production surface, test
-or evidence currently exists.
+implementation and records its merge gates. Production surfaces and
+task-local tests exist on the feature branch; only a successful exact-revision
+public/E2E/isolation evidence bundle may close OCM-27.
 
-Normative inputs:
+Authoritative inputs:
 
 - [`off-chain-computation.md`](../off-chain-computation.md);
 - [`off-chain-poc.md`](../off-chain-poc.md);
@@ -15,17 +16,65 @@ Normative inputs:
   through
   [`ADR-S-OCM-004`](../docs/adr/system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md);
 - [`PFS-002`](../docs/flows/002-off-chain-poc-protocol-flow.md);
-- the [implementation decision map](off-chain-poc-implementation-decisions.md);
-- the [current-code map](off-chain-poc-current-code-map.md);
-- the [protocol freeze](off-chain-poc-protocol-freeze.md);
 - the [Lysis V1 semantic baseline](off-chain-poc-lysis-v1-semantics.md);
 - the [finalized input/export decision](off-chain-poc-finalized-input-export.md);
-- the [process/CAS decision](off-chain-poc-process-and-artifact-topology.md);
-- the [deterministic/quorum decision](off-chain-poc-deterministic-execution-and-quorum.md);
-- the [activation/apply decision](off-chain-poc-activation-and-atomic-apply.md);
-- the [test/evidence architecture](off-chain-poc-test-and-evidence.md) and
-  [planning ledger](off-chain-poc-evidence-ledger.yaml);
-- the final [implementation-plan audit](off-chain-poc-implementation-audit.md).
+- the revised [planning ledger](off-chain-poc-evidence-ledger.yaml).
+
+The implementation decision map, current-code map, protocol freeze,
+process/CAS, deterministic/quorum, activation/apply, test/evidence and prior
+audit notes remain planning history. Where they describe a result relay or
+`ExecutionCertificateV1`, that text is superseded and must not be implemented.
+The affected notes are explicitly marked reopened/superseded and require
+regeneration before they can again be authoritative.
+
+### Full-result quorum-apply correction accepted during OCM public-path integration
+
+The public-path review exposed a protocol-accountability defect: an off-chain
+relay could drop a validator announcement, so consensus could not distinguish
+validator non-response from relay censorship. That makes timely-response
+slashing evidence impossible and turns the relay into an unnecessary second
+consensus contour.
+
+The accepted correction is:
+
+- each validator-domain `OffchainLysis Supervisor` replaces its relay
+  publication edge with one signed `ResultVoteV1` carrying the canonical
+  constant-size `LysisResultV1` through the ordinary public transaction path;
+- the validator does not pay for that transaction: one exact-selector,
+  zero-value, bounded-envelope ZeroFee hook modelled on Oracle authorizes only
+  the eligible validator EVM signer; OCOMP alone validates finality, window,
+  job, digest, signature and slot rules;
+- the node retains both OCOMP and EVM private keys behind restricted signing
+  seams; the Supervisor owns prepare/submit/inclusion/finality/reorg workflow;
+- consensus records request finality, waits four additional blocks, then
+  atomically installs `VOTING_OPEN(open_height, deadline_height)` where
+  `open_height = finality_recorded_height + 4`;
+- consensus stores exactly four bounded first-vote slots;
+- consensus derives `ResultDigest` from the complete canonical
+  `LysisResultV1`; four state slots retain only digest/signature/height;
+- the third equal first-vote digest atomically records quorum, stores the
+  canonical result once and executes the bounded typed apply in the same
+  checkpoint, producing `COMPLETED` or the defined `CONFLICTED` outcome;
+- there is no `QUORUM_READY` waiting state, `PoCActivationV1`,
+  `activateLysis`, activator or post-quorum result delivery;
+- the fourth slot remains open until the exclusive response deadline after
+  quorum application;
+- deadline close records matching, divergent, missing and equivocation
+  evidence; PoC does not apply monetary slashing;
+- fourth-slot/equivocation/close writes live in a separate bounded
+  `OcompVoteAccountabilityV1`; immutable terminal receipt, active generation,
+  applied result and exact-retry identity never change after completion;
+- only no-quorum pending jobs expire; a timely q=3 is already applied by its
+  forming transaction.
+
+This correction reopens the affected schema/freeze/FSM/signing/quorum/public
+quorum-apply/harness/capacity/closure work in `OCM-03`, `OCM-04`, `OCM-08`,
+`OCM-09`, `OCM-15`, `OCM-16` and `OCM-23..27`. It does not change
+authenticated input, deterministic Lysis, owner effects, Mongo/CE transport,
+Tribute population scope or the Lysis-only program boundary. The only permitted
+ZeroFee change is the closed full-result-vote hook above. It includes the
+bounded apply work when that submission forms q=3; consensus gas/work limits
+still apply.
 
 ### Protocol correction accepted during OCM-13
 
@@ -57,13 +106,13 @@ The last task must prove this real path:
 ```text
 public Tribute transactions
   -> terminal Metadosis JobIntent without Lysis/effects
+  -> consensus-recorded finality + four blocks -> VOTING_OPEN
   -> finalized authenticated export
   -> four independent validator-domain executions
-  -> three matching node-owned attestations
-  -> untrusted relay
-  -> normal paid public activateLysis transaction
-  -> bounded verification without Lysis
-  -> four certified activation-owner effects in one checkpoint
+  -> four Supervisor-submitted validator ZeroFee full-result transactions
+  -> the third matching transaction records q=3 and verifies without Lysis
+  -> four certified owner effects in the same checkpoint
+  -> fourth-slot accountability stays open
   -> finalized Nod/effect/generation public reads and proofs
 ```
 
@@ -71,12 +120,13 @@ The plan adds exactly two workspace packages:
 
 - `crates/system/ocomp-protocol`;
 - `bin/outbe-ocomp`, one executable with fixed `supervisor`,
-  `snapshot-exporter`, `worker` and `relay` modes.
+  `snapshot-exporter` and `worker` modes.
 
 It does not add a `ProgramRegistry`, `TaskAdapter`, second program, generic
-write/action dispatcher, new activation transaction type, new RPC namespace,
+write/action dispatcher, separate activation transaction, new RPC namespace,
 separate CAS daemon, node-spawned arbitrary worker, synchronous fallback,
-ZeroFee rule, TargetLarge proof/DA path or supported-network deployment.
+generic/broad ZeroFee policy, TargetLarge proof/DA path or
+supported-network deployment.
 
 `PFS-002-07` and `PFS-002-08` remain deferred. Normal restart and finalized
 generation replay are still PoC requirements.
@@ -117,8 +167,8 @@ The fork and capacity gates are deliberately split:
 | `G1 SHAPE FREEZE` | `OCM-04` | schemas/domains/registries/candidate ceilings frozen; no checked-in network can activate OCOMP |
 | `G2 REQUEST` | `OCM-08` | a typed measurement fixture can create/expire a real JobIntent with no Lysis/effects; production chain-manifest installation closes in `OCM-24/25` |
 | `G3 ONE DOMAIN` | `OCM-15` | one domain can export, compute, verify and durably attest |
-| `G4 QUORUM` | `OCM-16` | an untrusted relay can form only a valid q=3 certificate |
-| `G5 ACTIVATION` | `OCM-23` | public certified activation atomically applies four owner effects and terminal state |
+| `G4 QUORUM` | `OCM-16` | four bounded on-chain slots derive q=3 and objective accountability |
+| `G5 QUORUM APPLY` | `OCM-23` | the q-forming validator vote atomically applies four owner effects and terminal state |
 | `G6 PUBLIC MEASUREMENT` | `OCM-25` | disposable four-node measurement chain exercises real RPC/import/replay |
 | `G7 ARMING` | `OCM-26` | final cap/bundle/genesis/committee are checked in; canonical fresh-devnet fork may activate |
 | `G8 CLOSURE` | `OCM-27` | exact thirteen-step, isolation and evidence verifier pass |
@@ -148,14 +198,14 @@ flowchart TD
   T13[OCM-13 authenticated exporter]
   T14[OCM-14 planner workers reducer]
   T15[OCM-15 attestation sign-once]
-  T16[OCM-16 relay certificate]
-  T17[OCM-17 activation verifier]
+  T16[OCM-16 on-chain result voting]
+  T17[OCM-17 quorum-apply verifier]
   T18[OCM-18 Nod generation-root owner]
   T19[OCM-19 Intex certified owner]
   T20[OCM-20 Tribute certified owner]
   T21[OCM-21 next-day carry-over]
-  T22[OCM-22 Promis activation credit]
-  T23[OCM-23 atomic public activation]
+  T22[OCM-22 Promis quorum-apply credit]
+  T23[OCM-23 atomic q-forming apply]
   T24[OCM-24 harness and evidence]
   T25[OCM-25 public measurement suite]
   T26[OCM-26 capacity and arming]
@@ -191,6 +241,8 @@ flowchart TD
   T09 --> T15
   T14 --> T15
   T04 --> T16
+  T08 --> T16
+  T09 --> T16
   T15 --> T16
   T01 --> T17
   T04 --> T17
@@ -238,8 +290,8 @@ Parallelizable groups:
 
 - `OCM-01` and `OCM-02`;
 - `OCM-05`, `OCM-06`, `OCM-07` and `OCM-11` after shape freeze;
-- process plane `OCM-09..16` and activation verifier `OCM-17`;
-- activation owner tasks `OCM-18..20` and `OCM-22`.
+- process plane `OCM-09..16` and quorum-apply verifier `OCM-17`;
+- quorum-apply owner tasks `OCM-18..20` and `OCM-22`.
 
 ## 5. Task index
 
@@ -248,7 +300,7 @@ Parallelizable groups:
 | `OCM-00` | evidence/CI contract | — | `OCM-EVD-001` |
 | `OCM-01` | pure Lysis V1 + reference | `00` | `OCM-SEM-001` |
 | `OCM-02` | OCB1/hash/list foundation | `00` | contributes `OCM-BYT-001` |
-| `OCM-03` | complete protocol schemas/verifiers | `01,02` | contributes `BYT/APL/FIN/CRT` |
+| `OCM-03` | complete protocol schemas/verifiers | `01,02` | contributes `BYT/APL/FIN/VOT` |
 | `OCM-04` | P0 shape freeze and vectors | `03` | `OCM-BYT-001/002`, `OCM-BND-003` |
 | `OCM-05` | budget split, strict Desis and carry-over primitives | `04` | contributes `OCM-REQ-001`, `OCM-APL-002` |
 | `OCM-06` | maintained bounded pre-admission | `04` | contributes `OCM-REQ/EXP/TIM` |
@@ -261,17 +313,17 @@ Parallelizable groups:
 | `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001` |
 | `OCM-14` | deterministic plan/work/reduce | `01,04,11,13` | `OCM-SEM-002`, `OCM-DET-001` |
 | `OCM-15` | node attestation and sign-once | `04,09,14` | `OCM-SIG-001` |
-| `OCM-16` | relay and q=3 certificate | `04,15` | `OCM-CRT-001` |
+| `OCM-16` | Supervisor zero-fee result votes, q=3 and accountability | `04,08,09,15` | `OCM-VOT-001` |
 | `OCM-17` | structural verifier/capability/equations | `01,04,05` | `OCM-APL-001`, `OCM-BND-002` |
 | `OCM-18` | Nod certified generation-root install | `05,17` | contributes `OCM-APL-002` |
 | `OCM-19` | Intex certified contributor-root install | `05,17` | contributes `OCM-APL-002` |
 | `OCM-20` | Tribute consume/retire | `05,17` | contributes `OCM-APL-002` |
 | `OCM-21` | consume carry-over into the next unformed day limit | `05,08` | contributes `OCM-REQ-001`, `OCM-TIM-001` |
 | `OCM-22` | Promis certified `unused_lysis` credit | `05,17` | contributes `OCM-APL-002` |
-| `OCM-23` | public atomic activation and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001` |
+| `OCM-23` | q-forming atomic apply and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001` |
 | `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all public/E2E IDs |
-| `OCM-25` | public fork/activation measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-002/003/004` |
-| `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001`, `OCM-PUB-001` |
+| `OCM-25` | public fork/vote/quorum-apply measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-001/002/003/004` |
+| `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001` |
 | `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001..008`, `OCM-ISO-001`, `OCM-TRC-001` |
 
 ## 6. Detailed task cards
@@ -430,12 +482,12 @@ while population-wide objects use constant-size count/root commitments.
 
 **Files/symbols:**
 
-- `crates/system/ocomp-protocol/src/{profile,intent,input,unit,result,committee,certificate,state,activation,receipts,control}.rs`;
+- `crates/system/ocomp-protocol/src/{profile,intent,input,unit,result,committee,vote,state,activation,receipts,control}.rs`;
 - ABI/system-transaction/event/error registries;
 - golden vector semantic fixtures.
 
-**Changes:** implement the complete object registry `0x0001..0x001f`, nested
-types, exact IDs/hashes/signature rules, Job/attempt/deadline bindings, local
+**Changes:** implement the complete regenerated object registry, nested
+types, exact IDs/hashes/signature rules, Job/attempt/finality/open/deadline bindings, local
 control frames, receipts/job record and public ABI constants. The capacity
 profile contains no total Tribute cap. `JobIntentV1` binds the complete
 population; `InputManifestV1`, `PlanCommitmentV1` and `LysisResultV1` commit
@@ -455,10 +507,19 @@ internal typed Rust interface over bounded cursors, not a wire/control object.
 primary shard, including excluded Tribute; nominal is not duplicated in every
 finalized record.
 
+Add `AWAITING_FINALITY`, `VOTING_OPEN`, `LysisTerminalV1`, `ResultVoteV1`,
+four fixed `ResultVoteSlotV1` records, `EquivocationEvidenceV1`, immutable
+quorum fields and separate bounded
+`OcompVoteAccountabilityV1`/`OcompAccountabilitySummaryV1`. Freeze that terminal
+identity excludes mutable accountability fields. Remove
+`ExecutionCertificateV1` and every candidate-announcement/relay wire object
+from the PoC registry.
+
 **Invariants/failures:** exact field order and sort keys; one chain/genesis/fork/
-bundle/parent job; complete canonical shard coverage; q=3 distinct signers;
-high-s/invalid keys reject; fixed owner order; no opaque target/call/write
-bytes.
+bundle/parent job; complete canonical shard coverage; q=3 equal first-vote
+slots; high-s/invalid keys reject; exact retry is idempotent; conflicting
+second vote records evidence without replacing the first; fixed owner order;
+no opaque target/call/write bytes.
 
 **Fork impact:** defines bytes only; no checked-in schedule selects them.
 
@@ -468,7 +529,7 @@ traits.
 
 **Task-local tests:** per-type roundtrip/negative/cap/hash tests, independent ABI
 selector/topic checks and schema dependency-cycle checks. Contributes
-`OCM-BYT-001/002`, `OCM-FIN-001`, `OCM-APL-001` and `OCM-CRT-001`.
+`OCM-BYT-001/002`, `OCM-FIN-001`, `OCM-APL-001` and `OCM-VOT-001`.
 Finalized-output vectors include mixed eligible/excluded, all-excluded,
 subtotal overflow, mutation/truncation and rejection of bytes produced under
 the previous work-output schema.
@@ -505,6 +566,12 @@ merges while leaving final capacity/network identity explicitly unarmed.
 verification result, machine/headroom policy hash and explicit
 `measurement_only` evidence classification. No checked-in genesis/fork
 schedule may reference the fixture.
+Regenerate all former certificate registry/domain/cap vectors as
+finality+4-open/full-result-vote-slot/quorum-apply/separate-accountability/
+immutable-terminal vectors. Freeze the exact `submitLysisResult` selector,
+`ResultVoteV1 { result: LysisResultV1, ... }` envelope and
+validator ZeroFee classification separately from OCOMP validity; stale
+`ExecutionCertificateV1` bytes must fail V1 decoding and cannot be armed.
 
 **Invariants/failures:** regeneration without inputs is byte-identical;
 candidate per-interface limits never exceed documented ceilings; `S+1`
@@ -654,11 +721,15 @@ request slots without a second execution path.
 **Changes:** add `OcompLifecycleBegin` (`OSE2`) after
 `LateFinalizeCredits`/before `CycleTick`; at `H` its first subphase atomically
 installs the chain-manifest-bound request profile, exact bundle and complete
-committee before expiry; add sole end-zone `OcompTerminalRequest` (`OSR2`);
+committee; later active blocks consume consensus-recorded request finality,
+open jobs due at `finality_recorded_height+4`, then close/expire due voting
+windows before ordinary transactions; add sole end-zone
+`OcompTerminalRequest` (`OSR2`);
 finalize compressed entities when the first end envelope is reached; reject
 missing/duplicate/misordered/user-after-end forms. Preserve the empty OSE2 body
 and existing SystemTx ABI. The protocol-version-1 Update handler remains the
-sole owner-profile initializer at the same `H`.
+sole owner-profile initializer at the same `H` and runs in deterministic
+pre-execution hooks before the receipt-visible begin zone.
 
 **Invariants/failures:** every path receives one immutable install parsed before
 startup; all install objects validate before the first write; install is
@@ -696,9 +767,12 @@ mutations reject and pre-fork blocks remain byte-compatible.
 
 **Depends on:** `OCM-05`, `OCM-06`, `OCM-07`.
 
-**Outcome:** an eligible non-empty READY WWD creates one complete JobIntent and
-one request-phase budget effect, then expires/requeues with the same budget and
-without executing Lysis.
+**Outcome:** an eligible non-empty READY WWD creates one complete JobIntent,
+Metadosis `OFFCHAIN_PENDING`, OCOMP `AWAITING_FINALITY` and one request-phase
+budget effect. Four blocks after consensus records request finality, it becomes
+`VOTING_OPEN`, then either completes through the third matching full-result
+vote, records the defined conflict/retry outcome, or expires/requeues with the
+same budget and without executing Lysis.
 
 **Files/symbols:**
 
@@ -707,18 +781,24 @@ without executing Lysis.
 - Metadosis dispatch/interface for the initial job view;
 - lifecycle handlers wired from `OCM-07`.
 
-**Changes:** append `OFFCHAIN_PENDING=8`; add nonce/state/envelope fields;
-job/live/READY/expiry/terminal indexes; exact request checkpoint; exclusive
-deadline; one-block retry; terminal cap; empty/ineligible direct compatibility
-branches. Assemble the complete activation-precondition snapshot through the
-read-only projections owned here and in `OCM-06`. Perform the authoritative
-budget-effect receipt lookup before choosing the `OCM-05` fresh-apply or
-replay-validation path.
+**Changes:** retain Metadosis `OFFCHAIN_PENDING=8`; add fork-pinned OCOMP
+`AWAITING_FINALITY` and `VOTING_OPEN` tags; add
+nonce/state/envelope fields; job/live/READY/finality-open/
+response-deadline/terminal indexes; exact request checkpoint; checked
+`open_height = finality_recorded_height + 4`; exclusive result-vote deadline;
+one-block retry; terminal cap; empty/ineligible direct
+compatibility branches. At deadline, close accountability and expire only a
+no-quorum pending job. A q=3 result is already terminally applied before close.
+Assemble the complete apply-precondition snapshot through the read-only projections owned here
+and in `OCM-06`. Perform the authoritative budget-effect receipt lookup before
+choosing the `OCM-05` fresh-apply or replay-validation path.
 
-**Invariants/failures:** status/index/budget equivalences; initial nonce zero and
-`attempt=checked_u32(nonce)`; expiry increments once; no scan; no `RUNNING`;
-retry does not repeat Desis/carry-over; terminal evidence is not silently
-evicted; invariant corruption is fatal.
+**Invariants/failures:** status/index/budget equivalences; request creation has
+no deadline index; pre-open signature/vote authority is absent; initial nonce zero and
+`attempt=checked_u32(nonce)`; no-quorum expiry increments once; quorum is
+immutable and never expires; completed/conflicted response windows close once;
+no scan; no `RUNNING`; retry does not repeat Desis/carry-over; terminal evidence
+is not silently evicted; invariant corruption is fatal.
 
 **Fork impact:** pre-fork remains synchronous; active eligible non-empty path has
 no synchronous fallback; empty/zero/ineligible behavior remains pinned.
@@ -734,9 +814,11 @@ CE-seal/no-effects integration.
 state/events and zero-effect public reads.
 
 **Observable acceptance:** a measurement request block exposes the canonical
-split, exact early effect and `OFFCHAIN_PENDING` intent, with zero Nod/
-contributor/Tribute-consume effects. Expiry preserves the budget and schedules
-only height+1.
+split, exact early effect, Metadosis `OFFCHAIN_PENDING` and OCOMP
+`AWAITING_FINALITY`, with zero Nod/contributor/Tribute-consume effects. The job
+opens exactly at `finality_recorded_height + 4`; no-quorum expiry preserves the
+budget and schedules only height+1; a timely q=3 transition is already
+`COMPLETED` or `CONFLICTED` before window close.
 
 **Risks:** re-acquiring in the expiry block or scanning READY state. Mitigation:
 exact due indexes and fixed retry key.
@@ -748,40 +830,63 @@ atomic; fork compatibility tests remain green.
 
 **Depends on:** `OCM-04`, `OCM-08`.
 
-**Outcome:** only a finalized canonical request becomes a signable JobId, and
-each validator durably pins its source before a positive vote.
+**Outcome:** only a finalized canonical request becomes a JobId; consensus
+records its finality height and deterministically opens voting four blocks
+later. Each validator durably pins its source before a positive vote.
 
 **Files/symbols:**
 
 - `crates/blockchain/node/src/ocomp/{retention,finality}.rs`;
 - consensus vote/finalization hooks;
 - `FinalizedParentCertStore`, `CertifiedParentProofRecord` adapters;
-- immutable one-entry pin journal;
+- OCOMP consensus finality/open due record and begin-zone transition;
+- bounded durable multi-job registry plus separately addressed authenticated
+  input-lease registry;
 - protocol finality proof verifier/tests.
 
 **Changes:** implement `OcompRetentionCoordinator`,
 `FinalizedInputProofSource`, tentative-before-vote ack, finalized/orphan
-reconciliation, historical committee opening and exact `JobId` proof building.
+reconciliation, independent Job entries, typed `InputLeaseId` derivation and
+reference tracking, historical committee opening and exact `JobId` proof building;
+feed the existing consensus-certified finalization path into the OCOMP
+`finality_recorded_height` marker; checked-add four, then atomically install
+`VOTING_OPEN`, deadline and due index. The asynchronous node finality worker
+must also promote the exact pin and pre-arm the immutable CE export lease while
+the finalized marker still names the request block; the consensus callback
+only enqueues this work. No vote payload or local event can mark finality/open.
 
 **Invariants/failures:** event is not authority; missing/wrong finality abstains;
+open height is exactly finality height plus four; pre-open attestation/vote
+rejects; height overflow fails closed;
 pin fsync failure withholds local positive vote; orphan releases and becomes
-non-signable; ambiguous/corrupt pin quarantines OCOMP while consensus continues.
+non-signable; a retained predecessor and retry coexist; one stuck Job does not
+block another; changed input commitments cannot alias an existing lease;
+ambiguous/corrupt registry data fails closed for affected OCOMP work while
+consensus continues.
 
-**Fork impact:** node-local readiness only; cannot change block validity or
-threshold.
+**Fork impact:** the finality/open marker is consensus state; local pin/export
+readiness cannot change block validity or threshold.
 
 **Reuse/non-goals:** adapt persisted finalization records/subscriptions and
 existing key permission patterns. Do not expose broad proof RPC, stream bodies,
 sign or schedule work.
 
 **Test first:** `OCM-FIN-001` adversarial proof vectors and `OCM-PIN-001`
-persistence/orphan/restart boundaries.
+persistence/orphan/restart boundaries. The tracer regression is the observed
+production sequence: Job A finalizes at 151, becomes terminal at 219 and remains
+retained through 283; retry Job B is admitted/finalized at 221 and progresses
+without replacing A. Add independent Jobs, same-lease retry, changed-lease
+retry, last-reference GC and restart recovery.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; proof bytes, tentative/final/orphan
 journal bytes and withheld-vote/refusal result.
 
-**Observable acceptance:** four nodes derive the same JobId after finality; an
-orphaned candidate cannot be exported or signed after restart.
+**Observable acceptance:** four nodes derive the same JobId/finality height,
+remain non-signable for four blocks, then expose the same
+`VOTING_OPEN(open_height, deadline_height)`; an orphaned candidate never opens
+and cannot be signed after restart. A Supervisor first started or restarted
+after later CE finalization consumes the pre-armed exact request lease and
+cannot fall back to the then-current CE marker.
 
 **Risks:** blocking consensus on local export health. Mitigation: only
 tentative-pin durability participates before vote; all later OCOMP failures
@@ -809,7 +914,9 @@ window without receiving writer or arbitrary query authority.
 hash/state/CE marker identity, typed raw proof set and terminal+64-finalized-block
 release ownership. Retained Tribute release is cursor/page bounded across the
 parent JobId; finding more than one worker shard continues GC and is not an
-invariant violation.
+invariant violation. The lease is created by the node finality worker at exact
+request finality and handed to the independently started exporter/Supervisor;
+late process startup never re-opens an historical snapshot from live state.
 
 **Invariants/failures:** CE marker ahead/missed lease, pruned state, Mongo lag,
 wrong containment/proof or opening cap makes that validator abstain; exporter
@@ -822,7 +929,8 @@ to consensus validity.
 and current proof types. Do not add historical CE query service, second
 projection DB or long-horizon production recovery.
 
-**Task-local tests:** lease generation/stale handle, marker race, raw retention,
+**Task-local tests:** lease generation/stale handle, marker race, finality-time
+pre-arm followed by late Supervisor start/restart, raw retention,
 multi-page release with `max_tributes_per_work_shard + 1` retained Tribute,
 Mongo behind/ahead containment and Fidelity/Oracle proof mutation. Contributes
 `OCM-EXP-001`.
@@ -830,8 +938,10 @@ Mongo behind/ahead containment and Fidelity/Oracle proof mutation. Contributes
 **Evidence/CI:** `OCM-INT` with real CE MDBX and Mongo; checkpoint identities,
 proofs and exact release-height records.
 
-**Observable acceptance:** exporter can read one final JobId snapshot and no
-other height/path; source ambiguity yields no manifest/signature while blocks
+**Observable acceptance:** exporter can read each requested final JobId snapshot
+and no other height/path; simultaneous handoffs remain independently
+addressable; a retry may read its exact shared input lease while the predecessor
+evidence is retained; source ambiguity yields no manifest/signature while blocks
 continue.
 
 **Risks:** holding the CE writer indefinitely. Mitigation: one bounded
@@ -844,13 +954,13 @@ caller-selected path/query/writer capability is exposed.
 
 **Depends on:** `OCM-04`.
 
-**Outcome:** one `outbe-ocomp` package runs only the four fixed roles over
+**Outcome:** one `outbe-ocomp` package runs only the three fixed roles over
 bounded UDS/CAS contracts, with checked-in systemd/cgroup topology.
 
 **Files/symbols:**
 
 - new `bin/outbe-ocomp/{Cargo.toml,src/}`;
-- role entrypoints `supervisor`, `snapshot-exporter`, `worker`, `relay`;
+- role entrypoints `supervisor`, `snapshot-exporter`, `worker`;
 - bounded frame/session/counter clients using `outbe-ocomp-protocol`;
 - filesystem CAS and worker inbox;
 - `deploy/systemd/outbe-ocomp-*` service/socket/target/slice units.
@@ -922,8 +1032,9 @@ restart and exactly-once assertion.
 **Observable acceptance:** dropping the complete request subscription still
 discovers the finalized job once; replaying the hint changes nothing.
 
-**Risks:** unbounded cursor backlog. Mitigation: PoC max one pending job and one
-bounded response.
+**Risks:** unbounded cursor backlog. Mitigation: the generated PoC profile
+admits at most two simultaneously live Jobs, advances at most one request per
+block and returns one bounded discovery response.
 
 **DoD:** supervisor uses only finalized cursor authority, discovery test passes
 with real processes and no direct node DB access exists.
@@ -1111,8 +1222,10 @@ cannot inject a precomputed result root.
 
 **Depends on:** `OCM-04`, `OCM-09`, `OCM-14`.
 
-**Outcome:** a node independently reloads and validates a candidate, then
-releases at most one durable signature for one exact job attempt. Independent
+**Outcome:** a node independently reloads and validates the canonical
+`LysisResultV1`, then releases at most one durable signed full-result
+`ResultVoteV1` for one exact job attempt.
+Independent
 means finalized intent/export authority and constant-size bindings/equations;
 the node does not read result chunks or rerun Lysis.
 
@@ -1128,7 +1241,8 @@ artifacts, exact 64-lowercase-hex-plus-LF owner-only secret file, candidate
 reload/reconstruction, cap/program checks and create/write/file-fsync/
 no-clobber-link/directory-fsync-before-response protocol. The gate recomputes
 the signing subject and `ResultDigest` from canonical candidate bytes; it does
-not claim to prove opaque catalog bodies it does not read.
+not claim to prove opaque catalog bodies it does not read. It requires the
+exact consensus `VOTING_OPEN` attempt; finality alone is insufficient.
 
 **Invariants/failures:** compute processes never access key; caller supplies no
 arbitrary digest/purpose; exact retry returns recorded signature; different
@@ -1151,9 +1265,11 @@ bundle, committee, deadline, arithmetic and result bindings.
 sign-once exact bytes, fsync boundary and typed refusal.
 
 **Observable acceptance:** one domain signs the independently reconstructed
-ResultDigest; a second digest is refused before and after node restart. A
+ResultDigest only after `open_height`; the canonical signed vote envelope is
+ready for the downstream submitter without exposing either signing key; a
+second digest is refused before and after node restart. A
 malicious internally consistent opaque catalog claim can consume at most its
-faulty domain's one sign-once slot and cannot form `q=3`.
+faulty domain's one sign-once/vote slot and cannot form `q=3`.
 
 **Risks:** signature released before durable record. Mitigation: response is
 strictly after directory fsync and startup reconciliation.
@@ -1161,49 +1277,94 @@ strictly after directory fsync and startup reconciliation.
 **DoD:** `G3` one-domain export/compute/attest passes, key isolation/call shape
 is closed and `OCM-SIG-001` is green.
 
-### OCM-16 — Implement the replaceable relay and q=3 certificate
+### OCM-16 — Implement on-chain result voting, q=3 and accountability
 
-**Depends on:** `OCM-04`, `OCM-15`.
+**Depends on:** `OCM-04`, `OCM-08`, `OCM-09`, `OCM-15`.
 
-**Outcome:** an untrusted relay groups exact result bytes and can submit only a
-canonical certificate with three distinct eligible matching signatures.
+**Outcome:** the production on-chain full-result-vote dispatch and narrow
+validator-only ZeroFee classification are complete; four bounded consensus
+slots accept eligible timely submissions, derive one immutable q=3 digest and
+close objective fourth-validator accountability without a relay, certificate
+or separate activator.
+Supervisor RPC submission, inclusion tracking and reorg rebroadcast are
+integrated and proven later by `OCM-25`, after the public harness exists.
+The PoC submitter uses canonical `latest` account nonce plus the frozen bounded
+gas envelope; it never invokes `eth_estimateGas` or pending-block execution.
+Its single-writer journal persists exact node-signed raw bytes for retry and
+reorg rebroadcast.
 
 **Files/symbols:**
 
-- `bin/outbe-ocomp` relay mode/HTTP ingress and bounded storage;
-- `CandidateAnnouncementV1`, certificate builder and activation calldata
-  builder;
-- production certificate verifier fixtures;
-- public exact-block finality/proof client.
+- `crates/core/metadosis/src/ocomp/{vote,state,views}.rs`;
+- `crates/system/zerofee/src/hooks.rs` exact result-vote hook;
+- `xtask/src/ocomp/task.rs` fail-first `OCM-VOT-001` task-progress gate;
+- Metadosis public `submitLysisResult(bytes)` dispatch and interface;
+- `ResultVoteV1`, `ResultVoteSlotV1`, `EquivocationEvidenceV1` and
+  separate `OcompVoteAccountabilityV1`/`OcompAccountabilitySummaryV1` pure
+  verifiers;
+- begin-zone response-window close wired through the OCM-07 lifecycle;
+- public exact-block vote/state proof collectors.
 
-**Changes:** bounded announcement validation, group by complete result/digest,
-select sorted first three eligible indexes, reconstruct finality/state proof and
-build one normal Ethereum transaction.
+**Changes:** add an Oracle-model exact-selector/zero-value/bounded-envelope/
+eligible-validator ZeroFee hook that only waives native debit. OCOMP bounded
+ABI preflight bounded-decodes the complete canonical `LysisResultV1`, derives
+`ResultDigest`, and verifies `VOTING_OPEN`, finalized job binding, committee,
+validator index, key epoch, low-s signature and exclusive inclusion height;
+store the first vote digest/signature/height without copying the result and
+consensus-assigned height; make exact retry idempotent; record a conflicting
+second valid signature without replacing/counting it; scan exactly four slots;
+surface the q-forming current result plus immutable
+digest/height/bitmap/evidence hash to the OCM-23 apply command at three matches;
+keep a missing fourth slot open in `COMPLETED` or `CONFLICTED`; close matching,
+divergent, missing and equivocation bitmaps in separate bounded accountability
+state at the deadline. No monetary slashing call is part of PoC.
 
-**Invariants/failures:** no mixed digest, duplicate/unknown/wrong epoch/key,
-malformed/high-s/reordered signature authority; relay has no exclusive role,
-keys, domain files or trusted ordering; q never lowers.
+**Invariants/failures:** one first tally vote per eligible index; no
+unknown/wrong-epoch/high-s/late authority; q never lowers; quorum never changes
+or expires; fourth vote never changes applied output; minority digest is
+recorded but not automatically slashable; only canonical inclusion height
+defines timeliness; pre-open rejects in OCOMP; fee waiver grants no protocol
+authority; Supervisor retry/reorg cannot double-count; fourth/close cannot
+change terminal receipt, active generation or exact-retry identity.
 
-**Fork impact:** measurement transaction only until arming.
+**Fork impact:** measurement transaction/state only until arming.
 
-**Reuse/non-goals:** reuse public RPC transaction/finality clients and protocol
-verifier. Do not add private executor injection, central calculator, relay key
-or second evidence transaction.
+**Reuse/non-goals:** reuse Supervisor discovery/job runner, node control
+authentication, Oracle ZeroFee registry shape, normal public transaction
+dispatch, OCOMP committee verifier, lifecycle due index and state checkpoints.
+Do not add a relay mode,
+candidate HTTP API, `ExecutionCertificateV1`, custom transaction type, direct
+state injection, generic voting framework, separate activation call or broad ZeroFee waiver, or
+monetary slashing policy.
 
-**Test first:** `OCM-CRT-001` positive q=3 and complete signer/result mutation
-matrix.
+**Test first:** `OCM-VOT-001` execution matrix: healthy `4/4`;
+one-unavailable `3/4` plus one missing bit; two-unavailable q<3 expiry;
+finality+3 reject/finality+4 accept; exact retry;
+duplicate/wrong/unknown/key-epoch/high-s/late vote; conflicting second
+vote/equivocation; minority fourth digest; q persistence across deadline and
+restart/replay. `OCM-PUB-001` later proves Supervisor inclusion/reorg
+rebroadcast and unchanged validator native balance through the real public
+path.
 
-**Evidence/CI:** `OCM-INT`; announcement groups, selected indexes, certificate/
-calldata bytes and rejection codes.
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; canonical vote transaction bytes,
+ZeroFee classification decisions, slot transitions, quorum/accountability
+summaries, block heights, rejection codes and replay equality. Public
+Supervisor submission/reorg/balance claims are deliberately absent from this
+task and belong to `OCM-PUB-001`.
 
-**Observable acceptance:** three matching domains form one canonical
-certificate; one mismatch forms groups below threshold and no transaction.
+**Observable acceptance:** the healthy path records all four identical slots;
+the one-domain-down path reaches q from exactly three and passes the q-forming
+result into the atomic-apply seam completed by OCM-23, then later records one
+missing validator; no off-chain component can hide or synthesize participation.
 
-**Risks:** relay silently chooses a majority result. Mitigation: exact byte
-grouping and node-side full verification.
+**Risks:** treating the fourth validator as a veto, expiring a timely quorum, or
+allowing q-forming apply to close accountability early. Mitigation: terminal
+result state is immutable while the four-slot accountability record has its own
+deadline and model tests.
 
-**DoD:** `G4` certificate/relay tests pass, relay is replaceable/unprivileged and
-cannot produce authority from invalid evidence.
+**DoD:** `G4` execution-level vote/quorum/accountability tests pass; no
+relay/certificate authority is used as result evidence; no test inspects source
+text. The public block-path gate remains visibly open until `OCM-25`.
 
 ### OCM-17 — Implement the Lysis structural verifier and private apply authority
 
@@ -1234,7 +1395,7 @@ wire crate; the provider default denies frame creation.
 Oracle/Lysis call; capability has no public constructor/generic supertype;
 owner cursor order fixed; only verified receipts produce terminal permit.
 
-**Fork impact:** none until Metadosis activation dispatch.
+**Fork impact:** none until Metadosis q-forming vote dispatch.
 
 **Reuse/non-goals:** reuse pure Lysis equations and protocol types. Do not
 recompute economics, access `StorageHandle`, invent a generic capability/action
@@ -1274,13 +1435,13 @@ root transition and returns constant-size `NodBatchReceiptV1`.
 **Changes:** private capability-gated generation-install method,
 target-precondition/generation checks, explicit request
 `logical_evaluation_time`, certified roots/counts/totals and one canonical
-receipt/event projection. Activation never iterates `NodActionV1`.
+receipt/event projection. Quorum apply never iterates `NodActionV1`.
 
 **Invariants/failures:** certified count equals consumed Tribute count; exact
 old/new roots and amount/Gratis totals; no current block timestamp in semantic
 fields; namespace generation compare-and-set; no public issuance selector.
 
-**Fork impact:** private method unreachable except certified activation.
+**Fork impact:** private method unreachable except the verified q-forming apply frame.
 
 **Reuse/non-goals:** reuse generation/CE root and proof-read helpers. Do not
 call legacy Lysis, expose public root install, inline action batches or write
@@ -1340,7 +1501,7 @@ exact active root while Nod count still equals all consumed Tributes.
 with absent/version compare-and-set.
 
 **DoD:** checked method and receipt tests pass, legacy API remains unchanged and
-only certified activation can call it post-fork.
+only the private q-forming apply capability can call it post-fork.
 
 ### OCM-20 — Add Tribute certified consume and logical retirement
 
@@ -1429,7 +1590,7 @@ consumer and no auction top-up path exists.
 
 **Depends on:** `OCM-05`, `OCM-17`.
 
-**Outcome:** activation credits exact signed `unused_lysis` with checked
+**Outcome:** quorum apply credits exact signed `unused_lysis` with checked
 arithmetic and returns `CarryOverReceiptV1`.
 
 **Files/symbols:**
@@ -1459,35 +1620,42 @@ budget/conservation, overflow and receipt/event rollback.
 **Observable acceptance:** receipt reports actual before/delta/after and valid
 unrelated additions remain compatible.
 
-**Risks:** crediting `auction_base` again at activation. Mitigation: result type
+**Risks:** crediting `auction_base` again at quorum apply. Mitigation: result type
 contains only `unused_lysis` and conservation tests pin both equations.
 
 **DoD:** certified carry-over tests pass, method is private/capability-gated and
 both budget conservation equations are independently verified.
 
-### OCM-23 — Wire normal public activation and atomic terminal commit
+### OCM-23 — Wire q-forming vote to atomic terminal apply
 
 **Depends on:** `OCM-07`, `OCM-08`, `OCM-16`, `OCM-17`, `OCM-18`,
 `OCM-19`, `OCM-20`, `OCM-21`, `OCM-22`.
 
-**Outcome:** one normal paid `activateLysis(bytes)` transaction verifies the
-live job/evidence/result and commits four activation owner effects, active
-generation, receipts and `COMPLETED` or nothing.
+**Outcome:** the validator ZeroFee `submitLysisResult(bytes)` transaction that
+creates the third matching slot records quorum, stores one canonical
+`LysisResultV1` and commits four owner effects, active generation, receipts and
+`COMPLETED` in one checkpoint. No separate activation transaction exists.
 
 **Files/symbols:**
 
-- `crates/core/metadosis/src/ocomp/{activation,state,views}.rs`;
+- `crates/core/metadosis/src/ocomp/{vote,activation,state,views}.rs`;
 - existing Metadosis precompile/interface and `outbe_ctx_dispatch`;
 - `crates/blockchain/evm/src/{precompiles,executor}.rs`;
 - `crates/blockchain/evm/src/storage/ctx_provider.rs`;
-- `crates/blockchain/txpool/src/lib.rs` only for normal size/admission parity;
+- `crates/system/zerofee` only for the already-frozen result selector;
+- `crates/blockchain/txpool/src/lib.rs` for full-result vote size/admission parity;
 - `contracts/precompiles/src/IMetadosis.sol`.
 
-**Changes:** bounded ABI preflight/meter, exact verification order, execution-
-frame entitlement recorded from the exact Metadosis selector/value/static
-context, one-shot capability closure, owner cursor/receipt verification,
-APPLIED/conflict/retry/rejection semantics, aggregate receipt/active generation,
-three views and frozen logs/errors.
+**Changes:** extend the OCM-16 vote checkpoint so the q-forming current result
+passes directly into exact structural/result/precondition verification and the
+one-shot private capability. Commit the new slot, immutable quorum, one
+canonical result, owner receipts, active generation and terminal record
+together. First and second matching votes perform no owner writes. Remove
+`activateLysis`, `PoCActivationV1`, transaction-carried finalized-intent proof
+and all activator state. Q-forming apply neither closes the fourth vote slot nor
+removes its response-deadline entry. Keep immutable `LysisTerminalV1` separate
+from `OcompVoteAccountabilityV1`; terminal/receipt/active-generation/exact-retry
+identity excludes mutable fourth-slot and closed-summary fields.
 
 `APPLIED` recomputes the aggregate event summary from four validated owner
 state-event digests in fixed Nod/Contributor/Tribute/CarryOver order.
@@ -1495,34 +1663,41 @@ state-event digests in fixed Nod/Contributor/Tribute/CarryOver order.
 apply-event-summary hash. Neither is compared with the signed empty
 `SemanticEventRecords` root.
 
-**Invariants/failures:** at most one activation attempt/block; completed exact
-retry does no crypto/owner/event work; conflict only after valid evidence;
-owner/receipt failure reverts outer checkpoint; fatal corruption rejects block;
-no ZeroFee/public owner/raw path.
+**Invariants/failures:** at most one q-forming apply/block; completed exact
+resubmission does no owner/event work; no caller chooses a signer subset;
+expected stale preconditions commit quorum plus `CONFLICTED`/retry with zero
+owner effects; invalid evidence rejects before the slot; unexpected
+owner/receipt failure reverts the q-forming slot, quorum and every effect;
+fatal corruption rejects the block; the validator pays no native fee, while
+consensus gas/work accounting and the exact result-vote cap remain enforced; no
+public owner/raw/activation path exists.
 
-**Fork impact:** selector exists only under active measurement/final profile;
-pre-fork dispatch unchanged. Public activation is a normal Ethereum transaction.
+**Fork impact:** the full-result selector and q-forming behavior exist only
+under the active measurement/final profile; pre-fork dispatch is unchanged.
 
 **Reuse/non-goals:** reuse `StorageHandle::with_checkpoint`, precompile dispatch,
 owner methods and public transaction path. Do not add custom RPC, transaction
-type, generic dispatcher/write set or on-chain Lysis.
+type, generic dispatcher/write set, activator or on-chain Lysis.
 
 **Test first:** `OCM-BND-001` factory/raw-path/compile-fail scan,
 `OCM-APL-002` table-driven four-owner/four-receipt rollback/conflict/retry and
 `OCM-TIM-001` logical time.
 
-**Evidence/CI:** `OCM-FAST`, `OCM-INT`; calldata/receipt/event bytes, capability
-capability-denial/runtime-trace report and exact pre/post owner/job/CE state.
+**Evidence/CI:** `OCM-FAST`, `OCM-INT`; full-result vote/receipt/event bytes,
+capability-denial/runtime-trace report and exact pre/post
+slot/quorum/owner/job/CE state.
 
-**Observable acceptance:** valid q=3 activation yields the frozen public
-receipt/views and every owner effect; a named late failure leaves the pending
-job and all state/CE/events unchanged.
+**Observable acceptance:** first and second matching full-result votes have no
+owner effects; the third yields the frozen public receipt/views and every owner
+effect in its transaction; the fourth changes only accountability. A named
+owner failure leaves the third slot, quorum, job and all owner state/events
+unchanged.
 
 **Risks:** Metadosis view-only dispatch lacks execution scope, or a helper
 swallows owner errors. Mitigation: exact selector special-case passes the active
 scope; strict certified methods only.
 
-**DoD:** `G5` activation tests pass, one production capability factory exists,
+**DoD:** `G5` quorum-apply tests pass, one production capability factory exists,
 all public views/logs/errors match vectors and no post-fork raw/synchronous
 bypass is reachable.
 
@@ -1545,14 +1720,15 @@ can emit one hash-indexed multi-scenario evidence bundle.
   `src/features/tribute_projection.rs` as the executable public-Tribute
   baseline;
 - OCOMP process/CAS guards, event drop/corruption/schedule/bundle/failpoint
-  controls;
+controls, including Supervisor vote-submit/reorg and validator balance checks;
 - OCOMP scenario evidence/run manifest and closure verifier integration;
 - structured calculation-boundary markers/traces in exact production call
   owners.
 
 **Changes:** add four domain handles, supervisor-only stop/restart, worker
-activator, exporter/CAS/Mongo faults, untrusted relay, exact-block OCOMP views/
-proofs, process/topology inventory and correlation across delay variants.
+socket launcher, exporter/CAS/Mongo faults, vote-submitter controls, exact-block OCOMP
+vote/quorum/accountability views/proofs, process/topology inventory and
+correlation across delay variants.
 Generate the disposable base genesis, bundle and committee first, then emit one
 canonical `Measurement` `OcompForkInstallV1` before node launch. All four nodes
 load that exact immutable binding; the harness cannot hot-load or override it.
@@ -1591,7 +1767,7 @@ evidence must prove, in order:
    finalized header, and the present body equals its projected Mongo bytes;
 5. the fixture correlation record binds transaction/block/header, owner/day,
    raw entity ID, projection digest and CE proof/root to the later snapshot,
-   manifest, `JobIntent`, result and activation evidence.
+   manifest, `JobIntent`, result-vote and quorum-apply evidence.
 
 The next state transition is the production Metadosis request path. Harness
 code cannot provide a Tribute root, snapshot root, manifest, job, result or
@@ -1606,9 +1782,10 @@ feature is registered once and has no direct job/result/state injection hook.
 
 **Evidence/CI:** `OCM-INT`; contributes all `OCM-PUB/E2E/ISO/TRC` IDs.
 
-**Observable acceptance:** an unprivileged development run starts four nodes,
-four OCOMP domains and relay with real UDS/Mongo/CE, then stops only a
-supervisor while finality advances.
+**Observable acceptance:** an unprivileged development run starts four nodes
+and four OCOMP domains with real UDS/Mongo/CE, records a healthy `4/4` vote
+window, then stops only a supervisor while finality advances and a fresh job
+reaches `3/4`.
 
 **Risks:** harness shortcut becoming an alternate product path. Mitigation:
 steps call typed production handles only and closure rejects direct injection.
@@ -1617,7 +1794,7 @@ steps call typed production handles only and closure rejects direct injection.
 manifest validates, cleanup cannot touch operator/unowned data and no scenario
 can self-declare closure.
 
-### OCM-25 — Run the public fork/activation measurement suite
+### OCM-25 — Run the public fork/vote/quorum-apply measurement suite
 
 **Depends on:** `OCM-04`, `OCM-08`, `OCM-09`, `OCM-13`, `OCM-14`,
 `OCM-15`, `OCM-16`, `OCM-23`, `OCM-24`.
@@ -1628,23 +1805,34 @@ capacity generation.
 
 **Files/symbols:**
 
+- `bin/outbe-ocomp/src/{supervisor_job,vote_submitter}.rs`;
+- `crates/blockchain/node/src/ocomp/control.rs` restricted outer EVM signing seam;
+- `xtask/src/ocomp/task.rs` public-path task runner and exact PUB-ID gate;
 - `crates/testing/e2e-harness/features/ocomp_public_path.feature`;
 - OCOMP step definitions and exact block/state proof collectors;
 - `mise run ocomp-poc-public-path`;
 - measurement-only network/profile generator inputs.
 
-**Changes:** add pre-fork/fork/post-fork phase scenarios; result/job/order/signer
-mutations; before/at deadline; exact/different completed retry; provisional
-activation-byte cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs;
+**Changes:** replace the superseded `run_to_relay/publish_candidate` edge with
+Supervisor-owned prepare/submit/inclusion/finality/reorg-rebroadcast state and
+the node-owned outer EVM signing seam without exporting the key. Add
+pre-fork/fork/post-fork phase scenarios; result/job/order/voter mutations; vote
+at finality+3/finality+4, before/at/after the response deadline; Supervisor
+direct zero-fee submit/reorg replay and validator balance equality;
+q-forming atomic apply; exact/different completed resubmission; provisional
+non-q-forming and q-forming full-result-vote
+cap-1/cap/cap+1 RPC/txpool/P2P/proposer/import/replay runs;
 also prove worker-shard-cap+1 succeeds as a multi-shard parent job and synthetic
 large counts do not allocate proportional plans. Exercise the same startup
 install path planned for the final network, including restart before/at/after
 `H`, historical follower sync and rejection of a mismatched install.
 
 **Invariants/failures:** no direct executor/state injection or post-start
-profile load; each failed activation proves scoped public pre/post equality;
-proposer/import/replay produce equal state/receipt/header/CE roots; deadline
-expiry precedes tx order.
+profile load; each failed vote/q-forming apply proves scoped public pre/post equality;
+proposer/import/replay produce equal state/receipt/header/CE roots; response
+window opens only at finality+4, closes before deadline transaction order,
+expires only q<3; ZeroFee does not perform OCOMP validation, but waives the
+eligible full-result vote even when that vote forms q and applies.
 
 **Fork impact:** only disposable measurement manifest is active. No checked-in
 canonical fresh-devnet schedule changes.
@@ -1652,13 +1840,15 @@ canonical fresh-devnet schedule changes.
 **Reuse/non-goals:** reuse the new harness/public APIs. Do not claim final cap,
 final bundle identity or PoC completion.
 
-**Test first:** close `OCM-PUB-002`, `OCM-PUB-003`, `OCM-PUB-004`; execute
+**Test first:** close `OCM-PUB-001`, `OCM-PUB-002`, `OCM-PUB-003`,
+`OCM-PUB-004`; execute
 provisional `OCM-PUB-001` measurements consumed by `OCM-26`.
 
 **Evidence/CI:** `OCM-PUBLIC`; exact transactions/blocks/finality/state proofs,
 work counters, machine profile and replay results.
 
-**Observable acceptance:** every public mutation/deadline/retry oracle is green,
+**Observable acceptance:** every public vote/quorum/accountability/q-forming-apply
+mutation/deadline/retry oracle is green,
 and cap behavior is measured consistently enough for the generator to select a
 lower/equal final candidate.
 
@@ -1688,9 +1878,10 @@ fresh four-validator devnet.
 - genesis/network/profile consumers and `mise` capacity command.
 
 **Changes:** start with worker-shard `S<=256`, construct maximum-shaped
-individual chunks and constant-size activation, prove `S-1/S/S+1` partition
+individual chunks, full-result `ResultVoteV1`, four-slot/accountability state and
+q-forming apply, prove `S-1/S/S+1` partition
 coverage plus exact 10,000/1,000,000,000 unit-count derivation, run real
-activation-byte cap-1/cap/cap+1, run the five cold measurements on the frozen
+non-q-forming and q-forming vote-byte cap-1/cap/cap+1, run the five cold measurements on the frozen
 `OcompPocDevnetMachineV1` class, lower per-interface bounds until the worst run
 has at least 20% headroom, bind benchmark/machine evidence, regenerate
 bundle/genesis/committee in the frozen two-stage order and remove all
@@ -1718,7 +1909,7 @@ raise documented ceilings or alter schema semantics.
 machine measurements, final artifact hashes and independent vector result.
 
 **Observable acceptance:** worker-shard-cap+1 succeeds with complete two-shard
-coverage; activation-byte cap-1/cap succeeds and cap+1 rejects identically on
+coverage; non-q-forming and q-forming full-result-vote cap-1/cap succeed and cap+1 reject identically on
 the final profile through RPC/txpool/P2P/proposal/import/replay; canonical
 fresh-devnet starts at pre-fork height and activates at 32. All five cold runs
 meet the exact machine/headroom rule with no retry.
@@ -1751,9 +1942,11 @@ closure verification.
 
 **Changes:** implement all stable Gherkin scenarios/tags, final mock-Gramine
 encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
-`S+1` multi-shard 1/2/4-worker schedules, sign-once/restart, q=3/q<3, delays, owner failure,
-bundle mismatch, generation replay, compatibility branches and forbidden-call
-trace.
+`S+1` multi-shard 1/2/4-worker schedules, finality+4 window,
+Supervisor zero-fee submit/reorg, sign-once/restart, healthy `4/4`,
+one-down `3/4`, two-down q<3, late/conflicting/minority fourth votes, delayed
+q-forming apply at a different valid height, owner failure, bundle mismatch, generation
+replay, compatibility branches and forbidden-call trace.
 
 **Invariants/failures:** real four node/OCOMP domains; real UDS/Mongo/CE/
 checkpoints/public path; no central calculator, direct state/handler injection,
@@ -1781,18 +1974,20 @@ production release gate, TargetLarge or second program.
 **Evidence/CI:** `OCM-E2E`, `OCM-ISO`, `OCM-VERIFY`; publish one atomic
 hash-indexed bundle, deterministic `closure-report.json/.md` and report SHA-256.
 
-**Observable acceptance:** public Tribute -> finalized JobIntent -> three
-independent results/signatures -> public activation -> finalized Nod/effects/
-proofs succeeds, with one correlation chain from the original encrypted
+**Observable acceptance:** public Tribute -> finalized JobIntent -> independent
+results -> public full-result vote slots -> q-forming atomic apply -> finalized
+Nod/effects/proofs succeeds, with one correlation chain from the original encrypted
 Tribute transaction and verified projection/CE package through every later
-artifact; q<3 expires with no Nod; all negative cases leave exact expected
-state; forbidden counters are zero.
+artifact; healthy execution records `4/4`, one-domain-down records one missing
+bit without losing the applied result, q<3 expires with no Nod, equivocation is
+canonical evidence, all negative cases leave exact expected state and forbidden
+counters are zero.
 
 **Risks:** environment skip/flakiness or report trusting scenario status.
 Mitigation: exact discovery, no automatic retry, retained first failure,
 independent recomputation and systemd runner requirement.
 
-**DoD:** `G8` verifier reports PASS for all 34 OCM ADR invariants,
+**DoD:** `G8` verifier reports PASS for every cataloged OCM ADR invariant,
 `POC-01..26`, every non-deferred `PFS-002` row and story `1..13`; only
 `PFS-002-07/-08` are DEFERRED; no mandatory status is missing/skipped/todo/
 quarantined/retried-away.
@@ -1807,7 +2002,7 @@ execution has closure semantics and cannot ignore future `MISSING` IDs.
 |---|---:|---|
 | `mise run ocomp-poc-fast` | `OCM-00`; populated through `OCM-04/17` | exact discovery, byte/reference/model/boundary PASS |
 | `mise run ocomp-poc-integration` | `OCM-00`; populated through `OCM-23` | real backend/process/owner seams PASS |
-| `mise run ocomp-poc-public-path` | `OCM-25` | public mutation/deadline/retry and cap measurement PASS |
+| `mise run ocomp-poc-public-path` | `OCM-25` | public vote/quorum/q-forming-apply mutation, deadline, retry and cap measurement PASS |
 | `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | `OCM-27` | four-domain scenario set PASS |
 | `mise run ocomp-poc-isolation -- --evidence-dir <dir>` | `OCM-27` | systemd/cgroup topology and failure isolation PASS |
 | `mise run ocomp-poc-evidence-verify -- <manifest>` | `OCM-00`; final in `OCM-27` | independent closure PASS |
@@ -1838,40 +2033,56 @@ This plan adds:
 
 ```text
 test ID -> closing OCM task
-OCM task -> dependencies/files/interfaces/tests/evidence/DoD
+OCM task -> dependencies + required task-local command
+task card -> files/interfaces/tests/evidence/DoD
 ```
 
 No task may cite a downstream test as its own completed evidence. It may state
 that it “contributes” to the test; closure remains owned by the task listed in
-the task index and verified only in `OCM-27`.
+the task index and verified only in `OCM-27`. An empty `task_ownership` row
+means that the task closes no stable cross-task test ID; it does not waive its
+machine-readable `task_commands` gate or the task-local tests named in its
+card.
 
-The final reverse audit recorded in
+The prior reverse audit in
 [`off-chain-poc-implementation-audit.md`](off-chain-poc-implementation-audit.md)
-mechanically proved:
+predates the on-chain-vote correction and is no longer closure authority. The
+revised ledger parser enforces:
 
 - every ledger test has exactly one closing task;
-- every task has task-local tests and a downstream observable;
+- all `OCM-00..27` tasks have one task-local command;
 - every normative requirement reaches a non-deferred test/task/command/oracle;
 - every task dependency exists and the graph is acyclic;
-- no file/authority owner is duplicated or absent;
-- all fork/byte/cap dependencies pass through `G1` and `G7`;
-- no DoD requires deferred/non-goal work; the closure DoD names the two
-  deferred PFS rows only to exclude them.
+- exactly `PFS-002-07/-08` are deferred;
+- all referenced lanes, oracles, planned paths and substitution discharges are
+  valid.
+
+File/interface and authority-owner boundaries remain explicit in task cards and
+the `G1/G7` and DoD constraints remain review gates; the planning ledger does
+not pretend to infer them by scanning source text.
+
+A new reverse audit must be generated after `OCM-03/04/08/09/15/16/23..27` are
+reconciled with the corrected protocol and before any `OCM-27` closure claim.
 
 ## 9. PoC to BoundedMVP evolution
 
 The following core remains unchanged:
 
 - finalized JobIntent/finality binding and authenticated manifest;
+- consensus `VOTING_OPEN` exactly four blocks after recorded finality;
 - deterministic Lysis V1 plan/result;
-- q=3/4 execute-and-attest and sign-once subject;
-- normal public activation and exclusive deadline;
-- request split receipt, private capability, four activation receipts and
+- q=3/4 execute-and-attest, sign-once and four on-chain result-vote slots;
+- Supervisor-owned validator ZeroFee vote submission;
+- immutable quorum/terminal identity, q-forming atomic apply and separate
+  fourth-slot accountability;
+- exclusive result-vote deadline with no-quorum expiry;
+- request split receipt, private capability, four apply receipts and
   atomic generation switch;
-- begin expiry -> users -> CE seal -> terminal request order;
+- begin response-window close/no-quorum expiry -> users -> CE seal -> terminal
+  request order;
 - public active-generation/terminal authority.
 
-BoundedMVP may replace demo key custody, one-entry journals, local CAS, worker
+BoundedMVP may replace demo key custody, the bounded local registry, local CAS, worker
 service hardening, retention/GC, pause/revocation, recovery, observability and
 deployment operations under a new governed bundle. It does not require changing
 the core protocol above. TargetLarge proof/DA and a second typed program remain
@@ -1879,7 +2090,12 @@ separate protocol work.
 
 ## 10. Plan completion boundary
 
-This plan is complete and ready to start at `OCM-00`; decision ticket #11
-resolved every audit finding. Neither this plan nor green planning-file
-validation claims the PoC implementation exists. Actual PoC completion remains
-strictly `OCM-27` plus a PASS from the exact-artifact closure verifier.
+This revised plan is ready to resume at the first affected task, `OCM-03`, while
+preserving already valid earlier work. `OCM-03/04/08/09/15/16/23..27` must be
+reconciled in dependency order, with `OCM-09` added for the finality+4 marker;
+relay/certificate implementation cannot count as progress. The prior blanket
+“no ZeroFee changes” goal constraint is superseded only for the exact
+validator-result-vote hook approved here. Neither this plan nor green
+planning-file validation claims the PoC implementation exists. Actual PoC
+completion remains strictly `OCM-27` plus a PASS from the exact-artifact closure
+verifier and the regenerated reverse audit.

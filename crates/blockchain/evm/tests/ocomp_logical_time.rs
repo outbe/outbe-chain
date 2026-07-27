@@ -8,11 +8,8 @@ use outbe_ocomp_protocol::receipts::ActivationOutcome;
 fn request_pinned_semantics_are_identical_at_different_activation_heights() {
     let mut first = ActivationFixture::new(20, 1_010, true);
     let first_calldata = first.calldata();
-    let first_output = first.apply().expect("first activation must apply");
-    assert_eq!(
-        ActivationFixture::decoded_outcome(&first_output),
-        ActivationOutcome::Applied
-    );
+    first.apply().expect("first q-forming vote must apply");
+    assert_eq!(first.terminal_outcome(), ActivationOutcome::Applied);
     let first_semantics = first.semantic_snapshot();
     let first_metadata = first.activation_metadata();
     let first_state = first.rollback_snapshot();
@@ -23,11 +20,8 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
         first_calldata,
         "activation height is not part of the request-pinned computation"
     );
-    let second_output = second.apply().expect("second activation must apply");
-    assert_eq!(
-        ActivationFixture::decoded_outcome(&second_output),
-        ActivationOutcome::Applied
-    );
+    second.apply().expect("second q-forming vote must apply");
+    assert_eq!(second.terminal_outcome(), ActivationOutcome::Applied);
     let second_semantics = second.semantic_snapshot();
     let second_metadata = second.activation_metadata();
     let second_state = second.rollback_snapshot();

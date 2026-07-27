@@ -53,16 +53,16 @@ use outbe_metadosis::{
         FORMING_PERIOD_HOURS, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS, SECONDS_PER_HOUR,
         WAITING_PERIOD_HOURS,
     },
-    ocomp::schema::{poc_schema_limits, OcompRequestProfile},
+    ocomp::{
+        fork::OcompForkInstallClassification, schema::poc_schema_limits,
+        test_support::fork_install_fixture,
+    },
     precompile::IMetadosis,
     schema::{day_type, status, MetadosisContract, WorldwideDayEntryExt},
 };
 use outbe_nod::NodContract;
 use outbe_node::OutbePayloadBuilder;
-use outbe_ocomp_protocol::{
-    profile::CapacityProfileV1,
-    state::{OcompJobRecordV1, OcompJobStatus},
-};
+use outbe_ocomp_protocol::state::{OcompJobRecordV1, OcompJobStatus};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::contract::OracleContract;
@@ -83,6 +83,10 @@ use outbe_primitives::{
     OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_tribute::{TributeContract, TributeData};
+use outbe_update::{
+    schema::{ScheduledUpdateStatus, Update},
+    ProtocolVersion,
+};
 use outbe_validatorset::{
     committee_snapshot_key, contract::ValidatorSet, read_committee_snapshot,
     write_committee_snapshot, CommitteeSnapshot as StoredCommitteeSnapshot,
@@ -122,6 +126,8 @@ const PARENT_VIEW: u64 = 99;
 const VRF_MATERIAL_VERSION: u64 = 5;
 const VALIDATOR_OWNER: Address = address!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
+const OCOMP_UPDATE_PROPOSAL_ID: u64 = 1;
+const OCOMP_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::from_raw(1);
 
 type TestPool = NoopTransactionPool<EthPooledTransaction>;
 type InnerTestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
@@ -368,7 +374,14 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     let dkg = build_dkg();
     let snapshot = build_snapshot(&dkg);
     let prepared = prepare_parent(proposer, &snapshot);
-    let metadata = finalized_parent_metadata(&dkg, &snapshot, prepared.parent.hash());
+    let fork_install = Arc::new(fork_install_fixture(
+        OcompForkInstallClassification::Measurement,
+        REQUEST_HEIGHT,
+        CHAIN_ID,
+        B256::repeat_byte(0x11),
+    ));
+    let metadata =
+        finalized_parent_metadata(&dkg, &snapshot, PARENT_HEIGHT, prepared.parent.hash());
     let provider = mock_provider(&chain_spec, &prepared.parent_storage);
     provider.inner.add_block(
         prepared.parent.hash(),
@@ -380,7 +393,7 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         &snapshot,
         metadata.committee_set_hash,
     );
-    assert_provider_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
+    assert_provider_pre_fork_ocomp_inputs(&provider, prepared.wwd, prepared.nominal);
     let body_storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
     let evm_config = OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
         chain_spec.clone(),
@@ -392,7 +405,8 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     )
     .with_evm_signer(signer)
     .with_compressed_tree_service(prepared.tree_service.clone())
-    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT));
+    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(REQUEST_HEIGHT))
+    .with_ocomp_fork_install(fork_install.clone());
     let phase1 = evm_config
         .build_signed_phase1_tx(
             REQUEST_HEIGHT,
@@ -524,6 +538,33 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
     post_state.storage = prepared.parent_storage;
     apply_bundle(&mut post_state, executed.execution_output.state.state());
     StorageHandle::enter(&mut post_state, |storage| {
+        let update = Update::new(storage.clone());
+        assert_eq!(update.get_active_version().unwrap(), OCOMP_PROTOCOL_VERSION);
+        assert_eq!(update.get_active_version_height().unwrap(), REQUEST_HEIGHT);
+        assert_eq!(
+            update.version_at_height(REQUEST_HEIGHT).unwrap(),
+            OCOMP_PROTOCOL_VERSION
+        );
+        let scheduled = update
+            .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
+            .unwrap()
+            .expect("genesis-scheduled OCOMP update remains publicly readable");
+        assert_eq!(scheduled.status, ScheduledUpdateStatus::Activated);
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis
+                .read_ocomp_request_profile(&poc_schema_limits())
+                .unwrap(),
+            Some(fork_install.request_profile.clone())
+        );
+        let authority = metadosis
+            .read_ocomp_activation_authority(&poc_schema_limits())
+            .unwrap()
+            .expect("fork block installs complete activation authority");
+        assert_eq!(authority.bundle, fork_install.protocol_bundle);
+        assert_eq!(authority.result_committee, fork_install.result_committee);
+
         let public_call = IMetadosis::getOffchainJobCall {
             intentId: requested.data.intentId,
         };
@@ -538,13 +579,16 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         let record =
             OcompJobRecordV1::decode_canonical(public_bytes.as_ref(), &poc_schema_limits())
                 .unwrap();
-        assert_eq!(record.status, OcompJobStatus::OffchainPending);
+        assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
+        assert!(
+            record.finalized.is_none(),
+            "request block cannot invent a response window before finality"
+        );
         assert_eq!(record.intent.wwd, prepared.wwd.value());
         assert_eq!(record.intent.pending_nonce, 0);
         assert_eq!(record.intent.authenticated_day_count, 1);
         assert_eq!(record.intent.authenticated_day_nominal, prepared.nominal);
         assert_eq!(record.intent.ce_sealed_root, ce_artifact.r_sealed);
-        assert_eq!(record.intent.deadline_height, REQUEST_HEIGHT + 64);
         assert_eq!(
             record
                 .intent
@@ -605,6 +649,73 @@ fn real_payload_builder_commits_atomic_request_after_ce_seal_without_lysis_effec
         let totals = tribute.get_day_totals(prepared.wwd).unwrap();
         assert_eq!(totals.tribute_count, 1);
         assert_eq!(totals.tribute_nominal_amount, prepared.nominal);
+    });
+
+    let request_hash = payload.block().hash();
+    let request_state_root = payload.block().header().state_root();
+    let request_parent = Arc::new(SealedHeader::new(
+        payload.block().header().clone(),
+        request_hash,
+    ));
+    let successor_provider = mock_provider(&chain_spec, &post_state.storage);
+    successor_provider.inner.add_block(
+        request_hash,
+        Block::new(request_parent.header().clone(), Default::default()),
+    );
+    let successor_metadata =
+        finalized_parent_metadata(&dkg, &snapshot, REQUEST_HEIGHT, request_hash);
+    let successor_builder = OutbePayloadBuilder::new(
+        successor_provider,
+        TestPool::new(),
+        evm_config,
+        EthereumBuilderConfig::new().with_gas_limit(BLOCK_GAS_LIMIT),
+    );
+    let successor_attributes = OutbePayloadAttributes::new(
+        REWARDS_ADDRESS,
+        (prepared.request_time + 1) * 1_000,
+        B256::repeat_byte(0x54),
+        Some(B256::repeat_byte(0x55)),
+        Bytes::new(),
+        Some(successor_metadata),
+        Some(proposer),
+    )
+    .with_execution_read_budget(ExecutionReadBudget::new());
+    let successor = successor_builder
+        .build_empty_payload(PayloadConfig::new(
+            request_parent,
+            successor_attributes,
+            PayloadId::new([0x09; 8]),
+        ))
+        .expect("the certified successor records request finality");
+    let successor_execution = successor
+        .executed_block()
+        .expect("successor exposes its production execution");
+    let mut finalized_state = HashMapStorageProvider::new(CHAIN_ID);
+    finalized_state.storage = post_state.storage;
+    apply_bundle(
+        &mut finalized_state,
+        successor_execution.execution_output.state.state(),
+    );
+    StorageHandle::enter(&mut finalized_state, |storage| {
+        let record = MetadosisContract::new(storage)
+            .ocomp_job_record(requested.data.intentId, &poc_schema_limits())
+            .unwrap()
+            .expect("certified successor preserves the request record");
+        let finalized = record
+            .finalized
+            .expect("actual parent finalization must bind the request on-chain");
+        assert_eq!(record.status, OcompJobStatus::AwaitingFinality);
+        assert_eq!(finalized.finalized_request_block_hash, request_hash);
+        assert_eq!(finalized.finalized_request_state_root, request_state_root);
+        assert_eq!(finalized.finality_recorded_height, REQUEST_HEIGHT + 1);
+        assert_eq!(finalized.open_height, REQUEST_HEIGHT + 5);
+        assert_eq!(
+            finalized.job_id,
+            record
+                .intent
+                .job_id(request_hash, request_state_root, &poc_schema_limits())
+                .unwrap()
+        );
     });
 
     assert_ne!(requested.data.intentId, B256::ZERO);
@@ -676,9 +787,6 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
     let request_time = parent_time + SECONDS_PER_DAY;
     let nominal = U256::from(1_000);
     let owner = address!("7300000000000000000000000000000000000073");
-    let mut profile = request_profile();
-    profile.chain_id = CHAIN_ID;
-
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -722,9 +830,6 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
-            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
-            .unwrap();
-        metadosis
             .create_worldwide_day(
                 wwd,
                 wwd.start_timestamp(),
@@ -766,6 +871,15 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             )
             .unwrap();
         tribute.seal_day(wwd).unwrap();
+
+        Update::new(storage.clone())
+            .write_scheduled_update(
+                U256::from(OCOMP_UPDATE_PROPOSAL_ID),
+                OCOMP_PROTOCOL_VERSION,
+                REQUEST_HEIGHT,
+                "OCOMP PoC production-path integration fixture",
+            )
+            .unwrap();
 
         let parent_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(PARENT_HEIGHT, parent_time, CHAIN_ID),
@@ -1008,7 +1122,7 @@ fn assert_provider_snapshot(
     );
 }
 
-fn assert_provider_ocomp_inputs(
+fn assert_provider_pre_fork_ocomp_inputs(
     provider: &TestProvider,
     wwd: WorldwideDay,
     expected_nominal: U256,
@@ -1021,12 +1135,22 @@ fn assert_provider_ocomp_inputs(
         .build();
     let mut direct = DirectStorageProvider::new(&mut state, context);
     let storage = StorageHandle::new(&mut direct);
+    let update = Update::new(storage.clone());
+    assert_eq!(update.get_active_version().unwrap(), ProtocolVersion::ZERO);
+    let scheduled = update
+        .read_scheduled_update(U256::from(OCOMP_UPDATE_PROPOSAL_ID))
+        .unwrap()
+        .expect("parent carries the scheduled OCOMP update");
+    assert_eq!(scheduled.version, OCOMP_PROTOCOL_VERSION);
+    assert_eq!(scheduled.activation_height, REQUEST_HEIGHT);
+    assert_eq!(scheduled.status, ScheduledUpdateStatus::Scheduled);
+
     let metadosis = MetadosisContract::new(storage.clone());
     assert_eq!(
         metadosis
             .read_ocomp_request_profile(&poc_schema_limits())
             .unwrap(),
-        Some(request_profile())
+        None
     );
     assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::READY);
     assert_eq!(metadosis.active_wwd.read_all().unwrap(), vec![wwd]);
@@ -1060,37 +1184,6 @@ fn seed_ce_genesis(storage: &StorageHandle<'_>) {
             ),
         )
         .unwrap();
-}
-
-fn request_profile() -> OcompRequestProfile {
-    OcompRequestProfile {
-        chain_id: CHAIN_ID,
-        genesis_hash: B256::repeat_byte(0x11),
-        fork_id: B256::repeat_byte(0x21),
-        protocol_bundle_hash: B256::repeat_byte(0x41),
-        correctness_profile_id: B256::repeat_byte(0x24),
-        capacity_profile: CapacityProfileV1 {
-            profile_id: B256::repeat_byte(0x22),
-            max_tributes_per_work_shard: 256,
-            max_workers_per_domain: 4,
-            max_pending_jobs: 1,
-            max_intents_per_block: 1,
-            max_activations_per_block: 1,
-            max_ready_inspections_per_block: 1,
-            max_expirations_per_block: 1,
-            retry_backoff_blocks: 1,
-            max_terminal_job_records: 365,
-            max_reference_currencies: 256,
-            max_fidelity_cohorts_per_owner: 64,
-            max_oracle_wwd_pair_entries: 256,
-            max_active_scurve_entries: 256,
-            result_deadline_blocks: 64,
-            source_retention_after_terminal_blocks: 64,
-            generated_limits_manifest_hash: B256::repeat_byte(0x23),
-        },
-        source_availability_policy_id: B256::repeat_byte(0x35),
-        result_committee_snapshot_hash: B256::repeat_byte(0x36),
-    }
 }
 
 fn build_dkg() -> Dkg {
@@ -1136,6 +1229,7 @@ fn build_snapshot(dkg: &Dkg) -> CommitteeSnapshot {
 fn finalized_parent_metadata(
     dkg: &Dkg,
     snapshot: &CommitteeSnapshot,
+    finalized_block_number: u64,
     parent_hash: B256,
 ) -> CertifiedParentAccountingMetadata {
     let round = Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW));
@@ -1178,7 +1272,7 @@ fn finalized_parent_metadata(
     let committee_set_hash =
         outbe_consensus::proof::committee_set_hash_v2(FINALIZED_EPOCH, snapshot);
     let metadata = CertifiedParentAccountingMetadata {
-        finalized_block_number: PARENT_HEIGHT,
+        finalized_block_number,
         finalized_block_hash: parent_hash,
         finalized_epoch: FINALIZED_EPOCH,
         finalized_view: FINALIZED_VIEW,

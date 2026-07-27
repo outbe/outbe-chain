@@ -63,8 +63,8 @@ use thiserror::Error;
 use crate::bundle::PinnedProtocolBundle;
 use crate::cas::{CasError, CasLimits, FilesystemCasReader};
 use crate::control::{
-    poc_schema_limits, require_effective_user, uid_for_user, ControlError, ControlServerSession,
-    EndpointIdentity, ServerPolicy,
+    poc_schema_limits, require_effective_uid, ControlError, ControlServerSession, EndpointIdentity,
+    ServerPolicy,
 };
 use crate::inbox::{WorkerInbox, WorkerInboxError, WorkerInboxLimits};
 use crate::input_artifacts::{
@@ -75,8 +75,8 @@ use crate::lysis_phase_replay::{replay_output_finalize_artifact, LysisPhaseRepla
 
 #[derive(Clone, Debug)]
 pub struct WorkerConfig {
-    pub expected_effective_user: String,
-    pub expected_supervisor_user: String,
+    pub expected_effective_uid: u32,
+    pub expected_supervisor_uid: u32,
     pub identity: EndpointIdentity,
     pub session_generation: u64,
     pub cas_root: PathBuf,
@@ -156,11 +156,10 @@ pub enum WorkerError {
 }
 
 pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, WorkerError> {
-    require_effective_user(&config.expected_effective_user)?;
+    require_effective_uid(config.expected_effective_uid)?;
     if config.protocol_bundle.hash() != config.identity.protocol_bundle_hash {
         return Err(WorkerError::BundleIdentityMismatch);
     }
-    let expected_supervisor_uid = uid_for_user(&config.expected_supervisor_user)?;
     let stream = duplicate_connected_stream(config.connection_fd)?;
     let reader = FilesystemCasReader::open(&config.cas_root, config.cas_limits)?;
     let inbox = WorkerInbox::open(&config.inbox_root, config.inbox_limits)?;
@@ -168,7 +167,7 @@ pub fn run_one_from_inherited_fd(config: WorkerConfig) -> Result<WorkerOutcome, 
     let mut session = ControlServerSession::accept(
         stream,
         ServerPolicy::worker(
-            expected_supervisor_uid,
+            config.expected_supervisor_uid,
             config.identity,
             config.session_generation,
             limits,

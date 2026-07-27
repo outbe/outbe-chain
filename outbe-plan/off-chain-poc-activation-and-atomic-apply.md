@@ -1,6 +1,14 @@
 # Off-chain PoC: consensus lifecycle, activation and atomic apply
 
-Status: **resolved decision asset for implementation-planning ticket #8**
+Status: **SUPERSEDED ON 2026-07-26 — HISTORICAL, DO NOT IMPLEMENT**
+
+The separate certificate/relay/public-activation design below was replaced by
+full-result validator votes. The transaction that records the third matching
+slot also stores one canonical `LysisResultV1` and atomically applies its bounded
+effects. There is no durable `QUORUM_READY`, relay, public activator or
+`activateLysis` call. The fourth slot remains open only for accountability.
+ADR-S-OCM-003/004, PFS-002, `off-chain-poc.md` and the implementation plan are
+authoritative; the body below is retained only as decision history.
 
 Scope: the PoC fork path from terminal Metadosis request creation through
 expiry, public `activateLysis`, certified owner effects, terminal state and
@@ -220,7 +228,7 @@ terminal_order  = bounded ordered IntentId queue
 No READY or expiry scan is permitted. The PoC limits are:
 
 ```text
-max_pending_jobs = 1
+max_pending_jobs = 2
 max_ready_inspections_per_block = 1
 max_expirations_per_block = 1
 retry_backoff_blocks = 1

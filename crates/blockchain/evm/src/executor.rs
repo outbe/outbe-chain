@@ -5,7 +5,7 @@
 
 use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
-use alloy_eips::{eip2718::Encodable2718 as _, eip7685::Requests};
+use alloy_eips::eip7685::Requests;
 use alloy_evm::{
     block::{
         state_changes::{balance_increment_state, post_block_balance_increments},
@@ -385,6 +385,11 @@ pub(crate) fn validate_finalized_metadata(
 pub struct AccountedParentArtifact {
     pub summary: ExecutionSummaryArtifact,
     pub timestamp: u64,
+    /// State root committed by the same exact parent header.
+    ///
+    /// Legacy/test bridge entries may omit it. An OCOMP finality transition
+    /// requires this value and fails closed when it is unavailable.
+    pub state_root: Option<B256>,
 }
 
 /// exact-hash-first lookup of an accounted-parent's
@@ -818,6 +823,10 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     validate_execution_summary: bool,
     /// Hash of the block being validated, when execution is for an existing block.
     block_hash: Option<B256>,
+    /// State root committed by the block being validated. It is cached with the
+    /// execution summary so the immediate child can bind OCOMP finality even
+    /// during the Reth in-memory-tree/provider visibility window.
+    block_state_root: Option<B256>,
     /// Hash of this block's parent header.
     parent_hash: B256,
     /// Priority/coinbase fees collected by user transactions in this block.
@@ -941,6 +950,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             accounted_parent_artifact_provider,
             validate_execution_summary,
             block_hash,
+            block_state_root: None,
             parent_hash,
             current_block_validator_fees: U256::ZERO,
             system_tx_execution_gas: 0,
@@ -979,6 +989,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
         self.compressed_entities_scope = scope;
+        self
+    }
+
+    pub(crate) fn with_block_state_root(mut self, state_root: Option<B256>) -> Self {
+        self.block_state_root = state_root;
         self
     }
 
@@ -2945,17 +2960,13 @@ where
             }
         }
 
-        // Local pending-block RPC construction is outside a sealed/proposed
-        // block lifecycle. Keep standard Ethereum pre-execution and marker
-        // preservation above, but do not open the compressed-entity overlay.
-        if !self.execute_outbe_block_hooks {
-            return Ok(());
-        }
-
-        // 3. Open the block-scoped compressed-body overlay before any system
-        // or user transaction can perform a body read or mutation. The scope
-        // is the exact Arc already captured by top-level and nested precompile
-        // dispatch, so end-block permanently closes every execution seam.
+        // 3. Open the block-scoped compressed-body overlay before any user or
+        // system transaction can perform a body read or mutation. This also
+        // applies to Reth's local pending-block construction: it executes
+        // txpool transactions against an isolated State and therefore needs a
+        // complete CE begin/end lifecycle even though consensus-only Outbe
+        // hooks remain disabled. The provisional tree batch is not published
+        // without a final block hash.
         {
             let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
             let chain_id = self.inner.evm.chain_id();
@@ -2992,7 +3003,15 @@ where
             self.compressed_entities_started = true;
         }
 
-        // 3. Extract block context before taking a mutable DB borrow.
+        // Pending-block RPC has no proposer certificate or consensus system
+        // transactions. Its isolated CE scope is active now, so user
+        // transactions can be simulated faithfully; skip only the
+        // consensus-specific hooks below.
+        if !self.execute_outbe_block_hooks {
+            return Ok(());
+        }
+
+        // 4. Extract block context before taking a mutable DB borrow.
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
@@ -3140,34 +3159,6 @@ where
         if is_ocomp_terminal_request {
             return self.execute_ocomp_terminal_request(recovered, f);
         }
-        if self.ocomp_lifecycle_active {
-            let tx = recovered.tx();
-            let is_activation = tx.to() == Some(outbe_primitives::addresses::METADOSIS_ADDRESS)
-                && tx.input().get(..4).is_some_and(|selector| {
-                    selector == outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR
-                });
-            let encoded_len = tx.encode_2718_len();
-            let cap = usize::try_from(
-                outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1
-                    .max_transaction_rlp_bytes,
-            )
-            .unwrap_or(usize::MAX);
-            if is_activation && encoded_len > cap {
-                return Err(BlockExecutionError::Validation(
-                    BlockValidationError::InvalidTx {
-                        hash: tx.signature_hash(),
-                        error: Box::new(InvalidTransaction::Str(
-                            format!(
-                                "OCOMP activation transaction envelope exceeds consensus cap: \
-                                 {encoded_len} > {cap}"
-                            )
-                            .into(),
-                        )),
-                    },
-                ));
-            }
-        }
-
         let ce_scope = self.compressed_entities_scope.clone();
         let ce_checkpoint = ce_scope
             .ce_work_checkpoint()
@@ -3938,7 +3929,17 @@ where
             self.block_hash,
             block_artifacts.execution_summary,
         ) {
-            bridge.record_execution_summary(block_number, block_hash, summary, block_timestamp);
+            if let Some(state_root) = self.block_state_root {
+                bridge.record_execution_summary_with_state_root(
+                    block_number,
+                    block_hash,
+                    summary,
+                    block_timestamp,
+                    state_root,
+                );
+            } else {
+                bridge.record_execution_summary(block_number, block_hash, summary, block_timestamp);
+            }
         }
 
         Ok((evm, result))
@@ -4481,6 +4482,7 @@ mod tests {
             },
             timestamp_millis_part: 0,
             block_hash: None,
+            block_state_root: None,
             expected_begin_system_txs: Vec::new(),
             expected_end_system_txs: Vec::new(),
             system_layout_error: None,
@@ -4928,11 +4930,12 @@ mod tests {
     }
 
     #[test]
-    fn pending_rpc_context_skips_outbe_hooks_without_proposer_or_parent_cert() {
-        let mut state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-            .with_bundle_update()
-            .build();
+    fn pending_rpc_context_opens_ce_scope_but_skips_consensus_hooks() {
+        let user_tx = test_regular_tx()
+            .try_into_recovered()
+            .expect("regular tx signer should recover");
+        let mut state =
+            state_with_active_proposer_and_funded_account(REWARDS_ADDRESS, user_tx.signer());
         let evm_env = test_evm_env(2, REWARDS_ADDRESS);
         let config = OutbeEvmConfig::new(test_chain_spec());
         let evm = config.evm_with_env(&mut state, evm_env);
@@ -4944,6 +4947,16 @@ mod tests {
             .apply_pre_execution_changes()
             .expect("pending RPC env should skip consensus-only Outbe hooks");
         assert!(executor.receipts().is_empty());
+        drop(
+            executor
+                .compressed_entities_scope
+                .begin_explicit_gas_window(0)
+                .expect("pending RPC env must open the CE lifecycle"),
+        );
+        executor
+            .execute_transaction(user_tx)
+            .expect("pending RPC env must execute txpool transactions inside a CE scope");
+        assert_eq!(executor.receipts().len(), 1);
     }
 
     #[test]
@@ -5950,6 +5963,7 @@ mod tests {
                     validator_fee_sum: U256::ZERO,
                 },
                 timestamp: 1,
+                state_root: None,
             }),
         );
         executor.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
@@ -7611,6 +7625,7 @@ mod tests {
                     validator_fee_sum: U256::ZERO,
                 },
                 timestamp: 0,
+                state_root: None,
             });
             execution.proposer_evm_address = Some(proposer);
             if expected_validator_body {
@@ -9699,6 +9714,7 @@ mod tests {
                 validator_fee_sum: U256::from(777u64),
             },
             timestamp: 1_700_900_000,
+            state_root: None,
         }
     }
 

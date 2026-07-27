@@ -281,6 +281,12 @@ pub struct ConsensusData {
 pub struct CachedExecutionSummary {
     pub summary: ExecutionSummaryArtifact,
     pub timestamp: u64,
+    /// State root committed by the same exact block header as `summary`.
+    ///
+    /// `None` is retained only for legacy/test cache writers. Consensus paths
+    /// that need to bind an OCOMP JobId require `Some` and fail closed
+    /// otherwise.
+    pub state_root: Option<B256>,
 }
 
 /// VRF/DKG safety state visible to operators and RPC clients.
@@ -408,6 +414,7 @@ struct ExecutionSummaryCacheEntry {
     block_hash: B256,
     summary: ExecutionSummaryArtifact,
     timestamp: u64,
+    state_root: Option<B256>,
 }
 
 impl ConsensusExecutionBridge {
@@ -449,6 +456,36 @@ impl ConsensusExecutionBridge {
         summary: ExecutionSummaryArtifact,
         timestamp: u64,
     ) {
+        self.record_execution_summary_inner(block_number, block_hash, summary, timestamp, None);
+    }
+
+    /// Records a summary together with the state root committed by the same
+    /// exact block header.
+    pub fn record_execution_summary_with_state_root(
+        &self,
+        block_number: u64,
+        block_hash: B256,
+        summary: ExecutionSummaryArtifact,
+        timestamp: u64,
+        state_root: B256,
+    ) {
+        self.record_execution_summary_inner(
+            block_number,
+            block_hash,
+            summary,
+            timestamp,
+            Some(state_root),
+        );
+    }
+
+    fn record_execution_summary_inner(
+        &self,
+        block_number: u64,
+        block_hash: B256,
+        summary: ExecutionSummaryArtifact,
+        timestamp: u64,
+        state_root: Option<B256>,
+    ) {
         let mut state = self.lock_state();
         if let Some(entry) = state
             .execution_summary_cache
@@ -457,6 +494,9 @@ impl ConsensusExecutionBridge {
         {
             entry.summary = summary;
             entry.timestamp = timestamp;
+            if state_root.is_some() {
+                entry.state_root = state_root;
+            }
             return;
         }
 
@@ -470,6 +510,7 @@ impl ConsensusExecutionBridge {
                 block_hash,
                 summary,
                 timestamp,
+                state_root,
             });
     }
 
@@ -488,6 +529,7 @@ impl ConsensusExecutionBridge {
             .map(|entry| CachedExecutionSummary {
                 summary: entry.summary,
                 timestamp: entry.timestamp,
+                state_root: entry.state_root,
             })
     }
 

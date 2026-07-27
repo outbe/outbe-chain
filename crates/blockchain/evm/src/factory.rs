@@ -14,6 +14,7 @@ use alloy_primitives::{Address, Bytes, TxKind};
 use core::ops::{Deref, DerefMut};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use reth_ethereum::evm::{
@@ -328,6 +329,7 @@ pub struct OutbeEvmFactory {
     ocomp_finality_authority:
         Arc<std::sync::RwLock<Option<Arc<dyn OcompFinalizedIntentAuthority>>>>,
     ocomp_lifecycle_activation: Arc<std::sync::RwLock<OcompLifecycleActivation>>,
+    ocomp_fork_install: Arc<std::sync::RwLock<Option<Arc<OcompForkInstallV1>>>>,
 }
 
 impl core::fmt::Debug for OutbeEvmFactory {
@@ -356,6 +358,13 @@ impl core::fmt::Debug for OutbeEvmFactory {
                     .read()
                     .map_or(OcompLifecycleActivation::Disabled, |value| *value),
             )
+            .field(
+                "ocomp_fork_install",
+                &self
+                    .ocomp_fork_install
+                    .read()
+                    .is_ok_and(|install| install.is_some()),
+            )
             .finish()
     }
 }
@@ -378,6 +387,7 @@ impl OutbeEvmFactory {
             compressed_tree_service: Arc::default(),
             ocomp_finality_authority: Arc::default(),
             ocomp_lifecycle_activation: Arc::default(),
+            ocomp_fork_install: Arc::default(),
         }
     }
 
@@ -412,6 +422,13 @@ impl OutbeEvmFactory {
             .ocomp_lifecycle_activation
             .write()
             .expect("OCOMP lifecycle activation lock") = activation;
+    }
+
+    pub fn install_ocomp_fork_install(&self, install: Arc<OcompForkInstallV1>) {
+        *self
+            .ocomp_fork_install
+            .write()
+            .expect("OCOMP fork install lock") = Some(install);
     }
 }
 
@@ -460,6 +477,11 @@ impl EvmFactory for OutbeEvmFactory {
             .read()
             .ok()
             .and_then(|authority| authority.clone());
+        let ocomp_fork_install = self
+            .ocomp_fork_install
+            .read()
+            .ok()
+            .and_then(|install| install.clone());
 
         // Register Outbe stateful precompiles via dynamic lookup.
         extend_outbe_precompiles::<DB>(
@@ -469,6 +491,7 @@ impl EvmFactory for OutbeEvmFactory {
             execution_scope.clone(),
             ocomp_finality_authority,
             ocomp_lifecycle_active,
+            ocomp_fork_install,
         );
 
         let evm = Context::mainnet()

@@ -59,11 +59,15 @@ fn run_terminal_request_inner(
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(TerminalRequestOutcome::Inactive);
     };
-    if !metadosis.ocomp_scheduler.is_empty()? {
+    let fsm_limits = fsm_limits(&profile);
+    if metadosis
+        .live_ocomp_fsm_states(&schema_limits, fsm_limits)?
+        .len()
+        >= usize::from(profile.capacity_profile.max_pending_jobs)
+    {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     }
 
-    let fsm_limits = fsm_limits(&profile);
     let Some(projection) = metadosis.next_ocomp_ready(&schema_limits, fsm_limits)? else {
         return Ok(TerminalRequestOutcome::NoReadyJob);
     };
@@ -226,11 +230,6 @@ fn build_and_commit_request(
         .receipt_hash(&schema_limits)
         .map_err(|error| fatal(format!("hash OCOMP request receipt: {error}")))?;
 
-    let deadline_height = ctx
-        .block
-        .block_number
-        .checked_add(profile.capacity_profile.result_deadline_blocks)
-        .ok_or_else(|| fatal("OCOMP deadline height overflow"))?;
     let attempt =
         u32::try_from(pending_nonce).map_err(|_| fatal("OCOMP pending nonce exceeds u32"))?;
     let (_, collection_key) = partition_collection_key(PartitionRef::TributeWwd(wwd))
@@ -296,7 +295,6 @@ fn build_and_commit_request(
         activation_preconditions,
         result_committee_snapshot_hash: profile.result_committee_snapshot_hash,
         custody_committee_epoch_hash: None,
-        deadline_height,
     };
     let intent_id = intent
         .intent_id(&schema_limits)
@@ -312,7 +310,6 @@ fn build_and_commit_request(
         wwd: wwd.value(),
         pendingNonce: pending_nonce,
         attempt,
-        deadlineHeight: deadline_height,
         activationPreconditionsHash: activation_preconditions_hash,
     })?;
 
@@ -429,11 +426,6 @@ fn build_and_commit_retry(
         return Err(fatal("OCOMP retry request receipt hash changed"));
     }
 
-    let deadline_height = ctx
-        .block
-        .block_number
-        .checked_add(profile.capacity_profile.result_deadline_blocks)
-        .ok_or_else(|| fatal("OCOMP retry deadline overflow"))?;
     let attempt =
         u32::try_from(pending_nonce).map_err(|_| fatal("OCOMP pending nonce exceeds u32"))?;
     let mut intent = previous.intent;
@@ -443,7 +435,6 @@ fn build_and_commit_retry(
     intent.logical_evaluation_height = ctx.block.block_number;
     intent.logical_evaluation_time = ctx.block.timestamp;
     intent.activation_preconditions.metadosis.pending_nonce = pending_nonce;
-    intent.deadline_height = deadline_height;
     let intent_id = intent
         .intent_id(&schema_limits)
         .map_err(|error| fatal(format!("hash OCOMP retry intent: {error}")))?;
@@ -458,7 +449,6 @@ fn build_and_commit_retry(
         wwd: wwd.value(),
         pendingNonce: pending_nonce,
         attempt,
-        deadlineHeight: deadline_height,
         activationPreconditionsHash: activation_preconditions_hash,
     })?;
     Ok(TerminalRequestOutcome::IntentCreated(intent_id))

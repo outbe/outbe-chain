@@ -38,6 +38,7 @@ use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_CO
 use outbe_metadosis::ocomp::activation::{
     OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
 };
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
@@ -85,10 +86,8 @@ where
         proof: &outbe_ocomp_protocol::intent::FinalizedIntentProofV1,
         expected: outbe_ocomp_protocol::intent::ExpectedFinalizedIntentBindingV1,
         limits: &outbe_ocomp_protocol::SchemaLimits,
-    ) -> Result<
-        outbe_ocomp_protocol::intent::VerifiedFinalizedIntentV1,
-        OcompFinalityAuthorityError,
-    > {
+    ) -> Result<outbe_ocomp_protocol::intent::VerifiedFinalizedIntentV1, OcompFinalityAuthorityError>
+    {
         let claimed = &proof.parent_accounting;
         let finalized = self
             .provider
@@ -136,6 +135,7 @@ fn cached_accounted_parent_artifact(
         .map(|cached| AccountedParentArtifact {
             summary: cached.summary,
             timestamp: cached.timestamp,
+            state_root: cached.state_root,
         })
 }
 
@@ -289,6 +289,7 @@ fn decode_accounted_parent_artifact(header: &OutbeHeader) -> Option<AccountedPar
         .map(|summary| AccountedParentArtifact {
             summary,
             timestamp: header.timestamp(),
+            state_root: Some(header.state_root()),
         })
 }
 
@@ -300,6 +301,9 @@ pub struct OutbeBlockExecutionCtx<'a> {
     pub inner: EthBlockExecutionCtx<'a>,
     pub timestamp_millis_part: u64,
     pub block_hash: Option<B256>,
+    /// State root from the sealed block header on validator/import execution.
+    /// `None` while a proposer is still building the block.
+    pub block_state_root: Option<B256>,
     pub expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
     pub expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
     pub system_layout_error: Option<String>,
@@ -457,6 +461,7 @@ pub struct OutbeEvmConfig {
     runtime_body_readers: Option<RuntimeBodyReaders>,
     compressed_tree_service: Option<Arc<CompressedTreeService>>,
     ocomp_lifecycle_activation: OcompLifecycleActivation,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -482,6 +487,7 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "ocomp_lifecycle_activation",
                 &self.ocomp_lifecycle_activation,
             )
+            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
             .finish()
     }
 }
@@ -528,6 +534,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: None,
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -550,6 +557,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -571,6 +579,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: None,
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -593,6 +602,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -617,6 +627,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: None,
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -645,6 +656,7 @@ impl OutbeEvmConfig {
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -667,6 +679,17 @@ impl OutbeEvmConfig {
             .evm_factory()
             .install_ocomp_lifecycle_activation(activation);
         self.ocomp_lifecycle_activation = activation;
+        self
+    }
+
+    /// Installs the immutable chain-manifest authority into every EVM created
+    /// by this configuration.
+    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_fork_install(install.clone());
+        self.ocomp_fork_install = Some(install);
         self
     }
 
@@ -1259,6 +1282,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             prebuilt_phase1_tx,
             parent_artifact_hint,
         )
+        .with_block_state_root(ctx.block_state_root)
         .with_compressed_entities_scope(compressed_entities_scope)
         .with_compressed_tree_service(self.compressed_tree_service.clone())
         .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
@@ -1352,6 +1376,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             },
             timestamp_millis_part: block.header().timestamp_millis_part(),
             block_hash: Some(block.hash()),
+            block_state_root: Some(block.header().state_root()),
             expected_begin_system_txs,
             expected_end_system_txs,
             system_layout_error,
@@ -1395,6 +1420,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             },
             timestamp_millis_part: attributes.timestamp_millis_part,
             block_hash: None,
+            block_state_root: None,
             expected_begin_system_txs: Vec::new(),
             expected_end_system_txs: Vec::new(),
             system_layout_error: None,
@@ -1538,6 +1564,8 @@ pub struct OutbeExecutorBuilder {
     pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
     /// Inert until the canonical OCM-26 devnet schedule is supplied.
     pub ocomp_lifecycle_activation: OcompLifecycleActivation,
+    /// Complete immutable authority installed at the activation height.
+    pub ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
     /// Production finalized JobIntent proof authority supplied by the node.
     pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
 }
@@ -1559,6 +1587,7 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "ocomp_lifecycle_activation",
                 &self.ocomp_lifecycle_activation,
             )
+            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
             .field(
                 "ocomp_finality_authority",
                 &self.ocomp_finality_authority.is_some(),
@@ -1576,6 +1605,7 @@ impl OutbeExecutorBuilder {
             runtime_body_readers: None,
             compressed_tree_service: None,
             ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
             ocomp_finality_authority: None,
         }
     }
@@ -1598,6 +1628,11 @@ impl OutbeExecutorBuilder {
 
     pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
         self.ocomp_lifecycle_activation = activation;
+        self
+    }
+
+    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
+        self.ocomp_fork_install = Some(install);
         self
     }
 
@@ -1626,6 +1661,27 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        match (&self.ocomp_fork_install, self.ocomp_lifecycle_activation) {
+            (Some(install), OcompLifecycleActivation::AtBlock(height))
+                if install.activation_height == height => {}
+            (None, OcompLifecycleActivation::Disabled) => {}
+            (Some(_), OcompLifecycleActivation::Disabled) => {
+                return Err(eyre::eyre!(
+                    "OCOMP fork install requires an active lifecycle schedule"
+                ));
+            }
+            (None, OcompLifecycleActivation::AtBlock(_)) => {
+                return Err(eyre::eyre!(
+                    "active OCOMP lifecycle requires a chain-manifest fork install"
+                ));
+            }
+            (Some(install), OcompLifecycleActivation::AtBlock(height)) => {
+                return Err(eyre::eyre!(
+                    "OCOMP fork install height {} differs from lifecycle height {height}",
+                    install.activation_height
+                ));
+            }
+        }
         let runtime_body_readers = self.runtime_body_readers.ok_or_else(|| {
             eyre::eyre!("live Outbe EVM construction requires RuntimeBodyReaders")
         })?;
@@ -1662,6 +1718,9 @@ where
         let mut config = config
             .with_compressed_tree_service(compressed_tree_service)
             .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
+        if let Some(install) = self.ocomp_fork_install {
+            config = config.with_ocomp_fork_install(install);
+        }
         if let Some(authority) = self.ocomp_finality_authority {
             config = config.with_ocomp_finality_authority(Arc::new(
                 ProviderAnchoredOcompFinalityAuthority::new(ctx.provider().clone(), authority),
@@ -1705,15 +1764,13 @@ mod tests {
         },
         OutbeHeader,
     };
+    use reth_chainspec::ChainInfo;
     use reth_ethereum::chainspec::ChainSpec;
     use reth_ethereum::{
         chainspec::MAINNET,
         primitives::{Header, SealedHeader},
     };
-    use reth_provider::{
-        BlockHashReader, BlockIdReader, BlockNumReader, ProviderResult,
-    };
-    use reth_chainspec::ChainInfo;
+    use reth_provider::{BlockHashReader, BlockIdReader, BlockNumReader, ProviderResult};
     #[test]
     fn new_with_bridge_installs_cache_summary_provider() {
         let bridge = ConsensusExecutionBridge::new();
@@ -1733,6 +1790,7 @@ mod tests {
 
         assert_eq!(resolved.summary, summary);
         assert_eq!(resolved.timestamp, 456);
+        assert_eq!(resolved.state_root, None);
     }
 
     use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
@@ -2009,7 +2067,8 @@ mod tests {
         let bridge = ConsensusExecutionBridge::new();
         let summary = test_summary();
         let block_hash = B256::repeat_byte(0x42);
-        bridge.record_execution_summary(7, block_hash, summary, 123);
+        let state_root = B256::repeat_byte(0x43);
+        bridge.record_execution_summary_with_state_root(7, block_hash, summary, 123, state_root);
         let provider = RethAccountedParentArtifactProvider::new(
             TestHeaderProvider::default(),
             Some(bridge.clone()),
@@ -2022,6 +2081,7 @@ mod tests {
 
         assert_eq!(resolved.summary, summary);
         assert_eq!(resolved.timestamp, 123);
+        assert_eq!(resolved.state_root, Some(state_root));
     }
 
     #[derive(Clone)]
@@ -2144,11 +2204,7 @@ mod tests {
         let limits = outbe_metadosis::ocomp::schema::poc_schema_limits();
 
         let side_chain = authority
-            .verify(
-                &anchor_proof(7, B256::repeat_byte(0x88)),
-                expected,
-                &limits,
-            )
+            .verify(&anchor_proof(7, B256::repeat_byte(0x88)), expected, &limits)
             .unwrap_err();
         assert!(matches!(
             side_chain,
@@ -2172,9 +2228,7 @@ mod tests {
             .unwrap_err();
         assert!(matches!(
             delegated,
-            OcompFinalityAuthorityError::InvalidProof(
-                FinalizedIntentVerificationError::WrongChain
-            )
+            OcompFinalityAuthorityError::InvalidProof(FinalizedIntentVerificationError::WrongChain)
         ));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
     }

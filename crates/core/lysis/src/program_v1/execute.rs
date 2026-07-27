@@ -403,17 +403,16 @@ pub(crate) fn compute_fraction_map_from_groups(
     }
     let f = gratis_allocation * SCALE_1E18 / total_interest;
     let fmax = f * U256::from(2_u8);
-    let fractions =
-        calc_fraction_distribution_fp(
-            &shares,
-            &populations,
-            usize::try_from(tribute_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-            f,
-            fmax,
-        )
-        .map_err(|error| ProgramErrorV1::Arithmetic {
-                message: error.to_string(),
-            })?;
+    let fractions = calc_fraction_distribution_fp(
+        &shares,
+        &populations,
+        usize::try_from(tribute_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+        f,
+        fmax,
+    )
+    .map_err(|error| ProgramErrorV1::Arithmetic {
+        message: error.to_string(),
+    })?;
     Ok(sorted_fis.into_iter().zip(fractions).collect())
 }
 

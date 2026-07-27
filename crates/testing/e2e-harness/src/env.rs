@@ -105,6 +105,10 @@ pub struct EnvCli {
     #[arg(long)]
     pub chain_bin: Option<PathBuf>,
 
+    /// `outbe-ocomp` binary. Defaults to `<repo>/target/debug/outbe-ocomp`.
+    #[arg(long)]
+    pub ocomp_bin: Option<PathBuf>,
+
     /// Optional prebuilt newer `outbe-chain` binary for operator replacement.
     /// When omitted, the update E2E builds the requested version itself from a
     /// temporary worktree of the source revision under test.
@@ -156,6 +160,7 @@ pub struct Environment {
     pub data_dir: PathBuf,
     pub evidence_dir: Option<PathBuf>,
     pub chain_bin: PathBuf,
+    pub ocomp_bin: PathBuf,
     pub upgraded_chain_bin: Option<PathBuf>,
     pub cli_bin: PathBuf,
     pub keygen_bin: PathBuf,
@@ -185,6 +190,10 @@ impl Environment {
                 .chain_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/debug/outbe-chain")),
+            ocomp_bin: cli
+                .ocomp_bin
+                .clone()
+                .unwrap_or_else(|| repo.join("target/debug/outbe-ocomp")),
             upgraded_chain_bin: cli.upgraded_chain_bin.clone(),
             cli_bin: cli
                 .cli_bin
@@ -225,6 +234,7 @@ impl Default for Environment {
             data_dir: None,
             evidence_dir: None,
             chain_bin: None,
+            ocomp_bin: None,
             upgraded_chain_bin: None,
             cli_bin: None,
             keygen_bin: None,
@@ -287,6 +297,12 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
     }
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
+    }
+    if has_tag(feature, scenario, "ocomp") && !cfg!(feature = "ocomp-integration") {
+        return Some(
+            "needs the Rust OCOMP integration profile (@ocomp), but the harness was built without --features ocomp-integration"
+                .to_string(),
+        );
     }
     None
 }

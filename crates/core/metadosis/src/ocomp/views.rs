@@ -21,6 +21,21 @@ pub fn get_offchain_job(storage: StorageHandle<'_>, intent_id: B256) -> Result<V
         .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
 }
 
+/// Returns the complete bounded four-slot vote/accountability record selected
+/// by consensus for one finalized JobId.
+pub fn get_offchain_vote_accountability(
+    storage: StorageHandle<'_>,
+    job_id: B256,
+) -> Result<Vec<u8>> {
+    let limits = poc_schema_limits();
+    let accountability = MetadosisContract::new(storage)
+        .result_vote_accountability(job_id, &limits)?
+        .ok_or_else(|| missing_record_err("OcompVoteAccountabilityV1"))?;
+    accountability
+        .encode_canonical(&limits)
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
+}
+
 /// Returns the canonical active generation selected by completed Metadosis
 /// state, never by supervisor-local storage.
 pub fn get_active_lysis_generation(

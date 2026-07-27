@@ -41,11 +41,11 @@ fn atomic_retirement_keeps_exact_job_scoped_bytes_until_exact_job_gc() {
     current_writer.put(&body).unwrap();
 
     let first = RetainedTributePin {
-        job_id: B256::repeat_byte(0x41),
+        input_lease_id: B256::repeat_byte(0x41),
         worldwide_day: day,
     };
     let second = RetainedTributePin {
-        job_id: B256::repeat_byte(0x42),
+        input_lease_id: B256::repeat_byte(0x42),
         worldwide_day: day,
     };
     let first_copy = retained
@@ -81,7 +81,9 @@ fn atomic_retirement_keeps_exact_job_scoped_bytes_until_exact_job_gc() {
         );
     }
 
-    assert!(retained_writer.release_job_page(first.job_id).unwrap());
+    assert!(retained_writer
+        .release_input_lease_page(first.input_lease_id)
+        .unwrap());
     assert!(retained
         .list_by_day(first, None, 4)
         .unwrap()
@@ -92,8 +94,12 @@ fn atomic_retirement_keeps_exact_job_scoped_bytes_until_exact_job_gc() {
         1
     );
 
-    assert!(retained_writer.release_job_page(first.job_id).unwrap());
-    assert!(retained_writer.release_job_page(second.job_id).unwrap());
+    assert!(retained_writer
+        .release_input_lease_page(first.input_lease_id)
+        .unwrap());
+    assert!(retained_writer
+        .release_input_lease_page(second.input_lease_id)
+        .unwrap());
     assert!(retained
         .list_by_day(second, None, 4)
         .unwrap()
@@ -112,7 +118,7 @@ fn immutable_retained_key_rejects_changed_bytes_instead_of_overwriting_them() {
     let body = tribute(day, 0x51);
     current_writer.put(&body).unwrap();
     let pin = RetainedTributePin {
-        job_id: B256::repeat_byte(0x61),
+        input_lease_id: B256::repeat_byte(0x61),
         worldwide_day: day,
     };
 
@@ -121,7 +127,7 @@ fn immutable_retained_key_rejects_changed_bytes_instead_of_overwriting_them() {
     let reference = retained.list_by_day(pin, None, 1).unwrap().records[0];
     let retained_key = Key::new(
         [
-            pin.job_id.as_slice(),
+            pin.input_lease_id.as_slice(),
             &day.value().to_be_bytes(),
             body.tribute_id.as_bytes(),
             reference.body_commitment.as_slice(),
@@ -154,7 +160,7 @@ fn retained_selector_rejects_a_body_from_another_worldwide_day() {
     let body = tribute(WorldwideDay::new(20260724), 0x71);
     current_writer.put(&body).unwrap();
     let wrong_day = RetainedTributePin {
-        job_id: B256::repeat_byte(0x72),
+        input_lease_id: B256::repeat_byte(0x72),
         worldwide_day: WorldwideDay::new(20260725),
     };
 
@@ -174,7 +180,7 @@ fn release_pages_across_the_work_shard_boundary_without_dropping_the_last_tribut
     let retained_writer = RetainedTributeWriter::new(storage.clone(), writer.clone());
     let day = WorldwideDay::new(20260724);
     let pin = RetainedTributePin {
-        job_id: B256::repeat_byte(0x81),
+        input_lease_id: B256::repeat_byte(0x81),
         worldwide_day: day,
     };
     let mut last_id = None;
@@ -199,16 +205,22 @@ fn release_pages_across_the_work_shard_boundary_without_dropping_the_last_tribut
         writer.apply_atomic(&retain).unwrap();
     }
 
-    assert!(!retained_writer.release_job_page(pin.job_id).unwrap());
+    assert!(!retained_writer
+        .release_input_lease_page(pin.input_lease_id)
+        .unwrap());
     let second_page = retained.list_by_day(pin, None, 2).unwrap();
     assert_eq!(second_page.records.len(), 1);
     assert_eq!(second_page.records[0].tribute_id, last_id.unwrap());
 
-    assert!(retained_writer.release_job_page(pin.job_id).unwrap());
+    assert!(retained_writer
+        .release_input_lease_page(pin.input_lease_id)
+        .unwrap());
     assert!(retained
         .list_by_day(pin, None, 1)
         .unwrap()
         .records
         .is_empty());
-    assert!(retained_writer.release_job_page(pin.job_id).unwrap());
+    assert!(retained_writer
+        .release_input_lease_page(pin.input_lease_id)
+        .unwrap());
 }

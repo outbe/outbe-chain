@@ -12,6 +12,7 @@ use std::{
 
 use alloy_primitives::B256;
 use outbe_metadosis::ocomp::schema::poc_schema_limits;
+use outbe_ocomp_protocol::{activation::SignOncePurpose, vote::ResultVoteSigningSubjectV1};
 
 use crate::ocomp::sign_once::{
     PersistenceBoundary, SignOnceDurability, SignOnceError, SignOnceStore, SignOnceSubjectV1,
@@ -60,13 +61,34 @@ impl SignOnceDurability for FailAfterBoundary {
 fn subject(result_digest: B256) -> SignOnceSubjectV1 {
     SignOnceSubjectV1 {
         chain_id: 42,
+        genesis_hash: B256::repeat_byte(0x10),
+        fork_id: B256::repeat_byte(0x20),
         job_id: B256::repeat_byte(0x11),
         attempt: 3,
         protocol_bundle_hash: B256::repeat_byte(0x22),
         committee_snapshot_hash: B256::repeat_byte(0x33),
+        validator_index: 2,
         key_epoch: 1,
         result_digest,
     }
+}
+
+fn expected_signing_digest(subject: SignOnceSubjectV1) -> B256 {
+    ResultVoteSigningSubjectV1 {
+        chain_id: subject.chain_id,
+        genesis_hash: subject.genesis_hash,
+        fork_id: subject.fork_id,
+        protocol_bundle_hash: subject.protocol_bundle_hash,
+        job_id: subject.job_id,
+        attempt: subject.attempt,
+        result_committee_snapshot_hash: subject.committee_snapshot_hash,
+        validator_index: subject.validator_index,
+        key_epoch: subject.key_epoch,
+        purpose: SignOncePurpose::ResultSignature as u8,
+        result_digest: subject.result_digest,
+    }
+    .signing_digest()
+    .expect("fixture result-vote signing digest")
 }
 
 #[test]
@@ -83,7 +105,7 @@ fn ocm_sig_001_exact_replay_and_equivocation_survive_restart() {
         SignOnceStore::open(root.clone(), owner_uid, poc_schema_limits()).expect("open store");
     let first = store
         .record_or_replay(first_subject, |digest| {
-            assert_eq!(digest, first_subject.result_digest);
+            assert_eq!(digest, expected_signing_digest(first_subject));
             signed.fetch_add(1, Ordering::SeqCst);
             Ok([0x55; 64])
         })

@@ -221,12 +221,13 @@ impl outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority
         VerifiedFinalizedIntentV1,
         outbe_metadosis::ocomp::activation::OcompFinalityAuthorityError,
     > {
-        proof.verify(
-            expected,
-            &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
-            limits,
-        )
-        .map_err(Into::into)
+        proof
+            .verify(
+                expected,
+                &FinalizedIntentVerifier::new(TrieHistoricalCommitteeAuthority),
+                limits,
+            )
+            .map_err(Into::into)
     }
 }
 
@@ -262,6 +263,9 @@ pub fn authenticate_snapshot_handoff(
     if verified.job_id != handoff.job_id {
         return Err(SnapshotHandoffVerificationError::VerifiedJobId);
     }
+    if verified.intent.input_lease_id()? != handoff.input_lease_id {
+        return Err(SnapshotHandoffVerificationError::InputLeaseId);
+    }
     if verified.request.block_number != handoff.checkpoint.finalized_block_number
         || verified.request.block_hash != handoff.checkpoint.finalized_block_hash
         || verified.request.state_root != handoff.checkpoint.finalized_state_root
@@ -284,6 +288,8 @@ pub enum SnapshotHandoffVerificationError {
     ResponseJobId,
     #[error("verified finalized proof derives a different JobId")]
     VerifiedJobId,
+    #[error("verified JobIntent derives a different InputLeaseId")]
+    InputLeaseId,
     #[error("verified request identity differs from the snapshot checkpoint")]
     Checkpoint,
     #[error("verified JobIntent CE root differs from the snapshot checkpoint")]
@@ -544,7 +550,7 @@ where
         }
         let record = OcompJobRecordV1::decode_canonical(&canonical_record, &self.limits)
             .map_err(|error| PublicFinalizedIntentProofBuildError::Intent(error.to_string()))?;
-        if record.status != OcompJobStatus::OffchainPending
+        if record.status != OcompJobStatus::AwaitingFinality
             || record
                 .intent
                 .intent_id(&self.limits)
@@ -1091,7 +1097,9 @@ impl<A: HistoricalCommitteeAuthority> FinalizedIntentVerifier<A> {
 
         let record = OcompJobRecordV1 {
             intent: intent.clone(),
-            status: OcompJobStatus::OffchainPending,
+            intent_height: intent.logical_evaluation_height,
+            status: OcompJobStatus::AwaitingFinality,
+            finalized: None,
             terminal: None,
         };
         let encoded_record = record
@@ -1305,7 +1313,7 @@ fn read_pending_job_record(
         .intent
         .intent_id(limits)
         .map_err(|error| FinalizedIntentProofBuildError::Intent(error.to_string()))?;
-    if decoded_id != intent_id || record.status != OcompJobStatus::OffchainPending {
+    if decoded_id != intent_id || record.status != OcompJobStatus::AwaitingFinality {
         return Err(FinalizedIntentProofBuildError::Intent(
             "exact state does not contain the requested pending intent".to_owned(),
         ));

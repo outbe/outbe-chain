@@ -556,7 +556,7 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
         wwd: day.value(),
         ce_sealed_root: B256::repeat_byte(0x63),
         protocol_bundle_hash: B256::repeat_byte(0x64),
-        deadline_height: 110,
+        input_lease_id: B256::repeat_byte(0x65),
     };
     let openings = build_lysis_openings(
         &OpeningProvider {
@@ -632,7 +632,7 @@ fn fidelity_total_slot_cap_stops_before_reading_later_owners_or_building_a_proof
         wwd: 20260724,
         ce_sealed_root: B256::repeat_byte(0x73),
         protocol_bundle_hash: B256::repeat_byte(0x74),
-        deadline_height: 110,
+        input_lease_id: B256::repeat_byte(0x75),
     };
 
     assert!(build_lysis_openings(

@@ -2,16 +2,12 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use outbe_ocomp_protocol::{
     abi::{
-        ACTIVATE_LYSIS_SELECTOR, GET_ACTIVE_LYSIS_GENERATION_SELECTOR,
-        GET_LYSIS_TERMINAL_RECEIPT_SELECTOR, GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0,
-        OCOMP_ACTIVATION_REJECTED_SELECTOR, OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0,
-        OCOMP_REQUESTED_TOPIC0,
+        GET_ACTIVE_LYSIS_GENERATION_SELECTOR, GET_LYSIS_TERMINAL_RECEIPT_SELECTOR,
+        GET_OFFCHAIN_JOB_SELECTOR, LYSIS_ACTIVATED_TOPIC0, OCOMP_ACTIVATION_REJECTED_SELECTOR,
+        OCOMP_CONFLICTED_TOPIC0, OCOMP_EXPIRED_TOPIC0, OCOMP_REQUESTED_TOPIC0,
+        SUBMIT_LYSIS_RESULT_SELECTOR,
     },
-    activation::{
-        ActivationCallCoreV1, CandidateAnnouncementV1, PoCActivationV1, SignOncePurpose,
-        SignOnceRecordV1,
-    },
-    certificate::{ExecutionCertificateV1, OrderedSignatureV1},
+    activation::{ActivationCallCoreV1, SignOncePurpose, SignOnceRecordV1},
     codec::CodecLimits,
     committee::{
         verify_low_s_prehash, OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1,
@@ -54,12 +50,16 @@ use outbe_ocomp_protocol::{
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
-        ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompJobTerminalV1,
+        ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
         OcompTerminalOutcome,
     },
     unit::{
         BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
         UnitPhase, UnitSpecV1, WorkOutputHeaderV1,
+    },
+    vote::{
+        EquivocationEvidenceV1, OcompAccountabilitySummaryV1, OcompQuorumV1,
+        OcompVoteAccountabilityV1, RecordVoteOutcomeV1, ResultVoteSlotV1, ResultVoteV1,
     },
     ProtocolError, SchemaLimits,
 };
@@ -188,8 +188,33 @@ fn intent() -> JobIntentV1 {
         activation_preconditions: preconditions(),
         result_committee_snapshot_hash: hash(45),
         custody_committee_epoch_hash: None,
-        deadline_height: 110,
     }
+}
+
+#[test]
+fn retry_reuses_only_a_byte_identical_authenticated_input_lease() {
+    let first = intent();
+    let mut retry = first.clone();
+    retry.attempt += 1;
+    retry.pending_nonce += 1;
+    retry.activation_preconditions.metadosis.pending_nonce += 1;
+    assert_eq!(
+        first.input_lease_id().unwrap(),
+        retry.input_lease_id().unwrap(),
+        "attempt identity is independent from authenticated source retention"
+    );
+
+    let mut changed_input = retry;
+    changed_input.sealed_tribute_collection_root = hash(0xa1);
+    changed_input
+        .activation_preconditions
+        .tribute
+        .sealed_collection_root = hash(0xa1);
+    assert_ne!(
+        first.input_lease_id().unwrap(),
+        changed_input.input_lease_id().unwrap(),
+        "a changed authenticated source root must create a different lease"
+    );
 }
 
 fn finality_proof() -> FinalizedIntentProofV1 {
@@ -377,19 +402,33 @@ fn committee() -> OcompCommitteeSnapshotV1 {
     }
 }
 
-fn certificate(result_digest: B256) -> ExecutionCertificateV1 {
-    let snapshot = committee();
-    ExecutionCertificateV1 {
+fn signed_vote(
+    validator_index: u8,
+    result: LysisResultV1,
+    finalized_intent: &JobIntentV1,
+    job_id: B256,
+    snapshot: &OcompCommitteeSnapshotV1,
+) -> ResultVoteV1 {
+    let mut vote = ResultVoteV1 {
+        protocol_bundle_hash: finalized_intent.protocol_bundle_hash,
+        job_id,
+        attempt: finalized_intent.attempt,
         result_committee_snapshot_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
-        signer_bitmap: 0b0111,
-        ordered_signatures: (0..3)
-            .map(|index| OrderedSignatureV1 {
-                validator_index: index,
-                signature_rs: sign(&signing_key(index), result_digest),
-            })
-            .collect(),
-        result_digest,
-    }
+        validator_index,
+        key_epoch: 1,
+        result,
+        signature_rs: [0; 64],
+    };
+    let signing_digest = vote.signing_digest(finalized_intent, &LIMITS).unwrap();
+    vote.signature_rs = sign(&signing_key(validator_index), signing_digest);
+    vote
+}
+
+fn vote_result(job_id: B256, result_chunk_root: u8) -> LysisResultV1 {
+    let mut result = result();
+    result.job_id = job_id;
+    result.result_chunk_list_root = hash(result_chunk_root);
+    result
 }
 
 fn binding() -> EffectBindingV1 {
@@ -557,38 +596,24 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     .unwrap();
     let result = result();
     let activation_payload = result.activation_payload(&LIMITS).unwrap();
-    let result_digest = activation_payload.result_digest(&LIMITS).unwrap();
-    let certificate = certificate(result_digest);
+    let result_digest = result.result_digest(&LIMITS).unwrap();
     let snapshot = committee();
     let proof = finality_proof();
-    let poc_activation = PoCActivationV1 {
-        intent_id: intent().intent_id(&LIMITS).unwrap(),
-        finalized_intent_proof: proof.clone(),
-        activation_payload: activation_payload.clone(),
-        result: result.clone(),
-        certificate: certificate.clone(),
-    };
-    let candidate = CandidateAnnouncementV1 {
-        protocol_bundle_hash: result.protocol_bundle_hash,
-        job_id: result.job_id,
-        attempt: result.attempt,
-        result: result.clone(),
-        result_digest,
-        validator_index: 0,
-        key_epoch: 1,
-        signature_rs: sign(&signing_key(0), result_digest),
-    };
-    let sign_once = SignOnceRecordV1 {
+    let mut sign_once = SignOnceRecordV1 {
         chain_id: 42,
+        genesis_hash: hash(40),
+        fork_id: hash(1),
         purpose: SignOncePurpose::ResultSignature,
         job_id: result.job_id,
         attempt: result.attempt,
         protocol_bundle_hash: result.protocol_bundle_hash,
         committee_snapshot_hash: snapshot.snapshot_hash(&LIMITS).unwrap(),
+        validator_index: 0,
         key_epoch: 1,
         result_digest,
-        signature_rs: sign(&signing_key(0), result_digest),
+        signature_rs: [0; 64],
     };
+    sign_once.signature_rs = sign(&signing_key(0), sign_once.signing_digest().unwrap());
     let activation_call = ActivationCallCoreV1 {
         intent_id: hash(80),
         job_id: result.job_id,
@@ -659,16 +684,37 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         availability_certificate_hash: None,
     };
     let aggregate = conflict_receipt();
+    let job_intent = intent();
+    let finalized_request_block_hash = hash(46);
+    let finalized_request_state_root = hash(49);
+    let finalized_job = OcompFinalizedJobV1 {
+        job_id: job_intent
+            .job_id(
+                finalized_request_block_hash,
+                finalized_request_state_root,
+                &LIMITS,
+            )
+            .unwrap(),
+        finalized_request_block_hash,
+        finalized_request_state_root,
+        finality_recorded_height: 102,
+        open_height: 106,
+        deadline_height: 110,
+        quorum: None,
+    };
+    let terminal = LysisTerminalV1 {
+        outcome: OcompTerminalOutcome::Expired,
+        terminal_height: 111,
+        terminal_time: 1_100,
+        next_pending_nonce: Some(2),
+        completed_binding: None,
+    };
     let job_record = OcompJobRecordV1 {
-        intent: intent(),
+        intent: job_intent,
+        intent_height: 100,
         status: OcompJobStatus::Expired,
-        terminal: Some(OcompJobTerminalV1 {
-            outcome: OcompTerminalOutcome::Expired,
-            terminal_height: 111,
-            terminal_time: 1_100,
-            next_pending_nonce: Some(2),
-            completed_binding: None,
-        }),
+        finalized: Some(finalized_job),
+        terminal: Some(terminal.clone()),
     };
     let shuffle_run = ShuffleRunArtifactV1 {
         protocol_bundle_hash: hash(41),
@@ -729,14 +775,16 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     assert_round_trip!(result_chunk, ResultChunkV1, ResultChunkV1);
     assert_round_trip!(result.clone(), LysisResultV1, LysisResultV1);
     assert_round_trip!(activation_payload, ActivationPayloadV1, ActivationPayloadV1);
-    assert_round_trip!(snapshot, OcompCommitteeSnapshotV1, OcompCommitteeSnapshotV1);
+    assert_round_trip!(
+        snapshot.clone(),
+        OcompCommitteeSnapshotV1,
+        OcompCommitteeSnapshotV1
+    );
     assert_round_trip!(
         registration(0),
         OcompKeyRegistrationV1,
         OcompKeyRegistrationV1
     );
-    assert_round_trip!(certificate, ExecutionCertificateV1, ExecutionCertificateV1);
-    assert_round_trip!(poc_activation, PoCActivationV1, PoCActivationV1);
     assert_round_trip!(active_generation, ActiveGenerationV1, ActiveGenerationV1);
     assert_round_trip!(
         aggregate,
@@ -756,7 +804,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         RequestBudgetSplitReceiptV1
     );
     assert_round_trip!(carry_over_receipt, CarryOverReceiptV1, CarryOverReceiptV1);
-    assert_round_trip!(candidate, CandidateAnnouncementV1, CandidateAnnouncementV1);
     assert_round_trip!(sign_once, SignOnceRecordV1, SignOnceRecordV1);
     assert_round_trip!(activation_call, ActivationCallCoreV1, ActivationCallCoreV1);
     assert_round_trip!(
@@ -766,27 +813,150 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
     );
     assert_round_trip!(job_record, OcompJobRecordV1, OcompJobRecordV1);
     assert_round_trip!(shuffle_run, ShuffleRunArtifactV1, ShuffleRunArtifactV1);
+    assert_round_trip!(terminal, LysisTerminalV1, LysisTerminalV1);
+    let mut vote_intent = intent();
+    vote_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let vote = signed_vote(
+        0,
+        vote_result(hash(59), 120),
+        &vote_intent,
+        hash(59),
+        &snapshot,
+    );
+    let vote_digest = vote.result_digest(&LIMITS).unwrap();
+    let slot = ResultVoteSlotV1 {
+        validator_index: 0,
+        first_result_digest: vote_digest,
+        key_epoch: vote.key_epoch,
+        first_signature_rs: vote.signature_rs,
+        submitted_height: 106,
+        equivocation: None,
+    };
+    let equivocation = EquivocationEvidenceV1 {
+        conflicting_result_digest: hash(122),
+        conflicting_key_epoch: 1,
+        conflicting_signature_rs: sign(&signing_key(0), hash(122)),
+        submitted_height: 107,
+    };
+    let quorum = OcompQuorumV1 {
+        result_digest: vote_digest,
+        quorum_height: 106,
+        signer_bitmap: 0b0111,
+        evidence_hash: hash(121),
+    };
+    let summary = OcompAccountabilitySummaryV1 {
+        closed_height: 120,
+        timely_bitmap: 0b0111,
+        matching_bitmap: 0b0111,
+        divergent_bitmap: 0,
+        missing_bitmap: 0b1000,
+        equivocation_bitmap: 0,
+    };
+    assert_round_trip!(vote, ResultVoteV1, ResultVoteV1);
+    assert_round_trip!(equivocation, EquivocationEvidenceV1, EquivocationEvidenceV1);
+    assert_round_trip!(slot, ResultVoteSlotV1, ResultVoteSlotV1);
+    assert_round_trip!(quorum, OcompQuorumV1, OcompQuorumV1);
+    assert_round_trip!(
+        summary,
+        OcompAccountabilitySummaryV1,
+        OcompAccountabilitySummaryV1
+    );
+    let accountability =
+        OcompVoteAccountabilityV1::empty(hash(59), vote_intent.result_committee_snapshot_hash)
+            .unwrap();
+    assert_round_trip!(
+        accountability,
+        OcompVoteAccountabilityV1,
+        OcompVoteAccountabilityV1
+    );
 }
 
 #[test]
-fn committee_certificate_and_signatures_fail_closed() {
-    let digest = hash(120);
+fn direct_result_votes_freeze_q3_and_keep_late_accountability_separate() {
     let snapshot = committee();
-    let certificate = certificate(digest);
-    certificate.verify(&snapshot, 100, &LIMITS).unwrap();
+    let mut finalized_intent = intent();
+    finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
+    let job_id = hash(59);
+    let matching_result = vote_result(job_id, 120);
+    let result_digest = matching_result.result_digest(&LIMITS).unwrap();
+    let mut accountability =
+        OcompVoteAccountabilityV1::empty(job_id, finalized_intent.result_committee_snapshot_hash)
+            .unwrap();
 
-    let mut wrong_bitmap = certificate.clone();
-    wrong_bitmap.signer_bitmap = 0b1111;
-    assert!(matches!(
-        wrong_bitmap.validate_shape(),
-        Err(ProtocolError::InvalidInvariant(
-            "certificate threshold bitmap"
-        ))
-    ));
+    for validator_index in 0..3 {
+        let vote = signed_vote(
+            validator_index,
+            matching_result.clone(),
+            &finalized_intent,
+            job_id,
+            &snapshot,
+        );
+        vote.verify(
+            &finalized_intent,
+            job_id,
+            &snapshot,
+            106 + u64::from(validator_index),
+            106,
+            120,
+            &LIMITS,
+        )
+        .unwrap();
+        assert_eq!(
+            accountability
+                .record_verified_vote(&vote, 106 + u64::from(validator_index), &LIMITS)
+                .unwrap(),
+            RecordVoteOutcomeV1::FirstVote
+        );
+    }
 
-    let mut duplicate = certificate.clone();
-    duplicate.ordered_signatures[1].validator_index = 0;
-    assert!(duplicate.validate_shape().is_err());
+    let frozen_quorum = accountability.quorum.clone().unwrap();
+    assert_eq!(frozen_quorum.result_digest, result_digest);
+    assert_eq!(frozen_quorum.quorum_height, 108);
+    assert_eq!(frozen_quorum.signer_bitmap, 0b0111);
+
+    let minority = signed_vote(
+        3,
+        vote_result(job_id, 121),
+        &finalized_intent,
+        job_id,
+        &snapshot,
+    );
+    minority
+        .verify(&finalized_intent, job_id, &snapshot, 109, 106, 120, &LIMITS)
+        .unwrap();
+    accountability
+        .record_verified_vote(&minority, 109, &LIMITS)
+        .unwrap();
+    assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
+
+    let equivocation = signed_vote(
+        3,
+        vote_result(job_id, 122),
+        &finalized_intent,
+        job_id,
+        &snapshot,
+    );
+    assert_eq!(
+        accountability
+            .record_verified_vote(&equivocation, 110, &LIMITS)
+            .unwrap(),
+        RecordVoteOutcomeV1::EquivocationRecorded
+    );
+    assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
+
+    let summary = accountability.close(120, &LIMITS).unwrap();
+    assert_eq!(summary.timely_bitmap, 0b1111);
+    assert_eq!(summary.matching_bitmap, 0b0111);
+    assert_eq!(summary.divergent_bitmap, 0b1000);
+    assert_eq!(summary.missing_bitmap, 0);
+    assert_eq!(summary.equivocation_bitmap, 0b1000);
+    assert_eq!(accountability.quorum.as_ref(), Some(&frozen_quorum));
+}
+
+#[test]
+fn committee_and_signatures_fail_closed() {
+    let digest = hash(120);
+    committee().validate_semantics(&LIMITS).unwrap();
 
     let invalid_key = [0_u8; 33];
     assert_eq!(
@@ -926,43 +1096,29 @@ fn lysis_completion_is_bound_to_the_finalized_job_intent() {
 }
 
 #[test]
-fn activation_rejects_completion_fields_not_bound_by_the_signed_payload() {
+fn full_result_digest_and_finalized_binding_cover_completion_fields() {
     let snapshot = committee();
     let mut finalized_intent = intent();
     finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
-    let mut proof = finality_proof();
-    proof.canonical_job_intent = BoundedBytes(finalized_intent.encode_canonical(&LIMITS).unwrap());
     let finalized_request_state_root = hash(49);
     let job_id = finalized_intent
         .job_id(
-            proof.parent_accounting.finalized_block_hash,
+            finality_proof().parent_accounting.finalized_block_hash,
             finalized_request_state_root,
             &LIMITS,
         )
         .unwrap();
     let mut valid_result = result();
     valid_result.job_id = job_id;
-    let activation_payload = valid_result.activation_payload(&LIMITS).unwrap();
-    let result_digest = activation_payload.result_digest(&LIMITS).unwrap();
-    let certificate = certificate(result_digest);
-
-    let mut activation = PoCActivationV1 {
-        intent_id: finalized_intent.intent_id(&LIMITS).unwrap(),
-        finalized_intent_proof: proof,
-        activation_payload,
-        result: valid_result,
-        certificate,
-    };
-    activation
-        .verify(finalized_request_state_root, &snapshot, 100, &LIMITS)
+    valid_result
+        .validate_finalized_intent(&finalized_intent)
         .unwrap();
-
-    activation
-        .result
-        .metadosis_completion_summary
-        .logical_evaluation_time += 1;
+    let valid_digest = valid_result.result_digest(&LIMITS).unwrap();
+    let mut changed = valid_result;
+    changed.metadosis_completion_summary.logical_evaluation_time += 1;
+    assert_ne!(changed.result_digest(&LIMITS).unwrap(), valid_digest);
     assert!(matches!(
-        activation.verify(finalized_request_state_root, &snapshot, 100, &LIMITS,),
+        changed.validate_finalized_intent(&finalized_intent),
         Err(ProtocolError::InvalidInvariant(
             "result finalized intent binding"
         ))
@@ -970,37 +1126,26 @@ fn activation_rejects_completion_fields_not_bound_by_the_signed_payload() {
 }
 
 #[test]
-fn validator_candidate_verification_requires_the_finalized_intent_binding() {
+fn result_vote_verification_requires_the_finalized_intent_binding() {
     let snapshot = committee();
     let mut finalized_intent = intent();
     finalized_intent.result_committee_snapshot_hash = snapshot.snapshot_hash(&LIMITS).unwrap();
-    let valid_result = result();
-    let payload = valid_result.activation_payload(&LIMITS).unwrap();
-    let result_digest = payload.result_digest(&LIMITS).unwrap();
-    let mut candidate = CandidateAnnouncementV1 {
-        protocol_bundle_hash: valid_result.protocol_bundle_hash,
-        job_id: valid_result.job_id,
-        attempt: valid_result.attempt,
-        result: valid_result,
-        result_digest,
-        validator_index: 0,
-        key_epoch: 1,
-        signature_rs: sign(&signing_key(0), result_digest),
-    };
-
-    candidate
-        .verify(&finalized_intent, candidate.job_id, &snapshot, 100, &LIMITS)
+    let job_id = hash(59);
+    let vote = signed_vote(
+        0,
+        vote_result(job_id, 120),
+        &finalized_intent,
+        job_id,
+        &snapshot,
+    );
+    vote.verify(&finalized_intent, job_id, &snapshot, 106, 106, 120, &LIMITS)
         .unwrap();
 
-    candidate
-        .result
-        .metadosis_completion_summary
-        .logical_evaluation_time += 1;
+    let mut wrong_intent = finalized_intent;
+    wrong_intent.fork_id = hash(99);
     assert!(matches!(
-        candidate.verify(&finalized_intent, candidate.job_id, &snapshot, 100, &LIMITS,),
-        Err(ProtocolError::InvalidInvariant(
-            "result finalized intent binding"
-        ))
+        vote.verify(&wrong_intent, job_id, &snapshot, 106, 106, 120, &LIMITS),
+        Err(ProtocolError::InvalidSignature)
     ));
 }
 
@@ -1352,10 +1497,10 @@ fn local_control_frame_checks_cap_magic_length_and_worker_shape() {
 }
 
 #[test]
-fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
+fn finalized_discovery_control_pages_multiple_jobs_canonically() {
     let request = ListFinalizedJobsV1 {
         after_cursor: 99,
-        limit: 1,
+        limit: MAX_FINALIZED_JOBS_PER_RESPONSE,
     };
     assert_eq!(
         ListFinalizedJobsV1::decode_body(&request.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
@@ -1383,9 +1528,12 @@ fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
         finalized_state_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
     };
+    let mut second = summary.clone();
+    second.cursor += 1;
+    second.job_id = hash(0x94);
     let response = ListFinalizedJobsResponseV1 {
-        next_cursor: summary.cursor,
-        jobs: vec![summary.clone()],
+        next_cursor: second.cursor,
+        jobs: vec![summary.clone(), second],
     };
     assert_eq!(
         ListFinalizedJobsResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
@@ -1394,7 +1542,7 @@ fn finalized_discovery_control_is_one_job_bounded_and_canonical() {
     );
     assert!(ListFinalizedJobsResponseV1 {
         next_cursor: 101,
-        jobs: vec![summary.clone(), summary.clone()],
+        jobs: vec![summary.clone(); usize::from(MAX_FINALIZED_JOBS_PER_RESPONSE) + 1],
     }
     .encode_body(&LIMITS)
     .is_err());
@@ -1428,7 +1576,7 @@ fn attestation_control_carries_only_bounded_canonical_artifacts() {
         request
     );
     let response = AttestationResponseV1 {
-        canonical_candidate: BoundedBytes(vec![5, 6, 7]),
+        canonical_vote: BoundedBytes(vec![5, 6, 7]),
     };
     assert_eq!(
         AttestationResponseV1::decode_body(&response.encode_body(&LIMITS).unwrap(), &LIMITS)
@@ -1442,7 +1590,7 @@ fn attestation_control_carries_only_bounded_canonical_artifacts() {
     .encode_body(&LIMITS)
     .is_err());
     assert!(AttestationResponseV1 {
-        canonical_candidate: BoundedBytes(Vec::new()),
+        canonical_vote: BoundedBytes(Vec::new()),
     }
     .encode_body(&LIMITS)
     .is_err());
@@ -1454,7 +1602,7 @@ fn attestation_control_carries_only_bounded_canonical_artifacts() {
 }
 
 #[test]
-fn snapshot_export_control_binds_one_job_checkpoint_lease_and_manifest() {
+fn snapshot_export_control_pages_job_scoped_leases_and_manifests() {
     let job_id = hash(0xa1);
     let checkpoint = CheckpointIdentityV1 {
         finalized_block_number: 100,
@@ -1472,6 +1620,7 @@ fn snapshot_export_control_binds_one_job_checkpoint_lease_and_manifest() {
     );
     let handoff = SnapshotHandoffV1 {
         job_id,
+        input_lease_id: hash(12),
         pin_generation: 7,
         lease_generation: 11,
         checkpoint,
@@ -1489,9 +1638,12 @@ fn snapshot_export_control_binds_one_job_checkpoint_lease_and_manifest() {
         ListSnapshotHandoffsV1::decode_body(&list.encode_body(&LIMITS).unwrap(), &LIMITS).unwrap(),
         list
     );
+    let mut second_handoff = handoff.clone();
+    second_handoff.job_id = hash(0xa6);
+    second_handoff.lease_generation += 1;
     let listed = ListSnapshotHandoffsResponseV1 {
-        next_lease_generation: handoff.lease_generation,
-        handoffs: vec![handoff.clone()],
+        next_lease_generation: second_handoff.lease_generation,
+        handoffs: vec![handoff.clone(), second_handoff],
     };
     assert_eq!(
         ListSnapshotHandoffsResponseV1::decode_body(&listed.encode_body(&LIMITS).unwrap(), &LIMITS)
@@ -1650,7 +1802,10 @@ fn selector(signature: &str) -> [u8; 4] {
 
 #[test]
 fn public_abi_constants_match_independent_keccak_derivation() {
-    assert_eq!(selector("activateLysis(bytes)"), ACTIVATE_LYSIS_SELECTOR);
+    assert_eq!(
+        selector("submitLysisResult(bytes)"),
+        SUBMIT_LYSIS_RESULT_SELECTOR
+    );
     assert_eq!(
         selector("getOffchainJob(bytes32)"),
         GET_OFFCHAIN_JOB_SELECTOR
@@ -1668,7 +1823,7 @@ fn public_abi_constants_match_independent_keccak_derivation() {
         OCOMP_ACTIVATION_REJECTED_SELECTOR
     );
     assert_eq!(
-        keccak256(b"OffchainJobRequested(bytes32,uint32,uint64,uint32,uint64,bytes32)"),
+        keccak256(b"OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)"),
         OCOMP_REQUESTED_TOPIC0
     );
     assert_eq!(

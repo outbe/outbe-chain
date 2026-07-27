@@ -59,12 +59,17 @@ impl ChildGuard {
     pub(crate) fn pid(&self) -> u32 {
         self.child.id()
     }
+
+    /// Stop and synchronously reap this owned process. Idempotent after exit.
+    pub(crate) fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
     }
 }
 

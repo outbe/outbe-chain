@@ -169,7 +169,6 @@ fn intent() -> JobIntentV1 {
         },
         result_committee_snapshot_hash: hash(11),
         custody_committee_epoch_hash: None,
-        deadline_height: 110,
     }
 }
 
@@ -877,7 +876,9 @@ fn fixture_with_intent(signer_indices: &[u32], intent: JobIntentV1) -> Fixture {
     let logical_key = intent_storage_key(intent_id).unwrap();
     let record = OcompJobRecordV1 {
         intent: intent.clone(),
-        status: OcompJobStatus::OffchainPending,
+        intent_height: intent.logical_evaluation_height,
+        status: OcompJobStatus::AwaitingFinality,
+        finalized: None,
         terminal: None,
     };
     let slots = independent_storage_slots(logical_key, &record.encode_canonical(&LIMITS).unwrap());
@@ -1155,6 +1156,7 @@ fn ocm_fin_001_exporter_derives_job_inputs_only_from_verified_handoff_proof() {
     };
     let handoff = SnapshotHandoffV1 {
         job_id: verified.job_id,
+        input_lease_id: verified.intent.input_lease_id().expect("input lease id"),
         pin_generation: 1,
         lease_generation: 2,
         checkpoint: CheckpointIdentityV1 {
@@ -1215,7 +1217,7 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         wwd: fixture.intent.wwd,
         ce_sealed_root: fixture.intent.ce_sealed_root,
         protocol_bundle_hash: fixture.intent.protocol_bundle_hash,
-        deadline_height: fixture.intent.deadline_height,
+        input_lease_id: fixture.intent.input_lease_id().expect("input lease id"),
     };
     let expected_job_id = fixture
         .intent
@@ -1227,7 +1229,7 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         .put_finalization(fixture.finalization_record.clone())
         .expect("persist exact finalization");
     let exact_source =
-        RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store, || Ok(None));
+        RethFinalizedInputProofSource::new(fixture.provider.clone(), exact_store, || Ok(None), 64);
     assert_eq!(
         exact_source
             .resolve_finality(candidate)
@@ -1235,6 +1237,9 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
         CandidateFinalityV1::Finalized(outbe_node::ocomp::retention::FinalizedJobPinV1 {
             candidate,
             job_id: expected_job_id,
+            finality_recorded_height: FINALIZED_BLOCK_NUMBER,
+            open_height: FINALIZED_BLOCK_NUMBER + 4,
+            deadline_height: FINALIZED_BLOCK_NUMBER + 4 + 64,
         })
     );
 
@@ -1244,8 +1249,12 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     competing_store
         .put_finalization(competing)
         .expect("persist competing finalization identity");
-    let competing_source =
-        RethFinalizedInputProofSource::new(fixture.provider.clone(), competing_store, || Ok(None));
+    let competing_source = RethFinalizedInputProofSource::new(
+        fixture.provider.clone(),
+        competing_store,
+        || Ok(None),
+        64,
+    );
     assert_eq!(
         competing_source
             .resolve_finality(candidate)
@@ -1262,8 +1271,12 @@ fn ocm_fin_001_production_source_resolves_exact_finality_and_refuses_ambiguity()
     ambiguous_store
         .put_finalization(duplicate)
         .expect("persist second exact-key variant");
-    let ambiguous_source =
-        RethFinalizedInputProofSource::new(fixture.provider.clone(), ambiguous_store, || Ok(None));
+    let ambiguous_source = RethFinalizedInputProofSource::new(
+        fixture.provider.clone(),
+        ambiguous_store,
+        || Ok(None),
+        64,
+    );
     assert!(ambiguous_source.resolve_finality(candidate).is_err());
 }
 

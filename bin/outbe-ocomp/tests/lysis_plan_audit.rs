@@ -23,6 +23,7 @@ use outbe_ocomp::{
     lysis_result_catalog::{
         ExactLysisResultCatalogCursorV1, LysisResultCatalogError, LysisResultCatalogStepV1,
     },
+    nod_proof::{build_certified_nod_proof, NodProofBuildError},
 };
 use outbe_ocomp_protocol::{
     common::{BoundedBytes, EntityId36, ProofBytes},
@@ -36,9 +37,11 @@ use outbe_ocomp_protocol::{
         RawStorageSlotV1,
     },
     registry::ObjectKind,
-    result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
+    result::{
+        ActiveNodSetV1, ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1,
+    },
     unit::{UnitArtifactV1, UnitPhase, UnitSpecV1, WorkOutputHeaderV1},
-    CasObjectRefV1, ListKind,
+    CasObjectRefV1, ListKind, StreamingOrderedListRoot,
 };
 
 const CAS_LIMITS: CasLimits = CasLimits {
@@ -1042,6 +1045,133 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
             .unwrap()
     };
     assert_eq!(restarted, first);
+}
+
+#[test]
+fn cold_reloaded_result_catalog_builds_a_verified_nod_proof_across_shards() {
+    let fixture = synthetic_fixture(false, false);
+    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        &fixture.input_ref_root,
+        &reader,
+        fixture.limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admissions =
+        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
+    let audit = LocalLysisPlanAuditV1::open(
+        &admissions,
+        &input_refs,
+        &reader,
+        &fixture.bundle,
+        &fixture.limits,
+    )
+    .unwrap();
+
+    let mut root = StreamingOrderedListRoot::new(ListKind::NodActions, 257).unwrap();
+    for step in ExactLysisResultCatalogCursorV1::open(&audit).unwrap() {
+        if let LysisResultCatalogStepV1::Chunk(chunk) = step.unwrap() {
+            for action in &chunk.chunk().ordered_nod_actions {
+                root.push(
+                    &action.encode_canonical_record(&fixture.limits).unwrap(),
+                    fixture.limits.max_bounded_bytes,
+                )
+                .unwrap();
+            }
+        }
+    }
+    let authority = ActiveNodSetV1 {
+        job_id: audit.plan().job_id,
+        program_semantics_hash: fixture.bundle.bundle().lysis_program_semantics_hash,
+        worldwide_day: audit.plan().wwd,
+        generation: 1,
+        nod_root: root.finish().unwrap(),
+        nod_count: 257,
+    };
+
+    let proof = build_certified_nod_proof(&audit, &authority, 256).unwrap();
+
+    let action = proof.verify_against(&authority, &fixture.limits).unwrap();
+    assert_eq!(action.raw_ordinal, 256);
+}
+
+#[test]
+fn missing_result_chunk_makes_the_nod_read_unavailable() {
+    let fixture = synthetic_fixture(false, false);
+    let authority = {
+        let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+        let input_refs = VerifiedInputChunkRefCatalog::reopen(
+            &fixture.input_ref_root,
+            &reader,
+            fixture.limits,
+            poc_input_list_limits(),
+        )
+        .unwrap();
+        let admissions =
+            VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits)
+                .unwrap();
+        let audit = LocalLysisPlanAuditV1::open(
+            &admissions,
+            &input_refs,
+            &reader,
+            &fixture.bundle,
+            &fixture.limits,
+        )
+        .unwrap();
+        let mut root = StreamingOrderedListRoot::new(ListKind::NodActions, 257).unwrap();
+        for step in ExactLysisResultCatalogCursorV1::open(&audit).unwrap() {
+            if let LysisResultCatalogStepV1::Chunk(chunk) = step.unwrap() {
+                for action in &chunk.chunk().ordered_nod_actions {
+                    root.push(
+                        &action.encode_canonical_record(&fixture.limits).unwrap(),
+                        fixture.limits.max_bounded_bytes,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        ActiveNodSetV1 {
+            job_id: audit.plan().job_id,
+            program_semantics_hash: fixture.bundle.bundle().lysis_program_semantics_hash,
+            worldwide_day: audit.plan().wwd,
+            generation: 1,
+            nod_root: root.finish().unwrap(),
+            nod_count: 257,
+        }
+    };
+
+    let digest_hex = hex::encode(fixture.result_chunk_refs[1].transport_digest);
+    let missing_path = fixture
+        .cas_root
+        .join("objects")
+        .join(&digest_hex[..2])
+        .join(&digest_hex[2..]);
+    std::fs::remove_file(missing_path).unwrap();
+
+    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        &fixture.input_ref_root,
+        &reader,
+        fixture.limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admissions =
+        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
+    let audit = LocalLysisPlanAuditV1::open(
+        &admissions,
+        &input_refs,
+        &reader,
+        &fixture.bundle,
+        &fixture.limits,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        build_certified_nod_proof(&audit, &authority, 256),
+        Err(NodProofBuildError::Catalog(_))
+    ));
 }
 
 #[test]

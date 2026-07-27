@@ -472,7 +472,20 @@ fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), Con
 /// Consensus builder that produces `OutbeBeaconConsensus` with increased extra_data limit.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OutbeConsensusBuilder;
+pub struct OutbeConsensusBuilder {
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+}
+
+impl OutbeConsensusBuilder {
+    #[must_use]
+    pub const fn with_ocomp_lifecycle_activation(
+        mut self,
+        activation: OcompLifecycleActivation,
+    ) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+}
 
 impl<Node> ConsensusBuilder<Node> for OutbeConsensusBuilder
 where
@@ -488,7 +501,8 @@ where
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(
             OutbeBeaconConsensus::new(ctx.chain_spec())
-                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE),
+                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE)
+                .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation),
         ))
     }
 }

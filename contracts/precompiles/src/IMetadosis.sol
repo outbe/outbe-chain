@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 interface IMetadosis {
     error OcompActivationRejected(uint16 code);
+    error OcompResultVoteRejected(uint16 code);
 
     event MetadosisAccumulation(
         uint32 indexed date, uint256 dayMetadosisLimitAmount, uint256 totalAccumulated, uint64 blockNumber
@@ -63,7 +64,6 @@ interface IMetadosis {
         uint32 indexed wwd,
         uint64 pendingNonce,
         uint32 attempt,
-        uint64 deadlineHeight,
         bytes32 activationPreconditionsHash
     );
 
@@ -117,10 +117,15 @@ interface IMetadosis {
     /// @return ocompJobRecordV1 Canonically encoded OcompJobRecordV1 bytes.
     function getOffchainJob(bytes32 intentId) external view returns (bytes memory ocompJobRecordV1);
 
-    /// @notice Activate one certified LYSIS_V1 result through a normal paid transaction.
-    function activateLysis(bytes calldata pocActivationV1)
+    /// @notice Submit one canonical node-attested ResultVoteV1.
+    function submitLysisResult(bytes calldata resultVoteV1) external;
+
+    /// @notice Return the four fixed vote slots, immutable quorum and optional
+    /// closed accountability summary for one finalized JobId.
+    function getOffchainVoteAccountability(bytes32 jobId)
         external
-        returns (bytes32 activationCallId, bytes32 resultDigest, uint8 outcome);
+        view
+        returns (bytes memory ocompVoteAccountabilityV1);
 
     /// @notice Return the canonical active generation selected by Metadosis state.
     function getActiveLysisGeneration(uint32 wwd) external view returns (bytes memory activeGenerationV1);

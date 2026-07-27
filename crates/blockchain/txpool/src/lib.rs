@@ -6,7 +6,7 @@
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS},
+    addresses::OUTBE_SYSTEM_TX_ADDRESS,
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -40,42 +40,6 @@ where
     tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
 }
 
-fn ocomp_activation_shape_error<T>(tx: &T) -> Option<OutbeOcompActivationPoolError>
-where
-    T: PoolTransaction,
-{
-    ocomp_activation_shape_error_for(tx.to(), tx.input(), tx.encoded_length())
-}
-
-fn ocomp_activation_shape_error_for(
-    to: Option<Address>,
-    input: &[u8],
-    encoded_length: usize,
-) -> Option<OutbeOcompActivationPoolError> {
-    if to != Some(METADOSIS_ADDRESS)
-        || input.get(..4) != Some(outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR.as_slice())
-    {
-        return None;
-    }
-
-    let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let input_len = u64::try_from(input.len()).unwrap_or(u64::MAX);
-    if input_len > candidate.max_activation_calldata_bytes {
-        return Some(OutbeOcompActivationPoolError::Calldata {
-            actual: input.len(),
-            maximum: usize::try_from(candidate.max_activation_calldata_bytes).unwrap_or(usize::MAX),
-        });
-    }
-    let encoded_len = u64::try_from(encoded_length).unwrap_or(u64::MAX);
-    if encoded_len > candidate.max_transaction_rlp_bytes {
-        return Some(OutbeOcompActivationPoolError::Envelope {
-            actual: encoded_length,
-            maximum: usize::try_from(candidate.max_transaction_rlp_bytes).unwrap_or(usize::MAX),
-        });
-    }
-    None
-}
-
 fn zero_fee_transaction<'a, T>(tx: &'a T, signer: Address) -> ZeroFeeTransaction<'a>
 where
     T: alloy_consensus::Transaction + ?Sized,
@@ -97,6 +61,7 @@ where
 fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
     match hook {
         ZeroFeeHookId::OracleSubmitVote => Some(1),
+        ZeroFeeHookId::OcompSubmitResultVote => Some(1),
     }
 }
 
@@ -401,23 +366,6 @@ where
             ReservedSystemTxPolicy::Reject(outcome) => return outcome,
         };
 
-        let next_block = self
-            .inner
-            .client()
-            .best_block_number()
-            .ok()
-            .and_then(|height| height.checked_add(1));
-        if next_block.is_some_and(|height| {
-            self.ocomp_lifecycle_activation.is_active_at(height)
-        }) {
-            if let Some(error) = ocomp_activation_shape_error(parts.transaction.transaction()) {
-                return TransactionValidationOutcome::Invalid(
-                    parts.transaction.into_transaction(),
-                    InvalidPoolTransactionError::other(error),
-                );
-            }
-        }
-
         let tx = parts.transaction.transaction();
         let signer = tx.sender();
         let zero_fee_tx = zero_fee_transaction(tx, signer);
@@ -629,24 +577,6 @@ impl PoolTransactionError for OutbeReservedSystemTxPoolError {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum OutbeOcompActivationPoolError {
-    #[error("OCOMP activation calldata exceeds consensus cap: {actual} > {maximum}")]
-    Calldata { actual: usize, maximum: usize },
-    #[error("OCOMP activation transaction envelope exceeds consensus cap: {actual} > {maximum}")]
-    Envelope { actual: usize, maximum: usize },
-}
-
-impl PoolTransactionError for OutbeOcompActivationPoolError {
-    fn is_bad_transaction(&self) -> bool {
-        true
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
 #[error("zero-fee policy rejected transaction: {0}")]
 struct OutbeZeroFeePoolError(String);
 
@@ -797,82 +727,6 @@ mod tests {
             }
             other => panic!("expected reserved-address invalid outcome, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn ocomp_activation_pool_admission_enforces_calldata_and_envelope_caps() {
-        let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
-        let calldata_cap = usize::try_from(candidate.max_activation_calldata_bytes).unwrap();
-        let envelope_cap = usize::try_from(candidate.max_transaction_rlp_bytes).unwrap();
-        let mut activation_input = vec![0_u8; calldata_cap];
-        activation_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
-
-        assert!(ocomp_activation_shape_error_for(
-            Some(METADOSIS_ADDRESS),
-            &activation_input,
-            envelope_cap,
-        )
-        .is_none());
-        assert!(matches!(
-            ocomp_activation_shape_error_for(
-                Some(METADOSIS_ADDRESS),
-                &activation_input,
-                envelope_cap + 1,
-            ),
-            Some(OutbeOcompActivationPoolError::Envelope { .. })
-        ));
-
-        activation_input.push(0);
-        assert!(matches!(
-            ocomp_activation_shape_error_for(
-                Some(METADOSIS_ADDRESS),
-                &activation_input,
-                envelope_cap,
-            ),
-            Some(OutbeOcompActivationPoolError::Calldata { .. })
-        ));
-
-        let mut real_input = vec![0_u8; calldata_cap];
-        real_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
-        let at_cap = pooled_tx(
-            METADOSIS_ADDRESS,
-            Bytes::from(real_input),
-            MIN_PROTOCOL_BASE_FEE as u128,
-            1,
-        );
-        assert!(ocomp_activation_shape_error(&at_cap).is_none());
-
-        let mut over_cap_input = vec![0_u8; calldata_cap + 1];
-        over_cap_input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
-        let over_cap = pooled_tx(
-            METADOSIS_ADDRESS,
-            Bytes::from(over_cap_input),
-            MIN_PROTOCOL_BASE_FEE as u128,
-            1,
-        );
-        assert!(matches!(
-            ocomp_activation_shape_error(&over_cap),
-            Some(OutbeOcompActivationPoolError::Calldata { .. })
-        ));
-    }
-
-    #[test]
-    fn ocomp_pool_caps_do_not_classify_other_calls() {
-        let candidate = outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
-        let oversize = usize::try_from(candidate.max_activation_calldata_bytes)
-            .unwrap()
-            .saturating_add(1);
-        let mut input = vec![0_u8; oversize];
-        input[..4].copy_from_slice(&outbe_ocomp_protocol::abi::ACTIVATE_LYSIS_SELECTOR);
-
-        assert!(
-            ocomp_activation_shape_error_for(Some(Address::ZERO), &input, usize::MAX,).is_none()
-        );
-        input[..4].copy_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
-        assert!(
-            ocomp_activation_shape_error_for(Some(METADOSIS_ADDRESS), &input, usize::MAX,)
-                .is_none()
-        );
     }
 
     // -----------------------------------------------------------------

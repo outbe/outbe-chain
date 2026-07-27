@@ -21,6 +21,7 @@ outbe-ocomp-protocol.workspace = true
 outbe-oracle.workspace = true
 outbe-tribute.workspace = true
 outbe-validatorset.workspace = true
+outbe-zerofee.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -47,6 +48,7 @@ revm.workspace = true
 
 # Utilities
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-genesis.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
@@ -58,12 +60,13 @@ tokio.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 k256.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-alloy-eips.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 alloy-provider.workspace = true
 alloy-trie.workspace = true
 mongodb.workspace = true

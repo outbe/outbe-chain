@@ -16,6 +16,7 @@ pub enum DayPhase {
 pub enum JobFsmTransitionKind {
     Defer,
     Request,
+    OpenVoting,
     Expire,
     Conflict,
 }
@@ -27,7 +28,7 @@ pub struct JobFsmTransitionRule {
     pub to: DayPhase,
 }
 
-const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 4] = [
+const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 5] = [
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Defer,
         from: DayPhase::Ready,
@@ -36,6 +37,11 @@ const JOB_FSM_TRANSITION_RULES: [JobFsmTransitionRule; 4] = [
     JobFsmTransitionRule {
         kind: JobFsmTransitionKind::Request,
         from: DayPhase::Ready,
+        to: DayPhase::OffchainPending,
+    },
+    JobFsmTransitionRule {
+        kind: JobFsmTransitionKind::OpenVoting,
+        from: DayPhase::OffchainPending,
         to: DayPhase::OffchainPending,
     },
     JobFsmTransitionRule {
@@ -81,9 +87,12 @@ pub enum JobFsmCommand {
     Request {
         at_height: u64,
         intent_id: B256,
-        deadline_height: u64,
         lysis_budget: U256,
         request_budget_receipt_hash: B256,
+    },
+    OpenVoting {
+        at_height: u64,
+        deadline_height: u64,
     },
     Expire {
         at_height: u64,
@@ -100,6 +109,7 @@ impl JobFsmCommand {
         match self {
             Self::Defer { .. } => JobFsmTransitionKind::Defer,
             Self::Request { .. } => JobFsmTransitionKind::Request,
+            Self::OpenVoting { .. } => JobFsmTransitionKind::OpenVoting,
             Self::Expire { .. } => JobFsmTransitionKind::Expire,
             Self::Conflict { .. } => JobFsmTransitionKind::Conflict,
         }
@@ -157,7 +167,7 @@ pub struct LiveAttemptSnapshot {
     pub intent_id: B256,
     pub pending_nonce: u64,
     pub requested_height: u64,
-    pub deadline_height: u64,
+    pub deadline_height: Option<u64>,
     pub retained_effect: RetainedRequestEffectSnapshot,
 }
 
@@ -190,7 +200,7 @@ struct LiveAttempt {
     intent_id: B256,
     pending_nonce: u64,
     requested_height: u64,
-    deadline_height: u64,
+    deadline_height: Option<u64>,
     retained_effect: RetainedRequestEffect,
 }
 
@@ -223,6 +233,14 @@ pub enum JobFsmError {
     RequestRequiresReady,
     #[error("OCOMP expiry requires OFFCHAIN_PENDING state")]
     ExpiryRequiresPending,
+    #[error("OCOMP voting open requires OFFCHAIN_PENDING state")]
+    OpenVotingRequiresPending,
+    #[error("OCOMP voting window is already open")]
+    VotingAlreadyOpen,
+    #[error("OCOMP voting cannot open before height {open_height}")]
+    VotingOpenTooEarly { open_height: u64 },
+    #[error("OCOMP expiry requires an opened voting window")]
+    ExpiryRequiresOpenVoting,
     #[error("OCOMP certified conflict requires OFFCHAIN_PENDING state")]
     ConflictRequiresPending,
     #[error("OCOMP intent id is the reserved zero hash")]
@@ -379,6 +397,7 @@ impl JobFsmState {
             return Err(match transition_kind {
                 JobFsmTransitionKind::Expire => JobFsmError::ExpiryRequiresPending,
                 JobFsmTransitionKind::Conflict => JobFsmError::ConflictRequiresPending,
+                JobFsmTransitionKind::OpenVoting => JobFsmError::OpenVotingRequiresPending,
                 JobFsmTransitionKind::Defer | JobFsmTransitionKind::Request => {
                     JobFsmError::RequestRequiresReady
                 }
@@ -409,7 +428,6 @@ impl JobFsmState {
             JobFsmCommand::Request {
                 at_height,
                 intent_id,
-                deadline_height,
                 lysis_budget,
                 request_budget_receipt_hash,
             } => {
@@ -425,13 +443,6 @@ impl JobFsmState {
                 if request_budget_receipt_hash.is_zero() {
                     return Err(JobFsmError::ZeroRequestBudgetReceiptHash);
                 }
-                if deadline_height <= at_height {
-                    return Err(JobFsmError::InvalidDeadline {
-                        request_height: at_height,
-                        deadline_height,
-                    });
-                }
-
                 let retained_effect = match ready.retained_effect {
                     None => RetainedRequestEffect {
                         effect_nonce: ready.pending_nonce,
@@ -452,18 +463,47 @@ impl JobFsmState {
                     intent_id,
                     pending_nonce: ready.pending_nonce,
                     requested_height: at_height,
-                    deadline_height,
+                    deadline_height: None,
                     retained_effect,
                 });
                 self.ready = None;
                 Ok(())
             }
+            JobFsmCommand::OpenVoting {
+                at_height,
+                deadline_height,
+            } => {
+                let mut live = self.live.ok_or(JobFsmError::OpenVotingRequiresPending)?;
+                if live.deadline_height.is_some() {
+                    return Err(JobFsmError::VotingAlreadyOpen);
+                }
+                if at_height <= live.requested_height {
+                    return Err(JobFsmError::VotingOpenTooEarly {
+                        open_height: live
+                            .requested_height
+                            .checked_add(1)
+                            .ok_or(JobFsmError::RetryHeightOverflow)?,
+                    });
+                }
+                if deadline_height <= at_height {
+                    return Err(JobFsmError::InvalidDeadline {
+                        request_height: at_height,
+                        deadline_height,
+                    });
+                }
+                live.deadline_height = Some(deadline_height);
+                self.live = Some(live);
+                Ok(())
+            }
             JobFsmCommand::Expire { at_height, at_time } => {
                 let live = self.live.ok_or(JobFsmError::ExpiryRequiresPending)?;
-                if at_height < live.deadline_height {
+                let deadline_height = live
+                    .deadline_height
+                    .ok_or(JobFsmError::ExpiryRequiresOpenVoting)?;
+                if at_height < deadline_height {
                     return Err(JobFsmError::DeadlineNotReached {
                         at_height,
-                        deadline_height: live.deadline_height,
+                        deadline_height,
                     });
                 }
                 self.retry_after_terminal(
@@ -582,7 +622,9 @@ impl JobFsmState {
         } else {
             let live = self.live.ok_or(JobFsmError::InvalidPhaseCardinality)?;
             if live.intent_id.is_zero()
-                || live.deadline_height <= live.requested_height
+                || live
+                    .deadline_height
+                    .is_some_and(|deadline| deadline <= live.requested_height)
                 || live.retained_effect.receipt_hash.is_zero()
             {
                 return Err(JobFsmError::InvalidRequestEffect);
@@ -624,7 +666,7 @@ impl JobFsmState {
                 pending_nonce: live.pending_nonce,
                 next_check_height: None,
                 live_intent_id: Some(live.intent_id),
-                deadline_height: Some(live.deadline_height),
+                deadline_height: live.deadline_height,
                 terminal_records,
                 retained_lysis_budget: Some(live.retained_effect.lysis_budget),
             },
@@ -674,7 +716,6 @@ mod tests {
                 JobFsmCommand::Request {
                     at_height: 10,
                     intent_id: B256::repeat_byte(0x11),
-                    deadline_height: 74,
                     lysis_budget: U256::from(900),
                     request_budget_receipt_hash: B256::repeat_byte(0x22),
                 },

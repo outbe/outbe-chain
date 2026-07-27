@@ -476,7 +476,7 @@ fn pinned_tribute_partition_retirement_atomically_moves_exact_body_to_job_retent
     let storage = Arc::new(RecordingStorage::default());
     let day = 20260715;
     let pin = RetainedTributePin {
-        job_id: B256::repeat_byte(0x51),
+        input_lease_id: B256::repeat_byte(0x51),
         worldwide_day: WorldwideDay::new(day),
     };
     let selector = Arc::new(FixedRetentionSelector { pin });

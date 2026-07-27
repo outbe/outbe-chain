@@ -41,6 +41,7 @@ impl ControlRole {
                     | method_bit(NodeMessageKind::GetJobSpec as u16)
                     | method_bit(NodeMessageKind::OpenSnapshotLease as u16)
                     | method_bit(NodeMessageKind::RequestAttestation as u16)
+                    | method_bit(NodeMessageKind::PrepareVoteTransaction as u16)
                     | method_bit(NodeMessageKind::GetOcompHealth as u16)
             }
             (Self::SnapshotExporter, ControlMagic::Node) => {
@@ -678,40 +679,7 @@ const fn error_kind(magic: ControlMagic) -> u16 {
 /// bundle; callers must still supply one exact [`EndpointIdentity`].
 #[must_use]
 pub fn poc_schema_limits() -> SchemaLimits {
-    use crate::{generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1, CodecLimits};
-
-    let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
-    let max_body_bytes = usize::try_from(candidate.max_activation_ocb1_bytes)
-        .expect("generated body cap fits usize");
-    let max_collection_items = usize::try_from(candidate.max_protocol_collection_items)
-        .expect("generated collection cap fits usize");
-    SchemaLimits {
-        codec: CodecLimits::new(
-            max_body_bytes,
-            max_collection_items,
-            usize::try_from(candidate.max_transaction_rlp_bytes)
-                .expect("generated allocation cap fits usize"),
-        ),
-        max_bounded_bytes: max_body_bytes,
-        max_proof_bytes: usize::try_from(candidate.max_finalized_intent_proof_bytes)
-            .expect("generated proof cap fits usize"),
-        max_opening_bytes: usize::try_from(candidate.max_opening_bytes)
-            .expect("generated opening cap fits usize"),
-        max_collection_items,
-        max_action_items: usize::try_from(
-            candidate
-                .max_nod_actions_per_result_chunk
-                .min(candidate.max_contributor_actions_per_result_chunk),
-        )
-        .expect("generated action cap fits usize"),
-        max_chunk_items: usize::try_from(candidate.max_records_per_input_chunk)
-            .expect("generated chunk cap fits usize"),
-        max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
-            .expect("generated unit-input cap fits usize"),
-        max_result_chunk_bytes: candidate.max_result_chunk_bytes,
-        max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
-            .expect("generated control cap fits usize"),
-    }
+    crate::profile::poc_schema_limits()
 }
 
 pub fn effective_uid() -> Result<u32, ControlError> {
@@ -749,10 +717,18 @@ pub fn effective_user_name() -> Result<String, ControlError> {
 
 pub fn require_effective_user(user: &str) -> Result<u32, ControlError> {
     let expected = uid_for_user(user)?;
+    require_effective_uid_for(expected, user.to_owned())
+}
+
+pub fn require_effective_uid(expected: u32) -> Result<u32, ControlError> {
+    require_effective_uid_for(expected, format!("uid:{expected}"))
+}
+
+fn require_effective_uid_for(expected: u32, user: String) -> Result<u32, ControlError> {
     let actual = effective_uid()?;
     if expected != actual {
         return Err(ControlError::EffectiveUserMismatch {
-            user: user.to_owned(),
+            user,
             expected,
             actual,
         });

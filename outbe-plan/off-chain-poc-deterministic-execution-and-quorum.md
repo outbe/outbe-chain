@@ -1,10 +1,18 @@
 # Off-chain PoC deterministic execution and quorum evidence
 
-Status: **RESOLVED — decision ticket #7**
+Status: **SUPERSEDED ON 2026-07-26 — HISTORICAL, DO NOT IMPLEMENT**
+
+The relay/`ExecutionCertificateV1` and separate permissionless-activation
+decision below was replaced by four bounded on-chain full-result vote slots.
+The q-forming vote stores one canonical `LysisResultV1` and atomically applies
+it; no durable `QUORUM_READY` or later activation exists. The fourth-validator
+window is accountability-only. ADR-S-OCM-003/004, PFS-002, `off-chain-poc.md`
+and `off-chain-poc-implementation-plan.md` are authoritative.
 
 This decision maps the frozen Lysis semantics and protocol bytes to one exact
 deterministic work graph, one node-owned result signature per validator domain,
-a durable sign-once store, a `3-of-4` certificate and an untrusted relay.
+a durable sign-once store. The certificate/relay text below is retained only as
+superseded decision history.
 
 It depends on:
 

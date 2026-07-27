@@ -198,7 +198,6 @@ fn intent(block_number: u64, identity: EndpointIdentity) -> JobIntentV1 {
         },
         result_committee_snapshot_hash: B256::repeat_byte(0x1B),
         custody_committee_epoch_hash: None,
-        deadline_height: block_number + 10,
     }
 }
 
@@ -346,13 +345,19 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         wwd: intent.wwd,
         ce_sealed_root: intent.ce_sealed_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
-        deadline_height: intent.deadline_height,
+        input_lease_id: intent.input_lease_id().expect("input lease id"),
     };
     let job_id = job_id_from_intent_id(intent_id, candidate.block_hash, candidate.state_root)
         .expect("fixture JobId");
     let source = Arc::new(FinalizedFixtureSource {
         block_hash: request.block_hash(),
-        pin: FinalizedJobPinV1 { candidate, job_id },
+        pin: FinalizedJobPinV1 {
+            candidate,
+            job_id,
+            finality_recorded_height: request.number(),
+            open_height: request.number() + 4,
+            deadline_height: request.number() + 10,
+        },
         proof: proof(candidate, &intent),
     });
     let retention = Arc::new(OcompRetentionCoordinator::open(retention_root, source));

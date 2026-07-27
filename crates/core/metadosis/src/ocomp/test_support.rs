@@ -14,7 +14,6 @@ use std::{
 };
 
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
-use alloy_sol_types::SolCall;
 use k256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
@@ -22,8 +21,6 @@ use outbe_compressed_entities::{
     EntityRef, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
 };
 use outbe_ocomp_protocol::{
-    activation::PoCActivationV1,
-    certificate::{ExecutionCertificateV1, OrderedSignatureV1},
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
         OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
@@ -49,7 +46,8 @@ use outbe_ocomp_protocol::{
         CompletionStatus, ConservationTotalsV1, ExactCountsV1, LysisArithmeticSummaryV1,
         LysisResultV1, MetadosisCompletionSummaryV1, ResultRootsV1,
     },
-    state::OcompJobStatus,
+    state::{OcompJobStatus, RESULT_VOTE_MIN_FINALITY_DEPTH},
+    vote::ResultVoteV1,
     SchemaLimits,
 };
 use outbe_primitives::{
@@ -61,13 +59,12 @@ use outbe_tribute::{DayPreAdmission, DayTotals, TributeContract};
 
 use crate::{
     ocomp::{
-        activation::{
-            dispatch_public_activation, OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
-        },
+        activation::{OcompFinalityAuthorityError, OcompFinalizedIntentAuthority},
+        fork::{OcompForkInstallClassification, OcompForkInstallV1},
         schema::{poc_schema_limits, OcompRequestProfile},
         state::JobFsmLimits,
+        vote::dispatch_public_result_vote,
     },
-    precompile::IMetadosis,
     schema::{day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord},
 };
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
@@ -130,7 +127,7 @@ fn capacity_profile() -> CapacityProfileV1 {
         profile_id: hash(13),
         max_tributes_per_work_shard: 256,
         max_workers_per_domain: 4,
-        max_pending_jobs: 1,
+        max_pending_jobs: 2,
         max_intents_per_block: 1,
         max_activations_per_block: 1,
         max_ready_inspections_per_block: 1,
@@ -199,14 +196,19 @@ fn sign(key: &SigningKey, digest: B256) -> [u8; 64] {
     signature.to_bytes().into()
 }
 
-fn committee(bundle_hash: B256, limits: &SchemaLimits) -> OcompCommitteeSnapshotV1 {
+fn committee(
+    chain_id: u64,
+    genesis_hash: B256,
+    bundle_hash: B256,
+    limits: &SchemaLimits,
+) -> OcompCommitteeSnapshotV1 {
     let registrations = (0..4)
         .map(|index| {
             let key = signing_key(index);
             let mut registration = OcompKeyRegistrationV1 {
                 core: OcompKeyRegistrationCoreV1 {
-                    chain_id: 1,
-                    genesis_hash: hash(17),
+                    chain_id,
+                    genesis_hash,
                     fork_id: hash(21),
                     protocol_bundle_hash: bundle_hash,
                     validator_index: index,
@@ -230,8 +232,8 @@ fn committee(bundle_hash: B256, limits: &SchemaLimits) -> OcompCommitteeSnapshot
         })
         .collect::<Vec<_>>();
     OcompCommitteeSnapshotV1 {
-        chain_id: 1,
-        genesis_hash: hash(17),
+        chain_id,
+        genesis_hash,
         fork_id: hash(21),
         protocol_bundle_hash: bundle_hash,
         snapshot_epoch: 1,
@@ -249,6 +251,39 @@ fn committee(bundle_hash: B256, limits: &SchemaLimits) -> OcompCommitteeSnapshot
                 proof_of_possession: registration.proof_of_possession,
             })
             .collect(),
+    }
+}
+
+/// Builds a fully valid immutable fork-install artifact for behavioral tests.
+///
+/// This creates only canonical manifest bytes. It does not seed chain state or
+/// bypass the production lifecycle.
+pub fn fork_install_fixture(
+    classification: OcompForkInstallClassification,
+    activation_height: u64,
+    chain_id: u64,
+    genesis_hash: B256,
+) -> OcompForkInstallV1 {
+    let limits = poc_schema_limits();
+    let protocol_bundle = bundle();
+    let bundle_hash = protocol_bundle.protocol_bundle_hash(&limits).unwrap();
+    let result_committee = committee(chain_id, genesis_hash, bundle_hash, &limits);
+    let committee_hash = result_committee.snapshot_hash(&limits).unwrap();
+    OcompForkInstallV1 {
+        classification,
+        activation_height,
+        request_profile: OcompRequestProfile {
+            chain_id,
+            genesis_hash,
+            fork_id: hash(21),
+            protocol_bundle_hash: bundle_hash,
+            correctness_profile_id: hash(12),
+            capacity_profile: capacity_profile(),
+            source_availability_policy_id: hash(44),
+            result_committee_snapshot_hash: committee_hash,
+        },
+        protocol_bundle,
+        result_committee,
     }
 }
 
@@ -338,7 +373,6 @@ fn intent(bundle_hash: B256, committee_hash: B256, request_receipt_hash: B256) -
         },
         result_committee_snapshot_hash: committee_hash,
         custody_committee_epoch_hash: None,
-        deadline_height: 74,
     }
 }
 
@@ -589,7 +623,7 @@ pub struct ActivationMetadata {
 pub struct ActivationFixture {
     pub provider: HashMapStorageProvider,
     pub scope: ExecutionScope,
-    pub activation: PoCActivationV1,
+    pub result: LysisResultV1,
     pub finality: FixedFinality,
     pub intent_id: B256,
     pub limits: SchemaLimits,
@@ -599,10 +633,28 @@ pub struct ActivationFixture {
 impl ActivationFixture {
     #[must_use]
     pub fn new(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, 2)
+    }
+
+    /// Builds the same production-valid fixture before any validator vote is
+    /// recorded, so public result-vote dispatch tests can exercise all four
+    /// consensus slots instead of injecting quorum state.
+    #[must_use]
+    pub fn new_voting(current_height: u64, current_time: u64, seed_targets: bool) -> Self {
+        Self::new_with_initial_votes(current_height, current_time, seed_targets, 0)
+    }
+
+    fn new_with_initial_votes(
+        current_height: u64,
+        current_time: u64,
+        seed_targets: bool,
+        initial_vote_count: u8,
+    ) -> Self {
+        assert!(initial_vote_count <= 3);
         let limits = poc_schema_limits();
         let bundle = bundle();
         let bundle_hash = bundle.protocol_bundle_hash(&limits).unwrap();
-        let committee = committee(bundle_hash, &limits);
+        let committee = committee(1, hash(17), bundle_hash, &limits);
         let committee_hash = committee.snapshot_hash(&limits).unwrap();
         let request_receipt = request_receipt(bundle_hash);
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
@@ -618,26 +670,6 @@ impl ActivationFixture {
             )
             .unwrap();
         let result = result(bundle_hash, job_id, &limits);
-        let activation_payload = result.activation_payload(&limits).unwrap();
-        let result_digest = activation_payload.result_digest(&limits).unwrap();
-        let certificate = ExecutionCertificateV1 {
-            result_committee_snapshot_hash: committee_hash,
-            signer_bitmap: 0b0111,
-            ordered_signatures: (0..3)
-                .map(|index| OrderedSignatureV1 {
-                    validator_index: index,
-                    signature_rs: sign(&signing_key(index), result_digest),
-                })
-                .collect(),
-            result_digest,
-        };
-        let activation = PoCActivationV1 {
-            intent_id,
-            finalized_intent_proof: proof,
-            activation_payload,
-            result,
-            certificate,
-        };
         let expected = ExpectedFinalizedIntentBindingV1 {
             chain_id: intent.chain_id,
             genesis_hash: intent.genesis_hash,
@@ -663,6 +695,7 @@ impl ActivationFixture {
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_block_number(current_height);
         provider.set_timestamp(U256::from(current_time));
+        let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
             if seed_targets {
                 let tribute = TributeContract::new(storage.clone());
@@ -729,19 +762,80 @@ impl ActivationFixture {
             contract
                 .commit_ocomp_request(&intent, &request_receipt, &limits, fsm_limits)
                 .unwrap();
+            let finalized = contract
+                .record_ocomp_finality(
+                    intent_id,
+                    hash(46),
+                    request_state_root,
+                    TEST_REQUEST_HEIGHT,
+                    capacity_profile().result_deadline_blocks,
+                    &limits,
+                )
+                .unwrap();
+            assert_eq!(
+                finalized.open_height,
+                TEST_REQUEST_HEIGHT + RESULT_VOTE_MIN_FINALITY_DEPTH
+            );
+            contract
+                .open_due_ocomp_voting(finalized.open_height, &limits, fsm_limits)
+                .unwrap();
+            for index in 0..initial_vote_count {
+                let mut vote = ResultVoteV1 {
+                    protocol_bundle_hash: bundle_hash,
+                    job_id,
+                    attempt: intent.attempt,
+                    result_committee_snapshot_hash: committee_hash,
+                    validator_index: index,
+                    key_epoch: 1,
+                    result: result.clone(),
+                    signature_rs: [0; 64],
+                };
+                let signing_digest = vote.signing_digest(&intent, &limits).unwrap();
+                vote.signature_rs = sign(&signing_key(index), signing_digest);
+                contract
+                    .record_ocomp_result_vote(
+                        &vote,
+                        finalized.open_height + u64::from(index),
+                        &scope,
+                        &limits,
+                    )
+                    .unwrap();
+            }
         });
-        let scope = begin_activation_scope(&mut provider);
         provider.clear_events(METADOSIS_ADDRESS);
 
         Self {
             provider,
             scope,
-            activation,
+            result,
             finality,
             intent_id,
             limits,
             request_receipt,
         }
+    }
+
+    /// Creates the canonical node-attested vote for one fixture committee
+    /// member. The returned bytes still have to pass the production public
+    /// dispatch and consensus transition.
+    #[must_use]
+    pub fn signed_result_vote(&self, validator_index: u8) -> ResultVoteV1 {
+        let intent = &self.finality.verified.intent;
+        let mut vote = ResultVoteV1 {
+            protocol_bundle_hash: intent.protocol_bundle_hash,
+            job_id: self.result.job_id,
+            attempt: intent.attempt,
+            result_committee_snapshot_hash: intent.result_committee_snapshot_hash,
+            validator_index,
+            key_epoch: 1,
+            result: self.result.clone(),
+            signature_rs: [0; 64],
+        };
+        vote.signature_rs = sign(
+            &signing_key(validator_index),
+            vote.signing_digest(intent, &self.limits).unwrap(),
+        );
+        vote
     }
 
     pub fn apply(&mut self) -> PrecompileResult<Bytes> {
@@ -766,37 +860,35 @@ impl ActivationFixture {
 
     #[must_use]
     pub fn calldata(&self) -> Bytes {
-        IMetadosis::activateLysisCall {
-            pocActivationV1: Bytes::from(self.activation.encode_canonical(&self.limits).unwrap()),
-        }
-        .abi_encode()
-        .into()
+        Bytes::from(
+            outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(
+                &self.signed_result_vote(2),
+                &self.limits,
+            )
+            .unwrap(),
+        )
     }
 
     pub fn dispatch_current(&mut self) -> PrecompileResult<Bytes> {
         let calldata = self.calldata();
         StorageHandle::enter(&mut self.provider, |storage| {
-            dispatch_public_activation(
-                storage,
-                &self.scope,
-                Some(&self.finality),
-                calldata.as_ref(),
-                U256::ZERO,
-                false,
-            )
+            dispatch_public_result_vote(storage, &self.scope, calldata.as_ref(), U256::ZERO, false)
         })
     }
 
-    #[must_use]
-    pub fn decoded_outcome(output: &[u8]) -> ActivationOutcome {
-        let decoded = IMetadosis::activateLysisCall::abi_decode_returns(output).unwrap();
-        match decoded.outcome {
-            value if value == ActivationOutcome::Applied as u8 => ActivationOutcome::Applied,
-            value if value == ActivationOutcome::ConflictResolved as u8 => {
-                ActivationOutcome::ConflictResolved
-            }
-            value => panic!("unknown activation fixture outcome {value}"),
-        }
+    pub fn terminal_outcome(&mut self) -> ActivationOutcome {
+        StorageHandle::enter(&mut self.provider, |storage| {
+            MetadosisContract::new(storage)
+                .ocomp_job_record(self.intent_id, &self.limits)
+                .unwrap()
+                .unwrap()
+                .terminal
+                .unwrap()
+                .completed_binding
+                .unwrap()
+                .terminal_receipt
+                .outcome
+        })
     }
 
     pub fn replace_request_receipt(&mut self, receipt: &RequestBudgetSplitReceiptV1) {
@@ -893,7 +985,8 @@ impl ActivationFixture {
                 .ocomp_job_record(self.intent_id, &self.limits)
                 .unwrap()
                 .unwrap();
-            assert_eq!(job.status, OcompJobStatus::OffchainPending);
+            assert_eq!(job.status, OcompJobStatus::VotingOpen);
+            assert!(job.finalized.unwrap().quorum.is_none());
             assert_eq!(
                 contract.get_wwd_status(TEST_WWD).unwrap(),
                 status::OFFCHAIN_PENDING

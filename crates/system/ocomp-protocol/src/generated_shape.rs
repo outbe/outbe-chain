@@ -11,11 +11,11 @@ pub const OCOMP_CORRECTNESS_PROFILE_ID_HEX: &str =
 pub const OCOMP_CAPACITY_PROFILE_ID_HEX: &str =
     "7c9614691067b57829fba66f37e02860529ab1a24497dbb8f5b53dc5bd0f52df";
 pub const OCOMP_SHAPE_GENERATOR_SOURCE_SHA256: &str =
-    "e9a59d3a7944b280a06bb18d9657e936a770680c8b60b55d07802c653b094afe";
+    "4d9bfc207a487b5a06393d44279181a4868d69c9246cd4e48f41861eb32c7715";
 pub const OCOMP_SHAPE_INPUT_SET_SHA256: &str =
-    "2d3bc695dad4606cf708beda7f9593f43bedacb86ce6bc086926f44c4da7fb03";
+    "8dbb8ed3d173a5323cad352a35d00e647a5d209bb3e37c2bef2b6414f7a6c29f";
 pub const OCOMP_CANDIDATE_LIMITS_SHA256: &str =
-    "a48c9f7fca72a9515e256af811a436fc3b81c97f0ddc5e8c3bf9ba43ff1eecdb";
+    "886ca153f055177d86db1beaa9352c95d1b280b18972603e80501a317a189a7d";
 pub const OCOMP_MINIMUM_MACHINE_SHA256: &str =
     "335e5f46dbb86ff41a5dcbd164fd681eb79a8a3e3f4880a1af2e42166d824144";
 pub const OCOMP_HEADROOM_POLICY_SHA256: &str =
@@ -39,7 +39,6 @@ pub struct OcompPocCandidateLimitsV1 {
     pub max_active_scurve_entries: u64,
     pub max_bucket_records_per_result_chunk: u64,
     pub max_contributor_actions_per_result_chunk: u64,
-    pub max_execution_certificate_bytes: u64,
     pub max_fidelity_openings_per_work_shard: u64,
     pub max_finalized_intent_proof_bytes: u64,
     pub max_input_chunk_bytes: u64,
@@ -56,6 +55,7 @@ pub struct OcompPocCandidateLimitsV1 {
     pub max_records_per_input_chunk: u64,
     pub max_result_chunk_bytes: u64,
     pub max_result_summary_bytes: u64,
+    pub max_result_vote_bytes: u64,
     pub max_signature_verifications: u64,
     pub max_transaction_rlp_bytes: u64,
     pub max_tributes_per_work_shard: u64,
@@ -79,7 +79,6 @@ pub const OCOMP_POC_CANDIDATE_LIMITS_V1: OcompPocCandidateLimitsV1 = OcompPocCan
     max_active_scurve_entries: 256,
     max_bucket_records_per_result_chunk: 256,
     max_contributor_actions_per_result_chunk: 256,
-    max_execution_certificate_bytes: 512,
     max_fidelity_openings_per_work_shard: 256,
     max_finalized_intent_proof_bytes: 524288,
     max_input_chunk_bytes: 1048576,
@@ -96,6 +95,7 @@ pub const OCOMP_POC_CANDIDATE_LIMITS_V1: OcompPocCandidateLimitsV1 = OcompPocCan
     max_records_per_input_chunk: 768,
     max_result_chunk_bytes: 524288,
     max_result_summary_bytes: 1048576,
+    max_result_vote_bytes: 2048,
     max_signature_verifications: 3,
     max_transaction_rlp_bytes: 2097408,
     max_tributes_per_work_shard: 256,

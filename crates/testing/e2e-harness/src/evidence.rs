@@ -8,8 +8,10 @@ use eyre::{Result, WrapErr};
 use serde_json::json;
 
 use crate::env::Environment;
-use crate::ocomp_evidence::publish_member;
+use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
+use crate::world::ocomp::OcompScenarioTopologyV1;
+use crate::world::state::OcompPublicScenarioEvidenceV1;
 
 pub(crate) struct ScenarioEvidence<'a> {
     pub env: &'a Environment,
@@ -20,15 +22,34 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub scenario_dir: &'a Path,
     pub elapsed: Duration,
     pub audit: &'a LogAudit,
+    pub ocomp: &'a OcompScenarioTopologyV1,
+    pub ocomp_public: &'a OcompPublicScenarioEvidenceV1,
 }
 
 pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
+    input
+        .ocomp
+        .validate()
+        .wrap_err("validate OCOMP scenario topology evidence")?;
     let evidence_dir = input
         .env
         .evidence_dir
         .as_ref()
         .expect("run() resolves the evidence directory");
     let (sha, tracked_dirty, untracked_dirty) = git_identity(&input.env.repo);
+    let exact_ocomp_binaries = if input.ocomp.launch_identity.is_some() {
+        let current_exe = std::env::current_exe().wrap_err("resolve exact outbe-e2e binary")?;
+        Some(json!({
+            "outbe_chain": hash_file(&input.env.chain_bin)
+                .wrap_err("hash exact outbe-chain binary")?,
+            "outbe_ocomp": hash_file(&input.env.ocomp_bin)
+                .wrap_err("hash exact outbe-ocomp binary")?,
+            "outbe_e2e": hash_file(&current_exe)
+                .wrap_err("hash exact outbe-e2e binary")?,
+        }))
+    } else {
+        None
+    };
     let document = json!({
         "schema_version": 1,
         "recorded_at_unix_ms": unix_millis(),
@@ -51,6 +72,11 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         },
         "scenario_data_dir": input.scenario_dir,
         "log_audit": input.audit.json(),
+        "ocomp": {
+            "exact_binaries": exact_ocomp_binaries,
+            "topology": input.ocomp,
+            "public_path": input.ocomp_public,
+        },
     });
     let mut bytes = serde_json::to_vec_pretty(&document)?;
     bytes.push(b'\n');

@@ -302,7 +302,7 @@ impl SnapshotExporter {
             "open authenticated Tribute body stream",
             self.tribute_source.stream(
                 RetainedTributePin {
-                    job_id: handoff.job_id,
+                    input_lease_id: handoff.input_lease_id,
                     worldwide_day: day,
                 },
                 &closure,

@@ -1,11 +1,14 @@
-//! Exact, one-job snapshot-export authority behind the node-local control seam.
+//! Exact, bounded multi-job snapshot-export authority behind the node-local control seam.
 //!
 //! The module deliberately owns the coordination between the durable OCOMP pin
 //! and the CE next-apply lease. Callers receive bounded protocol values only:
 //! no Reth provider, Mongo writer, CE path, or writer-capable tree handle
 //! crosses this seam.
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use alloy_primitives::{keccak256, B256};
 use outbe_compressed_entities::{CompressedTreeService, ExportLeaseStatus, TreeServiceError};
@@ -27,7 +30,9 @@ use thiserror::Error;
 
 use crate::projection::{ocomp_projection_contains, OcompProjectionContainment};
 
-use super::retention::{OcompRetentionCoordinator, PinStateV1, RetentionError, RetentionStatus};
+use super::retention::{FinalizedSnapshotArmer, OcompRetentionCoordinator, RetentionError};
+
+const MAX_TRACKED_SNAPSHOT_HANDOFFS: usize = 256;
 
 const EXPORT_LEASE_CHALLENGE_DOMAIN: &[u8] = b"OUTBE_OCOMP_EXPORT_LEASE_CHALLENGE_V1";
 
@@ -76,14 +81,14 @@ where
     }
 }
 
-/// Node-owned one-entry broker for the PoC's one live finalized job.
+/// Node-owned bounded broker for independently addressed finalized Jobs.
 pub struct SnapshotExportAuthority {
     retention: Arc<OcompRetentionCoordinator>,
     tree: Arc<CompressedTreeService>,
     projection_containment: Arc<dyn ProjectionContainmentAuthority>,
     boot_nonce: B256,
     limits: SchemaLimits,
-    handoff: Mutex<Option<SnapshotHandoffV1>>,
+    handoffs: Mutex<BTreeMap<B256, SnapshotHandoffV1>>,
 }
 
 impl SnapshotExportAuthority {
@@ -101,41 +106,40 @@ impl SnapshotExportAuthority {
             projection_containment,
             boot_nonce,
             limits,
-            handoff: Mutex::new(None),
+            handoffs: Mutex::new(BTreeMap::new()),
         }
     }
 
     /// Arms the exact current finalized CE marker for the exact durable job.
     ///
     /// Repeating the request returns the same live generation. A timed-out
-    /// generation may be replaced, but a different job never can.
+    /// generation may be replaced without overwriting another Job.
     pub fn open(&self, job_id: B256) -> Result<SnapshotHandoffV1, SnapshotExportError> {
-        let mut slot = self.lock_handoff()?;
-        if let Some(existing) = slot.as_ref() {
-            if existing.job_id != job_id {
-                return Err(SnapshotExportError::ConflictingJob);
-            }
-            match self.tree.export_lease_status(existing.lease_generation)? {
-                ExportLeaseStatus::Pending | ExportLeaseStatus::Opened => {
-                    return Ok(existing.clone());
-                }
-                ExportLeaseStatus::TimedOut => {}
-            }
+        let live_job_ids = self
+            .retention
+            .finalized_live_jobs()?
+            .into_iter()
+            .map(|job| job.job_id)
+            .collect::<BTreeSet<_>>();
+        let mut handoffs = self.lock_handoffs()?;
+        handoffs.retain(|existing_job_id, _| live_job_ids.contains(existing_job_id));
+        if let Some(existing) = handoffs.get(&job_id) {
+            return Ok(existing.clone());
+        }
+        if handoffs.len() >= MAX_TRACKED_SNAPSHOT_HANDOFFS && !handoffs.contains_key(&job_id) {
+            return Err(SnapshotExportError::HandoffCapacity);
         }
 
-        let (pin_generation, candidate) = match self.retention.status() {
-            RetentionStatus::Ready(record) => match record.state {
-                PinStateV1::Finalized {
-                    candidate,
-                    job_id: live_job,
-                } if live_job == job_id => (record.generation, candidate),
-                _ => return Err(SnapshotExportError::JobNotFinalized),
-            },
-            RetentionStatus::Empty => return Err(SnapshotExportError::JobNotFinalized),
-            RetentionStatus::Quarantined { reason } => {
-                return Err(SnapshotExportError::RetentionQuarantined(reason));
-            }
-        };
+        let (pin_generation, finalized) =
+            self.retention
+                .finalized_job_record(job_id)
+                .map_err(|error| match error {
+                    RetentionError::Quarantined(reason) => {
+                        SnapshotExportError::RetentionQuarantined(reason)
+                    }
+                    _ => SnapshotExportError::JobNotFinalized,
+                })?;
+        let candidate = finalized.candidate;
         let marker = self.tree.finalized_marker()?;
         if marker.height != candidate.block_number || marker.block_hash != candidate.block_hash {
             return Err(SnapshotExportError::CeMarkerMismatch {
@@ -160,6 +164,7 @@ impl SnapshotExportAuthority {
         let offer = self.tree.arm_finalized_export(marker, lease_challenge)?;
         let handoff = SnapshotHandoffV1 {
             job_id,
+            input_lease_id: candidate.input_lease_id,
             pin_generation,
             lease_generation: offer.generation(),
             checkpoint: CheckpointIdentityV1 {
@@ -172,7 +177,7 @@ impl SnapshotExportAuthority {
             canonical_lease_offer: BoundedBytes(offer.encode_fixed().to_vec()),
         };
         let _ = handoff.encode_body(&self.limits)?;
-        *slot = Some(handoff.clone());
+        handoffs.insert(job_id, handoff.clone());
         Ok(handoff)
     }
 
@@ -181,19 +186,22 @@ impl SnapshotExportAuthority {
         request: &ListSnapshotHandoffsV1,
     ) -> Result<ListSnapshotHandoffsResponseV1, SnapshotExportError> {
         let _ = request.encode_body(&self.limits)?;
-        let slot = self.lock_handoff()?;
-        let Some(handoff) = slot
-            .as_ref()
+        let handoffs = self.lock_handoffs()?;
+        let mut selected = handoffs
+            .values()
             .filter(|handoff| handoff.lease_generation > request.after_lease_generation)
-        else {
-            return Ok(ListSnapshotHandoffsResponseV1 {
-                next_lease_generation: request.after_lease_generation,
-                handoffs: Vec::new(),
+            .cloned()
+            .collect::<Vec<_>>();
+        selected.sort_by_key(|handoff| handoff.lease_generation);
+        selected.truncate(usize::from(request.limit));
+        let next_lease_generation = selected
+            .last()
+            .map_or(request.after_lease_generation, |handoff| {
+                handoff.lease_generation
             });
-        };
         Ok(ListSnapshotHandoffsResponseV1 {
-            next_lease_generation: handoff.lease_generation,
-            handoffs: vec![handoff.clone()],
+            next_lease_generation,
+            handoffs: selected,
         })
     }
 
@@ -202,12 +210,9 @@ impl SnapshotExportAuthority {
         request: &GetSnapshotHandoffV1,
     ) -> Result<SnapshotHandoffV1, SnapshotExportError> {
         let _ = request.encode_body(&self.limits)?;
-        self.lock_handoff()?
-            .as_ref()
-            .filter(|handoff| {
-                handoff.job_id == request.job_id
-                    && handoff.lease_generation == request.lease_generation
-            })
+        self.lock_handoffs()?
+            .get(&request.job_id)
+            .filter(|handoff| handoff.lease_generation == request.lease_generation)
             .cloned()
             .ok_or(SnapshotExportError::HandoffNotFound)
     }
@@ -325,12 +330,20 @@ impl SnapshotExportAuthority {
         })
     }
 
-    fn lock_handoff(
+    fn lock_handoffs(
         &self,
-    ) -> Result<MutexGuard<'_, Option<SnapshotHandoffV1>>, SnapshotExportError> {
-        self.handoff
+    ) -> Result<MutexGuard<'_, BTreeMap<B256, SnapshotHandoffV1>>, SnapshotExportError> {
+        self.handoffs
             .lock()
             .map_err(|_| SnapshotExportError::Poisoned)
+    }
+}
+
+impl FinalizedSnapshotArmer for SnapshotExportAuthority {
+    fn arm_finalized_snapshot(&self, job_id: B256) -> Result<(), String> {
+        self.open(job_id)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -359,8 +372,8 @@ pub enum SnapshotExportError {
     Protocol(#[from] ProtocolError),
     #[error("snapshot export authority mutex is poisoned")]
     Poisoned,
-    #[error("snapshot export handoff already belongs to a different job")]
-    ConflictingJob,
+    #[error("snapshot export handoff registry reached its bounded capacity")]
+    HandoffCapacity,
     #[error("requested OCOMP job is not in the exact finalized pin state")]
     JobNotFinalized,
     #[error("OCOMP retention is quarantined: {0}")]

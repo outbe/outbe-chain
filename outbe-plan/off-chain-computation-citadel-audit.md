@@ -2,14 +2,15 @@
 
 > Historical audit note: reservation/`RESULT_ACCEPTED`/Desis-in-activation text
 > below describes the pinned pre-remediation SHA. The current normative PoC uses
-> one activation transaction, request-phase `auction_base`, read-only activation
-> preconditions and `unused_lysis` carry-over. It creates no owner reservation
-> records and never calls Desis during activation. It also predates the
+> full-result validator votes, q-forming atomic apply, request-phase
+> `auction_base`, read-only apply preconditions and `unused_lysis` carry-over.
+> It has no relay, public activator or durable `QUORUM_READY`, creates no owner
+> reservation records and never calls Desis during apply. It also predates the
 > unbounded-parent amendment: references below to `BoundedLysisResultV1`,
 > `ActionStreamV1`, complete-job caps or action bytes in the activation
 > transaction are findings about that historical SHA, not current protocol
 > requirements. Current normative types are bounded `ResultChunkV1` plus
-> constant-size `LysisResultV1`/root activation, with no total Tribute cap.
+> constant-size `LysisResultV1`/root apply, with no total Tribute cap.
 
 ## Verdict
 

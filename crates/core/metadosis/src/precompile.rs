@@ -56,6 +56,13 @@ pub fn dispatch(
                 crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
                     .map(Bytes::from)
             }),
+            getOffchainVoteAccountability(c) => view(c, |c| {
+                crate::ocomp::views::get_offchain_vote_accountability(
+                    metadosis.storage.clone(),
+                    c.jobId,
+                )
+                .map(Bytes::from)
+            }),
             getActiveLysisGeneration(c) => view(c, |c| {
                 crate::ocomp::views::get_active_lysis_generation(
                     metadosis.storage.clone(),
@@ -70,8 +77,8 @@ pub fn dispatch(
                 )
                 .map(Bytes::from)
             }),
-            activateLysis(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
-                "OCOMP activation requires authenticated execution context".into(),
+            submitLysisResult(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP result vote requires current-block execution context".into(),
             )),
         }
     })

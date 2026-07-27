@@ -310,13 +310,16 @@ fn load_objects(repository_root: &Path) -> Result<Vec<ObjectRow>> {
             name: fields[3].to_owned(),
         });
     }
-    ensure!(objects.len() == 31, "OCOMP V1 must have exactly 31 objects");
-    for (index, object) in objects.iter().enumerate() {
-        ensure!(
-            usize::from(object.tag) == index + 1,
-            "object registry must be contiguous"
-        );
-    }
+    ensure!(objects.len() == 35, "OCOMP V1 must have exactly 35 objects");
+    ensure!(
+        objects.first().is_some_and(|object| object.tag == 0x0001)
+            && objects.last().is_some_and(|object| object.tag == 0x0026),
+        "object registry bounds changed"
+    );
+    ensure!(
+        objects.windows(2).all(|pair| pair[0].tag < pair[1].tag),
+        "object registry tags must be strictly increasing"
+    );
     Ok(objects)
 }
 

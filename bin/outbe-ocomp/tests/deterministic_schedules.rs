@@ -57,7 +57,6 @@ use outbe_ocomp::{
     worker::{run_one_from_inherited_fd, WorkerConfig},
 };
 use outbe_ocomp_protocol::{
-    activation::CandidateAnnouncementV1,
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
         OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
@@ -80,6 +79,7 @@ use outbe_ocomp_protocol::{
     registry::HashDomain,
     result::{LysisResultV1, ResultChunkV1},
     unit::UnitSpecV1,
+    vote::ResultVoteV1,
     FinalizedJobSpecV1, FinalizedJobSummaryV1, LocalErrorCode, RunUnitV1, SchemaLimits,
     UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
@@ -236,6 +236,9 @@ impl FinalizedInputProofSource for ExportedNodeFixtureSource {
         Ok(CandidateFinalityV1::Finalized(FinalizedJobPinV1 {
             candidate,
             job_id: self.job_id,
+            finality_recorded_height: candidate.block_number,
+            open_height: candidate.block_number + 4,
+            deadline_height: candidate.block_number + 10,
         }))
     }
 
@@ -274,7 +277,7 @@ fn exported_node_fixture() -> (ConsensusBlock, ExportedNodeFixtureSource, JobInt
         wwd: intent.wwd,
         ce_sealed_root: intent.ce_sealed_root,
         protocol_bundle_hash: intent.protocol_bundle_hash,
-        deadline_height: intent.deadline_height,
+        input_lease_id: intent.input_lease_id().expect("input lease id"),
     };
     (
         proof_fixture.block,
@@ -326,15 +329,21 @@ fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
     let limits = poc_schema_limits();
     let root = tempdir().expect("attestation process fixture");
     let (block, source, intent) = exported_node_fixture();
+    let open_height = source
+        .candidate
+        .block_number
+        .checked_add(4)
+        .expect("fixture open height");
+    let deadline_height = source
+        .candidate
+        .block_number
+        .checked_add(10)
+        .expect("fixture deadline height");
     assert_eq!(source.job_id, outcome.job_id);
     let result = LysisResultV1::decode_canonical(&outcome.result_bytes, &limits)
         .expect("final Lysis result");
     assert_eq!(
-        result
-            .activation_payload(&limits)
-            .expect("activation payload")
-            .result_digest(&limits)
-            .expect("result digest"),
+        result.result_digest(&limits).expect("result digest"),
         outcome.result_digest
     );
 
@@ -367,10 +376,12 @@ fn attest_finalized_schedule_across_node_restart(outcome: &ScheduleOutcome) {
             &intent,
             outcome.job_id,
             &deterministic_committee(),
-            105,
+            open_height,
+            open_height,
+            deadline_height,
             &limits,
         )
-        .expect("verify first process candidate");
+        .expect("verify first process result vote");
     let replay = request_node_attestation(root.path(), "replay", &outcome.result_bytes)
         .expect("exact replay after node process restart");
     assert_eq!(replay, first);
@@ -410,7 +421,7 @@ fn request_node_attestation(
     root: &Path,
     run: &str,
     canonical_result: &[u8],
-) -> Result<CandidateAnnouncementV1, SupervisorDiscoveryError> {
+) -> Result<ResultVoteV1, SupervisorDiscoveryError> {
     let socket = root.join(format!("node-{run}.sock"));
     let mut child = Command::new(env::current_exe().expect("current deterministic test binary"));
     child
@@ -457,6 +468,11 @@ fn run_child_node() {
     let root = PathBuf::from(env::var_os(NODE_CHILD_ROOT).expect("node child root"));
     let socket = PathBuf::from(env::var_os(NODE_CHILD_SOCKET).expect("node child socket"));
     let (_, source, _) = exported_node_fixture();
+    let initial_height = source
+        .candidate
+        .block_number
+        .checked_add(4)
+        .expect("fixture open height");
     let coordinator = Arc::new(OcompRetentionCoordinator::open(
         root.join("retention"),
         Arc::new(source),
@@ -476,7 +492,7 @@ fn run_child_node() {
         expected_owner_uid: uid,
         validator_index: 0,
         committee: deterministic_committee(),
-        initial_height: 105,
+        initial_height,
     })
     .expect("configure closed node attestation");
     let listener = UnixListener::bind(&socket).expect("bind node attestation UDS");
@@ -1132,7 +1148,6 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
         },
         result_committee_snapshot_hash,
         custody_committee_epoch_hash: None,
-        deadline_height: 110,
     }
 }
 
@@ -1292,14 +1307,15 @@ fn run_child_worker() {
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
     let user = env::var(CHILD_USER).expect("deterministic worker child user");
+    let uid = outbe_ocomp::control::uid_for_user(&user).expect("deterministic worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical deterministic child bundle");
     run_one_from_inherited_fd(WorkerConfig {
-        expected_effective_user: user.clone(),
-        expected_supervisor_user: user,
+        expected_effective_uid: uid,
+        expected_supervisor_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),

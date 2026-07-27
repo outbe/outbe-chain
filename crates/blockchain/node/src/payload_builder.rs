@@ -180,6 +180,7 @@ where
                 .map(|summary| AccountedParentArtifact {
                     summary,
                     timestamp: parent_header.timestamp(),
+                    state_root: Some(parent_header.state_root()),
                 });
 
         // One-time TEE bootstrap: the consensus thread's TEE DKG coordination

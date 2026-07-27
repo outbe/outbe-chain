@@ -150,7 +150,6 @@ wire_struct! {
         pub activation_preconditions: ActivationPreconditionsV1,
         pub result_committee_snapshot_hash: B256,
         pub custody_committee_epoch_hash: Option<B256>,
-        pub deadline_height: u64,
     }
     validate = validate_job_intent;
 }
@@ -238,14 +237,38 @@ impl JobIntentV1 {
         hash_framed(HashDomain::Intent, &self.encode_canonical(limits)?)
     }
 
+    /// Stable authenticated-source identity shared only by attempts that read
+    /// byte-identical chain/opening commitments.
+    pub fn input_lease_id(&self) -> Result<B256, ProtocolError> {
+        self.validate_semantics()?;
+        let mut preimage = Vec::with_capacity(8 + 32 * 8 + 4 + 8 * 3);
+        preimage.extend_from_slice(&self.chain_id.to_be_bytes());
+        preimage.extend_from_slice(self.genesis_hash.as_slice());
+        preimage.extend_from_slice(self.fork_id.as_slice());
+        preimage.extend_from_slice(&self.wwd.to_be_bytes());
+        preimage.extend_from_slice(self.protocol_bundle_hash.as_slice());
+        preimage.extend_from_slice(self.ce_sealed_root.as_slice());
+        preimage.extend_from_slice(self.sealed_tribute_collection_key.as_slice());
+        preimage.extend_from_slice(self.sealed_tribute_collection_root.as_slice());
+        preimage.extend_from_slice(&self.authenticated_day_count.to_be_bytes());
+        preimage.extend_from_slice(&self.authenticated_day_nominal.to_be_bytes::<32>());
+        preimage.extend_from_slice(self.source_availability_policy_id.as_slice());
+        preimage.extend_from_slice(
+            &self
+                .activation_preconditions
+                .tribute
+                .source_generation
+                .to_be_bytes(),
+        );
+        preimage.extend_from_slice(&self.logical_evaluation_height.to_be_bytes());
+        preimage.extend_from_slice(&self.logical_evaluation_time.to_be_bytes());
+        hash_framed(HashDomain::InputLease, &preimage)
+    }
+
     pub fn validate_semantics(&self) -> Result<(), ProtocolError> {
         require(
             u64::from(self.attempt) == self.pending_nonce,
             "attempt equals checked pending nonce",
-        )?;
-        require(
-            self.deadline_height > self.logical_evaluation_height,
-            "deadline follows logical evaluation height",
         )?;
         let split_total = self
             .frozen_metadosis_values

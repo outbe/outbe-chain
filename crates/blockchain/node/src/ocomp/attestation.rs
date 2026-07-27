@@ -12,13 +12,15 @@ use std::sync::{
 
 use alloy_primitives::B256;
 use outbe_ocomp_protocol::{
-    activation::CandidateAnnouncementV1,
     committee::{OcompCommitteeSnapshotV1, RESULT_SIGNATURE_PURPOSE_BITMAP},
     intent::JobIntentV1,
     local_control::EndpointIdentity,
     result::LysisResultV1,
+    state::RESULT_VOTE_MIN_FINALITY_DEPTH,
+    vote::ResultVoteV1,
     ProtocolError, SchemaLimits,
 };
+use reth_storage_api::BlockNumReader;
 
 use super::{
     retention::{
@@ -34,6 +36,9 @@ pub struct ExportedAttestationAuthorityV1 {
     pub job_id: B256,
     pub manifest_hash: B256,
     pub finalized_intent: JobIntentV1,
+    pub finality_recorded_height: u64,
+    pub open_height: u64,
+    pub deadline_height: u64,
 }
 
 pub trait FinalizedAttestationAuthority: Send + Sync {
@@ -50,14 +55,31 @@ impl FinalizedAttestationAuthority for OcompRetentionCoordinator {
         requested_job_id: B256,
         limits: &SchemaLimits,
     ) -> Result<ExportedAttestationAuthorityV1, AttestationAuthorityError> {
-        let (candidate, job_id, manifest_hash) = match self.status() {
+        let (
+            candidate,
+            job_id,
+            manifest_hash,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
+        ) = match self.status() {
             RetentionStatus::Ready(record) => match record.state {
                 PinStateV1::Exported {
                     candidate,
                     job_id,
                     manifest_hash,
+                    finality_recorded_height,
+                    open_height,
+                    deadline_height,
                     ..
-                } if job_id == requested_job_id => (candidate, job_id, manifest_hash),
+                } if job_id == requested_job_id => (
+                    candidate,
+                    job_id,
+                    manifest_hash,
+                    finality_recorded_height,
+                    open_height,
+                    deadline_height,
+                ),
                 _ => return Err(AttestationAuthorityError::NotExported(requested_job_id)),
             },
             RetentionStatus::Empty => {
@@ -76,6 +98,9 @@ impl FinalizedAttestationAuthority for OcompRetentionCoordinator {
             job_id,
             manifest_hash,
             finalized_intent,
+            finality_recorded_height,
+            open_height,
+            deadline_height,
         })
     }
 }
@@ -105,6 +130,30 @@ impl AtomicHeightSource {
 impl CurrentHeightSource for AtomicHeightSource {
     fn current_height(&self) -> Result<u64, HeightSourceError> {
         Ok(self.height.load(Ordering::SeqCst))
+    }
+}
+
+/// Production canonical-height source backed by the node provider.
+#[derive(Clone, Debug)]
+pub struct ProviderHeightSource<P> {
+    provider: P,
+}
+
+impl<P> ProviderHeightSource<P> {
+    #[must_use]
+    pub const fn new(provider: P) -> Self {
+        Self { provider }
+    }
+}
+
+impl<P> CurrentHeightSource for ProviderHeightSource<P>
+where
+    P: BlockNumReader + Send + Sync,
+{
+    fn current_height(&self) -> Result<u64, HeightSourceError> {
+        self.provider
+            .last_block_number()
+            .map_err(|error| HeightSourceError(error.to_string()))
     }
 }
 
@@ -172,7 +221,7 @@ impl OcompAttestationGate {
     pub fn attest_canonical_result(
         &self,
         canonical_result: &[u8],
-    ) -> Result<CandidateAnnouncementV1, AttestationError> {
+    ) -> Result<ResultVoteV1, AttestationError> {
         let result = LysisResultV1::decode_canonical(canonical_result, &self.limits)?;
         if result.encode_canonical(&self.limits)? != canonical_result {
             return Err(AttestationError::Binding(
@@ -182,19 +231,14 @@ impl OcompAttestationGate {
         self.attest(result)
     }
 
-    pub fn attest(
-        &self,
-        result: LysisResultV1,
-    ) -> Result<CandidateAnnouncementV1, AttestationError> {
+    pub fn attest(&self, result: LysisResultV1) -> Result<ResultVoteV1, AttestationError> {
         result.validate_semantics(&self.limits)?;
         let authority = self
             .authority
             .reload_exported(result.job_id, &self.limits)?;
         self.validate_authority_and_result(&authority, &result)?;
 
-        let result_digest = result
-            .activation_payload(&self.limits)?
-            .result_digest(&self.limits)?;
+        let result_digest = result.result_digest(&self.limits)?;
 
         // Reload immediately before the irreversible local vote. A terminal,
         // reorged or differently exported pin between validation and signing
@@ -212,10 +256,16 @@ impl OcompAttestationGate {
         // deadline or key-validity interval has advanced.
         let current_height = self.height.current_height()?;
         let intent = &fresh.finalized_intent;
-        if current_height >= intent.deadline_height {
+        if current_height < fresh.open_height {
+            return Err(AttestationError::VotingNotOpen {
+                current_height,
+                open_height: fresh.open_height,
+            });
+        }
+        if current_height >= fresh.deadline_height {
             return Err(AttestationError::DeadlineReached {
                 current_height,
-                deadline_height: intent.deadline_height,
+                deadline_height: fresh.deadline_height,
             });
         }
         let member = &self.committee.ordered_members[usize::from(self.validator_index)];
@@ -228,10 +278,13 @@ impl OcompAttestationGate {
         let record = self.sign_once.record_or_replay(
             SignOnceSubjectV1 {
                 chain_id: self.identity.chain_id,
+                genesis_hash: self.identity.genesis_hash,
+                fork_id: intent.fork_id,
                 job_id: result.job_id,
                 attempt: result.attempt,
                 protocol_bundle_hash: result.protocol_bundle_hash,
                 committee_snapshot_hash: self.committee_snapshot_hash,
+                validator_index: self.validator_index,
                 key_epoch: self.signer.key_epoch(),
                 result_digest,
             },
@@ -241,24 +294,26 @@ impl OcompAttestationGate {
                     .map_err(|error| error.to_string())
             },
         )?;
-        let candidate = CandidateAnnouncementV1 {
+        let vote = ResultVoteV1 {
             protocol_bundle_hash: result.protocol_bundle_hash,
             job_id: result.job_id,
             attempt: result.attempt,
-            result,
-            result_digest,
+            result_committee_snapshot_hash: self.committee_snapshot_hash,
             validator_index: self.validator_index,
             key_epoch: self.signer.key_epoch(),
+            result,
             signature_rs: record.signature_rs,
         };
-        candidate.verify(
+        vote.verify(
             &fresh.finalized_intent,
             fresh.job_id,
             &self.committee,
             current_height,
+            fresh.open_height,
+            fresh.deadline_height,
             &self.limits,
         )?;
-        Ok(candidate)
+        Ok(vote)
     }
 
     fn validate_authority_and_result(
@@ -288,7 +343,11 @@ impl OcompAttestationGate {
                 != authority.job_id
             || intent.wwd != candidate.wwd
             || intent.ce_sealed_root != candidate.ce_sealed_root
-            || intent.deadline_height != candidate.deadline_height
+            || authority
+                .finality_recorded_height
+                .checked_add(RESULT_VOTE_MIN_FINALITY_DEPTH)
+                != Some(authority.open_height)
+            || authority.open_height >= authority.deadline_height
         {
             return Err(AttestationError::Binding("finalized intent pin"));
         }
@@ -317,6 +376,14 @@ pub struct HeightSourceError(pub String);
 pub enum AttestationError {
     #[error("OCOMP attestation binding failed: {0}")]
     Binding(&'static str),
+    #[error(
+        "OCOMP attestation voting is not open: current height {current_height}, \
+         open height {open_height}"
+    )]
+    VotingNotOpen {
+        current_height: u64,
+        open_height: u64,
+    },
     #[error(
         "OCOMP attestation deadline reached: current height {current_height}, \
          exclusive deadline {deadline_height}"

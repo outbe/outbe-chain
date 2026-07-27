@@ -12,6 +12,7 @@ use crate::env::Environment;
 use crate::internal::config::Config;
 use crate::internal::proc::{base_cmd, docker_rm};
 use crate::mongo_fixture::ManagedMongoReplicaSet;
+use crate::ocomp_evidence::sha256_hex;
 
 const COLLECTIONS: [&str; 3] = ["tributes", "tributes_by_owner", "tributes_by_day"];
 
@@ -37,6 +38,31 @@ pub struct ProjectedTribute {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TributeProjectionSnapshot {
     pub documents: [Document; 3],
+}
+
+/// Stable hashes of the exact BSON documents retained by one validator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TributeProjectionDigests {
+    pub primary_sha256: String,
+    pub owner_index_sha256: String,
+    pub worldwide_day_index_sha256: String,
+}
+
+impl TributeProjectionSnapshot {
+    pub fn evidence_digests(&self) -> Result<TributeProjectionDigests> {
+        let [primary, owner, day] = &self.documents;
+        Ok(TributeProjectionDigests {
+            primary_sha256: document_sha256(primary)?,
+            owner_index_sha256: document_sha256(owner)?,
+            worldwide_day_index_sha256: document_sha256(day)?,
+        })
+    }
+}
+
+fn document_sha256(document: &Document) -> Result<String> {
+    let mut encoded = Vec::new();
+    document.to_writer(&mut encoded)?;
+    Ok(sha256_hex(&encoded))
 }
 
 impl MongoDb {
@@ -347,5 +373,43 @@ fn exact_index_document(
         other => Err(eyre!(
             "{database_name}.{collection_name} index value must be empty binary, found {other:?}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, Bson};
+
+    use super::TributeProjectionSnapshot;
+
+    fn binary(bytes: &[u8]) -> Bson {
+        Bson::Binary(Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    #[test]
+    fn projection_evidence_hashes_exact_bson_documents_independently() {
+        let snapshot = TributeProjectionSnapshot {
+            documents: [
+                doc! {"_id": "tribute-1", "value": binary(&[1, 2, 3])},
+                doc! {"_id": "owner-1", "value": binary(&[])},
+                doc! {"_id": "day-1", "value": binary(&[])},
+            ],
+        };
+        let baseline = snapshot.evidence_digests().unwrap();
+        assert_eq!(baseline, snapshot.evidence_digests().unwrap());
+
+        let mut changed = snapshot.clone();
+        changed.documents[0].insert("value", binary(&[1, 2, 4]));
+        let changed = changed.evidence_digests().unwrap();
+
+        assert_ne!(changed.primary_sha256, baseline.primary_sha256);
+        assert_eq!(changed.owner_index_sha256, baseline.owner_index_sha256);
+        assert_eq!(
+            changed.worldwide_day_index_sha256,
+            baseline.worldwide_day_index_sha256
+        );
     }
 }

@@ -1,6 +1,10 @@
 # Off-chain PoC process and artifact topology
 
-Status: **RESOLVED — decision ticket #6**
+Status: **PARTIALLY SUPERSEDED ON 2026-07-26**
+
+The node/supervisor/exporter/worker/CAS isolation remains valid. Any relay role,
+HTTP candidate path or relay-owned activation flow is removed; validators use
+public result-vote transactions and activation is permissionless.
 
 This decision fixes the smallest local topology that demonstrates real process,
 resource and artifact failure boundaries for the PoC. It is subordinate to:

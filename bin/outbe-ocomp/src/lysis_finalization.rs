@@ -173,7 +173,7 @@ pub fn finalize_verified_lysis_v1(
     if reloaded.bytes() != canonical_result_bytes || reloaded_result != result {
         return Err(HostedLysisFinalizationError::ResultReloadMismatch);
     }
-    let result_digest = result.activation_payload(limits)?.result_digest(limits)?;
+    let result_digest = result.result_digest(limits)?;
     Ok(VerifiedLysisFinalizationV1 {
         result_ref,
         result,

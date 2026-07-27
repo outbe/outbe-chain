@@ -8,14 +8,17 @@
 
 pub mod localnet;
 pub mod mongodb;
+pub mod ocomp;
 pub mod rpc;
 pub mod state;
 pub mod validators;
 
 use crate::env::environment;
 use crate::internal::config::Config;
+use crate::ocomp_capacity::OcompCapacityResourceMeterV1;
 use localnet::Localnet;
 use mongodb::MongoDb;
+use ocomp::OcompTopology;
 use rpc::Rpc;
 use state::FixtureState;
 use std::time::Instant;
@@ -37,6 +40,12 @@ pub struct World {
     pub rpc: Rpc,
     /// Validator/operator identities and committee size.
     pub validators: Validators,
+    /// Four independent OCOMP validator domains. Processes are
+    /// owned here so dropping a scenario cannot orphan compute work.
+    pub ocomp: OcompTopology,
+    /// Present only when the Rust capacity runner explicitly starts this
+    /// scenario inside its dedicated cold-run cgroup.
+    pub(crate) capacity_meter: Option<OcompCapacityResourceMeterV1>,
     /// Scratch state threaded across the scenario's steps.
     pub state: FixtureState,
 }
@@ -50,13 +59,22 @@ impl Default for World {
             .start_scenario(env.validators)
             .expect("allocate this scenario's port blocks");
         let mut cfg = Config::for_scenario(&env, id);
+        let capacity_meter = std::env::var("OUTBE_OCOMP_CAPACITY_RUN_ID")
+            .ok()
+            .map(|run_id| {
+                OcompCapacityResourceMeterV1::start_current_process(&run_id).unwrap_or_else(
+                    |error| panic!("start dedicated OCOMP capacity meter: {error:#}"),
+                )
+            });
         let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
         Self {
             started_at: Instant::now(),
             localnet: Localnet::new(cfg.clone()),
             mongodb,
             rpc: Rpc::new(cfg.clone()),
-            validators: Validators::new(cfg, env.validators),
+            validators: Validators::new(cfg.clone(), env.validators),
+            ocomp: OcompTopology::new(cfg),
+            capacity_meter,
             state: FixtureState::default(),
         }
     }

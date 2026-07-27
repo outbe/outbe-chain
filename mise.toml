@@ -292,8 +292,8 @@ description = "Run the OCOMP process/integration lane; currently fail-closed on 
 run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-INT"
 
 [tasks.ocomp-poc-public-path]
-description = "Run the OCOMP public execution lane; currently fail-closed on MISSING"
-run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-PUBLIC"
+description = "Run and independently verify the exact OCOMP public execution lane"
+run = "cargo xtask ocomp task OCM-25"
 
 [tasks.ocomp-poc-e2e]
 description = "Run the four-domain OCOMP E2E lane; currently fail-closed on MISSING"

@@ -90,13 +90,19 @@ impl Display for OracleOpeningEvaluationError {
                 formatter.write_str("Oracle opening slots do not match the canonical plan")
             }
             Self::IntegerOverflow(field) => {
-                write!(formatter, "Oracle opening {field} does not fit its runtime type")
+                write!(
+                    formatter,
+                    "Oracle opening {field} does not fit its runtime type"
+                )
             }
             Self::InvalidWorldwideDayExists(value) => {
                 write!(formatter, "invalid Oracle WorldwideDay exists flag {value}")
             }
             Self::MissingPairId { iso } => {
-                write!(formatter, "Oracle settlement ISO {iso} has no registered pair id")
+                write!(
+                    formatter,
+                    "Oracle settlement ISO {iso} has no registered pair id"
+                )
             }
         }
     }
@@ -287,9 +293,9 @@ pub fn evaluate_oracle_opening_v1(
     let count_offset = settlement_isos.len().saturating_mul(2);
     let worldwide_day_exists = value_at(count_plan.slots[count_offset])?;
     if worldwide_day_exists > U256::from(1) {
-        return Err(
-            OracleOpeningEvaluationError::InvalidWorldwideDayExists(worldwide_day_exists),
-        );
+        return Err(OracleOpeningEvaluationError::InvalidWorldwideDayExists(
+            worldwide_day_exists,
+        ));
     }
     let worldwide_day_pair_count = checked_u32(
         value_at(count_plan.slots[count_offset + 1])?,
@@ -388,10 +394,7 @@ pub fn evaluate_oracle_opening_v1(
     })
 }
 
-fn checked_u32(
-    value: U256,
-    field: &'static str,
-) -> Result<u32, OracleOpeningEvaluationError> {
+fn checked_u32(value: U256, field: &'static str) -> Result<u32, OracleOpeningEvaluationError> {
     if value > U256::from(u32::MAX) {
         Err(OracleOpeningEvaluationError::IntegerOverflow(field))
     } else {
@@ -399,10 +402,7 @@ fn checked_u32(
     }
 }
 
-fn checked_u64(
-    value: U256,
-    field: &'static str,
-) -> Result<u64, OracleOpeningEvaluationError> {
+fn checked_u64(value: U256, field: &'static str) -> Result<u64, OracleOpeningEvaluationError> {
     if value > U256::from(u64::MAX) {
         Err(OracleOpeningEvaluationError::IntegerOverflow(field))
     } else {

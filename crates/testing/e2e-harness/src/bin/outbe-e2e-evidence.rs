@@ -5,9 +5,16 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, Subcommand};
 use eyre::{ensure, Result, WrapErr};
 use outbe_e2e_harness::ocomp_evidence::{
-    discover, manifest_in, missing_bundle_report, publish_report, require_pass,
+    assemble_lane, discover, manifest_in, missing_bundle_report, publish_report, require_pass,
     task_progress_report, verify_manifest, EvidenceMode, PlanningLedger,
 };
+#[cfg(feature = "ocomp-integration")]
+use outbe_e2e_harness::{
+    ocomp_capacity::{observe_capacity_host, OcompCapacityHostObservationV1},
+    ocomp_evidence::assemble_capacity_evidence,
+};
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocomp_protocol::capacity::CapacityBudgetV1;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-e2e-evidence")]
@@ -25,6 +32,32 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Measure and publish exact OCM-26 host facts using Rust-owned probes.
+    #[cfg(feature = "ocomp-integration")]
+    CapacityHost {
+        /// Real workspace filesystem used by all five cold runs.
+        #[arg(long)]
+        workspace: PathBuf,
+        /// Immutable output JSON.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Assemble exactly five public scenario records into CapacityEvidenceV1.
+    #[cfg(feature = "ocomp-integration")]
+    CapacityAssemble {
+        /// Host observation emitted by `capacity-host`.
+        #[arg(long)]
+        host: PathBuf,
+        /// Explicit per-dimension budget JSON.
+        #[arg(long)]
+        budget: PathBuf,
+        /// Five distinct immutable public capacity scenario JSON files.
+        #[arg(long = "scenario", required = true, num_args = 5)]
+        scenarios: Vec<PathBuf>,
+        /// Immutable output CapacityEvidenceV1 JSON.
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Parse and validate all ledger IDs, ownership and references.
     ValidateLedger,
     /// Print independently discovered and missing stable test IDs.
@@ -49,6 +82,9 @@ enum Command {
     Lane {
         /// Registered ledger lane such as `OCM-FAST`.
         lane: String,
+        /// Directory containing the completed lane scenario records.
+        #[arg(long)]
+        evidence_dir: PathBuf,
     },
     /// Verify a complete bundle, or report every missing ID when none exists.
     Closure {
@@ -69,6 +105,32 @@ fn main() -> Result<()> {
     let ledger = PlanningLedger::parse(&ledger_path)?;
 
     match cli.command {
+        #[cfg(feature = "ocomp-integration")]
+        Command::CapacityHost { workspace, output } => {
+            let workspace = resolve_from_current(&workspace)?;
+            let observation = observe_capacity_host(&workspace)?;
+            publish_json_output(&output, &observation)?;
+            println!("{}", serde_json::to_string_pretty(&observation)?);
+            Ok(())
+        }
+        #[cfg(feature = "ocomp-integration")]
+        Command::CapacityAssemble {
+            host,
+            budget,
+            scenarios,
+            output,
+        } => {
+            let host: OcompCapacityHostObservationV1 = decode_json(&resolve_from_current(&host)?)?;
+            let budget: CapacityBudgetV1 = decode_json(&resolve_from_current(&budget)?)?;
+            let scenarios = scenarios
+                .iter()
+                .map(|path| resolve_from_current(path))
+                .collect::<Result<Vec<_>>>()?;
+            let (evidence, verified) = assemble_capacity_evidence(host, budget, &scenarios)?;
+            publish_json_output(&output, &evidence)?;
+            println!("{}", serde_json::to_string_pretty(&verified)?);
+            Ok(())
+        }
         Command::ValidateLedger => {
             println!(
                 "ledger PASS: {} tests, {} lanes, {} tasks",
@@ -101,33 +163,13 @@ fn main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             require_pass(&report)
         }
-        Command::Lane { lane } => {
+        Command::Lane { lane, evidence_dir } => {
             ensure!(ledger.lanes.contains_key(&lane), "unknown lane {lane}");
-            let discovery = discover(&repo, &ledger)?;
-            let lane_ids = ledger.lane_test_ids(&lane);
-            let discovered = discovery
-                .discovered
-                .iter()
-                .filter(|test| lane_ids.contains(*test))
-                .cloned()
-                .collect::<Vec<_>>();
-            let missing = lane_ids
-                .iter()
-                .filter(|test| !discovered.contains(test))
-                .cloned()
-                .collect::<Vec<_>>();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "mode": "lane_placeholder",
-                    "lane": lane,
-                    "status": "MISSING",
-                    "discovered_test_ids": discovered,
-                    "missing_test_ids": missing,
-                    "reason": "OCM-00 exposes the lane but no run manifest can prove it yet"
-                }))?
-            );
-            eyre::bail!("lane {lane} has no verified exact-artifact evidence")
+            let evidence_dir = resolve_from_current(&evidence_dir)?;
+            let manifest = assemble_lane(&repo, &ledger, &lane, &evidence_dir)?;
+            let report = verify_manifest(&repo, &ledger, &manifest)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            require_pass(&report)
         }
         Command::Closure { evidence_dir } => {
             let manifest = manifest_in(&evidence_dir);
@@ -148,6 +190,30 @@ fn main() -> Result<()> {
             require_pass(&report)
         }
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn decode_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    serde_json::from_slice(
+        &std::fs::read(path).wrap_err_with(|| format!("read {}", path.display()))?,
+    )
+    .wrap_err_with(|| format!("decode typed JSON {}", path.display()))
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn publish_json_output<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {
+    let path = resolve_from_current(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre::eyre!("capacity output has no parent"))?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| eyre::eyre!("capacity output file name is not UTF-8"))?;
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    outbe_e2e_harness::ocomp_evidence::publish_member(parent, name, &bytes)?;
+    Ok(())
 }
 
 fn absolute(path: &Path) -> Result<PathBuf> {

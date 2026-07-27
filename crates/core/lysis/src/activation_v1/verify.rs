@@ -65,7 +65,7 @@ pub fn verify_result(
         "Lysis apply target bounds",
     )?;
 
-    let result_digest = activation_payload.result_digest(limits)?;
+    let result_digest = result.result_digest(limits)?;
     let activation_preconditions_hash = intent
         .activation_preconditions
         .activation_preconditions_hash(limits)?;

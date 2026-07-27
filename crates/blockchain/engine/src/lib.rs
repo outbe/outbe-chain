@@ -22,4 +22,4 @@ pub mod tee_bootstrap;
 pub mod validators;
 
 pub use args::ConsensusArgs;
-pub use stack::run_consensus_stack;
+pub use stack::{run_consensus_stack, ConsensusStackServices};

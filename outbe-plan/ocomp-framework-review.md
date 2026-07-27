@@ -5,6 +5,8 @@ Date: 2026-07-23
 Status: non-normative research/consolidation record; no production code changed.
 The revision hashes below identify the historical inputs reviewed on that date;
 later normative amendments are tracked by the PoC scope/continuity audit.
+In particular, later full-result votes and q-forming atomic apply supersede the
+historical `ActivationPayloadV1`/separate-activation examples in this note.
 The proposed canonical decisions are
 [`ADR-S-OCM-001`](../docs/adr/system/ADR-S-OCM-001-ocomp-kernel-and-typed-program-boundary.md)
 through

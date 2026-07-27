@@ -9,9 +9,12 @@ use outbe_ocomp::control::{
     effective_uid, poc_schema_limits, ClientPolicy, ControlClientSession, ControlError,
     ControlRole, ControlServerSession, EndpointIdentity, ServerPolicy,
 };
+use outbe_ocomp::snapshot_client::{
+    SnapshotClientError, SnapshotExporterNodeClient, SnapshotExporterNodeConfig,
+};
 use outbe_ocomp_protocol::{
-    ControlFrameV1, ControlMagic, ControlRoleV1, HelloAckV1, NodeMessageKind, WorkerMessageKind,
-    CONTROL_FRAME_LEN_AFTER_PREFIX,
+    ControlFrameV1, ControlMagic, ControlRoleV1, HelloAckV1, ListSnapshotHandoffsResponseV1,
+    NodeMessageKind, WorkerMessageKind, CONTROL_FRAME_LEN_AFTER_PREFIX,
 };
 use tempfile::tempdir;
 
@@ -79,6 +82,127 @@ fn ocm_ctl_001_real_peer_credentials_bundle_acl_and_counter_are_enforced() {
     client
         .send_request_with_id(NodeMessageKind::ListFinalizedJobs as u16, 1, Vec::new())
         .expect("wire replay for server rejection");
+    server.join().expect("server thread");
+}
+
+#[test]
+fn ocm_ctl_001_snapshot_exporter_transports_a_maximum_bounded_protocol_response() {
+    let limits = poc_schema_limits();
+    let uid = effective_uid().expect("effective uid");
+    let (client_stream, server_stream) = connected_pair();
+    let expected_body = vec![0xA5; limits.max_bounded_bytes];
+
+    let server_body = expected_body.clone();
+    let server = thread::spawn(move || {
+        let mut session = ControlServerSession::accept(
+            server_stream,
+            ServerPolicy::node(
+                ControlRole::SnapshotExporter,
+                uid,
+                identity(0x53),
+                8,
+                limits,
+            ),
+        )
+        .expect("peer credentials");
+        session.handshake().expect("compatible exporter hello");
+        let request = session.receive_request().expect("bounded opening request");
+        assert_eq!(
+            request.message_kind,
+            NodeMessageKind::BuildLysisOpenings as u16
+        );
+        session
+            .send_response(
+                request.request_id,
+                NodeMessageKind::Response as u16,
+                server_body,
+            )
+            .expect("maximum protocol-bounded response must fit local control");
+    });
+
+    let mut client = ControlClientSession::connect(
+        client_stream,
+        ClientPolicy::exporter_to_node(uid, identity(0x54), limits),
+    )
+    .expect("client session");
+    let negotiated = client.handshake().expect("handshake");
+    assert!(
+        negotiated.max_control_body_bytes >= limits.max_bounded_bytes,
+        "negotiated local-control cap must carry every protocol-valid body"
+    );
+    client
+        .send_request(NodeMessageKind::BuildLysisOpenings as u16, Vec::new())
+        .expect("request bounded opening");
+    let response = client
+        .receive_response()
+        .expect("receive maximum bounded protocol response");
+    assert_eq!(response.message_kind, NodeMessageKind::Response as u16);
+    assert_eq!(response.body, expected_body);
+    server.join().expect("server thread");
+}
+
+#[test]
+fn ocm_ctl_001_snapshot_client_reconnects_after_a_dropped_response() {
+    let limits = poc_schema_limits();
+    let uid = effective_uid().expect("effective uid");
+    let directory = tempdir().expect("socket directory");
+    let socket = directory.path().join("reconnect.sock");
+    let listener = UnixListener::bind(&socket).expect("bind control socket");
+    let server = thread::spawn(move || {
+        for session_generation in [9_u64, 10] {
+            let (stream, _) = listener.accept().expect("accept control socket");
+            let mut session = ControlServerSession::accept(
+                stream,
+                ServerPolicy::node(
+                    ControlRole::SnapshotExporter,
+                    uid,
+                    identity(0x55),
+                    session_generation,
+                    limits,
+                ),
+            )
+            .expect("peer credentials");
+            session.handshake().expect("compatible exporter hello");
+            let request = session.receive_request().expect("list request");
+            assert_eq!(
+                request.message_kind,
+                NodeMessageKind::ListSnapshotHandoffs as u16
+            );
+            if session_generation == 9 {
+                continue;
+            }
+            let response = ListSnapshotHandoffsResponseV1 {
+                next_lease_generation: 0,
+                handoffs: Vec::new(),
+            };
+            session
+                .send_response(
+                    request.request_id,
+                    NodeMessageKind::Response as u16,
+                    response.encode_body(&limits).expect("encode list response"),
+                )
+                .expect("send list response");
+        }
+    });
+
+    let mut client = SnapshotExporterNodeClient::connect(&SnapshotExporterNodeConfig {
+        node_socket: socket,
+        expected_node_uid: uid,
+        identity: identity(0x56),
+        limits,
+    })
+    .expect("initial client session");
+    assert!(matches!(
+        client.list(0).expect_err("first response is dropped"),
+        SnapshotClientError::Control(ControlError::ConnectionClosed)
+    ));
+    assert_eq!(
+        client.list(0).expect("next call reconnects"),
+        ListSnapshotHandoffsResponseV1 {
+            next_lease_generation: 0,
+            handoffs: Vec::new(),
+        }
+    );
     server.join().expect("server thread");
 }
 

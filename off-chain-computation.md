@@ -1,10 +1,12 @@
-# Off-chain computation for Outbe — system design v0.6
+# Off-chain computation for Outbe — system design v0.7
 
-Date: 2026-07-23
-Status: audited architecture proposal. Production code is unchanged. The
-selected PoC is a small protocol-forked devnet profile, not an on-chain Lysis
-comparison. PoC, transition and MVP are separate release gates; none is marked
-implemented by this document.
+Date: 2026-07-26
+Status: accepted architecture with the PoC implementation present on
+`feat/ocomp-poc`; exact public/E2E/isolation closure evidence is pending. The
+relay, digest-only-vote and separate-activation paths are superseded and absent
+from the runtime protocol. The selected PoC is a small protocol-forked devnet
+profile, not an on-chain Lysis comparison. PoC, transition and MVP remain
+separate release gates.
 
 The pre-remediation evidence and blockers are recorded in
 [the Citadel audit](outbe-plan/off-chain-computation-citadel-audit.md).
@@ -18,9 +20,10 @@ the canonical test flow is
 [PFS-002](docs/flows/002-off-chain-poc-protocol-flow.md).
 
 The computation process is not part of the node process, and the job input is not
-an intermediate state inside a block. Metadosis commits an `OFFCHAIN_PENDING`
-intent in a terminal system phase with no later semantic writers. The finalized
-end-of-block state is then the immutable input snapshot.
+an intermediate state inside a block. Metadosis marks the day
+`OFFCHAIN_PENDING` and commits an OCOMP `AWAITING_FINALITY` intent in a terminal
+system phase with no later semantic writers. The finalized end-of-block state
+is then the immutable input snapshot.
 
 ## 0. Architecture boundary: OCOMP kernel and typed programs
 
@@ -44,12 +47,12 @@ The boundary is ownership, not type erasure:
 | finalized discovery, `JobId`, pending/expiry/terminal lifecycle | WWD/Metadosis split, preconditions and request meaning |
 | checkpoint lease and untrusted artifact transport | authenticated Tribute/Fidelity/Oracle input contract |
 | worker isolation, leases, retries and content addressing | planner, Lysis phases, units and fixed reduction |
-| committee snapshot, sign-once and certificate mechanics | result schema, ordering, totals and conservation |
+| committee snapshot, sign-once, on-chain vote slots, quorum and accountability | result schema, ordering, totals and conservation |
 | common admission, replay/drain shell and outer checkpoint | `CertifiedLysisActivation`, effect calls, receipts and cleanup |
 
 The PoC must implement that module boundary internally, but its consensus wire is
-deliberately concrete. `JobIntentV1`, `UnitSpecV1`, `ActivationPayloadV1`,
-`LysisResultV1`, `ProtocolBundleV1` and `activateLysis` are Lysis V1
+deliberately concrete. `JobIntentV1`, `UnitSpecV1`, `LysisResultV1`,
+`ResultVoteV1` and `ProtocolBundleV1` are Lysis V1
 objects even where their historical names omit “Lysis”. The pinned
 `ProtocolBundleHash` is the exact identity of this sole program. There is no
 PoC consensus `ProgramRegistry`, generic program envelope, public
@@ -72,9 +75,13 @@ Metadosis reaches a sealed READY day
         | 1. short deterministic on-chain transition
         v
 day_limit is split; GREEN auction_base goes to Desis, RED to carry-over
-JobIntent(lysis_budget) + OFFCHAIN_PENDING + event are committed in block H
+JobIntent(lysis_budget) + day OFFCHAIN_PENDING + job AWAITING_FINALITY
+are committed in block H
         |
         | 2. H becomes final
+        v
+consensus records finality; four additional blocks elapse; VOTING_OPEN begins
+        |
         v
 outbe-ocomp-supervisor discovers the finalized job through the node control API
         |
@@ -85,10 +92,11 @@ sandboxed workers execute/prove units in parallel
         |
         | 5. fixed reducers build one result digest
         v
-Bounded: q validators independently execute and attest
+Bounded: q validators independently execute and attest; each Supervisor submits
+         its result-vote transaction directly to the chain
 Large:   validators verify one recursive proof + data-availability certificate
         |
-        | 6. one constant-size activation transaction
+        | 6. the third matching full-result vote atomically applies
         v
 result root/generation becomes active; old state is retained for recovery
 ```
@@ -100,8 +108,9 @@ The actors are concrete:
   starts workers.
 - `outbe-ocomp-supervisor` is a separate OS process or container. It discovers
   finalized jobs, reserves resources, verifies source artifacts, derives the
-  plan, schedules workers and journals progress. It has no validator keys and no
-  write access to the node databases.
+  plan, schedules workers, requests node-owned result/EVM signatures, submits
+  and tracks the result-vote transaction, handles reorg rebroadcast and journals
+  progress. It has no validator keys and no write access to the node databases.
 - `outbe-ocomp-snapshot-exporter` is a separate read-only process. The node gives
   it an opaque handle to one storage-engine-created immutable checkpoint, never
   the live database. It streams canonical Fidelity/Oracle/CE openings into the
@@ -116,9 +125,13 @@ The actors are concrete:
   The PoC instead uses one fixed unprivileged local worker template.
 - source and artifact stores transport bytes. They are untrusted: roots and
   proofs, not storage location, establish authority.
-- any relayer may collect result signatures or a proof plus custody receipts and
-  submit the bounded activation transaction. The relayer is not trusted and has no
-  exclusive role; every validator rechecks the evidence against the job record.
+- each result validator's Supervisor submits its signed full `LysisResultV1` through the
+  normal public transaction path. A dedicated exact-selector validator-only
+  ZeroFee hook waives the native fee, while OCOMP alone validates the job,
+  window and vote. Consensus stores four bounded digest/signature slots; the
+  third matching submission stores the canonical result once and applies it in
+  the same checkpoint. There is no later activator, required result relay or
+  off-chain certificate authority.
 - the service manager starts and restarts the node and supervisor independently.
   The node does not spawn the supervisor.
 
@@ -136,12 +149,15 @@ Tribute issued and day sealed
   -> Metadosis splits day_limit and applies GREEN Desis/RED carry-over once
   -> terminal Metadosis creates JobIntent(lysis_budget); no Lysis or Nod yet
   -> request block finalizes
+  -> four additional blocks elapse and consensus records VOTING_OPEN
   -> four validator domains independently read and execute the same job off-chain
-  -> any relayer collects q=3 matching result signatures
-  -> one activation transaction carries certificate + typed result commitment
-  -> that transaction installs output roots and applies
+  -> every Supervisor submits one signed full LysisResultV1 transaction on-chain
+     without validator fee debit
+  -> the third matching first-vote slot fixes quorum, stores the result once,
+     installs output roots and applies
      Tribute/unused-carry-over scalars atomically
   -> Metadosis becomes COMPLETED and the Tribute partition is logically retired
+  -> the fourth slot stays open until the response deadline for accountability
 ```
 
 There is no synchronous fallback. If fewer than `q` validators produce the same
@@ -154,9 +170,10 @@ This PoC proves the architecture, not scale:
 - `JobIntent`, finality binding, discovery and expiry are real consensus state;
 - supervisors, snapshot exporters and workers are real separate processes;
 - every signing validator independently reads and executes the whole job;
-- result signatures use separate OCOMP keys and the pinned result committee;
-- the relayer is untrusted;
-- evidence verification and activation happen through normal block execution;
+- result votes use separate OCOMP keys and the pinned result committee;
+- result timing, missing response and equivocation are consensus-visible;
+- quorum apply has no required relay or separate activator;
+- evidence verification and application happen through normal block execution;
 - Nod, contributors, Desis, Promis, Metadosis and Tribute retirement are real;
 - volumes, concurrency, recovery and adversarial coverage are deliberately small.
 
@@ -172,9 +189,11 @@ pure off-chain:
       -> LysisResultV1
 
 on-chain:
-  apply_certified_lysis(JobIntent, LysisResultV1,
-                        ExecutionCertificateV1)
-      -> atomic domain root/state transition
+  open_voting(finalized JobIntent, finality_recorded_height + 4)
+      -> VOTING_OPEN(open_height, deadline_height)
+  submit_result_vote(VOTING_OPEN, ResultVoteV1 { result: LysisResultV1, ... })
+      -> first/second match: bounded accountability only
+      -> third match: immutable quorum + atomic domain root/state transition
 ```
 
 `apply_certified_lysis` is a deep protocol module, not a generic write interpreter.
@@ -191,26 +210,33 @@ is insufficient evidence for a program-neutral wire protocol.
 For a non-empty eligible WWD, terminal Metadosis does only:
 
 1. read bounded sealed day metadata and calculate the frozen Metadosis scalars;
-2. reserve the WWD, Nod namespace, contributor series, Desis brief and Promis
-   consequence;
-3. store `JobIntentV1`, its expiry entry and `OFFCHAIN_PENDING`;
-4. emit `OffchainJobRequested(IntentId)`;
-5. return without calling Lysis, issuing Nod, recording contributors, consuming
-   Tribute, dispatching Desis or changing Promis.
+2. split `day_limit`; dispatch GREEN `auction_base` to Desis or credit RED
+   `auction_base` to carry-over exactly once;
+3. freeze the WWD, Nod/contributor preconditions and Lysis budget;
+4. store `JobIntentV1`, OCOMP `AWAITING_FINALITY` and Metadosis
+   `OFFCHAIN_PENDING`, without a response deadline;
+5. emit `OffchainJobRequested(IntentId)`;
+6. return without calling Lysis, issuing Nod, recording contributors, consuming
+   Tribute or crediting unused Lysis.
 
 The request block can be inspected immediately: the intent exists and no output
 Nod exists. This negative observation is part of the PoC acceptance test.
 
 ```text
 READY
-  -> OFFCHAIN_PENDING(IntentId)
-  -> COMPLETED
+  -> OFFCHAIN_PENDING(IntentId)           Metadosis day state
 
-OFFCHAIN_PENDING
+AWAITING_FINALITY(IntentId)
+  -> VOTING_OPEN(JobId, open_height, deadline_height)
+
+VOTING_OPEN
+  -> COMPLETED(ResultDigest, quorum_height)
   -> EXPIRED
   -> CONFLICTED
   -> CANCELED
-  -> READY(next_pending_nonce)
+
+EXPIRED | CONFLICTED | CANCELED
+  -> READY(next_pending_nonce)             only after terminal archive/release
 ```
 
 `RUNNING` is never consensus state; it is only local supervisor progress.
@@ -228,7 +254,7 @@ The first devnet is fixed to:
 ```text
 n = 4 result validators
 f = 1 tolerated faulty/offline validator
-q = 3 matching signatures
+q = 3 matching on-chain result votes
 ```
 
 Each of the four validator domains has its own node, supervisor, exporter,
@@ -254,8 +280,7 @@ LysisResultV1 {
   frozen empty pre-result event root
 }
 
-ActivationPayloadV1 contains the result-chunk count/root and the recomputed job,
-profile, output-root, count, conservation and event-summary fields. The single
+`ResultDigest` hashes the complete canonical `LysisResultV1`. The single
 normative `ResultChunkHash` and `ResultDigest` definitions are in section 8.2;
 this summary introduces no alternate preimage.
 ```
@@ -273,38 +298,56 @@ not read bulk result chunks.
 The supervisor never receives that key. The PoC pins canonical low-`s`
 `secp256k1` signatures over the domain-separated digest; its static committee
 snapshot maps each validator index to a separate OCOMP public key. The
-certificate contains an ordered signer bitmap and exactly three
-`(validator_index, signature)` entries. It never reuses a consensus private key.
-Aggregate signatures are an optimization, not core mechanics.
+signed `ResultVoteV1` carries exactly one validator index, key epoch, canonical
+`LysisResultV1` and signature over its `ResultDigest`. It never reuses a
+consensus private key.
 
-The local node returns the attestation to its supervisor. For the PoC, the
-supervisor posts
-`CandidateAnnouncement(JobId, LysisResultV1, validator_index, signature)`
-to a trivial HTTP relay adapter. The relay groups announcements by the signed
-digest, accepts at most one entry per validator index, constructs exactly one
-`PoCActivationV1` after reaching three and submits
-`activateLysis(PoCActivationV1)`. It owns no key and makes no decision:
-dropping, reordering, changing or mixing announcements can delay the job but
-cannot create a valid certificate. A validator or another client may perform the
-same activation submission if the demo relay is absent. There is no separate
-result-evidence transaction or second consensus wire type.
+The local node returns the closed attestation to its Supervisor, which owns the
+`prepared -> submitted -> included -> finalized` transaction workflow and
+reorg rebroadcast through the normal public path. A restricted node seam signs
+the outer EVM transaction; the Supervisor receives neither private key. An
+Oracle-style, exact-selector validator ZeroFee hook waives native fee debit but
+does not validate JobIntent, finality, window, digest, quorum or slashing.
+For the PoC the Supervisor reads the account nonce from canonical `latest`
+state, uses the frozen gas envelope and never calls `eth_estimateGas` or asks
+RPC to build pending state. Its single-writer journal retains the exact signed
+transaction bytes and nonce for idempotent retry and reorg rebroadcast.
+Consensus OCOMP verifies `VOTING_OPEN`, the OCOMP signature and all eligibility
+before recording the first timely vote in one of four fixed slots. Exact retry
+is idempotent. A conflicting second signed digest does not replace or add to the
+first tally; it records bounded equivocation evidence.
 
-For `n=4, q=3`, two quorum certificates intersect in at least two validators.
-With at most one faulty domain and honest sign-once behavior, two conflicting
-certificates cannot both form. This does not protect against a common software
-bug shared by all four implementations; differential fixtures remain required.
+After every first vote, consensus scans the four slots. The first digest present
+in three slots becomes immutable `quorum_digest`. That q-forming transaction
+already carries the matching canonical result, stores it once and applies the
+typed root/scalar transition inside the same checkpoint. The job becomes
+`COMPLETED`, or the defined `CONFLICTED`/retry outcome is committed without
+owner effects. The fourth slot remains open until the exclusive response
+deadline and closes as matching, divergent, missing or equivocating evidence.
 
-### 1.4 What on-chain activation verifies and applies
+There is no required relay service and no `ExecutionCertificateV1`. This is
+necessary for accountability: if an off-chain relay collected votes, consensus
+could not distinguish validator non-response from relay censorship. Relay logs,
+mempool observations and supervisor journals are not slashable evidence.
 
-Any relayer may submit one constant-size activation transaction:
+For `n=4, q=3`, the fixed first-vote slots cannot produce two conflicting
+selected digests. This does not protect against a common software bug shared by
+all four implementations; differential fixtures remain required. A minority
+digest is retained but is not automatically slashable. Missing-response and
+equivocation penalties require a separate slashing-policy ADR; the PoC only
+creates canonical evidence.
+
+### 1.4 What the q-forming submission verifies and applies
+
+Every validator submits one constant-size full-result vote:
 
 ```text
-PoCActivationV1 {
-  IntentId,
-  FinalizedIntentProofV1,
-  ActivationPayloadV1,
-  LysisResultV1,
-  ExecutionCertificateV1
+ResultVoteV1 {
+  protocol_bundle_hash, JobId, attempt,
+  result_committee_snapshot_hash,
+  validator_index, key_epoch,
+  result: LysisResultV1,
+  signature
 }
 ```
 
@@ -316,13 +359,14 @@ chunk-order results through bounded cursors, derives every result field and
 abstains on any missing, duplicate, reordered, substituted or conflicting
 entry. It accepts no caller-built root/result and has no signing authority.
 
-Every node:
+Every node validates the result and signature before recording a slot. If the
+current transaction forms q=3, it:
 
-1. derives the same `JobId` from the finalization proof;
-2. loads the exact historical result-committee snapshot;
-3. requires three distinct valid signatures over one `ResultDigest`;
+1. uses the finalized JobIntent/JobId already owned by consensus state;
+2. reconstructs `ResultDigest` over the complete canonical `LysisResultV1`;
+3. records immutable quorum and stores that result once;
 4. checks the result-chunk count/root bound into `LysisResultV1`;
-5. checks activation byte/crypto caps, canonical encoding, committed counts,
+5. checks full-result vote byte/crypto/work caps, canonical encoding, committed counts,
    live old-root/generation preconditions and arithmetic relationships between
    the summary fields;
 6. constructs a private `CertifiedLysisActivation` capability and enters the
@@ -343,27 +387,31 @@ The same transaction checkpoint then applies the typed certified result:
 install the certified Nod/bucket/contributor/output roots and exact counts
 logically retire the exact sealed Tribute generation
 credit exact unused_lysis to carry-over
-mark Metadosis COMPLETED
+mark Metadosis COMPLETED while leaving the fourth response slot open
 emit the canonical aggregate/domain events
-remove expiry
 ```
 
 Hashing, decoding, signature verification, constant-size structural validation
-and installing certified roots are activation work; they are not Lysis
+and installing certified roots are verification/apply work; they are not Lysis
 computation.
-Any mismatch or write failure reverts the entire activation. Before commit there
+Any mismatch or write failure reverts the entire q-forming transaction,
+including its new slot/quorum. Before commit there
 is still no Nod; after commit all certified effects exist together.
 
-The action bytes do not occur in the activation transaction body. No full
-result is parked in EVM slots. The terminal record stores active roots, counts,
-the certificate hash and the activation receipt. The three signing domains have
+The action bytes do not occur in the result-vote transaction body. The
+constant-size canonical result is stored once at quorum; four copies are not
+parked in EVM slots. Immutable `LysisTerminalV1` stores active roots, counts,
+the quorum-evidence hash and apply receipt. The four vote/equivocation slots and
+closing summary live in separate bounded `OcompVoteAccountabilityV1`;
+post-completion fourth-vote/close writes cannot
+change terminal, receipt, active-generation or exact-retry identity. The three quorum domains have
 validated and retain the result chunks for the PoC projection/proof-serving
 path, but this is not an independent production DA/custody claim. Erasure
 coding, custody handover and recursive proof remain later-profile concerns.
 
 `CertifiedLysisActivation` has no public constructor. Only the OCOMP verifier
 inside the production executor can create it after all checks above. The
-activation module owns the checkpoint and calls closed root-transition APIs:
+q-forming apply module owns the checkpoint and calls closed root-transition APIs:
 
 ```text
 NodFactory::install_certified_generation(capability, roots, counts, totals)
@@ -424,7 +472,7 @@ CarryOverReceipt {
 ```
 
 The request stores `RequestBudgetSplitReceiptV1`. GREEN dispatches exactly
-`auction_base` to Desis; RED credits it to carry-over. Activation never calls
+`auction_base` to Desis; RED credits it to carry-over. Quorum apply never calls
 Desis or tops up the live auction.
 
 `PromisLimit.total_unallocated` is the carry-over accumulator. Day-limit
@@ -434,14 +482,14 @@ A later credit waits for the following unformed day.
 Retry preserves `lysis_budget` and the request split. A terminal no-retry
 outcome credits the whole `lysis_budget` exactly once.
 
-Before commit the activation module consumes four activation receipts and the
+Before commit the q-forming apply module consumes four typed owner receipts and the
 request split receipt. It checks:
 
 ```text
 all receipt.binding == capability.binding
 NodBatchReceipt.nod_count == TributeReceipt.consumed_count
-NodBatchReceipt.nod_count == ActivationPayload.exact_nod_count
-NodBatchReceipt.nod_root == ActivationPayload.nod_root
+NodBatchReceipt.nod_count == LysisResultV1.exact_nod_count
+NodBatchReceipt.nod_root == LysisResultV1.nod_root
 NodBatchReceipt.nod_gratis_consumed + unused_lysis
   == frozen_lysis_budget                              [bundle arithmetic]
 frozen_day_limit == frozen_lysis_budget + frozen_auction_base
@@ -449,7 +497,7 @@ TributeReceipt.(root,count,nominal)
   == JobIntent.(sealed_tribute_collection_root,
                 authenticated_count, authenticated_nominal)
 ContributorReceipt.(root,count,eligible_nominal_total)
-  == the decoded eligible action stream and ActivationPayload
+  == the decoded eligible action stream and LysisResultV1
 RequestBudgetSplitReceipt
   == exact GREEN Desis auction_base or RED carry-over auction_base
 CarryOverReceipt.credited_unused_lysis == signed unused_lysis
@@ -459,24 +507,25 @@ every precondition identity/version and state_event_digest
   == the decoded action, pre-state and post-state owned by that module
 ```
 
-Only then may it write Metadosis `COMPLETED` plus `LysisActivated`. A `bool`,
+Only then may it write Metadosis `COMPLETED` plus `LysisResultApplied`. A `bool`,
 best-effort result, stale receipt or raw `issue_nod` call cannot satisfy this
 path. Any missing/mismatched receipt rolls back the whole outer checkpoint. The
 old public/internal seams remain legacy-only until the fork and must be
-unreachable from the active certified path.
+unreachable from the active OCOMP path.
 
 Time is also fixed explicitly:
 
 | Field/effect | Authoritative time |
 |---|---|
 | Fidelity/Oracle snapshot, Metadosis scalars, Nod `issued_at`, Desis brief anchor and pre-fork-compatible semantic event fields | frozen request `logical_evaluation_height/time` |
-| certificate formation | no wall-clock field; it signs only the canonical payload |
-| activation receipt/log location and `activated_at_height/time` | actual activation block |
+| validator result-vote signing | no wall-clock field; each validator signs only the canonical vote subject |
+| vote inclusion/quorum formation | canonical block height of each accepted vote and of the third matching slot |
+| apply receipt/log location and `applied_at_height/time` | actual q-forming block |
 
-The certified Nod batch receives `issued_at`; it may not call
+The applied Nod generation receives `issued_at`; it may not call
 `storage.timestamp()` for that field. Desis receives the frozen brief anchor,
-not `ctx.block.timestamp`. Delaying a valid activation changes only the explicit
-activation metadata, never Nod economics, Desis scheduling, Promis amounts or
+not `ctx.block.timestamp`. Delaying a valid q-forming vote changes only explicit
+inclusion/apply metadata, never Nod economics, Desis scheduling, Promis amounts or
 the signed semantic result.
 
 ### 1.5 Initial consensus-frozen PoC envelope
@@ -488,27 +537,28 @@ the PoC fork:
 | Limit | PoC value | Why |
 |---|---:|---|
 | result committee | `n=4, q=3` | demonstrate one faulty/offline domain |
-| `MAX_TRIBUTES_PER_WORK_SHARD` | `256` | bounded worker job; shard-cap+1 starts another job |
+| `MAX_TRIBUTES_PER_WORK_SHARD` | `256` | bounded worker invocation; shard-cap+1 starts another work shard under the same job |
 | workers per validator | `1..4` | prove worker-count independence |
 | `MAX_RECORDS_PER_INPUT_CHUNK` | `768` | bounded input decode/allocation |
-| `MAX_RESULT_CHUNK_BYTES` | candidate ceiling `<=512 KiB`; fork value generated before activation | bounded result artifact decode/allocation |
-| `MAX_RESULT_SUMMARY_BYTES` | candidate ceiling `<=1 MiB`; fork value generated before activation | constant-size result/activation envelope |
-| `MAX_PENDING_JOBS` | `1` | no production queue/recovery claim |
-| intents/activations per block | `1 / 1` | statically bounded executor work |
+| `MAX_RESULT_CHUNK_BYTES` | candidate ceiling `<=512 KiB`; fork value generated before protocol enablement | bounded result artifact decode/allocation |
+| `MAX_RESULT_SUMMARY_BYTES` | candidate ceiling `<=1 MiB`; fork value generated before protocol enablement | constant-size full-result vote envelope |
+| `MAX_PENDING_JOBS` | `2` | proves independent concurrent Job progress without a production queue/recovery claim |
+| intents/q-forming applies per block | `1 / 1` | statically bounded executor work |
 | distinct reference currencies | `8` | exercise Oracle branching with a cap |
 | Fidelity cohorts per owner | `64` | bounded controlled-devnet input shape |
-| result deadline | `64 blocks` | exercise success and deterministic expiry |
+| result-vote response deadline | `64 blocks` | exercise timely quorum, fourth-slot accountability and no-quorum expiry |
 
 The table is not a total-job capacity proof. Before the fork can activate, one
 generator must construct maximum-shaped input/result chunks, constant-size
-`LysisResultV1`, certificate, finality proof, transaction, receipts/logs and
+`LysisResultV1`, full-result `ResultVoteV1`, four-slot/accountability state,
+consensus finality binding, non-q/q-forming vote transactions, receipts/logs and
 every mandatory block artifact. Each selected interface constant must fit its
 decode, memory, transaction, full RLP block, gas/internal-work, root-transition
 and finality budgets with measured headroom on the declared minimum devnet
 machine. The generator runs at
 `cap-1/cap/cap+1` from public JSON-RPC through transaction decoding, txpool
 admission/replacement, four-node transaction gossip, proposer selection, block
-gossip, validation, import and replay. It may not inject the activation directly
+gossip, validation, import and replay. It may not inject the q-forming apply directly
 into the executor. `ReleaseManifest` and `NetworkManifest` pin compatible RPC,
 transaction-input, txpool, P2P, block-body, gas and internal-work limits; the
 smallest layer is the protocol cap. One `JobIntent` covers all `T` Tribute and
@@ -516,13 +566,13 @@ the constant-size `PlanCommitmentV1` commits
 `ceil(T / MAX_TRIBUTES_PER_WORK_SHARD)` ordered worker shards. Filling a shard
 never rejects the next Tribute. Total `T` has no PoC/protocol ceiling. Local
 configuration may run fewer workers, but it may not raise per-interface caps or
-reinterpret them as total-population admission. Resource exhaustion causes
-local abstention/expiry; it never falls back to on-chain Lysis.
+reinterpret them as total-population admission. Resource exhaustion causes a
+missing local vote and possible no-quorum expiry; it never falls back to
+on-chain Lysis.
 
 ### 1.6 Demonstration that defines PoC success
 
-The acceptance demonstration starts four validator deployments and an untrusted
-relayer, then:
+The acceptance demonstration starts four validator deployments, then:
 
 1. issues a bounded WWD containing different Fidelity leagues, currencies and at
    least one `exclude_from_intex_issuance` Tribute;
@@ -530,21 +580,28 @@ relayer, then:
 3. shows the finalized split and `JobIntent`, proves the request-phase effect
    happened once, and proves there are still zero new Nod/contributor/
    Tribute-consume effects;
-4. stops one validator's supervisor;
-5. shows the remaining three domains independently rebuilding the same input
-   root and producing the same `ResultDigest`;
-6. submits their certificate and exact typed result in one activation
-   transaction through the untrusted relayer;
-7. finalizes that transaction and queries every expected Nod, contributor total,
-   Metadosis state, request-phase Desis brief, carry-over and retired Tribute
-   partition;
+4. in the healthy workflow includes four matching public result votes, proves
+   `4/4`, proves the third matching submission atomically applied that job,
+   finalizes it and verifies its public result;
+5. starts a separately initialized workflow with a fresh WWD and `JobIntent`,
+   repeats the request-only checks from steps 1–3, then stops one validator's
+   supervisor before execution; shows the remaining three domains independently
+   rebuilding that workflow's input root and including three matching
+   `ResultVoteV1` transactions;
+6. observes the third matching full-result vote atomically record quorum and
+   apply the typed result, then closes the fourth slot as missing at the response
+   deadline;
+7. finalizes the degraded workflow's q-forming block and queries every expected Nod,
+   contributor total, Metadosis state, request-phase Desis brief, carry-over and
+   retired Tribute partition;
 8. compares the result to an offline reference/golden corpus, never to an
    on-chain Lysis execution;
 9. repeats with `1`, `2` and `4` workers and randomized completion order;
 10. asks one validator to sign a second digest for the same job and observes a
-    sign-once refusal; then mutates one result byte, signer, JobId and ordering
-    field and observes consensus rejection;
-11. delays otherwise identical activations by different block counts and proves
+    sign-once refusal; exercises exact vote retry, wrong signer/key epoch, late
+    vote and a conflicting signed vote; proves first-vote immutability and
+    canonical equivocation evidence;
+11. delays otherwise identical q-forming votes by different block counts and proves
     byte-identical Nod/contributor/Tribute/carry-over results with no repeated
     request effect;
 12. runs a second job with two unavailable validators and observes expiry,
@@ -580,7 +637,7 @@ implementations:
 | scale claim | none beyond the generated multi-shard PoC envelope | only the benchmarked bounded cap |
 
 Minimum cryptographic authenticity, sign-once behavior, finality binding, atomic
-activation and process separation are not postponed: without them the PoC would
+quorum apply and process separation are not postponed: without them the PoC would
 not exercise the real system. MVP adds hardening and operational confidence
 around those same interfaces rather than replacing a fake PoC architecture.
 
@@ -595,11 +652,13 @@ The PoC should be built as six independently testable vertical slices:
    remove the synchronous Lysis call for the PoC profile.
 3. **One validator domain:** exporter, supervisor and workers discover a finalized
    job, rebuild the input and produce a candidate without any direct state write.
-4. **Certificate:** four domains use separate OCOMP keys; an untrusted relayer can
-   form evidence only from three identical digests.
-5. **Real activation:** `apply_certified_lysis` verifies the constant-size typed
-   result commitment and atomically installs all current observable domain
-   roots/effects without iterating the result population.
+4. **On-chain quorum:** four domains use separate OCOMP keys and public result
+   transactions; consensus fixes quorum only from three identical first-vote
+   slots and retains the fourth for accountability.
+5. **Real quorum apply:** the third matching full-result vote invokes
+   `apply_certified_lysis`, which verifies the constant-size typed result and
+   atomically installs all observable domain roots/effects without iterating the
+   result population.
 6. **System demonstration:** execute section 1.6, including one offline domain,
    tampered evidence, worker-count determinism and expiry without fallback.
 
@@ -615,8 +674,8 @@ updates Promis, marks the day completed and retires Tribute in the same executio
 path ([current code](crates/core/metadosis/src/runtime.rs#L366)). That path must
 remain authoritative until a fork enables this design.
 
-After the fork, the non-empty successful branch is split into two on-chain
-transactions separated by an off-chain job.
+After the fork, the request transition and validator result submissions are
+separated by an off-chain job; there is no additional post-quorum transaction.
 
 ### 2.1 Request block
 
@@ -635,10 +694,10 @@ In that terminal phase Metadosis performs only bounded work:
    `day_limit = lysis_budget + auction_base`;
 4. for GREEN, strictly dispatch `auction_base` to Desis; for RED, credit it to
    carry-over;
-5. freeze the Tribute binding and Nod/contributor/Metadosis activation
+5. freeze the Tribute binding and Nod/contributor/Metadosis apply
    preconditions;
-6. store `JobIntentV1`, insert `(deadline_height, IntentId)` into the expiry
-   index and change the day to `OFFCHAIN_PENDING`;
+6. store `JobIntentV1`, OCOMP `AWAITING_FINALITY` and Metadosis
+   `OFFCHAIN_PENDING`; do not create a response deadline yet;
 7. emit `OffchainJobRequested(IntentId)`;
 8. finish the block without any later semantic write.
 
@@ -694,8 +753,7 @@ JobIntentV1 {
   logical_evaluation_height, logical_evaluation_time,
   activation_preconditions,
   result_committee_snapshot_hash,
-  custody_committee_epoch_hash,
-  deadline_height
+  custody_committee_epoch_hash
 }
 
 IntentId = H("OUTBE_OCOMP_INTENT_V1", canonical(JobIntentV1))
@@ -728,7 +786,9 @@ The local restart-safe pin FSM is:
 
 ```text
 TENTATIVE(candidate_block_hash, IntentId, state_root)
-  -> FINALIZED(JobId, deadline_height)
+  -> FINALIZED(JobId, finality_recorded_height)
+  -> VOTING_OPEN(open_height = finality_recorded_height + 4,
+                 deadline_height = open_height + response_window_blocks)
   -> EXPORTED(source_snapshot_certificate)
   -> RELEASED
 
@@ -779,11 +839,20 @@ JobId = H(
 ```
 
 Every node can derive the same value from the finalization proof and the intent's
-state inclusion. `IntentId` remains the consensus lifecycle key: request creation
-has already inserted `(deadline_height, IntentId)` into the expiry index. The
-activation transaction supplies `FinalizedIntentProofV1`, derives `JobId`, proves
-inclusion of the same `IntentId` and checks the unique `IntentId -> JobId`
-binding before any apply work.
+state inclusion. The existing consensus-certified finalization path records the
+unique `IntentId -> JobId` binding and `finality_recorded_height`. Exactly four
+blocks later, begin-zone atomically records:
+
+```text
+open_height = checked_add(finality_recorded_height, 4)
+deadline_height = checked_add(open_height, response_window_blocks)
+VOTING_OPEN(JobId, open_height, deadline_height)
+```
+
+and inserts `(deadline_height, JobId)` into the response index. No local event,
+cursor, Supervisor or vote payload can open the window. Consensus finality
+ingestion establishes the unique binding before voting; full-result votes reuse
+that stored authority and do not resubmit a finalized-intent proof.
 
 `FinalizedIntentProofV1` is a fork-registered, strictly bounded codec, not a bag
 of caller-selected roots:
@@ -832,7 +901,7 @@ The verifier:
    their inclusion
    against the committee-history root of a prior accepted finalized checkpoint;
    `ordered_committee`, `committee_set_hash`, VRF version/group-key hash and
-   scheme must equal that authority; relayer bytes alone are never authority;
+   scheme must equal that authority; transaction-supplied bytes alone are never authority;
 4. decodes the proof with the authoritative committee length and rejects
    trailing bytes; requires proposal epoch/view/parent/payload equality, verifies
    the Commonware finalization certificate under the authoritative scheme and
@@ -853,52 +922,54 @@ committee members, signatures, trie nodes and cryptographic work. Golden vectors
 cover every step above, including a valid certificate paired with a
 caller-invented committee and a valid intent at the wrong storage key.
 
-Activation dispatch orders terminal retries before the live-job guard:
+Full-result vote dispatch orders terminal retries before the live-job guard:
 
 1. `COMPLETED` plus the exact `IntentId`, `JobId`, attempt and `ResultDigest`
-   returns the recorded activation receipt without constructing a capability or
+   returns the recorded apply receipt without constructing a capability or
    repeating effects;
 2. `COMPLETED` with any different binding/digest rejects;
 3. `EXPIRED`, `CONFLICTED` or `CANCELED` rejects;
-4. only live `OFFCHAIN_PENDING` proceeds through deadline, finality,
-   certificate, result and apply verification.
+4. only a live `VOTING_OPEN` submission that creates the third matching slot
+   proceeds through stored-finality, result and apply verification.
 
-No post-finality background transaction is required merely to make expiry work.
-A pre-finality reorg removes the intent and its expiry entry in the same reverted
-state; no result from that fork is signable.
+No public post-finality transaction is required to open or close the voting
+window: deterministic begin-zone lifecycle work performs both. A pre-finality
+reorg removes the intent before any response-deadline entry exists; no result
+from that fork is signable.
 
 The event is only a wake-up hint. The supervisor calls a paged
 `ListFinalizedJobs(after_cursor)` API and then reads the on-chain job record. On
 restart it resumes from its durable finalized cursor, so a lost event or broken
 subscription cannot lose a job.
 
-### 2.3 Activation block
+### 2.3 Q-forming block
 
-When correctness and, for large results, availability have been established, a
-relayer submits one ordinary bounded `activateLysis` transaction. The
-transaction carries all evidence needed for its profile:
+Each validator submission carries the canonical typed result and all evidence
+required by its profile:
 
-- PoC/BoundedMVP: finalized-intent proof, constant-size complete-result
-  commitment and q certificate;
-- TargetLarge: finalized-intent proof, recursive proof, root-authoritative
-  payload and availability/custody certificate.
+- PoC/BoundedMVP: constant-size complete `LysisResultV1`; the finalized
+  JobIntent/JobId binding already lives in consensus state;
+- TargetLarge: a versioned full-result submission with recursive proof,
+  root-authoritative payload and availability/custody certificate.
 
 The transaction checks:
 
-- the exact `JobId`, attempt, protocol bundle and deadline;
-- the result certificate or proof and historical OCOMP committee snapshot;
+- the exact `JobId`, attempt and protocol bundle;
+- whether recording the current vote creates the timely quorum, or satisfies
+  the versioned TargetLarge proof authority;
 - every reserved field/version with compare-and-swap;
 - the output manifest root and availability certificate;
 - that the job has not already completed or expired.
 
-The fork also fixes `MAX_OCOMP_ACTIVATIONS_PER_BLOCK`, maximum evidence bytes,
-maximum signatures/receipts and maximum proof-verification cost. Valid excess
+The fork also fixes `MAX_OCOMP_RESULT_APPLIES_PER_BLOCK`, maximum full-result
+vote/evidence bytes,
+maximum vote signatures/receipts and maximum proof-verification cost. Valid excess
 transactions revert with a typed block-capacity result and leave the job
 unchanged for resubmission. Proposal policy excludes them before execution when
 the same deterministic counter is already full. The counter/byte reservation is
 checked before result decoding or cryptography, so an over-cap transaction costs
-only bounded rejection work. No certificate/result is stored in an intermediate
-`RESULT_ACCEPTED` state and no full payload is copied into EVM storage.
+only bounded rejection work. Four vote slots store only digest/signature/height;
+the canonical `LysisResultV1` is stored once only when quorum is formed.
 
 The consensus-visible block order is:
 
@@ -908,10 +979,12 @@ begin-zone:
   2. install due PAUSE/DRAIN mode barriers
   3. evaluate upgrade cutoff/cancel/activation transitions
   4. advance bounded PAUSING cancellation cursors
-  5. expire/reset remaining jobs due at this height
+  5. consume consensus-recorded request finality; open jobs whose
+     finality_recorded_height+4 is due; close result-vote windows and
+     expire/reset only no-quorum jobs due at this height
      (pause-marked jobs use CANCELED, not EXPIRED)
   6. process bounded custody-expiry/repair state changes
-ordinary transactions (including activateLysis)
+ordinary transactions (including submitLysisResult)
 CE sealing
 terminal READY inspection / request creation
 commit; no later semantic writer
@@ -921,18 +994,26 @@ Within each numbered phase records use canonical `(effective_height, plan_id)`
 order. A mode generation/snapshot change in phases 1–2 makes a stale upgrade
 readiness certificate fail in phase 3. Consequently same-height key revocation
 or pause beats upgrade activation, pause beats expiry, and every begin-zone
-barrier beats an ordinary activation transaction.
+barrier beats an ordinary q-forming result transaction.
 
-`deadline_height = H` is exclusive: `activateLysis` must execute in a block
-`< H`. At begin `H`, every still-pending job due at `H` is archived/reset before
-ordinary transactions; a transaction in `H` therefore sees an expired old nonce
-and rejects. If the job was marked by a same-height pause, it sees `CANCELED`
-instead. This ordering has no activation-versus-expiry/pause tie.
+`deadline_height = H` is the exclusive result-vote deadline. A `ResultVoteV1`
+counts as timely only when included in a block
+`< H`. At begin `H`, consensus closes the four-slot accountability window:
+
+- `VOTING_OPEN` without a timely `q=3` is archived/reset as `EXPIRED`;
+- `COMPLETED` or `CONFLICTED` retains its terminal quorum result and receives
+  the same closed accountability
+  summary;
+- a same-height pause still wins first and produces `CANCELED` where applicable.
+
+Thus a q-forming vote included in `H` is late. A valid q=3 was already applied
+inside its pre-deadline transaction, so closing the response window cannot
+erase it or create a second-transaction race.
 
 After verification, the same transaction switches the target generation/root,
 logically retires the sealed
 Tribute WWD by removing its catalog pointer, applies the frozen Desis/Promis
-consequences, marks Metadosis `COMPLETED` and emits one aggregate activation
+consequences, marks Metadosis `COMPLETED` and emits one aggregate apply
 event. It does not emit a billion receipts, run a billion EVM calls or physically
 delete a billion-record tree in the block transition.
 
@@ -955,7 +1036,7 @@ deletion. This requires replacing today's `delete_collection_records`, which
 collects and deletes every prefixed MDBX key in the finalized apply path
 ([persistence.rs](crates/core/compressed-entities/src/persistence.rs#L1873)).
 
-If a live activation precondition conflicts, certified domain effects do not
+If a live apply precondition conflicts, certified domain effects do not
 apply. Instead, the
 transaction commits a **typed domain outcome**, not an error that would roll the
 state back. `ConflictResolved` atomically marks that job `CONFLICTED`, increments
@@ -963,7 +1044,7 @@ the pending nonce and returns the day to `READY` with the same Lysis budget;
 only the later terminal phase can create a new intent/snapshot. The old evidence
 can never be relabelled as a retry. Unrelated chain execution continues.
 
-Activation is one metered executor checkpoint. Evidence verification happens
+Quorum apply is one metered executor checkpoint. Evidence verification happens
 before writes; the generation switch, logical retirement, frozen scalar effects,
 FSM state and aggregate event commit together or all roll back. Invalid evidence
 is a transaction rejection with no state change, a stale compare-and-swap is the
@@ -1467,25 +1548,20 @@ canonical `ResultDigest` with a separately registered OCOMP key.
 ResultChunkHash =
   H("OUTBE_OCOMP_RESULT_CHUNK_V1", canonical(ResultChunkV1))
 
-ActivationPayloadV1 {
+ResultDigest = H("OUTBE_OCOMP_RESULT_V1", canonical(LysisResultV1))
+
+ResultVoteV1 {
   protocol_bundle_hash, JobId, attempt,
-  result_chunk_count, result_chunk_list_root,
-  nod_root, bucket_root, contributor_root, output_manifest_root,
-  exact_input_and_output_counts,
-  conservation_totals, arithmetic_commitment, event_summary_hash
-}
-
-ResultDigest = H("OUTBE_OCOMP_RESULT_V1", canonical(ActivationPayloadV1))
-
-ExecutionCertificateV1 {
-  result_committee_snapshot_hash, signer_bitmap,
-  aggregate_or_ordered_signatures, ResultDigest
+  result_committee_snapshot_hash,
+  validator_index, key_epoch,
+  result: LysisResultV1,
+  signature_over_ResultDigest
 }
 ```
 
-LYSIS_V1 has no pre-activation semantic-event record population. Its signed
+LYSIS_V1 has no pre-apply semantic-event record population. Its signed
 `semantic_event_count` is zero and `event_summary_hash` is the canonical empty
-list-kind `SemanticEventRecords` root. This is not the post-activation receipt
+list-kind `SemanticEventRecords` root. This is not the post-apply receipt
 summary: `APPLIED` hashes four validated owner state-event digests in fixed
 order, while `CONFLICT_RESOLVED` hashes an empty payload under the
 apply-event-summary domain. The two commitments are never compared, and every
@@ -1496,10 +1572,10 @@ plane invokes the typed finalizer, which traverses every bounded
 `ResultChunkV1`, verifies gap-free complete coverage and recomputes the catalog
 root, output roots, counts and totals, then derives the frozen empty pre-result
 event root before requesting the node's signature. The node itself does not
-perform this bulk traversal. The
-activation transaction carries only the constant-size `LysisResultV1`
-commitment. This is the only valid `ResultDigest` preimage; no alternate tuple
-encoding is permitted. Thus a quorum signature cannot be detached from the
+perform this bulk traversal. Every validator's vote transaction carries the
+constant-size canonical `LysisResultV1`. This is the only valid `ResultDigest`
+preimage; no alternate tuple
+encoding is permitted. Thus a quorum vote cannot be detached from the
 exact chunk catalog it authorizes. The PoC fixes small per-interface envelopes
 in section 1.5 but does not cap total Tribute. For `TargetLarge`, the proof's
 public output is the same `ResultDigest` and root-authoritative payload.
@@ -1513,16 +1589,26 @@ f = floor((n - 1) / 3)
 q = floor(2n / 3) + 1 = n - f
 ```
 
-`q` distinct result signatures certify the output under the assumption that at
-most `f` validator administrative domains are Byzantine. One validator using
-1,000 workers still contributes one signature. Shared cloud accounts, shared
+`q` distinct eligible on-chain first-vote slots certify the output under the
+assumption that at most `f` validator administrative domains are Byzantine.
+One validator using 1,000 workers still contributes one vote. Shared cloud accounts, shared
 worker clusters or the same buggy binary reduce real independence and are an
-explicit operational/common-mode risk. Historical evidence is always checked
-against `C_job` and its archived OCOMP public keys, never today's committee,
-plus the key-status history at the activation height. A later compromise record
-does not rewrite a block finalized earlier; at or after its effective height the
-affected snapshot cannot authorize a new activation as specified in section
+explicit operational/common-mode risk. Historical eligibility is checked
+against `C_job` and its archived OCOMP public keys when each vote transaction
+executes, never today's committee. The q-forming path consumes the just-derived
+immutable quorum rather than re-verifying an off-chain signer subset. A later
+compromise record does not rewrite a block finalized earlier; at or after its
+effective height the affected snapshot cannot authorize a new result submission
+as specified in section
 14.6.
+
+The four slots also establish accountability. Consensus records the first valid
+digest/signature and its inclusion height per validator. Exact retry is
+idempotent; a conflicting second signed digest records equivocation without
+replacing the first tally vote. At the exclusive response deadline, the chain
+closes matching, divergent, missing and equivocating bitmaps. The PoC creates
+this evidence but does not apply monetary penalties. A separate slashing ADR
+must define penalty policy and may consume only canonical on-chain evidence.
 
 ### 8.3 Large profile: proof-carrying execution
 
@@ -1535,17 +1621,17 @@ JobId
 protocol bundle, program semantics and verifier key
 all input roots and exact counts
 the gap-free UnitId/reduction tree
-the exact ActivationPayloadV1 / ResultDigest
+the exact LysisResultV1 / ResultDigest
 DA encoding commitment
 ```
 
-Every validator verifies the final proof during the activation transaction and
+Every validator verifies the final proof during its full-result vote transaction and
 during block replay. A supervisor may preverify it, but consensus does not trust
 that precheck.
 
 The capped proof bytes, public inputs, verifier/program identifiers,
-`ActivationPayloadV1`, and result/availability certificates form
-`EvidenceRecordV1` in the activation transaction; a CAS-only reference is not
+`LysisResultV1`, and result/availability certificates form
+`EvidenceRecordV1` in the full-result vote transaction; a CAS-only reference is not
 enough. The terminal consensus record keeps its hash and exact identifiers.
 Ordinary block-data availability retains the full record through the declared
 replay horizon. Before block-body pruning, an authenticated evidence archive or
@@ -1623,7 +1709,7 @@ independent custody rounds, retention and handover.
 The canonical candidate mapping is part of the fork:
 
 ```text
-ResultCandidate(JobId, ActivationPayloadV1, verified evidence)
+ResultCandidate(JobId, LysisResultV1, verified evidence)
   -> subject = Result(JobId, attempt)
   -> purpose = ResultSignature
   -> digest  = ResultDigest
@@ -1784,7 +1870,8 @@ exact identity-to-index mapping, and a valid opening/signature for every assigne
 fragment. Signer-specific indexes and fragment digests are expected to differ.
 The initial round uses a zero parent; every renewal/handover increments the round
 and names the finalized parent certificate. For `JobOutput`, the same encoding
-commitment also equals `ActivationPayloadV1.da_encoding_commitment_or_none`.
+commitment also equals the versioned result's
+`da_encoding_commitment_or_none`.
 
 A source custody record uses the `Source` subject and cannot be manufactured for
 the first time after Metadosis requests the job. Its stable pre-job identity is
@@ -2076,7 +2163,7 @@ or accumulating unbudgeted custody obligations.
 
 ```text
 READY
-  -> OFFCHAIN_PENDING(IntentId)
+  -> OFFCHAIN_PENDING(IntentId)          Metadosis day state
 
 after request-block finality:
   DISCOVERED(JobId)
@@ -2085,11 +2172,15 @@ after request-block finality:
   -> LOCALLY_VERIFIED
 
 consensus state:
-  OFFCHAIN_PENDING
-    -> COMPLETED             one activation transaction verifies all evidence and applies
-    -> EXPIRED               deadline and exact nonce/attempt
-    -> CONFLICTED            committed activation compare-and-swap outcome
-    -> CANCELED              governed profile pause before activation
+  AWAITING_FINALITY
+    -> VOTING_OPEN             exactly finality_recorded_height + 4
+
+  VOTING_OPEN
+    -> COMPLETED             third matching full-result vote atomically applies
+    -> EXPIRED               response deadline without quorum
+    -> CONFLICTED            committed q-forming compare-and-swap outcome
+    -> CANCELED              governed profile pause before quorum apply
+    -> CANCELED
 
   terminal job: COMPLETED | EXPIRED | CONFLICTED | CANCELED
                                                    archived forever
@@ -2097,31 +2188,37 @@ consensus state:
     -> READY(next_pending_nonce)                  on EXPIRED/CONFLICTED/CANCELED
 ```
 
-The deterministic system executor owns expiry/reset; liveness does not depend on
-a supervisor or relayer. The request checkpoint inserts jobs into the consensus
-expiry index by `(deadline_height, IntentId)`, because `IntentId` is known in the
-request block and `JobId` depends on that block's later finality. At each
+The deterministic system executor owns response-window close/expiry; liveness
+does not depend on a supervisor or relay. The request checkpoint stores
+`AWAITING_FINALITY`; four blocks after consensus records request finality, the
+begin-zone installs `VOTING_OPEN` and the response-deadline index by
+`(deadline_height, JobId)`. At each
 begin-zone the executor processes the canonical due prefix under
 `MAX_OCOMP_EXPIRATIONS_PER_BLOCK`, which is provisioned at least as large as
 `MAX_PENDING_JOBS`, so due jobs cannot build an unbounded backlog.
-Expiry resolves the record by `IntentId`, removes that exact expiry entry,
-archives the old intent as `EXPIRED`, releases any program-specific capacity
-claim, increments the day nonce and inserts the day into the READY due-index.
-Lysis preserves its frozen budget and request split for retry. It works even
-when no supervisor ever ran. Successful
-activation derives and records `JobId` and removes the same expiry entry; a
+At the deadline the executor closes the four-slot accountability summary. If no
+quorum exists, it archives the intent as `EXPIRED`, releases any
+program-specific capacity claim, increments the day nonce and inserts the day
+into the READY due-index. Lysis preserves its frozen budget and request split
+for retry. It works even when no supervisor ever ran.
+
+If quorum was recorded before the deadline, its q-forming transaction already
+recorded immutable `LysisTerminalV1` and terminal effects. The executor leaves
+the separate bounded `OcompVoteAccountabilityV1` and response-
+deadline entry open until the fourth slot closes. Its later writes cannot
+change terminal receipt, active generation or exact-retry identity; a
 compare-and-swap conflict does so while performing the analogous `CONFLICTED`
-transition inside the activation checkpoint. Each path has a metered system
+transition inside the q-forming checkpoint. Each path has a metered system
 receipt; partial removal/release/requeue is impossible, and invariant/storage
 failure invalidates the candidate block rather than silently skipping cleanup.
 The local pin FSM observes finality of that terminal transition and then releases
 only after its export/retention gates; consensus does not directly mutate a
 node-local pin journal.
 
-There is deliberately no persistent `RESULT_ACCEPTED` or `DATA_AVAILABLE`
-substate. The relayer waits until the complete profile evidence exists and then
-submits it once with activation. This removes a cross-block payload handoff,
-pending-result storage and one crash/replay boundary.
+Four accountability slots store only constant-size
+digest/signature/height/evidence identity. The q-forming submission stores one
+canonical `LysisResultV1` in terminal state. There is no persistent
+`QUORUM_READY`, result-chunk handoff or `DATA_AVAILABLE` state.
 
 `RUNNING` and `LOCALLY_VERIFIED` are local supervisor states, not consensus
 truth. A local journal can always be reconstructed from finalized chain state
@@ -2139,16 +2236,22 @@ global scan:
 WWD is OFFCHAIN_PENDING
   <=> exactly one live IntentId for its current pending_nonce
 
-live intent
-  <=> exactly one expiry entry
-  <=> exactly one immutable activation-precondition/capacity set
+live attempt
+  <=> exactly one immutable apply-precondition/capacity set
 
-terminal intent
-  <=> no expiry entry
-  <=> no temporary program capacity claim
+AWAITING_FINALITY
+  <=> no response-deadline entry
+
+open response window
+  <=> exactly one response-deadline entry
+  <=> no closed accountability summary
+
+closed response window
+  <=> no response-deadline entry
+  <=> exactly one accountability summary
 
 COMPLETED
-  <=> exactly one activation receipt and active result identity
+  <=> exactly one quorum/result, apply receipt and active result identity
 
 READY
   <=> exactly one due-index entry and no live intent for the current nonce
@@ -2162,10 +2265,14 @@ directly.
 
 There are two admission layers.
 
-Protocol admission uses authenticated counts and fork-pinned maxima. If a field
-needed for a safe upper bound is unknown, stale or above the active profile, the
-request does not fall back to synchronous Lysis. The WWD remains deferred and
-the chain continues.
+Protocol admission uses authenticated counts for completeness and checked
+arithmetic, but never compares the total Tribute, owner, Nod or contributor
+population with a profile ceiling. Fork-pinned maxima apply only to one bounded
+interface operation: body, page, opening batch, work shard, result chunk,
+transaction or per-block lifecycle batch. A population larger than one
+operation is deterministically partitioned into more operations under the same
+`JobId`. If an individual bounded object is malformed, stale or above its
+per-interface limit, the request does not fall back to synchronous Lysis.
 
 After the deterministic protocol reservation/pin, local admission checks actual
 free disk, memory, CPU, I/O, ingress, proof slots, artifact retention and current
@@ -2173,12 +2280,15 @@ jobs before expanding the snapshot export or scheduling workers. A validator
 that cannot meet its declared profile abstains and alerts; it still honors the
 already-bounded protocol pin until the release gate.
 
-Required bounds include at least:
+Required bounded dimensions include at least:
 
-- Tribute/body counts and decoded bytes;
-- unique owners and total/per-owner Fidelity cohort visits;
-- currencies and Oracle openings;
-- Nod items, buckets, contributors and output bytes;
+- total counts/roots/nominals as completeness commitments, never admission
+  maxima;
+- decoded bytes per Tribute body, page, chunk and work shard;
+- owners per Fidelity opening batch and visits per bounded cohort operation;
+- currencies and Oracle openings per bounded request/batch;
+- Nod items, buckets and contributors per result chunk/page, plus output bytes
+  per artifact;
 - external-sort spill, file count and merge fan-in;
 - proof trace, prover RAM/disk/time and verifier limits;
 - DA encoding, ingress/egress, custody and repair;
@@ -2240,7 +2350,7 @@ DA fragments, custody challenges, disk watermarks and signer refusals.
 | Component | May read | May write | May sign | If compromised |
 |---|---|---|---|---|
 | node | canonical chain and fixed OCOMP digests | chain/node state | consensus key; separate OCOMP key | one Byzantine validator |
-| snapshot exporter | one immutable checkpoint | source CAS/export journal | never | may omit/corrupt output; root rebuild/custody gate rejects it |
+| snapshot exporter | one immutable checkpoint per Job, with independently addressed concurrent handoffs | source CAS/export journal | never | may omit/corrupt output; root rebuild/custody gate rejects it |
 | supervisor | finalized job specs, source/artifact bytes | own journal/artifacts | never | bounded profile loses one validator's correctness; target invalid proofs still reject |
 | launch broker | admitted plan/lease records | fixed worker lifecycle only | never | can deny work or fill only the aggregate OCOMP quota |
 | worker/prover | job-scoped immutable inputs | private scratch/CAS object | never | bad artifact/proof is rejected; may waste bounded resources |
@@ -2265,7 +2375,7 @@ mutate domain state. Those remain program-owned.
 |---|---|
 | architecture seam | kernel owns lifecycle/process/evidence mechanics; the program owns semantics and effects |
 | PoC source seam | concrete internal kernel modules call the concrete Lysis V1 protocol |
-| PoC wire seam | all V1 intent/unit/result/activation objects remain Lysis-specific |
+| PoC wire seam | all V1 intent/unit/full-result-vote/apply objects remain Lysis-specific |
 | future wire seam | a new fork may introduce new typed object kinds and, if two real programs justify it, a closed registry/envelope |
 
 A second entry is not considered a program merely because it has another tag or
@@ -2275,9 +2385,9 @@ adapter. It qualifies only when it has all of:
 2. authenticated complete input enumeration and canonical ordering;
 3. its own admission bounds, preconditions/capacity claims and conflict rules;
 4. deterministic execution plus domain-specific result verification;
-5. a private typed activation capability and owner-controlled effect APIs;
+5. a private typed apply capability and owner-controlled effect APIs;
 6. conservation/witness/receipt rules and a complete
-   finality-to-activation/expiry/replay path;
+   finality-to-quorum-apply/expiry/replay path;
 7. cross-program contention tests against Lysis.
 
 Gem qualification is the preferred destructive design test because its
@@ -2292,14 +2402,14 @@ compared and their proven intersection extracted into `ProgramId`,
 fork-registered typed object kinds and its own signature domain; it never
 reinterprets Lysis V1 bytes. No public generic `TaskAdapter`, opaque task bytes,
 runtime-loaded handler, arbitrary action stream, storage-key write set or generic
-activation capability is allowed.
+apply capability is allowed.
 
 ## 14. Profiles and rollout
 
 | Profile | Computation | Input completeness | Apply/availability | Status |
 |---|---|---|---|---|
-| `PoC` | `q=3/4` independent full executions of one multi-shard fixture; arbitrary `N` is count/root-addressed | full CE fold of one pinned checkpoint | constant-size result commitment + atomic root activation; three-domain chunk retention | selected devnet fork; not implemented |
-| `BoundedMVP` | same q mechanism with measured per-interface and concurrency caps | CE fold + production local resource admission | same result/root contract + production retention/restore | disabled until hardening gates pass |
+| `PoC` | `q=3/4` independent full executions with four on-chain full-result vote slots; arbitrary `N` is count/root-addressed | full CE fold of each Job's pinned checkpoint; bounded concurrent Job/lease registry | q-forming constant-size result + atomic root apply; bounded accountability | implemented on feature branch; exact closure pending |
+| `BoundedMVP` | same on-chain q/accountability mechanism with measured per-interface and concurrency caps | CE fold + production local resource admission | same result/root contract + production retention/restore | disabled until hardening gates pass |
 | `TargetLarge` | recursive proof; validators verify | counted ranges + source snapshot certificate | proof/DA + witness/delta state + claims | disabled |
 | `1B` | TargetLarge exact declared shape | same | same plus O(1) activate/retire and cold recovery/repair | unclaimed |
 
@@ -2317,14 +2427,14 @@ finalized JobIntent
 -> deterministic off-chain execute_lysis
 -> deterministic typed result finalization
 -> q independent validator-domain signatures
--> one typed activateLysis transaction
+-> q full-result validator transactions; the third matching one applies
 -> private CertifiedLysisActivation capability
 -> atomic Nod/contributor/Tribute/Desis/Promis/Metadosis effects
 ```
 
 MVP replaces local-file keys, one-job scheduling, simple process templates and
 demo retention with production implementations. It does not replace the intent,
-signed result meaning, activation authority or domain-effect contract. A change
+signed result meaning, quorum-apply authority or domain-effect contract. A change
 to any of those is a new protocol bundle, not “MVP hardening”.
 
 ### 14.2 One immutable protocol bundle
@@ -2406,7 +2516,7 @@ The release-authority fields are copies of the independently governed
 the bundle is registered, scheduled, armed and activated; a gate cannot choose
 its own catalog, approval threshold or validator program.
 
-`JobIntentV1`, `ActivationPayloadV1`, every certificate, snapshot, delta and
+`JobIntentV1`, `LysisResultV1`, `ResultVoteV1`, every certificate, snapshot, delta and
 custody statement pins `ProtocolBundleHash`. Redundant version/profile fields
 must equal that registry entry byte for byte. Correctness and capacity profiles
 are immutable versioned consensus records, not strings negotiated by a
@@ -2436,8 +2546,8 @@ empty pre-result semantic-event commitment and binds completion fields to the
 finalized intent before asking its node to attest. The node's closed
 attestation gate verifies
 only the constant-size result/job binding and sign-once subject; it never scans
-bulk chunks. The activation verifier reconstructs the committed
-`ActivationPayloadV1` and verifies its certified old-root-to-new-root
+bulk chunks. The q-forming verifier reconstructs the committed
+`LysisResultV1` and verifies its certified old-root-to-new-root
 transition. No other tuple under the same domain is valid. Golden vectors cover
 decode -> finality/certificate verification -> every typed effect transition
 -> terminal state root and events; computation-only equality is insufficient.
@@ -2470,9 +2580,10 @@ ACTIVE_DUAL and later -> FORWARD_FIX_PENDING    never downgrade
 PoC starts from a reproducible fresh base genesis. After its exact hash exists,
 the generator creates the bundle, committee/PoPs and canonical
 `OcompForkInstallV1` chain binding before node startup. At `H`, the existing
-empty-body `OcompLifecycleBegin` atomically installs the complete authority;
-the protocol-version-1 Update handler initializes owner pre-admission profiles
-through `CycleTick` at the same height.
+protocol-version-1 Update handler first initializes owner pre-admission
+profiles in deterministic pre-execution hooks. The existing empty-body
+`OcompLifecycleBegin` then atomically installs the complete authority before
+expiry, followed by `CycleTick`.
 BoundedMVP on a network with existing state uses two governed stages:
 
 1. a dormant preparation version adds versioned OCOMP records/indexes and runs
@@ -3181,8 +3292,8 @@ statements bind this exact gate and authority hash. Missing tools/schemas are a
 |---|---|
 | normative | accepted `ADR-S-OCM-001` through `ADR-S-OCM-004`, every accepted content-digest-pinned ADR owner in the exact ownership map below, and accepted OCOMP revisions of PFS-002, PFS-005 and PFS-009 |
 | semantics | native/reference byte equality, frozen codecs/hashes and pre-fork golden conservation |
-| authority | closed certified activation capability; no raw bypass; typed receipts from every effect owner |
-| Byzantine | `q-1/q`, duplicate/stale/wrong-epoch/conflicting certificate and deterministic network simulation |
+| authority | closed certified apply capability; no raw bypass; typed receipts from every effect owner |
+| Byzantine | `q-1/q`, duplicate/stale/wrong-epoch/late/conflicting result votes, fourth-slot accountability and deterministic network simulation |
 | keys | purpose-bound PoP registry, HSM/remote signer, fsync-before-sign, rotation/revocation/restore drills |
 | capacity | exact maximum encoded block bill and cold benchmark on named minimum hardware with numeric finality headroom |
 | isolation | deployed sibling services, aggregate cgroup/namespace/disk quotas; OOM/disk/IPC storms preserve numeric block SLO |
@@ -3195,7 +3306,7 @@ statements bind this exact gate and authority hash. Missing tools/schemas are a
 The profile remains `DISABLED` if any cell fails, refers to a different commit/
 artifact/network manifest or has no numeric threshold. Passing the PoC does not
 waive an MVP gate. `ADR-S-OCM-001` through `ADR-S-OCM-004` are the proposed
-kernel, input, evidence and activation owners. They exist but are not accepted
+kernel, input, evidence and quorum-apply owners. They exist but are not accepted
 or implemented, so this design remains non-normative. The listed existing
 ADR/PFS files retain ownership of their module/flow invariants and must be
 amended and accepted, not merely linked from this proposal.
@@ -3207,7 +3318,7 @@ The ownership map is exact:
 | OCOMP kernel/process/program boundary | `ADR-S-OCM-001`, `ADR-B-NOD-001`, `ADR-B-OPS-001`, `ADR-B-SUP-001` |
 | authenticated job input/export/CAS authority | `ADR-S-OCM-002`, `ADR-B-OCD-004` through `ADR-B-OCD-015` |
 | deterministic execution/result evidence/sign-once | `ADR-S-OCM-003`, `ADR-S-KEY-001`, `ADR-S-VAL-001`, `ADR-B-CRY-001` |
-| request/job/FSM/activation/version authority | `ADR-S-OCM-004`, `ADR-S-GOV-002`, `ADR-S-GOV-003`, PFS-005 |
+| request/job/FSM/quorum-apply/version authority | `ADR-S-OCM-004`, `ADR-S-GOV-002`, `ADR-S-GOV-003`, PFS-005 |
 | Lysis result semantics and Metadosis lifecycle | `ADR-C-LYS-001`, `ADR-C-MET-001`, PFS-002, PFS-009 |
 | authenticated Tribute/Fidelity/Oracle/Gratis inputs, `H_max` and emission scalars | `ADR-C-TRB-001`, `ADR-C-FID-001`, `ADR-C-GRT-001`, `ADR-S-ORC-001`, `ADR-S-EMI-001` |
 | CE commitment/catalog/proof, snapshot/export, `RETIRED_RETAINED`/GC and recovery | `ADR-B-OCD-001`, `ADR-B-OCD-002`, `ADR-B-OCD-006`, `ADR-B-OCD-007`, `ADR-B-OCD-009`, `ADR-B-OCD-010`, `ADR-B-OCD-011`, `ADR-B-OCD-012`, `ADR-B-OCD-013`, `ADR-B-OCD-014`, `ADR-B-OCD-015` |
@@ -3217,7 +3328,7 @@ The ownership map is exact:
 | `CarryOverReceiptV1` and next-unformed-day consumption | `ADR-C-PRM-003`, `ADR-C-MET-001` |
 | Commonware finality proof and historical consensus/OCOMP committee authority | `ADR-B-CNS-001`, `ADR-B-CNS-002`, `ADR-B-CNS-003`, `ADR-B-CRY-001`, `ADR-S-VAL-001` |
 | genesis/fork authority, upgrade envelope and handler activation | `ADR-B-GEN-001`, `ADR-B-DEP-001`, `ADR-B-EVM-001`, `ADR-B-EVM-003`, `ADR-B-EVM-005`, `ADR-S-GOV-003` |
-| activation wire/RPC/txpool/gossip and capacity | `ADR-B-WIR-001`, `ADR-B-RPC-001`, `ADR-B-TXP-001`, `ADR-B-CAP-001` |
+| full-result vote wire/RPC/txpool/gossip and capacity | `ADR-B-WIR-001`, `ADR-B-RPC-001`, `ADR-B-TXP-001`, `ADR-B-CAP-001` |
 | sibling-process lifecycle, stores, deployment and recovery operations | `ADR-B-NOD-001`, `ADR-B-OPS-001`, `ADR-B-SUP-001`, `ADR-B-OCD-014`, `ADR-B-OCD-015` |
 | verification, reproducible artifacts and release evidence | `ADR-B-TST-001`, `ADR-B-RLS-001` |
 | result keys, rotation and compromise revocation | `ADR-S-KEY-001` |
@@ -3237,8 +3348,9 @@ Rollout order:
 1. split current Lysis into pure `execute_lysis`, closed typed result
    finalization and the typed `apply_certified_lysis` module; add the PoC
    consensus state/codec under an explicit devnet fork;
-2. run four node/supervisor/exporter/worker deployments plus an untrusted relayer
-   and pass the complete section 1.6 acceptance story;
+2. run four node/supervisor/exporter/worker deployments with direct public
+   full-result voting and q-forming apply, then pass the complete section
+   1.6 acceptance story;
 3. run native/reference differential Lysis and deterministic 1/2/4-worker tests;
    completion of these first three steps is the PoC milestone;
 4. accept `ADR-S-OCM-001` through `ADR-S-OCM-004`, accept every exact ADR/PFS
@@ -3298,7 +3410,8 @@ the following additional MVP/Target stories pass end-to-end:
    kill the snapshot exporter on every page, corrupt its checkpoint/CAS and
    require exact root rebuild before pin release;
 9. reorg before finality and attempt replay/equivocation after finality;
-10. inject Byzantine result signatures, proof, DA fragment and custody receipt;
+10. inject Byzantine result votes/equivocation evidence, proof, DA fragment and
+    custody receipt;
 11. retain/replay evidence across block-body pruning and bootstrap from every
     supported finalized checkpoint;
 12. activate, mutate, claim and delete; lose every local cache and up to `f`
@@ -3329,19 +3442,22 @@ the following additional MVP/Target stories pass end-to-end:
     reference and proof guest wrapping/saturating operations;
 17. prove that no ordinary or system transaction can write after the terminal
     request-snapshot phase in the same block; inject failure after every request
-    and activation write and observe either the whole transition or none.
+    and q-forming apply write and observe either the whole transition or none.
 18. place permanently ineligible READY days before eligible days and prove the
     bounded due-index makes progress; expire/conflict all `MAX_PENDING_JOBS` at
     once and cancel all of them before/after export; verify atomic
-    pin release, preserved Lysis budget and nonce requeue; submit
-    activation at `H-1`, `H` and `H+1` and verify the exclusive-deadline rule;
-    create an intent with no supervisor/activation, expire it through its
-    `(deadline_height, IntentId)` entry, and verify finality-gated pin release;
+    pin release, preserved Lysis budget and nonce requeue; prove no vote/signature
+    is accepted before `finality_recorded_height+4`; submit votes at deadline
+    `H-1`, `H` and `H+1`, prove only the first is timely, prove
+    no-quorum expiry, and prove a q-forming vote at `H-1` atomically completed;
+    create an intent with no supervisor, open it through finality+4,
+    expire it through its `(deadline_height, JobId)` entry, and verify
+    finality-gated pin release;
 19. expire a live custody certificate, reject mutations while `UNAVAILABLE`,
     repair from snapshot+deltas and reactivate only the exact prior root;
 20. freeze bytes/hashes for `ProtocolBundleV1`, profiles, intent, finality proof,
     `UnitSpecV1`/`UnitId`, `SourceSubjectSpecV1`/`SourceSubjectId`, action stream,
-    activation payload and certificate;
+    full result, result vote, quorum and accountability summary;
     reject every unknown phase/interval, duplicate, non-minimal, trailing and
     over-limit form, and assert that every named domain has exactly one preimage
     definition;
@@ -3411,12 +3527,13 @@ the following additional MVP/Target stories pass end-to-end:
 35. build readiness from different conforming implementation artifact hashes:
     canonical per-validator statements pass, aggregate-as-one-message or a
     non-permitted artifact fails;
-36. compromise one OCOMP key before/after certificate formation and before/after
-    activation. At the effective height require the barrier to beat activation,
+36. compromise one OCOMP key before/after its first result-vote signing,
+    before/after quorum formation and before/after quorum apply. At the effective
+    height require the barrier to beat a q-forming submission,
     cancel every affected live job without lowering `q`, retain validity only
-    for activations finalized earlier, and resume new attempts only with the safe
+    for result applications finalized earlier, and resume new attempts only with the safe
     successor snapshot;
-37. collide PAUSE with activation, expiry and upgrade at the same height; pause
+37. collide PAUSE with q-forming result application, expiry and upgrade at the same height; pause
     must win in the documented phase order. Crash every `PAUSING` cursor write,
     submit cap+1 cancellation work and attempt early resume; require exact
     `CANCELED` receipts/root and restart-idempotent completion;
@@ -3457,24 +3574,28 @@ latency result. "Completed once" is not a scale claim.
 | Question | Answer |
 |---|---|
 | Who reads the Metadosis event? | The separate supervisor, through a finalized cursor exposed by the node. The event only wakes it; the on-chain job record is authority. |
-| Who reads the huge historical state? | The separate read-only snapshot exporter scans one immutable checkpoint into CAS. The node creates only the O(1) checkpoint handoff and never streams bulk bytes through its control API. |
+| Who reads the huge historical state? | The separate read-only snapshot exporter scans each Job's immutable checkpoint into CAS. The node creates independently addressed O(1) checkpoint handoffs and never streams bulk bytes through its control API. |
 | Does the supervisor live in the node? | No. It is a sibling service/process with a separate UID, cgroup, journal and disk quota. |
 | Who starts it? | systemd/Kubernetes starts it alongside the node. The node never spawns it and does not depend on its lifetime. |
 | What fixes the input? | The finalized request block/state root, CE sealed root, immutable job spec and snapshot/body retention lease. Live files are not globally locked. |
 | Where does the Tribute root come from? | Normal CE end-block sealing: shard roots -> WWD collection -> catalog -> sealed CE root -> EVM/block state root. |
 | Who divides the work? | The deterministic planner in every supervisor. The scheduler only assigns fixed `UnitId`s. |
 | Who computes? | PoC/BoundedMVP: every result-signing validator's separate workers. TargetLarge: permissionless prover workers. |
-| Who checks correctness? | PoC/BoundedMVP: each signing validator independently executes, then every node verifies the `q` certificate and typed result binding. TargetLarge: every node verifies the pinned recursive proof. |
+| Who submits the result? | Each validator-domain Supervisor requests node-owned OCOMP/EVM signatures, submits the ResultVote transaction, tracks inclusion/finality and rebroadcasts after reorg. It holds no validator key and there is no relay. |
+| Who pays for the result vote? | The validator does not. An exact-selector validator-only ZeroFee hook, modelled on Oracle, waives native fee debit; OCOMP—not ZeroFee—validates finality, window, job, signature and slot rules. |
+| When does voting open? | Exactly four blocks after consensus records finality of the JobIntent block: `open_height = finality_recorded_height + 4`. Before that the attestation gate cannot sign and OCOMP rejects votes. |
+| Who checks correctness? | PoC/BoundedMVP: each validator independently executes and submits one signed canonical `LysisResultV1`; consensus derives its digest, and the third matching full-result vote verifies and atomically applies it. TargetLarge: every node verifies the pinned recursive proof. |
 | Is OCOMP only for Lysis? | No. OCOMP defines the reusable operational kernel; Lysis V1 is its first closed typed protocol. The PoC intentionally does not pretend that one program proves generic wire abstractions. A registry/common envelopes are considered only after a second real end-to-end program, likely tested first with Gem qualification. |
-| Does the PoC execute Lysis on-chain? | No. Metadosis creates `JobIntent`; validators execute Lysis off-chain. Consensus verifies the certificate/result commitment and atomically installs the typed root transition. There is no synchronous fallback and no loop over all outputs. |
-| What does the PoC prove? | The real Tribute -> Metadosis -> JobIntent -> q execution -> evidence -> activation -> Nod chain on four validators. It proves arbitrary `N` is partitioned into bounded work without a total protocol cap, but exercises full bodies only on a small multi-shard fixture and makes no billion-record throughput or production-operations claim. |
-| Where do result bytes live? | Bounded `ResultChunkV1` objects live in authenticated artifact storage retained by signing domains; the single `activateLysis` transaction carries their count/root in `LysisResultV1`. Consensus state retains the active roots and terminal receipt. |
-| Does PoC become MVP by changing the architecture? | No. BoundedMVP keeps the same intent, q certificate, one activation transaction and typed apply seam; it replaces demo keys, scheduling, isolation, recovery and operations with production implementations and measured caps. |
+| Does the PoC execute Lysis on-chain? | No. Metadosis creates `JobIntent`; validators execute Lysis off-chain. Consensus verifies each constant-size result submission and the q-forming transaction atomically installs the typed root transition. There is no synchronous fallback and no loop over all outputs. |
+| What does the PoC prove? | The real Tribute -> Metadosis -> JobIntent -> q execution -> full-result votes -> quorum apply -> Nod chain on four validators. It proves arbitrary `N` is partitioned into bounded work without a total protocol cap, but exercises full bodies only on a small multi-shard fixture and makes no billion-record throughput or production-operations claim. |
+| Where do result bytes live? | Bounded `ResultChunkV1` objects live in authenticated artifact storage retained by signing domains. Every vote carries the same constant-size `LysisResultV1` count/root summary; consensus stores it once at q=3 and keeps four compact accountability slots separately. |
+| Does PoC become MVP by changing the architecture? | No. BoundedMVP keeps the same intent, four on-chain full-result vote slots, q=3 atomic apply and typed owner seam; it replaces demo keys, scheduling, isolation, recovery and operations with production implementations and measured caps. |
+| How is validator non-response proved? | Only by absence of that validator's canonical vote at response-window close. Relay logs, supervisor journals and mempool observations are not authority. The PoC records candidates for slashing but does not define or apply a monetary penalty. |
 | What happens to a job during an upgrade? | It finishes or expires under the exact bundle, committee and key epoch pinned when it was created. It is never converted. New request blocks use the newly active bundle. |
 | What prevents a half-ready upgrade at `H`? | At the cutoff consensus evaluates separate weighted-consensus and result-committee readiness predicates over pinned snapshots. Without both, it automatically unschedules the plan; no governance transaction is needed. |
 | What if an activation handler fails at `H`? | Its nested writes roll back, the old dispatcher records `ACTIVATION_FAILED`, removes the schedule and keeps the old bundle active. A new migration ID/plan is required. |
-| What if an OCOMP key is compromised? | At the governed effective begin-zone the affected snapshot is invalid for new activation, its live jobs are canceled/requeued without lowering `q`, and new attempts wait for a safe successor. Earlier finalized activation remains historically valid. |
-| What if pause, expiry and activation meet in one block? | The begin-zone pause barrier wins; affected jobs become `CANCELED`, then ordinary activation rejects. The bounded cleanup cursor is restart-idempotent. |
+| What if an OCOMP key is compromised? | At the governed effective begin-zone the affected snapshot is invalid for new result submissions, its live jobs are canceled/requeued without lowering `q`, and new attempts wait for a safe successor. Earlier finalized result application remains historically valid. |
+| What if pause, expiry and a q-forming vote meet in one block? | The begin-zone pause barrier wins; affected jobs become `CANCELED`, then the ordinary result submission rejects. The bounded cleanup cursor is restart-idempotent. |
 | Can the network roll back after MVP activation? | It may cancel before the activation height. After a block under the new bundle finalizes, downgrade is forbidden; repair is a higher governed forward-fix. |
 | When is MVP actually complete? | Only when `validate-ocomp-release` authenticates the network/fork `ReleaseGateAuthorityEnvelopeV1`, accepts its exact unexpired `BoundedMVPReleaseGateEnvelopeV1` and every mandatory ledger requirement is `PASS`; this includes numeric capacity, SLO, RPO/RTO, mixed-version, key, recovery and incident evidence. |
 | What does a signature prove? | Result signature: that one validator domain performed the bounded verification. DA/custody signature: that its exact fragment is durable. Neither means the other. |
@@ -3506,9 +3627,10 @@ These are engineering precedents, not proofs that Outbe is correct.
 
 ## 18. Current-code facts and implementation gaps
 
-- no production `JobIntent`, OCOMP state/codec, `FinalizedIntentProofV1`,
-  `OcompControl`, attestation gate, supervisor/exporter/worker/broker,
-  certificate verifier or certified activation module exists. This document is
+- no production `JobIntent`, complete OCOMP vote/quorum/accountability
+  state/codec, `FinalizedIntentProofV1`, `OcompControl`, attestation gate,
+  supervisor/exporter/worker/broker or certified quorum-apply module exists in
+  the baseline from which this design started. This document is
   a design and implementation plan, not an implemented PoC;
 - current `process_metadosis` still calls Lysis synchronously and performs
   Nod/contributor/Tribute/Desis/Promis/completion effects in that path
@@ -3527,7 +3649,7 @@ These are engineering precedents, not proofs that Outbe is correct.
   as fatal; it does not implement `CANCELED_NOT_ARMED` or
   `ACTIVATION_FAILED`, so the recoverable FSM in section 14.3 requires an Update
   protocol migration;
-- current `nodfactory::api::issue_nod` has no unforgeable Lysis/activation
+- current `nodfactory::api::issue_nod` has no unforgeable Lysis/apply
   authority, and current Desis dispatch reports acceptance as `bool`. The
   certified path requires the private capability and typed receipts defined in
   section 1.4;
@@ -3584,8 +3706,10 @@ finalized request-block snapshot
 + authenticated shape pre-admission plus local resource admission
 + deterministic content-addressed Map/Reduce
 + q full execution through bounded streaming work; no total Tribute cap
-+ one constant-size certificate+result-root activation transaction
-+ private certified activation capability and typed effect receipts
++ Supervisor-submitted validator ZeroFee result-vote transactions
++ four bounded vote slots, immutable on-chain q and separate accountability
++ the q-forming full-result vote atomically installs the result root
++ private certified apply capability and typed effect receipts
 + prepared/armed mixed-version upgrade with old-job drain and forward-fix
 + recursive proof for large jobs
 + proved output root with erasure/custody availability
@@ -3600,8 +3724,8 @@ The design explicitly rejects:
 - treating an event, Mongo page, count, signature or hash as input completeness;
 - giving a scheduler/worker a validator key;
 - claiming that more workers create more Byzantine independence;
-- inlining a result proportional to `N` in an activation transaction or
-  activating individual result chunks;
+- inlining a result proportional to `N` in a vote transaction or applying
+  individual result chunks;
 - activating a version whose bundle, preparation root or required handler set
   is not committed and threshold-armed;
 - converting or reinterpreting an in-flight job during an upgrade;

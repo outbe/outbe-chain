@@ -37,6 +37,11 @@ pub enum EvidenceMode {
         /// `OCM-NN` task whose local merge gate is being checked.
         task_id: String,
     },
+    /// Evidence for exactly one registered execution lane.
+    Lane {
+        /// Ledger lane such as `OCM-PUBLIC`.
+        lane: String,
+    },
     /// Complete PoC closure over every mandatory lane and requirement.
     PocClosure,
 }

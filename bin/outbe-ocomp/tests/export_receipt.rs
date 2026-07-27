@@ -92,6 +92,7 @@ fn fixture() -> ReceiptFixture {
     manifest_ref.expected_ocb1_kind = Some(ObjectKind::InputManifestV1.tag());
     let handoff = SnapshotHandoffV1 {
         job_id,
+        input_lease_id: hash(12),
         pin_generation: 11,
         lease_generation: 17,
         checkpoint: manifest.checkpoint,

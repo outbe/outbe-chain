@@ -2,6 +2,7 @@
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt as _;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
@@ -179,6 +180,26 @@ impl Localnet {
         self.restart()
     }
 
+    /// Relaunch one validator against an alternate immutable chain manifest.
+    ///
+    /// The manifest must describe the same genesis header; this hook exists only
+    /// for fork-install isolation evidence and does not inject state or alter the
+    /// manifests used by the rest of the committee.
+    pub fn restart_validator_with_chain_manifest(
+        &mut self,
+        i: usize,
+        chain_manifest: PathBuf,
+    ) -> Result<()> {
+        if !chain_manifest.is_file() {
+            bail!(
+                "validator-{i} chain manifest does not exist: {}",
+                chain_manifest.display()
+            );
+        }
+        self.validator_chain_manifests.insert(i, chain_manifest);
+        self.restart_validator_and_enclave(i)
+    }
+
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
@@ -239,6 +260,33 @@ impl Localnet {
         }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
+        }
+        if let Some(protocol_bundle_hash) = opts.ocomp_protocol_bundle_hash.as_deref() {
+            let domain = vd.join("ocomp").join("domain-v1");
+            fs::create_dir_all(&domain)?;
+            fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
+            let effective_uid = fs::metadata("/proc/self")?.uid();
+            let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
+            a.extend(args![
+                "--ocomp.supervisor-socket",
+                self.cfg.ocomp_supervisor_socket(i).display(),
+                "--ocomp.snapshot-exporter-socket",
+                self.cfg.ocomp_snapshot_exporter_socket(i).display(),
+                "--ocomp.supervisor-uid",
+                effective_uid,
+                "--ocomp.snapshot-exporter-uid",
+                effective_uid,
+                "--ocomp.protocol-bundle-hash",
+                protocol_bundle_hash,
+                "--ocomp.boot-nonce",
+                boot_nonce,
+                "--ocomp.session-generation",
+                1_u64,
+                "--ocomp.key",
+                domain.join("ocomp-key-v1.hex").display(),
+                "--ocomp.validator-index",
+                i,
+            ]);
         }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;

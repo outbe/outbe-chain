@@ -138,8 +138,9 @@ pub struct MetadosisContract {
     #[attribute(order = 6)]
     pub ocomp_request_profile: outbe_primitives::storage::types::StorageBytes,
 
-    /// Exact single-live-job index. Empty while no OCOMP intent is pending.
-    /// READY work is kept in the separately bounded ordered index below.
+    /// Exact bounded live-Job registry. Empty while no OCOMP intent is pending.
+    /// READY work is kept in the separately bounded ordered index below; each
+    /// live entry retains an independent per-WWD FSM and IntentId.
     #[attribute(order = 7)]
     pub ocomp_scheduler: outbe_primitives::storage::types::StorageBytes,
 
@@ -203,7 +204,19 @@ pub struct MetadosisContract {
     pub ocomp_active_protocol_bundle: StorageBytes,
 
     /// Canonical OCB1 `OcompCommitteeSnapshotV1` installed with the bundle.
-    /// Result certificates are verified only against this consensus state.
+    /// Result votes are verified only against this consensus state.
     #[attribute(order = 17)]
     pub ocomp_result_committee_snapshot: StorageBytes,
+
+    /// Four fixed result-vote slots and their independently closing
+    /// accountability summary, keyed by finalized JobId.
+    #[attribute(order = 18)]
+    pub ocomp_vote_accountability: Mapping<B256, StorageBytes>,
+
+    /// Canonical bounded response-window index ordered by
+    /// `(deadline_height, JobId)`. It deliberately survives activation so the
+    /// fourth validator and bounded equivocation evidence remain admissible
+    /// until the exclusive deadline.
+    #[attribute(order = 19)]
+    pub ocomp_response_deadline_index: StorageBytes,
 }

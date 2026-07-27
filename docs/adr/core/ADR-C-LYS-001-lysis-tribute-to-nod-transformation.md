@@ -1,7 +1,7 @@
 # ADR-C-LYS-001: Lysis atomically transforms a sealed Tribute day into Nods
 
 - **Status:** Proposed; OCOMP PoC target defined, current implementation is synchronous
-- **Date:** 2026-07-17
+- **Date:** 2026-07-26
 - **Decision owners:** Tribute/Nod economics and authenticated-state maintainers
 - **Scope:** `crates/core/lysis` and its direct Tribute, Nod, Fidelity, Oracle,
   Intex-contributor and compressed-entity seams
@@ -25,7 +25,7 @@ architecture review boundary.
 
 Lysis V1 is a deterministic typed OCOMP program. Metadosis creates its exact
 request; the authenticated input/export contract is ADR-S-OCM-002; independent
-execution/evidence is ADR-S-OCM-003; and certified activation is
+execution/evidence is ADR-S-OCM-003; and full-result quorum apply is
 ADR-S-OCM-004.
 
 The semantic program accepts a typed frozen job and authenticated input bundle
@@ -55,15 +55,17 @@ unused_lysis = lysis_budget - used_by_nods
 For a GREEN day, Metadosis sends `auction_base` to Desis before the OCOMP
 job starts. A RED day sends no auction supply.
 
-Desis is not a Lysis input or activation effect. `unused_lysis` is credited to
-Promis carry-over only after certified activation.
+Desis is not a Lysis input or quorum-apply effect. `unused_lysis` is credited to
+Promis carry-over only when the q-forming vote atomically applies the certified
+result.
 
-On-chain activation does not rerun these steps or iterate every result action.
+On-chain quorum apply does not rerun these steps or iterate every result action.
 The closed Lysis verifier checks the typed result commitment, bindings, live
 target preconditions, root transition and equations.
 
-Only then may it create private `CertifiedLysisActivation`. Its apply path calls
-domain-owner certified methods inside one outer checkpoint.
+Only then may it create the private in-frame apply capability (currently named
+`CertifiedLysisActivation` internally). Its apply path calls domain-owner
+certified methods inside one outer checkpoint.
 
 Metadosis owns terminal day status. Lysis owns transformation/result
 correctness and its certified effect contract. Physical compressed-entity
@@ -196,5 +198,7 @@ change. OCOMP can evolve operationally without owning its economics.
     an independent reference corpus.
 16. Implement certified Nod, contributor, Tribute, carry-over and Metadosis
     methods/receipts. Desis must remain outside activation.
-17. Prove 1/2/4-worker byte equality, q-certificate binding and the full public
-    PFS-002 activation/output path.
+17. Prove 1/2/4-worker byte equality, Supervisor-submitted validator-ZeroFee
+    result votes only after finality+4, public q=3 vote/quorum binding, separate
+    fourth-validator accountability and the full PFS-002 activation/output
+    path.

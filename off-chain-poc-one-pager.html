@@ -240,7 +240,7 @@
 
     .node-box,
     .compute-box,
-    .relay-box,
+    .votes-box,
     .apply-box {
       padding: 18px;
       border-radius: 16px;
@@ -353,18 +353,18 @@
       font-weight: 300;
     }
 
-    .certificate {
+    .consensus-column {
       display: grid;
       gap: 12px;
       align-content: center;
     }
 
-    .relay-box {
+    .votes-box {
       border: 1px solid rgba(255, 189, 102, 0.38);
       background: rgba(255, 189, 102, 0.06);
     }
 
-    .relay-box .box-title {
+    .votes-box .box-title {
       color: var(--amber);
     }
 
@@ -673,7 +673,7 @@
   <main class="poster">
     <div class="topline">
       <div class="eyebrow">Outbe / Off-chain computation / PoC</div>
-      <div class="status">Ready for implementation planning</div>
+      <div class="status">Architecture aligned — ready to resume implementation</div>
     </div>
 
     <header class="hero">
@@ -682,16 +682,17 @@
         <p class="lede">
           PoC показывает один реальный bounded vertical slice: общий operational
           lifecycle несёт закрытый Lysis V1 protocol. Четыре независимых validator
-          domains считают job, три совпавших результата разрешают одну atomic activation.
+          domains считают job и отправляют on-chain full-result votes; транзакция
+          с третьим совпавшим результатом атомарно применяет его.
         </p>
         <div class="badges" aria-label="Ключевые параметры PoC">
-          <div class="badge"><strong>T ≤ generated cap</strong> candidate 256</div>
+          <div class="badge"><strong>T без total cap</strong> bounded shards</div>
           <div class="badge"><strong>n = 4</strong> domains</div>
-          <div class="badge"><strong>q = 3</strong> signatures</div>
-          <div class="badge"><strong>1</strong> activation tx</div>
+          <div class="badge"><strong>q = 3</strong> on-chain votes</div>
+          <div class="badge"><strong>1</strong> q-forming apply tx</div>
           <div class="badge"><strong>1</strong> typed program: Lysis V1</div>
           <div class="badge"><strong>0</strong> on-chain Lysis</div>
-          <div class="badge"><strong>64</strong> block deadline</div>
+          <div class="badge"><strong>64</strong> block vote window</div>
         </div>
       </div>
       <aside class="north-star">
@@ -712,11 +713,12 @@
         </h2>
         <p class="section-note">
           Каждый из четырёх domains имеет собственные node, supervisor, exporter,
-          workers и CAS. Много workers внутри одного domain всё равно дают только одну подпись.
+          workers и CAS. Много workers внутри одного domain всё равно дают только
+          один validator vote.
         </p>
       </div>
 
-      <div class="arch" role="img" aria-label="Архитектурная схема одного из четырёх независимых validator domains и activation path">
+      <div class="arch" role="img" aria-label="Архитектурная схема одного из четырёх независимых validator domains и quorum-apply path">
         <div class="domain">
           <article class="node-box">
             <div class="box-title">
@@ -724,11 +726,11 @@
               <small>protected consensus process</small>
             </div>
             <ul class="mini-list">
-              <li>finality + <code>JobIntent</code> FSM</li>
-              <li>budget split / expiry / preconditions</li>
+              <li>finality + 4 blocks → <code>VOTING_OPEN</code></li>
+              <li>budget split / vote window / preconditions</li>
               <li>bounded <code>OcompControl</code> UDS</li>
               <li>OCOMP key + sign-once gate</li>
-              <li>certificate/result verifier</li>
+              <li>q/terminal separate from accountability</li>
               <li>typed atomic apply</li>
             </ul>
           </article>
@@ -745,7 +747,7 @@
             <div class="compute-stack">
               <div class="component">
                 <strong>Supervisor</strong>
-                <span>finalized cursor, planner, scheduler, reducer, journal</span>
+                <span>discover, plan, execute, submit/rebroadcast vote tx</span>
               </div>
               <div class="component">
                 <strong>Snapshot exporter</strong>
@@ -765,28 +767,30 @@
 
         <div class="connector" aria-hidden="true">→</div>
 
-        <div class="certificate">
-          <article class="relay-box">
-            <div class="q-chip">q = 3 matching digests</div>
+        <div class="consensus-column">
+          <article class="votes-box">
+            <div class="q-chip">q = 3 matching full results</div>
             <div class="box-title">
-              Untrusted relay
-              <small>replaceable / owns no key</small>
+              On-chain result votes
+              <small>4 bounded validator slots</small>
             </div>
             <ul class="mini-list">
-              <li>groups exact <code>ResultDigest</code></li>
-              <li>deduplicates validator indexes</li>
-              <li>builds one certificate</li>
-              <li>submits ordinary transaction</li>
+              <li>each Supervisor submits validator ZeroFee tx</li>
+              <li>ZeroFee waives fee; OCOMP validates vote</li>
+              <li>vote carries signed canonical <code>LysisResultV1</code></li>
+              <li>slot stores compact digest/signature/height</li>
+              <li>q=3 stores the canonical result once</li>
+              <li>4th stays open for accountability</li>
             </ul>
           </article>
           <article class="apply-box">
             <div class="box-title">
-              <code>activateLysis</code>
-              <small>normal RPC → txpool → P2P → block → replay</small>
+              q-forming <code>submitLysisResult</code>
+              <small>same validator tx → block → replay → atomic apply</small>
             </div>
             <ul class="mini-list">
-              <li>finality proof + typed result + q certificate</li>
-              <li>private <code>CertifiedLysisActivation</code></li>
+              <li>third matching slot and effects share one checkpoint</li>
+              <li>private typed apply capability</li>
               <li>all domain receipts commit or all roll back</li>
             </ul>
           </article>
@@ -823,16 +827,18 @@
           <p>
             <code>day_limit = lysis_budget + auction_base</code>. GREEN сразу
             отправляет auction_base в Desis; RED — в carry-over. Затем сохраняются
-            <code>JobIntent(lysis_budget)</code>, expiry и <code>OFFCHAIN_PENDING</code>.
+            <code>JobIntent(lysis_budget)</code>, job
+            <code>AWAITING_FINALITY</code> и day <code>OFFCHAIN_PENDING</code>.
           </p>
         </article>
 
         <article class="step onchain">
           <div class="step-no">3</div>
-          <h3>Finality фиксирует input</h3>
+          <h3>Finality + 4 открывает voting</h3>
           <p>
             <code>JobId</code> связывает intent с request block/state root.
-            Exporter получает read-only immutable checkpoint.
+            Через 4 блока consensus фиксирует
+            <code>VOTING_OPEN(open_height, deadline_height)</code>.
           </p>
         </article>
 
@@ -847,19 +853,22 @@
 
         <article class="step committee">
           <div class="step-no">5</div>
-          <h3>q=3 attestations</h3>
+          <h3>Full-result validator votes</h3>
           <p>
-            Каждый domain сам вычисляет весь job. Node подписывает ровно один
-            canonical <code>ResultDigest</code> отдельным OCOMP key.
+            Каждый domain сам вычисляет весь job. Node подписывает canonical
+            <code>LysisResultV1</code> и его binding, а Supervisor отправляет
+            validator-only ZeroFee EVM tx напрямую в blockchain. В state слот
+            хранит только digest, signature и inclusion height.
           </p>
         </article>
 
         <article class="step onchain">
           <div class="step-no">6</div>
-          <h3>One activation tx</h3>
+          <h3>Third vote applies</h3>
           <p>
-            Consensus проверяет finality, committee, signatures, hashes, caps,
-            ordering, counts, totals и live preconditions — но не Lysis.
+            Транзакция, создающая q=3, сохраняет canonical result один раз и под
+            тем же outer checkpoint применяет roots/scalars. Отдельного relay,
+            activator или activation transaction нет; Lysis on-chain не считается.
           </p>
         </article>
 
@@ -869,7 +878,8 @@
           <p>
             Nod + contributors + Tribute retirement + unused-Lysis carry-over +
             Metadosis COMPLETED + <code>ActiveGenerationV1</code>. Desis здесь
-            не вызывается.
+            не вызывается; поздний 4th vote меняет только отдельный
+            accountability record.
           </p>
         </article>
       </div>
@@ -893,6 +903,7 @@
             <li>finalized/authenticated input</li>
             <li>deterministic parallel execution</li>
             <li>3-of-4 independent result threshold</li>
+            <li>Supervisor → ZeroFee vote → on-chain slots</li>
             <li>sign-once и exact result binding</li>
             <li>one-tx atomic typed apply</li>
             <li>supervisor failure не убивает node</li>
@@ -917,6 +928,9 @@
           <ul class="mini-list">
             <li><strong>1 domain offline:</strong> q=3 работает</li>
             <li><strong>2 domains offline:</strong> job expires</li>
+            <li><strong>4th missing:</strong> canonical accountability evidence</li>
+            <li><strong>4th after quorum apply:</strong> terminal identity unchanged</li>
+            <li><strong>double vote:</strong> equivocation evidence</li>
             <li><strong>bad result:</strong> reject, no state change</li>
             <li><strong>write conflict:</strong> CONFLICTED → READY</li>
             <li><strong>no supervisors:</strong> expiry всё равно on-chain</li>
@@ -935,12 +949,12 @@
           <span>four domains execute; worker count never increases Byzantine weight</span>
         </div>
         <div class="invariant">
-          <strong>Activation authority</strong>
-          <span>only the verifier creates the private move-only capability</span>
+          <strong>Apply authority</strong>
+          <span>the q-forming validator transaction; verifier creates only a private in-frame capability</span>
         </div>
         <div class="invariant">
           <strong>Time authority</strong>
-          <span>economics use request logical time; only activation metadata uses current block</span>
+          <span>voting opens at finality_recorded_height+4; economics use request logical time</span>
         </div>
       </div>
     </section>
@@ -956,8 +970,8 @@
         <a href="outbe-plan/off-chain-poc-scope-audit.md">PASS</a>.
       </div>
       <div class="footer-code">
-        Parent SHA 5bc67987…79834<br>
-        PoC SHA fe9d14a6…534ce · bounded devnet / no on-chain Lysis / no fallback
+        Parent SHA a0191b30…8291efa<br>
+        PoC SHA 292189dd…abc4ef3 · bounded devnet / no on-chain Lysis / no fallback
       </div>
     </footer>
   </main>

@@ -1083,9 +1083,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "-p",
                     "outbe-ocomp",
                     "--test",
-                    "certificate_relay",
-                    "--",
-                    "--test-threads=1",
+                    "systemd_units",
                 ],
             )?;
             cargo(
@@ -1094,9 +1092,9 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "test",
                     "--locked",
                     "-p",
-                    "outbe-ocomp",
+                    "outbe-evm",
                     "--test",
-                    "systemd_units",
+                    "ocomp_result_votes",
                 ],
             )?;
             cargo(
@@ -1144,7 +1142,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                 ],
             )?;
         }
@@ -1205,9 +1203,11 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
+                    "OCM-BND-001",
                     "OCM-BND-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1276,9 +1276,12 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1351,9 +1354,12 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1445,9 +1451,12 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1527,9 +1536,12 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1594,9 +1606,12 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
                 ],
             )?;
         }
@@ -1717,12 +1732,212 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "OCM-CAS-001",
                     "OCM-DET-001",
                     "OCM-SIG-001",
-                    "OCM-CRT-001",
+                    "OCM-VOT-001",
                     "OCM-APL-001",
                     "OCM-BND-002",
                     "OCM-BND-001",
                     "OCM-APL-002",
                     "OCM-TIM-001",
+                ],
+            )?;
+        }
+        "OCM-24" => {
+            evidence_verifier(repository_root)?;
+            reference(repository_root)?;
+            registry::run(repository_root, true)?;
+            super::shape::run(repository_root, true)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--lib",
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--test",
+                    "ocomp_harness_contract",
+                ],
+            )?;
+            cargo(repository_root, &["test", "--locked", "-p", "outbe-ocomp"])?;
+            cargo(repository_root, &["test", "--locked", "-p", "outbe-engine"])?;
+            cargo(
+                repository_root,
+                &[
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "outbe-chain",
+                    "-p",
+                    "outbe-engine",
+                    "-p",
+                    "outbe-node",
+                    "-p",
+                    "outbe-ocomp",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "outbe-e2e-harness/ocomp-integration",
+                    "--all-targets",
+                    "--",
+                    "-D",
+                    "warnings",
+                ],
+            )?;
+            build_ocomp_e2e_binaries(repository_root)?;
+            cargo(
+                repository_root,
+                &[
+                    "run",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--bin",
+                    "outbe-e2e",
+                    "--",
+                    "--tags",
+                    "@ocomp",
+                    "--no-sudo",
+                    "--tee",
+                    "mock",
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                    "OCM-VOT-001",
+                    "OCM-APL-001",
+                    "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
+                ],
+            )?;
+        }
+        "OCM-25" => {
+            evidence_verifier(repository_root)?;
+            cargo(
+                repository_root,
+                &[
+                    "test",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--test",
+                    "ocomp_harness_contract",
+                ],
+            )?;
+            build_ocomp_e2e_binaries(repository_root)?;
+            let evidence_dir = std::env::temp_dir().join(format!(
+                "outbe-ocomp-public-evidence-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .wrap_err("system clock precedes Unix epoch")?
+                    .as_millis()
+            ));
+            let evidence_dir = evidence_dir.to_string_lossy().into_owned();
+            cargo(
+                repository_root,
+                &[
+                    "run",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--features",
+                    "ocomp-integration",
+                    "--bin",
+                    "outbe-e2e",
+                    "--",
+                    "--tags",
+                    "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
+                     @ocomp-public-mutation or @ocomp-fork-restart or @ocomp-fork-mismatch",
+                    "--concurrency",
+                    "1",
+                    "--no-resolve-ports",
+                    "--no-sudo",
+                    "--tee",
+                    "mock",
+                    "--all",
+                    "--evidence-dir",
+                    &evidence_dir,
+                ],
+            )?;
+            cargo(
+                repository_root,
+                &[
+                    "run",
+                    "--locked",
+                    "-p",
+                    "outbe-e2e-harness",
+                    "--bin",
+                    "outbe-e2e-evidence",
+                    "--",
+                    "lane",
+                    "OCM-PUBLIC",
+                    "--evidence-dir",
+                    &evidence_dir,
+                ],
+            )?;
+            task_progress(
+                repository_root,
+                task,
+                &[
+                    "OCM-EVD-001",
+                    "OCM-SEM-001",
+                    "OCM-SEM-002",
+                    "OCM-BYT-001",
+                    "OCM-BYT-002",
+                    "OCM-BND-003",
+                    "OCM-FSM-001",
+                    "OCM-REQ-001",
+                    "OCM-FIN-001",
+                    "OCM-PIN-001",
+                    "OCM-CTL-001",
+                    "OCM-DIS-001",
+                    "OCM-EXP-001",
+                    "OCM-CAS-001",
+                    "OCM-DET-001",
+                    "OCM-SIG-001",
+                    "OCM-VOT-001",
+                    "OCM-APL-001",
+                    "OCM-BND-002",
+                    "OCM-BND-001",
+                    "OCM-APL-002",
+                    "OCM-TIM-001",
+                    "OCM-PUB-001",
+                    "OCM-PUB-002",
+                    "OCM-PUB-003",
+                    "OCM-PUB-004",
                 ],
             )?;
         }
@@ -1788,6 +2003,46 @@ fn evidence_verifier(repository_root: &Path) -> Result<()> {
             "outbe-e2e-harness",
             "--test",
             "ocomp_evidence_verifier",
+        ],
+    )
+}
+
+fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
+    cargo(
+        repository_root,
+        &[
+            "build",
+            "--locked",
+            "-p",
+            "outbe-chain",
+            "--bin",
+            "outbe-chain",
+            "-p",
+            "outbe-ocomp",
+            "--bin",
+            "outbe-ocomp",
+            "-p",
+            "outbe-cli",
+            "--bin",
+            "outbe-cli",
+            "-p",
+            "outbe-keygen",
+            "--bin",
+            "outbe-keygen",
+        ],
+    )?;
+    cargo(
+        repository_root,
+        &[
+            "build",
+            "--locked",
+            "--release",
+            "-p",
+            "outbe-tee-enclave",
+            "--features",
+            "mock",
+            "--bin",
+            "outbe-tee-enclave-mock",
         ],
     )
 }

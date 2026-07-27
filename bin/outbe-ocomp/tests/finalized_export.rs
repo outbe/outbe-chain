@@ -299,7 +299,10 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
         wwd: day.value(),
         ce_sealed_root,
         protocol_bundle_hash: endpoint_identity().protocol_bundle_hash,
-        deadline_height: proof_fixture.intent.deadline_height,
+        input_lease_id: proof_fixture
+            .intent
+            .input_lease_id()
+            .expect("input lease id"),
     };
     let job_id = proof_fixture.job_id;
     let projection_containment = RethProjectionContainmentAuthority::new(
@@ -323,7 +326,13 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
     let projection_containment = Arc::new(projection_containment);
     let source = Arc::new(LeaseFixtureSource {
         block_hash,
-        finalized: FinalizedJobPinV1 { candidate, job_id },
+        finalized: FinalizedJobPinV1 {
+            candidate,
+            job_id,
+            finality_recorded_height: finalized_block.number(),
+            open_height: finalized_block.number() + 4,
+            deadline_height: finalized_block.number() + 10,
+        },
         proof: proof_fixture.proof,
         opening_provider,
     });
@@ -967,7 +976,6 @@ fn export_intent(
         },
         result_committee_snapshot_hash: B256::repeat_byte(0x19),
         custody_committee_epoch_hash: None,
-        deadline_height: 110,
     }
 }
 

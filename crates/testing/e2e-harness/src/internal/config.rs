@@ -22,6 +22,9 @@ pub(crate) struct Config {
     pub dir: PathBuf,
     /// `outbe-chain` node binary (`--chain-bin`).
     pub bin_chain: PathBuf,
+    /// `outbe-ocomp` role binary (`--ocomp-bin`).
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub bin_ocomp: PathBuf,
     /// Newer node binary (`--upgraded-chain-bin`) for operator replacement E2E.
     pub bin_chain_upgraded: Option<PathBuf>,
     /// `outbe-cli` client binary (`--cli-bin`).
@@ -73,6 +76,7 @@ impl Config {
             repo: env.repo.clone(),
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
+            bin_ocomp: env.ocomp_bin.clone(),
             bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
@@ -171,6 +175,33 @@ impl Config {
     /// Per-validator data dir: `<dir>/validator-<i>`.
     pub fn validator_dir(&self, i: usize) -> PathBuf {
         self.dir.join(format!("validator-{i}"))
+    }
+
+    /// Exact projection database assigned to validator `i`.
+    #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
+    pub fn validator_projection_database(&self, i: usize) -> String {
+        format!(
+            "{}_scenario_{}_validator-{i}",
+            self.projection_database_prefix, self.scenario
+        )
+    }
+
+    /// Short scenario-owned directory for Unix sockets, independent of the
+    /// potentially long evidence/datadir path.
+    pub fn ocomp_socket_dir(&self, i: usize) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "outbe-oc-{:016x}-s{}-v{i}",
+            stable_hash(&self.run_tag),
+            self.scenario
+        ))
+    }
+
+    pub fn ocomp_supervisor_socket(&self, i: usize) -> PathBuf {
+        self.ocomp_socket_dir(i).join("supervisor.sock")
+    }
+
+    pub fn ocomp_snapshot_exporter_socket(&self, i: usize) -> PathBuf {
+        self.ocomp_socket_dir(i).join("exporter.sock")
     }
 }
 

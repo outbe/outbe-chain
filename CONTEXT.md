@@ -58,6 +58,22 @@ the parent of all local work shards, not one worker-sized slice. Its population
 is committed by counts/roots and has no artificial PoC total-size ceiling.
 _Avoid_: event, worker job, scheduler task
 
+### Job Registry
+
+The durable validator-local index of independently progressing OCOMP Job
+attempts. Each entry preserves one exact candidate/finalized identity and
+references its authenticated input lease; an operational concurrency limit may
+apply, but one retained or failed Job never replaces or blocks another.
+_Avoid_: current job slot, predecessor slot, global OCOMP lock
+
+### Authenticated Input Lease
+
+A durable, content-addressed retention obligation for one exact set of
+authenticated source commitments. Several Job attempts may reference the same
+lease only when those commitments are byte-identical; the lease is released
+only after every referencing Job has reached its retention gate.
+_Avoid_: JobId, live database lock, temporary file
+
 ### Work Shard
 
 A deterministic bounded slice of one Job Intent that workers may execute and
@@ -77,10 +93,16 @@ One Byzantine evidence identity comprising a validator's node, OCOMP services,
 workers and local artifacts, regardless of worker or process count.
 _Avoid_: worker vote, process validator
 
-### Certified Activation
+### Full-result Vote
 
-The atomic consensus transition that verifies evidence for one exact typed
-result of the complete Job Intent, derives a private program-scoped capability
-and commits the owning domain effects or none. A Work Shard is never activated
-independently.
-_Avoid_: generic write batch, result import
+One validator domain's canonical on-chain submission containing the complete
+constant-size Typed Program result plus its validator identity and signature.
+The vote never contains population-sized output records.
+_Avoid_: digest announcement, worker result, activation request
+
+### Quorum Apply
+
+The atomic consensus transition performed by the third matching Full-result
+Vote. It records quorum, derives a private program-scoped capability and commits
+the owning domain effects or none; no later activator transaction exists.
+_Avoid_: relay activation, permissionless activation, generic write batch

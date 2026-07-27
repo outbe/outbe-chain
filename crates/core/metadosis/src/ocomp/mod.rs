@@ -5,6 +5,7 @@
 
 pub mod activation;
 pub mod expiry;
+pub mod fork;
 pub mod request;
 pub mod schema;
 pub mod state;
@@ -12,3 +13,4 @@ pub mod state;
 #[doc(hidden)]
 pub mod test_support;
 pub mod views;
+pub mod vote;

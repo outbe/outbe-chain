@@ -33,6 +33,10 @@ pub struct PlanningLedger {
     pub tests: BTreeMap<String, PlannedTest>,
     /// Exactly one closing task per stable test.
     pub task_ownership: BTreeMap<String, Vec<String>>,
+    /// Fail-closed task dependency graph used by incremental execution.
+    pub task_dependencies: BTreeMap<String, Vec<String>>,
+    /// Required task-local command for every plan card.
+    pub task_commands: BTreeMap<String, String>,
     /// Bidirectional normative coverage.
     pub requirements: RequirementCatalog,
 }
@@ -304,6 +308,11 @@ impl PlanningLedger {
                 "test {test_id} must have exactly one owner, got {test_owners:?}"
             );
         }
+        validate_task_contracts(
+            &self.task_ownership,
+            &self.task_dependencies,
+            &self.task_commands,
+        )?;
 
         for (test_id, test) in &self.tests {
             for discharge in &test.substitution_discharge {
@@ -494,6 +503,70 @@ fn validate_test_refs(
             unique.insert(test_id),
             "requirement {requirement_id} repeats test {test_id}"
         );
+    }
+    Ok(())
+}
+
+fn validate_task_contracts(
+    ownership: &BTreeMap<String, Vec<String>>,
+    dependencies: &BTreeMap<String, Vec<String>>,
+    commands: &BTreeMap<String, String>,
+) -> EyreResult<()> {
+    let expected = (0..=27)
+        .map(|index| format!("OCM-{index:02}"))
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        ownership.keys().cloned().collect::<BTreeSet<_>>() == expected,
+        "task ownership must contain exactly OCM-00..OCM-27"
+    );
+    ensure!(
+        dependencies.keys().cloned().collect::<BTreeSet<_>>() == expected,
+        "task dependencies must contain exactly OCM-00..OCM-27"
+    );
+    ensure!(
+        commands.keys().cloned().collect::<BTreeSet<_>>() == expected,
+        "task commands must contain exactly OCM-00..OCM-27"
+    );
+
+    for (task_id, command) in commands {
+        ensure!(
+            !command.trim().is_empty() && command.contains(task_id),
+            "task {task_id} has no task-local command naming itself"
+        );
+    }
+
+    for (task_id, task_dependencies) in dependencies {
+        let mut unique = BTreeSet::new();
+        for dependency in task_dependencies {
+            ensure!(
+                expected.contains(dependency),
+                "task {task_id} references unknown dependency {dependency}"
+            );
+            ensure!(
+                dependency != task_id,
+                "task {task_id} cannot depend on itself"
+            );
+            ensure!(
+                unique.insert(dependency),
+                "task {task_id} repeats dependency {dependency}"
+            );
+        }
+    }
+
+    let mut resolved = BTreeSet::new();
+    while resolved.len() != expected.len() {
+        let ready = dependencies
+            .iter()
+            .filter(|(task_id, task_dependencies)| {
+                !resolved.contains(*task_id)
+                    && task_dependencies
+                        .iter()
+                        .all(|dependency| resolved.contains(dependency))
+            })
+            .map(|(task_id, _)| task_id.clone())
+            .collect::<Vec<_>>();
+        ensure!(!ready.is_empty(), "task dependency graph contains a cycle");
+        resolved.extend(ready);
     }
     Ok(())
 }

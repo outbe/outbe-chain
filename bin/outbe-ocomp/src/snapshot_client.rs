@@ -31,12 +31,24 @@ pub struct SnapshotExporterNodeConfig {
 }
 
 pub struct SnapshotExporterNodeClient {
-    session: ControlClientSession,
+    config: SnapshotExporterNodeConfig,
+    session: Option<ControlClientSession>,
     limits: SchemaLimits,
 }
 
 impl SnapshotExporterNodeClient {
     pub fn connect(config: &SnapshotExporterNodeConfig) -> Result<Self, SnapshotClientError> {
+        let session = Self::connect_session(config)?;
+        Ok(Self {
+            config: config.clone(),
+            session: Some(session),
+            limits: config.limits,
+        })
+    }
+
+    fn connect_session(
+        config: &SnapshotExporterNodeConfig,
+    ) -> Result<ControlClientSession, SnapshotClientError> {
         let stream =
             UnixStream::connect(&config.node_socket).map_err(|source| SnapshotClientError::Io {
                 path: config.node_socket.clone(),
@@ -51,10 +63,14 @@ impl SnapshotExporterNodeClient {
             ),
         )?;
         session.handshake()?;
-        Ok(Self {
-            session,
-            limits: config.limits,
-        })
+        Ok(session)
+    }
+
+    fn ensure_session(&mut self) -> Result<(), SnapshotClientError> {
+        if self.session.is_none() {
+            self.session = Some(Self::connect_session(&self.config)?);
+        }
+        Ok(())
     }
 
     pub fn list(
@@ -171,8 +187,27 @@ impl SnapshotExporterNodeClient {
         request_kind: NodeMessageKind,
         body: Vec<u8>,
     ) -> Result<Vec<u8>, SnapshotClientError> {
-        self.session.send_request(request_kind as u16, body)?;
-        let response = self.session.receive_response()?;
+        self.ensure_session()?;
+        let response = {
+            let Some(session) = self.session.as_mut() else {
+                return Err(SnapshotClientError::SessionUnavailable);
+            };
+            (|| {
+                session.send_request(request_kind as u16, body)?;
+                session.receive_response()
+            })()
+        };
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                // A request may have reached the node even when its response
+                // did not reach us. Never replay it inside this call. Drop the
+                // poisoned request-id state so the next reconciliation opens
+                // a fresh authenticated session and retries idempotently.
+                self.session = None;
+                return Err(error.into());
+            }
+        };
         if response.message_kind == NodeMessageKind::Error as u16 {
             let error = LocalErrorV1::decode_body(&response.body, &self.limits)?;
             return Err(SnapshotClientError::RemoteRejected {
@@ -214,4 +249,6 @@ pub enum SnapshotClientError {
     },
     #[error("node returned unexpected snapshot response kind {0:#06x}")]
     UnexpectedResponseKind(u16),
+    #[error("node snapshot control session is unavailable")]
+    SessionUnavailable,
 }

@@ -1,3 +1,4 @@
+// OCOMP-TEST-ID: OCM-APL-001
 mod support;
 
 use alloy_primitives::U256;
@@ -16,7 +17,6 @@ use outbe_ocomp_protocol::{
 
 use support::{activation_fixture, hash, recommit_result};
 
-// OCOMP-TEST-ID: OCM-APL-001
 #[test]
 fn structural_verifier_produces_one_closed_four_owner_plan() {
     for day_type in [DayType::Green, DayType::Red] {

@@ -1712,7 +1712,6 @@ fn real_worker_processes_execute_through_output_finalize() {
         },
         result_committee_snapshot_hash: B256::repeat_byte(0x47),
         custody_committee_epoch_hash: None,
-        deadline_height: manifest.checkpoint.finalized_block_number + 10,
     };
     let ordered_artifacts = vec![
         artifact,
@@ -2617,14 +2616,15 @@ fn run_child_worker() {
             .unwrap_or_else(|_| panic!("invalid {name}"))
     };
     let user = env::var(CHILD_USER).expect("worker child user");
+    let uid = outbe_ocomp::control::uid_for_user(&user).expect("worker child uid");
     let limits = poc_schema_limits();
     let expected_bundle_hash = parse_b256(CHILD_BUNDLE);
     let canonical_bundle = support::protocol_bundle()
         .encode_canonical(&limits)
         .expect("canonical child protocol bundle");
     run_one_from_inherited_fd(WorkerConfig {
-        expected_effective_user: user.clone(),
-        expected_supervisor_user: user,
+        expected_effective_uid: uid,
+        expected_supervisor_uid: uid,
         identity: EndpointIdentity {
             chain_id: parse_u64(CHILD_CHAIN_ID),
             genesis_hash: parse_b256(CHILD_GENESIS),

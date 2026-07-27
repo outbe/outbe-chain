@@ -1,7 +1,8 @@
 # ADR-S-OCM-001: OCOMP is an operational kernel for closed typed programs
 
-- **Status:** Proposed; PoC not implemented
-- **Date:** 2026-07-23
+- **Status:** Accepted; full-result quorum apply implemented on
+  `feat/ocomp-poc`; final PoC closure evidence pending
+- **Date:** 2026-07-26
 - **Decision owners:** System Space, consensus execution and Core program maintainers
 - **Scope:** OCOMP lifecycle/process boundary and the contract between shared
   computation infrastructure and a domain program
@@ -48,15 +49,15 @@ The kernel and program own different truths:
 | artifact addressing, leases and retry mechanics | planner, units, reducer and semantic ordering |
 | verified-admission journal and bounded catalog cursors | pure typed finalizer and every result-field derivation |
 | committee snapshot, sign-once and evidence envelope | typed result, equations and result verifier |
-| outer activation checkpoint and closed dispatch | private effect capability, owner calls and receipts |
+| outer quorum-apply checkpoint and closed dispatch | private effect capability, owner calls and receipts |
 | protocol compatibility and readiness | domain-visible output and recovery contract |
 
 For the PoC the kernel is implemented as internal deep modules wired directly to
 one concrete `LysisProgramV1`. The persisted and wire-visible
-`JobIntentV1`, `UnitSpecV1`, `ActivationPayloadV1`,
-`LysisResultV1`, `ProtocolBundleV1`, `activateLysis` and
-`CertifiedLysisActivation` remain Lysis-specific even where a historical name
-looks generic.
+`JobIntentV1`, `UnitSpecV1`, `LysisResultV1`, `ResultVoteV1`,
+`ProtocolBundleV1` and the private `CertifiedLysisActivation` capability remain
+Lysis-specific even where a historical name looks generic. There is no public
+post-quorum activation call.
 
 No PoC consensus `ProgramRegistry`, public `TaskAdapter`, dynamic handler table,
 uploaded program, `execute(program_id, bytes)`, opaque result, generic action
@@ -68,7 +69,7 @@ capability exists.
 One validator domain contains:
 
 - `outbe-chain`, which owns consensus, finalized job state, OCOMP attestation
-  authority and activation verification;
+  authority and q-forming result verification/apply;
 - a separate unprivileged OCOMP supervisor, which discovers work, plans,
   schedules and journals, then hosts the closed program's pure finalizer after
   complete verified admission, but owns no chain writer or signing key;
@@ -99,7 +100,7 @@ one finalized JobIntent / JobId over N Tribute
 
 Crossing a shard boundary never rejects or drops a Tribute: the next canonical
 Tribute starts the next shard. Shards are local retryable artifacts, not
-consensus jobs, validator votes or independently activatable results. Every
+consensus jobs, validator votes or independently applicable results. Every
 validator domain derives and executes the complete shard set independently.
 `N` has no artificial PoC or protocol ceiling. Only one work shard, one
 input/result chunk, the live worker pool and constant-size protocol summaries
@@ -116,6 +117,10 @@ are bounded.
 | Lysis semantics and result meaning | ADR-C-LYS-001 and the pinned Lysis bundle |
 | result construction | pure `LysisProgramV1` finalizer; supervisor is only its host |
 | result signature | node-owned `OcompAttestationGate`; never the finalizer host |
+| public vote construction/submission/reorg retry | validator-domain `OffchainLysis Supervisor` using restricted node-owned signing seams |
+| result-vote fee waiver | exact-selector validator-only ZeroFee hook; no protocol authority |
+| vote-slot/quorum/accountability state | OCOMP kernel inside block execution |
+| immutable terminal vs late accountability | separate `LysisTerminalV1` and bounded `OcompVoteAccountabilityV1` |
 | Metadosis trigger/status | ADR-C-MET-001 |
 | effect mutations | domain-owner certified methods, never kernel raw storage |
 | deployment/readiness/failure reporting | ADR-B-SUP-001 and ADR-B-OPS-001 |
@@ -123,7 +128,8 @@ are bounded.
 ## Invariants
 
 - OCOMP failure cannot stop consensus or mutate domain state.
-- A supervisor, exporter, worker, CAS or relay owns no consensus authority.
+- A supervisor, exporter, worker, CAS or public transaction submitter owns no
+  consensus authority; quorum is derived from bounded on-chain vote state.
 - The supervisor may invoke the Lysis finalizer but cannot supply precomputed
   result fields or roots; the finalizer derives them from typed finalized
   authority and exact durable verified catalogs.
@@ -148,7 +154,7 @@ are bounded.
 
 ## Atomicity, replay and failure
 
-The kernel owns the outer job-state transition and activation checkpoint.
+The kernel owns the outer q-forming job-state/apply checkpoint.
 Program verification and typed effect receipts either complete inside that
 checkpoint or leave job and domain state unchanged. Local process retries are
 not consensus transitions and cannot invent `RUNNING` chain state.
@@ -159,7 +165,7 @@ continues and on-chain expiry remains available without any compute process.
 
 ## Determinism and bounds
 
-Every control message, individual chunk/work artifact and activation summary
+Every control message, individual chunk/work artifact and result summary
 has fork-pinned byte/count/work caps. Total job size is a committed `u64`
 population, not an admission cap. Enumeration, scheduling, reduction and GC are
 cursor/page bounded so resident memory and per-step work do not grow with `N`.
@@ -177,7 +183,8 @@ A future program qualifies only when its own ADRs define:
 4. deterministic execution and result verification;
 5. private typed apply authority and owner-controlled effects;
 6. conservation/witness/receipt/recovery rules; and
-7. a complete finality, activation, expiry and replay flow with contention tests.
+7. a complete finality, full-result vote, quorum-apply, expiry and replay flow
+   with contention tests.
 
 Only after two real programs exist may their demonstrated intersection be
 extracted into a common registry, envelope or source interface. Such extraction
@@ -186,7 +193,8 @@ Gem qualification is the preferred future stress test, not a PoC deliverable.
 
 ## Production-interface verification evidence
 
-No OCOMP process, control API, job state, attestation gate or activation module
+No complete OCOMP process, control API, job state, attestation gate or
+quorum-apply module
 exists in production code. PFS-002 and `off-chain-poc.md` define the required
 four-validator demonstration. Evidence must use separate released processes,
 real UDS, consensus blocks, public RPC and public state/proof reads. Direct
@@ -202,7 +210,7 @@ completeness and mutation authority.
 ## Rejected alternatives
 
 - **Keep Lysis entirely special-cased:** the next large computation would need
-  another lifecycle, signer, recovery and activation mechanism.
+  another lifecycle, signer, recovery and result-apply mechanism.
 - **Freeze a one-entry consensus registry:** it duplicates
   `ProtocolBundleV1` without proving heterogeneous dispatch.
 - **Expose generic task/result bytes:** type erasure hides domain authority and

@@ -98,9 +98,8 @@ where
         record_count = record_count
             .checked_add(1)
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        max_buffered_records = max_buffered_records.max(
-            u32::try_from(output.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-        );
+        max_buffered_records = max_buffered_records
+            .max(u32::try_from(output.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?);
         if output.len() == max_chunk_records {
             sink(chunk_count, &output).map_err(StreamingMergeErrorV1::Sink)?;
             chunk_count = chunk_count
@@ -176,9 +175,8 @@ where
         record_count = record_count
             .checked_add(1)
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
-        max_buffered_records = max_buffered_records.max(
-            u32::try_from(output.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
-        );
+        max_buffered_records = max_buffered_records
+            .max(u32::try_from(output.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?);
         if output.len() == max_chunk_records {
             sink(chunk_count, &output).map_err(StreamingMergeErrorV1::Sink)?;
             chunk_count = chunk_count

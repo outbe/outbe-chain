@@ -1,7 +1,8 @@
 # ADR-S-OCM-002: OCOMP input is a finalized authenticated export, not a trusted database snapshot
 
-- **Status:** Proposed; PoC not implemented
-- **Date:** 2026-07-23
+- **Status:** Accepted; finalized export and direct full-result vote path
+  implemented on `feat/ocomp-poc`; final PoC closure evidence pending
+- **Date:** 2026-07-26
 - **Decision owners:** System Space, compressed-entity and persistence maintainers
 - **Scope:** finalized input identity, retention pins, snapshot export, raw-body
   transport, CAS manifests and worker read integrity
@@ -45,25 +46,68 @@ totals, not from a Mongo page count.
 
 ### Pin and export lifecycle
 
-Each validator domain maintains:
+Each validator domain maintains a bounded durable Job Registry and a separately
+addressed Authenticated Input Lease Registry:
 
 ```text
-TENTATIVE(IntentId, candidate block/state root)
-  -> FINALIZED(JobId, deadline)
-  -> EXPORTED(InputManifestHash)
-  -> RELEASED after terminal finality and retention policy
+Job Registry
+  JobAttemptKey
+    -> TENTATIVE(IntentId, candidate block/state root, InputLeaseId)
+    -> FINALIZED(JobId, finality_recorded_height, InputLeaseId)
+    -> EXPORTED(InputManifestHash, InputLeaseId)
+    -> TERMINAL(retention deadline, InputLeaseId)
+    -> RELEASED after terminal finality and retention policy
 
-TENTATIVE -> RELEASED when the candidate block is orphaned
+  TENTATIVE -> RELEASED when the exact candidate block is orphaned
+
+Authenticated Input Lease Registry
+  InputLeaseId
+    -> exact authenticated source commitments
+    -> references from zero or more non-released Job attempts
+    -> RELEASED only after the last reference reaches its maximum retention gate
+
+Consensus gate, independent of export progress:
+AWAITING_FINALITY
+  -> VOTING_OPEN(open_height = finality_recorded_height + 4)
+
+signable <=> FINALIZED + EXPORTED + VOTING_OPEN
 ```
 
+`JobId` remains the exact finalized attempt identity and therefore continues to
+bind the finalized block hash and state root. `InputLeaseId` is a different
+typed digest over the complete source commitments named by the decoded
+`JobIntentV1`: source domain/WWD, sealed collection key/root, authenticated
+count and nominal total, CE sealed root, required opening context and
+`ProtocolBundleHash`. Paths, current database markers, candidate block hash and
+attempt nonce are not input-lease identity.
+
+Retry creates a new Job Registry entry and a new exact `JobId`. It may reference
+an existing `InputLeaseId` only when all lease fields compare byte-for-byte
+equal. Any changed root, count, total, opening context or protocol bundle creates
+a new lease. A retained predecessor and its retry therefore coexist; neither is
+overwritten and neither prevents unrelated Jobs from progressing.
+
 Before a validator votes for a block containing an intent, it durably records
-the tentative retention pin. Semantic computation and signing wait for finality.
-An orphaned request invalidates every local artifact derived from it.
+the tentative Job entry and its lease reference. When that exact request becomes
+finalized, the node's asynchronous finality worker promotes only that entry and
+immediately pre-arms the exact immutable read-only CE export handoff while the
+finalized CE marker still names the request block. The consensus finalization
+callback only enqueues this bounded work; it never opens CE, proves data or
+writes export artifacts inline. Reconciliation retries promotion plus pre-arm
+as one local availability operation.
+
+Semantic computation may begin from that already armed handoff even when the
+Supervisor starts or restarts after the CE marker has advanced. It must never
+reconstruct the old handoff from current live state. Signing and vote admission
+additionally wait for consensus `VOTING_OPEN`, exactly four blocks after
+recorded finality. An orphaned request invalidates every local artifact derived
+from it.
 
 The node performs an O(1) handoff of a bounded opaque read-only checkpoint/lease
-capability to the exporter UID. It does not expose a live MDBX/Reth writer,
-accept a caller-selected filesystem path or stream bulk bodies through
-`OcompControlV1`.
+capability to the exporter UID. The handoff names both the exact `JobId` and its
+`InputLeaseId`; resolving a Job never changes either identity. It does not
+expose a live MDBX/Reth writer, accept a caller-selected filesystem path or
+stream bulk bodies through `OcompControlV1`.
 
 ### Authenticated input bundle
 
@@ -123,7 +167,9 @@ one rather than being rejected.
 | immutable chain/opening view | retained finalized checkpoint capability |
 | exported object identity | canonical digest and manifest membership |
 | bulk consumption | job-scoped CAS capability |
-| retention release | terminal/recovery policy, never worker cleanup |
+| job concurrency/lifecycle | bounded durable Job Registry |
+| source retention identity | Authenticated Input Lease Registry |
+| retention release | last-reference terminal/recovery policy, never worker cleanup |
 
 ## Invariants
 
@@ -133,6 +179,10 @@ one rather than being rejected.
 - Traversal reconstructs the exact pinned collection root, count and nominal.
 - Fidelity and Oracle values are bound to the job's logical evaluation context.
 - A manifest names one `JobId` and one protocol bundle only.
+- Every Job entry names exactly one `InputLeaseId`; multiple Job entries may
+  share it only when their complete authenticated source commitments match.
+- Multiple Jobs advance independently; a retained, corrupt or unavailable Job
+  cannot replace or globally block another.
 - Work-shard ranges are adjacent, non-overlapping and cover the manifest count
   exactly once; shard scheduling cannot select or omit input.
 - Workers consume only digest-verified manifest members.
@@ -160,23 +210,25 @@ authenticated manifest is closed.
 Export is local and restartable by manifest/chunk digest. Duplicate publication
 of identical bytes is idempotent. A corrupt, truncated, missing or changed
 object is rejected and may be rebuilt from retained sources. If the source,
-checkpoint or disk is unavailable, that validator abstains while consensus
-continues.
+checkpoint or disk is unavailable, that validator emits no result vote while
+consensus continues. Its missing canonical vote is visible when the response
+window closes; this ADR does not define the later slashing policy.
 
-The node releases retained input only after terminal finality and the applicable
-evidence/recovery window. Release is restart-safe and cursor/page bounded across
-the parent job; finding another page continues GC instead of treating the first
-record beyond one shard as corruption. Worker or supervisor shutdown cannot
-release it. An input export cannot mutate canonical chain, Mongo projection or
-CE state.
+The node releases retained input only after every Job referencing its
+`InputLeaseId` is terminal/released and the greatest applicable
+evidence/recovery height has finalized. Release is restart-safe and cursor/page
+bounded across the lease; finding another page continues GC instead of treating
+the first record beyond one shard as corruption. Worker or supervisor shutdown
+cannot release it. An input export cannot mutate canonical chain, Mongo
+projection or CE state.
 
 ## Compatibility and migration
 
 Body codec, commitment scheme, tree topology, manifest codec, opening schema and
 caps are pinned by `ProtocolBundleV1`. New versions never reinterpret existing
-objects. BoundedMVP may replace local filesystem CAS and one-entry pin journals
-with production stores/recovery without changing the authenticated input
-meaning.
+objects. PoC already uses the multi-job/lease identity model. BoundedMVP may
+replace its bounded local registry and filesystem CAS with production
+stores/recovery without changing Job, lease or authenticated-input meaning.
 
 The worker loads the canonical bundle from the fixed service-owned
 `/etc/outbe/ocomp/protocol-bundle-v1.ocb1` path. Startup fails unless its
@@ -204,7 +256,8 @@ Existing code provides Mongo `StorageReader`, typed body repositories, CE roots
 and MDBX finalized snapshots, but no OCOMP retention handoff, exporter, manifest
 or CAS capability exists. PoC evidence must corrupt Mongo bytes, omit a body,
 change/reorder/truncate a CAS chunk, orphan the request block and restart export.
-Every case must either reconstruct the exact input or produce no signature.
+Every case must either reconstruct the exact input or produce no signed result
+vote.
 
 ## Consequences
 
@@ -233,6 +286,7 @@ the manifest/root closure rather than trusting partial work.
    without treating Mongo as authority.
 3. Generate and independently verify the three nested codec descriptors, bundle
    fields, opening-registry hash and corruption vectors.
-4. Complete crash-safe one-entry PoC pin persistence and orphan release ordering.
+4. Complete crash-safe bounded multi-job/lease persistence, restart recovery and
+   last-reference release ordering.
 5. Specify secure file-descriptor/no-follow handling in addition to digest
    verification to reduce local attack surface.

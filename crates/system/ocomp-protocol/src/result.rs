@@ -9,6 +9,7 @@ use crate::{
     error::ProtocolError,
     hash::hash_framed,
     intent::{DayType, JobIntentV1},
+    list::verify_ordered_list_membership,
     registry::{HashDomain, ListKind, ObjectKind},
     schema::{impl_top_level_codec, require, wire_enum_u8, wire_struct, NestedCodec, SchemaLimits},
 };
@@ -42,6 +43,37 @@ wire_struct! {
         pub issued_at: u64,
         pub bucket_key: B256,
     }
+}
+
+/// Finalized on-chain authority against which one Nod membership proof is
+/// checked.
+///
+/// This value is deliberately not a self-authenticating wire object. A caller
+/// must derive it from finalized `ActiveGenerationV1` and the matching Nod
+/// owner generation projection; the proof cannot supply its own trusted root.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActiveNodSetV1 {
+    pub job_id: B256,
+    pub program_semantics_hash: B256,
+    pub worldwide_day: u32,
+    pub generation: u64,
+    pub nod_root: B256,
+    pub nod_count: u32,
+}
+
+wire_struct! {
+    /// One canonical Nod body and its bottom-up path in the certified
+    /// `ListKind::NodActions` population.
+    pub struct NodMembershipProofV1 {
+        pub job_id: B256,
+        pub program_semantics_hash: B256,
+        pub worldwide_day: u32,
+        pub generation: u64,
+        pub nod_ordinal: u32,
+        pub action: NodActionV1,
+        pub membership_siblings: Vec<B256>,
+    }
+    validate = validate_nod_membership_proof;
 }
 
 wire_struct! {
@@ -306,6 +338,74 @@ impl NodActionV1 {
     }
 }
 
+impl ActiveNodSetV1 {
+    fn validate(&self) -> Result<(), ProtocolError> {
+        require(
+            !self.job_id.is_zero()
+                && !self.program_semantics_hash.is_zero()
+                && self.worldwide_day != 0
+                && self.generation != 0
+                && !self.nod_root.is_zero()
+                && self.nod_count != 0,
+            "active Nod set authority",
+        )
+    }
+}
+
+impl NodMembershipProofV1 {
+    pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
+        <Self as NestedCodec>::validate(self, limits)?;
+        let mut writer = CanonicalWriter::new(limits.codec);
+        self.encode_nested(&mut writer, limits)?;
+        Ok(writer.into_bytes())
+    }
+
+    pub fn decode_canonical_record(
+        encoded: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let mut reader = CanonicalReader::new(encoded, limits.codec)?;
+        let proof = Self::decode_nested(&mut reader, limits)?;
+        reader.finish()?;
+        <Self as NestedCodec>::validate(&proof, limits)?;
+        require_canonical_reencoding(encoded, &proof.encode_canonical_record(limits)?)?;
+        Ok(proof)
+    }
+
+    /// Verifies the complete public read against authority obtained separately
+    /// from finalized chain state.
+    pub fn verify_against<'action>(
+        &'action self,
+        authority: &ActiveNodSetV1,
+        limits: &SchemaLimits,
+    ) -> Result<&'action NodActionV1, ProtocolError> {
+        authority.validate()?;
+        <Self as NestedCodec>::validate(self, limits)?;
+        require(
+            self.job_id == authority.job_id
+                && self.program_semantics_hash == authority.program_semantics_hash
+                && self.worldwide_day == authority.worldwide_day
+                && self.generation == authority.generation,
+            "Nod proof active generation binding",
+        )?;
+        require(
+            self.nod_ordinal == self.action.raw_ordinal
+                && self.action.wwd == authority.worldwide_day,
+            "Nod proof action binding",
+        )?;
+        let canonical_action = self.action.encode_canonical_record(limits)?;
+        verify_ordered_list_membership(
+            ListKind::NodActions,
+            authority.nod_count,
+            self.nod_ordinal,
+            &canonical_action,
+            &self.membership_siblings,
+            authority.nod_root,
+        )?;
+        Ok(&self.action)
+    }
+}
+
 impl ContributorActionV1 {
     pub fn encode_canonical_record(&self, limits: &SchemaLimits) -> Result<Vec<u8>, ProtocolError> {
         <Self as NestedCodec>::validate(self, limits)?;
@@ -313,6 +413,28 @@ impl ContributorActionV1 {
         self.encode_nested(&mut writer, limits)?;
         Ok(writer.into_bytes())
     }
+}
+
+fn validate_nod_membership_proof(
+    proof: &NodMembershipProofV1,
+    limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    let proof_bytes = proof
+        .membership_siblings
+        .len()
+        .checked_mul(core::mem::size_of::<B256>())
+        .ok_or(ProtocolError::IntegerOverflow {
+            what: "Nod membership proof bytes",
+        })?;
+    require(
+        !proof.job_id.is_zero()
+            && !proof.program_semantics_hash.is_zero()
+            && proof.worldwide_day != 0
+            && proof.generation != 0
+            && proof.membership_siblings.len() <= u32::BITS as usize
+            && proof_bytes <= limits.max_proof_bytes,
+        "Nod membership proof shape",
+    )
 }
 
 impl LysisResultV1 {
@@ -403,6 +525,26 @@ impl LysisResultV1 {
         )
     }
 
+    /// Canonical semantic identity of the complete constant-size Lysis result.
+    ///
+    /// The digest deliberately covers fields that were not present in the
+    /// superseded activation payload (manifest/plan/unit roots, carry-over
+    /// action, completion summary and explicit Tribute totals).
+    pub fn result_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
+        self.validate_semantics(limits)?;
+        hash_framed(HashDomain::Result, &self.encode_canonical(limits)?)
+    }
+
+    /// Canonical evidence object retained by the applied generation.
+    ///
+    /// Unlike the result digest's signing domain, this domain identifies the
+    /// complete result as terminal evidence. Quorum metadata is retained
+    /// separately in `OcompCompletedBindingV1`.
+    pub fn result_evidence_hash(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
+        self.validate_semantics(limits)?;
+        hash_framed(HashDomain::ResultEvidence, &self.encode_canonical(limits)?)
+    }
+
     pub fn activation_payload(
         &self,
         limits: &SchemaLimits,
@@ -443,16 +585,6 @@ impl LysisResultV1 {
                 && completion.logical_evaluation_time == intent.logical_evaluation_time,
             "result finalized intent binding",
         )
-    }
-}
-
-impl ActivationPayloadV1 {
-    pub fn result_digest(&self, limits: &SchemaLimits) -> Result<B256, ProtocolError> {
-        require(
-            self.result_chunk_count > 0 && !self.result_chunk_list_root.is_zero(),
-            "activation committed result chunks",
-        )?;
-        hash_framed(HashDomain::Result, &self.encode_canonical(limits)?)
     }
 }
 

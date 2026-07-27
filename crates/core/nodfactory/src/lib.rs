@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod certified;
+pub mod certified_read;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;

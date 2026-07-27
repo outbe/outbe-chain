@@ -1,6 +1,10 @@
 # Off-chain Computation PoC implementation-plan audit
 
-Status: **VERIFIED — implementation plan only**
+Status: **STALE AFTER 2026-07-26 PROTOCOL CORRECTION — REAUDIT REQUIRED**
+
+The audit predates removal of the relay/`ExecutionCertificateV1`. Its closure
+claim must not be used until the revised vote/quorum/accountability plan and
+evidence ledger are reaudited.
 
 Date: 2026-07-23
 

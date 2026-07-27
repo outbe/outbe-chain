@@ -1,10 +1,12 @@
 # ADR-S-OCM-003: OCOMP uses deterministic execution and independent quorum evidence
 
-- **Status:** Proposed; PoC not implemented
-- **Date:** 2026-07-23
+- **Status:** Accepted; full-result on-chain voting and q=3 evidence implemented
+  on `feat/ocomp-poc`; final PoC closure evidence pending
+- **Date:** 2026-07-26
 - **Decision owners:** System Space, consensus cryptography and Lysis maintainers
 - **Scope:** deterministic planning/execution/reduction, validator-domain
-  independence, result digest, OCOMP signing and untrusted relay
+  independence, result digest, OCOMP signing, on-chain result voting and
+  accountability evidence
 - **Depends on:** ADR-S-OCM-001, ADR-S-OCM-002, ADR-B-CRY-001,
   ADR-B-CAP-001, ADR-S-VAL-001, ADR-S-KEY-001
 - **Related:** ADR-B-TST-001, ADR-S-OCM-004, ADR-C-LYS-001, PFS-002
@@ -18,8 +20,14 @@ running Lysis on-chain and without equating worker count with Byzantine
 independence.
 
 A single prover implementation is premature for this PoC. The selected
-mechanism is independent execute-and-attest by four validator domains, with a
-three-signature threshold and a separate deterministic reference corpus.
+mechanism is independent execute-and-attest by four validator domains, with
+three matching on-chain votes, a separate deterministic reference corpus and
+consensus-visible evidence of timely participation.
+
+Collecting signatures only in an off-chain relay is insufficient. Consensus
+cannot distinguish a validator that failed to respond from an honest validator
+whose announcement was dropped or censored by the relay. Such a design cannot
+support objective missed-result accountability or slashing evidence.
 
 ## Decision
 
@@ -44,7 +52,7 @@ JobId + authenticated input
   -> bounded ROOT_REDUCE LEAF(entry + summary) / NODE(summary)
   -> pure LysisProgramV1 finalization over exact verified catalogs
   -> LysisResultV1(result_chunk_count, result_chunk_list_root)
-  -> ActivationPayloadV1 / ResultDigest
+  -> canonical LysisResultV1 / ResultDigest
 ```
 
 The planner, Lysis phase/range rules, codecs, arithmetic, logical time, sort
@@ -204,6 +212,16 @@ program, signer or generic framework. The final `ROOT_REDUCE` artifact remains
 excluded from `unit_artifact_root` to prevent self-reference, while its summary
 is bound through the semantic result and `ResultDigest`.
 
+The result identity is exactly:
+
+```text
+ResultDigest =
+  H("OUTBE_OCOMP_RESULT_V1", canonical(LysisResultV1))
+```
+
+No activation payload, submitter identity, signature ordering or fourth-slot
+accountability field participates in that semantic digest.
+
 ### PoC evidence profile
 
 The first devnet fixes:
@@ -211,7 +229,7 @@ The first devnet fixes:
 ```text
 n = 4 result validator domains
 f = 1 faulty or unavailable domain
-q = 3 distinct matching signatures
+q = 3 distinct matching on-chain votes
 ```
 
 Each domain independently owns its node, supervisor, exporter, CAS and workers.
@@ -235,25 +253,132 @@ The sign-once subject binds at least:
 An exact retry returns the recorded signature. A different digest for the same
 subject is refused after restart as well as in one process.
 
-### Certificate and relay
+### On-chain result votes
 
-Any relay may collect announcements and submit the constant-size
-`LysisResultV1` commitment plus `ExecutionCertificateV1`. Result chunks remain
-authenticated content-addressed artifacts. Before requesting its node's
-signature, every validator's separate compute plane must have validated
-complete chunk coverage and reduction. The node verifies only the closed
-constant-size signing subject; no chunk has independent evidence weight. A
-faulty compute plane may consume its own sign-once slot, but contributes at most
-that validator domain's one signature. The relay has no signing key,
-exclusivity or trusted ordering role. Every activation verifier verifies:
+After its attestation gate signs the closed result subject, the validator
+domain's existing `OffchainLysis Supervisor` owns submission. It replaces its
+superseded relay publication edge with one signed
+`submitLysisResult` EVM transaction through the public RPC, txpool,
+gossip, proposal, import and replay path:
 
-- exact `ResultDigest` reconstruction;
-- distinct eligible committee indexes from the job-pinned snapshot;
-- exactly the required threshold under the pinned signature domain;
-- no duplicate, unknown, wrong-epoch or malformed signer;
-- exact `JobId`, attempt, bundle and typed result binding.
+```text
+ResultVoteV1 {
+  protocol_bundle_hash,
+  JobId,
+  attempt,
+  result_committee_snapshot_hash,
+  validator_index,
+  key_epoch,
+  result: LysisResultV1,
+  signature
+}
+```
 
-Three signatures over different result bytes do not form evidence.
+`ResultVoteV1` is a signed full-result submission, not a digest-only
+announcement. `LysisResultV1` is a constant-size typed summary containing the
+complete job bindings, roots, counts, totals, carry-over action and arithmetic
+commitment; it never contains the `N` Nod/contributor records or result-chunk
+bodies.
+
+The executor bounded-decodes and structurally verifies the canonical result,
+then reconstructs `ResultDigest`. The inner OCOMP signature binds the
+chain/genesis/fork, bundle, job, attempt, committee, key epoch, result purpose
+and that exact digest. The outer EVM
+transaction uses the validator's EVM identity through a restricted node-owned
+signing seam; the Supervisor never receives either private key. A dedicated
+ZeroFee hook, constrained like Oracle's existing hook to the exact selector,
+zero value, bounded envelope and eligible validator, waives the native fee.
+ZeroFee performs no JobIntent, finality, window, digest, quorum or slashing
+validation. Those checks belong exclusively to the OCOMP on-chain module.
+
+The Supervisor persists `prepared -> submitted -> included -> finalized`,
+rebroadcasts the same logical vote after an orphaned inclusion while the slot
+is empty and the window is open, and stops at finality or window close.
+For the PoC it reads the validator account nonce from canonical `latest` state,
+uses the frozen bounded gas envelope and never calls `eth_estimateGas` or asks
+RPC to execute a `pending` block. Its single-writer vote journal preserves the
+exact node-signed transaction bytes and nonce for rebroadcast; an exact retry
+does not reconstruct or re-sign the envelope.
+Consensus verifies protocol eligibility and the OCOMP signature before
+recording the vote. No distinguished relay, collector or off-chain certificate
+builder is required.
+
+Consensus stores one bounded `ResultVoteSlotV1` for each of the four validator
+indexes. A slot records the first valid digest, key epoch, signature and
+consensus-assigned inclusion height; it does not retain four copies of
+`LysisResultV1`. Exact resubmission is idempotent. A second valid signature by
+the same validator for a different digest never replaces or adds to the first
+tally; the first such conflict records bounded `EquivocationEvidenceV1`
+containing both signed vote identities. Further distinct conflicts cannot grow
+state and reject.
+
+After each accepted vote, consensus scans exactly four slots and groups their
+first digests by byte equality. When one digest first reaches `q=3`, consensus
+immutably records:
+
+```text
+quorum_digest
+quorum_height
+quorum_signer_bitmap
+quorum_evidence_hash
+```
+
+The q-forming transaction already carries the canonical `LysisResultV1`.
+Inside the same outer checkpoint, consensus stores that result exactly once,
+constructs the private Lysis-scoped apply capability and executes the
+constant-size typed root/scalar transition. There is no durable
+`QUORUM_READY` waiting state, public `activateLysis` call, relay or activator.
+The transition is:
+
+```text
+VOTING_OPEN
+  -- third matching ResultVoteV1 --> COMPLETED
+  -- third matching result with stale target preconditions --> CONFLICTED
+```
+
+Invalid result evidence rejects before filling a slot. An expected target
+precondition conflict commits the quorum evidence and deterministic
+`CONFLICTED`/retry outcome without owner effects. Any unexpected verifier or
+owner error reverts the whole q-forming transaction, including its new slot and
+quorum, so it can be retried without partial state.
+
+No later vote can change the selected digest or terminal result. The fourth
+validator may still submit until the exclusive response deadline. Its vote
+updates only a separate bounded `OcompVoteAccountabilityV1` record keyed by
+`JobId`:
+
+- matching produces observable `4/4`;
+- a different digest is retained as a minority result but is not automatically
+  slashable;
+- no timely vote produces a missing-response bit;
+- two different signed digests produce objective equivocation evidence.
+
+At the deadline consensus closes `OcompAccountabilitySummaryV1` inside that
+record. The immutable `LysisTerminalV1`, apply receipt, active-generation
+hash, applied domain state and exact-retry identity bind only the already-fixed
+quorum evidence and never change because of the fourth vote or deadline close.
+The PoC records this evidence but does not introduce monetary slashing policy
+or call `SlashIndicator`. Missing-response and equivocation policy, penalty
+size, appeals and operator exceptions require a separate ADR. Any later
+slashing mechanism must consume only canonical on-chain evidence; relay logs,
+mempool observations and supervisor journals are never authority.
+
+### Quorum-applied result evidence
+
+Every validator submission carries one constant-size `LysisResultV1` and no
+`ExecutionCertificateV1`. The executor reconstructs `ResultDigest` before
+recording the validator slot. The q-forming submission supplies the canonical
+result that is stored once and applied atomically; no later transaction repeats
+result transport or selects voters.
+
+Result chunks remain authenticated content-addressed artifacts. Before
+requesting its node's signature, every validator's separate compute plane must
+have validated complete chunk coverage and reduction. The node verifies only
+the closed constant-size signing subject; no chunk has independent evidence
+weight. A faulty compute plane may consume its own sign-once slot, but
+contributes at most that validator domain's first on-chain vote.
+
+Three votes over different result bytes do not form quorum evidence.
 
 ## Authoritative interfaces
 
@@ -264,8 +389,15 @@ Three signatures over different result bytes do not form evidence.
 | artifact equality | canonical digest and plan membership |
 | OCOMP key custody | node attestation gate plus ADR-S-KEY-001 backend |
 | signer eligibility/weight | job-pinned result committee snapshot |
-| certificate construction | untrusted replaceable relay |
-| certificate validity | every node during activation |
+| vote submission/rebroadcast | validator-domain `OffchainLysis Supervisor` |
+| EVM transport signature | restricted node-owned validator EVM signing seam |
+| vote fee waiver | exact-selector validator-only ZeroFee hook |
+| vote inclusion | ordinary public transaction path |
+| vote eligibility/signature validity | every node while executing the vote transaction |
+| quorum selection | bounded consensus vote state |
+| result-apply trigger | the q-forming full-result submission |
+| terminal result identity | immutable `LysisTerminalV1` |
+| post-quorum fourth-slot evidence | separate bounded `OcompVoteAccountabilityV1` |
 | semantic reference | independent golden/reference implementation |
 
 ## Invariants
@@ -274,12 +406,19 @@ Three signatures over different result bytes do not form evidence.
 - `N` authenticated Tribute produce exactly the canonical shard/range set; a
   shard boundary never drops or rejects a valid next Tribute.
 - Worker/scheduler count cannot change result bytes or evidence weight.
-- One validator index contributes at most one matching signature.
+- One validator index contributes at most one first vote to the tally.
 - The OCOMP key is distinct from the consensus key and unavailable to compute
   processes.
 - Sign-once history is durable before signature release.
-- A certificate binds one exact typed result and one exact job attempt.
-- The relay cannot turn mismatched or duplicate signatures into authority.
+- A vote binds one exact result digest and one exact job attempt.
+- The quorum digest is set only by three matching eligible on-chain vote slots.
+- The fourth slot remains writable until the response deadline even after
+  quorum application.
+- A fourth vote or deadline close cannot change terminal/result,
+  active-generation or exact-retry identity.
+- A conflicting second vote records equivocation evidence and never replaces
+  the first tally vote.
+- Absence and timeliness are derived only from canonical inclusion heights.
 - Quorum evidence never proves data availability, domain-spec correctness or
   implementation diversity by itself.
 
@@ -287,25 +426,37 @@ Three signatures over different result bytes do not form evidence.
 
 Local unit/reducer work is content-addressed and freely replayable. Completion
 of a proper subset of work shards is not a result and is never signable or
-activatable. The
+applicable. The
 sign-once journal update is write-before-sign and crash-safe: an uncertain write
 disables signing until reconciled. A worker/supervisor crash cannot corrupt
 consensus state.
 
-One unavailable domain still permits `q=3`. Two unavailable domains produce no
-fallback or lower threshold; the job reaches its on-chain expiry path. A
-deterministic mismatch is retained as evidence and no local “majority choice”
-rewrites the job.
+Each non-q-forming vote transaction changes only its bounded accountability
+state. The q-forming vote executes the constant-size certified apply inside the
+same outer checkpoint. Exact vote retry is idempotent. A conflicting retry
+records bounded equivocation evidence without replacing the first vote or
+contributing twice. ZeroFee classification only waives native fee debit; all
+execution still consumes consensus-accounted gas/work, and a protocol-invalid
+vote is rejected by OCOMP with no vote-state change.
+
+One unavailable domain still permits `q=3` and immediate atomic application.
+There is no post-quorum liveness dependency on a separate submitter. Two
+unavailable domains produce no fallback or lower threshold; the
+job reaches its on-chain expiry path. A deterministic mismatch is retained as
+evidence and no local “majority choice” rewrites the job.
 
 ## Determinism and bounds
 
-Per-shard/per-chunk counts and bytes, live workers, signatures and activation
-cryptographic work are checked against the generated PoC capacity profile
-before allocation or verification. Total Tribute, unit and result-chunk counts
+Per-shard/per-chunk counts and bytes, live workers, vote bytes/signatures and
+q-forming apply work are checked against the generated PoC capacity profile
+before allocation or verification. The consensus vote state is fixed at four
+bounded slots plus one terminal `LysisResultV1` and therefore independent of
+total Tribute count. Total Tribute, unit and result-chunk counts
 are checked for arithmetic validity and exact committed coverage, not capped by
 the PoC. Unit and result-chunk artifacts do not enter activation state
-individually. One constant-size complete-result commitment is carried in the
-activation transaction. `ShuffleRunArtifactV1` bounds each leaf to 256 records
+individually. Exactly four bounded full-result vote transactions are carried
+through the normal public path; the q-forming one also performs the bounded
+root/scalar apply. `ShuffleRunArtifactV1` bounds each leaf to 256 records
 and each internal node to two child references; the number of leaves and nodes
 is derived from the uncapped Tribute population and is never a consensus cap.
 
@@ -318,27 +469,31 @@ committee schema requires a new bundle and golden vectors. Live jobs finish or
 expire under the bundle and committee pinned at creation.
 
 BoundedMVP may harden keys, scheduling and retention while preserving this
-execute-and-attest meaning. A proof-carrying TargetLarge profile is separate
-evidence semantics and cannot be presented as PoC completion.
+execute, full-result on-chain vote and quorum-apply meaning. A proof-carrying
+TargetLarge profile is separate evidence semantics and cannot be presented as
+PoC completion.
 
 ## Production-interface verification evidence
 
-No OCOMP planner, workers, signer, sign-once journal, certificate or relay path
-exists. Required evidence includes a boundary fixture whose Tribute count is
+No OCOMP planner, workers, signer, sign-once journal or on-chain vote path
+exists in the baseline inspected by this ADR. Required evidence includes a boundary fixture whose Tribute count is
 one greater than a full work shard, synthetic plan derivations for 10,000 and
 1,000,000,000 Tribute without proportional plan allocation, independent full
-executions of the bounded fixture by four real validator domains, 1/2/4-worker
-equality, randomized order/retry, restart-safe sign-once refusal,
-wrong/duplicate signer rejection, one-byte/ordering/JobId mutation rejection
-and comparison with a separate reference corpus.
+executions of the bounded fixture by four real validator domains, a healthy
+`4/4` matching run, a one-domain-unavailable `3/4` application, a two-domain
+unavailable expiry, 1/2/4-worker equality, randomized order/retry, restart-safe
+sign-once refusal, public vote inclusion and replay, duplicate/wrong/late voter
+rejection, conflicting-vote evidence, one-byte/ordering/JobId mutation
+rejection and comparison with a separate reference corpus.
 
 ## Consequences
 
-The PoC establishes decentralised correctness through bounded work without
-on-chain Lysis or a total Tribute cap, but accepts that three implementations
-can share one semantic bug. The reference corpus, adversarial vectors and later
-implementation diversity remain required; quorum is not an excuse to skip
-specification testing.
+The PoC establishes decentralised correctness and consensus-visible
+accountability through bounded work without on-chain Lysis or a total Tribute
+cap, but accepts four additional public transactions per job and that three
+implementations can share one semantic bug. The reference corpus, adversarial
+vectors and later implementation diversity remain required; quorum is not an
+excuse to skip specification testing.
 
 ## Rejected alternatives
 
@@ -346,7 +501,13 @@ specification testing.
 - **Count many workers as many voters:** they share one validator failure domain.
 - **Sign an arbitrary digest supplied by the supervisor:** key authority can be
   redirected to unrelated statements.
-- **Let the relay select “close enough” results:** result equality must be exact.
+- **Collect votes only in an off-chain relay:** canonical consensus cannot prove
+  which validator missed its response window or whether the relay censored it.
+- **Let any submitter select “close enough” results:** result equality must be
+  exact and the four-slot tally is consensus-derived.
+- **Require all four votes for application:** loses the selected one-domain
+  unavailable liveness property; the fourth is retained for accountability,
+  not made a veto.
 - **Rerun Lysis on-chain:** defeats the purpose and scale boundary of OCOMP.
 - **Lower `q` on timeout:** changes the fault model exactly when availability is
   weakest.
@@ -358,7 +519,12 @@ specification testing.
 2. Freeze the sign-once journal schema, fsync contract and recovery procedure.
 3. Produce an independent Lysis reference implementation and adversarial golden
    corpus before allowing signatures.
-4. Generate all `UnitSpecV1`, `UnitId`, result and certificate golden vectors.
-5. Prove maximum result/signature verification work through the public
+4. Generate all `UnitSpecV1`, `UnitId`, result, vote-slot, quorum and
+   accountability golden vectors.
+5. Prove maximum result/vote-signature verification work through the public
    RPC/txpool/P2P/import/replay path.
 6. Define durable mismatch diagnostics without leaking raw user data.
+7. Define monetary missed-response/equivocation policy in a separate slashing
+   ADR; the PoC supplies evidence only.
+8. Define BoundedMVP cleanup/retention for closed vote slots and terminal result
+   records.

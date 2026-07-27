@@ -15,6 +15,8 @@ pub(crate) const STK_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const SLASH_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 /// Tribute precompile (`totalSupply()`).
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
+/// Nod precompile (`totalSupply()`).
+pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// Update precompile (protocol-version governance).

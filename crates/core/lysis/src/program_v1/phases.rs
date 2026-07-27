@@ -164,8 +164,7 @@ pub fn fidelity_map(
     {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
-    let count =
-        u32::try_from(observed.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    let count = u32::try_from(observed.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
     let end_ordinal = start_ordinal
         .checked_add(count)
         .ok_or(ProgramErrorV1::OutputCountMismatch)?;
@@ -274,21 +273,18 @@ pub fn fidelity_reduce(
         .iter()
         .chain(&right.ordered_league_partials)
     {
-        let group = groups
-            .entry(partial.league_id)
-            .or_insert((0, U256::ZERO));
+        let group = groups.entry(partial.league_id).or_insert((0, U256::ZERO));
         group.0 = group
             .0
             .checked_add(partial.count)
             .ok_or_else(|| ProgramErrorV1::Arithmetic {
                 message: "Fidelity reducer population overflow".to_owned(),
             })?;
-        group.1 = group
-            .1
-            .checked_add(partial.nominal_amount_minor)
-            .ok_or(ProgramErrorV1::TotalNominalOverflow {
+        group.1 = group.1.checked_add(partial.nominal_amount_minor).ok_or(
+            ProgramErrorV1::TotalNominalOverflow {
                 ordinal: right.start_ordinal as usize,
-            })?;
+            },
+        )?;
     }
     Ok(FidelityAggregateV1 {
         start_ordinal: left.start_ordinal,
@@ -319,10 +315,9 @@ pub fn fidelity_reduce_pair(
         (FidelityReduceValueV1::Aggregate(left), FidelityReduceValueV1::Empty) => {
             Ok(FidelityReduceValueV1::Aggregate(left))
         }
-        (
-            FidelityReduceValueV1::Aggregate(left),
-            FidelityReduceValueV1::Aggregate(right),
-        ) => fidelity_reduce(&left, &right).map(FidelityReduceValueV1::Aggregate),
+        (FidelityReduceValueV1::Aggregate(left), FidelityReduceValueV1::Aggregate(right)) => {
+            fidelity_reduce(&left, &right).map(FidelityReduceValueV1::Aggregate)
+        }
         (FidelityReduceValueV1::Empty, FidelityReduceValueV1::Aggregate(_)) => {
             Err(ProgramErrorV1::OutputCountMismatch)
         }
@@ -388,8 +383,7 @@ pub fn amount_map(
 
     let mut ordered_records = Vec::with_capacity(observed.len());
     let mut checked_segment_gratis_total = U256::ZERO;
-    for (local_ordinal, (item, fidelity)) in
-        observed.iter().zip(fidelity_observations).enumerate()
+    for (local_ordinal, (item, fidelity)) in observed.iter().zip(fidelity_observations).enumerate()
     {
         let raw_ordinal = start_ordinal
             .checked_add(
@@ -433,8 +427,7 @@ pub fn amount_map(
             .get(&first_league)
             .copied()
             .unwrap_or(U256::ZERO);
-        let gratis_load_minor =
-            item.tribute.nominal_amount_minor * fraction / SCALE_1E18;
+        let gratis_load_minor = item.tribute.nominal_amount_minor * fraction / SCALE_1E18;
         if gratis_load_minor.is_zero() {
             return Err(ProgramErrorV1::ZeroGratisLoad {
                 ordinal: raw_ordinal as usize,
@@ -525,11 +518,12 @@ pub fn gratis_summary(
                 ordinal: raw_ordinal as usize,
             });
         }
-        checked_segment_gratis_total = checked_segment_gratis_total
-            .checked_add(load)
-            .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                message: format!("Gratis total overflow at {raw_ordinal}"),
-            })?;
+        checked_segment_gratis_total =
+            checked_segment_gratis_total
+                .checked_add(load)
+                .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                    message: format!("Gratis total overflow at {raw_ordinal}"),
+                })?;
     }
     Ok(GratisSegmentSummaryV1 {
         start_ordinal,
@@ -552,10 +546,7 @@ pub fn gratis_summary_reduce_pair(
         (GratisSummaryValueV1::Empty, GratisSummaryValueV1::Summary(_)) => {
             Err(ProgramErrorV1::OutputCountMismatch)
         }
-        (
-            GratisSummaryValueV1::Summary(left),
-            GratisSummaryValueV1::Summary(right),
-        ) => {
+        (GratisSummaryValueV1::Summary(left), GratisSummaryValueV1::Summary(right)) => {
             if left.start_ordinal >= left.end_ordinal
                 || right.start_ordinal >= right.end_ordinal
                 || left.end_ordinal != right.start_ordinal
@@ -566,18 +557,13 @@ pub fn gratis_summary_reduce_pair(
                 .checked_segment_gratis_total
                 .checked_add(right.checked_segment_gratis_total)
                 .ok_or_else(|| ProgramErrorV1::Arithmetic {
-                    message: format!(
-                        "Gratis reducer total overflow at {}",
-                        right.start_ordinal
-                    ),
+                    message: format!("Gratis reducer total overflow at {}", right.start_ordinal),
                 })?;
-            Ok(GratisSummaryValueV1::Summary(
-                GratisSegmentSummaryV1 {
-                    start_ordinal: left.start_ordinal,
-                    end_ordinal: right.end_ordinal,
-                    checked_segment_gratis_total: total,
-                },
-            ))
+            Ok(GratisSummaryValueV1::Summary(GratisSegmentSummaryV1 {
+                start_ordinal: left.start_ordinal,
+                end_ordinal: right.end_ordinal,
+                checked_segment_gratis_total: total,
+            }))
         }
     }
 }
@@ -684,11 +670,12 @@ pub fn output_finalize(
             .ok_or(ProgramErrorV1::TotalNominalOverflow {
                 ordinal: amount.raw_ordinal as usize,
             })?;
-        let nod_id = derive_poseidon_entity_id(amount.owner, amount.worldwide_day).map_err(
-            |error| ProgramErrorV1::Arithmetic {
-                message: error.to_string(),
-            },
-        )?;
+        let nod_id =
+            derive_poseidon_entity_id(amount.owner, amount.worldwide_day).map_err(|error| {
+                ProgramErrorV1::Arithmetic {
+                    message: error.to_string(),
+                }
+            })?;
         let bucket_key = nod_bucket_key(amount.worldwide_day, amount.floor_price_minor);
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal: amount.raw_ordinal,
@@ -738,8 +725,8 @@ pub fn output_finalize(
 }
 
 fn validate_finalized_leaf(run: &FinalizedOutputRunV1) -> Result<u32, ProgramErrorV1> {
-    let count =
-        u32::try_from(run.ordered_records.len()).map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
+    let count = u32::try_from(run.ordered_records.len())
+        .map_err(|_| ProgramErrorV1::OutputCountMismatch)?;
     if count == 0
         || count > PRIMARY_WORK_SHARD_SIZE
         || !run.start_ordinal.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)
@@ -765,9 +752,7 @@ fn validate_finalized_leaf(run: &FinalizedOutputRunV1) -> Result<u32, ProgramErr
     Ok(run.start_ordinal / PRIMARY_WORK_SHARD_SIZE)
 }
 
-pub fn shuffle_owners(
-    run: &FinalizedOutputRunV1,
-) -> Result<OwnerOrderedRunV1, ProgramErrorV1> {
+pub fn shuffle_owners(run: &FinalizedOutputRunV1) -> Result<OwnerOrderedRunV1, ProgramErrorV1> {
     let run_ordinal = validate_finalized_leaf(run)?;
     let mut ordered_contributors = run
         .ordered_records
@@ -795,9 +780,7 @@ pub fn shuffle_owners(
     })
 }
 
-pub fn shuffle_buckets(
-    run: &FinalizedOutputRunV1,
-) -> Result<BucketOrderedRunV1, ProgramErrorV1> {
+pub fn shuffle_buckets(run: &FinalizedOutputRunV1) -> Result<BucketOrderedRunV1, ProgramErrorV1> {
     let run_ordinal = validate_finalized_leaf(run)?;
     let mut ordered_records = run
         .ordered_records

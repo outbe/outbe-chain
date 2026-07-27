@@ -184,6 +184,7 @@ use outbe_primitives::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, FinalizedParentAttestation,
         OutbeBlockArtifacts,
     },
+    system_tx::OcompLifecycleActivation,
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
 use reth_node_builder::{BuiltPayload as _, ConsensusEngineHandle};
@@ -239,7 +240,7 @@ use crate::finalization::util::extract_header_artifact_from_block;
 use crate::application::epoch_boundary::{self, ApplicationEpochFence, EpochBoundaryParentError};
 use crate::application::validation::{
     validate_context_parent_binding, validate_rewards_beneficiary,
-    validate_system_tx_leader_binding,
+    validate_system_tx_leader_binding_for_activation,
 };
 use crate::application::verify_resolution::{resolve_for_verify, VerifyResolveTarget};
 
@@ -389,6 +390,11 @@ pub(crate) struct ApplicationShared {
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
 
+    /// Immutable chain-manifest activation used by the pre-Engine consensus
+    /// system-transaction verifier. This must match the payload builder and
+    /// execution configuration so every validator expects the same layout at H.
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+
     /// Marshal mailbox for digest-bound block resolution.
     pub(crate) marshal_mailbox: crate::marshal_types::MarshalMailbox,
 
@@ -488,6 +494,7 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
     pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
     pub elector_config_provider: HybridElectorConfigProvider<MinSig>,
@@ -528,6 +535,7 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            ocomp_lifecycle_activation,
             marshal_mailbox,
             certificate_scheme_provider,
             elector_config_provider,
@@ -557,6 +565,7 @@ impl ApplicationHandler {
                 genesis_hash,
                 validators,
                 chain_id,
+                ocomp_lifecycle_activation,
                 marshal_mailbox,
                 certificate_scheme_provider,
                 elector_config_provider,
@@ -1794,12 +1803,13 @@ impl ApplicationShared {
             VERIFY_RESOLUTION_TIMEOUT,
             clock.child("ancestry"),
         );
-        if let Err(error) = validate_header_consensus_artifacts(
+        if let Err(error) = validate_header_consensus_artifacts_for_activation(
             &block,
             parent_block.as_ref(),
             round,
             &context.leader,
             self.chain_id,
+            self.ocomp_lifecycle_activation,
             ValidatorRole::from_proposer_evm_address(self.proposer_evm_address),
             &self.certificate_scheme_provider,
             &self.committee_provider,
@@ -2062,12 +2072,13 @@ impl ValidatorRole {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn validate_header_consensus_artifacts(
+async fn validate_header_consensus_artifacts_for_activation(
     block: &ConsensusBlock,
     parent_block: Option<&ConsensusBlock>,
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
     role: ValidatorRole,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
@@ -2087,11 +2098,12 @@ async fn validate_header_consensus_artifacts(
         return Ok(());
     }
     validate_rewards_beneficiary(block)?;
-    validate_system_tx_leader_binding(
+    validate_system_tx_leader_binding_for_activation(
         block,
         round,
         proposer,
         chain_id,
+        ocomp_lifecycle_activation,
         certificate_scheme_provider,
         committee_provider,
     )?;
@@ -2170,6 +2182,35 @@ async fn validate_header_consensus_artifacts(
             Ok(())
         }
     }
+}
+
+#[cfg(test)]
+async fn validate_header_consensus_artifacts(
+    block: &ConsensusBlock,
+    parent_block: Option<&ConsensusBlock>,
+    round: Round,
+    proposer: &PublicKey,
+    chain_id: u64,
+    role: ValidatorRole,
+    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    committee_provider: &CommitteeProvider,
+    dkg_manager: &crate::dkg_manager::Mailbox,
+    ancestry: &impl AncestryReader,
+) -> Result<(), String> {
+    validate_header_consensus_artifacts_for_activation(
+        block,
+        parent_block,
+        round,
+        proposer,
+        chain_id,
+        OcompLifecycleActivation::Disabled,
+        role,
+        certificate_scheme_provider,
+        committee_provider,
+        dkg_manager,
+        ancestry,
+    )
+    .await
 }
 
 #[cfg(test)]

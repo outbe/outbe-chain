@@ -1,6 +1,6 @@
 # Off-chain PoC: current-code map
 
-Status: **resolved research asset for decision ticket #2**
+Status: **historical current-code research asset for decision ticket #2**
 
 Scope: repository state before OCOMP PoC implementation
 
@@ -11,6 +11,11 @@ reused by the PoC, and which OCOMP boundaries are genuinely missing?
 
 It does not select the final crate layout, wire codecs, protocol constants,
 process topology or implementation tasks. Those are downstream decisions.
+
+Amendment 2026-07-26: any later-planned `activateLysis` or separate activation
+envelope mentioned below is now a gap to remove, not an implementation target.
+The authoritative design uses `submitLysisResult`, full-result validator votes
+and atomic apply in the q-forming transaction.
 
 ## 1. Current execution story
 

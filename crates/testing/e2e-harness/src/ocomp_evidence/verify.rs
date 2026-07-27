@@ -7,7 +7,7 @@ use eyre::{bail, ensure, Result, WrapErr};
 use walkdir::WalkDir;
 
 use super::discovery::{discover, validate_discovery};
-use super::io::hash_file;
+use super::io::{capture_source_identity, hash_file};
 use super::ledger::PlanningLedger;
 use super::schema::{
     AssertionRecordV1, AssertionStatus, ClosureReportV1, EvidenceMode, MemberDigestV1,
@@ -26,6 +26,10 @@ pub fn verify_manifest(
     let manifest: RunManifestV1 =
         serde_json::from_slice(&bytes).wrap_err("decode run-manifest.json")?;
     validate_manifest_shape(&manifest)?;
+    ensure!(
+        manifest.source == capture_source_identity(repo)?,
+        "manifest source/toolchain identity differs from the checked-out verifier source"
+    );
     for section in &ledger.runtime_evidence.required_sections {
         ensure!(
             manifest.sections.get(section).is_some_and(substantive_json),
@@ -83,10 +87,17 @@ pub fn missing_bundle_report(
 ) -> ClosureReportV1 {
     let task_id = match &mode {
         EvidenceMode::TaskProgress { task_id } => Some(task_id.clone()),
-        EvidenceMode::PocClosure => None,
+        EvidenceMode::Lane { .. } | EvidenceMode::PocClosure => None,
     };
     let mode_name = mode_name(&mode).to_owned();
-    let mut missing = ledger.test_ids().into_iter().collect::<Vec<_>>();
+    let mut missing = match &mode {
+        EvidenceMode::Lane { lane } => ledger.lane_test_ids(lane),
+        EvidenceMode::TaskProgress { .. } | EvidenceMode::PocClosure => {
+            ledger.test_ids().into_iter().collect()
+        }
+    }
+    .into_iter()
+    .collect::<Vec<_>>();
     missing.sort();
     ClosureReportV1 {
         schema_version: RUNTIME_SCHEMA_VERSION,
@@ -409,24 +420,35 @@ fn compute_report(
         .map(|(id, _)| id.clone())
         .collect::<BTreeSet<_>>();
     let all_tests = ledger.test_ids();
+    let report_test_scope = match &manifest.mode {
+        EvidenceMode::Lane { lane } => ledger
+            .lane_test_ids(lane)
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+        EvidenceMode::TaskProgress { .. } | EvidenceMode::PocClosure => all_tests.clone(),
+    };
     let discovered = manifest
         .discovery
         .discovered
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let mut missing = all_tests
+    let mut missing = report_test_scope
         .difference(&passed)
         .cloned()
         .collect::<BTreeSet<_>>();
-    missing.extend(all_tests.difference(&discovered).cloned());
+    missing.extend(report_test_scope.difference(&discovered).cloned());
 
-    let requirement_gaps = ledger
-        .required_coverage()
-        .into_iter()
-        .filter(|(_, tests)| tests.iter().any(|test| !passed.contains(test)))
-        .map(|(id, _)| id)
-        .collect::<Vec<_>>();
+    let requirement_gaps = if matches!(manifest.mode, EvidenceMode::Lane { .. }) {
+        Vec::new()
+    } else {
+        ledger
+            .required_coverage()
+            .into_iter()
+            .filter(|(_, tests)| tests.iter().any(|test| !passed.contains(test)))
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>()
+    };
 
     let mut errors = Vec::new();
     let mode_ok = match &manifest.mode {
@@ -456,6 +478,25 @@ fn compute_report(
             }
             owned_ok && discovered_ok
         }
+        EvidenceMode::Lane { lane } => {
+            let lane_tests = ledger
+                .lane_test_ids(lane)
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            let lane_passed = passed
+                .intersection(&lane_tests)
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let lane_non_pass = non_pass
+                .intersection(&lane_tests)
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let lane_ok = lane_passed == lane_tests && lane_non_pass.is_empty();
+            if !lane_ok {
+                errors.push(format!("lane {lane} did not pass every registered test"));
+            }
+            lane_ok
+        }
     };
     if !non_pass.is_empty() {
         errors.push("bundle contains non-PASS stable tests".to_owned());
@@ -467,7 +508,7 @@ fn compute_report(
         mode: mode_name(&manifest.mode).to_owned(),
         task_id: match &manifest.mode {
             EvidenceMode::TaskProgress { task_id } => Some(task_id.clone()),
-            EvidenceMode::PocClosure => None,
+            EvidenceMode::Lane { .. } | EvidenceMode::PocClosure => None,
         },
         source_sha: Some(manifest.source.sha.clone()),
         status: if passed_ok { "PASS" } else { "FAIL" }.to_owned(),
@@ -521,6 +562,7 @@ fn is_lower_hex(value: &str) -> bool {
 fn mode_name(mode: &EvidenceMode) -> &'static str {
     match mode {
         EvidenceMode::TaskProgress { .. } => "task_progress",
+        EvidenceMode::Lane { .. } => "lane",
         EvidenceMode::PocClosure => "poc_closure",
     }
 }

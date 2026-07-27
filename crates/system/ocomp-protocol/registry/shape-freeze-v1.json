@@ -41,7 +41,7 @@
     "max_result_summary_bytes": 1048576,
     "max_activation_payload_bytes": 65536,
     "max_finalized_intent_proof_bytes": 524288,
-    "max_execution_certificate_bytes": 512,
+    "max_result_vote_bytes": 2048,
     "max_activation_ocb1_bytes": 2097152,
     "max_activation_calldata_bytes": 2097216,
     "max_transaction_rlp_bytes": 2097408,

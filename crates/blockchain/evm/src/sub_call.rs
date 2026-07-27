@@ -64,7 +64,7 @@ where
         runtime_body_readers,
         execution_scope,
         None,
-        Arc::new(crate::precompiles::OcompActivationBlockMeter::default()),
+        Arc::new(crate::precompiles::OcompActivationBlockMeter),
         false,
         input,
     )

@@ -43,8 +43,11 @@ pub fn poc_schema_limits() -> SchemaLimits {
         max_unit_inputs: usize::try_from(candidate.max_inputs_per_work_unit)
             .expect("generated per-unit input cap fits usize"),
         max_result_chunk_bytes: candidate.max_result_chunk_bytes,
-        max_control_body_bytes: usize::try_from(candidate.max_activation_payload_bytes)
-            .expect("generated control cap fits usize"),
+        // Local control transports typed off-chain proofs and openings as well
+        // as compact activation data. Method codecs enforce their narrower
+        // limits; the frame ceiling must not reject a body accepted by the
+        // shared canonical codec.
+        max_control_body_bytes: max_body_bytes,
     }
 }
 

@@ -484,7 +484,9 @@ fn build_finalized_intent_proof_fixture(
     let logical_key = intent_storage_key(intent_id).expect("fixture intent storage key");
     let record = OcompJobRecordV1 {
         intent: intent.clone(),
-        status: OcompJobStatus::OffchainPending,
+        intent_height: intent.logical_evaluation_height,
+        status: OcompJobStatus::AwaitingFinality,
+        finalized: None,
         terminal: None,
     };
     let encoded_record = record

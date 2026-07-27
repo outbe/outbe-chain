@@ -45,6 +45,13 @@ pub struct StartOpts {
     pub voting_window: Option<u64>,
     /// Signed wall-clock offset used only by debug-node day-boundary E2E.
     pub unix_time_offset_secs: Option<i64>,
+    /// The scenario already shifted `genesis.json` before deriving another
+    /// immutable manifest binding from it. Nodes still receive the clock
+    /// offset, but the common start path must not shift genesis a second time.
+    pub genesis_timestamp_pre_shifted: bool,
+    /// Bundle identity already pinned by the measurement chain manifest; used
+    /// only for the node-local OCOMP UDS handshake.
+    pub ocomp_protocol_bundle_hash: Option<String>,
 }
 
 impl StartOpts {
@@ -53,17 +60,41 @@ impl StartOpts {
         Self {
             voting_window: Some(window),
             unix_time_offset_secs: None,
+            genesis_timestamp_pre_shifted: false,
+            ocomp_protocol_bundle_hash: None,
         }
     }
 
     pub fn near_next_utc_day(window: u64, now_secs: u64) -> Self {
-        const SECONDS_PER_DAY: u64 = 86_400;
         const BOUNDARY_LEAD_SECS: u64 = 120;
+        Self::near_next_utc_day_with_lead(window, now_secs, BOUNDARY_LEAD_SECS)
+    }
+
+    /// Position the debug-node clock an exact number of seconds before the next
+    /// UTC day boundary. Capacity scenarios need a wider lead than the ordinary
+    /// one-item lifecycle because every input must first be finalized through
+    /// the public transaction path.
+    pub fn near_next_utc_day_with_lead(
+        window: u64,
+        now_secs: u64,
+        boundary_lead_secs: u64,
+    ) -> Self {
+        const SECONDS_PER_DAY: u64 = 86_400;
         let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
-        let target = next_day.saturating_sub(BOUNDARY_LEAD_SECS);
+        let target = next_day.saturating_sub(boundary_lead_secs);
         Self {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
+            genesis_timestamp_pre_shifted: false,
+            ocomp_protocol_bundle_hash: None,
+        }
+    }
+
+    /// Enable node-local OCOMP UDS for an already-armed measurement manifest.
+    pub fn with_ocomp_measurement_bundle(protocol_bundle_hash: String) -> Self {
+        Self {
+            ocomp_protocol_bundle_hash: Some(protocol_bundle_hash),
+            ..Self::default()
         }
     }
 }
@@ -78,6 +109,10 @@ pub struct Localnet {
     followers: HashMap<String, ChildGuard>,
     /// Owned validator-indexed enclave containers (committee + joiner).
     enclaves: HashMap<usize, EnclaveGuard>,
+    /// Scenario-only chain-manifest overrides used to prove that a validator
+    /// with a different immutable fork install cannot join the canonical
+    /// consensus namespace. All ordinary validators use `genesis.json`.
+    validator_chain_manifests: HashMap<usize, PathBuf>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
 }
@@ -89,6 +124,7 @@ impl Localnet {
             validators: HashMap::new(),
             followers: HashMap::new(),
             enclaves: HashMap::new(),
+            validator_chain_manifests: HashMap::new(),
             start_opts: StartOpts::default(),
         }
     }
@@ -99,11 +135,6 @@ impl Localnet {
 
     fn dir(&self) -> String {
         self.cfg.dir.display().to_string()
-    }
-
-    /// Absolute path of a file directly under the data dir.
-    fn data_path(&self, name: &str) -> String {
-        self.cfg.dir.join(name).display().to_string()
     }
 
     /// Committee size (`--validators`). Not derivable from the port map: the
@@ -143,10 +174,15 @@ impl Localnet {
     /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
     fn reth_base_args(&self, node_dir: &Path, i: usize) -> Vec<String> {
         let data = node_dir.join("data");
+        let chain_manifest = self
+            .validator_chain_manifests
+            .get(&i)
+            .cloned()
+            .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
         args![
             "node",
             "--chain",
-            self.data_path("genesis.json"),
+            chain_manifest.display(),
             "--datadir",
             data.display(),
             "--http",
@@ -155,7 +191,7 @@ impl Localnet {
             "--http.port",
             self.cfg.http_port(i),
             "--http.api",
-            "eth,net,web3,outbe",
+            "eth,net,web3,outbe,debug",
             "--port",
             self.cfg.p2p_port(i),
             "--discovery.port",
@@ -426,5 +462,22 @@ mod tests {
         let wd = worldwide_day();
         assert_eq!(wd.len(), 8);
         assert!(wd.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn custom_day_boundary_lead_is_reflected_exactly_in_the_node_clock_offset() {
+        const NOW: u64 = 1_700_000_000;
+        const LEAD: u64 = 240;
+        const SECONDS_PER_DAY: u64 = 86_400;
+
+        let opts = StartOpts::near_next_utc_day_with_lead(6, NOW, LEAD);
+        let next_day = NOW - (NOW % SECONDS_PER_DAY) + SECONDS_PER_DAY;
+
+        assert_eq!(opts.voting_window, Some(6));
+        assert_eq!(
+            opts.unix_time_offset_secs,
+            Some((next_day - LEAD) as i64 - NOW as i64)
+        );
+        assert!(!opts.genesis_timestamp_pre_shifted);
     }
 }
