@@ -2,14 +2,14 @@
 
 - **Status:** Proposed; current Solidity implementation profiled
 - **Date:** 2026-07-17
-- **Owners/scope:** `contracts/intex/src/target/EscrowAdapter.sol`, The Compact/VaultProvider seams
+- **Owners/scope:** `contracts/intex/src/target/EscrowAdapter.sol`, The Compact/VaultRouter seams
 - **Depends on:** ADR-C-INX-005, ADR-C-VLT-001, ADR-B-CAP-001
 - **Related flow:** PFS-004
 
 ## Context
 
 EscrowAdapter pools bid funds and commit bonds in The Compact, tracks per-series/bidder
-locks, executes batched finalization, exposes refund claims and records VaultProvider
+locks, executes batched finalization, exposes refund claims and records VaultRouter
 amounts owed when immediate liquidity settlement fails. It is the monetary authority
 for the target auction.
 
@@ -17,13 +17,13 @@ for the target auction.
 
 Primary state distinguishes bid lock, commit bond, auction aggregate and finalization
 identity. For each bidder, locked value terminates exactly once as paid proceeds,
-claimable refund, VaultProvider owed amount or released/abandoned bond. Finalization is
+claimable refund, VaultRouter owed amount or released/abandoned bond. Finalization is
 identified by authenticated `receiveId` plus series and immutable instruction
 commitment. Per-item failure is parked with enough data for deterministic retry; success
 cannot replay.
 
 The Compact balance is pooled physically but logically equals the sum of all live bid
-locks and bonds. External VaultProvider debt is explicit state and remains included in
+locks and bonds. External VaultRouter debt is explicit state and remains included in
 value conservation until acknowledged settlement.
 
 ## Authoritative interfaces
@@ -40,7 +40,7 @@ corresponding planned Compact claim.
 - `refunded + paid == locked` for every successful finalization instruction.
 - Auction total locked equals the sum of its nonterminal bidder locks.
 - A finalization item and receive identity can succeed at most once.
-- Proceeds recipient, payment token, Compact, allocator and VaultProvider are valid,
+- Proceeds recipient, payment token, Compact, allocator and VaultRouter are valid,
   versioned wiring and cannot change while outstanding locks exist.
 
 ## Atomicity, replay and failure
@@ -60,7 +60,7 @@ settlement cannot force unbounded work.
 ## Compatibility, trust and activation
 
 Payment token, Compact lock id/tag, allocator, reset period, auction/router roles,
-VaultProvider and UUPS layout form one deployment manifest. Rewiring is forbidden with
+VaultRouter and UUPS layout form one deployment manifest. Rewiring is forbidden with
 outstanding locks and uses governed two-step activation.
 
 ## Production-interface verification evidence
@@ -83,7 +83,7 @@ ledger. The additional pending/debt states must remain observable and operable.
 
 ## Open questions and technical debt
 
-- **Critical:** extend conservation evidence across real Compact and VaultProvider
+- **Critical:** extend conservation evidence across real Compact and VaultRouter
   failures, fee-on-transfer/reentrant tokens, partial finalization and retries.
 - Prove per-item self-call isolation and receive-id replay cannot finalize twice or leave
   aggregate totals inconsistent.

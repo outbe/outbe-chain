@@ -5,7 +5,7 @@ import {
   ICredis__factory,
   SmartAccountFactory__factory,
   IERC20__factory,
-  IVaultProvider__factory,
+  IVaultRouter__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
@@ -48,7 +48,7 @@ const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const credisFactoryAddress = process.env["CREDIS_FACTORY_ADDRESS"] || DEFAULT_CREDIS_FACTORY_ADDRESS;
 const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
-const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
+const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
 
 function loadTicket(): { ticket: Ticket; path: string } {
@@ -74,7 +74,7 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultProviderAddress],
+    [vaultRouterAddress],
     SALT,
   );
 
@@ -119,7 +119,7 @@ async function main() {
   const interfaces = [
     { name: "ICredisFactory", iface: ICredisFactory__factory.createInterface() },
     { name: "ICredis", iface: ICredis__factory.createInterface() },
-    { name: "VaultProvider", iface: IVaultProvider__factory.createInterface() },
+    { name: "VaultRouter", iface: IVaultRouter__factory.createInterface() },
     { name: "IGratis", iface: IGratis__factory.createInterface() },
     { name: "ERC20", iface: IERC20__factory.createInterface() },
   ];

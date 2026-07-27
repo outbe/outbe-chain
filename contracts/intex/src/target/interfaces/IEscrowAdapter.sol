@@ -110,7 +110,7 @@ interface IEscrowAdapter {
     /// @param receiveId Inbound bridge message that triggered the payout.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose winning portion was paid out.
-    /// @param amount Amount routed to the vault provider.
+    /// @param amount Amount routed to the vault router.
     event FundsClaimed(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a series escrow is finalized.
@@ -134,8 +134,8 @@ interface IEscrowAdapter {
     /// @param intexAuctionNew IntexAuction address after this wire.
     /// @param compactOld The Compact address before this wire.
     /// @param compactNew The Compact address after this wire.
-    /// @param vaultProviderOld Outbe-vault `VaultProvider` address before this wire.
-    /// @param vaultProviderNew Outbe-vault `VaultProvider` address after this wire.
+    /// @param vaultRouterOld Outbe-vault `VaultRouter` address before this wire.
+    /// @param vaultRouterNew Outbe-vault `VaultRouter` address after this wire.
     /// @param paymentTokenOld Active payment-token address before this wire.
     /// @param paymentTokenNew Active payment-token address after this wire.
     event Wired(
@@ -143,8 +143,8 @@ interface IEscrowAdapter {
         address intexAuctionNew,
         address compactOld,
         address compactNew,
-        address vaultProviderOld,
-        address vaultProviderNew,
+        address vaultRouterOld,
+        address vaultRouterNew,
         address paymentTokenOld,
         address paymentTokenNew
     );
@@ -187,7 +187,7 @@ interface IEscrowAdapter {
     ///         vault and advances the lock from `RefundClaimed` to `Finalized`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose parked vault portion was settled.
-    /// @param vaultOwed Payout portion deposited into the vault provider.
+    /// @param vaultOwed Payout portion deposited into the vault router.
     event VaultOwedSettled(uint32 indexed worldwideDay, address indexed bidder, uint128 vaultOwed);
 
     /// @notice Emitted when `finalizeAuction` settled zero bidders (every instruction failed). The
@@ -268,15 +268,15 @@ interface IEscrowAdapter {
     /// @dev After the first wiring, rotating `_paymentToken` or `_compact` reverts with
     ///      `LiveLocksOutstanding` while any locked balance remains in The Compact.
     /// @dev Deployment-order requirement (handled by the outbe-vault owner, not this contract):
-    ///      `VaultProvider.addVault(vaultV2)` + `addLiquiditySource(this, IntexBidPrice)` must
+    ///      `IVaultRouter.addVault(vaultV2)` + `addLiquiditySource(this, IntexCostAmount)` must
     ///      land before our `wire(...)` and any subsequent `finalizeAuction()` paid-portion call.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
-    /// @param _vaultProvider Outbe-vault `VaultProvider` address (router for liquidity into the
+    /// @param _vaultRouter Outbe-vault `VaultRouter` address (router for liquidity into the
     ///        underlying `VaultV2`). Winner principal at finalization is routed through
-    ///        `vaultProvider.depositLiquidity(paymentToken, paidAmount)`.
+    ///        `vaultRouter.deposit(paymentToken, paidAmount)`.
     /// @param _paymentToken Active payment-token address.
-    function wire(address _intexAuction, address _compact, address _vaultProvider, address _paymentToken) external;
+    function wire(address _intexAuction, address _compact, address _vaultRouter, address _paymentToken) external;
 
     // --- Auction Integration ---
 
@@ -341,7 +341,7 @@ interface IEscrowAdapter {
 
     /// @notice Permissionless settlement of a payout portion left parked by a post-finalize
     ///         `claimRefund` (lock in `RefundClaimed`). Withdraws the parked amount from The Compact
-    ///         and deposits it into the vault provider, advancing the lock to `Finalized`. The
+    ///         and deposits it into the vault router, advancing the lock to `Finalized`. The
     ///         amount and destination are fixed by stored lock state — the caller chooses only when.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose parked vault portion is being settled.

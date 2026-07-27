@@ -24,7 +24,7 @@ use outbe_primitives::addresses::{
     OUTBE_SYSTEM_TX_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS,
     REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS,
     TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS,
-    VAULT_PROVIDER_ADDRESS, VOTE_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
+    VAULT_ROUTER_ADDRESS, VOTE_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
     ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
@@ -132,9 +132,9 @@ fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, Bas
             default_base_gas,
         ),
         a if a == DESIS_ADDRESS => ("desis", outbe_desis::precompile::dispatch, default_base_gas),
-        a if a == VAULT_PROVIDER_ADDRESS => (
-            "vaultprovider",
-            outbe_vaultprovider::precompile::dispatch,
+        a if a == VAULT_ROUTER_ADDRESS => (
+            "vaultrouter",
+            outbe_vaultrouter::precompile::dispatch,
             default_base_gas,
         ),
         a if a == CREDIS_ADDRESS => (

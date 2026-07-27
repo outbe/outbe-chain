@@ -4,7 +4,7 @@
 //! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
 //! asserted by decrypting the ciphertext with the account's view key, exactly as
 //! a client would. `HashMapStorageProvider` does not run a real EVM, so the
-//! runtime's Rust → Solidity sub-calls into `IVaultProvider` / `IERC20` are
+//! runtime's Rust → Solidity sub-calls into `IVaultRouter` / `IERC20` are
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -13,7 +13,7 @@ use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -119,7 +119,7 @@ fn env() -> HashMapStorageProvider {
     storage.set_timestamp(U256::from(CREATED_AT));
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, zero_word());
+    storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     storage
 }

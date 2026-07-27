@@ -11,7 +11,7 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 contract EscrowAdapterUupsTest is Test {
     address internal admin = makeAddr("admin");
@@ -58,7 +58,7 @@ contract EscrowAdapterUupsTest is Test {
     function test_Upgrade_PreservesWiringAndCompactConfig() public {
         MockERC20 token = new MockERC20("Mock USD", "MUSD", 6);
         MockTheCompact compactMock = new MockTheCompact();
-        MockVaultProvider vault = new MockVaultProvider();
+        MockVaultRouter vault = new MockVaultRouter();
         address auction = makeAddr("auction");
 
         vm.prank(admin);
@@ -76,7 +76,7 @@ contract EscrowAdapterUupsTest is Test {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
         assertEq(escrow.intexAuctionContract(), auction);
         assertEq(address(escrow.compact()), address(compactMock));
-        assertEq(address(escrow.vaultProvider()), address(vault));
+        assertEq(address(escrow.vaultRouter()), address(vault));
         assertEq(address(escrow.paymentToken()), address(token));
         assertEq(escrow.allocatorId(), allocatorIdBefore);
         assertEq(escrow.lockTag(), lockTagBefore);

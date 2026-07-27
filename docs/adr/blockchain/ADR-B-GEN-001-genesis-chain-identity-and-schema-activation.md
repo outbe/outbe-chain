@@ -240,7 +240,7 @@ module audits can trace every initial state word to a module-owned schema.
 17. Some bootstrap shell code patches genesis after the main seeder (for example dev
     felony threshold). Post-validation mutation must be prohibited or force a full
     identity/revalidation pass.
-18. Governance authority defaults to validator addresses and VaultProvider defaults
+18. Governance authority defaults to validator addresses and VaultRouter defaults
     to validator zero. These are security/economic decisions requiring explicit
     production inputs and owner-ADR approval, not convenience defaults.
 19. Absence of `tee_policy` produces a running chain whose enclave measurements are

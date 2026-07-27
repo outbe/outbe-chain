@@ -3,12 +3,12 @@
 use alloy_primitives::{keccak256, Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_intex::IntexState;
-use outbe_vaultprovider::api::IVaultProvider;
+use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
@@ -283,7 +283,7 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
 /// Sweep ownerless proceeds to the reserve vault (native transfer to the vault
 /// provider), so a series with no recorded contributors is not stranded.
 fn sweep_to_reserve(storage: &StorageHandle<'_>, series_id: u32, amount: U256) -> Result<()> {
-    storage.transfer_balance(INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS, amount)?;
+    storage.transfer_balance(INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS, amount)?;
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsSweptToReserve {
@@ -460,15 +460,15 @@ pub fn settle(
         payment_token,
         U256::ZERO,
         IERC20::approveCall {
-            spender: VAULT_PROVIDER_ADDRESS,
+            spender: VAULT_ROUTER_ADDRESS,
             amount: received,
         }
         .abi_encode()
         .into(),
     )?;
 
-    // Deposit into the reserve vault via the provider's Solidity ABI.
-    let shares = outbe_vaultprovider::api::deposit_liquidity(storage, payment_token, received)?;
+    // Deposit into the reserve vault via the router's Solidity ABI.
+    let shares = outbe_vaultrouter::api::deposit(storage, payment_token, received)?;
     if shares.is_zero() {
         return Err(IntexFactoryError::ZeroSharesReceived.into());
     }
@@ -516,12 +516,12 @@ fn nft_balance_of(storage: &StorageHandle<'_>, account: Address, id: U256) -> Re
 fn vault_asset(storage: &StorageHandle<'_>) -> Result<Address> {
     // TODO pick up the asset ERC20 address properly
     let ret = storage.staticcall(
-        VAULT_PROVIDER_ADDRESS,
-        IVaultProvider::assetAtCall { index: U256::ZERO }
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetAtCall { index: U256::ZERO }
             .abi_encode()
             .into(),
     )?;
-    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+    let asset = IVaultRouter::assetAtCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("assetAt undecodable".into()))?;
     if asset.is_zero() {
         return Err(IntexFactoryError::NotWired.into());

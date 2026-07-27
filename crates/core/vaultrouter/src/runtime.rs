@@ -1,9 +1,9 @@
-//! Orchestration logic for the vaultprovider precompile.
+//! Orchestration logic for the vaultrouter precompile.
 //!
-//! Faithful port of `contracts/.../VaultProvider.sol`. All cross-contract
+//! Faithful port of `contracts/.../VaultRouter.sol`. All cross-contract
 //! interaction (ERC-20 token ops, ERC-4626 vault ops, token-bundle top-up) goes
 //! through `StorageHandle::call` / `StorageHandle::staticcall`; from the callee's
-//! perspective `msg.sender` is `VAULT_PROVIDER_ADDRESS` (this precompile).
+//! perspective `msg.sender` is `VAULT_ROUTER_ADDRESS` (this precompile).
 //!
 //! Following the repo convention (see `outbe_credisfactory::runtime`), ERC-20
 //! mutating sub-calls propagate failure by reverting; their boolean return is
@@ -12,17 +12,17 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::IVaultProvider;
-use crate::errors::VaultProviderError;
-use crate::schema::{VaultProviderContract, UNKNOWN};
-use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
+use crate::api::{ICrosschainVaultRouter, IVaultRouter};
+use crate::errors::VaultRouterError;
+use crate::schema::{VaultRouterContract, UNKNOWN};
+use crate::sol_ext::{IReferenceCurrency, ITokenBundle, IVaultV2, IERC20};
 
 /// This precompile's own address (`address(this)` in the Solidity original).
-const SELF: Address = VAULT_PROVIDER_ADDRESS;
+const SELF: Address = VAULT_ROUTER_ADDRESS;
 
 // ---------------------------------------------------------------------------
 // owner gate
@@ -30,9 +30,9 @@ const SELF: Address = VAULT_PROVIDER_ADDRESS;
 
 /// Reverts unless `sender` is the configured owner. Replaces `onlyOwner`.
 fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     if contract.owner.read()? != sender {
-        return Err(VaultProviderError::Unauthorized.into());
+        return Err(VaultRouterError::Unauthorized.into());
     }
     Ok(())
 }
@@ -50,10 +50,10 @@ pub fn set_crosschain_bridge(
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
     ensure_no_pending_crosschain_operations(&storage)?;
-    let mut contract = VaultProviderContract::new(storage);
+    let mut contract = VaultRouterContract::new(storage);
     let old_bridge = contract.crosschain_bridge.read()?;
     contract.crosschain_bridge.write(bridge)?;
-    contract.emit(IVaultProvider::CrosschainBridgeUpdated {
+    contract.emit(ICrosschainVaultRouter::CrosschainBridgeUpdated {
         oldBridge: old_bridge,
         newBridge: bridge,
     })
@@ -61,39 +61,39 @@ pub fn set_crosschain_bridge(
 
 /// Registers the fixed vault adapter for a remote EVM chain. Passing the zero
 /// address clears the peer while retaining the chain key's default value.
-pub fn set_remote_vault_provider(
+pub fn set_remote_vault_router(
     storage: StorageHandle<'_>,
     sender: Address,
     chain_id: U256,
-    provider: Address,
+    router: Address,
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
     ensure_no_pending_crosschain_operations(&storage)?;
     let local_chain_id = U256::from(storage.chain_id()?);
     if chain_id.is_zero() || chain_id == local_chain_id {
-        return Err(VaultProviderError::InvalidDestinationChain.into());
+        return Err(VaultRouterError::InvalidDestinationChain.into());
     }
 
-    let mut contract = VaultProviderContract::new(storage);
-    let old_provider = contract.remote_vault_providers.read(&chain_id)?;
-    if provider.is_zero() {
-        contract.remote_vault_providers.clear(&chain_id)?;
+    let mut contract = VaultRouterContract::new(storage);
+    let old_router = contract.remote_vault_routers.read(&chain_id)?;
+    if router.is_zero() {
+        contract.remote_vault_routers.clear(&chain_id)?;
     } else {
-        contract.remote_vault_providers.write(&chain_id, provider)?;
+        contract.remote_vault_routers.write(&chain_id, router)?;
     }
-    contract.emit(IVaultProvider::RemoteVaultProviderUpdated {
+    contract.emit(ICrosschainVaultRouter::RemoteVaultRouterUpdated {
         chainId: chain_id,
-        oldProvider: old_provider,
-        newProvider: provider,
+        oldRouter: old_router,
+        newRouter: router,
     })
 }
 
 fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Result<()> {
-    let pending = VaultProviderContract::new(storage.clone())
+    let pending = VaultRouterContract::new(storage.clone())
         .pending_crosschain_operations
         .read()?;
     if !pending.is_zero() {
-        return Err(VaultProviderError::CrosschainOperationsPending(pending).into());
+        return Err(VaultRouterError::CrosschainOperationsPending(pending).into());
     }
     Ok(())
 }
@@ -102,52 +102,85 @@ fn ensure_no_pending_crosschain_operations(storage: &StorageHandle<'_>) -> Resul
 // vault management (owner-only)
 // ---------------------------------------------------------------------------
 
-/// `addVault`: register `vault` for its underlying asset and grant the provider
-/// an unlimited allowance so the vault can pull on deposit.
+/// `addVault`: register an ownerless `vault` for its underlying asset and ISO
+/// 4217 reference currency, then grant the router an unlimited allowance so
+/// the vault can pull on deposit.
 pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if vault.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
 
     let asset = vault_asset(&storage, vault)?;
     if asset.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
 
-    // TODO ensure wallet.owner = address(0)
+    let current_owner = vault_owner(&storage, vault)?;
+    if !current_owner.is_zero() {
+        return Err(VaultRouterError::ReserveVaultOwnerNotRenounced(current_owner).into());
+    }
 
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let iso_code = asset_iso_code(&storage, asset)?;
+    if iso_code == 0 {
+        return Err(VaultRouterError::InvalidReferenceCurrency.into());
+    }
+
+    let mut contract = VaultRouterContract::new(storage.clone());
     if !contract.asset_vault_set(asset).insert(vault)? {
-        return Err(VaultProviderError::ReserveVaultAlreadyAdded.into());
+        return Err(VaultRouterError::ReserveVaultAlreadyAdded.into());
     }
     contract.assets.insert(asset)?;
+    contract
+        .reference_currency_vault_set(iso_code)
+        .insert(vault)?;
+    contract
+        .vault_reference_currencies
+        .write(&vault, iso_code)?;
 
     erc20_approve(&storage, asset, vault, U256::MAX)?;
 
-    contract.emit(IVaultProvider::VaultAdded { asset, vault })
+    contract.emit(IVaultRouter::VaultAdded {
+        isoCode: iso_code,
+        asset,
+        vault,
+    })
 }
 
 /// `removeVault`: deregister `vault` for its asset and revoke the allowance.
 pub fn remove_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if vault.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
 
     let asset = vault_asset(&storage, vault)?;
 
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let mut contract = VaultRouterContract::new(storage.clone());
+    let mut iso_code = contract.vault_reference_currencies.read(&vault)?;
+    if iso_code == 0 {
+        // Upgrade compatibility for vaults registered before the ISO index was
+        // introduced: resolve their immutable asset metadata on first removal.
+        iso_code = asset_iso_code(&storage, asset)?;
+    }
     if !contract.asset_vault_set(asset).remove(&vault)? {
-        return Err(VaultProviderError::ReserveVaultNotFound.into());
+        return Err(VaultRouterError::ReserveVaultNotFound.into());
     }
     if contract.asset_vault_set(asset).is_empty()? {
         contract.assets.remove(&asset)?;
     }
+    contract
+        .reference_currency_vault_set(iso_code)
+        .remove(&vault)?;
+    contract.vault_reference_currencies.clear(&vault)?;
 
     erc20_approve(&storage, asset, vault, U256::ZERO)?;
 
-    contract.emit(IVaultProvider::VaultRemoved { asset, vault })
+    contract.emit(IVaultRouter::VaultRemoved {
+        isoCode: iso_code,
+        asset,
+        vault,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -162,19 +195,19 @@ pub fn add_liquidity_source(
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if source.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
     if source_type == UNKNOWN {
-        return Err(VaultProviderError::InvalidLiquiditySource.into());
+        return Err(VaultRouterError::InvalidLiquiditySource.into());
     }
 
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let mut contract = VaultRouterContract::new(storage.clone());
     contract.liquidity_sources.insert(source)?;
     contract
         .liquidity_source_types
         .write(&source, source_type)?;
 
-    contract.emit(IVaultProvider::LiquiditySourceAdded {
+    contract.emit(IVaultRouter::LiquiditySourceAdded {
         sourceAddress: source,
         sourceType: liquidity_source(source_type),
     })
@@ -186,14 +219,14 @@ pub fn remove_liquidity_source(
     source: Address,
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let mut contract = VaultRouterContract::new(storage.clone());
     if !contract.liquidity_sources.remove(&source)? {
-        return Err(VaultProviderError::LiquiditySourceNotFound.into());
+        return Err(VaultRouterError::LiquiditySourceNotFound.into());
     }
     let source_type = contract.liquidity_source_types.read(&source)?;
     contract.liquidity_source_types.clear(&source)?;
 
-    contract.emit(IVaultProvider::LiquiditySourceRemoved {
+    contract.emit(IVaultRouter::LiquiditySourceRemoved {
         sourceAddress: source,
         sourceType: liquidity_source(source_type),
     })
@@ -207,19 +240,19 @@ pub fn add_liquidity_target(
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
     if target.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
     if target_type == UNKNOWN {
-        return Err(VaultProviderError::InvalidLiquidityTarget.into());
+        return Err(VaultRouterError::InvalidLiquidityTarget.into());
     }
 
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let mut contract = VaultRouterContract::new(storage.clone());
     contract.liquidity_targets.insert(target)?;
     contract
         .liquidity_target_types
         .write(&target, target_type)?;
 
-    contract.emit(IVaultProvider::LiquidityTargetAdded {
+    contract.emit(IVaultRouter::LiquidityTargetAdded {
         targetAddress: target,
         targetType: liquidity_target(target_type),
     })
@@ -231,14 +264,14 @@ pub fn remove_liquidity_target(
     target: Address,
 ) -> Result<()> {
     ensure_owner(&storage, sender)?;
-    let mut contract = VaultProviderContract::new(storage.clone());
+    let mut contract = VaultRouterContract::new(storage.clone());
     if !contract.liquidity_targets.remove(&target)? {
-        return Err(VaultProviderError::LiquidityTargetNotFound.into());
+        return Err(VaultRouterError::LiquidityTargetNotFound.into());
     }
     let target_type = contract.liquidity_target_types.read(&target)?;
     contract.liquidity_target_types.clear(&target)?;
 
-    contract.emit(IVaultProvider::LiquidityTargetRemoved {
+    contract.emit(IVaultRouter::LiquidityTargetRemoved {
         targetAddress: target,
         targetType: liquidity_target(target_type),
     })
@@ -248,41 +281,41 @@ pub fn remove_liquidity_target(
 // liquidity flow
 // ---------------------------------------------------------------------------
 
-/// Resolves the `LiquiditySource` registered for `caller`, returning `Unknown`
+/// Resolves the `StablesSource` registered for `caller`, returning `Unknown`
 /// when `caller` is not a registered source.
 pub fn registered_liquidity_source(
     storage: &StorageHandle<'_>,
     caller: Address,
-) -> Result<IVaultProvider::LiquiditySource> {
-    let contract = VaultProviderContract::new(storage.clone());
+) -> Result<IVaultRouter::StablesSource> {
+    let contract = VaultRouterContract::new(storage.clone());
     Ok(liquidity_source(
         contract.liquidity_source_types.read(&caller)?,
     ))
 }
 
-/// Resolves the `LiquidityTarget` registered for `caller`, returning `Unknown`
+/// Resolves the `StablesTarget` registered for `caller`, returning `Unknown`
 /// when `caller` is not a registered target.
 pub fn registered_liquidity_target(
     storage: &StorageHandle<'_>,
     caller: Address,
-) -> Result<IVaultProvider::LiquidityTarget> {
-    let contract = VaultProviderContract::new(storage.clone());
+) -> Result<IVaultRouter::StablesTarget> {
+    let contract = VaultRouterContract::new(storage.clone());
     Ok(liquidity_target(
         contract.liquidity_target_types.read(&caller)?,
     ))
 }
 
-/// `depositLiquidity`: pulls `amount` of `asset` from the caller and deposits it
+/// `deposit`: pulls `amount` of `asset` from the caller and deposits it
 /// into the asset's vault, returning the minted shares.
-pub(crate) fn deposit_liquidity(
+pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
-    source: IVaultProvider::LiquiditySource,
+    source: IVaultRouter::StablesSource,
 ) -> Result<U256> {
-    if matches!(source, IVaultProvider::LiquiditySource::Unknown) {
-        return Err(VaultProviderError::InvalidLiquiditySource.into());
+    if matches!(source, IVaultRouter::StablesSource::Unknown) {
+        return Err(VaultRouterError::InvalidLiquiditySource.into());
     }
 
     let vault = first_vault(&storage, asset)?;
@@ -290,8 +323,8 @@ pub(crate) fn deposit_liquidity(
     erc20_transfer_from(&storage, asset, caller, SELF, amount)?;
     let shares = vault_deposit(&storage, vault, amount, SELF)?;
 
-    let mut contract = VaultProviderContract::new(storage.clone());
-    contract.emit(IVaultProvider::LiquidityDeposited {
+    let mut contract = VaultRouterContract::new(storage.clone());
+    contract.emit(IVaultRouter::LiquidityDeposited {
         source: caller,
         vault,
         assetsAmount: amount,
@@ -302,21 +335,21 @@ pub(crate) fn deposit_liquidity(
     Ok(shares)
 }
 
-/// `withdrawLiquidity`: redeems `amount` of `asset` from the vault and tops it
+/// `withdraw`: redeems `amount` of `asset` from the vault and tops it
 /// up into `receiver` (a token bundle), returning the burned shares.
-pub(crate) fn withdraw_liquidity(
+pub(crate) fn withdraw(
     storage: StorageHandle<'_>,
     caller: Address,
     asset: Address,
     amount: U256,
     receiver: Address,
-    target: IVaultProvider::LiquidityTarget,
+    target: IVaultRouter::StablesTarget,
 ) -> Result<U256> {
     if receiver.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
-    if matches!(target, IVaultProvider::LiquidityTarget::Unknown) {
-        return Err(VaultProviderError::InvalidLiquidityTarget.into());
+    if matches!(target, IVaultRouter::StablesTarget::Unknown) {
+        return Err(VaultRouterError::InvalidLiquidityTarget.into());
     }
 
     let vault = first_vault(&storage, asset)?;
@@ -324,7 +357,7 @@ pub(crate) fn withdraw_liquidity(
     let required_shares = vault_preview_withdraw(&storage, vault, amount)?;
     let available_shares = erc20_balance_of(&storage, vault, SELF)?;
     if available_shares < required_shares {
-        return Err(VaultProviderError::InsufficientSharesForWithdraw {
+        return Err(VaultRouterError::InsufficientSharesForWithdraw {
             available: available_shares,
             required: required_shares,
         }
@@ -336,8 +369,8 @@ pub(crate) fn withdraw_liquidity(
     erc20_approve(&storage, asset, receiver, amount)?;
     token_bundle_top_up(&storage, receiver, SELF, asset, amount)?;
 
-    let mut contract = VaultProviderContract::new(storage.clone());
-    contract.emit(IVaultProvider::LiquidityWithdrawn {
+    let mut contract = VaultRouterContract::new(storage.clone());
+    contract.emit(IVaultRouter::LiquidityWithdrawn {
         target: caller,
         receiver,
         vault,
@@ -353,7 +386,7 @@ pub(crate) fn withdraw_liquidity(
 // views
 // ---------------------------------------------------------------------------
 
-/// `sharesBalance`: vault shares currently held by this provider.
+/// `sharesBalance`: vault shares currently held by this router.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
 }
@@ -362,22 +395,20 @@ pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U25
 // helpers: enum reconstruction
 // ---------------------------------------------------------------------------
 
-fn liquidity_source(value: u8) -> IVaultProvider::LiquiditySource {
-    IVaultProvider::LiquiditySource::try_from(value)
-        .unwrap_or(IVaultProvider::LiquiditySource::Unknown)
+fn liquidity_source(value: u8) -> IVaultRouter::StablesSource {
+    IVaultRouter::StablesSource::try_from(value).unwrap_or(IVaultRouter::StablesSource::Unknown)
 }
 
-fn liquidity_target(value: u8) -> IVaultProvider::LiquidityTarget {
-    IVaultProvider::LiquidityTarget::try_from(value)
-        .unwrap_or(IVaultProvider::LiquidityTarget::Unknown)
+fn liquidity_target(value: u8) -> IVaultRouter::StablesTarget {
+    IVaultRouter::StablesTarget::try_from(value).unwrap_or(IVaultRouter::StablesTarget::Unknown)
 }
 
 /// Resolves the first vault for `asset`, reverting if none is configured.
 fn first_vault(storage: &StorageHandle<'_>, asset: Address) -> Result<Address> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     contract
         .first_vault(asset)?
-        .ok_or_else(|| VaultProviderError::ReserveVaultNotConfigured.into())
+        .ok_or_else(|| VaultRouterError::ReserveVaultNotConfigured.into())
 }
 
 // ---------------------------------------------------------------------------
@@ -410,13 +441,28 @@ fn erc20_transfer_from(
 fn erc20_balance_of(storage: &StorageHandle<'_>, token: Address, account: Address) -> Result<U256> {
     let ret = storage.staticcall(token, IERC20::balanceOfCall { account }.abi_encode().into())?;
     IERC20::balanceOfCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("ERC20 balanceOf").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("ERC20 balanceOf").into())
 }
 
 fn vault_asset(storage: &StorageHandle<'_>, vault: Address) -> Result<Address> {
     let ret = storage.staticcall(vault, IVaultV2::assetCall {}.abi_encode().into())?;
     IVaultV2::assetCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("IVaultV2 asset").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 asset").into())
+}
+
+fn vault_owner(storage: &StorageHandle<'_>, vault: Address) -> Result<Address> {
+    let ret = storage.staticcall(vault, IVaultV2::ownerCall {}.abi_encode().into())?;
+    IVaultV2::ownerCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 owner").into())
+}
+
+fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::UndecodableReturn("IReferenceCurrency isoCode").into())
 }
 
 fn vault_deposit(
@@ -436,7 +482,7 @@ fn vault_deposit(
         .into(),
     )?;
     IVaultV2::depositCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("IVaultV2 deposit").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 deposit").into())
 }
 
 fn vault_preview_withdraw(
@@ -449,7 +495,7 @@ fn vault_preview_withdraw(
         IVaultV2::previewWithdrawCall { assets }.abi_encode().into(),
     )?;
     IVaultV2::previewWithdrawCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("IVaultV2 previewWithdraw").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 previewWithdraw").into())
 }
 
 fn vault_withdraw(
@@ -471,7 +517,7 @@ fn vault_withdraw(
         .into(),
     )?;
     IVaultV2::withdrawCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("IVaultV2 withdraw").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("IVaultV2 withdraw").into())
 }
 
 fn token_bundle_top_up(
@@ -485,7 +531,7 @@ fn token_bundle_top_up(
     // internal guards would be silently skipped if the bundle smart account is not
     // deployed. Reject up front so requestCredis fails instead of half-completing.
     if storage.with_account_info(receiver, |info| Ok(info.is_empty_code_hash()))? {
-        return Err(VaultProviderError::ReceiverNotDeployed.into());
+        return Err(VaultRouterError::ReceiverNotDeployed.into());
     }
     let calldata = ITokenBundle::topUpCall {
         sender,

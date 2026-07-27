@@ -195,7 +195,7 @@ and generated evidence rather than several synchronized match arms and lists.
 ## Open questions and technical debt
 
 1. `outbe_dispatch_fn` and `outbe_precompile_addresses` duplicate the registry. The
-   latter already omits at least `VAULT_PROVIDER_ADDRESS`, `GOVERNANCE_ADDRESS` and
+   latter already omits at least `VAULT_ROUTER_ADDRESS`, `GOVERNANCE_ADDRESS` and
    `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` present in lookup; replace both with one
    generated manifest and make current registration tests exhaustive.
 2. `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` is registered in the normal table. Prove it is

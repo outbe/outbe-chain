@@ -186,7 +186,7 @@ sol! {
             uint256 nodId,
             uint256 nonce,
             address asset,
-            address vaultProvider
+            address vaultRouter
         ) external returns (uint256);
         function nodData(uint256 nodId) external view returns (
             uint256 nodId,

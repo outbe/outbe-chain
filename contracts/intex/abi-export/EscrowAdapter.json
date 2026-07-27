@@ -982,13 +982,13 @@
     },
     {
       "type": "function",
-      "name": "vaultProvider",
+      "name": "vaultRouter",
       "inputs": [],
       "outputs": [
         {
           "name": "",
           "type": "address",
-          "internalType": "contract IVaultProvider"
+          "internalType": "contract IVaultRouter"
         }
       ],
       "stateMutability": "view"
@@ -1008,7 +1008,7 @@
           "internalType": "address"
         },
         {
-          "name": "_vaultProvider",
+          "name": "_vaultRouter",
           "type": "address",
           "internalType": "address"
         },
@@ -1475,13 +1475,13 @@
           "internalType": "address"
         },
         {
-          "name": "vaultProviderOld",
+          "name": "vaultRouterOld",
           "type": "address",
           "indexed": false,
           "internalType": "address"
         },
         {
-          "name": "vaultProviderNew",
+          "name": "vaultRouterNew",
           "type": "address",
           "indexed": false,
           "internalType": "address"

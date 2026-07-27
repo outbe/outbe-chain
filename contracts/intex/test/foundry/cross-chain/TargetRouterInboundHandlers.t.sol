@@ -15,13 +15,13 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
@@ -50,7 +50,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     MockTheCompact internal compact;
     MockERC20 internal paymentToken;
     MockSettlementVault internal vault;
-    MockVaultProvider internal provider;
+    MockVaultRouter internal router;
 
     address internal admin = address(this);
     address internal bidder = address(0xB1);
@@ -69,10 +69,10 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        provider = new MockVaultProvider();
-        provider.addVault(vault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
-        escrow.wire(admin, address(compact), address(provider), address(paymentToken));
+        router = new MockVaultRouter();
+        router.addVault(vault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
+        escrow.wire(admin, address(compact), address(router), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));

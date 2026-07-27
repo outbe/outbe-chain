@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Property test for the per-series escrow invariant:
 ///   Σ bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
@@ -20,7 +20,7 @@ contract EscrowAdapterInvariantsTest is Test {
     MockTheCompact compact;
     MockERC20 paymentToken;
     MockSettlementVault mockVault;
-    MockVaultProvider provider;
+    MockVaultRouter router;
 
     address admin = address(1);
     address bridger = address(2);
@@ -41,12 +41,12 @@ contract EscrowAdapterInvariantsTest is Test {
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
+        router = new MockVaultRouter();
+        router.addVault(mockVault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(router), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);

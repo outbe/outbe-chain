@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Self-call shim guards on EscrowAdapter. `processFinalizationOne` wraps the per-bidder
 ///      `_processFinalizationInstruction` for `finalizeAuction`'s try/catch; `settleVaultOwedSelf`
@@ -32,11 +32,11 @@ contract EscrowAdapterNotSelfTest is Test {
         MockTheCompact compact = new MockTheCompact();
         MockERC20 paymentToken = new MockERC20("USD Coin", "USDC", 6);
         MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        MockVaultProvider provider = new MockVaultProvider();
-        provider.addVault(vault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
+        MockVaultRouter router = new MockVaultRouter();
+        router.addVault(vault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(router), address(paymentToken));
     }
 
     function test_processFinalizationOne_externalCallerRevertsNotSelf() public {

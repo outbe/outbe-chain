@@ -12,7 +12,7 @@ import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
 import {Scope} from "../vendor/the-compact/types/Scope.sol";
 import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
-import {IVaultProvider} from "../vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 
 /**
  * @title EscrowAdapter
@@ -67,8 +67,8 @@ contract EscrowAdapter is
         /// @dev The Compact contract address.
         ITheCompact compact;
         /// @dev Outbe-vault router; winner principal at finalization is deposited via
-        ///      `vaultProvider.depositLiquidity(...)`. Shares accrue on the provider, not here.
-        IVaultProvider vaultProvider;
+        ///      `vaultRouter.deposit(...)`. Shares accrue on the router, not here.
+        IVaultRouter vaultRouter;
         /// @dev Active payment token used for bid escrow.
         IERC20 paymentToken;
         /// @dev The Compact resource lock ID for our deposits.
@@ -131,9 +131,9 @@ contract EscrowAdapter is
     }
 
     /// @notice Outbe-vault router receiving winner principal at finalization.
-    /// @return The wired vault provider.
-    function vaultProvider() external view returns (IVaultProvider) {
-        return _s().vaultProvider;
+    /// @return The wired vault router.
+    function vaultRouter() external view returns (IVaultRouter) {
+        return _s().vaultRouter;
     }
 
     /// @notice Active payment token used for bid escrow.
@@ -195,17 +195,18 @@ contract EscrowAdapter is
 
     // --- Admin ---
     /// @inheritdoc IEscrowAdapter
-    /// @dev `_vaultProvider` must have `addVault(vaultV2)` + `addLiquiditySource(this, IntexBidPrice)`
+    /// @dev `_vaultRouter` must have `addVault(vaultV2)` +
+    ///      `addLiquiditySource(this, IntexCostAmount)`
     ///      called on it by the outbe-vault owner before any `finalizeAuction()` paid-portion call;
     ///      otherwise the deposit reverts `ReserveVaultNotConfigured` or `InvalidLiquiditySource`.
-    function wire(address _intexAuction, address _compact, address _vaultProvider, address _paymentToken)
+    function wire(address _intexAuction, address _compact, address _vaultRouter, address _paymentToken)
         external
         override
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
         if (_compact == address(0)) revert ZeroAddress("compact");
-        if (_vaultProvider == address(0)) revert ZeroAddress("vaultProvider");
+        if (_vaultRouter == address(0)) revert ZeroAddress("vaultRouter");
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
 
         EscrowAdapterStorage storage $ = _s();
@@ -236,12 +237,12 @@ contract EscrowAdapter is
         // Capture the pre-rotation dependencies so `Wired` is log-reconstructible (old+new).
         address intexAuctionOld = $.intexAuctionContract;
         address compactOld = address($.compact);
-        address vaultProviderOld = address($.vaultProvider);
+        address vaultRouterOld = address($.vaultRouter);
         address paymentTokenOld = address($.paymentToken);
 
         $.intexAuctionContract = _intexAuction;
         $.compact = ITheCompact(_compact);
-        $.vaultProvider = IVaultProvider(_vaultProvider);
+        $.vaultRouter = IVaultRouter(_vaultRouter);
         $.paymentToken = IERC20(_paymentToken);
 
         _grantRole(AUCTION_ROLE, _intexAuction);
@@ -261,8 +262,8 @@ contract EscrowAdapter is
             _intexAuction,
             compactOld,
             _compact,
-            vaultProviderOld,
-            _vaultProvider,
+            vaultRouterOld,
+            _vaultRouter,
             paymentTokenOld,
             _paymentToken
         );
@@ -470,8 +471,8 @@ contract EscrowAdapter is
         // Stranded recovery: series already routed on Outbe, settle residual to the vault.
         if (inst.paidAmount > 0) {
             EscrowAdapterStorage storage $ = _s();
-            $.paymentToken.forceApprove(address($.vaultProvider), inst.paidAmount);
-            $.vaultProvider.depositLiquidity(address($.paymentToken), inst.paidAmount);
+            $.paymentToken.forceApprove(address($.vaultRouter), inst.paidAmount);
+            $.vaultRouter.deposit(address($.paymentToken), inst.paidAmount);
             emit FundsClaimed(receiveId, worldwideDay, inst.bidder, inst.paidAmount);
         }
 
@@ -572,7 +573,7 @@ contract EscrowAdapter is
     }
 
     /// @dev Route a `RefundClaimed` lock's parked payout portion into the vault and finalize it.
-    ///      Amount (`lockedAmount - failedRefund`) and destination (`vaultProvider`) are fixed by
+    ///      Amount (`lockedAmount - failedRefund`) and destination (`vaultRouter`) are fixed by
     ///      stored state, so the operation is safe to expose permissionlessly.
     function _settleVaultOwed(uint32 worldwideDay, address bidder) internal {
         EscrowAdapterStorage storage $ = _s();
@@ -585,8 +586,8 @@ contract EscrowAdapter is
 
         // Interactions
         _withdrawFromCompact(vaultOwed);
-        $.paymentToken.forceApprove(address($.vaultProvider), vaultOwed);
-        $.vaultProvider.depositLiquidity(address($.paymentToken), vaultOwed);
+        $.paymentToken.forceApprove(address($.vaultRouter), vaultOwed);
+        $.vaultRouter.deposit(address($.paymentToken), vaultOwed);
         emit VaultOwedSettled(worldwideDay, bidder, vaultOwed);
     }
 

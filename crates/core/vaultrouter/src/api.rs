@@ -1,49 +1,46 @@
-//! Public Solidity ABI of the vaultprovider precompile, plus thin typed helpers
-//! that hide the EVM sub-call to `VAULT_PROVIDER_ADDRESS`.
+//! Public Solidity ABI of the vaultrouter precompile, plus thin typed helpers
+//! that hide the EVM sub-call to `VAULT_ROUTER_ADDRESS`.
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-sol!("../../../contracts/precompiles/src/IVaultProvider.sol");
+sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
+sol!("../../../contracts/precompiles/src/ICrosschainVaultRouter.sol");
 
-/// `depositLiquidity`: deposit `amount` of `asset` into its reserve vault via an
-/// EVM sub-call to the vault provider, returning the minted shares.
-pub fn deposit_liquidity(
-    storage: &StorageHandle<'_>,
-    asset: Address,
-    amount: U256,
-) -> Result<U256> {
+/// `deposit`: deposit `amount` of `asset` into its reserve vault via an
+/// EVM sub-call to the vault router, returning the minted shares.
+pub fn deposit(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<U256> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         U256::ZERO,
-        IVaultProvider::depositLiquidityCall {
+        IVaultRouter::depositCall {
             asset,
             assetsAmount: amount,
         }
         .abi_encode()
         .into(),
     )?;
-    IVaultProvider::depositLiquidityCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("depositLiquidity undecodable".into()))
+    IVaultRouter::depositCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("deposit undecodable".into()))
 }
 
-/// `withdrawLiquidity`: redeem `amount` of `asset` from its reserve vault and top
-/// it up into `receiver` via an EVM sub-call to the vault provider, returning the
+/// `withdraw`: redeem `amount` of `asset` from its reserve vault and top
+/// it up into `receiver` via an EVM sub-call to the vault router, returning the
 /// burned shares.
-pub fn withdraw_liquidity(
+pub fn withdraw(
     storage: &StorageHandle<'_>,
     asset: Address,
     amount: U256,
     receiver: Address,
 ) -> Result<U256> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         U256::ZERO,
-        IVaultProvider::withdrawLiquidityCall {
+        IVaultRouter::withdrawCall {
             asset,
             amount,
             receiver,
@@ -51,8 +48,8 @@ pub fn withdraw_liquidity(
         .abi_encode()
         .into(),
     )?;
-    IVaultProvider::withdrawLiquidityCall::abi_decode_returns(&ret)
-        .map_err(|_| PrecompileError::Revert("withdrawLiquidity undecodable".into()))
+    IVaultRouter::withdrawCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("withdraw undecodable".into()))
 }
 
 /// Quotes a WCOEN deposit into the fixed remote vault and previews its
@@ -64,9 +61,9 @@ pub fn quote_crosschain_deposit(
     acknowledgement_gas_limit: U256,
 ) -> Result<(U256, B256)> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         U256::ZERO,
-        IVaultProvider::quoteCrosschainDepositCall {
+        ICrosschainVaultRouter::quoteCrosschainDepositCall {
             assetsAmount: assets_amount,
             destinationGasLimit: destination_gas_limit,
             acknowledgementGasLimit: acknowledgement_gas_limit,
@@ -74,7 +71,7 @@ pub fn quote_crosschain_deposit(
         .abi_encode()
         .into(),
     )?;
-    let decoded = IVaultProvider::quoteCrosschainDepositCall::abi_decode_returns(&ret)
+    let decoded = ICrosschainVaultRouter::quoteCrosschainDepositCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("quoteCrosschainDeposit undecodable".into()))?;
     Ok((decoded.nativeFee, decoded.operationId))
 }
@@ -89,9 +86,9 @@ pub fn crosschain_deposit(
     value: U256,
 ) -> Result<(B256, B256)> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         value,
-        IVaultProvider::crosschainDepositCall {
+        ICrosschainVaultRouter::crosschainDepositCall {
             assetsAmount: assets_amount,
             destinationGasLimit: destination_gas_limit,
             acknowledgementGasLimit: acknowledgement_gas_limit,
@@ -99,7 +96,7 @@ pub fn crosschain_deposit(
         .abi_encode()
         .into(),
     )?;
-    let decoded = IVaultProvider::crosschainDepositCall::abi_decode_returns(&ret)
+    let decoded = ICrosschainVaultRouter::crosschainDepositCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("crosschainDeposit undecodable".into()))?;
     Ok((decoded.operationId, decoded.sendId))
 }
@@ -113,9 +110,9 @@ pub fn quote_crosschain_withdraw(
     return_gas_limit: U256,
 ) -> Result<(U256, B256)> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         U256::ZERO,
-        IVaultProvider::quoteCrosschainWithdrawCall {
+        ICrosschainVaultRouter::quoteCrosschainWithdrawCall {
             sharesAmount: shares_amount,
             requestGasLimit: request_gas_limit,
             returnGasLimit: return_gas_limit,
@@ -123,7 +120,7 @@ pub fn quote_crosschain_withdraw(
         .abi_encode()
         .into(),
     )?;
-    let decoded = IVaultProvider::quoteCrosschainWithdrawCall::abi_decode_returns(&ret)
+    let decoded = ICrosschainVaultRouter::quoteCrosschainWithdrawCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("quoteCrosschainWithdraw undecodable".into()))?;
     Ok((decoded.nativeFee, decoded.operationId))
 }
@@ -139,9 +136,9 @@ pub fn crosschain_withdraw(
     value: U256,
 ) -> Result<(B256, B256)> {
     let ret = storage.call(
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         value,
-        IVaultProvider::crosschainWithdrawCall {
+        ICrosschainVaultRouter::crosschainWithdrawCall {
             sharesAmount: shares_amount,
             requestGasLimit: request_gas_limit,
             returnGasLimit: return_gas_limit,
@@ -149,7 +146,7 @@ pub fn crosschain_withdraw(
         .abi_encode()
         .into(),
     )?;
-    let decoded = IVaultProvider::crosschainWithdrawCall::abi_decode_returns(&ret)
+    let decoded = ICrosschainVaultRouter::crosschainWithdrawCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("crosschainWithdraw undecodable".into()))?;
     Ok((decoded.operationId, decoded.sendId))
 }

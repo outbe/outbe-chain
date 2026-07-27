@@ -6,11 +6,11 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Randomized actions against EscrowAdapter across several concurrent series.
 contract EscrowConservationHandler is Test {
@@ -108,7 +108,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockERC20 internal paymentToken;
-    MockVaultProvider internal provider;
+    MockVaultRouter internal router;
     EscrowConservationHandler internal handler;
 
     address internal admin = address(1);
@@ -123,12 +123,12 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
         MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        provider = new MockVaultProvider();
-        provider.addVault(vault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
+        router = new MockVaultRouter();
+        router.addVault(vault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(router), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         bidders.push(address(0xB1));

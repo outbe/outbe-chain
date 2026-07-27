@@ -43,7 +43,7 @@ use outbe_oracle::{
     contract::OracleContract,
     logic::{init_from_genesis, OracleGenesisConfig},
 };
-use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::units::Units;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -461,7 +461,7 @@ fn run_green_red_auction() -> ScenarioOutcome {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
     provider.enable_sub_call_stub();
-    provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
+    provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0u8; 32]));
     provider.stub_sub_call_at(
         ORIGIN_ROUTER_ADDRESS,
         targets_stub(&[CHAIN_REMOTE, CHAIN_LOCAL]),
@@ -709,7 +709,7 @@ fn test_runtime_e2e_auction_gate_deadline_skips_silent_chain() {
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
     );
-    provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
+    provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0u8; 32]));
 
     let wwd = 20250310u32;
     // Anchor lands on this midnight (now is early in the UTC day).

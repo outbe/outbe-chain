@@ -87,7 +87,7 @@ or crate names, and cross-module runtime sagas remain PFS documents.
 | C | `FID` | Fidelity cohorts |
 | C | `PRM` | Promis ledger, factory and allocation limit |
 | C | `CRD` | Credis ledger and factory |
-| C | `VLT` | VaultProvider liquidity authority |
+| C | `VLT` | VaultRouter liquidity authority |
 | C | `TOK` | Native, synthetic and bridged settlement tokens |
 | C | `INX` | Intex ledger and factory |
 | C | `GEM` | Gem ledger and factory |
@@ -210,7 +210,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-C-PRM-003](core/ADR-C-PRM-003-promis-unallocated-limit.md) | Unallocated Promis limit | promislimit | Proposed |
 | [ADR-C-CRD-001](core/ADR-C-CRD-001-credis-position-ledger.md) | Credis position/installment FSM | credis | Proposed |
 | [ADR-C-CRD-002](core/ADR-C-CRD-002-credis-factory-orchestration.md) | Credis orchestration | credisfactory | Proposed |
-| [ADR-C-VLT-001](core/ADR-C-VLT-001-vault-provider-liquidity-authority.md) | Vault liquidity authority | vaultprovider | Proposed |
+| [ADR-C-VLT-001](core/ADR-C-VLT-001-vault-router-liquidity-authority.md) | Vault liquidity authority | vaultrouter | Proposed |
 | [ADR-C-TOK-001](core/ADR-C-TOK-001-native-wrapped-and-synthetic-token-contracts.md) | Native/wrapped/synthetic token issuance | Solidity token contracts | Proposed |
 | [ADR-C-TOK-002](core/ADR-C-TOK-002-fungible-token-cross-chain-custody.md) | Fungible cross-chain token custody | ERC-7786 token bridge | Proposed |
 | [ADR-C-INX-001](core/ADR-C-INX-001-intex-series-ledger.md) | Intex series ledger | intex | Proposed |

@@ -7399,7 +7399,7 @@ dependencies = [
  "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
- "outbe-vaultprovider",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 
@@ -7626,7 +7626,7 @@ dependencies = [
  "outbe-tributefactory",
  "outbe-update",
  "outbe-validatorset",
- "outbe-vaultprovider",
+ "outbe-vaultrouter",
  "outbe-vote",
  "outbe-zerofee",
  "outbe-zkproof",
@@ -7706,7 +7706,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
- "outbe-vaultprovider",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 
@@ -7776,7 +7776,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promisfactory",
- "outbe-vaultprovider",
+ "outbe-vaultrouter",
  "ring",
  "thiserror 2.0.18",
  "tracing",
@@ -7956,7 +7956,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
- "outbe-vaultprovider",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 
@@ -8358,7 +8358,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-vaultprovider"
+name = "outbe-vaultrouter"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",

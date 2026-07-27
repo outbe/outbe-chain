@@ -8,11 +8,11 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
 ///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
@@ -23,7 +23,7 @@ contract IntexAuctionBondTest is Test {
     MockTheCompact compact;
     MockERC20 paymentToken;
     MockSettlementVault mockVault;
-    MockVaultProvider provider;
+    MockVaultRouter router;
 
     address admin = address(1);
     address bridger = address(2);
@@ -58,14 +58,14 @@ contract IntexAuctionBondTest is Test {
         compact = new MockTheCompact();
         paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault WCOEN", "mvWCOEN", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
+        router = new MockVaultRouter();
+        router.addVault(mockVault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
         auction.wire(address(escrow));
-        escrow.wire(address(auction), address(compact), address(provider), address(paymentToken));
+        escrow.wire(address(auction), address(compact), address(router), address(paymentToken));
         vm.stopPrank();
         compact.setResetPeriodSeconds(0);
 

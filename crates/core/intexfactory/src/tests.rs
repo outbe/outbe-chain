@@ -1307,7 +1307,7 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
 
 #[test]
 fn late_top_up_during_final_round_reaches_creators() {
-    use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+    use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
     with_factory(|s| {
         let owners = [contrib(1), contrib(2)];
         outbe_intex::api::record_contributors(
@@ -1366,7 +1366,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
                                                                             // The money reached creators, never the reserve vault.
-        assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 }
@@ -1426,7 +1426,7 @@ fn distribute_rejects_non_origin_router() {
 #[test]
 fn distribute_no_contributors_sweeps_to_reserve() {
     use alloy_sol_types::SolEvent;
-    use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+    use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
@@ -1455,10 +1455,7 @@ fn distribute_no_contributors_sweeps_to_reserve() {
 
         // No distribution opened; the ownerless proceeds went to the reserve vault.
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
-        assert_eq!(
-            s.balance(VAULT_PROVIDER_ADDRESS).unwrap(),
-            U256::from(100u64)
-        );
+        assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::from(100u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 

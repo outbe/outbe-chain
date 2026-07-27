@@ -8,16 +8,16 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolValue};
 
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::IVaultProvider;
-use crate::errors::VaultProviderError;
-use crate::schema::VaultProviderContract;
+use crate::api::ICrosschainVaultRouter;
+use crate::errors::VaultRouterError;
+use crate::schema::VaultRouterContract;
 use crate::sol_ext::{IERC7786Bridge, IERC7786TokenBridge, IERC20};
 
-const SELF: Address = VAULT_PROVIDER_ADDRESS;
+const SELF: Address = VAULT_ROUTER_ADDRESS;
 
 pub const DEPOSIT_REQUEST: u64 = 1;
 pub const DEPOSIT_ACKNOWLEDGEMENT: u64 = 2;
@@ -35,12 +35,12 @@ struct Configuration {
     message_bridge: Address,
     destination_chain_id: U256,
     destination_domain: u32,
-    remote_provider: Address,
+    remote_router: Address,
 }
 
 fn ensure_owner(storage: &StorageHandle<'_>, sender: Address) -> Result<()> {
-    if VaultProviderContract::new(storage.clone()).owner.read()? != sender {
-        return Err(VaultProviderError::Unauthorized.into());
+    if VaultRouterContract::new(storage.clone()).owner.read()? != sender {
+        return Err(VaultRouterError::Unauthorized.into());
     }
     Ok(())
 }
@@ -55,23 +55,22 @@ pub fn set_asset(
     ensure_owner(&storage, sender)?;
     ensure_no_pending_operations(&storage)?;
     if asset.is_zero() || token_bridge.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
     let local_chain_id = U256::from(storage.chain_id()?);
     if destination_chain_id.is_zero() || destination_chain_id == local_chain_id {
-        return Err(VaultProviderError::InvalidDestinationChain.into());
+        return Err(VaultRouterError::InvalidDestinationChain.into());
     }
-    u32::try_from(destination_chain_id)
-        .map_err(|_| VaultProviderError::CrosschainDomainTooLarge)?;
+    u32::try_from(destination_chain_id).map_err(|_| VaultRouterError::CrosschainDomainTooLarge)?;
 
-    let mut contract = VaultProviderContract::new(storage);
+    let mut contract = VaultRouterContract::new(storage);
     let old_asset = contract.crosschain_asset.read()?;
     contract.crosschain_asset.write(asset)?;
     contract.crosschain_token_bridge.write(token_bridge)?;
     contract
         .crosschain_destination_chain_id
         .write(destination_chain_id)?;
-    contract.emit(IVaultProvider::CrosschainAssetUpdated {
+    contract.emit(ICrosschainVaultRouter::CrosschainAssetUpdated {
         oldAsset: old_asset,
         newAsset: asset,
         tokenBridge: token_bridge,
@@ -124,7 +123,7 @@ pub fn deposit(
             value,
             IERC7786TokenBridge::sendAndCallCall {
                 destinationDomain: config.destination_domain,
-                to: config.remote_provider,
+                to: config.remote_router,
                 amount,
                 extraData: extra_data.into(),
                 gasLimit: destination_gas_limit,
@@ -133,11 +132,11 @@ pub fn deposit(
             .into(),
         )?;
         let send_id = IERC7786TokenBridge::sendAndCallCall::abi_decode_returns(&ret)
-            .map_err(|_| VaultProviderError::UndecodableReturn("token bridge sendAndCall"))?;
+            .map_err(|_| VaultRouterError::UndecodableReturn("token bridge sendAndCall"))?;
         erc20_approve(&storage, config.asset, config.token_bridge, U256::ZERO)?;
 
-        let mut contract = VaultProviderContract::new(storage.clone());
-        contract.emit(IVaultProvider::CrosschainDepositSent {
+        let mut contract = VaultRouterContract::new(storage.clone());
+        contract.emit(ICrosschainVaultRouter::CrosschainDepositSent {
             operationId: operation_id,
             user,
             assetsAmount: amount,
@@ -160,7 +159,7 @@ pub fn quote_withdraw(
     let config = configuration(storage)?;
     let operation_id = preview_operation_id(storage, user, OPERATION_WITHDRAW, amount)?;
     let payload = withdraw_request_data(operation_id, user, amount, return_gas_limit);
-    let recipient = format_evm_v1(config.destination_chain_id, config.remote_provider);
+    let recipient = format_evm_v1(config.destination_chain_id, config.remote_router);
     let fee = message_bridge_quote(
         storage,
         config.message_bridge,
@@ -185,7 +184,7 @@ pub fn withdraw(
         let config = configuration(&storage)?;
         let operation_id = next_operation_id(&storage, user, OPERATION_WITHDRAW, amount)?;
         let payload = withdraw_request_data(operation_id, user, amount, return_gas_limit);
-        let recipient = format_evm_v1(config.destination_chain_id, config.remote_provider);
+        let recipient = format_evm_v1(config.destination_chain_id, config.remote_router);
         let attributes = gas_attributes(request_gas_limit);
         let required_fee = message_bridge_quote(
             &storage,
@@ -197,7 +196,7 @@ pub fn withdraw(
         ensure_fee(value, required_fee)?;
         record_operation(&storage, operation_id, user, amount, OPERATION_WITHDRAW)?;
 
-        let mut contract = VaultProviderContract::new(storage.clone());
+        let mut contract = VaultRouterContract::new(storage.clone());
         let user_shares = contract.crosschain_shares.read(&user)?;
         contract
             .crosschain_shares
@@ -217,8 +216,8 @@ pub fn withdraw(
             .into(),
         )?;
         let send_id = IERC7786Bridge::sendMessageCall::abi_decode_returns(&ret)
-            .map_err(|_| VaultProviderError::UndecodableReturn("ERC7786Bridge sendMessage"))?;
-        contract.emit(IVaultProvider::CrosschainWithdrawalSent {
+            .map_err(|_| VaultRouterError::UndecodableReturn("ERC7786Bridge sendMessage"))?;
+        contract.emit(ICrosschainVaultRouter::CrosschainWithdrawalSent {
             operationId: operation_id,
             user,
             receiptShares: amount,
@@ -243,13 +242,13 @@ pub fn receive_deposit_acknowledgement(
 
         let (kind, operation_id, user, amount) =
             <(U256, B256, Address, U256)>::abi_decode_validate(payload)
-                .map_err(|_| VaultProviderError::InvalidCrosschainCallback)?;
+                .map_err(|_| VaultRouterError::InvalidCrosschainCallback)?;
         if kind != U256::from(DEPOSIT_ACKNOWLEDGEMENT) {
-            return Err(VaultProviderError::InvalidCrosschainCallback.into());
+            return Err(VaultRouterError::InvalidCrosschainCallback.into());
         }
         validate_pending_operation(&storage, operation_id, user, amount, OPERATION_DEPOSIT)?;
 
-        let mut contract = VaultProviderContract::new(storage.clone());
+        let mut contract = VaultRouterContract::new(storage.clone());
         let current = contract.crosschain_shares.read(&user)?;
         contract.crosschain_shares.write(&user, current + amount)?;
         let total = contract.total_crosschain_shares.read()?;
@@ -258,7 +257,7 @@ pub fn receive_deposit_acknowledgement(
             .operation_statuses
             .write(&operation_id, STATUS_COMPLETED)?;
         decrement_pending_operations(&contract)?;
-        contract.emit(IVaultProvider::CrosschainDepositFinalized {
+        contract.emit(ICrosschainVaultRouter::CrosschainDepositFinalized {
             operationId: operation_id,
             user,
             assetsAmount: amount,
@@ -278,25 +277,25 @@ pub fn receive_withdrawal_return(
     storage.with_checkpoint(|| {
         let config = configuration(&storage)?;
         if source_domain != config.destination_domain {
-            return Err(VaultProviderError::InvalidCrosschainSender.into());
+            return Err(VaultRouterError::InvalidCrosschainSender.into());
         }
         authenticate_remote(&config, caller, config.token_bridge, from)?;
 
         let (kind, operation_id, user, declared_amount) =
             <(U256, B256, Address, U256)>::abi_decode_validate(extra_data)
-                .map_err(|_| VaultProviderError::InvalidCrosschainCallback)?;
+                .map_err(|_| VaultRouterError::InvalidCrosschainCallback)?;
         if kind != U256::from(WITHDRAW_RETURN) || declared_amount != amount {
-            return Err(VaultProviderError::InvalidCrosschainCallback.into());
+            return Err(VaultRouterError::InvalidCrosschainCallback.into());
         }
         validate_pending_operation(&storage, operation_id, user, amount, OPERATION_WITHDRAW)?;
 
         erc20_transfer(&storage, config.asset, user, amount)?;
-        let mut contract = VaultProviderContract::new(storage.clone());
+        let mut contract = VaultRouterContract::new(storage.clone());
         contract
             .operation_statuses
             .write(&operation_id, STATUS_COMPLETED)?;
         decrement_pending_operations(&contract)?;
-        contract.emit(IVaultProvider::CrosschainWithdrawalFinalized {
+        contract.emit(ICrosschainVaultRouter::CrosschainWithdrawalFinalized {
             operationId: operation_id,
             user,
             receiptShares: amount,
@@ -306,32 +305,28 @@ pub fn receive_withdrawal_return(
 }
 
 fn configuration(storage: &StorageHandle<'_>) -> Result<Configuration> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     let asset = contract.crosschain_asset.read()?;
     if asset.is_zero() {
-        return Err(VaultProviderError::CrosschainAssetNotConfigured.into());
+        return Err(VaultRouterError::CrosschainAssetNotConfigured.into());
     }
     let token_bridge = contract.crosschain_token_bridge.read()?;
     if token_bridge.is_zero() {
-        return Err(VaultProviderError::CrosschainTokenBridgeNotConfigured.into());
+        return Err(VaultRouterError::CrosschainTokenBridgeNotConfigured.into());
     }
     let message_bridge = contract.crosschain_bridge.read()?;
     if message_bridge.is_zero() {
-        return Err(VaultProviderError::CrosschainBridgeNotConfigured.into());
+        return Err(VaultRouterError::CrosschainBridgeNotConfigured.into());
     }
     let destination_chain_id = contract.crosschain_destination_chain_id.read()?;
     if destination_chain_id.is_zero() {
-        return Err(VaultProviderError::InvalidDestinationChain.into());
+        return Err(VaultRouterError::InvalidDestinationChain.into());
     }
     let destination_domain = u32::try_from(destination_chain_id)
-        .map_err(|_| VaultProviderError::CrosschainDomainTooLarge)?;
-    let remote_provider = contract
-        .remote_vault_providers
-        .read(&destination_chain_id)?;
-    if remote_provider.is_zero() {
-        return Err(
-            VaultProviderError::RemoteVaultProviderNotConfigured(destination_chain_id).into(),
-        );
+        .map_err(|_| VaultRouterError::CrosschainDomainTooLarge)?;
+    let remote_router = contract.remote_vault_routers.read(&destination_chain_id)?;
+    if remote_router.is_zero() {
+        return Err(VaultRouterError::RemoteVaultRouterNotConfigured(destination_chain_id).into());
     }
     Ok(Configuration {
         asset,
@@ -339,7 +334,7 @@ fn configuration(storage: &StorageHandle<'_>) -> Result<Configuration> {
         message_bridge,
         destination_chain_id,
         destination_domain,
-        remote_provider,
+        remote_router,
     })
 }
 
@@ -349,29 +344,29 @@ fn authenticate_remote(
     expected_caller: Address,
     sender: &Bytes,
 ) -> Result<()> {
-    let expected_sender = format_evm_v1(config.destination_chain_id, config.remote_provider);
+    let expected_sender = format_evm_v1(config.destination_chain_id, config.remote_router);
     if caller != expected_caller || sender.as_ref() != expected_sender.as_slice() {
-        return Err(VaultProviderError::InvalidCrosschainSender.into());
+        return Err(VaultRouterError::InvalidCrosschainSender.into());
     }
     Ok(())
 }
 
 fn validate_amount(user: Address, amount: U256) -> Result<()> {
     if user.is_zero() {
-        return Err(VaultProviderError::ZeroAddress.into());
+        return Err(VaultRouterError::ZeroAddress.into());
     }
     if amount.is_zero() {
-        return Err(VaultProviderError::InvalidCrosschainAmount.into());
+        return Err(VaultRouterError::InvalidCrosschainAmount.into());
     }
     Ok(())
 }
 
 fn ensure_shares(storage: &StorageHandle<'_>, user: Address, required: U256) -> Result<()> {
-    let available = VaultProviderContract::new(storage.clone())
+    let available = VaultRouterContract::new(storage.clone())
         .crosschain_shares
         .read(&user)?;
     if available < required {
-        return Err(VaultProviderError::InsufficientCrosschainShares {
+        return Err(VaultRouterError::InsufficientCrosschainShares {
             available,
             required,
         }
@@ -382,7 +377,7 @@ fn ensure_shares(storage: &StorageHandle<'_>, user: Address, required: U256) -> 
 
 fn ensure_fee(provided: U256, required: U256) -> Result<()> {
     if provided != required {
-        return Err(VaultProviderError::CrosschainFeeMismatch { provided, required }.into());
+        return Err(VaultRouterError::CrosschainFeeMismatch { provided, required }.into());
     }
     Ok(())
 }
@@ -394,9 +389,9 @@ fn record_operation(
     amount: U256,
     kind: u8,
 ) -> Result<()> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     if contract.operation_statuses.read(&operation_id)? != 0 {
-        return Err(VaultProviderError::CrosschainOperationAlreadyExists.into());
+        return Err(VaultRouterError::CrosschainOperationAlreadyExists.into());
     }
     contract.operation_users.write(&operation_id, user)?;
     contract.operation_amounts.write(&operation_id, amount)?;
@@ -411,19 +406,19 @@ fn record_operation(
 }
 
 fn ensure_no_pending_operations(storage: &StorageHandle<'_>) -> Result<()> {
-    let pending = VaultProviderContract::new(storage.clone())
+    let pending = VaultRouterContract::new(storage.clone())
         .pending_crosschain_operations
         .read()?;
     if !pending.is_zero() {
-        return Err(VaultProviderError::CrosschainOperationsPending(pending).into());
+        return Err(VaultRouterError::CrosschainOperationsPending(pending).into());
     }
     Ok(())
 }
 
-fn decrement_pending_operations(contract: &VaultProviderContract<'_>) -> Result<()> {
+fn decrement_pending_operations(contract: &VaultRouterContract<'_>) -> Result<()> {
     let pending = contract.pending_crosschain_operations.read()?;
     if pending.is_zero() {
-        return Err(VaultProviderError::InvalidCrosschainCallback.into());
+        return Err(VaultRouterError::InvalidCrosschainCallback.into());
     }
     contract
         .pending_crosschain_operations
@@ -437,20 +432,20 @@ fn validate_pending_operation(
     amount: U256,
     kind: u8,
 ) -> Result<()> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     let status = contract.operation_statuses.read(&operation_id)?;
     if status == 0 {
-        return Err(VaultProviderError::CrosschainOperationNotFound.into());
+        return Err(VaultRouterError::CrosschainOperationNotFound.into());
     }
     if status == STATUS_COMPLETED {
-        return Err(VaultProviderError::CrosschainOperationAlreadyCompleted.into());
+        return Err(VaultRouterError::CrosschainOperationAlreadyCompleted.into());
     }
     if status != STATUS_PENDING
         || contract.operation_users.read(&operation_id)? != user
         || contract.operation_amounts.read(&operation_id)? != amount
         || contract.operation_kinds.read(&operation_id)? != kind
     {
-        return Err(VaultProviderError::InvalidCrosschainCallback.into());
+        return Err(VaultRouterError::InvalidCrosschainCallback.into());
     }
     Ok(())
 }
@@ -461,7 +456,7 @@ fn next_operation_id(
     kind: u8,
     amount: U256,
 ) -> Result<B256> {
-    let contract = VaultProviderContract::new(storage.clone());
+    let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract.crosschain_operation_nonce.read()? + U256::from(1);
     contract.crosschain_operation_nonce.write(nonce)?;
     operation_id(storage, nonce, user, kind, amount)
@@ -473,7 +468,7 @@ fn preview_operation_id(
     kind: u8,
     amount: U256,
 ) -> Result<B256> {
-    let nonce = VaultProviderContract::new(storage.clone())
+    let nonce = VaultRouterContract::new(storage.clone())
         .crosschain_operation_nonce
         .read()?
         + U256::from(1);
@@ -551,7 +546,7 @@ fn message_bridge_quote(
         .into(),
     )?;
     IERC7786Bridge::quoteCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("ERC7786Bridge quote").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("ERC7786Bridge quote").into())
 }
 
 fn token_bridge_quote(
@@ -565,7 +560,7 @@ fn token_bridge_quote(
         config.token_bridge,
         IERC7786TokenBridge::quoteSendCall {
             destinationDomain: config.destination_domain,
-            to: config.remote_provider,
+            to: config.remote_router,
             amount,
             extraData: extra_data.into(),
             gasLimit: gas_limit,
@@ -574,7 +569,7 @@ fn token_bridge_quote(
         .into(),
     )?;
     IERC7786TokenBridge::quoteSendCall::abi_decode_returns(&ret)
-        .map_err(|_| VaultProviderError::UndecodableReturn("token bridge quoteSend").into())
+        .map_err(|_| VaultRouterError::UndecodableReturn("token bridge quoteSend").into())
 }
 
 fn erc20_approve(

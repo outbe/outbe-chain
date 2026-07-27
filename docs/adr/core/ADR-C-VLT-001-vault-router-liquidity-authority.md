@@ -1,17 +1,17 @@
-# ADR-C-VLT-001: VaultProvider owns reserve routing and liquidity authority
+# ADR-C-VLT-001: VaultRouter owns reserve routing and liquidity authority
 
 - **Status:** Proposed; current implementation profiled
 - **Date:** 2026-07-17
 - **Decision owners:** Treasury and protocol execution maintainers
-- **Scope:** `crates/core/vaultprovider` and its external ERC-20/vault/token-bundle seams
+- **Scope:** `crates/core/vaultrouter` and its external ERC-20/vault/token-bundle seams
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-B-OCD-006,
   ADR-S-GOV-001 through ADR-S-GOV-003
 - **Related:** ADR-C-GRT-002, ADR-C-CRD-002, ADR-C-INX-002, ADR-C-GEM-002
-- **Supersedes:** VaultProvider portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
+- **Supersedes:** VaultRouter portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
 
 ## Context
 
-VaultProvider is the protocol's reserve gateway. It maps assets to external vaults,
+VaultRouter is the protocol's reserve gateway. It maps assets to external vaults,
 classifies which module addresses may deposit or withdraw, holds vault shares and
 routes withdrawn assets into token-bundle receivers. A registry error can redirect
 all settlement or credit liquidity, so it is an independently privileged stateful
@@ -25,10 +25,11 @@ A genesis-seeded owner exclusively adds/removes vaults and liquidity source/targ
 accounts. The owner is protocol administration governed by ADR-S-GOV-001 through ADR-S-GOV-003, not an
 ordinary operator convenience key.
 
-Adding a vault staticcalls its `asset()`, inserts the asset and vault into enumerable
-sets, and approves the vault for maximum asset allowance. Removing it deletes set
-membership, removes an empty asset and revokes allowance. Duplicate/missing entries
-revert.
+Adding a vault staticcalls its `asset()` and `owner()`, requires ownership to have
+been renounced, reads the asset's ISO 4217 code, inserts the vault into both the
+asset and reference-currency indexes, and approves the vault for maximum asset
+allowance. Removing it deletes both index memberships, removes an empty asset and
+revokes allowance. Duplicate/missing entries revert.
 
 Adding a source or target stores both enumerable membership and its declared enum
 type. Removal clears both. Only declared non-Unknown enum variants are valid.
@@ -37,11 +38,11 @@ type. Removal clears both. Only declared non-Unknown enum variants are valid.
 
 ABI dispatch derives caller classification from registry state:
 
-- `depositLiquidity(asset, amount)` is available only to a registered source. It
-  selects the configured vault, pulls asset from caller into VaultProvider, deposits
-  on behalf of VaultProvider and returns minted shares.
-- `withdrawLiquidity(asset, amount, receiver)` is available only to a registered
-  target. It previews required shares, verifies VaultProvider's vault-share balance,
+- `deposit(asset, amount)` is available only to a registered source. It
+  selects the configured vault, pulls asset from caller into VaultRouter, deposits
+  on behalf of VaultRouter and returns minted shares.
+- `withdraw(asset, amount, receiver)` is available only to a registered
+  target. It previews required shares, verifies VaultRouter's vault-share balance,
   withdraws asset to itself, approves the receiver bundle and calls its top-up,
   returning burned shares.
 
@@ -55,7 +56,7 @@ observed behavior but not an accepted long-term routing policy.
 - Vault membership is unique; removal revokes its allowance.
 - Source/target set membership iff its type mapping is a declared non-Unknown value.
 - ABI caller classification is loaded from storage, never supplied by caller.
-- Provider-held vault shares and emitted deposit/withdraw movement reconcile with
+- Router-held vault shares and emitted deposit/withdraw movement reconcile with
   external token/vault balance deltas.
 - A withdrawal cannot burn more shares than Provider holds and tops up exactly the
   requested receiver/asset under supported-token semantics.
@@ -96,6 +97,13 @@ ERC-20/vault/bundle adversarial behavior, multi-vault migration or governance.
 Factories import a narrow reserve interface instead of owning vault selection and
 shares. Treasury authority and external-contract risk become visible in one architecture
 audit.
+
+Cross-chain vault routing is an independent optional ABI capability:
+`ICrosschainVaultRouter` contains only cross-chain configuration, flow and
+callback methods. A future cross-chain-enabled VaultRouter implementation can
+compose `IVaultRouter` and `ICrosschainVaultRouter`; consumers that only need
+local reserve routing do not depend on cross-chain configuration or callback
+methods.
 
 ## Rejected alternatives
 

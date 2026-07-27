@@ -2,7 +2,7 @@
 
 - **Status:** Draft
 - **Actors:** Gratis owner/borrower bundle, Gratisfactory, GratisPool, Gratis,
-  CredisFactory, Credis, Oracle, VaultProvider and reserve asset/vault
+  CredisFactory, Credis, Oracle, VaultRouter and reserve asset/vault
 - **Trigger:** User pledges Gratis, then requests Credis with the shielded note
 - **Topology/services:** Finalizing network with configured Oracle, reserve asset,
   vault, source/target registrations and proof verifier
@@ -23,7 +23,7 @@ permitting replay.
 - **Trigger:** A user pledges an eligible Gratis denomination, opens Credis with the shielded note, then submits ordered repayments.
 - **Environment:** Finalizing network with configured proof verifier, Oracle, reserve asset, vault liquidity and registered source/target modules.
 - **Canonical inputs:** Bundle-bound commitment/nullifier/proof, denomination and collateral, Fidelity eligibility, Credis terms, Oracle rates, exact reserve asset, vault shares, allowances and repayment amounts.
-- **System under test:** Gratisfactory, GratisPool, Gratis, CredisFactory/Credis, Oracle, VaultProvider and reserve token/vault adapters.
+- **System under test:** Gratisfactory, GratisPool, Gratis, CredisFactory/Credis, Oracle, VaultRouter and reserve token/vault adapters.
 - **Expected response:** Pledge/root evidence, one Credis position with ten installments, asset disbursement, spent nullifiers, repayment receipts and one reclaim commitment per installment.
 - **Response measures:** Debt, collateral, token and vault equations close; every nullifier, position and installment is consumed at most once; completed debt rejects payment and collateral is reclaimable once.
 - **Failure guarantee:** Failed proof, withdrawal or deposit leaves the transaction's prior root, nullifier, position, cursor, debt and token/vault balances intact.
@@ -34,7 +34,7 @@ permitting replay.
 - Denomination is pledge- and Credis-eligible; commitment/nullifier/proof inputs use
   the pinned circuit/domain version.
 - Bundle has no overdue position; asset reports a registered ISO currency.
-- Oracle has exchange/refinancing rates; VaultProvider has matching reserve shares
+- Oracle has exchange/refinancing rates; VaultRouter has matching reserve shares
   and CredisFactory is the registered target/source as applicable.
 
 ## Success sequence
@@ -45,7 +45,7 @@ permitting replay.
 | 2 | CredisFactory/Pool | verify bundle-bound proof and consume nullifier | spent-nullifier state |
 | 3 | CredisFactory/Oracle | calculate stable amount and snapshot refinancing/currency | position fields |
 | 4 | Credis | create unique position and ten installments | position/index records |
-| 5 | VaultProvider | withdraw exact asset into borrower bundle | token/vault deltas and event |
+| 5 | VaultRouter | withdraw exact asset into borrower bundle | token/vault deltas and event |
 | 6 | borrower, repeated 10x | pay next asset installment into reserve | installment cursor/debt delta |
 | 7 | CredisFactory/Pool | append denomination-bound reclaim note | new pool root |
 | 8 | Gratisfactory, optional | spend reclaim note and release exact Gratis escrow | nullifier + liquid/pledged deltas |
@@ -90,7 +90,7 @@ commitments and remains a blocking debt.
 | PFS-003-01 | full credit lifecycle | eligible owner, valid note/proof, Oracle and liquid vault | pledge, request, pay ten installments and reclaim each | one position; debt/collateral close; ten unique notes; full collateral returned once | in-process `full_request_pay_reclaim_unpledge_flow`; proof/vault effects stubbed |
 | PFS-003-02 | copied request proof | valid proof bound to original bundle and unspent note | another bundle or replay submits it | no redirect/second position; nullifier consumed at most once | pool/runtime tests only; cross-module example missing |
 | PFS-003-03 | overdue second request | bundle owns overdue live position | request another Credis | revert; existing position/nullifier/vault state unchanged | in-process `request_credis_rejects_overdue_anadosis` |
-| PFS-003-04 | insufficient vault shares | valid proof but vault cannot withdraw required liquidity | request Credis | revert; proof nullifier and position creation roll back | documentation-only: stateful failing VaultProvider absent |
+| PFS-003-04 | insufficient vault shares | valid proof but vault cannot withdraw required liquidity | request Credis | revert; proof nullifier and position creation roll back | documentation-only: stateful failing VaultRouter absent |
 | PFS-003-05 | repayment deposit failure | live due position but token/vault deposit fails | owner pays installment | revert; cursor/debt/root/token state unchanged | documentation-only: failing ERC-20/vault adapter absent |
 | PFS-003-06 | invalid reclaim denomination | due installment with commitment for wrong denomination | owner pays installment | reject before cursor/value commit | documentation-only: current interface cannot authenticate denomination |
 | PFS-003-07 | early repayment | live position before due timestamp | owner pays next installment | result follows explicit early-payment policy with no ambiguous cursor | documentation-only pending policy |

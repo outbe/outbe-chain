@@ -27,7 +27,7 @@ import {
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 interface IUpgradeProbe {
     function upgradeProbe() external pure returns (uint256);
@@ -144,7 +144,7 @@ contract UpgradeDrillTest is CrossChainTest {
         EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
         MockERC20 token = new MockERC20("Mock USD", "MUSD", 6);
         MockTheCompact compactMock = new MockTheCompact();
-        MockVaultProvider vault = new MockVaultProvider();
+        MockVaultRouter vault = new MockVaultRouter();
         address auction = makeAddr("auction");
 
         vm.prank(admin);

@@ -35,7 +35,7 @@ arithmetic and emits issuance in one frame.
 
 Only Gem owner may settle a Qualified Gem. Factory transitions to Settled, then if
 cost is nonzero pulls the configured reserve asset from owner, approves and deposits
-it through VaultProvider. Failure rolls the transition back.
+it through VaultRouter. Failure rolls the transition back.
 
 Only owner may mine a Settled Gem. Factory verifies shared-scheme PoW over Gem id and
 nonce, burns the Gem, mints exactly `gem_load` Promis through PromisFactory and emits
@@ -58,7 +58,7 @@ completion atomically.
 ## Atomicity, replay and external trust
 
 Each mint, settlement and mining call is one EVM transaction across Gem, Oracle,
-ERC-20, VaultProvider, PromisFactory and events. Gem record/id prevents mint/burn
+ERC-20, VaultRouter, PromisFactory and events. Gem record/id prevents mint/burn
 replay; consumed record and PoW input prevent a second mining result.
 
 Oracle, reserve asset, ERC-20 and vault are external/configuration trust boundaries.
@@ -71,7 +71,7 @@ Gem type table, coefficients, floor markup, scales, initial states, reserve asse
 binding, PoW scheme and privileged caller set are activation-critical economics.
 
 Inspected all runtime commands, checked pricing helpers, Oracle mapping reads,
-VaultProvider calls and tests including genesis flow/ownership/state failures. Real
+VaultRouter calls and tests including genesis flow/ownership/state failures. Real
 asset/vault behavior, caller closure, multi-currency rules and complete rollback
 matrix remain unproven.
 
@@ -90,7 +90,7 @@ other producers import a narrow mint seam; the daily reward saga belongs in a PF
 
 ## Open questions and technical debt
 
-1. Settlement uses `VaultProvider.assetAt(0)`. Bind each Gem's issuance/reference
+1. Settlement uses `VaultRouter.assetAt(0)`. Bind each Gem's issuance/reference
    currency to an exact reserve asset and verify vault asset identity.
 2. Current code comments say cross-currency is unsupported but do not visibly enforce
    `issuance_currency == reference_currency` after checking reference registration.
@@ -101,7 +101,7 @@ other producers import a narrow mint seam; the daily reward saga belongs in a PF
    allowed Gem types and one-time source/replay guards in structural tests.
 5. Settlement pulls nominal amount without measuring actual ERC-20 balance delta.
    Reject fee-on-transfer/rebasing tokens or implement explicit delta economics.
-6. Validate VaultProvider returned shares/nonzero reserve effect; current settlement
+6. Validate VaultRouter returned shares/nonzero reserve effect; current settlement
    ignores the returned value through the internal API.
 7. Add failure injection after Gem transition, token pull/approval, vault deposit,
    Gem burn, Promis/Fidelity mint and events.

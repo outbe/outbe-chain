@@ -77,7 +77,7 @@ environment name by editing `DEFAULT_ENV` at the top of `utils.ts`.
 src/
 ├── 0-info.ts                   Print current state of all actors
 ├── 0-setup-native.ts           Fund user + CCA with native COEN
-├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault provider
+├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault router
 ├── 0-setup-gratis.ts           Convert user's seeded Promis → confidential Gratis
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
 ├── 1-pledge-gratis.ts          User pledges Gratis (amount + modify-key MAC) → pledge handle
@@ -162,8 +162,8 @@ export BUNDLE_WITHDRAW_HOOK_ADDRESS=0xdF25D88FED0FF8af2003Eb98E0CC153303fcAF2c
 export SMART_ACCOUNT_FACTORY_ADDRESS=0xe28db1d1a138B21f2c84D7156b4Dab45a2F18E30
 
 export VAULT_ADDRESS=0xc0E713890eC7bbcC9e21e027c357c5042B7f03B6
-export VAULT_PROVIDER_IMPL_ADDRESS=0x7c43B530dE37E6943f8AfF0e0698246A7b87D682
-export VAULT_PROVIDER_ADDRESS=0xA447d123a93236A64CBBE1599E8102b54491F01E
+export VAULT_ROUTER_IMPL_ADDRESS=0x7c43B530dE37E6943f8AfF0e0698246A7b87D682
+export VAULT_ROUTER_ADDRESS=0xA447d123a93236A64CBBE1599E8102b54491F01E
 ```
 
 ## Running

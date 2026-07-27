@@ -17,13 +17,13 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Desis precompile stand-in that records the relayed bid intake.
 contract RecordingDesis {
@@ -157,7 +157,7 @@ contract LocalLoopbackTest is Test {
     SyncTokenBridge internal tokenBridge;
     MockTheCompact internal compact;
     MockSettlementVault internal vault;
-    MockVaultProvider internal provider;
+    MockVaultRouter internal router;
 
     uint32 internal local;
     uint256 internal startTs;
@@ -193,10 +193,10 @@ contract LocalLoopbackTest is Test {
         escrow = DeployProxy.escrowAdapter(address(this), address(this));
         compact = new MockTheCompact();
         vault = new MockSettlementVault(address(wcoen), "Mock Vault WCOEN", "mvWCOEN", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(vault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
-        escrow.wire(address(auction), address(compact), address(provider), address(wcoen));
+        router = new MockVaultRouter();
+        router.addVault(vault);
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
+        escrow.wire(address(auction), address(compact), address(router), address(wcoen));
         escrow.setProceedsRecipient(address(target));
         compact.setResetPeriodSeconds(0);
 

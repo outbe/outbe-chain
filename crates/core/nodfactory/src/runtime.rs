@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -94,9 +94,9 @@ fn issue_nod_inner(
 ///
 /// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
 /// that amount of `asset` from the caller into the precompile address via
-/// `IERC20.transferFrom`, approves the reserve `VAULT_PROVIDER_ADDRESS` for the
-/// same amount, and calls `IVaultProvider.depositLiquidity` declaring the
-/// `LiquiditySource::NodCostPrice` classifier. The caller MUST grant the
+/// `IERC20.transferFrom`, approves the reserve `VAULT_ROUTER_ADDRESS` for the
+/// same amount, and calls `IVaultRouter.deposit` declaring the
+/// `StablesSource::NodCostAmount` classifier. The caller MUST grant the
 /// NodFactory precompile an ERC20 allowance of at least `cost_amount_minor`
 /// before invoking `mineGratis`.
 ///
@@ -191,14 +191,14 @@ fn mine_gratis_inner(
         //    owns the intermediate balance and resets to `cost` each call, so
         //    there is no leftover allowance to clear.
         let approve = IERC20::approveCall {
-            spender: VAULT_PROVIDER_ADDRESS,
+            spender: VAULT_ROUTER_ADDRESS,
             amount: cost,
         }
         .abi_encode();
         storage.call(asset, U256::ZERO, approve.into())?;
 
         // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
-        outbe_vaultprovider::api::deposit_liquidity(storage, asset, cost)?;
+        outbe_vaultrouter::api::deposit(storage, asset, cost)?;
     }
 
     let owner = item.body().owner;

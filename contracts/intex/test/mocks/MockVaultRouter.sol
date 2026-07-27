@@ -3,24 +3,24 @@ pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockSettlementVault} from "./MockSettlementVault.sol";
 
-/// @notice Minimal test double mirroring `outbe-vault/VaultProvider` for the methods
-///         `EscrowAdapter` actually calls (`depositLiquidity`).
+/// @notice Minimal test double mirroring `outbe-vault/VaultRouter` for the methods
+///         `EscrowAdapter` actually calls (`deposit`).
 /// @dev Wraps `MockSettlementVault` per asset. `addVault` / `addLiquiditySource` are open
-///      (no role checks) — test-helper only. Production `VaultProvider` is `onlyOwner` for both.
-contract MockVaultProvider {
+///      (no role checks) — test-helper only. Production `VaultRouter` is `onlyOwner` for both.
+contract MockVaultRouter {
     using SafeERC20 for IERC20;
 
     /// @dev Maps stablecoin address to the registered ERC4626-style vault for that asset.
     mapping(address => MockSettlementVault) public assetVault;
 
-    /// @dev Maps caller address to the registered LiquiditySource slot
-    ///      (`Unknown` = 0 means not registered → `depositLiquidity` reverts).
-    mapping(address => IVaultProvider.LiquiditySource) public liquiditySourceTypes;
+    /// @dev Maps caller address to the registered StablesSource slot
+    ///      (`Unknown` = 0 means not registered → `deposit` reverts).
+    mapping(address => IVaultRouter.StablesSource) public liquiditySourceTypes;
 
-    /// @dev When true, `depositLiquidity` reverts — used to simulate a vault-side failure during
+    /// @dev When true, `deposit` reverts — used to simulate a vault-side failure during
     ///      finalization (the instruction's split is valid but the payout deposit fails).
     bool public revertOnDeposit;
 
@@ -28,13 +28,13 @@ contract MockVaultProvider {
     error ReserveVaultNotConfigured();
     error DepositReverted();
 
-    /// @notice Toggle a forced revert on `depositLiquidity` for failure-path tests.
+    /// @notice Toggle a forced revert on `deposit` for failure-path tests.
     function setRevertOnDeposit(bool on) external {
         revertOnDeposit = on;
     }
 
     /// @notice Register a vault for its underlying asset. Pre-approves the vault to pull tokens
-    ///         from this contract (mirrors `VaultProvider.addVault`).
+    ///         from this contract (mirrors `VaultRouter.addVault`).
     function addVault(MockSettlementVault vault) external {
         address asset = vault.asset();
         assetVault[asset] = vault;
@@ -42,18 +42,18 @@ contract MockVaultProvider {
     }
 
     /// @notice Register `source` as a permitted depositor with the given enum slot.
-    /// @dev In production this is `onlyOwner` on `VaultProvider`. The mock leaves it open for
+    /// @dev In production this is `onlyOwner` on `VaultRouter`. The mock leaves it open for
     ///      test setup convenience.
-    function addLiquiditySource(address source, IVaultProvider.LiquiditySource sourceType) external {
+    function addLiquiditySource(address source, IVaultRouter.StablesSource sourceType) external {
         liquiditySourceTypes[source] = sourceType;
     }
 
-    /// @notice Mirrors `VaultProvider.depositLiquidity` semantics:
+    /// @notice Mirrors `IVaultRouter.deposit` semantics:
     ///         pulls `assets` from `msg.sender`, deposits them into the registered vault,
     ///         shares accrue on this contract.
-    function depositLiquidity(address asset, uint256 assets) external returns (uint256 shares) {
+    function deposit(address asset, uint256 assets) external returns (uint256 shares) {
         if (revertOnDeposit) revert DepositReverted();
-        if (liquiditySourceTypes[msg.sender] == IVaultProvider.LiquiditySource.Unknown) {
+        if (liquiditySourceTypes[msg.sender] == IVaultRouter.StablesSource.Unknown) {
             revert InvalidLiquiditySource();
         }
         MockSettlementVault vault = assetVault[asset];

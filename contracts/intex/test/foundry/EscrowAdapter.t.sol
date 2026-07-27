@@ -8,18 +8,18 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
+import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
+import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 contract EscrowAdapterTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
     MockSettlementVault mockVault;
-    MockVaultProvider provider;
+    MockVaultRouter router;
 
     address admin = address(1);
     address bridger = address(2);
@@ -48,15 +48,15 @@ contract EscrowAdapterTest is Test {
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
         mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        // Whitelist escrow as a permitted depositor on the provider (production: outbe-vault
-        // owner calls `addLiquiditySource(escrow, IntexBidPrice)` post-deploy).
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
+        router = new MockVaultRouter();
+        router.addVault(mockVault);
+        // Whitelist escrow as a permitted depositor on the router (production: outbe-vault
+        // owner calls `addLiquiditySource(escrow, IntexCostAmount)` post-deploy).
+        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         // Wire dependencies (no allow-list precondition anymore).
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(router), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(proceedsRecipient);
 
@@ -91,7 +91,7 @@ contract EscrowAdapterTest is Test {
     function test_Wire() public view {
         assertEq(escrow.intexAuctionContract(), auction);
         assertEq(address(escrow.compact()), address(compact));
-        assertEq(address(escrow.vaultProvider()), address(provider));
+        assertEq(address(escrow.vaultRouter()), address(router));
         assertEq(address(escrow.paymentToken()), address(paymentToken));
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction));
         assertTrue(escrow.allocatorId() > 0);
@@ -109,7 +109,7 @@ contract EscrowAdapterTest is Test {
         compact2.__registerAllocator(address(0xDEAD), "");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact2), address(router), address(paymentToken));
 
         assertTrue(escrow.allocatorId() != allocatorBefore);
         assertTrue(escrow.lockTag() != lockTagBefore);
@@ -129,26 +129,26 @@ contract EscrowAdapterTest is Test {
         MockTheCompact compact2 = new MockTheCompact();
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
-        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact2), address(router), address(paymentToken));
     }
 
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
         vm.prank(admin);
-        newEscrow.wire(address(0), address(compact), address(provider), address(paymentToken));
+        newEscrow.wire(address(0), address(compact), address(router), address(paymentToken));
     }
 
     function test_Wire_ZeroCompact() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "compact"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(0), address(provider), address(paymentToken));
+        newEscrow.wire(auction, address(0), address(router), address(paymentToken));
     }
 
-    function test_Wire_ZeroVaultProvider() public {
+    function test_Wire_ZeroVaultRouter() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "vaultProvider"));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "vaultRouter"));
         vm.prank(admin);
         newEscrow.wire(auction, address(compact), address(0), address(paymentToken));
     }
@@ -157,7 +157,7 @@ contract EscrowAdapterTest is Test {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "paymentToken"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(compact), address(provider), address(0));
+        newEscrow.wire(auction, address(compact), address(router), address(0));
     }
 
     function test_Wire_EmitsWired_OnInitial() public {
@@ -170,17 +170,17 @@ contract EscrowAdapterTest is Test {
             address(0),
             address(compact),
             address(0),
-            address(provider),
+            address(router),
             address(0),
             address(paymentToken)
         );
         vm.prank(admin);
-        freshEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        freshEscrow.wire(auction, address(compact), address(router), address(paymentToken));
     }
 
     function test_Wire_EmitsWired_OnRotation() public {
         // Rotate the auction address (no LiveLocksOutstanding constraint — no locks opened in setUp).
-        // `escrow` was wired in setUp with (auction, compact, provider, paymentToken); only the
+        // `escrow` was wired in setUp with (auction, compact, router, paymentToken); only the
         // auction rotates, so its old value is non-zero and the rest carry their prior addresses.
         address newAuction = address(0xBEEF);
         vm.expectEmit(true, true, true, true);
@@ -189,20 +189,20 @@ contract EscrowAdapterTest is Test {
             newAuction,
             address(compact),
             address(compact),
-            address(provider),
-            address(provider),
+            address(router),
+            address(router),
             address(paymentToken),
             address(paymentToken)
         );
         vm.prank(admin);
-        escrow.wire(newAuction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(newAuction, address(compact), address(router), address(paymentToken));
     }
 
     function test_Wire_OnlyAdmin() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert();
         vm.prank(outsider);
-        newEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        newEscrow.wire(auction, address(compact), address(router), address(paymentToken));
     }
 
     // --- LockFunds Tests ---
@@ -755,30 +755,30 @@ contract EscrowAdapterTest is Test {
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(usdt));
+        escrow.wire(auction, address(compact), address(router), address(usdt));
     }
 
     function test_Wire_RotatePaymentToken_AllowedWhenNoLocks() public {
         // Swap active token when no locks are held.
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(usdt));
+        escrow.wire(auction, address(compact), address(router), address(usdt));
 
         assertEq(address(escrow.paymentToken()), address(usdt));
     }
 
     function test_Wire_RewireSameTokenStaysAllowedWithLocks() public {
-        // Active locks must not block re-wiring with the same token (e.g. updating the provider).
+        // Active locks must not block re-wiring with the same token (e.g. updating the router).
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         MockSettlementVault newMockVault =
             new MockSettlementVault(address(paymentToken), "New Mock Vault", "nmvUSDC", 18);
-        MockVaultProvider newProvider = new MockVaultProvider();
-        newProvider.addVault(newMockVault);
+        MockVaultRouter newRouter = new MockVaultRouter();
+        newRouter.addVault(newMockVault);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(newProvider), address(paymentToken));
-        assertEq(address(escrow.vaultProvider()), address(newProvider));
+        escrow.wire(auction, address(compact), address(newRouter), address(paymentToken));
+        assertEq(address(escrow.vaultRouter()), address(newRouter));
     }
 
     // --- claimRefund ---
@@ -898,7 +898,7 @@ contract EscrowAdapterTest is Test {
 
         // Withdrawal recovers, but the vault is still down at claim time → remainder parked.
         compact.setForcedWithdrawalShouldFail(false);
-        provider.setRevertOnDeposit(true);
+        router.setRevertOnDeposit(true);
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
 
@@ -976,7 +976,7 @@ contract EscrowAdapterTest is Test {
 
         // Withdrawal recovers, but the vault is still down → claimRefund parks the remainder.
         compact.setForcedWithdrawalShouldFail(false);
-        provider.setRevertOnDeposit(true);
+        router.setRevertOnDeposit(true);
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
         escrow.claimRefund(worldwideDay1, bidder1);
         assertEq(
@@ -984,7 +984,7 @@ contract EscrowAdapterTest is Test {
         );
 
         // Vault recovers; a random caller (not the bidder, not the relayer) settles the remainder.
-        provider.setRevertOnDeposit(false);
+        router.setRevertOnDeposit(false);
         uint256 vaultBefore = paymentToken.balanceOf(address(mockVault));
 
         vm.expectEmit(true, true, false, true, address(escrow));

@@ -162,14 +162,14 @@ MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
 INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
-# Factory precompiles seeded as default VaultProvider liquidity sources. Mirror
+# Factory precompiles seeded as default VaultRouter liquidity sources. Mirror
 # the Rust constants in `outbe_primitives::addresses`.
 NOD_FACTORY_ADDRESS = "0000000000000000000000000000000000001007"
 GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
-# VaultProvider precompile. Genesis seeds the owner (slot 0) and the default
-# liquidity source/target registry (see `seed_vault_provider`). Mirrors the Rust
-# constant `outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`.
-VAULT_PROVIDER_ADDRESS = "0000000000000000000000000000000000001017"
+# VaultRouter precompile. Genesis seeds the owner (slot 0) and the default
+# liquidity source/target registry (see `seed_vault_router`). Mirrors the Rust
+# constant `outbe_primitives::addresses::VAULT_ROUTER_ADDRESS`.
+VAULT_ROUTER_ADDRESS = "0000000000000000000000000000000000001017"
 # Governance precompile. Genesis seeds the authorities set (validator addresses,
 # the PoC write-gate) and the canon / meta-canon texts at version 1. Mirrors the
 # Rust constant `outbe_primitives::addresses::GOVERNANCE_ADDRESS`.
@@ -224,7 +224,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
     NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
-    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
+    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
     GOVERNANCE_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
@@ -853,19 +853,19 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_slot(0, bootstrap_end)
 
 
-# VaultProvider default liquidity registry seeded at genesis. The discriminant
-# values MUST match the IVaultProvider.LiquiditySource / LiquidityTarget enum
-# ordering (see contracts/precompiles/src/IVaultProvider.sol).
-#   LiquiditySource: Unknown=0 NodCostPrice=1 IntexStrikePrice=2
-#                    CredisAnadosis=3 IntexBidPrice=4 GemSettle=5
-#   LiquidityTarget: Unknown=0 Credis=1
-VAULT_PROVIDER_LIQUIDITY_SOURCES = [
-    (NOD_FACTORY_ADDRESS, 1),     # NodCostPrice
-    (INTEX_FACTORY_ADDRESS, 2),   # IntexStrikePrice
-    (CREDIS_FACTORY_ADDRESS, 3),  # CredisAnadosis
-    (GEM_FACTORY_ADDRESS, 5),     # GemSettle
+# VaultRouter default liquidity registry seeded at genesis. The discriminant
+# values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
+# (see contracts/precompiles/src/IVaultRouter.sol).
+#   StablesSource: Unknown=0 NodCostAmount=1 IntexCostAmount=2
+#                  CredisCostAmount=3 GemCostAmount=4
+#   StablesTarget: Unknown=0 Credis=1
+VAULT_ROUTER_LIQUIDITY_SOURCES = [
+    (NOD_FACTORY_ADDRESS, 1),     # NodCostAmount
+    (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
+    (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
+    (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
 ]
-VAULT_PROVIDER_LIQUIDITY_TARGETS = [
+VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis
 ]
 
@@ -896,9 +896,9 @@ def _seed_address_set_with_types(
     storage.set_slot(set_base, len(entries))
 
 
-def seed_vault_provider(storage: StorageBuilder, owner_address: str):
+def seed_vault_router(storage: StorageBuilder, owner_address: str):
     """
-    VaultProvider storage layout (see crates/core/vaultprovider/src/schema.rs):
+    VaultRouter storage layout (see crates/core/vaultrouter/src/schema.rs):
       slot 0:      owner (admin)
       slots 1-2:   assets (Set) — written at runtime by addVault
       slot 3:      asset_vaults (Map) — written at runtime by addVault
@@ -908,8 +908,8 @@ def seed_vault_provider(storage: StorageBuilder, owner_address: str):
       slot 9:      liquidity_target_types (Map<Address, u8>)
 
     Genesis sets the owner and pre-registers the default liquidity source/target
-    registry for the factory precompiles, so the Solidity depositLiquidity /
-    withdrawLiquidity ABI path is gated and configured out of the box. The
+    registry for the factory precompiles, so the Solidity deposit / withdraw
+    ABI path is gated and configured out of the box. The
     reserve vault itself is still registered post-deploy via `addVault`; the
     in-process api callers bypass this registry and declare their discriminant
     directly. Owner mirrors the ValidatorSet owner pattern (slot 0).
@@ -920,13 +920,13 @@ def seed_vault_provider(storage: StorageBuilder, owner_address: str):
         storage,
         set_base=4,
         type_map_slot=6,
-        entries=VAULT_PROVIDER_LIQUIDITY_SOURCES,
+        entries=VAULT_ROUTER_LIQUIDITY_SOURCES,
     )
     _seed_address_set_with_types(
         storage,
         set_base=7,
         type_map_slot=9,
-        entries=VAULT_PROVIDER_LIQUIDITY_TARGETS,
+        entries=VAULT_ROUTER_LIQUIDITY_TARGETS,
     )
 
 
@@ -1532,16 +1532,16 @@ def main():
         )
         alloc[VALIDATOR_SET_ADDRESS].setdefault("storage", {}).update(validator_storage.entries)
 
-        # VaultProvider owner: validator0 by default (overridable via
-        # seed["vault_provider"]["owner"]). The owner can later register vaults
+        # VaultRouter owner: validator0 by default (overridable via
+        # seed["vault_router"]["owner"]). The owner can later register vaults
         # and liquidity sources/targets on the precompile.
-        vault_owner = seed.get("vault_provider", {}).get("owner", validators[0]["address"])
-        vault_provider_storage = StorageBuilder()
-        seed_vault_provider(vault_provider_storage, vault_owner)
-        alloc[VAULT_PROVIDER_ADDRESS].setdefault("storage", {}).update(
-            vault_provider_storage.entries
+        vault_owner = seed.get("vault_router", {}).get("owner", validators[0]["address"])
+        vault_router_storage = StorageBuilder()
+        seed_vault_router(vault_router_storage, vault_owner)
+        alloc[VAULT_ROUTER_ADDRESS].setdefault("storage", {}).update(
+            vault_router_storage.entries
         )
-        print(f"  VaultProvider: owner={vault_owner}, slot 0 seeded")
+        print(f"  VaultRouter: owner={vault_owner}, slot 0 seeded")
 
         staking_storage = StorageBuilder()
         total_staked = seed_staking(

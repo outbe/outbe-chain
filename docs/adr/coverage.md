@@ -56,7 +56,7 @@ The current workspace contains 57 Cargo packages.
 | `outbe-promislimit` | `crates/core/promislimit` | ADR-C-PRM-003 | Allocation limit |
 | `outbe-credis` | `crates/core/credis` | ADR-C-CRD-001 | Credis position FSM |
 | `outbe-credisfactory` | `crates/core/credisfactory` | ADR-C-CRD-002, PFS-003 | Credis orchestration |
-| `outbe-vaultprovider` | `crates/core/vaultprovider` | ADR-C-VLT-001 | Liquidity authority |
+| `outbe-vaultrouter` | `crates/core/vaultrouter` | ADR-C-VLT-001 | Liquidity authority |
 | `outbe-intex` | `crates/core/intex` | ADR-C-INX-001, PFS-009 | Native Intex ledger |
 | `outbe-intexfactory` | `crates/core/intexfactory` | ADR-C-INX-002, PFS-004 and PFS-009 | Native Intex orchestration |
 | `outbe-gem` | `crates/core/gem` | ADR-C-GEM-001 | Gem ledger |
@@ -160,7 +160,7 @@ rules; this table names the state/business owner.
 | `metadosis`, `agentreward` | ADR-C-MET-001 and ADR-C-AGR-001 |
 | `fidelity` | ADR-C-FID-001 |
 | `promis`, `promisfactory`, `promislimit` | ADR-C-PRM-001 through ADR-C-PRM-003 |
-| `credis`, `credisfactory`, `vaultprovider` | ADR-C-CRD-001, ADR-C-CRD-002 and ADR-C-VLT-001 |
+| `credis`, `credisfactory`, `vaultrouter` | ADR-C-CRD-001, ADR-C-CRD-002 and ADR-C-VLT-001 |
 | `intex`, `intexfactory` | ADR-C-INX-001 and ADR-C-INX-002 |
 | `gem`, `gemfactory` | ADR-C-GEM-001 and ADR-C-GEM-002 |
 | `desis` | ADR-C-DES-001 |
