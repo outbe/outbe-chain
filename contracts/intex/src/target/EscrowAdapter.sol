@@ -43,11 +43,9 @@ contract EscrowAdapter is
     ///         legitimate finalization latency (settlement window + cross-chain delivery).
     uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
 
-    /// @notice Post-finalize safety window for a bidder whose lock was left in `Locked` state
-    ///         after `finalizeAuction` (i.e. landed in `BidderRefundFailed`), anchored at
-    ///         `finalizedAt`. Priority window for the relayer to `retryFinalize` — possibly with
-    ///         a corrected split — before the recorded split becomes permissionlessly payable
-    ///         (and its remainder irreversibly burned) via `claimRefund`.
+    /// @notice Relayer-priority window after `finalizeAuction` for a failed bidder, anchored at
+    ///         `finalizedAt`: time to `retryFinalize` (possibly with a corrected split) before the
+    ///         recorded split becomes permissionlessly payable via `claimRefund`.
     uint32 public constant POST_FINALIZE_REFUND_DELAY = 72 hours;
 
     /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series
