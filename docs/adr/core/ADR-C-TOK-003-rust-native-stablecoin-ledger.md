@@ -144,8 +144,8 @@ There is no separate force-burn entrypoint.
 
 ### Memo extension
 
-The runtime adds Tempo-compatible opaque `bytes32` memo variants for transfer,
-transferFrom, mint, burn, burnFrom and forcedTransfer. A successful memo operation
+The runtime adds opaque `bytes32` memo variants for transfer, transferFrom, mint,
+burn, burnFrom and forcedTransfer. A successful memo operation
 emits the same canonical ERC-20/ERC-7943 events as its non-memo form plus:
 
 ```solidity
@@ -223,8 +223,8 @@ compatibility vectors and bounded lazy migrations for every upgrade.
   replacement would become issuer-controlled consensus behavior.
 - One token contract with token ids was rejected because it is not ordinary ERC-20
   address compatibility.
-- Per-token major templates were rejected in favor of Tempo-style global hard-fork
-  behavior.
+- Per-token major templates were rejected in favor of one global hard-fork-governed
+  runtime.
 - Embedded token-local allowlists were rejected because they duplicate policy state.
 - Implicit zero-as-unlimited caps, initial minting, mutable metadata and protocol
   admin recovery were rejected as ambiguous or over-privileged.

@@ -68,7 +68,7 @@ Create:
 - `contracts/precompiles/src/IStablecoinPolicyRegistry.sol`.
 
 Freeze function selectors, typed errors, event signatures/order, role ids,
-ERC-165/7943 id `0x3edbb4c4`, EIP-2612 type hashes and Tempo-compatible memo events.
+ERC-165/7943 id `0x3edbb4c4`, EIP-2612 type hashes and the canonical `bytes32` memo events.
 Generate ABI selector tests before Rust dispatch exists.
 
 **Acceptance:** independent Alloy/Solidity encoding produces the same selectors,

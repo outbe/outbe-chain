@@ -240,9 +240,9 @@ reserves that address class and requires a collision scan before activation.
 - Initial minting, automatic policy creation, global ticker uniqueness, deletable
   registrations and implicit fee eligibility were rejected.
 - Event-only discovery was rejected because runtime modules need a canonical registry.
-- A 12-byte Tempo prefix was rejected because 64 hash bits are unnecessarily small;
-  no-prefix routing was rejected because current native dispatch requires a reserved
-  class.
+- A 12-byte prefix was rejected because leaving only 64 hash bits is unnecessarily
+  restrictive; no-prefix routing was rejected because current native dispatch
+  requires a reserved class.
 
 ## Open questions and technical debt
 
