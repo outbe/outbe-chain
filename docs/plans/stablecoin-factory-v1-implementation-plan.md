@@ -129,6 +129,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-010 | Done | read-only | Exact AGENTS.md 8.1 surveys; trybuild 1/1; no long-lived runtime owner; storage review APPROVE |
 | SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 | SCF-012 | Done | `a81c22e1` | Actual unsupported set_code, nested checkpoint/storage/balance/event rollback, account/change-set preservation, transfer underflow and current overflow wrap; primitives 279/279; clippy/LSP clean |
+| SCF-013 | Done | `8c0eea17` | ACTIVE/PENDING guards and zero-value legacy tests retained; raw payload state/log, validator-change quorum, handler rejection, terminal replay and outer rollback snapshots; Vote 36/36; clippy/LSP clean |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
