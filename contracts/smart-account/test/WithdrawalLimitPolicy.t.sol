@@ -111,6 +111,37 @@ contract WithdrawalLimitPolicyTest is Test {
         });
     }
 
+    /// @dev ERC-7579 batch execution element (matches solady LibERC7579 / Kernel batch decoding).
+    struct Execution {
+        address target;
+        uint256 value;
+        bytes callData;
+    }
+
+    /// @dev Builds a CALLTYPE_BATCH UserOp whose single sub-call is a transfer targeting `target`.
+    function _buildBatchUserOpTargeting(address target) internal view returns (PackedUserOperation memory) {
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: target,
+            value: 0,
+            callData: abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1))
+        });
+        bytes32 batchMode = bytes32(bytes1(0x01)); // CALLTYPE_BATCH
+        bytes memory callData = abi.encodeWithSelector(bytes4(0), batchMode, abi.encode(execs));
+
+        return PackedUserOperation({
+            sender: kernelAccount,
+            nonce: 0,
+            initCode: "",
+            callData: callData,
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: ""
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Install / Uninstall
     // -------------------------------------------------------------------------
@@ -242,6 +273,30 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         vm.expectRevert(abi.encodeWithSelector(WithdrawalLimitPolicy.NonCanonicalOffset.selector, uint256(96)));
         policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-04: a standalone policy must fail-closed on a batch that targets the configured token,
+    ///      not pass it through — otherwise a batch bypasses the daily limit entirely when the policy
+    ///      is reused without a call-type-restricting sibling hook.
+    function test_W05_BatchTargetingConfiguredToken_Reverts() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        PackedUserOperation memory userOp = _buildBatchUserOpTargeting(address(token));
+        vm.prank(kernelAccount);
+        vm.expectRevert(
+            abi.encodeWithSelector(WithdrawalLimitPolicy.BatchTargetsConfiguredToken.selector, address(token))
+        );
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-04: a batch that touches no configured token is genuinely unrelated and still passes.
+    function test_W05_UnrelatedBatch_StillPasses() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        PackedUserOperation memory userOp = _buildBatchUserOpTargeting(makeAddr("otherToken"));
+        vm.prank(kernelAccount);
+        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+        assertEq(result, 0, "unrelated batch must pass through");
     }
 
     function test_CheckUserOpPolicy_CumulativeExceedsLimit() public {
