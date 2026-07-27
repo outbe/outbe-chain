@@ -4,6 +4,7 @@ import {BaseAATest} from "./BaseAATest.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
+import {MockFeeToken} from "src/mocks/MockFeeToken.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
 import {Kernel} from "@zerodev/kernel/Kernel.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
@@ -234,6 +235,35 @@ contract CCAFlow is BaseAATest {
         // Withdraw 900e6 of token2 via CCA permission for token2 — separate limit
         _ccaWithdrawToken(smartAccount, recipient.addr, 900e6, address(token2));
         assertEq(token2.balanceOf(recipient.addr), 900e6);
+    }
+
+    /// @dev T-02: a fee-on-transfer bundle token must credit the measured delta (2×(amount−fee)),
+    ///      not the nominal 2×amount the pre-transfer credit produced (which over-stated the reserve).
+    function test_W02_FeeOnTransfer_CreditsActualReceived() external {
+        MockFeeToken feeToken = new MockFeeToken(100); // 1% fee
+
+        address[] memory bundleTokens = new address[](1);
+        bundleTokens[0] = address(feeToken);
+        address[] memory bundleSenders = new address[](1);
+        bundleSenders[0] = vault;
+
+        address smartAccount = factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 0);
+
+        uint256 amount = 1000e6;
+        uint256 fee = amount / 100; // 1%
+        // Pre-fund SA (user's own funds) and vault; mint carries no fee.
+        feeToken.mint(smartAccount, amount);
+        feeToken.mint(vault, amount);
+        vm.startPrank(vault);
+        feeToken.approve(smartAccount, amount);
+        ITokenBundle(smartAccount).topUp(vault, address(feeToken), amount);
+        vm.stopPrank();
+
+        assertEq(
+            bundlePlugin.balanceOf(smartAccount, address(feeToken)),
+            2 * (amount - fee),
+            "bundle must credit 2x the received amount, not 2x the nominal amount"
+        );
     }
 
     // -------------------------------------------------------------------------

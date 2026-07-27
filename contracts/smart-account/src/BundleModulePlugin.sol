@@ -63,18 +63,23 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         // NB: enforce check to verify that the user made a topUp with owns funds to enable credis
         require(IERC20(token).balanceOf(thisAccount) >= amount, "Insufficient funds for Credis");
 
-        // update bundle
-        // NB: double the amount of the bundle meaning that 50% will be used for purchases and 50% for Coen buys
-        bundleBalance[thisAccount][token] += amount * 2;
-        emit BundleTransfer(sender, thisAccount, token, amount);
-
         // Have the smart account (msg.sender) execute transferFrom in its own context so that
         // the ERC20 sees the smart account as the spender, not this singleton plugin.
         bytes32 execMode =
             LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory transferCall = abi.encodeCall(IERC20.transferFrom, (sender, thisAccount, amount));
+
+        // Credit the bundle from the measured balance delta, after the transfer. The transfer runs
+        // through the account's executor (msg.sender must be the account, so SafeERC20 can't wrap it), and
+        // a no-return / false-return or fee-on-transfer token would let a over-state the reserve.
+        uint256 balBefore = IERC20(token).balanceOf(thisAccount);
         // ERC-7579 single execution encoding: target(20) ‖ value(32) ‖ callData.
         IERC7579Account(thisAccount).executeFromExecutor(execMode, abi.encodePacked(token, uint256(0), transferCall));
+        uint256 received = IERC20(token).balanceOf(thisAccount) - balBefore;
+
+        // NB: double the received amount — 50% funds purchases, 50% funds Coen buys.
+        bundleBalance[thisAccount][token] += received * 2;
+        emit BundleTransfer(sender, thisAccount, token, received);
     }
 
     function balanceOf(address owner, address token) external view override returns (uint256) {
