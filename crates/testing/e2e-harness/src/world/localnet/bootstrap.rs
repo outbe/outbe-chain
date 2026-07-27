@@ -112,7 +112,7 @@ impl Localnet {
             }
         }
         copy_fixture_file(
-            &artifacts.join("chain-manifest-v1.json"),
+            &artifacts.join("genesis-final.json"),
             &self.cfg.dir.join("genesis.json"),
             0o640,
         )?;
