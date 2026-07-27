@@ -12,7 +12,7 @@ Feature: Off-chain computation public path
   @ocomp-public-apply
   # OCOMP-TEST-ID: OCM-PUB-001
   Scenario: Four independent domains certify and atomically apply one public Lysis result
-    Given a fresh four-validator OCOMP public measurement localnet
+    Given the canonical four-validator OCOMP Final devnet
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
@@ -48,7 +48,7 @@ Feature: Off-chain computation public path
   @ocomp-public-replay
   # OCOMP-TEST-ID: OCM-PUB-004
   Scenario: Completed result-vote replay is idempotent and changed binding is rejected
-    Given a fresh four-validator OCOMP public measurement localnet
+    Given the canonical four-validator OCOMP Final devnet
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
@@ -61,7 +61,7 @@ Feature: Off-chain computation public path
   @ocomp-public-expiry
   # OCOMP-TEST-ID: OCM-PUB-003
   Scenario: Two timely votes cannot prevent exclusive-deadline expiry
-    Given a fresh four-validator OCOMP public measurement localnet
+    Given the canonical four-validator OCOMP Final devnet
     When validators 2 and 3 OCOMP supervisors are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -75,7 +75,7 @@ Feature: Off-chain computation public path
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery
-    Given a fresh four-validator OCOMP public measurement localnet
+    Given the canonical four-validator OCOMP Final devnet
     When validators 1, 2 and 3 OCOMP supervisors are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
