@@ -127,6 +127,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
 | SCF-G0 | Done | `325de189` | Forge 8/8; primitives lock suites 24/24; Vote 33/33; xtask 5/5; complete ABI+namespace checks; independent gate PASS |
 | SCF-010 | Done | read-only | Exact AGENTS.md 8.1 surveys; trybuild 1/1; no long-lived runtime owner; storage review APPROVE |
+| SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
