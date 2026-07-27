@@ -46,16 +46,16 @@ No implementation task may invent these values. Phase 0 must freeze them first:
 1. exact Factory and Policy Registry addresses;
 2. exact two-byte prefix and marker bytecode;
 3. activation protocol version and new-genesis/reset applicability;
-4. `chainId_be` and ticker-length encoding widths in `tokenId`;
-5. EIP-712 domain version (role ids are frozen by SCF-001);
-6. ISO-4217 snapshot/update rule;
-7. policy membership batch cap and public pending caps; V1 has no member or Factory
+4. EIP-712 domain version (role ids are frozen by SCF-001);
+5. policy membership batch cap and public pending caps; V1 has no member or Factory
    page ABI;
-8. top-level/nested dynamic-route gas and warm/cold semantics; and
-9. maintained SDK location, or an explicit decision that V1 tooling is CLI-only.
+6. top-level/nested dynamic-route gas and warm/cold semantics; and
+7. maintained SDK location, or an explicit decision that V1 tooling is CLI-only.
 
 SCF-001 froze policy add/remove as typed `MembershipUnchanged`, the complete ABI
-error/event/indexing surface and all six role ids.
+error/event/indexing surface and all six role ids. SCF-002 froze the token-id widths as
+`u64` big-endian chain id plus `u8` ticker length and pinned the SIX ISO 4217 List One
+snapshot published 2026-01-01.
 
 ## Task execution contract
 
@@ -111,7 +111,8 @@ reviewing the task's scoped diff and verification evidence.
 | Task | Status | Branch/commit | Evidence / blocker |
 | --- | --- | --- | --- |
 | SCF-001 | Done | `5614296` | Forge 7/7; Alloy/golden 4/4; Vote 32/32; `cargo check` vote+CLI; independent ABI review READY |
-| SCF-G0 | Blocked | — | Requires SCF-002 through SCF-004 |
+| SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
+| SCF-G0 | Blocked | — | Requires SCF-003 and SCF-004 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -162,7 +163,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 - **Goal:** Define one byte-exact proposal and address derivation authority.
 - **Scope/files:** new focused stablecoin primitives module and testdata under
-  `crates/blockchain/primitives`; canonical JSON corpus and token-id vectors.
+  `crates/blockchain/primitives`; canonical JSON/ISO snapshot corpus and parameterized
+  token-id/address vectors. SCF-003 supplies final network Factory/prefix constants.
 - **Depends on:** SCF-001.
 - **Done when:** widths for chain id/ticker length are explicit; Rust and an
   independent encoder agree on JSON bytes, full `tokenId`, prefix address and
@@ -192,10 +194,10 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Goal:** Remove the remaining runtime-configurable or implementation-chosen values.
 - **Scope/files:** fork manifest/testdata and ADR/plan constants only.
 - **Depends on:** SCF-001 through SCF-003.
-- **Done when:** activation version, public pending cap, policy batch/page caps,
-  Factory page cap, warm/cold class semantics, initial gas schedule, benchmark
-  acceptance budgets, EIP-712 version, ISO snapshot and SDK owner are recorded. Bond
-  vector is exactly `10^24`.
+- **Done when:** activation version, public pending cap, policy member-batch cap,
+  warm/cold class semantics, initial gas schedule, benchmark acceptance budgets,
+  EIP-712 version and SDK owner are recorded; the SCF-002 ISO snapshot is verified,
+  not replaced. Bond vector is exactly `10^24`.
 - **Tests:** T2 constant/boundary vectors and manifest placeholder scan. SCF-034 and
   SCF-047 must validate the frozen caps/gas; a failed benchmark reopens G0 instead of
   silently changing implementation constants.
