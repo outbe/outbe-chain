@@ -55,7 +55,9 @@ Creation initializes:
 - immutable `name`: valid UTF-8, 1 through 64 bytes, with no control characters;
 - immutable `symbol`/ticker: 2 through 12 ASCII characters, first `A-Z`, remaining
   `A-Z0-9`, without normalization;
-- immutable currently assigned numeric ISO-4217 currency code;
+- immutable numeric code present in SIX ISO 4217 List One published 2026-01-01
+  (source XML SHA-256
+  `838dfb991648cf36df939edd5fe3811737962b75a32252847d239cedd1e291c9`);
 - immutable `decimals` in `0..=18` (CLI/SDK default 6 only);
 - immutable issuer identity and Factory `tokenId`;
 - explicit nonzero `U256 supplyCap`, in smallest units;

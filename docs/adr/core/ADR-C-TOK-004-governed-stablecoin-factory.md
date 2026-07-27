@@ -59,6 +59,8 @@ requires byte equality:
 - no whitespace, unknown fields, duplicate fields or alternate key order;
 - address is `0x` plus 40 lowercase hexadecimal characters and must be nonzero;
 - `version`, `iso4217` and `decimals` use canonical JSON integers;
+- `iso4217` must appear in the protocol-pinned SIX List One snapshot published
+  2026-01-01; updates require a hard-fork change to the pinned set and vectors;
 - `supplyCap` and `policyId` use nonempty base-10 strings with no sign or leading
   zero except the single string `"0"`;
 - name uses valid UTF-8 and shortest required JSON escaping; the decoder re-encodes
@@ -134,12 +136,19 @@ The full identity is:
 ```text
 tokenId = keccak256(
     "OUTBE_STABLECOIN_V1" ||
-    chainId_be ||
+    chainId_u64_be ||
     STABLECOIN_FACTORY_ADDRESS ||
     issuer ||
-    ticker_length || ticker_bytes
+    ticker_length_u8 || ticker_bytes
 )
 ```
+
+`chainId_u64_be` is exactly eight unsigned big-endian bytes, matching Outbe's
+canonical `u64` chain-id type. `ticker_length_u8` is exactly one byte; the V1 ticker
+bound is 2 through 12 bytes, so wider or variable-length encodings are noncanonical.
+SCF-002 identity vectors parameterize the Factory address and prefix; SCF-003 selects
+the network constants and regenerates the final network vectors without changing the
+preimage codec.
 
 The EVM address uses a protocol-reserved two-byte prefix followed by the rightmost
 144 bits of `tokenId`. The full 256-bit id remains in Factory state. A hash-tail
@@ -229,8 +238,9 @@ adapter. They are not EVM selectors.
 
 ## Determinism, bounds and replay
 
-JSON byte validation, ISO table, ticker validation, address derivation and index
-writes are protocol-versioned deterministic code. Proposal size remains bounded by
+JSON byte validation, the SIX List One 2026-01-01 ISO table snapshot, ticker
+validation, address derivation and index writes are protocol-versioned deterministic
+code. Proposal size remains bounded by
 Vote; name and ticker bounds cap parsing/allocation. One proposal performs O(1)
 Factory and token initialization work. Duplicate proposal, execution or terminal
 hooks are rejected or idempotently observe their already-terminal state without
