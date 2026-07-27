@@ -479,6 +479,12 @@ Desis or tops up the live auction.
 formation atomically takes its current value into the next not-yet-formed day.
 A later credit waits for the following unformed day.
 
+Only the daily Cycle terminal allocation supplies the OCOMP `base_limit`.
+Non-daily terminal headroom such as `LateFinalizeCredits` residue is
+purpose-routed into carry-over and cannot form or replace the day limit. If it
+arrives before Cycle it is consumed by that formation; otherwise it waits for
+the next unformed day. Pre-OCOMP behavior remains unchanged.
+
 Retry preserves `lysis_budget` and the request split. A terminal no-retry
 outcome credits the whole `lysis_budget` exactly once.
 

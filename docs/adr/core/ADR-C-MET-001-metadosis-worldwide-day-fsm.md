@@ -108,6 +108,10 @@ Desis has advanced its stage.
 Metadosis limit formation atomically adds and clears its current value.
 
 Credit arriving after a limit was formed waits for the next not-yet-formed day.
+Only the daily Cycle terminal allocation may supply `base_limit` and form an
+OCOMP day. Non-daily terminal headroom, including a `LateFinalizeCredits`
+residue, must checked-add to carry-over; it must never call the formation sink
+or win a first-writer race against Cycle.
 
 ## Interfaces and invariants
 

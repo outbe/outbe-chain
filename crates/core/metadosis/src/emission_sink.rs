@@ -38,6 +38,25 @@ pub fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
     Ok(U256::ZERO)
 }
 
+/// Recycles late-settlement headroom without racing daily OCOMP limit formation.
+///
+/// Before the OCOMP profile is armed this preserves the legacy terminal-sink
+/// behavior. Under OCOMP, the daily Cycle allocation is the sole base-limit
+/// formation input, so a late residue is a carry-over credit consumed by the
+/// next not-yet-formed day limit.
+pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
+    let metadosis = MetadosisContract::new(ctx.storage.clone());
+    if metadosis
+        .read_ocomp_request_profile(&crate::ocomp::schema::poc_schema_limits())?
+        .is_some()
+    {
+        PromisLimitContract::new(ctx.storage.clone()).checked_add_carry_over(amount)?;
+        return Ok(U256::ZERO);
+    }
+
+    apply(ctx, amount)
+}
+
 fn apply_ocomp_day_limit(ctx: &BlockRuntimeContext, base_limit: U256) -> Result<U256> {
     ctx.storage.with_checkpoint(|| {
         let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);

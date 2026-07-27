@@ -1565,10 +1565,14 @@ the next not-yet-formed day limit atomically takes the available carry-over.
 
 **Changes:** add a checked atomic take during limit formation; bind the taken
 amount into the day-limit receipt/state; leave later credits for the following
-unformed day.
+unformed day. Keep the daily Cycle terminal allocation as the sole OCOMP
+`base_limit` producer. Route `LateFinalizeCredits` residue through a distinct
+purpose-bound headroom path that checked-adds carry-over instead of invoking
+day-limit formation.
 
 **Invariants/failures:** no double take; add/take conservation; a formed day is
-immutable; retry never consumes or credits again; overflow/failure rolls back.
+immutable; a non-daily headroom credit cannot form or replace a day; retry never
+consumes or credits again; overflow/failure rolls back.
 
 **Fork impact:** active PoC day-limit formation only; pre-fork behavior is
 unchanged.
@@ -1577,6 +1581,7 @@ unchanged.
 formation. Do not top up a live auction or add per-job Promis reservations.
 
 **Task-local tests:** zero/non-zero carry-over, credit before/after formation,
+late-settlement residue before Cycle, unchanged pre-fork residue routing,
 restart/replay, checked overflow and two consecutive days.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; contributes `OCM-REQ-001` and

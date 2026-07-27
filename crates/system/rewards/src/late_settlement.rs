@@ -212,11 +212,11 @@ pub fn settle_window(
     })?;
     if !residue.is_zero() {
         // Mint/burn parity: burn the residue from REWARDS, then recycle the same
-        // amount into terminal Metadosis emission headroom via the canonical
-        // dispatcher. Keeping both here decouples the begin-zone
-        // precompile from Metadosis emission internals.
+        // amount into terminal Metadosis emission headroom via the purpose-bound
+        // dispatcher. Under OCOMP this credits carry-over rather than racing the
+        // daily base-limit formation; pre-OCOMP behavior remains unchanged.
         ctx.storage.decrease_balance(REWARDS_ADDRESS, residue)?;
-        outbe_emissionlimit::block::dispatch_terminal_remainder_at(
+        outbe_emissionlimit::block::dispatch_late_settlement_residue_at(
             ctx,
             residue,
             ctx.block.timestamp,
@@ -312,8 +312,15 @@ mod tests {
     use super::*;
     use crate::constants::LATE_FINALIZE_W_MAX;
     use alloy_primitives::address;
+    use outbe_common::WorldwideDay;
+    use outbe_metadosis::{
+        ocomp::schema::{poc_schema_limits, OcompRequestProfile},
+        schema::{MetadosisContract, WorldwideDayEntryExt},
+    };
+    use outbe_ocomp_protocol::profile::CapacityProfileV1;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_promislimit::PromisLimitContract;
 
     const CHAIN_ID: u64 = 1;
     const FB: B256 = B256::repeat_byte(0xAB);
@@ -336,6 +343,40 @@ mod tests {
     fn fund(ctx: &BlockRuntimeContext, amount: U256) {
         ctx.storage
             .increase_balance(REWARDS_ADDRESS, amount)
+            .unwrap();
+    }
+
+    fn arm_ocomp_profile(ctx: &BlockRuntimeContext) {
+        let profile = OcompRequestProfile {
+            chain_id: CHAIN_ID,
+            genesis_hash: B256::repeat_byte(0x11),
+            fork_id: B256::repeat_byte(0x21),
+            protocol_bundle_hash: B256::repeat_byte(0x41),
+            correctness_profile_id: B256::repeat_byte(0x24),
+            capacity_profile: CapacityProfileV1 {
+                profile_id: B256::repeat_byte(0x22),
+                max_tributes_per_work_shard: 256,
+                max_workers_per_domain: 4,
+                max_pending_jobs: 2,
+                max_intents_per_block: 1,
+                max_activations_per_block: 1,
+                max_ready_inspections_per_block: 1,
+                max_expirations_per_block: 1,
+                retry_backoff_blocks: 1,
+                max_terminal_job_records: 365,
+                max_reference_currencies: 256,
+                max_fidelity_cohorts_per_owner: 64,
+                max_oracle_wwd_pair_entries: 256,
+                max_active_scurve_entries: 256,
+                result_deadline_blocks: 64,
+                source_retention_after_terminal_blocks: 64,
+                generated_limits_manifest_hash: B256::repeat_byte(0x23),
+            },
+            source_availability_policy_id: B256::repeat_byte(0x35),
+            result_committee_snapshot_hash: B256::repeat_byte(0x36),
+        };
+        MetadosisContract::new(ctx.storage.clone())
+            .initialize_ocomp_request_profile(&profile, &poc_schema_limits())
             .unwrap();
     }
 
@@ -438,6 +479,104 @@ mod tests {
                 "excluded voter's share is residue, not redistributed"
             );
             assert_eq!(distributed + residue, pending, "parity");
+        });
+    }
+
+    #[test]
+    fn pre_ocomp_late_settlement_residue_remains_terminal_headroom() {
+        run(|ctx| {
+            let pending = U256::from(4_000);
+            let expected_residue = U256::from(1_000);
+            fund(ctx, pending);
+            escrow_block_fee(ctx, 10, FB, pending, 4, 0, 0, 0, B256::ZERO, &[V0, V1, V2]).unwrap();
+
+            let (_, residue) = settle_window(ctx, FB, 4).unwrap();
+            assert_eq!(residue, expected_residue);
+            let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
+            assert_eq!(
+                MetadosisContract::new(ctx.storage.clone())
+                    .worldwide_days
+                    .entry(wwd)
+                    .metadosis_limit_amount()
+                    .read()
+                    .unwrap(),
+                expected_residue
+            );
+            assert_eq!(
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO
+            );
+        });
+    }
+
+    #[test]
+    fn ocomp_late_settlement_residue_waits_for_daily_limit_formation() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let wwd = WorldwideDay::new(20_260_728);
+            let timestamp = wwd.start_timestamp();
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::new(156, timestamp, CHAIN_ID, Address::ZERO, Vec::new()),
+                handle,
+            );
+            arm_ocomp_profile(&ctx);
+
+            let pending = U256::from(4_000);
+            let expected_residue = U256::from(1_000);
+            fund(&ctx, pending);
+            escrow_block_fee(
+                &ctx,
+                153,
+                FB,
+                pending,
+                4,
+                0,
+                0,
+                0,
+                B256::ZERO,
+                &[V0, V1, V2],
+            )
+            .unwrap();
+
+            let (distributed, residue) = settle_window(&ctx, FB, 4).unwrap();
+            assert_eq!(distributed, U256::from(3_000));
+            assert_eq!(residue, expected_residue);
+            assert!(MetadosisContract::new(ctx.storage.clone())
+                .ocomp_day_limit_formation(wwd)
+                .unwrap()
+                .is_none());
+            assert_eq!(
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                expected_residue
+            );
+
+            let daily_base = U256::from(10_000);
+            outbe_emissionlimit::block::dispatch_terminal_remainder_at(&ctx, daily_base, timestamp)
+                .unwrap();
+
+            let metadosis = MetadosisContract::new(ctx.storage.clone());
+            let formation = metadosis.ocomp_day_limit_formation(wwd).unwrap().unwrap();
+            assert_eq!(formation.base_limit, daily_base);
+            assert_eq!(formation.carry_over_taken, expected_residue);
+            assert_eq!(
+                metadosis
+                    .worldwide_days
+                    .entry(wwd)
+                    .metadosis_limit_amount()
+                    .read()
+                    .unwrap(),
+                daily_base + expected_residue
+            );
+            assert_eq!(
+                PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                U256::ZERO
+            );
         });
     }
 

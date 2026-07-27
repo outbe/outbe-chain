@@ -1483,6 +1483,12 @@ Limit formation atomically consumes the available carry-over into the next
 not-yet-formed day limit. A credit arriving after a day limit was formed waits
 for the following unformed day.
 
+The daily Cycle terminal allocation is the only OCOMP `base_limit` formation
+input. `LateFinalizeCredits` residue uses a distinct purpose-bound dispatch:
+before formation it accumulates in carry-over and is taken by Cycle; after
+formation it remains for the following unformed day. It never forms or replaces
+a day limit directly. Pre-OCOMP behavior is unchanged.
+
 Retry preserves `lysis_budget` without a second request-phase effect. A terminal
 no-retry outcome credits the whole `lysis_budget` exactly once.
 

@@ -208,6 +208,11 @@ and all job/manifest bindings before accepting either dependency. The node
 attestation gate separately compares the plan's WWD, budget and logical time to
 the finalized `JobIntentV1` before signing.
 
+`LateFinalizeCredits` precedes `CycleTick`. Its fee residue is added to carry-over
+and cannot form an OCOMP day limit. The Cycle terminal allocation is the sole
+`base_limit`; it atomically takes any residue already accumulated before
+formation. Residue arriving after formation waits for the next unformed day.
+
 ## Normative success protocol and test oracle
 
 | Step | Owner | Message/transition | Durable output | Observable test oracle | PoC requirements |
