@@ -22,6 +22,8 @@ use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
 use serde::Serialize;
 use serde_json::{json, Value};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::internal::proc::{first_hex, run_capture};
 use crate::internal::shell::Sh;
@@ -326,6 +328,73 @@ impl Localnet {
                  {block_number}/{block_hash:#x}"
             )
         })
+    }
+
+    /// Returns the observed wall-clock latency between canonical application
+    /// and finalization acknowledgement for one exact block on one validator.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn validator_finality_latency_micros(
+        &self,
+        validator_index: usize,
+        block_number: u64,
+        block_hash: B256,
+    ) -> Result<u64> {
+        ensure!(
+            validator_index < self.committee_size(),
+            "validator index {validator_index} is outside the committee"
+        );
+        let mut canonical_at = None;
+        let mut finalized_at = None;
+        let root = self.cfg.validator_dir(validator_index).join("logs");
+        for path in reth_log_paths(&root)? {
+            let file = File::open(&path)
+                .wrap_err_with(|| format!("open validator runtime log {}", path.display()))?;
+            for line in BufReader::new(file).lines() {
+                let line = line
+                    .wrap_err_with(|| format!("read validator runtime log {}", path.display()))?;
+                if let Some(observed_at) =
+                    parse_canonical_block_observed_at_micros(&line, block_number, block_hash)
+                        .wrap_err_with(|| {
+                            format!("parse canonical block timestamp in {}", path.display())
+                        })?
+                {
+                    ensure!(
+                        canonical_at.replace(observed_at).is_none(),
+                        "validator {validator_index} has multiple canonical timestamps for \
+                         {block_number}/{block_hash:#x}"
+                    );
+                }
+                if let Some(observed_at) =
+                    parse_finalized_block_observed_at_micros(&line, block_number, block_hash)
+                        .wrap_err_with(|| {
+                            format!("parse finalized block timestamp in {}", path.display())
+                        })?
+                {
+                    ensure!(
+                        finalized_at.replace(observed_at).is_none(),
+                        "validator {validator_index} has multiple finalization timestamps for \
+                         {block_number}/{block_hash:#x}"
+                    );
+                }
+            }
+        }
+        let canonical_at = canonical_at.ok_or_else(|| {
+            eyre::eyre!(
+                "validator {validator_index} has no canonical timestamp for \
+                 {block_number}/{block_hash:#x}"
+            )
+        })?;
+        let finalized_at = finalized_at.ok_or_else(|| {
+            eyre::eyre!(
+                "validator {validator_index} has no finalization timestamp for \
+                 {block_number}/{block_hash:#x}"
+            )
+        })?;
+        let latency = finalized_at
+            .checked_sub(canonical_at)
+            .ok_or_else(|| eyre::eyre!("finalization timestamp precedes canonical application"))?;
+        ensure!(latency > 0, "observed finality latency must be positive");
+        Ok(latency)
     }
 
     /// Forces one validator to reconstruct CE from preserved canonical Reth
@@ -707,6 +776,68 @@ fn parse_canonical_block_processing_micros(
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_canonical_block_observed_at_micros(
+    line: &str,
+    expected_number: u64,
+    expected_hash: B256,
+) -> Result<Option<u64>> {
+    if !line.contains("Block added to canonical chain") {
+        return Ok(None);
+    }
+    let number = required_log_u64_field(line, "number", "canonical block")?;
+    let hash = required_log_hash_field(line, "hash", "canonical block")?;
+    if number != expected_number || hash != expected_hash {
+        return Ok(None);
+    }
+    Ok(Some(parse_log_timestamp_micros(line)?))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_finalized_block_observed_at_micros(
+    line: &str,
+    expected_number: u64,
+    expected_hash: B256,
+) -> Result<Option<u64>> {
+    if !line.contains("marshal-delivered block finalized and acked") {
+        return Ok(None);
+    }
+    let number = required_log_u64_field(line, "height", "finalized block")?;
+    let hash = required_log_hash_field(line, "digest", "finalized block")?;
+    if number != expected_number || hash != expected_hash {
+        return Ok(None);
+    }
+    Ok(Some(parse_log_timestamp_micros(line)?))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn required_log_u64_field(line: &str, name: &str, record: &str) -> Result<u64> {
+    structured_field(line, name)
+        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
+        .parse::<u64>()
+        .wrap_err_with(|| format!("{record} {name} is not u64"))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn required_log_hash_field(line: &str, name: &str, record: &str) -> Result<B256> {
+    structured_field(line, name)
+        .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
+        .parse::<B256>()
+        .wrap_err_with(|| format!("{record} {name} is not B256"))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_log_timestamp_micros(line: &str) -> Result<u64> {
+    let timestamp = line
+        .split_ascii_whitespace()
+        .next()
+        .ok_or_else(|| eyre::eyre!("runtime log record has no timestamp"))?;
+    let timestamp = OffsetDateTime::parse(timestamp, &Rfc3339)
+        .wrap_err("runtime log timestamp is not RFC3339")?;
+    let micros = timestamp.unix_timestamp_nanos() / 1_000;
+    u64::try_from(micros).wrap_err("runtime log timestamp is before Unix epoch or exceeds u64")
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn parse_ce_startup_replay(
     line: &str,
     validator_index: u8,
@@ -816,9 +947,10 @@ mod tests {
 
     use super::{
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
-        exact_expected_update_fatal, is_runtime_log, parse_canonical_block_processing_micros,
-        parse_ce_startup_replay, unexpected_log_line, CeStartupReplayObservationV1, LogCounts,
-        RethLogTail,
+        exact_expected_update_fatal, is_runtime_log, parse_canonical_block_observed_at_micros,
+        parse_canonical_block_processing_micros, parse_ce_startup_replay,
+        parse_finalized_block_observed_at_micros, unexpected_log_line,
+        CeStartupReplayObservationV1, LogCounts, RethLogTail,
     };
 
     #[test]
@@ -957,6 +1089,33 @@ mod tests {
         );
         assert_eq!(
             parse_canonical_block_processing_micros(record, 163, block_hash).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn exact_runtime_records_report_positive_q_block_finality_latency() {
+        let block_hash = "0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7"
+            .parse()
+            .unwrap();
+        let canonical = "2026-07-27T10:42:12.172399Z INFO reth_node_events::node: \
+            Block added to canonical chain number=162 \
+            hash=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7 \
+            peers=3 txs=11 elapsed=590.757245ms";
+        let finalized = "2026-07-27T10:42:12.707842Z INFO \
+            outbe_consensus::executor::actor: marshal-delivered block finalized and acked \
+            height=162 \
+            digest=0x2a6edf48ac3c8fb19ff4e9daeca617c06c61ced8ec8889a59fafbc00093d4bb7";
+
+        let canonical_at = parse_canonical_block_observed_at_micros(canonical, 162, block_hash)
+            .unwrap()
+            .unwrap();
+        let finalized_at = parse_finalized_block_observed_at_micros(finalized, 162, block_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(finalized_at - canonical_at, 535_443);
+        assert_eq!(
+            parse_finalized_block_observed_at_micros(finalized, 163, block_hash).unwrap(),
             None
         );
     }

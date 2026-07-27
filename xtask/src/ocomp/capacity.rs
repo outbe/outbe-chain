@@ -6,6 +6,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -184,12 +185,12 @@ pub fn measure(
     );
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("create capacity output {}", output_dir.display()))?;
+    let source_binaries = CapacityBinariesV1::from_repository(repository_root)?;
+    source_binaries.validate()?;
+    let binaries = source_binaries.snapshot_into(&output_dir.join("artifact-set"))?;
     let budget_path = output_dir.join("capacity-budget-v1.json");
     let budget = serde_json::to_value(frozen_capacity_budget()?)?;
     publish_new_json(&budget_path, &budget)?;
-
-    let binaries = CapacityBinariesV1::from_repository(repository_root)?;
-    binaries.validate()?;
     let runner_uid = command_stdout(repository_root, "id", &["-u"])?;
     let runner_gid = command_stdout(repository_root, "id", &["-g"])?;
     validate_runner_identity(&runner_uid, "uid")?;
@@ -256,9 +257,7 @@ pub fn measure(
         .arg(&host_path)
         .arg("--budget")
         .arg(&budget_path);
-    for scenario in &scenario_paths {
-        assemble.arg("--scenario").arg(scenario);
-    }
+    append_capacity_scenarios(&mut assemble, &scenario_paths);
     assemble.arg("--output").arg(&capacity_evidence_path);
     run_checked(&mut assemble, "assemble five OCOMP capacity runs")?;
     run(
@@ -268,6 +267,10 @@ pub fn measure(
         limits_manifest_path,
         generated_capacity_path,
     )
+}
+
+fn append_capacity_scenarios(command: &mut Command, scenario_paths: &[PathBuf]) {
+    command.arg("--scenario").args(scenario_paths);
 }
 
 fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
@@ -389,6 +392,59 @@ impl CapacityBinariesV1 {
         }
         Ok(())
     }
+
+    fn snapshot_into(&self, root: &Path) -> Result<Self> {
+        ensure!(
+            root.is_absolute() && root != Path::new("/") && !root.exists(),
+            "capacity artifact-set path must be a new absolute non-root directory"
+        );
+        std::fs::create_dir(root)
+            .wrap_err_with(|| format!("create capacity artifact set {}", root.display()))?;
+        let snapshot = Self {
+            chain: root.join("outbe-chain"),
+            ocomp: root.join("outbe-ocomp"),
+            e2e: root.join("outbe-e2e"),
+            evidence: root.join("outbe-e2e-evidence"),
+            mock_enclave: root.join("outbe-tee-enclave-mock"),
+        };
+        for (source, destination) in [
+            (&self.chain, &snapshot.chain),
+            (&self.ocomp, &snapshot.ocomp),
+            (&self.e2e, &snapshot.e2e),
+            (&self.evidence, &snapshot.evidence),
+            (&self.mock_enclave, &snapshot.mock_enclave),
+        ] {
+            copy_immutable_binary(source, destination)?;
+        }
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o555))
+            .wrap_err_with(|| format!("seal capacity artifact set {}", root.display()))?;
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+}
+
+fn copy_immutable_binary(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(source)
+        .wrap_err_with(|| format!("inspect capacity binary {}", source.display()))?;
+    ensure!(
+        metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+        "capacity binary is not a real file: {}",
+        source.display()
+    );
+    let mut input = File::open(source)
+        .wrap_err_with(|| format!("open capacity binary {}", source.display()))?;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .wrap_err_with(|| format!("create capacity binary snapshot {}", destination.display()))?;
+    std::io::copy(&mut input, &mut output)
+        .wrap_err_with(|| format!("copy capacity binary {}", source.display()))?;
+    output
+        .sync_all()
+        .wrap_err_with(|| format!("sync capacity binary snapshot {}", destination.display()))?;
+    std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o555))
+        .wrap_err_with(|| format!("seal capacity binary snapshot {}", destination.display()))
 }
 
 fn capacity_systemd_command(
@@ -673,12 +729,76 @@ fn publish_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::fs;
+
     use outbe_ocomp_protocol::capacity::{
         CapacityBudgetV1, CapacityColdRunV1, CapacityEvidenceV1, CapacityRunBindingV1,
         CapacityValidatorBlockProcessingV1, CapacityWorkBillV1, ObservedMachineFactsV1,
     };
 
     use super::*;
+
+    #[test]
+    fn capacity_assemble_passes_five_paths_to_one_bounded_scenario_option() {
+        let scenarios = (1..=5)
+            .map(|ordinal| PathBuf::from(format!("scenario-{ordinal}.json")))
+            .collect::<Vec<_>>();
+        let mut command = Command::new("outbe-e2e-evidence");
+        append_capacity_scenarios(&mut command, &scenarios);
+        let arguments = command.get_args().collect::<Vec<_>>();
+        assert_eq!(arguments.first().copied(), Some(OsStr::new("--scenario")));
+        assert_eq!(
+            &arguments[1..],
+            scenarios
+                .iter()
+                .map(|path| path.as_os_str())
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
+    }
+
+    #[test]
+    fn cold_runner_snapshots_exact_binaries_before_measurement() {
+        let root = tempfile::tempdir().unwrap();
+        let source_root = root.path().join("source");
+        fs::create_dir(&source_root).unwrap();
+        let source = CapacityBinariesV1 {
+            chain: source_root.join("outbe-chain"),
+            ocomp: source_root.join("outbe-ocomp"),
+            e2e: source_root.join("outbe-e2e"),
+            evidence: source_root.join("outbe-e2e-evidence"),
+            mock_enclave: source_root.join("outbe-tee-enclave-mock"),
+        };
+        for (ordinal, path) in [
+            &source.chain,
+            &source.ocomp,
+            &source.e2e,
+            &source.evidence,
+            &source.mock_enclave,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            fs::write(path, [u8::try_from(ordinal).unwrap()]).unwrap();
+        }
+
+        let artifact_root = root.path().join("artifact-set");
+        let snapshot = source.snapshot_into(&artifact_root).unwrap();
+        fs::write(&source.e2e, b"changed").unwrap();
+
+        assert_eq!(fs::read(&snapshot.e2e).unwrap(), [2]);
+        assert_ne!(snapshot.e2e, source.e2e);
+        assert_eq!(
+            fs::metadata(&snapshot.e2e).unwrap().permissions().mode() & 0o222,
+            0
+        );
+        assert_eq!(
+            fs::metadata(&artifact_root).unwrap().permissions().mode() & 0o222,
+            0
+        );
+        fs::set_permissions(&artifact_root, fs::Permissions::from_mode(0o755)).unwrap();
+    }
 
     #[test]
     fn ocm_cap_001_generation_is_deterministic_and_bound_to_exact_inputs() {

@@ -85,7 +85,7 @@ reth-storage-api = { workspace = true, optional = true }
 reth-trie = { workspace = true, optional = true }
 revm = { workspace = true, optional = true }
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
-time = { workspace = true, features = ["formatting"] }
+time = { workspace = true, features = ["formatting", "parsing"] }
 
 # Native JSON-RPC (reads + local-signer sends), replacing the `cast` shell-outs.
 # Mirrors the canonical provider client in `bin/outbe-feeder`.

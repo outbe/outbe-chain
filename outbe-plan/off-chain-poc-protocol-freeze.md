@@ -2394,7 +2394,13 @@ The generator:
    four-node path;
 5. performs the five required cold runs and records CPU/block-processing time,
    peak memory, disk writes, network bytes, gas and finality latency on the
-   declared minimum machine;
+   declared minimum machine. Before the first run, it copies every executable
+   used by the lane into a new read-only artifact-set directory; scenario
+   identities and later verification resolve those copies, never mutable
+   `target/` paths. Finality latency is the maximum, across all four
+   validators, of the positive wall-clock interval from canonical application
+   of the q-forming block to that exact block's finalization acknowledgement;
+   subtracting the block timestamp from itself is not a measurement;
 6. lowers per-interface bounds when necessary until the worst run satisfies the
    exact 20% headroom rule at every layer; activation/chunk `cap+1` rejects at
    the intended earliest bound while `S+1` remains an accepted two-shard job;
@@ -2410,6 +2416,10 @@ The fork cannot activate if:
 - `S` exceeds 256, any bounded chunk/summary exceeds its generated cap, or any
   generated field introduces a total Tribute/unit/chunk-count ceiling;
 - the benchmark/environment/evidence hash is missing.
+
+Capacity evidence is immutable and revision-specific. A changed executable
+creates a new artifact set and requires five new cold runs; an older evidence
+set is retained as history and is never rewritten to name the new binaries.
 
 Local supervisor/worker quotas may be smaller and cause abstention. They cannot
 change consensus eligibility, object bytes or compiled maxima.

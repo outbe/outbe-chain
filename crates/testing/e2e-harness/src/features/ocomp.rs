@@ -802,18 +802,26 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                     .block_hash(primary, finalized_height)
                     .and_then(|value| value.parse::<B256>().ok())
                     .expect("finalized capacity capture block hash");
-                let q_forming_timestamp = world
-                    .rpc
-                    .block_timestamp(primary, q_forming.block_number)
-                    .expect("q-forming capacity block timestamp");
-                let finalized_timestamp = world
-                    .rpc
-                    .block_timestamp(primary, finalized_height)
-                    .expect("finalized capacity capture timestamp");
-                let finality_latency_micros = finalized_timestamp
-                    .checked_sub(q_forming_timestamp)
-                    .and_then(|seconds| seconds.checked_mul(1_000_000))
-                    .expect("capacity finality timestamp delta");
+                let finality_latency_micros = ports
+                    .iter()
+                    .enumerate()
+                    .map(|(validator_index, _)| {
+                        world
+                            .localnet
+                            .validator_finality_latency_micros(
+                                validator_index,
+                                q_forming.block_number,
+                                q_forming.block_hash,
+                            )
+                            .unwrap_or_else(|error| {
+                                panic!(
+                                    "observe q-forming capacity finality on validator \
+                                     {validator_index}: {error:#}"
+                                )
+                            })
+                    })
+                    .max()
+                    .expect("four validator finality observations");
                 let block_processing_micros_by_validator = ports
                     .iter()
                     .enumerate()

@@ -381,6 +381,13 @@ It does not rerun DKG, shift genesis or synthesize a new fork identity. The
 fixture keys remain harness-only test material and are not part of release
 binaries.
 
+Each five-run capacity set uses read-only snapshots of the exact executed
+binaries, not mutable `target/` paths. Rebuilding any binary creates a new
+artifact set and requires a new five-run measurement; existing evidence is
+never retargeted. The recorded finality latency is the maximum positive
+four-validator interval between canonical application of the q-forming block
+and finalization acknowledgement for that exact block.
+
 The generator must exercise `cap-1`, `cap` and `cap+1` through:
 
 ```text

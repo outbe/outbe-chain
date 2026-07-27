@@ -1898,6 +1898,13 @@ generate a total Tribute ceiling. Final public/E2E scenarios copy the exact
 four-validator base identities and armed chain manifest; the harness rewrites
 only scenario loopback ports and applies a process-local logical-clock offset.
 It does not regenerate DKG/validator identity or mutate final genesis.
+The cold runner first snapshots every executed binary into a new read-only
+artifact-set directory and all five scenarios bind those paths and hashes;
+later builds cannot invalidate an existing run by replacing `target/` files.
+Finality latency is the maximum positive validator observation from canonical
+q-forming block application to finalization acknowledgement. Any binary change
+requires a new artifact set and five new runs rather than mutation of old
+evidence.
 
 **Invariants/failures:** smallest bound across every interface wins; compiled/
 genesis/network constants equal; exact install classification/hash and all

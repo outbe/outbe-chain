@@ -24,7 +24,6 @@ const COLD_NAMESPACE_DOMAIN: &[u8] = b"OUTBE_OCOMP_COLD_NAMESPACE_V1";
 const REQUIRED_BINARIES: [&str; 3] = ["outbe_chain", "outbe_e2e", "outbe_ocomp"];
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CapacityScenarioV1 {
     source: ScenarioSourceV1,
     result: String,
@@ -53,7 +52,6 @@ struct ScenarioEnvironmentV1 {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ScenarioOcompV1 {
     exact_binaries: BTreeMap<String, BinaryIdentityV1>,
     public_path: CapacityPublicPathV1,
@@ -70,7 +68,6 @@ struct BinaryIdentityV1 {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CapacityPublicPathV1 {
     capacity_resources: CapacityResourcesV1,
     capacity_public_path: CapacityPublicObservationV1,
@@ -499,6 +496,8 @@ mod tests {
             );
         }
         let scenario = json!({
+            "schema_version": 1,
+            "recorded_at_unix_ms": 1,
             "source": {
                 "sha": "11".repeat(20),
                 "dirty": false,
@@ -508,9 +507,18 @@ mod tests {
             "result": "passed",
             "environment": {"validators": 4, "tee": "mock", "all": true},
             "scenario_data_dir": root.path().join("run-1"),
+            "log_audit": {"clean": true},
             "ocomp": {
                 "exact_binaries": binaries,
+                "topology": {"domain_roots": ["/tmp/domain"]},
                 "public_path": {
+                    "job_request": {
+                        "job_id": B256::repeat_byte(1),
+                        "open_height": 10,
+                    },
+                    "activation": {
+                        "result_digest": B256::repeat_byte(2),
+                    },
                     "capacity_resources": {
                         "cgroup_path": "/sys/fs/cgroup/system.slice/outbe-ocomp-capacity-01.service",
                         "resource_cgroup_writable": true,
