@@ -30,7 +30,9 @@ struct StablecoinArgs {
 
 #[derive(Debug, Subcommand)]
 enum StablecoinCommand {
-    /// Check fixed addresses, the dynamic class and optional genesis files.
+    /// Compare every checked-in ABI export with its compiled Solidity interface.
+    AbiCheck,
+    /// Check fixed addresses, planned classes, predeploys and genesis files.
     NamespaceCheck {
         /// Genesis files to validate. May be repeated.
         #[arg(long)]
@@ -231,13 +233,22 @@ fn main() -> Result<()> {
             },
         },
         Command::Stablecoin(stablecoin_args) => match stablecoin_args.command {
+            StablecoinCommand::AbiCheck => {
+                let report = stablecoin::check_abi_exports(&repo_root)?;
+                println!(
+                    "stablecoin ABI exports ok: {} complete interfaces",
+                    report.interfaces
+                );
+            }
             StablecoinCommand::NamespaceCheck { genesis, preseed } => {
                 let report = stablecoin::check_namespace(&repo_root, &genesis, preseed)?;
                 println!(
-                    "stablecoin namespace ok: {} declared addresses, {} Ethereum built-ins, {} genesis files",
+                    "stablecoin namespace ok: {} declared addresses, {} Ethereum built-ins, {} genesis files, {} seed predeploys, {} planned classes",
                     report.declared_addresses,
                     report.ethereum_builtins,
                     report.genesis_files,
+                    report.predeploy_addresses,
+                    report.planned_classes,
                 );
             }
         },

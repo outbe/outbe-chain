@@ -8,6 +8,7 @@ use outbe_primitives::{
     },
     chain::{DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, TESTNET_CHAIN_ID, TESTNET_CHAIN_NAME},
     stablecoin::{predict_stablecoin, stablecoin_token_id_preimage},
+    stablecoin_fork::STABLECOIN_V1_MAINNET_STATUS,
 };
 use serde::Deserialize;
 
@@ -102,7 +103,7 @@ fn independent_network_vectors_pin_current_supported_geneses() {
         hex::decode(corpus.marker.trim_start_matches("0x")).unwrap(),
         STABLECOIN_MARKER_CODE
     );
-    assert!(corpus.mainnet.status.starts_with("unsupported"));
+    assert_eq!(corpus.mainnet.status, STABLECOIN_V1_MAINNET_STATUS);
 
     for vector in corpus.networks {
         match vector.name.as_str() {

@@ -7,11 +7,13 @@ use outbe_primitives::{
         stablecoin_v1_budget_for_measurement, stablecoin_v1_is_active,
         MAX_PENDING_PUBLIC_BONDED_PROPOSALS, MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER,
         STABLECOIN_CREATE_BOND, STABLECOIN_EIP712_DOMAIN_VERSION,
-        STABLECOIN_POLICY_MEMBER_BATCH_CAP, STABLECOIN_V1_ACCOUNT_ACCESS_OWNER,
-        STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS, STABLECOIN_V1_GAS_FORMULA,
-        STABLECOIN_V1_MAINTAINED_SDK, STABLECOIN_V1_PROTOCOL_VERSION,
+        STABLECOIN_POLICY_MEMBER_BATCH_CAP, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
+        STABLECOIN_V1_ACCOUNT_ACCESS_OWNER, STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS,
+        STABLECOIN_V1_GAS_FORMULA, STABLECOIN_V1_MAINNET_STATUS, STABLECOIN_V1_MAINTAINED_SDK,
+        STABLECOIN_V1_NAMESPACE_RESERVATION, STABLECOIN_V1_PROTOCOL_VERSION,
         STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_REOPEN_RULES,
-        STABLECOIN_V1_SCHEMA_VERSION, STABLECOIN_V1_TOOLING_OWNER,
+        STABLECOIN_V1_SCHEMA_VERSION, STABLECOIN_V1_SUPPORTED_NETWORKS,
+        STABLECOIN_V1_TOOLING_OWNER, STABLECOIN_V1_UPDATE_ACTIVATION,
         STABLECOIN_V1_WALL_TIME_CLASSIFICATION,
     },
     storage::gas::PRECOMPILE_BASE_GAS,
@@ -66,8 +68,31 @@ fn fork_manifest_matches_canonical_rust_constants() {
         STABLECOIN_V1_PROTOCOL_VERSION_RAW
     );
     assert_eq!(
+        manifest["activation"]["updateActivation"],
+        STABLECOIN_V1_UPDATE_ACTIVATION
+    );
+    assert_eq!(
+        manifest["activation"]["namespaceReservation"],
+        STABLECOIN_V1_NAMESPACE_RESERVATION
+    );
+    let networks: Vec<&str> = manifest["activation"]["supportedNetworks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|network| network.as_str().unwrap())
+        .collect();
+    assert_eq!(networks, STABLECOIN_V1_SUPPORTED_NETWORKS);
+    assert_eq!(
+        manifest["activation"]["mainnet"],
+        STABLECOIN_V1_MAINNET_STATUS
+    );
+    assert_eq!(
         manifest["proposal"]["bondBaseUnits"],
         STABLECOIN_CREATE_BOND.to_string()
+    );
+    assert_eq!(
+        manifest["proposal"]["absoluteVotePendingCap"],
+        STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP
     );
     assert_eq!(
         manifest["proposal"]["maxPendingPublicBonded"],
@@ -181,11 +206,11 @@ fn activation_is_inclusive_at_protocol_version_0_2() {
 
 #[test]
 fn bounds_preserve_governance_capacity_and_pin_atomic_batch_edges() {
-    const ABSOLUTE_VOTE_PENDING_CAP: u32 = 64;
+    assert_eq!(STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP, 64);
     assert_eq!(MAX_PENDING_PUBLIC_BONDED_PROPOSALS, 16);
     assert_eq!(MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER, 1);
     assert_eq!(
-        ABSOLUTE_VOTE_PENDING_CAP - MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
+        STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP - MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
         48
     );
     assert_eq!(STABLECOIN_POLICY_MEMBER_BATCH_CAP, 64);

@@ -25,6 +25,6 @@
     }
   ],
   "mainnet": {
-    "status": "unsupported-until-chain-id-and-fresh-genesis-are-frozen"
+    "status": "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen"
   }
 }

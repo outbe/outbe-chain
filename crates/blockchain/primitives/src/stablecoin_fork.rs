@@ -14,12 +14,22 @@ pub const STABLECOIN_V1_SCHEMA_VERSION: u32 = 1;
 pub const STABLECOIN_V1_PROTOCOL_VERSION_RAW: u32 = 2;
 /// External dotted form accepted by the Update proposal payload.
 pub const STABLECOIN_V1_PROTOCOL_VERSION: &str = "0.2";
+pub const STABLECOIN_V1_UPDATE_ACTIVATION: &str = "begin-block-inclusive";
+pub const STABLECOIN_V1_NAMESPACE_RESERVATION: &str =
+    "genesis-active-independent-of-runtime-activation";
+pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 2] = [
+    "outbe-devnet-1-fresh-genesis",
+    "outbe-testnet-1-fresh-genesis",
+];
+pub const STABLECOIN_V1_MAINNET_STATUS: &str =
+    "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen";
 
 /// Exact StablecoinCreate proposal bond: 1,000,000 COEN at 18 decimals.
 pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_000_000_000_000_U256);
 
 /// Public bonded proposals may consume at most one quarter of Vote's 64-slot
 /// global pending index, preserving 48 slots for validator governance.
+pub const STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP: u32 = 64;
 pub const MAX_PENDING_PUBLIC_BONDED_PROPOSALS: u32 = 16;
 /// One public bonded StablecoinCreate proposal per proposer at a time.
 pub const MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER: u32 = 1;

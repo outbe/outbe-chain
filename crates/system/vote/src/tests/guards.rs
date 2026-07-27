@@ -1,7 +1,10 @@
 use alloy_primitives::{address, Address, U256};
 
 use outbe_primitives::{
-    error::PrecompileError, stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
+    error::PrecompileError,
+    stablecoin_fork::{
+        MAX_PENDING_PUBLIC_BONDED_PROPOSALS, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
+    },
 };
 
 use crate::api::get_proposal;
@@ -28,7 +31,7 @@ fn extra_validator_addr(index: u32) -> Address {
 #[test]
 fn stablecoin_public_cap_preserves_48_vote_slots() {
     const {
-        assert!(MAX_PENDING_PROPOSALS == 64);
+        assert!(MAX_PENDING_PROPOSALS == STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP);
         assert!(MAX_PENDING_PROPOSALS - MAX_PENDING_PUBLIC_BONDED_PROPOSALS == 48);
     }
 }

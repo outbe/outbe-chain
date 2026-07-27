@@ -2,7 +2,7 @@ use std::{fs, path::Path, process::Command};
 
 use serde_json::json;
 use tempfile::TempDir;
-use xtask::stablecoin::check_namespace;
+use xtask::stablecoin::{check_abi_exports, check_namespace};
 
 const FACTORY: &str = "000000000000000000000000000000000000ee0f";
 const POLICY: &str = "000000000000000000000000000000000000ee10";
@@ -12,7 +12,15 @@ fn repository_namespace_is_collision_free() {
     let report = check_namespace(repository_root(), &[], false).unwrap();
     assert!(report.declared_addresses > 30);
     assert_eq!(report.ethereum_builtins, 10);
-    assert_eq!(report.genesis_files, 0);
+    assert!(report.genesis_files >= 1);
+    assert!(report.predeploy_addresses >= 6);
+    assert_eq!(report.planned_classes, 1);
+}
+
+#[test]
+fn complete_abi_exports_match_compiled_solidity_interfaces() {
+    let report = check_abi_exports(repository_root()).unwrap();
+    assert_eq!(report.interfaces, 4);
 }
 
 #[test]
@@ -24,7 +32,9 @@ fn genesis_rejects_dynamic_class_and_fixed_account_collisions() {
         &json!({"alloc": {"53c0000000000000000000000000000000000000": {"balance": "0x1"}}}),
     );
     let error = check_namespace(repository_root(), &[prefix_path], true).unwrap_err();
-    assert!(error.to_string().contains("stablecoin prefix"));
+    assert!(error
+        .to_string()
+        .contains("planned address class stablecoin-v1"));
 
     let fixed_path = directory.path().join("fixed.json");
     write_json(
@@ -33,6 +43,52 @@ fn genesis_rejects_dynamic_class_and_fixed_account_collisions() {
     );
     let error = check_namespace(repository_root(), &[fixed_path], true).unwrap_err();
     assert!(error.to_string().contains("conflicting code"));
+}
+
+#[test]
+fn seed_predeploy_rejects_both_stablecoin_fixed_addresses() {
+    for reserved in [
+        "0x000000000000000000000000000000000000EE0F",
+        "0x000000000000000000000000000000000000EE10",
+    ] {
+        let directory = TempDir::new().unwrap();
+        let root = directory.path();
+        let fixture_dir = root.join("crates/blockchain/primitives/testdata/stablecoin/v1");
+        fs::create_dir_all(&fixture_dir).unwrap();
+        for fixture in [
+            "network-address-vectors.json",
+            "planned-address-classes.json",
+        ] {
+            fs::copy(
+                repository_root()
+                    .join("crates/blockchain/primitives/testdata/stablecoin/v1")
+                    .join(fixture),
+                fixture_dir.join(fixture),
+            )
+            .unwrap();
+        }
+        let addresses = root.join("crates/blockchain/primitives/src");
+        fs::create_dir_all(&addresses).unwrap();
+        fs::write(
+            addresses.join("addresses.rs"),
+            concat!(
+                "const FACTORY: Address = address!(\"0x000000000000000000000000000000000000ee0f\");\n",
+                "const POLICY: Address = address!(\"0x000000000000000000000000000000000000ee10\");\n"
+            ),
+        )
+        .unwrap();
+        let scripts = root.join("scripts");
+        fs::create_dir_all(&scripts).unwrap();
+        write_json(
+            &scripts.join("seed-conflict.json"),
+            &json!({"contracts": [{"address": reserved}]}),
+        );
+
+        let error = check_namespace(root, &[], true).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("seed predeploy collides with stablecoin fixed address"));
+    }
 }
 
 #[test]
@@ -65,7 +121,7 @@ fn complete_python_seeder_output_passes_xtask_validation() {
     );
 
     let report = check_namespace(repository_root(), std::slice::from_ref(&output), false).unwrap();
-    assert_eq!(report.genesis_files, 1);
+    assert!(report.genesis_files >= 2);
 
     let generated: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
     assert_eq!(generated["alloc"][FACTORY]["code"], "0xef");

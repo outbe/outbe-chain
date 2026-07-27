@@ -158,8 +158,10 @@ or overwrites an existing token.
 
 The reserved class prefix is exactly `0x53c0`, so token addresses are
 `0x53c0 || tokenId[14..32]`. The exact marker bytecode is `0xef`. Repository-declared
-addresses, Ethereum built-ins and genesis allocations are collision-scanned against
-the fixed addresses and complete class. The class is reserved from genesis, before
+addresses, Ethereum built-ins, every `scripts/*seed*.json` contract predeploy, tracked
+`genesis.json`, explicit generated genesis and every class in the machine-owned
+planned-range registry are collision-scanned by `xtask stablecoin namespace-check`.
+The class is reserved from genesis, before
 any user transaction: contract creation into
 the class is rejected and calls to an unregistered member fail closed. The class
 cannot be activated late over arbitrary pre-existing code, nonce or storage. Native

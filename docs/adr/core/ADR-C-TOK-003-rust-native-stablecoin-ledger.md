@@ -263,8 +263,9 @@ tested. The margin rule is `ceil_to_10_000(ceil(measured * 125 / 100))`. SCF-034
 SCF-047 or SCF-055 reopens this protocol lock if its measured path cannot fit the
 corresponding ceiling.
 
-- Keep the checked-in ABI error, event, role-id, ERC-165 and EIP-712 vectors aligned
-  with `contracts/precompiles/src/IStablecoin.sol`; any change reopens protocol lock.
+- `xtask stablecoin abi-check` compares every compiled function, error and event entry
+  with all four checked-in ABI exports; selected role, ERC-165 and EIP-712 semantic
+  vectors add independent assertions. Any mismatch reopens protocol lock.
 - Add frozen-transition vectors for `F < B`, `F == B`, `F > B`, mixed
   unfrozen/frozen consumption, full movement, ordinary self-transfer and rejected
   forced self-transfer.
