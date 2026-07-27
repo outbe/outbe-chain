@@ -843,7 +843,7 @@ impl Rpc {
         )
     }
 
-    /// Metadosis worldwide-day status byte (field 2 of `getWorldwideDay`).
+    /// Metadosis worldwide-day status byte (field 1 of `getWorldwideDay`).
     pub fn wwd_status(&self, port: u16, wwd: &str) -> Option<String> {
         let day: u32 = wwd.parse().ok()?;
         let r = eth::read_call(
@@ -851,7 +851,7 @@ impl Rpc {
             addresses::WWD_ADDR,
             &IWorldwideDay::getWorldwideDayCall { day },
         )?;
-        Some(r.f1.to_string())
+        Some(r.f0.to_string())
     }
 
     /// A JSON field from `outbe_consensusStatus` on the node at `port`.
