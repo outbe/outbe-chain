@@ -5,11 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Property test for the per-series escrow invariant:
 ///   Σ bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
@@ -19,8 +16,6 @@ contract EscrowAdapterInvariantsTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockSettlementVault mockVault;
-    MockVaultProvider provider;
 
     address admin = address(1);
     address bridger = address(2);
@@ -40,13 +35,9 @@ contract EscrowAdapterInvariantsTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
-        mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
@@ -65,9 +56,6 @@ contract EscrowAdapterInvariantsTest is Test {
             IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay, bidders[i]);
             if (lock.status == IEscrowAdapter.LockStatus.Locked) {
                 sum += lock.lockedAmount;
-            } else if (lock.status == IEscrowAdapter.LockStatus.RefundClaimed) {
-                // Refund paid, payout portion still parked in The Compact pending settleVaultOwed.
-                sum += lock.lockedAmount - lock.failedRefund;
             }
         }
         (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
@@ -147,12 +135,12 @@ contract EscrowAdapterInvariantsTest is Test {
     }
 
     /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201
-    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 7: five address/uint
+    /// namespaced struct (`erc7201:outbe.intex.EscrowAdapter`). Field offset 6: four address/uint
     /// slots, the packed allocatorId+lockTag slot, then the bidLocks mapping precede it.
     function _auctionEscrowStateSlot() internal pure returns (uint256) {
         uint256 base = uint256(
             keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
         );
-        return base + 7;
+        return base + 6;
     }
 }

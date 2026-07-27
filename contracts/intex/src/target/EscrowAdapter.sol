@@ -12,7 +12,6 @@ import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
 import {Scope} from "../vendor/the-compact/types/Scope.sol";
 import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
-import {IVaultProvider} from "../vendor/outbe-vault/interfaces/IVaultProvider.sol";
 
 /**
  * @title EscrowAdapter
@@ -60,15 +59,15 @@ contract EscrowAdapter is
     ///         less than 29 days (daily series span ~2).
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
 
+    /// @notice Canonical dead address receiving burned proceeds (the payment token has no burn()).
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
         address intexAuctionContract;
         /// @dev The Compact contract address.
         ITheCompact compact;
-        /// @dev Outbe-vault router; winner principal at finalization is deposited via
-        ///      `vaultProvider.depositLiquidity(...)`. Shares accrue on the provider, not here.
-        IVaultProvider vaultProvider;
         /// @dev Active payment token used for bid escrow.
         IERC20 paymentToken;
         /// @dev The Compact resource lock ID for our deposits.
@@ -130,12 +129,6 @@ contract EscrowAdapter is
         return _s().compact;
     }
 
-    /// @notice Outbe-vault router receiving winner principal at finalization.
-    /// @return The wired vault provider.
-    function vaultProvider() external view returns (IVaultProvider) {
-        return _s().vaultProvider;
-    }
-
     /// @notice Active payment token used for bid escrow.
     /// @return The wired payment token.
     function paymentToken() external view override returns (IERC20) {
@@ -195,17 +188,13 @@ contract EscrowAdapter is
 
     // --- Admin ---
     /// @inheritdoc IEscrowAdapter
-    /// @dev `_vaultProvider` must have `addVault(vaultV2)` + `addLiquiditySource(this, IntexBidPrice)`
-    ///      called on it by the outbe-vault owner before any `finalizeAuction()` paid-portion call;
-    ///      otherwise the deposit reverts `ReserveVaultNotConfigured` or `InvalidLiquiditySource`.
-    function wire(address _intexAuction, address _compact, address _vaultProvider, address _paymentToken)
+    function wire(address _intexAuction, address _compact, address _paymentToken)
         external
         override
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
         if (_compact == address(0)) revert ZeroAddress("compact");
-        if (_vaultProvider == address(0)) revert ZeroAddress("vaultProvider");
         if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
 
         EscrowAdapterStorage storage $ = _s();
@@ -236,12 +225,10 @@ contract EscrowAdapter is
         // Capture the pre-rotation dependencies so `Wired` is log-reconstructible (old+new).
         address intexAuctionOld = $.intexAuctionContract;
         address compactOld = address($.compact);
-        address vaultProviderOld = address($.vaultProvider);
         address paymentTokenOld = address($.paymentToken);
 
         $.intexAuctionContract = _intexAuction;
         $.compact = ITheCompact(_compact);
-        $.vaultProvider = IVaultProvider(_vaultProvider);
         $.paymentToken = IERC20(_paymentToken);
 
         _grantRole(AUCTION_ROLE, _intexAuction);
@@ -256,16 +243,7 @@ contract EscrowAdapter is
             $.lockTag = _buildLockTag($.allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
         }
 
-        emit Wired(
-            intexAuctionOld,
-            _intexAuction,
-            compactOld,
-            _compact,
-            vaultProviderOld,
-            _vaultProvider,
-            paymentTokenOld,
-            _paymentToken
-        );
+        emit Wired(intexAuctionOld, _intexAuction, compactOld, _compact, paymentTokenOld, _paymentToken);
     }
 
     // --- IAllocator Implementation ---
@@ -467,12 +445,9 @@ contract EscrowAdapter is
         }
         _processFinalizationInstruction(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
 
-        // Stranded recovery: series already routed on Outbe, settle residual to the vault.
+        // Stranded recovery: series already routed on Outbe, burn the residual.
         if (inst.paidAmount > 0) {
-            EscrowAdapterStorage storage $ = _s();
-            $.paymentToken.forceApprove(address($.vaultProvider), inst.paidAmount);
-            $.vaultProvider.depositLiquidity(address($.paymentToken), inst.paidAmount);
-            emit FundsClaimed(receiveId, worldwideDay, inst.bidder, inst.paidAmount);
+            _burnProceeds(worldwideDay, inst.bidder, inst.paidAmount);
         }
 
         emit BidderRetried(receiveId, worldwideDay, inst.bidder, inst.refundedAmount, inst.paidAmount);
@@ -511,32 +486,20 @@ contract EscrowAdapter is
                 return;
             }
 
+            // Refund the bidder's validated portion and burn the winning remainder (the series
+            // proceeds were already routed on Outbe) — terminal in one transaction.
             uint128 refundAmount = lock.failedRefund;
-            uint128 vaultOwed = lockedAmount - refundAmount;
+            uint128 burnAmount = lockedAmount - refundAmount;
 
-            // Refund the bidder's portion unconditionally — never blocked by vault health. Mark
-            // RefundClaimed first so the top-of-function status guard blocks any double-claim, and
-            // decrement only the refund portion; the vault portion stays accounted until settled.
-            lock.status = LockStatus.RefundClaimed;
-            state.totalLocked -= refundAmount;
+            lock.status = LockStatus.Finalized;
+            state.totalLocked -= lockedAmount;
+            _withdrawFromCompact(lockedAmount);
             if (refundAmount > 0) {
-                _withdrawFromCompact(refundAmount);
                 $.paymentToken.safeTransfer(bidder, refundAmount);
                 emit FundsRefunded(bytes32(0), worldwideDay, bidder, refundAmount);
             }
-
-            if (vaultOwed > 0) {
-                // Opportunistically settle the vault portion in the same transaction. Isolated via
-                // self-call so a vault deposit revert cannot roll back the bidder refund above. On
-                // success the lock advances to Finalized; on failure it stays RefundClaimed and the
-                // portion is recoverable later via the permissionless settleVaultOwed.
-                try this.settleVaultOwedSelf(worldwideDay, bidder) {}
-                catch {
-                    emit VaultOwedUnsettled(worldwideDay, bidder, vaultOwed);
-                }
-            } else {
-                // Nothing owed to the vault (full-refund bidder): terminal immediately.
-                lock.status = LockStatus.Finalized;
+            if (burnAmount > 0) {
+                _burnProceeds(worldwideDay, bidder, burnAmount);
             }
         } else {
             // Never-finalized: the relayer never settled the series, so a full-principal refund is
@@ -551,43 +514,6 @@ contract EscrowAdapter is
             $.paymentToken.safeTransfer(bidder, lockedAmount);
             emit FundsRefunded(bytes32(0), worldwideDay, bidder, lockedAmount);
         }
-    }
-
-    /// @inheritdoc IEscrowAdapter
-    function settleVaultOwed(uint32 worldwideDay, address bidder) external override nonReentrant {
-        BidLock storage lock = _s().bidLocks[worldwideDay][bidder];
-        if (lock.status != LockStatus.RefundClaimed) revert NoPendingVaultOwed(worldwideDay, bidder);
-        _settleVaultOwed(worldwideDay, bidder);
-    }
-
-    /// @notice Self-call shim around `_settleVaultOwed` for `claimRefund`'s isolated try/catch.
-    ///         Reverts on any non-self call. Bundled here because Solidity `try/catch` only works
-    ///         on external/public calls; not nonReentrant so the self-call is not blocked by the
-    ///         caller's reentrancy guard.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Bidder whose parked vault portion is being settled.
-    function settleVaultOwedSelf(uint32 worldwideDay, address bidder) external {
-        if (msg.sender != address(this)) revert NotSelf();
-        _settleVaultOwed(worldwideDay, bidder);
-    }
-
-    /// @dev Route a `RefundClaimed` lock's parked payout portion into the vault and finalize it.
-    ///      Amount (`lockedAmount - failedRefund`) and destination (`vaultProvider`) are fixed by
-    ///      stored state, so the operation is safe to expose permissionlessly.
-    function _settleVaultOwed(uint32 worldwideDay, address bidder) internal {
-        EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        uint128 vaultOwed = lock.lockedAmount - lock.failedRefund;
-
-        // Effects
-        lock.status = LockStatus.Finalized;
-        $.auctionEscrowState[worldwideDay].totalLocked -= vaultOwed;
-
-        // Interactions
-        _withdrawFromCompact(vaultOwed);
-        $.paymentToken.forceApprove(address($.vaultProvider), vaultOwed);
-        $.vaultProvider.depositLiquidity(address($.paymentToken), vaultOwed);
-        emit VaultOwedSettled(worldwideDay, bidder, vaultOwed);
     }
 
     // --- Views ---
@@ -713,6 +639,13 @@ contract EscrowAdapter is
         }
 
         // Paid portion stays in this contract; the caller routes it.
+    }
+
+    /// @dev Burn an undistributable winning portion: park it at the canonical dead address (the
+    ///      payment token exposes no burn of its own) and emit the burn marker.
+    function _burnProceeds(uint32 worldwideDay, address bidder, uint128 amount) internal {
+        _s().paymentToken.safeTransfer(BURN_ADDRESS, amount);
+        emit ProceedsBurned(worldwideDay, bidder, amount);
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).
