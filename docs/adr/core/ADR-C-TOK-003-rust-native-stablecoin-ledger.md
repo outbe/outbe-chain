@@ -22,12 +22,18 @@ proofs, ERC-3009 authorization and ERC-7802 bridging are separate future decisio
 
 ## Decision
 
-### One implementation, one address-scoped ledger
+### One dynamic precompile implementation, one address-scoped ledger
 
-Every registered stablecoin address dispatches to the same compiled Rust runtime.
-The callee address selects that token's storage account. The active Outbe hard fork
-determines behavior for every stablecoin; there are no per-token implementation
-pointers, proxy admins, issuer-selected templates or coexisting runtime versions.
+Every registered stablecoin address is a stateful dynamic native precompile instance,
+not deployed Solidity bytecode. The reserved address-class dispatcher passes the
+actual callee address to one compiled Rust precompile implementation; that address
+selects the token's isolated storage account. The exact marker code is the one-byte legacy sequence `0xef`. It exists for EVM
+introspection and EIP-161 preservation, but execution is handled by the Rust
+precompile rather than by that bytecode.
+
+The active Outbe hard fork determines behavior for every stablecoin; there are no
+per-token implementation pointers, proxy admins, issuer-selected templates or
+coexisting runtime versions.
 
 Each token stores `schemaVersion` and `creationProtocolVersion`. One canonical
 protocol-version resolver is propagated through canonical execution, payload build,
@@ -49,7 +55,9 @@ Creation initializes:
 - immutable `name`: valid UTF-8, 1 through 64 bytes, with no control characters;
 - immutable `symbol`/ticker: 2 through 12 ASCII characters, first `A-Z`, remaining
   `A-Z0-9`, without normalization;
-- immutable currently assigned numeric ISO-4217 currency code;
+- immutable numeric code present in SIX ISO 4217 List One published 2026-01-01
+  (source XML SHA-256
+  `838dfb991648cf36df939edd5fe3811737962b75a32252847d239cedd1e291c9`);
 - immutable `decimals` in `0..=18` (CLI/SDK default 6 only);
 - immutable issuer identity and Factory `tokenId`;
 - explicit nonzero `U256 supplyCap`, in smallest units;
@@ -66,9 +74,14 @@ ledger.
 ### Fixed authority topology
 
 The fixed roles are `ADMIN`, `ISSUER`, `CAP_MANAGER`, `GUARDIAN`, `COMPLIANCE` and
-`ENFORCER`. The creation issuer is the sole initial `ADMIN` and initially holds all
-five operational roles. `ADMIN` may grant or revoke operational role memberships;
-it cannot create new role kinds or renounce the token into an adminless state.
+`ENFORCER`. Their canonical `bytes32` ids are respectively `keccak256("ADMIN")`,
+`keccak256("ISSUER")`, `keccak256("CAP_MANAGER")`, `keccak256("GUARDIAN")`,
+`keccak256("COMPLIANCE")` and `keccak256("ENFORCER")`; the checked-in ABI vectors pin
+the resulting bytes. The creation issuer is the sole initial `ADMIN` and initially
+holds all five operational roles. `ADMIN` may grant or revoke operational role
+memberships; `grantRole` and `revokeRole` reject the `ADMIN` id with
+`UnsupportedRole`. ADMIN changes exclusively through the two-step transfer, so those
+role selectors cannot create multiple admins or bypass acceptance.
 
 Admin replacement is two-step:
 
@@ -109,7 +122,9 @@ The active shared policy is the sole account-policy source of truth:
   effects.
 
 `COMPLIANCE` may bind only an existing policy. There is no embedded whitelist,
-legacy fallback or implicit policy creation.
+legacy fallback or implicit policy creation. The `PolicyDenied` ABI error uses the
+stable `uint8` operation encoding `Send = 0`, `Receive = 1`, `Mint = 2`; ordinary burn
+uses Send, recipient checks use Receive and mint uses Mint.
 
 ### ERC-7943 enforcement
 
@@ -229,14 +244,28 @@ compatibility vectors and bounded lazy migrations for every upgrade.
 - Implicit zero-as-unlimited caps, initial minting, mutable metadata and protocol
   admin recovery were rejected as ambiguous or over-privileged.
 
-## Open questions and technical debt
+## Protocol lock and implementation follow-up
 
-- Fix the exact ABI errors, event ordering and ERC-165 golden interface vectors in
-  the implementation task before the activation fork is named.
-- Benchmark and assign protocol gas for policy reads, permit recovery and storage
-  mutation; flat precompile base gas is insufficient evidence.
-- Define the first `schemaVersion`, marker bytecode, activation protocol version and
-  canonical protocol-version resolver in the implementation fork manifest.
+Stablecoin V1 writes `schemaVersion = 1` and becomes active when Update's canonical
+active protocol version reaches `0.2` (raw `2`), with begin-block-inclusive activation.
+The EIP-712 domain version is the independent string `"1"`; it is not inferred from
+the schema or protocol version. V1 tooling is owned by `bin/outbe-cli`; generated ABI
+JSON is an integration artifact, not a maintained SDK promise.
+
+The initial native gas contract is dispatch `200`, each persistent read `100`, each
+persistent write `5,000`, no refund or additional native cold surcharge, ecrecover
+`3,000`, and explicit dynamic hashing `30 + 6 * ceil(bytes/32)`. Normal EVM
+CALL/account access remains revm-owned. Identical fixed/class work has identical
+Outbe-native charge on first and repeated calls; the dynamic class is never enumerated
+as warm. `outbe_primitives::stablecoin_fork` is the canonical source for these values;
+`fork-manifest.json` is a machine-readable mirror whose full gas/budget parity is
+tested. The margin rule is `ceil_to_10_000(ceil(measured * 125 / 100))`. SCF-034,
+SCF-047 or SCF-055 reopens this protocol lock if its measured path cannot fit the
+corresponding ceiling.
+
+- `xtask stablecoin abi-check` compares every compiled function, error and event entry
+  with all four checked-in ABI exports; selected role, ERC-165 and EIP-712 semantic
+  vectors add independent assertions. Any mismatch reopens protocol lock.
 - Add frozen-transition vectors for `F < B`, `F == B`, `F > B`, mixed
   unfrozen/frozen consumption, full movement, ordinary self-transfer and rejected
   forced self-transfer.

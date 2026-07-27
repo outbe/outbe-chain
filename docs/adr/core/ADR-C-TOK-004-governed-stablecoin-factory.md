@@ -22,7 +22,8 @@ oracle, fee-asset registry or endorsement service.
 
 ### Factory-only creation through Vote
 
-`STABLECOIN_FACTORY_ADDRESS` is a fixed stateful precompile and a compile-time
+`STABLECOIN_FACTORY_ADDRESS` is the fixed stateful precompile
+`0x000000000000000000000000000000000000EE0F` and a compile-time
 `VoteTargetRegistry` target. Direct public `create` is not exposed. The only creation
 path is:
 
@@ -59,6 +60,8 @@ requires byte equality:
 - no whitespace, unknown fields, duplicate fields or alternate key order;
 - address is `0x` plus 40 lowercase hexadecimal characters and must be nonzero;
 - `version`, `iso4217` and `decimals` use canonical JSON integers;
+- `iso4217` must appear in the protocol-pinned SIX List One snapshot published
+  2026-01-01; updates require a hard-fork change to the pinned set and vectors;
 - `supplyCap` and `policyId` use nonempty base-10 strings with no sign or leading
   zero except the single string `"0"`;
 - name uses valid UTF-8 and shortest required JSON escaping; the decoder re-encodes
@@ -73,8 +76,16 @@ never creates a policy implicitly. `supplyCap` must be nonzero.
 
 Stablecoin Factory is the only V1 exception to Vote's default
 `ActiveValidatorOnly` proposal creation rule. Its compile-time admission policy is
-`PublicBonded` with one hard-fork constant denominated in native COEN. The proposal
-call must attach exactly that amount; all other Vote targets reject nonzero value.
+`PublicBonded` with this fixed hard-fork constant:
+
+```text
+STABLECOIN_PROPOSAL_BOND = 1,000,000 COEN
+                         = 1,000,000 × 10^18 native base units
+                         = 1000000000000000000000000
+```
+
+The proposal call must attach exactly that `U256` amount; all other Vote targets
+reject nonzero value.
 
 The EVM value transfer escrows the bond on `VOTE_ADDRESS`, and Vote records amount
 and unsettled status in proposal state. The account balance may contain forced or
@@ -97,15 +108,17 @@ or failed refund/burn is likewise fatal rather than a partially settled proposal
 
 ### Reservation and terminal hooks
 
-At proposal creation, Factory atomically records
-`pendingTokenId[tokenId] = proposalId` after validating that:
+At proposal creation, Factory atomically records both
+`pendingTokenId[tokenId] = proposalId` and `pendingTicker[ticker] = proposalId` after
+validating that:
 
-- no permanent token exists for the id or `(issuer,ticker)`;
-- no pending proposal reserves the id or `(issuer,ticker)`;
+- no permanent token exists for the full id;
+- no permanent token created by any issuer already owns the ticker;
+- no pending proposal from any issuer reserves the id or ticker;
 - the predicted address is not assigned to another full token id; and
 - the referenced policy exists.
 
-Only one pending proposal per `(issuer,ticker)` is allowed. The reservation is
+Only one pending proposal globally may reserve a ticker. The reservation is
 consumed by successful creation and released on every Expired or Rejected outcome.
 Vote allocates the proposal id and calls target-specific reserve/terminal hooks in
 the same transaction; target runtime registration is forbidden.
@@ -124,21 +137,32 @@ The full identity is:
 ```text
 tokenId = keccak256(
     "OUTBE_STABLECOIN_V1" ||
-    chainId_be ||
+    chainId_u64_be ||
     STABLECOIN_FACTORY_ADDRESS ||
     issuer ||
-    ticker_length || ticker_bytes
+    ticker_length_u8 || ticker_bytes
 )
 ```
+
+`chainId_u64_be` is exactly eight unsigned big-endian bytes, matching Outbe's
+canonical `u64` chain-id type. `ticker_length_u8` is exactly one byte; the V1 ticker
+bound is 2 through 12 bytes, so wider or variable-length encodings are noncanonical.
+SCF-002 identity vectors parameterize the Factory address and prefix; SCF-003 selects
+the network constants and regenerates the final network vectors without changing the
+preimage codec.
 
 The EVM address uses a protocol-reserved two-byte prefix followed by the rightmost
 144 bits of `tokenId`. The full 256-bit id remains in Factory state. A hash-tail
 collision with a different full id is rejected deterministically; it never aliases
 or overwrites an existing token.
 
-The exact prefix and Factory address are selected only after a repository/genesis,
-Ethereum-precompile, system-address and reserved-range collision scan. The complete
-class is reserved from genesis, before any user transaction: contract creation into
+The reserved class prefix is exactly `0x53c0`, so token addresses are
+`0x53c0 || tokenId[14..32]`. The exact marker bytecode is `0xef`. Repository-declared
+addresses, Ethereum built-ins, every `scripts/*seed*.json` contract predeploy, tracked
+`genesis.json`, explicit generated genesis and every class in the machine-owned
+planned-range registry are collision-scanned by `xtask stablecoin namespace-check`.
+The class is reserved from genesis, before
+any user transaction: contract creation into
 the class is rejected and calls to an unregistered member fail closed. The class
 cannot be activated late over arbitrary pre-existing code, nonce or storage. Native
 COEN may still be forced to a future address and is treated as unrelated surplus,
@@ -163,16 +187,17 @@ Factory is the sole writer of:
 
 - monotonic `tokenCount` and `tokenAt(index)`;
 - `tokenById(tokenId)`;
-- `tokenForIssuerTicker(issuer,ticker)`;
+- global `tokenByTicker(ticker)`;
 - reverse `tokenIdOf(token)`; and
-- pending proposal reservations.
+- pending token-id and global-ticker proposal reservations.
 
 Registration cannot be deleted or replaced. Operational shutdown uses token pause
 and/or `DENY_ALL`; balances and history remain queryable. Runtime code never calls
 an unbounded `readAll`; callers iterate one index or use an explicitly capped page.
 
-Multiple issuers may use the same ticker and multiple tokens may reference the same
-ISO currency. Ticker uniqueness is only `(issuer,ticker)`.
+Ticker uniqueness is global across the Factory: once a permanent token or pending
+proposal owns a ticker, every other issuer is rejected for that exact canonical
+ticker. Multiple tokens may still reference the same ISO currency code.
 
 ## Authoritative interface
 
@@ -183,17 +208,18 @@ The canonical ABI lives in
 function tokenCount() external view returns (uint256);
 function tokenAt(uint256 index) external view returns (address);
 function tokenById(bytes32 tokenId) external view returns (address);
-function tokenForIssuerTicker(address issuer, string calldata ticker)
-    external view returns (address);
+function tokenByTicker(string calldata ticker) external view returns (address);
 function tokenIdOf(address token) external view returns (bytes32);
 function isStablecoin(address token) external view returns (bool);
 function predictTokenAddress(address issuer, string calldata ticker)
     external view returns (bytes32 tokenId, address token);
 ```
 
-Successful creation emits one `StablecoinCreated` containing indexed `tokenId`,
-token, issuer and proposal id plus immutable metadata, cap and policy id. The ABI and
-README must state that this is protocol admission only, not proof of backing,
+Successful creation emits one non-anonymous `StablecoinCreated` with indexed
+`tokenId`, token and issuer, plus non-indexed proposal id, immutable metadata, cap and
+policy id. Solidity permits at most three indexed parameters on a non-anonymous event;
+keeping the signature topic is preferred over an anonymous four-index event. The ABI
+and README must state that this is protocol admission only, not proof of backing,
 redeemability, price stability, creditworthiness or fee eligibility.
 
 Factory-internal `validateProposal`, `reserveProposal`, `executeApproved` and
@@ -203,8 +229,8 @@ adapter. They are not EVM selectors.
 ## Invariants
 
 - Factory is the only token initializer and registry writer.
-- A token id, dynamic address and `(issuer,ticker)` each resolve to at most one
-  permanent token.
+- A token id, dynamic address and canonical ticker each resolve to at most one
+  permanent token globally.
 - Every permanent forward index agrees with every reverse index and marker/schema.
 - Every pending id names exactly one Pending Vote proposal and is absent from the
   permanent indexes.
@@ -217,8 +243,9 @@ adapter. They are not EVM selectors.
 
 ## Determinism, bounds and replay
 
-JSON byte validation, ISO table, ticker validation, address derivation and index
-writes are protocol-versioned deterministic code. Proposal size remains bounded by
+JSON byte validation, the SIX List One 2026-01-01 ISO table snapshot, ticker
+validation, address derivation and index writes are protocol-versioned deterministic
+code. Proposal size remains bounded by
 Vote; name and ticker bounds cap parsing/allocation. One proposal performs O(1)
 Factory and token initialization work. Duplicate proposal, execution or terminal
 hooks are rejected or idempotently observe their already-terminal state without
@@ -237,26 +264,46 @@ reserves that address class and requires a collision scan before activation.
   admission and a spam bond.
 - Validator-only proposal creation was rejected because the prospective issuer must
   bind its own identity and bond.
-- Initial minting, automatic policy creation, global ticker uniqueness, deletable
-  registrations and implicit fee eligibility were rejected.
+- Initial minting, automatic policy creation, issuer-scoped ticker uniqueness,
+  deletable registrations and implicit fee eligibility were rejected.
 - Event-only discovery was rejected because runtime modules need a canonical registry.
 - A 12-byte prefix was rejected because leaving only 64 hash bits is unnecessarily
   restrictive; no-prefix routing was rejected because current native dispatch
   requires a reserved class.
 
-## Open questions and technical debt
+### Genesis and activation classification
 
-- Choose the exact `STABLECOIN_FACTORY_ADDRESS`, two-byte prefix, marker bytecode and
-  activation version after the mandatory collision scan.
-- Set the fixed COEN bond only after economics review; the mechanism is decided but
-  the amount is intentionally unresolved.
-- Define and benchmark the Factory page cap and creation gas schedule.
+Stablecoin V1 may activate on devnet/testnet only after a coordinated destructive
+pre-production reset that regenerates one identical genesis containing the Factory
+and Policy marker accounts. A restart that preserves old chain state is insufficient:
+the class must have been protected from CREATE/CREATE2 since block 1. Existing state
+that executed without the class guard is unsupported. Mainnet remains unsupported
+until its chain id, fresh genesis and activation manifest are separately frozen.
+
+## Protocol lock and technical debt
+
+Stablecoin Factory V1 activates at protocol version `0.2` (raw `2`). Namespace
+reservation remains genesis-active independently of that runtime predicate. The
+public bonded sub-cap is 16 of Vote's 64 total pending slots, with one pending public
+bonded proposal per proposer. The bond is exactly
+`1,000,000,000,000,000,000,000,000` base units (`10^24`). Rejected admission commits
+no reservation, liability or log; fatal retry remains Pending and continues consuming
+both caps.
+
+Factory V1 exposes O(1) `tokenAt(index)` rather than a page selector, so it has no
+Factory page-size constant. Its initial creation gas ceiling is `500,000`, measured
+under the shared native schedule and 125%-rounded margin rule in
+`fork-manifest.json`; SCF-055 reopens G0 if bounded creation cannot fit it.
+
 - ADR-S-GOV-002 must add raw-payload compile-time target
   admission/reservation/terminal hooks, typed recoverable-versus-fatal outcomes,
   nested handler rollback and bond state before this design can activate.
-- ADR-B-EVM-002 must pass the actual callee address into class dispatch, reserve the
-  class from genesis and generate exact-address plus reserved-class conformance from
-  one manifest.
+- ADR-B-EVM-002 first consolidates the 35 current exact routes behind one compact
+  declaration containing only dispatch adapter and base gas. The class-owning step
+  then adds exact-first resolution, passes the actual callee into class dispatch and
+  reserves the class from genesis. The static route table is not protocol-version,
+  persistence, warming or authentication authority; SCF-025 supplies exact-state
+  activation and Factory full-id/schema/marker checks authenticate each instance.
 - `DirectStorageProvider` currently rejects `set_code`; add journaled code mutation,
   state-root notification and checked balance credit, then publish Factory hook logs
   through the mandatory `HookEvents` receipt.
