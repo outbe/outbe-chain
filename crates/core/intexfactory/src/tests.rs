@@ -1365,7 +1365,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
-                                                                            // The money reached creators, never the reserve vault.
+                                                                            // The money reached creators, never the vault or the burn path.
         assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
@@ -1424,7 +1424,7 @@ fn distribute_rejects_non_origin_router() {
 }
 
 #[test]
-fn distribute_no_contributors_sweeps_to_reserve() {
+fn distribute_no_contributors_burns() {
     use alloy_sol_types::SolEvent;
     use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
 
@@ -1453,23 +1453,20 @@ fn distribute_no_contributors_sweeps_to_reserve() {
         )
         .unwrap();
 
-        // No distribution opened; the ownerless proceeds went to the reserve vault.
+        // No distribution opened; the ownerless proceeds were destroyed, not vaulted.
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
-        assert_eq!(
-            s.balance(VAULT_PROVIDER_ADDRESS).unwrap(),
-            U256::from(100u64)
-        );
+        assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 
-    let sig = IIntexFactory::ProceedsSweptToReserve::SIGNATURE_HASH;
+    let sig = IIntexFactory::ProceedsBurned::SIGNATURE_HASH;
     let found = storage.get_events(INTEX_FACTORY_ADDRESS).iter().any(|log| {
         log.topics().first() == Some(&sig)
-            && IIntexFactory::ProceedsSweptToReserve::decode_log_data(log)
+            && IIntexFactory::ProceedsBurned::decode_log_data(log)
                 .map(|ev| ev.seriesId == 7 && ev.amount == U256::from(100u64))
                 .unwrap_or(false)
     });
-    assert!(found, "expected ProceedsSweptToReserve event");
+    assert!(found, "expected ProceedsBurned event");
 }
 
 #[test]

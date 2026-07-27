@@ -8,22 +8,17 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
 ///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
-///      `COMMIT_BOND_LOCK_PERIOD`.
+///      `UNREVEALED_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
     IntexAuction auction;
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockSettlementVault mockVault;
-    MockVaultProvider provider;
 
     address admin = address(1);
     address bridger = address(2);
@@ -57,15 +52,11 @@ contract IntexAuctionBondTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
-        mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault WCOEN", "mvWCOEN", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
         auction.wire(address(escrow));
-        escrow.wire(address(auction), address(compact), address(provider), address(paymentToken));
+        escrow.wire(address(auction), address(compact), address(paymentToken));
         vm.stopPrank();
         compact.setResetPeriodSeconds(0);
 
@@ -230,7 +221,7 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
 
-        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD();
+        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD();
         vm.warp(claimableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
@@ -243,7 +234,7 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         auction.claimCommitBond(worldwideDay, iba1);
 
@@ -257,7 +248,7 @@ contract IntexAuctionBondTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
         auction.claimCommitBond(worldwideDay, iba1);

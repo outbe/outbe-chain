@@ -254,7 +254,7 @@ interface IIntexAuction {
     /// @dev When the series carries a non-zero `commitBondMinor`, the bond is pulled from the
     ///      caller into escrow in the same transaction (requires prior payment-token approval on
     ///      the escrow adapter). Reveal/cancel return it immediately; a green-day no-reveal locks
-    ///      it until `revealEnd + COMMIT_BOND_LOCK_PERIOD` (see `claimCommitBond`).
+    ///      it until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD` (see `claimCommitBond`).
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param commitHash `keccak256(signature)`, where `signature` is an EIP-712 typed-data
     ///                   signature over `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)`
@@ -287,7 +287,7 @@ interface IIntexAuction {
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled (red-day) auction releases immediately; otherwise the bond is claimable
-    ///         only after `revealEnd + COMMIT_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
+    ///         only after `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`. Pays the stored bidder, not the
     ///         caller. The escrow-local time-based valve (`claimAbandonedCommitBond`) backs this up
     ///         if the auction contract itself is rotated away.
     /// @param worldwideDay Worldwide day (yyyymmdd).

@@ -8,18 +8,13 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IAllocator} from "@contracts/vendor/the-compact/interfaces/IAllocator.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 contract EscrowAdapterTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockSettlementVault mockVault;
-    MockVaultProvider provider;
 
     address admin = address(1);
     address bridger = address(2);
@@ -47,16 +42,10 @@ contract EscrowAdapterTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
-        mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        // Whitelist escrow as a permitted depositor on the provider (production: outbe-vault
-        // owner calls `addLiquiditySource(escrow, IntexBidPrice)` post-deploy).
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
 
         // Wire dependencies (no allow-list precondition anymore).
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(proceedsRecipient);
 
@@ -91,7 +80,6 @@ contract EscrowAdapterTest is Test {
     function test_Wire() public view {
         assertEq(escrow.intexAuctionContract(), auction);
         assertEq(address(escrow.compact()), address(compact));
-        assertEq(address(escrow.vaultProvider()), address(provider));
         assertEq(address(escrow.paymentToken()), address(paymentToken));
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction));
         assertTrue(escrow.allocatorId() > 0);
@@ -109,7 +97,7 @@ contract EscrowAdapterTest is Test {
         compact2.__registerAllocator(address(0xDEAD), "");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact2), address(paymentToken));
 
         assertTrue(escrow.allocatorId() != allocatorBefore);
         assertTrue(escrow.lockTag() != lockTagBefore);
@@ -129,80 +117,57 @@ contract EscrowAdapterTest is Test {
         MockTheCompact compact2 = new MockTheCompact();
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
-        escrow.wire(auction, address(compact2), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact2), address(paymentToken));
     }
 
     function test_Wire_ZeroAuction() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "intexAuction"));
         vm.prank(admin);
-        newEscrow.wire(address(0), address(compact), address(provider), address(paymentToken));
+        newEscrow.wire(address(0), address(compact), address(paymentToken));
     }
 
     function test_Wire_ZeroCompact() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "compact"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(0), address(provider), address(paymentToken));
-    }
-
-    function test_Wire_ZeroVaultProvider() public {
-        EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "vaultProvider"));
-        vm.prank(admin);
-        newEscrow.wire(auction, address(compact), address(0), address(paymentToken));
+        newEscrow.wire(auction, address(0), address(paymentToken));
     }
 
     function test_Wire_ZeroPaymentToken() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "paymentToken"));
         vm.prank(admin);
-        newEscrow.wire(auction, address(compact), address(provider), address(0));
+        newEscrow.wire(auction, address(compact), address(0));
     }
 
     function test_Wire_EmitsWired_OnInitial() public {
         EscrowAdapter freshEscrow = DeployProxy.escrowAdapter(admin, bridger);
         // Initial wire: every `*Old` field is the zero address.
         vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.Wired(
-            address(0),
-            auction,
-            address(0),
-            address(compact),
-            address(0),
-            address(provider),
-            address(0),
-            address(paymentToken)
-        );
+        emit IEscrowAdapter.Wired(address(0), auction, address(0), address(compact), address(0), address(paymentToken));
         vm.prank(admin);
-        freshEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        freshEscrow.wire(auction, address(compact), address(paymentToken));
     }
 
     function test_Wire_EmitsWired_OnRotation() public {
         // Rotate the auction address (no LiveLocksOutstanding constraint — no locks opened in setUp).
-        // `escrow` was wired in setUp with (auction, compact, provider, paymentToken); only the
-        // auction rotates, so its old value is non-zero and the rest carry their prior addresses.
+        // `escrow` was wired in setUp with (auction, compact, paymentToken); only the auction
+        // rotates, so its old value is non-zero and the rest carry their prior addresses.
         address newAuction = address(0xBEEF);
         vm.expectEmit(true, true, true, true);
         emit IEscrowAdapter.Wired(
-            auction,
-            newAuction,
-            address(compact),
-            address(compact),
-            address(provider),
-            address(provider),
-            address(paymentToken),
-            address(paymentToken)
+            auction, newAuction, address(compact), address(compact), address(paymentToken), address(paymentToken)
         );
         vm.prank(admin);
-        escrow.wire(newAuction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(newAuction, address(compact), address(paymentToken));
     }
 
     function test_Wire_OnlyAdmin() public {
         EscrowAdapter newEscrow = DeployProxy.escrowAdapter(admin, bridger);
         vm.expectRevert();
         vm.prank(outsider);
-        newEscrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        newEscrow.wire(auction, address(compact), address(paymentToken));
     }
 
     // --- LockFunds Tests ---
@@ -345,7 +310,7 @@ contract EscrowAdapterTest is Test {
         _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
         escrow.claimRefund(worldwideDay1, bidder1); // permissionless
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
@@ -368,7 +333,7 @@ contract EscrowAdapterTest is Test {
         escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
 
         // bidder1 settled -> abandon path can never fire.
-        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         escrow.claimRefund(worldwideDay1, bidder1);
     }
@@ -707,28 +672,6 @@ contract EscrowAdapterTest is Test {
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
     }
 
-    function test_Events_FundsClaimed() public {
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT});
-
-        // Strand the winner at finalize (Compact withdrawal fails), leaving a valid split.
-        compact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = inst;
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
-
-        // Recover; retryFinalize settles the stranded proceeds to the vault and emits FundsClaimed.
-        compact.setForcedWithdrawalShouldFail(false);
-        vm.expectEmit(true, true, true, true);
-        emit IEscrowAdapter.FundsClaimed(RECEIVE_ID, worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.prank(bridger);
-        escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
-    }
-
     function test_Events_AuctionEscrowFinalized() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
@@ -755,30 +698,27 @@ contract EscrowAdapterTest is Test {
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
     }
 
     function test_Wire_RotatePaymentToken_AllowedWhenNoLocks() public {
         // Swap active token when no locks are held.
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
 
         assertEq(address(escrow.paymentToken()), address(usdt));
     }
 
     function test_Wire_RewireSameTokenStaysAllowedWithLocks() public {
-        // Active locks must not block re-wiring with the same token (e.g. updating the provider).
+        // Active locks must not block re-wiring with the same token (e.g. rotating the auction).
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
-        MockSettlementVault newMockVault =
-            new MockSettlementVault(address(paymentToken), "New Mock Vault", "nmvUSDC", 18);
-        MockVaultProvider newProvider = new MockVaultProvider();
-        newProvider.addVault(newMockVault);
+        address newAuction = address(0xBEEF);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(newProvider), address(paymentToken));
-        assertEq(address(escrow.vaultProvider()), address(newProvider));
+        escrow.wire(newAuction, address(compact), address(paymentToken));
+        assertEq(escrow.intexAuctionContract(), newAuction);
     }
 
     // --- claimRefund ---
@@ -789,7 +729,7 @@ contract EscrowAdapterTest is Test {
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // Permissionless caller (an outsider) triggers the refund; funds go to bidder1.
         // claimRefund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
@@ -808,7 +748,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         // One second before the delay elapses.
-        uint32 claimableAt = lockedAt + escrow.REFUND_DELAY();
+        uint32 claimableAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
         vm.warp(claimableAt - 1);
 
         vm.expectRevert(
@@ -826,7 +766,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_DoubleClaim_Reverts() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         escrow.claimRefund(worldwideDay1, bidder1);
 
@@ -842,7 +782,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // The Compact's forced withdrawal returns false (e.g. reset period not elapsed); the
         // adapter must surface this as the dedicated ForcedWithdrawalFailed, not a generic error.
@@ -852,159 +792,32 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
     }
 
-    function test_ClaimRefund_PostFinalize_RevertsWithin7d() public {
-        // Lock, then finalize with a failing instruction (BidderRefundFailed leaves lock Locked).
+    function test_ClaimRefund_PostFinalize_GateAnchorsAtFinalizeNotLock() public {
+        // Lock, then finalize a day later with a failing instruction (BidderRefundFailed leaves
+        // lock Locked).
+        uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
+        // via-ir CSEs TIMESTAMP across vm.warp, so derive finalizedAt instead of re-reading it.
+        uint32 finalizedAt = lockedAt + 1 days;
+        vm.warp(finalizedAt);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1,
             refundedAmount: 0,
             paidAmount: LOCK_AMOUNT - 1 // mismatch, fails inside try/catch
         });
-        uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
 
-        // 72h after lockedAt — would unlock the pre-finalize window — but post-finalize 7d wins now.
-        uint32 nowAt = finalizedAt + escrow.REFUND_DELAY();
+        // The pre-finalize window (lockedAt + UNFINALIZED_REFUND_DELAY) has elapsed, but the
+        // series is finalized, so the finalizedAt-anchored post-finalize gate governs and blocks.
+        uint32 nowAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
         uint32 claimableAt = finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY();
         vm.warp(nowAt);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, nowAt));
         escrow.claimRefund(worldwideDay1, bidder1);
-    }
-
-    function test_ClaimRefund_PostFinalize_VaultStillDown_ParksRemainder() public {
-        // Vault still down at claim time: the bidder is refunded their portion (never the full
-        // principal), and the payout portion is parked in The Compact as RefundClaimed for later
-        // permissionless settlement — the refund is not blocked by the vault failure.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
-
-        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
-        compact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
-        });
-        uint32 finalizedAt = uint32(block.timestamp);
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
-
-        // Withdrawal recovers, but the vault is still down at claim time → remainder parked.
-        compact.setForcedWithdrawalShouldFail(false);
-        provider.setRevertOnDeposit(true);
-        uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
-
-        vm.expectEmit(true, true, false, true, address(escrow));
-        emit IEscrowAdapter.VaultOwedUnsettled(worldwideDay1, bidder1, paidPortion);
-        escrow.claimRefund(worldwideDay1, bidder1);
-
-        // Only the refund portion is paid out; the payout portion is neither refunded nor lost.
-        assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion);
-        assertEq(
-            uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.RefundClaimed)
-        );
-        // The parked payout portion is still accounted for in totalLocked and still in The Compact.
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(totalLocked, paidPortion);
-        assertEq(_liveCompactBalance(), paidPortion);
-    }
-
-    function test_ClaimRefund_PostFinalize_VaultHealthy_SettlesInOneTx() public {
-        // Vault recovered by claim time: claimRefund refunds the bidder AND settles the payout
-        // portion into the vault in the same transaction — no leftover state, no keeper needed.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
-
-        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
-        compact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
-        });
-        uint32 finalizedAt = uint32(block.timestamp);
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
-
-        // Withdrawal recovers; the vault is healthy when the bidder claims.
-        compact.setForcedWithdrawalShouldFail(false);
-        uint256 balanceBefore = paymentToken.balanceOf(bidder1);
-        uint256 vaultBefore = paymentToken.balanceOf(address(mockVault));
-        vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
-
-        vm.expectEmit(true, true, false, true, address(escrow));
-        emit IEscrowAdapter.VaultOwedSettled(worldwideDay1, bidder1, paidPortion);
-        escrow.claimRefund(worldwideDay1, bidder1);
-
-        // Bidder refunded their portion; payout portion deposited into the vault; lock terminal.
-        assertEq(paymentToken.balanceOf(bidder1), balanceBefore + refundPortion);
-        assertEq(paymentToken.balanceOf(address(mockVault)), vaultBefore + paidPortion);
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(totalLocked, 0);
-        assertEq(_liveCompactBalance(), 0);
-    }
-
-    function test_SettleVaultOwed_Permissionless_FinishesParkedSettle() public {
-        // After a parked claim (vault was down), anyone can settle the payout portion once the
-        // vault recovers — the amount and destination are fixed by stored state.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-
-        uint128 refundPortion = LOCK_AMOUNT * 30 / 100;
-        uint128 paidPortion = LOCK_AMOUNT - refundPortion;
-
-        // Strand the bidder at finalize (Compact withdrawal fails), leaving a valid split.
-        compact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
-        instructions[0] = IEscrowAdapter.FinalizationInstruction({
-            bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
-        });
-        uint32 finalizedAt = uint32(block.timestamp);
-        vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
-
-        // Withdrawal recovers, but the vault is still down → claimRefund parks the remainder.
-        compact.setForcedWithdrawalShouldFail(false);
-        provider.setRevertOnDeposit(true);
-        vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
-        escrow.claimRefund(worldwideDay1, bidder1);
-        assertEq(
-            uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.RefundClaimed)
-        );
-
-        // Vault recovers; a random caller (not the bidder, not the relayer) settles the remainder.
-        provider.setRevertOnDeposit(false);
-        uint256 vaultBefore = paymentToken.balanceOf(address(mockVault));
-
-        vm.expectEmit(true, true, false, true, address(escrow));
-        emit IEscrowAdapter.VaultOwedSettled(worldwideDay1, bidder1, paidPortion);
-        vm.prank(outsider);
-        escrow.settleVaultOwed(worldwideDay1, bidder1);
-
-        assertEq(paymentToken.balanceOf(address(mockVault)), vaultBefore + paidPortion);
-        assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Finalized));
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
-        assertEq(totalLocked, 0);
-        assertEq(_liveCompactBalance(), 0);
-    }
-
-    function test_SettleVaultOwed_RevertsWhenNotRefundClaimed() public {
-        // A lock that is not in RefundClaimed has no parked vault portion to settle.
-        vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.NoPendingVaultOwed.selector, worldwideDay1, bidder1));
-        escrow.settleVaultOwed(worldwideDay1, bidder1);
     }
 
     function test_ClaimRefund_PostFinalize_RevertsSplitNotRecorded() public {
@@ -1147,7 +960,7 @@ contract EscrowAdapterTest is Test {
     // --- message-id threading ---
 
     /// @dev A single finalize call must stamp the same inbound bridge message id onto every fund-movement
-    ///      event it emits (FundsRefunded, FundsClaimed) and the summary (AuctionEscrowFinalized),
+    ///      event it emits (FundsRefunded) and the summary (AuctionEscrowFinalized),
     ///      so an indexer can attribute the whole batch to one cross-chain packet.
     function test_GuidThreading_AllFinalizeEvents_CarryPacketGuid() public {
         bytes32 packet = keccak256("inbound-packet-A");
