@@ -48,6 +48,7 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
     error WithdrawalLimitExceeded(uint256 used, uint256 limit);
     error WithdrawalLimitAlreadyInitialized();
+    error NonCanonicalOffset(uint256 offset);
 
     // -------------------------------------------------------------------------
     // State
@@ -134,6 +135,11 @@ contract WithdrawalLimitPolicy is PolicyBase {
 
         // ABI-encoded params: [4:36]=ExecMode(static), [36:68]=offset=64, [68:100]=execLen, [100:]=execCalldata
         if (uopCallData.length < 100) return 0;
+        // Kernel.execute decodes its `bytes calldata` param by following this offset, so a non-canonical
+        // value would let execution move a different amount than this policy validates. Reject it rather
+        // than pass-through (returning 0 here would be the bypass).
+        uint256 offset = uint256(bytes32(uopCallData[36:68]));
+        if (offset != 64) revert NonCanonicalOffset(offset);
         uint256 execLen = uint256(bytes32(uopCallData[68:100]));
         if (uopCallData.length < 100 + execLen) return 0;
         bytes calldata execCalldata = uopCallData[100:100 + execLen];

@@ -209,6 +209,41 @@ contract WithdrawalLimitPolicyTest is Test {
         policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 
+    /// @dev T-01: a UserOp whose ABI offset word is non-canonical must be rejected, not passed through.
+    ///      The fixed [68:100]/[100:] window shows a benign amount (1) while the real offset-followed
+    ///      data would move DEFAULT_LIMIT+1; Kernel.execute follows the offset, so passing through here
+    ///      would desync validation from execution. The policy must revert instead.
+    function test_W01_NonCanonicalOffset_Reverts() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        bytes memory transferCalldata = abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1));
+        bytes memory execCalldata = abi.encodePacked(address(token), uint256(0), transferCalldata);
+        // Hand-build callData with offset word = 96 (0x60) instead of the canonical 64 (0x40).
+        bytes memory callData = abi.encodePacked(
+            bytes4(0), // [0:4]   selector
+            bytes32(0), // [4:36]  ExecMode → CALLTYPE_SINGLE
+            uint256(96), // [36:68] non-canonical offset
+            uint256(execCalldata.length), // [68:100] length
+            execCalldata // [100:]  data
+        );
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: kernelAccount,
+            nonce: 0,
+            initCode: "",
+            callData: callData,
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: ""
+        });
+
+        vm.prank(kernelAccount);
+        vm.expectRevert(abi.encodeWithSelector(WithdrawalLimitPolicy.NonCanonicalOffset.selector, uint256(96)));
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
     function test_CheckUserOpPolicy_CumulativeExceedsLimit() public {
         _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
 
