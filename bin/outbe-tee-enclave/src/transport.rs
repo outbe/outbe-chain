@@ -1317,8 +1317,6 @@ mod tests {
         assert!(newcomer.offer_key.get().is_none());
     }
 
-    // --- OIP-00176: in-enclave account-ownership proof for DeriveAccountKeys ----
-
     /// An enclave with a resident group key installed, so `DeriveAccountKeys` can
     /// derive per-account keys (mirrors the handoff tests' setup).
     fn resident_enclave(seed: u8) -> Enclave {
