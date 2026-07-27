@@ -295,6 +295,10 @@ run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane 
 description = "Run and independently verify the exact OCOMP public execution lane"
 run = "cargo xtask ocomp task OCM-25"
 
+[tasks.ocomp-poc-capacity]
+description = "Build exact Rust binaries and run five immutable OCM-26 cold capacity measurements"
+run = "cargo xtask ocomp capacity-measure"
+
 [tasks.ocomp-poc-e2e]
 description = "Run the four-domain OCOMP E2E lane; currently fail-closed on MISSING"
 run = "cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- lane OCM-E2E"

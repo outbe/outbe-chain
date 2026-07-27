@@ -176,6 +176,7 @@ pub fn measure(
     generated_capacity_path: &Path,
 ) -> Result<()> {
     require_clean_revision(repository_root)?;
+    build_capacity_binaries(repository_root)?;
     let output_dir = resolve(repository_root, output_dir);
     ensure!(
         output_dir.is_absolute() && output_dir != Path::new("/") && !output_dir.exists(),
@@ -266,6 +267,45 @@ pub fn measure(
         &scenario_paths,
         limits_manifest_path,
         generated_capacity_path,
+    )
+}
+
+fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
+    let mut debug = Command::new("cargo");
+    debug.current_dir(repository_root).args([
+        "build",
+        "--locked",
+        "-p",
+        "outbe-chain",
+        "--bin",
+        "outbe-chain",
+        "-p",
+        "outbe-ocomp",
+        "--bin",
+        "outbe-ocomp",
+        "-p",
+        "outbe-e2e-harness",
+        "--features",
+        "ocomp-integration",
+        "--bins",
+    ]);
+    run_checked(&mut debug, "build exact debug OCOMP capacity binaries")?;
+
+    let mut mock_enclave = Command::new("cargo");
+    mock_enclave.current_dir(repository_root).args([
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "outbe-tee-enclave",
+        "--features",
+        "mock",
+        "--bin",
+        "outbe-tee-enclave-mock",
+    ]);
+    run_checked(
+        &mut mock_enclave,
+        "build exact release OCOMP capacity enclave",
     )
 }
 
