@@ -2307,6 +2307,15 @@ assumed provider bandwidth. The process launcher imports the same CAS-quota
 constant as the generator, so benchmark evidence cannot claim storage that the
 runtime does not grant.
 
+The capacity command creates the measurement cgroup through the system systemd
+manager and sets the transient service `User`/`Group` to the invoking
+unprivileged account. This is an evidence-runner privilege only: the E2E command
+and every node/OCOMP child remain unprivileged and run with `--no-sudo`. A
+user-manager service is not sufficient because a valid host may omit the
+`io` controller from `user.slice`; accepting such a service would silently lose
+the required kernel `io.stat` evidence. Passwordless permission to create this
+single bounded transient service is therefore a machine precondition.
+
 ### 8.3 Required generated fields
 
 The checked-in `OcompPocLimitsV1` manifest must contain exact literals for at

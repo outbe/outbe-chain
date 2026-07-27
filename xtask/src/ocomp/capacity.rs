@@ -164,6 +164,10 @@ pub fn measure(
 
     let binaries = CapacityBinariesV1::from_repository(repository_root)?;
     binaries.validate()?;
+    let runner_uid = command_stdout(repository_root, "id", &["-u"])?;
+    let runner_gid = command_stdout(repository_root, "id", &["-g"])?;
+    validate_runner_identity(&runner_uid, "uid")?;
+    validate_runner_identity(&runner_gid, "gid")?;
     require_systemd_host()?;
     let host_path = output_dir.join("host-observation.json");
     run_checked(
@@ -193,8 +197,15 @@ pub fn measure(
         let data_dir = run_root.join("data");
         let stdout = create_new_file(&run_root.join("systemd-run.stdout"))?;
         let stderr = create_new_file(&run_root.join("systemd-run.stderr"))?;
-        let mut command =
-            capacity_systemd_command(&unit, repository_root, &evidence_dir, &data_dir, &binaries);
+        let mut command = capacity_systemd_command(
+            &unit,
+            &runner_uid,
+            &runner_gid,
+            repository_root,
+            &evidence_dir,
+            &data_dir,
+            &binaries,
+        );
         let status = command
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
@@ -316,20 +327,25 @@ impl CapacityBinariesV1 {
 
 fn capacity_systemd_command(
     unit: &str,
+    runner_uid: &str,
+    runner_gid: &str,
     repository_root: &Path,
     evidence_dir: &Path,
     data_dir: &Path,
     binaries: &CapacityBinariesV1,
 ) -> Command {
-    let mut command = Command::new("systemd-run");
+    let mut command = Command::new("sudo");
     command
-        .arg("--user")
+        .arg("-n")
+        .arg("systemd-run")
         .arg("--quiet")
         .arg("--wait")
         .arg("--collect")
         .arg("--pipe")
         .arg("--same-dir")
         .arg(format!("--unit={unit}"))
+        .arg(format!("--uid={runner_uid}"))
+        .arg(format!("--gid={runner_gid}"))
         .arg(format!("--setenv=OUTBE_OCOMP_CAPACITY_RUN_ID={unit}"))
         .arg(format!("--property=MemoryMax={CAPACITY_MEMORY_MAX_BYTES}"))
         .arg(format!("--property=CPUQuota={CAPACITY_CPU_QUOTA_PERCENT}%"))
@@ -376,13 +392,28 @@ fn require_systemd_host() -> Result<()> {
         Path::new("/sys/fs/cgroup/cgroup.controllers").is_file(),
         "OCM-26 cold runs require unified cgroup v2"
     );
-    let status = Command::new("systemd-run")
-        .args(["--user", "--version"])
+    let status = Command::new("sudo")
+        .args(["-n", "systemd-run", "--version"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .wrap_err("start systemd-run preflight")?;
-    ensure!(status.success(), "systemd-run --user is unavailable");
+        .wrap_err("start privileged systemd-run preflight")?;
+    ensure!(
+        status.success(),
+        "passwordless system-manager systemd-run is unavailable"
+    );
+    Ok(())
+}
+
+fn validate_runner_identity(value: &str, name: &str) -> Result<()> {
+    ensure!(
+        !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()),
+        "capacity runner {name} is not a decimal identifier"
+    );
+    ensure!(
+        value != "0",
+        "capacity workload must run as an unprivileged user"
+    );
     Ok(())
 }
 
@@ -631,6 +662,8 @@ mod tests {
         };
         let command = capacity_systemd_command(
             "outbe-ocomp-capacity-deadbeef0000-01",
+            "1000",
+            "1000",
             root,
             Path::new("/evidence"),
             Path::new("/data"),
@@ -640,9 +673,17 @@ mod tests {
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        assert_eq!(command.get_program(), "systemd-run");
+        assert_eq!(command.get_program(), "sudo");
+        assert!(arguments.starts_with(&[
+            "-n".to_owned(),
+            "systemd-run".to_owned(),
+            "--quiet".to_owned(),
+        ]));
         assert!(arguments.contains(&"--wait".to_owned()));
         assert!(arguments.contains(&"--collect".to_owned()));
+        assert!(arguments.contains(&"--uid=1000".to_owned()));
+        assert!(arguments.contains(&"--gid=1000".to_owned()));
+        assert!(!arguments.contains(&"--user".to_owned()));
         assert!(arguments.contains(&"--property=Delegate=yes".to_owned()));
         assert!(arguments.contains(&format!("--property=MemoryMax={CAPACITY_MEMORY_MAX_BYTES}")));
         assert_eq!(
