@@ -39,23 +39,28 @@ eligibility.
 | Upgrades | One global hard-fork runtime; static old-schema reads and O(1) mutating lazy migration |
 | Fee/bridge scope | Fee assets, payment lanes, reserve proofs, ERC-3009 and ERC-7802 are outside V1 |
 
-## Remaining protocol-freeze decisions
+## Frozen protocol values
 
-No implementation task may invent these values. Phase 0 must freeze them first:
+No implementation task may change or duplicate these values without reopening G0,
+the owning ADR and its vectors:
 
-1. exact Factory and Policy Registry addresses;
-2. exact two-byte prefix and marker bytecode;
-3. activation protocol version and new-genesis/reset applicability;
-4. EIP-712 domain version (role ids are frozen by SCF-001);
-5. policy membership batch cap and public pending caps; V1 has no member or Factory
-   page ABI;
-6. top-level/nested dynamic-route gas and warm/cold semantics; and
-7. maintained SDK location, or an explicit decision that V1 tooling is CLI-only.
+1. Factory `0x...EE0F`, Policy Registry `0x...EE10`, dynamic prefix `0x53c0` and
+   marker `0xef`;
+2. activation protocol version `0.2` (raw `2`), schema version `1`, destructive
+   fresh-genesis devnet/testnet applicability and unsupported mainnet activation;
+3. EIP-712 domain version `"1"` (role ids are frozen by SCF-001);
+4. public bonded caps 16 globally and one per proposer inside Vote's 64 total slots;
+5. policy membership batch cap 64; V1 has no member or Factory page ABI;
+6. the gas/warm-cold contract and benchmark ceilings in
+   `outbe_primitives::stablecoin_fork`, mirrored by `fork-manifest.json`; and
+7. planned CLI-only tooling ownership under `bin/outbe-cli`, with no maintained SDK
+   promise.
 
 SCF-001 froze policy add/remove as typed `MembershipUnchanged`, the complete ABI
 error/event/indexing surface and all six role ids. SCF-002 froze the token-id widths as
 `u64` big-endian chain id plus `u8` ticker length and pinned the SIX ISO 4217 List One
-snapshot published 2026-01-01.
+snapshot published 2026-01-01. SCF-003 froze the namespace/reset contract; SCF-004
+froze version, bounds, gas, EIP-712 and tooling ownership.
 
 ## Task execution contract
 
@@ -120,7 +125,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
 | SCF-004 | Done | `50ebcb2` | Primitives 275/275; Vote 33/33; Forge 8/8; clippy/fmt/LSP; independent review READY |
 | SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
-| SCF-G0 | Review | — | Independent protocol-lock gate running over SCF-001..004 |
+| SCF-G0 | Done | `325de189` | Forge 8/8; primitives lock suites 24/24; Vote 33/33; xtask 5/5; complete ABI+namespace checks; independent gate PASS |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -809,7 +814,7 @@ its focused test filter and records exact output.
 
 | Gate | Minimum commands |
 | --- | --- |
-| `SCF-G0` | `cd contracts/precompiles && forge fmt --check && forge test`; `cargo nextest run -p outbe-primitives --test stablecoin_vectors` |
+| `SCF-G0` | `cd contracts/precompiles && forge fmt --check src/IStablecoin.sol src/IStablecoinFactory.sol src/IStablecoinPolicyRegistry.sol src/IVote.sol test/StablecoinInterfaces.t.sol && forge test --match-contract StablecoinInterfacesTest`; `cargo nextest run -p outbe-primitives --test stablecoin_abi_vectors --test stablecoin_vectors --test stablecoin_namespace --test stablecoin_fork_vectors`; `cargo nextest run -p outbe-vote`; `cargo nextest run -p xtask --test stablecoin_namespace`; `cargo run -p xtask -- stablecoin abi-check`; `cargo run -p xtask -- stablecoin namespace-check` |
 | `SCF-G1` | prescribed StorageHandle `rg` survey; `cargo nextest run -p outbe-primitives --test trybuild`; `cargo nextest run -p outbe-evm`; `cargo nextest run -p outbe-vote -p outbe-update -p outbe-governance` |
 | `SCF-G2` | `cargo nextest run -p outbe-stablecoinpolicy`; focused `cargo nextest run -p outbe-evm` registration/subcall tests |
 | `SCF-G3` | `cargo nextest run -p outbe-stablecoin`; EIP-2612/ERC-7943/property/migration filters; focused dynamic-route EVM tests |
