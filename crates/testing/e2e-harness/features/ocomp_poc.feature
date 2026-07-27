@@ -34,3 +34,29 @@ Feature: Off-chain computation PoC closure
     When the validator supervisors submit results directly for that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified Lysis generation contains only the original Tribute
+
+  @ocomp-e2e @ocomp-e2e-007
+  # OCOMP-TEST-ID: OCM-E2E-007
+  Scenario: An incompatible Supervisor cannot affect consensus or the other validator domains
+    Given the canonical four-validator OCOMP Final devnet
+    When validator 0 OCOMP supervisor is replaced by an incompatible peer
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then three compatible validator domains atomically apply Lysis and create the Nod
+    And the incompatible supervisor remains outside OCOMP while consensus finality advances
+
+  @ocomp-e2e @ocomp-e2e-008
+  # OCOMP-TEST-ID: OCM-E2E-008
+  Scenario: A completed generation survives node and compute-process restart and replay
+    Given the canonical four-validator OCOMP Final devnet
+    When an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the completed generation and exact vote replay remain identical

@@ -1133,6 +1133,99 @@ impl OcompTopology {
         Ok(())
     }
 
+    /// Restart the fixed SnapshotExporter role in one domain after a typed stop.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn restart_snapshot_exporter(&mut self, validator_index: u8) -> Result<()> {
+        if self.domain(validator_index)?.snapshot_exporter.is_some() {
+            eyre::bail!("validator-{validator_index} snapshot exporter is already running");
+        }
+        let identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        let exporter = self.spawn_validator_role(
+            validator_index,
+            OcompProcessRole::SnapshotExporter,
+            identity,
+        )?;
+        self.attach_owned(
+            Some(validator_index),
+            OcompProcessRole::SnapshotExporter,
+            None,
+            exporter,
+        )?;
+        sleep(Duration::from_secs(2));
+        let (record_index, exited) = {
+            let process = self
+                .domain_mut(validator_index)?
+                .snapshot_exporter
+                .as_mut()
+                .expect("attached immediately above");
+            (process.record_index, process.guard.exited())
+        };
+        if exited {
+            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+            eyre::bail!(
+                "validator-{validator_index} OCOMP snapshot exporter exited during typed restart:\n{}",
+                tail_file(
+                    &self
+                        .domain(validator_index)?
+                        .root
+                        .join("snapshot-exporter.log"),
+                    20
+                )
+            );
+        }
+        Ok(())
+    }
+
+    /// Replace a stopped Supervisor with a process that has a valid local
+    /// protocol bundle but an incompatible endpoint identity. The process must
+    /// remain outside the node-owned authenticated session while the node and
+    /// the other validator domains continue normally.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn restart_incompatible_supervisor(&mut self, validator_index: u8) -> Result<()> {
+        if self.domain(validator_index)?.supervisor.is_some() {
+            eyre::bail!("validator-{validator_index} supervisor is already running");
+        }
+        let mut identity = self
+            .launch_identity
+            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
+        identity.genesis_hash = B256::repeat_byte(0x7f);
+        let supervisor =
+            self.spawn_validator_role(validator_index, OcompProcessRole::Supervisor, identity)?;
+        self.attach_owned(
+            Some(validator_index),
+            OcompProcessRole::Supervisor,
+            None,
+            supervisor,
+        )?;
+        sleep(Duration::from_secs(2));
+        let (record_index, exited) = {
+            let process = self
+                .domain_mut(validator_index)?
+                .supervisor
+                .as_mut()
+                .expect("attached immediately above");
+            (process.record_index, process.guard.exited())
+        };
+        if exited {
+            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+            eyre::bail!(
+                "validator-{validator_index} incompatible OCOMP supervisor exited instead of retrying:\n{}",
+                self.supervisor_log_tail(validator_index, 20)?
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn supervisor_log_tail(&self, validator_index: u8, lines: usize) -> Result<String> {
+        Ok(tail_file(
+            &self.domain(validator_index)?.root.join("supervisor.log"),
+            lines,
+        ))
+    }
+
     /// Current process inventory, including already stopped owned processes.
     #[must_use]
     pub fn process_records(&self) -> &[OcompProcessRecordV1] {

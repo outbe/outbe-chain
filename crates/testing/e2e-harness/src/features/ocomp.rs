@@ -615,6 +615,22 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
 
 #[then("three matching validator domains atomically apply Lysis and create the Nod")]
 fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
+    quorum_applies_lysis_and_creates_nod_with_vote_count(world, 4);
+}
+
+#[then("three compatible validator domains atomically apply Lysis and create the Nod")]
+fn compatible_quorum_applies_lysis_and_creates_nod(world: &mut World) {
+    quorum_applies_lysis_and_creates_nod_with_vote_count(world, 3);
+}
+
+fn quorum_applies_lysis_and_creates_nod_with_vote_count(
+    world: &mut World,
+    expected_vote_count: usize,
+) {
+    assert!(
+        matches!(expected_vote_count, 3 | 4),
+        "PoC quorum scenario expects either three or four public votes"
+    );
     let request = world
         .state
         .ocomp_job_request
@@ -697,7 +713,7 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                     .collect::<Vec<_>>();
                 if observed.iter().all(|value| {
                     value.as_ref().is_some_and(|accountability| {
-                        accountability.slot_validator_indexes.len() == 4
+                        accountability.slot_validator_indexes.len() == expected_vote_count
                     })
                 }) {
                     let first = observed[0]
@@ -711,13 +727,21 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                 }
                 assert!(
                     Instant::now() < accountability_deadline,
-                    "the fourth timely validator vote did not reach finalized accountability: \
-                     {observed:?}"
+                    "the expected {expected_vote_count} timely validator votes did not reach \
+                     finalized accountability: {observed:?}"
                 );
                 sleep(Duration::from_millis(250));
             };
             assert_eq!(accountability.job_id, activation.job_id);
-            assert_eq!(accountability.slot_validator_indexes, vec![0, 1, 2, 3]);
+            let expected_validator_indexes = if expected_vote_count == 4 {
+                vec![0, 1, 2, 3]
+            } else {
+                vec![1, 2, 3]
+            };
+            assert_eq!(
+                accountability.slot_validator_indexes,
+                expected_validator_indexes
+            );
             assert_eq!(
                 accountability.quorum_result_digest,
                 Some(activation.result_digest)
@@ -770,8 +794,8 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
                     .iter()
                     .filter(|transaction| transaction.success)
                     .count(),
-                4,
-                "exactly four independent public validator result votes must succeed"
+                expected_vote_count,
+                "unexpected number of independent successful public validator result votes"
             );
             let mut signers = first_votes
                 .iter()
@@ -781,8 +805,8 @@ fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
             signers.dedup();
             assert_eq!(
                 signers.len(),
-                4,
-                "public result votes must come from four validator EVM signers"
+                expected_vote_count,
+                "public result votes must come from the expected distinct validator EVM signers"
             );
             assert!(
                 first_votes
@@ -1916,5 +1940,263 @@ fn fork_mismatch_is_fail_closed(world: &mut World) {
     assert!(
         snapshot.fork_mismatch.is_some(),
         "fork mismatch scenario must retain exact install and height observations"
+    );
+}
+
+#[when("validator 0 OCOMP supervisor is replaced by an incompatible peer")]
+fn replace_validator_zero_with_incompatible_supervisor(world: &mut World) {
+    let primary = world.validators.primary_port();
+    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+    world
+        .ocomp
+        .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
+        .expect("stop validator-0 canonical Supervisor");
+    world
+        .ocomp
+        .restart_incompatible_supervisor(0)
+        .expect("start validator-0 incompatible Supervisor");
+}
+
+#[then("the incompatible supervisor remains outside OCOMP while consensus finality advances")]
+fn incompatible_supervisor_isolated_from_consensus(world: &mut World) {
+    let before = world
+        .state
+        .ocomp_finality_before_fault
+        .expect("height captured before incompatible Supervisor");
+    let primary = world.validators.primary_port();
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
+        "consensus finality did not advance with one incompatible Supervisor"
+    );
+    let log = world
+        .ocomp
+        .supervisor_log_tail(0, 80)
+        .expect("read validator-0 Supervisor log");
+    assert!(
+        log.contains("local control peer rejected kind 0x0001 with code 1"),
+        "validator-0 Supervisor did not record the typed incompatible-handshake rejection:\n{log}"
+    );
+    let records = world.ocomp.process_records();
+    let validator_zero_supervisors = records
+        .iter()
+        .filter(|record| {
+            record.validator_index == Some(0)
+                && record.role == OcompProcessRole::Supervisor
+                && record.worker_ordinal.is_none()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        validator_zero_supervisors.len(),
+        2,
+        "incompatible replacement must retain both lifecycle records"
+    );
+    assert_eq!(
+        validator_zero_supervisors
+            .iter()
+            .filter(|record| record.stopped_at_millis.is_some())
+            .count(),
+        1,
+        "the canonical validator-0 Supervisor was not stopped exactly once"
+    );
+    assert_eq!(
+        validator_zero_supervisors
+            .iter()
+            .filter(|record| record.stopped_at_millis.is_none())
+            .count(),
+        1,
+        "the incompatible validator-0 Supervisor is not the sole live replacement"
+    );
+
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("incompatible-Supervisor scenario JobIntent");
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("three compatible domains activated Lysis");
+    let deadline = Instant::now() + Duration::from_secs(180);
+    let closed = loop {
+        let observed = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_vote_accountability_on(port, activation.job_id)
+            })
+            .collect::<Vec<_>>();
+        if observed.iter().all(|value| {
+            value.as_ref().is_some_and(|accountability| {
+                accountability.closed_height == Some(request.deadline_height)
+            })
+        }) {
+            let first = observed[0]
+                .clone()
+                .expect("all closed accountability records are present");
+            assert!(
+                observed.iter().all(|value| value.as_ref() == Some(&first)),
+                "validators expose different closed accountability after one incompatible domain"
+            );
+            break first;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "response window did not close with validator 0 recorded missing: {observed:?}"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    assert_eq!(closed.quorum_result_digest, Some(activation.result_digest));
+    assert_eq!(closed.quorum_signer_bitmap, Some(0b1110));
+    assert_eq!(closed.timely_bitmap, Some(0b1110));
+    assert_eq!(closed.matching_bitmap, Some(0b1110));
+    assert_eq!(closed.divergent_bitmap, Some(0));
+    assert_eq!(closed.missing_bitmap, Some(0b0001));
+    assert_eq!(closed.equivocation_bitmap, Some(0));
+}
+
+#[when("all validator nodes and OCOMP node-facing processes restart with preserved data")]
+fn restart_completed_network_and_ocomp_processes(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let before = world
+        .rpc
+        .finalized(primary)
+        .expect("finality before restart");
+    for validator_index in 0..4 {
+        world
+            .localnet
+            .restart_validator_and_enclave(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} with its preserved datadir: {error:#}")
+            });
+        let port = world.validators.http_port(validator_index);
+        assert!(
+            world
+                .rpc
+                .wait_block(port, before.saturating_add(1), 60)
+                .is_some(),
+            "validator-{validator_index} did not rejoin after preserved-datadir restart"
+        );
+    }
+
+    for validator_index in 0..4_u8 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .unwrap_or_else(|error| {
+                panic!("stop validator-{validator_index} Supervisor for replay: {error}")
+            });
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
+            .unwrap_or_else(|error| {
+                panic!("stop validator-{validator_index} SnapshotExporter for replay: {error}")
+            });
+        world
+            .ocomp
+            .restart_snapshot_exporter(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} SnapshotExporter: {error}")
+            });
+        world
+            .ocomp
+            .restart_supervisor(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} Supervisor: {error}")
+            });
+    }
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("all restarted OCOMP node-facing roles remain live");
+}
+
+#[then("the completed generation and exact vote replay remain identical")]
+fn completed_generation_survives_restart_and_replay(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("completed JobIntent before restart");
+    let activation = world
+        .state
+        .ocomp_activation
+        .clone()
+        .expect("completed activation before restart");
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("certified generation before restart");
+
+    for port in world.validators.committee_ports() {
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, activation.block_number, 60),
+            "validator on port {port} did not recover the activation height"
+        );
+        let recovered_activation = world
+            .rpc
+            .finalized_ocomp_activation_on(port, request.request_height, request.intent_id)
+            .expect("recovered finalized activation");
+        assert_eq!(
+            recovered_activation, activation,
+            "restart changed finalized activation on port {port}"
+        );
+        let recovered_generation = world
+            .rpc
+            .finalized_ocomp_certified_generation_on(port, &recovered_activation)
+            .expect("recovered certified generation");
+        assert_eq!(
+            recovered_generation, generation,
+            "restart changed certified generation on port {port}"
+        );
+        assert!(
+            world
+                .rpc
+                .transaction_receipt(&format!("{:#x}", activation.transaction_hash), port)
+                .is_some(),
+            "restart lost the q-forming transaction receipt on port {port}"
+        );
+    }
+
+    let primary = world.validators.primary_port();
+    let vote_bytes = world
+        .rpc
+        .ocomp_result_vote_bytes_on(primary, activation.transaction_hash)
+        .expect("decode the original q-forming result vote after restart");
+    let replay_hash = world
+        .rpc
+        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), vote_bytes)
+        .expect("submit exact full-result replay after restart");
+    let replay_receipt = world
+        .rpc
+        .transaction_receipt(&replay_hash, primary)
+        .expect("exact post-restart replay receipt");
+    assert_eq!(
+        replay_receipt
+            .get("status")
+            .and_then(serde_json::Value::as_str),
+        Some("0x1"),
+        "exact full-result replay after restart was not idempotently accepted"
+    );
+    let after = world
+        .rpc
+        .finalized_ocomp_activation_on(primary, request.request_height, request.intent_id)
+        .expect("activation after exact replay");
+    assert_eq!(after, activation, "exact replay changed the activation");
+    let after_generation = world
+        .rpc
+        .finalized_ocomp_certified_generation_on(primary, &after)
+        .expect("generation after exact replay");
+    assert_eq!(
+        after_generation, generation,
+        "exact replay changed the certified generation"
     );
 }
