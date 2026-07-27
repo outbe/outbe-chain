@@ -35,6 +35,12 @@ use crate::internal::config::Config;
 use crate::internal::proc::{args, ChildGuard, EnclaveGuard};
 use crate::internal::shell::Sh;
 
+/// Per-node execution cache for the four validators co-located by the PoC
+/// devnet harness. The upstream 4 GiB default is a single-node deployment
+/// default; applying it four times would consume the declared 12 GiB process
+/// budget before OCOMP begins.
+const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
+
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
 /// it's an environment decision read from [`Config::tee_mode`]. Only per-scenario
 /// parameters live on this struct.
@@ -206,6 +212,8 @@ impl Localnet {
             data.join("reth.ipc").display(),
             "--engine.persistence-threshold",
             0,
+            "--engine.cross-block-cache-size",
+            CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
         ]
@@ -412,6 +420,7 @@ fn ymd_utc(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::Environment;
     use std::ffi::OsStr;
 
     fn configured_timeout(mode: crate::env::TeeMode) -> Option<String> {
@@ -430,6 +439,22 @@ mod tests {
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("120"));
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::None), None);
+    }
+
+    #[test]
+    fn co_located_devnet_bounds_each_nodes_cross_block_cache() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+        let cache_size = args
+            .windows(2)
+            .find(|pair| pair[0] == "--engine.cross-block-cache-size")
+            .map(|pair| pair[1].as_str());
+
+        assert_eq!(cache_size, Some("512"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

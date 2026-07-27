@@ -2263,6 +2263,14 @@ or exceed every literal. The run manifest records those facts and derives
 `minimum_devnet_hardware_profile_hash`; a smaller or unknown machine cannot
 produce capacity evidence.
 
+The canonical four-validator PoC devnet co-locates all validator/node/OCOMP
+domains on that machine. Its E2E launch profile therefore fixes
+`--engine.cross-block-cache-size=512` MiB per node. Reth's 4096 MiB
+single-node default is not the PoC devnet configuration: multiplying it by
+four exhausts the 12 GiB process budget before any OCOMP work starts. The
+capacity evidence covers the fixed 512 MiB launch profile; it does not change
+consensus behavior or claim a supported production deployment profile.
+
 The exact PoC headroom rule is:
 
 ```text
