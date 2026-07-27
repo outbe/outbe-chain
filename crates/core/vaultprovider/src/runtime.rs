@@ -115,6 +115,8 @@ pub fn add_vault(storage: StorageHandle<'_>, sender: Address, vault: Address) ->
         return Err(VaultProviderError::ZeroAddress.into());
     }
 
+    // TODO ensure wallet.owner = address(0)
+
     let mut contract = VaultProviderContract::new(storage.clone());
     if !contract.asset_vault_set(asset).insert(vault)? {
         return Err(VaultProviderError::ReserveVaultAlreadyAdded.into());

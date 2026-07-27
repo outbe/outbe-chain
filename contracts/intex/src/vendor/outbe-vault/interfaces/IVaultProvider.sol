@@ -17,6 +17,8 @@ pragma solidity 0.8.30;
 /// @dev We never reference enum slot names in our Solidity (we only call `depositLiquidity`),
 ///      so the slot literal exists here purely as documentation and as a stable target for
 ///      the deployment runbook.
+
+// TODO remove this file and reference one from precompiles
 interface IVaultProvider {
     enum LiquiditySource {
         Unknown,

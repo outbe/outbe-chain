@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+// todo rename to vault-router
+// todo add mapping between iso and vaults?
 interface IVaultProvider {
-    enum LiquiditySource {
+    enum LiquiditySource { // todo rename to StablesSource/target
         Unknown,
-        NodCostPrice,
-        IntexStrikePrice,
-        CredisAnadosis,
-        IntexBidPrice,
-        GemSettle
+        NodCostPrice, // NodCostAmount
+        IntexStrikePrice, //IntexCostAmount
+        CredisAnadosis, // CredisCostAmount
+        IntexBidPrice, // remove
+        GemSettle // GemCostAmount
     }
 
     enum LiquidityTarget {
@@ -74,6 +76,7 @@ interface IVaultProvider {
         LiquidityTarget targetType
     );
 
+    // todo remove crosschain
     event CrosschainBridgeUpdated(address indexed oldBridge, address indexed newBridge);
     event RemoteVaultProviderUpdated(uint256 indexed chainId, address indexed oldProvider, address indexed newProvider);
     event CrosschainAssetUpdated(
@@ -124,28 +127,36 @@ interface IVaultProvider {
     /// @notice Returns the liquidity target at `index`. Reverts if out of bounds.
     function liquidityTargetAt(uint256 index) external view returns (address targetAddress, LiquidityTarget targetType);
 
+    // TODO remove after implementation governance
     /// @notice Registers a vault. Reverts if already registered.
     function addVault(address vault) external;
 
+    // TODO remove after implementation governance
     /// @notice Removes a previously registered vault for `asset`. Reverts if not found.
     function removeVault(address vault) external;
 
+    // TODO remove after implementation governance
     /// @notice Registers `sourceAddress` as an authorized liquidity source of `sourceType`.
     function addLiquiditySource(address sourceAddress, LiquiditySource sourceType) external;
 
+    // TODO remove after implementation governance
     /// @notice Deregisters a previously registered liquidity source. Reverts if not found.
     function removeLiquiditySource(address sourceAddress) external;
 
+    // TODO remove after implementation governance
     /// @notice Registers `targetAddress` as an authorized liquidity target of `targetType`.
     function addLiquidityTarget(address targetAddress, LiquidityTarget targetType) external;
 
+    // TODO remove after implementation governance
     /// @notice Deregisters a previously registered liquidity target. Reverts if not found.
     function removeLiquidityTarget(address targetAddress) external;
 
+    // todo rename to deposit
     /// @notice Deposits `assetsAmount` of `asset` into the asset's vault on behalf of the
     ///         caller. The caller (`msg.sender`) must be a registered liquidity source.
     function depositLiquidity(address asset, uint256 assetsAmount) external returns (uint256 sharesAmount);
 
+    // todo rename to withdraw
     /// @notice Redeems `amount` of `asset` from the vault and tops it up into `receiver`.
     ///         The caller (`msg.sender`) must be a registered liquidity target.
     function withdrawLiquidity(address asset, uint256 amount, address receiver) external returns (uint256 burnedShares);
