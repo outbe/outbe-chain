@@ -38,19 +38,22 @@ contract EscrowAdapter is
     /// @notice Role identifier for auction contract integration.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @notice Pre-finalize safety window before a bidder can claim their refund.
-    ///         72h = 259_200 seconds. Applies when `finalizeAuction` was never called.
-    uint32 public constant REFUND_DELAY = 72 hours;
+    /// @notice Safety window before the bidder of a never-finalized series can `claimRefund` the
+    ///         full principal, anchored at the lock's `lockedAt`. MUST exceed the longest
+    ///         legitimate finalization latency (settlement window + cross-chain delivery).
+    uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
 
     /// @notice Post-finalize safety window for a bidder whose lock was left in `Locked` state
-    ///         after `finalizeAuction` (i.e. landed in `BidderRefundFailed`). 7d = 604_800
-    ///         seconds. Gives the relayer a week to call `retryFinalize` with the correct
-    ///         split before the bidder can rescue their full principal via `claimRefund`.
-    uint32 public constant POST_FINALIZE_REFUND_DELAY = 7 days;
+    ///         after `finalizeAuction` (i.e. landed in `BidderRefundFailed`), anchored at
+    ///         `finalizedAt`. Priority window for the relayer to `retryFinalize` — possibly with
+    ///         a corrected split — before the recorded split becomes permissionlessly payable
+    ///         (and its remainder irreversibly burned) via `claimRefund`.
+    uint32 public constant POST_FINALIZE_REFUND_DELAY = 72 hours;
 
-    /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series can
-    ///         `claimRefund` the full principal. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
-    uint32 public constant ABANDON_DELAY = 30 days;
+    /// @notice Window after which an omitted/mismatched `Locked` bidder of a finalized series
+    ///         (no recorded split) can `claimRefund` the full principal, anchored at
+    ///         `finalizedAt`. MUST exceed `POST_FINALIZE_REFUND_DELAY`. Governance param.
+    uint32 public constant NO_SPLIT_REFUND_DELAY = 30 days;
 
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
@@ -473,9 +476,10 @@ contract EscrowAdapter is
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
             if (!lock.splitRecorded) {
-                // Omitted/mismatched bidder: relayer gets the retryFinalize window; after ABANDON_DELAY
-                // the lock becomes permissionlessly terminal with a full-principal refund.
-                uint32 abandonAt = state.finalizedAt + ABANDON_DELAY;
+                // Omitted/mismatched bidder: relayer gets the retryFinalize window; after
+                // NO_SPLIT_REFUND_DELAY the lock becomes permissionlessly terminal with a
+                // full-principal refund.
+                uint32 abandonAt = state.finalizedAt + NO_SPLIT_REFUND_DELAY;
                 if (block.timestamp < abandonAt) revert SplitNotRecorded(worldwideDay, bidder);
 
                 lock.status = LockStatus.Finalized;
@@ -504,7 +508,7 @@ contract EscrowAdapter is
         } else {
             // Never-finalized: the relayer never settled the series, so a full-principal refund is
             // correct — no clearing result exists on this chain.
-            uint32 claimableAt = lock.lockedAt + REFUND_DELAY;
+            uint32 claimableAt = lock.lockedAt + UNFINALIZED_REFUND_DELAY;
             if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
 
             lock.status = LockStatus.Finalized;

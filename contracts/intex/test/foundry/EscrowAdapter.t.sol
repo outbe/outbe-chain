@@ -310,7 +310,7 @@ contract EscrowAdapterTest is Test {
         _finalizeOmittingBidder1();
         uint256 balBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
         escrow.claimRefund(worldwideDay1, bidder1); // permissionless
 
         assertEq(paymentToken.balanceOf(bidder1), balBefore + LOCK_AMOUNT, "full principal refunded");
@@ -333,7 +333,7 @@ contract EscrowAdapterTest is Test {
         escrow.retryFinalize(worldwideDay1, RECEIVE_ID, inst);
 
         // bidder1 settled -> abandon path can never fire.
-        vm.warp(block.timestamp + escrow.ABANDON_DELAY() + 1);
+        vm.warp(block.timestamp + escrow.NO_SPLIT_REFUND_DELAY() + 1);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         escrow.claimRefund(worldwideDay1, bidder1);
     }
@@ -729,7 +729,7 @@ contract EscrowAdapterTest is Test {
 
         uint256 balanceBefore = paymentToken.balanceOf(bidder1);
 
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // Permissionless caller (an outsider) triggers the refund; funds go to bidder1.
         // claimRefund is not bridge-triggered, so the emitted receiveId is the zero sentinel.
@@ -748,7 +748,7 @@ contract EscrowAdapterTest is Test {
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         // One second before the delay elapses.
-        uint32 claimableAt = lockedAt + escrow.REFUND_DELAY();
+        uint32 claimableAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
         vm.warp(claimableAt - 1);
 
         vm.expectRevert(
@@ -766,7 +766,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_DoubleClaim_Reverts() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         escrow.claimRefund(worldwideDay1, bidder1);
 
@@ -782,7 +782,7 @@ contract EscrowAdapterTest is Test {
     function test_ClaimRefund_ForcedWithdrawalReturnsFalse_Reverts() public {
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
 
         // The Compact's forced withdrawal returns false (e.g. reset period not elapsed); the
         // adapter must surface this as the dedicated ForcedWithdrawalFailed, not a generic error.
@@ -792,23 +792,28 @@ contract EscrowAdapterTest is Test {
         escrow.claimRefund(worldwideDay1, bidder1);
     }
 
-    function test_ClaimRefund_PostFinalize_RevertsWithin7d() public {
-        // Lock, then finalize with a failing instruction (BidderRefundFailed leaves lock Locked).
+    function test_ClaimRefund_PostFinalize_GateAnchorsAtFinalizeNotLock() public {
+        // Lock, then finalize a day later with a failing instruction (BidderRefundFailed leaves
+        // lock Locked).
+        uint32 lockedAt = uint32(block.timestamp);
         vm.prank(auction);
         escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
+        // via-ir CSEs TIMESTAMP across vm.warp, so derive finalizedAt instead of re-reading it.
+        uint32 finalizedAt = lockedAt + 1 days;
+        vm.warp(finalizedAt);
         IEscrowAdapter.FinalizationInstruction[] memory instructions = new IEscrowAdapter.FinalizationInstruction[](1);
         instructions[0] = IEscrowAdapter.FinalizationInstruction({
             bidder: bidder1,
             refundedAmount: 0,
             paidAmount: LOCK_AMOUNT - 1 // mismatch, fails inside try/catch
         });
-        uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
         escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
 
-        // 72h after lockedAt — would unlock the pre-finalize window — but post-finalize 7d wins now.
-        uint32 nowAt = finalizedAt + escrow.REFUND_DELAY();
+        // The pre-finalize window (lockedAt + UNFINALIZED_REFUND_DELAY) has elapsed, but the
+        // series is finalized, so the finalizedAt-anchored post-finalize gate governs and blocks.
+        uint32 nowAt = lockedAt + escrow.UNFINALIZED_REFUND_DELAY();
         uint32 claimableAt = finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY();
         vm.warp(nowAt);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, nowAt));

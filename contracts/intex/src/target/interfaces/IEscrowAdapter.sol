@@ -56,7 +56,7 @@ interface IEscrowAdapter {
         /// @notice Number of bid locks created for the series.
         uint32 lockCount;
         /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds).
-        /// @dev Drives the post-finalize 7-day window on `claimRefund`. 0 if never finalized.
+        /// @dev Drives the post-finalize window on `claimRefund`. 0 if never finalized.
         uint32 finalizedAt;
         /// @notice Whether the series escrow has been finalized.
         bool finalized;
@@ -221,7 +221,7 @@ interface IEscrowAdapter {
     /// @param now_ Current block timestamp.
     error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
     /// @notice Post-finalize `claimRefund` has no validated split (bidder omitted or mismatched).
-    ///         Reverts only until `ABANDON_DELAY`, after which the full principal is refundable.
+    ///         Reverts only until `NO_SPLIT_REFUND_DELAY`, after which the full principal is refundable.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose split was never recorded.
     error SplitNotRecorded(uint32 worldwideDay, address bidder);
@@ -291,7 +291,7 @@ interface IEscrowAdapter {
     // --- Recovery ---
 
     /// @notice Permissionless principal refund: when the relayer never finalizes, or — for a finalized
-    ///         series — once `ABANDON_DELAY` elapses for an omitted/mismatched `Locked` bidder. Pays the
+    ///         series — once `NO_SPLIT_REFUND_DELAY` elapses for an omitted/mismatched `Locked` bidder. Pays the
     ///         stored `bidder`, not `msg.sender`.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.

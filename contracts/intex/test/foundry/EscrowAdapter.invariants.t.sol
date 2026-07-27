@@ -84,7 +84,7 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s2, bidders);
 
         // Permissionless refund of one lock on s1 after the 72h safety window.
-        vm.warp(block.timestamp + escrow.REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
         escrow.claimRefund(s1, bidderA);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
