@@ -297,7 +297,7 @@ description = "Run the complete immutable OCM-26 capacity and Final-arming gate"
 run = "cargo xtask ocomp task OCM-26"
 
 [tasks.ocomp-poc-e2e]
-description = "Run and independently verify the exact four-domain OCOMP E2E lane"
+description = "Run and independently verify the exact four-domain OCOMP E2E lane on hardware SGX"
 run = 'cargo xtask ocomp lane OCM-E2E "$@"'
 
 [tasks.ocomp-poc-isolation]
@@ -313,7 +313,7 @@ description = "Verify complete exact-artifact OCOMP PoC evidence; missing eviden
 run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- closure "$@"'
 
 [tasks.ocomp-poc-closure-run]
-description = "Execute all exact OCM-27 lanes once and retain the independently verified closure"
+description = "Execute all exact OCM-27 lanes once on hardware SGX and retain the independently verified closure"
 run = 'cargo xtask ocomp closure "$@"'
 
 # The hardware lane must be distinct from `e2e`: the default suite intentionally

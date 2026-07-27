@@ -128,6 +128,11 @@ pub struct EnvCli {
     #[arg(long)]
     pub mock_bin: Option<PathBuf>,
 
+    /// Production enclave binary used by `--tee real`. Defaults to
+    /// `<repo>/target/release/outbe-tee-enclave`.
+    #[arg(long)]
+    pub real_enclave_bin: Option<PathBuf>,
+
     /// Genesis seed file. Defaults to
     /// `<repo>/scripts/seed-testnet-lowstake.json`.
     #[arg(long)]
@@ -165,6 +170,7 @@ pub struct Environment {
     pub cli_bin: PathBuf,
     pub keygen_bin: PathBuf,
     pub mock_bin: PathBuf,
+    pub real_enclave_bin: PathBuf,
     pub seed: PathBuf,
     pub projection_mongodb_uri: String,
 }
@@ -207,6 +213,10 @@ impl Environment {
                 .mock_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/release/outbe-tee-enclave-mock")),
+            real_enclave_bin: cli
+                .real_enclave_bin
+                .clone()
+                .unwrap_or_else(|| repo.join("target/release/outbe-tee-enclave")),
             seed: cli
                 .seed
                 .clone()
@@ -239,6 +249,7 @@ impl Default for Environment {
             cli_bin: None,
             keygen_bin: None,
             mock_bin: None,
+            real_enclave_bin: None,
             seed: None,
             projection_mongodb_uri: "auto".to_owned(),
         })

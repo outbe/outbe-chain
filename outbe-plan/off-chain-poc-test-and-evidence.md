@@ -453,7 +453,7 @@ tests with the narrower claim defined in section 6.4:
 | `OCM-FAST` | `mise run ocomp-poc-fast` | Linux, every relevant PR | 15 min | mandatory |
 | `OCM-INT` | `mise run ocomp-poc-integration` | Linux + Mongo, every relevant PR | 30 min | mandatory |
 | `OCM-PUBLIC` | `mise run ocomp-poc-public-path` | fresh four-node process localnet, every relevant PR | 45 min | mandatory |
-| `OCM-E2E` | `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | privileged Linux with mock Gramine, every closure candidate and scheduled on main | 120 min | mandatory |
+| `OCM-E2E` | `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | privileged Linux with hardware SGX/Gramine, every closure candidate and scheduled on main | 120 min | mandatory |
 | `OCM-ISO` | `mise run ocomp-poc-isolation -- --evidence-dir <dir>` | systemd/cgroup-v2 runner, every closure candidate | 60 min | mandatory |
 | `OCM-VERIFY` | `mise run ocomp-poc-evidence-verify -- <manifest>` | clean Linux, every evidence bundle | 15 min | mandatory final gate |
 | `OCM-CLOSURE` | `mise run ocomp-poc-closure -- --evidence-dir <dir>` | closure runner, exact revision/artifacts | 240 min | aggregates all above |
@@ -462,14 +462,17 @@ The E2E task resolves to the existing harness entrypoint:
 
 ```text
 cargo run --locked -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock --validators 4 --all \
+  --tee real --real-enclave-bin <artifact-set>/outbe-tee-enclave \
+  --validators 4 --all \
   --input crates/testing/e2e-harness/features/ocomp_poc.feature \
   --evidence-dir <dir>
 ```
 
-Mock Gramine exercises the existing encrypted public Tribute path but makes no
-SGX hardware/attestation claim. It is not a mocked validator domain: all four
-nodes, consensus instances and OCOMP domains remain separate real processes.
+The closure runner passes `/dev/sgx_enclave` and `/dev/sgx_provision` into each
+Gramine container and retains the exact production enclave binary hash. This
+proves hardware-SGX execution but does not claim production DCAP policy. All
+four nodes, consensus instances and OCOMP domains remain separate real
+processes.
 
 The isolation task selects the companion OCOMP isolation feature and a planned
 explicit systemd-isolation CLI mode. It cannot silently fall back to ordinary

@@ -33,6 +33,8 @@ pub(crate) struct Config {
     pub bin_keygen: PathBuf,
     /// Mock enclave binary (`--mock-bin`).
     pub bin_mock: PathBuf,
+    /// Production enclave binary (`--real-enclave-bin`).
+    pub bin_real_enclave: PathBuf,
     /// Genesis seed file (`--seed`).
     pub seed: PathBuf,
     /// Transaction-capable MongoDB URI (`--projection-mongodb-uri`).
@@ -81,6 +83,7 @@ impl Config {
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
             bin_mock: env.mock_bin.clone(),
+            bin_real_enclave: env.real_enclave_bin.clone(),
             seed: env.seed.clone(),
             projection_mongodb_uri: env.projection_mongodb_uri.clone(),
             projection_database_prefix,
@@ -289,6 +292,19 @@ mod tests {
         assert_eq!(scenario.run_tag, run.run_tag);
         assert!(scenario.dir.starts_with(&run.dir));
         assert_eq!(scenario.validator_dir(2), scenario.dir.join("validator-2"));
+    }
+
+    #[test]
+    fn real_tee_keeps_the_explicit_production_enclave_artifact() {
+        let mut env = Environment::default();
+        env.tee_mode = TeeMode::Real;
+        env.real_enclave_bin = env.data_dir.join("artifact-set/outbe-tee-enclave");
+
+        let cfg = Config::resolve(&env);
+
+        assert_eq!(cfg.tee_mode, TeeMode::Real);
+        assert_eq!(cfg.bin_real_enclave, env.real_enclave_bin);
+        assert_ne!(cfg.bin_real_enclave, cfg.bin_mock);
     }
 
     /// Two scenarios never name the same container, and the run-level sweep

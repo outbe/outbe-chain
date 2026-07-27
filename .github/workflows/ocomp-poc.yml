@@ -78,7 +78,7 @@ jobs:
   poc-closure:
     name: PoC closure (fail closed)
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_closure)
-    runs-on: [self-hosted, linux, ocomp-systemd-cgroup-v2]
+    runs-on: [self-hosted, linux, sgx, ocomp-systemd-cgroup-v2]
     timeout-minutes: 360
     env:
       OUTBE_PROJECTION_MONGODB_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true
