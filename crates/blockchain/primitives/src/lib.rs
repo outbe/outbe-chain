@@ -23,6 +23,7 @@ pub mod reshare_artifact;
 pub mod signer;
 pub mod slashing_journal;
 pub mod stablecoin;
+pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
 pub mod tee_bootstrap;

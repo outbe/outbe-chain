@@ -278,13 +278,21 @@ the class must have been protected from CREATE/CREATE2 since block 1. Existing s
 that executed without the class guard is unsupported. Mainnet remains unsupported
 until its chain id, fresh genesis and activation manifest are separately frozen.
 
-## Open questions and technical debt
+## Protocol lock and technical debt
 
-- Choose the activation protocol version after SCF-021 implements and verifies the
-  genesis-active CREATE/CREATE2 class guard.
-- Before activation, verify that the fixed 1,000,000 COEN bond is representable and
-  transferred/burned as exactly `10^24` native base units in ABI and balance vectors.
-- Define and benchmark the Factory page cap and creation gas schedule.
+Stablecoin Factory V1 activates at protocol version `0.2` (raw `2`). Namespace
+reservation remains genesis-active independently of that runtime predicate. The
+public bonded sub-cap is 16 of Vote's 64 total pending slots, with one pending public
+bonded proposal per proposer. The bond is exactly
+`1,000,000,000,000,000,000,000,000` base units (`10^24`). Rejected admission commits
+no reservation, liability or log; fatal retry remains Pending and continues consuming
+both caps.
+
+Factory V1 exposes O(1) `tokenAt(index)` rather than a page selector, so it has no
+Factory page-size constant. Its initial creation gas ceiling is `500,000`, measured
+under the shared native schedule and 125%-rounded margin rule in
+`fork-manifest.json`; SCF-055 reopens G0 if bounded creation cannot fit it.
+
 - ADR-S-GOV-002 must add raw-payload compile-time target
   admission/reservation/terminal hooks, typed recoverable-versus-fatal outcomes,
   nested handler rollback and bond state before this design can activate.

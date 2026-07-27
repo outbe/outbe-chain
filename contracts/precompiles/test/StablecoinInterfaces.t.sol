@@ -87,6 +87,37 @@ contract StablecoinInterfacesTest {
         );
     }
 
+    function testEip712DomainVersionAndSeparatorsAreFrozen() public pure {
+        bytes32 domainTypehash =
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
+        bytes32 versionHash = keccak256("1");
+        _assertEq(versionHash, 0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6);
+        _assertEq(
+            keccak256(
+                abi.encode(
+                    domainTypehash,
+                    keccak256("Example Dollar"),
+                    versionHash,
+                    uint256(424242),
+                    address(0x53c0438D2AA31f9642f6718cE7b1aB3253c7F350)
+                )
+            ),
+            0xbad60a9ff5a489b59649a99c4bf6d3cf3ac4ed82c76304f0b14cbb2b8c9a83e9
+        );
+        _assertEq(
+            keccak256(
+                abi.encode(
+                    domainTypehash,
+                    keccak256("Example Dollar"),
+                    versionHash,
+                    uint256(54322345),
+                    address(0x53C0f7F0acaf4C6a42867EDc0CFeDD65eE90C97f)
+                )
+            ),
+            0x24aae2a2078bc2de3469da62ff425b346368ad5de045f3e522e81d0ccac6a425
+        );
+    }
+
     function testFactoryHasNoPublicCreationSelector() public pure {
         bytes4 forbidden = bytes4(keccak256("create(address,string,uint16,uint8,uint256,uint256)"));
         require(forbidden != IStablecoinFactory.tokenCount.selector, "public create selector");

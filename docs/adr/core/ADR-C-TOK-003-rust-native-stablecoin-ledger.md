@@ -244,15 +244,27 @@ compatibility vectors and bounded lazy migrations for every upgrade.
 - Implicit zero-as-unlimited caps, initial minting, mutable metadata and protocol
   admin recovery were rejected as ambiguous or over-privileged.
 
-## Open questions and technical debt
+## Protocol lock and implementation follow-up
+
+Stablecoin V1 writes `schemaVersion = 1` and becomes active when Update's canonical
+active protocol version reaches `0.2` (raw `2`), with begin-block-inclusive activation.
+The EIP-712 domain version is the independent string `"1"`; it is not inferred from
+the schema or protocol version. V1 tooling is owned by `bin/outbe-cli`; generated ABI
+JSON is an integration artifact, not a maintained SDK promise.
+
+The initial native gas contract is dispatch `200`, each persistent read `100`, each
+persistent write `5,000`, no refund or additional native cold surcharge, ecrecover
+`3,000`, and explicit dynamic hashing `30 + 6 * ceil(bytes/32)`. Normal EVM
+CALL/account access remains revm-owned. Identical fixed/class work has identical
+Outbe-native charge on first and repeated calls; the dynamic class is never enumerated
+as warm. `outbe_primitives::stablecoin_fork` is the canonical source for these values;
+`fork-manifest.json` is a machine-readable mirror whose full gas/budget parity is
+tested. The margin rule is `ceil_to_10_000(ceil(measured * 125 / 100))`. SCF-034,
+SCF-047 or SCF-055 reopens this protocol lock if its measured path cannot fit the
+corresponding ceiling.
 
 - Keep the checked-in ABI error, event, role-id, ERC-165 and EIP-712 vectors aligned
   with `contracts/precompiles/src/IStablecoin.sol`; any change reopens protocol lock.
-- Benchmark and assign protocol gas for policy reads, permit recovery and storage
-  mutation; flat precompile base gas is insufficient evidence.
-- Define the first `schemaVersion`, activation protocol version and canonical
-  protocol-version resolver in the implementation fork manifest; marker bytecode is
-  frozen as `0xef`.
 - Add frozen-transition vectors for `F < B`, `F == B`, `F > B`, mixed
   unfrozen/frozen consumption, full movement, ordinary self-transfer and rejected
   forced self-transfer.

@@ -160,12 +160,16 @@ eventing are protocol requirements rather than UI conveniences.
 - Validator-only policy creation was rejected; policy creation itself moves no funds
   and Factory admission separately governs token creation.
 
-## Open questions and technical debt
+## Protocol lock and technical debt
 
-- Choose the activation protocol version after the fixed `0xEE10` Registry address
-  and genesis reservation are integrated into the fork manifest.
-- Benchmark and set the maximum member batch, optional page cap and gas schedule;
-  all become pre-activation hard-fork constants.
+The Registry shares Stablecoin V1 activation at protocol version `0.2` (raw `2`); its
+fixed `0xEE10` marker remains genesis-active independently. One add/remove call accepts
+at most 64 accounts and validates the entire batch before the first write. V1 exposes
+only O(1) `isMember` and no member enumeration/page selector, so there is no member
+page cap. The initial policy-authorization ceiling is `10,000` gas and the 64-member
+mutation ceiling is `750,000`, under the shared native schedule and benchmark reopen
+rule in `fork-manifest.json`.
+
 - Keep add/remove `MembershipUnchanged` behavior and the exact event/error ABI aligned
   with the checked-in golden vectors.
 - Policy content does not prove KYC, sanctions screening or legal validity; those are

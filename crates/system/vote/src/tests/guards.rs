@@ -1,6 +1,8 @@
 use alloy_primitives::{address, Address, U256};
 
-use outbe_primitives::error::PrecompileError;
+use outbe_primitives::{
+    error::PrecompileError, stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
+};
 
 use crate::api::get_proposal;
 use crate::constants::{MAX_PENDING_PROPOSALS, MAX_PENDING_PROPOSALS_PER_VALIDATOR};
@@ -21,6 +23,14 @@ fn extra_validator_addr(index: u32) -> Address {
     bytes[0] = (index >> 8) as u8;
     bytes[1] = (index & 0xff) as u8;
     Address::from(bytes)
+}
+
+#[test]
+fn stablecoin_public_cap_preserves_48_vote_slots() {
+    const {
+        assert!(MAX_PENDING_PROPOSALS == 64);
+        assert!(MAX_PENDING_PROPOSALS - MAX_PENDING_PUBLIC_BONDED_PROPOSALS == 48);
+    }
 }
 
 #[test]
