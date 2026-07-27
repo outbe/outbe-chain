@@ -157,6 +157,18 @@ not create smaller competing snapshots. For `N` records and shard capacity
 ranges. Record `S` (the first record after a full first shard) belongs to shard
 one rather than being rejected.
 
+Fidelity opening transport is also population-independent and deterministic.
+The exporter first partitions the complete sorted owner set into consecutive
+batches of at most 256. If the node's canonical proof for one such batch does
+not fit the fork-pinned local-control body cap, the node returns typed
+`LimitExceeded` without closing the authenticated session. The exporter then
+bisects only that batch at `floor(len / 2)`, left half first, and repeats until
+every proof fits. Settlement ISO subjects remain byte-identical in every
+sub-batch. An individual owner whose proof cannot fit is a local abstention;
+the cap is never bypassed and the exact request is never blindly retried.
+Because the cap and split rule are bundle-pinned, all validator domains derive
+the same opening sequence and manifest commitment.
+
 ## Authoritative interfaces
 
 | Responsibility | Authority |

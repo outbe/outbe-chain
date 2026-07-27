@@ -501,7 +501,13 @@ impl OcompControlServer {
                 }
                 actual => return Err(NodeControlError::UnexpectedMethod(actual)),
             };
-            session.send_response(frame.request_id, NodeMessageKind::Response as u16, response)?;
+            send_bounded_response(
+                &mut session,
+                frame.request_id,
+                frame.message_kind,
+                response,
+                &self.limits,
+            )?;
         }
     }
 
@@ -641,6 +647,27 @@ fn send_local_error(
         NodeMessageKind::Error as u16,
         error.encode_body(limits)?,
     )?;
+    Ok(())
+}
+
+pub(super) fn send_bounded_response(
+    session: &mut ControlServerSession,
+    request_id: u64,
+    request_kind: u16,
+    response: Vec<u8>,
+    limits: &SchemaLimits,
+) -> Result<(), NodeControlError> {
+    if response.len() > limits.max_control_body_bytes {
+        return send_local_error(
+            session,
+            request_id,
+            request_kind,
+            LocalErrorCode::LimitExceeded,
+            false,
+            limits,
+        );
+    }
+    session.send_response(request_id, NodeMessageKind::Response as u16, response)?;
     Ok(())
 }
 

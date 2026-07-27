@@ -1060,6 +1060,11 @@ atomically and record exported identity only after closure. Worker startup
 loads the canonical bundle only from the fixed service-owned path; each
 selected manifest/chunk is decoded from the same digest-verified CAS bytes and
 matched to the typed `UnitSpecV1` input binding.
+Opening requests use the frozen maximum of 256 consecutive owners, but a
+canonical proof that exceeds the bundle-pinned control-body cap receives typed
+`LimitExceeded` without poisoning the session and is deterministically
+bisected left-first. The exact oversize request is not blindly retried; a
+single-owner oversize makes only that validator domain abstain.
 
 **Invariants/failures:** Mongo/CAS/path are transport only; missing/extra/
 changed/reordered body or opening fails root/count/nominal; worker hashes exact

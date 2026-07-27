@@ -484,7 +484,11 @@ For one `FINALIZED` pin, the exporter performs these steps in order:
     request typed Fidelity/Oracle state proofs at `BH` for every batch, verify
     the Ethereum proofs against `SR`, verify the complete expected raw slot set,
     and decode canonical openings; owner 257 starts the next batch and no total
-    owner/Tribute admission cap is introduced;
+    owner/Tribute admission cap is introduced; if a canonical response exceeds
+    the bundle-pinned control-body cap, accept only typed `LimitExceeded`,
+    bisect that exact owner batch at `floor(len / 2)` left-first while
+    preserving the complete ISO set, and abstain if one owner's proof still
+    cannot fit;
 14. independently reproduce Fidelity/Oracle read semantics at the intent's
     `logical_evaluation_height/time`; no live call or wall clock is allowed;
 15. encode Tribute, Fidelity and Oracle chunks in frozen canonical order;

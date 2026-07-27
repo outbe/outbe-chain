@@ -2273,6 +2273,9 @@ transaction or per-block lifecycle batch. A population larger than one
 operation is deterministically partitioned into more operations under the same
 `JobId`. If an individual bounded object is malformed, stale or above its
 per-interface limit, the request does not fall back to synchronous Lysis.
+For PoC Fidelity proofs, an over-cap response is a typed local-control
+rejection and the canonical owner batch is bisected left-first until it fits;
+the cap is never treated as a total-owner admission limit.
 
 After the deterministic protocol reservation/pin, local admission checks actual
 free disk, memory, CPU, I/O, ingress, proof slots, artifact retention and current

@@ -783,6 +783,15 @@ The exporter:
 5. verifies exact count/nominal and rebuilt collection root;
 6. writes a canonical authenticated input bundle to CAS.
 
+Opening transport has no total-owner ceiling. Sorted owners are first divided
+into consecutive groups of at most 256. If one canonical proof exceeds the
+bundle-pinned local-control body cap, the node returns typed `LimitExceeded`
+without dropping the session and the exporter deterministically bisects that
+group, left half first, until each response fits. The settlement ISO set is
+unchanged in every sub-request. A single owner that still cannot fit causes
+that validator domain to abstain; the limit is not increased or bypassed
+dynamically.
+
 PoC requires a bounded durable multi-job registry and a separately addressed
 Authenticated Input Lease Registry. A terminal predecessor, its retry and
 unrelated Jobs must coexist and progress independently. Retry creates a new

@@ -5,6 +5,7 @@ OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1	canonical(ActivationPreconditionsV1)
 OUTBE_OCOMP_INTENT_V1	canonical(JobIntentV1)
 OUTBE_OCOMP_INTENT_SLOT_V1	IntentId
 OUTBE_OCOMP_JOB_V1	IntentId||finalized_request_block_hash||finalized_request_state_root
+OUTBE_OCOMP_INPUT_LEASE_V1	chain_id||genesis_hash||fork_id||wwd||protocol_bundle_hash||ce_sealed_root||sealed_tribute_collection_key||sealed_tribute_collection_root||authenticated_day_count||authenticated_day_nominal||source_availability_policy_id||source_generation||logical_evaluation_height||logical_evaluation_time
 OUTBE_OCOMP_INPUT_CHUNK_V1	canonical(AuthenticatedInputChunkV1)
 OUTBE_OCOMP_INPUT_MANIFEST_V1	canonical(InputManifestV1)
 OUTBE_OCOMP_CODEC_DESCRIPTOR_V1	u16_be(role)||u16_be(version)||u32_be(descriptor_len)||canonical_schema_descriptor

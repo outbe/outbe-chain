@@ -1,6 +1,6 @@
 //! Production reconciliation loop for the fixed snapshot-exporter role.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -11,9 +11,11 @@ use outbe_compressed_entities::{
 };
 use outbe_node::ocomp::verify_lysis_openings;
 use outbe_ocomp_protocol::{
-    input::materialize_authenticated_openings, intent::ExpectedFinalizedIntentBindingV1,
-    opening::partition_lysis_opening_subjects, CommitSnapshotExportV1, RenewSnapshotLeaseV1,
-    SchemaLimits, SnapshotHandoffV1,
+    input::materialize_authenticated_openings,
+    intent::ExpectedFinalizedIntentBindingV1,
+    opening::{partition_lysis_opening_subjects, OpeningSubjectsV1},
+    CommitSnapshotExportV1, LocalErrorCode, NodeMessageKind, RenewSnapshotLeaseV1, SchemaLimits,
+    SnapshotHandoffV1,
 };
 use outbe_offchain_data::ProjectionConfig;
 use outbe_offchain_storage::{MongoStorage, MongoStorageConfig};
@@ -32,7 +34,9 @@ use crate::{
         poc_input_list_limits, publish_input_artifact_set, InputArtifactContents,
         InputArtifactIdentity,
     },
-    snapshot_client::{SnapshotExporterNodeClient, SnapshotExporterNodeConfig},
+    snapshot_client::{
+        SnapshotClientError, SnapshotExporterNodeClient, SnapshotExporterNodeConfig,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -328,19 +332,38 @@ impl SnapshotExporter {
             "partition bounded Lysis opening subjects",
             partition_lysis_opening_subjects(&owner_set, &iso_set, &self.limits),
         )?;
+        let mut pending_subjects = VecDeque::from(subjects);
         let mut fidelity_openings = Vec::new();
         let mut oracle_opening = None;
         let mut fidelity_slot_count = 0_usize;
         let mut oracle_slot_count = 0_usize;
-        for subject_batch in &subjects {
-            let openings = stage(
-                "request finalized Lysis openings",
-                self.node
-                    .lysis_openings(handoff.job_id, subject_batch.clone()),
-            )?;
+        while let Some(subject_batch) = pending_subjects.pop_front() {
+            let openings = match self
+                .node
+                .lysis_openings(handoff.job_id, subject_batch.clone())
+            {
+                Ok(openings) => openings,
+                Err(error) if is_lysis_response_limit(&error) => {
+                    let Some((left, right)) = bisect_opening_subjects(subject_batch) else {
+                        return Err(SnapshotExporterError::Stage {
+                            stage: "request finalized Lysis openings",
+                            detail: error.to_string(),
+                        });
+                    };
+                    pending_subjects.push_front(right);
+                    pending_subjects.push_front(left);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(SnapshotExporterError::Stage {
+                        stage: "request finalized Lysis openings",
+                        detail: error.to_string(),
+                    });
+                }
+            };
             stage(
                 "verify finalized Lysis openings",
-                verify_lysis_openings(&openings, &verified, subject_batch, &self.limits),
+                verify_lysis_openings(&openings, &verified, &subject_batch, &self.limits),
             )?;
             fidelity_slot_count = fidelity_slot_count
                 .checked_add(openings.fidelity.ordered_slots.len())
@@ -441,6 +464,33 @@ impl SnapshotExporter {
     }
 }
 
+fn is_lysis_response_limit(error: &SnapshotClientError) -> bool {
+    matches!(
+        error,
+        SnapshotClientError::RemoteRejected {
+            request_kind,
+            error_code,
+            retryable: false,
+        } if *request_kind == NodeMessageKind::BuildLysisOpenings as u16
+            && *error_code == LocalErrorCode::LimitExceeded as u16
+    )
+}
+
+fn bisect_opening_subjects(
+    mut subjects: OpeningSubjectsV1,
+) -> Option<(OpeningSubjectsV1, OpeningSubjectsV1)> {
+    let midpoint = subjects.owners.len() / 2;
+    if midpoint == 0 {
+        return None;
+    }
+    let right_owners = subjects.owners.split_off(midpoint);
+    let right = OpeningSubjectsV1 {
+        owners: right_owners,
+        settlement_isos: subjects.settlement_isos.clone(),
+    };
+    Some((subjects, right))
+}
+
 fn require(condition: bool, what: &'static str) -> Result<(), SnapshotExporterError> {
     if condition {
         Ok(())
@@ -471,4 +521,50 @@ pub enum SnapshotExporterError {
     MissingOracleOpening,
     #[error("snapshot exporter integer overflow")]
     IntegerOverflow,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloy_primitives::Address;
+
+    use super::*;
+
+    #[test]
+    fn ocm_ctl_001_limit_split_is_ordered_complete_and_strictly_decreasing() {
+        let subjects = OpeningSubjectsV1 {
+            owners: (1_u8..=5).map(Address::with_last_byte).collect(),
+            settlement_isos: vec![840, 978],
+        };
+        let (left, right) = bisect_opening_subjects(subjects.clone()).expect("splittable");
+
+        assert_eq!(left.owners, subjects.owners[..2]);
+        assert_eq!(right.owners, subjects.owners[2..]);
+        assert_eq!(left.settlement_isos, subjects.settlement_isos);
+        assert_eq!(right.settlement_isos, subjects.settlement_isos);
+        assert!(left.owners.len() < subjects.owners.len());
+        assert!(right.owners.len() < subjects.owners.len());
+
+        let singleton = OpeningSubjectsV1 {
+            owners: vec![Address::with_last_byte(1)],
+            settlement_isos: vec![840],
+        };
+        assert!(bisect_opening_subjects(singleton).is_none());
+    }
+
+    #[test]
+    fn ocm_ctl_001_only_exact_non_retryable_opening_limit_triggers_split() {
+        let exact = SnapshotClientError::RemoteRejected {
+            request_kind: NodeMessageKind::BuildLysisOpenings as u16,
+            error_code: LocalErrorCode::LimitExceeded as u16,
+            retryable: false,
+        };
+        assert!(is_lysis_response_limit(&exact));
+
+        let unrelated = SnapshotClientError::RemoteRejected {
+            request_kind: NodeMessageKind::CommitSnapshotExport as u16,
+            error_code: LocalErrorCode::LimitExceeded as u16,
+            retryable: false,
+        };
+        assert!(!is_lysis_response_limit(&unrelated));
+    }
 }

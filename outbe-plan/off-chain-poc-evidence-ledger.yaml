@@ -502,6 +502,8 @@ tests:
       - source_lag_ahead_and_restart_results
       - absent_sign_record_on_failure
       - bounded_256_owner_request_partition
+      - deterministic_control_cap_bisection_preserves_owner_order_and_completeness
+      - single_owner_control_cap_abstention
       - source_specific_opening_roots_and_manifest_commit
   OCM-CAS-001:
     status: planned
@@ -544,6 +546,7 @@ tests:
       - frame_and_acl_matrix
       - incompatible_bundle_readiness
       - cap_plus_one_rejection
+      - oversized_response_returns_typed_limit_without_session_loss
   OCM-DET-001:
     status: planned
     layer: PROCESS
