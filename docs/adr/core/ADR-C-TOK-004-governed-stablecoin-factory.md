@@ -298,9 +298,12 @@ under the shared native schedule and 125%-rounded margin rule in
 - ADR-S-GOV-002 must add raw-payload compile-time target
   admission/reservation/terminal hooks, typed recoverable-versus-fatal outcomes,
   nested handler rollback and bond state before this design can activate.
-- ADR-B-EVM-002 must pass the actual callee address into class dispatch, reserve the
-  class from genesis and generate exact-address plus reserved-class conformance from
-  one manifest.
+- ADR-B-EVM-002 first consolidates the 35 current exact routes behind one compact
+  declaration containing only dispatch adapter and base gas. The class-owning step
+  then adds exact-first resolution, passes the actual callee into class dispatch and
+  reserves the class from genesis. The static route table is not protocol-version,
+  persistence, warming or authentication authority; SCF-025 supplies exact-state
+  activation and Factory full-id/schema/marker checks authenticate each instance.
 - `DirectStorageProvider` currently rejects `set_code`; add journaled code mutation,
   state-root notification and checked balance credit, then publish Factory hook logs
   through the mandatory `HookEvents` receipt.

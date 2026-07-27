@@ -278,16 +278,32 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T0 canonical, payload build, validation, nested call and exact-block RPC.
 - **Exit:** every current source/fallback is documented.
 
-## SCF-020 — Generate one exact/class precompile manifest
+## SCF-020 — Consolidate exact precompile routing behind one compact declaration
 
-- **Goal:** Remove hand-maintained lookup/enumeration/capability drift.
-- **Scope/files:** new focused EVM manifest module; refactor `precompiles.rs`, factory
-  and subcall metadata without adding the production stablecoin route yet.
+- **Goal:** Remove the characterized 35-route/32-enumeration drift and the second
+  body-reader address match without changing existing route behavior.
+- **Scope/files:** add focused `outbe-evm/src/precompile_routes.rs`; refactor
+  `precompiles.rs` and registration/preservation tests. One declaration generates
+  exact lookup and complete exact enumeration and carries only the dispatch adapter
+  (`Basic`, `BodyReadersRequired`, `BodyReadersOptional`) plus base-gas function.
+- **Non-goals:** no stablecoin class route; no protocol activation, persistence,
+  warming, reentrancy, ABI/schema, owner or sponsorship metadata; no change to
+  `PrecompilesMap`/nested `warm_addresses` or `contains`; no gas schedule or current
+  `Bytes`/`SharedBuffer` pricing-order change; no debug-route reachability change.
 - **Depends on:** SCF-011, SCF-014.
-- **Done when:** lookup, enumeration, warm addresses, activation, gas and capability
-  metadata come from one manifest; duplicate/overlap is compile/startup fatal.
-- **Tests:** T1 manifest validation; T3 old exact routes remain byte/state equivalent.
-- **Verification:** complete EVM registration and subcall suites.
+- **Done when:** all 35 characterized exact routes come from one declaration; lookup
+  and enumeration cannot drift; resolved route adapters replace the second reader
+  match; duplicate exact declarations and Ethereum overlap fail compilation or
+  mandatory construction validation; top-level and nested calls still share
+  `outbe_ctx_dispatch`; byte/state/log/gas behavior of old exact routes is unchanged.
+- **Tests:** T1 exact-set/duplicate/Ethereum-overlap and reader-mode validation; T3
+  top-level/nested equivalence, Ethereum/ordinary fallback, missing-reader behavior
+  and the characterized calldata pricing order. Tests exercise behavior and typed
+  interfaces; they do not read or match Rust source text.
+- **Verification:** full EVM registration, genesis/preservation and subcall suites;
+  `cargo fmt --all --check`; `cargo clippy -p outbe-evm --all-targets -- -D warnings`.
+- **Exit:** routing review confirms no class, activation, warm/cold, persistence or
+  gas-policy change.
 
 ## SCF-021 — Enforce genesis-active CREATE/CREATE2 reservation
 
@@ -305,12 +321,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 - **Goal:** Route many token addresses to one Rust handler without shadowing ordinary
   EVM accounts.
-- **Scope/files:** EVM manifest/dispatch/subcall/storage-context seams; use a test
-  registry/handler until Factory lands.
+- **Scope/files:** add a thin exact/class resolver over `precompile_routes`, dispatch,
+  subcall and storage-context seams; use a test registry/handler until Factory lands.
 - **Depends on:** SCF-020, SCF-021.
-- **Done when:** exact routes win; class route receives actual callee; registration,
-  reverse full id, schema and exact marker are all required; unknown members fail
-  closed with no bytecode fallback.
+- **Done when:** exact routes win; the entire reserved prefix is claimed even before
+  runtime activation; inactive, unknown or unauthenticated members fail closed with
+  no bytecode fallback; the class route receives actual callee; registration, reverse
+  full id, schema and exact marker are all required; exact/class and class/class
+  overlap fail compilation or mandatory construction validation.
 - **Tests:** T1 route/auth outcomes; T3 two-instance isolation, forged marker,
   unregistered member, top-level/nested/static/reentrancy parity.
 - **Exit:** security review proves prefix alone never authenticates a token.
@@ -346,7 +364,9 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-014, SCF-004, SCF-024; serialize after HookEvents because these
   tasks share `outbe-primitives`/`outbe-evm` surfaces.
 - **Done when:** proposer, validator, nested call and historical RPC resolve the same
-  version from exact state; missing/corrupt authority is fatal.
+  version from exact state and pass it explicitly into class routing; static exact
+  route metadata and Ethereum `SpecId` are not activation authorities;
+  missing/corrupt authority is fatal.
 - **Tests:** T1 codec/failure; T3 H-1/H/H+1 and same-block Update visibility.
 - **Exit:** Update/EVM/RPC owners approve the authority contract.
 
@@ -654,13 +674,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 # Phase 6 — Production activation and consensus evidence
 
-## SCF-070 — Wire production manifests and compile-time targets
+## SCF-070 — Wire production routes and compile-time targets
 
 - **Goal:** Connect completed modules without runtime plugins.
 - **Scope/files:** workspace/EVM dependencies, exact Factory/Policy routes, token
   class route, Factory Vote target and global version context.
 - **Depends on:** `SCF-G1`, `SCF-G2`, `SCF-G3`, `SCF-G4`, `SCF-G5`.
-- **Tests:** T1 manifest/target uniqueness and activation; T3 existing routes/targets
+- **Tests:** T1 route/target uniqueness and activation; T3 existing routes/targets
   remain unchanged and stablecoin instances authenticate full id/schema/marker.
 
 ## SCF-071 — Land genesis/reset activation artifact

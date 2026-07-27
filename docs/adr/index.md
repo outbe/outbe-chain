@@ -134,7 +134,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-B-CNS-003](blockchain/ADR-B-CNS-003-consensus-execution-delivery.md) | Acknowledged consensus-to-execution delivery | consensus/engine | Proposed |
 | [ADR-B-CNS-004](blockchain/ADR-B-CNS-004-persistent-dkg-failure-halt-and-recovery.md) | Persistent DKG failure halt and quorum recovery | consensus/DKG/operator recovery | Proposed |
 | [ADR-B-EVM-001](blockchain/ADR-B-EVM-001-block-lifecycle-and-system-transactions.md) | Block lifecycle and system transaction order | EVM executor | Proposed |
-| [ADR-B-EVM-002](blockchain/ADR-B-EVM-002-outbe-evm-extension-and-call-frame-contract.md) | Outbe EVM registry/context/call frames | EVM integration | Proposed |
+| [ADR-B-EVM-002](blockchain/ADR-B-EVM-002-outbe-evm-extension-and-call-frame-contract.md) | Outbe EVM exact routes/class resolver/context/call frames | EVM integration | Proposed |
 | [ADR-B-EVM-003](blockchain/ADR-B-EVM-003-stateful-precompile-storage-capability.md) | Journaled precompile storage capabilities | storage provider seam | Proposed |
 | [ADR-B-EVM-004](blockchain/ADR-B-EVM-004-generated-storage-layout-and-abi-dispatch.md) | Generated storage layout and ABI dispatch | macros | Proposed |
 | [ADR-B-EVM-005](blockchain/ADR-B-EVM-005-stateful-runtime-module-contract.md) | Common stateful module contract | core/system runtime seam | Proposed |

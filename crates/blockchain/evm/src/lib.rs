@@ -7,6 +7,7 @@ pub mod factory;
 pub mod failure_receipt;
 pub mod gas;
 pub mod handlers;
+pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
