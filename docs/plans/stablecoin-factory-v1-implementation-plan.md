@@ -75,7 +75,9 @@ below as a fixed execution scope containing:
 
 Only the coordinating agent updates this plan. Implementation/review agents report
 evidence to the coordinator and never edit this file, avoiding a shared-file merge
-conflict across isolated worktrees.
+conflict across isolated worktrees. Repository/build/genesis validation belongs in
+`xtask`; end-to-end product flows belong in `crates/testing/e2e-harness`. Do not add a
+parallel standalone `scripts/tests` harness when either owner can express the check.
 
 Default completion rules for every implementation task:
 
@@ -115,7 +117,7 @@ reviewing the task's scoped diff and verification evidence.
 | --- | --- | --- | --- |
 | SCF-001 | Done | `5614296` | Forge 7/7; Alloy/golden 4/4; Vote 32/32; `cargo check` vote+CLI; independent ABI review READY |
 | SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
-| SCF-003 | Done | `6e948d2` | Rust 3/3; Python 7/7; scanner+generated-genesis integration; release build; review READY |
+| SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
 | SCF-G0 | Blocked | — | Requires SCF-004 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
@@ -190,8 +192,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T1 prefix/overlap and fixed-vector checks; T3 complete seeder output is
   rescanned and contains exact marker accounts. Fresh-localnet/reset evidence is
   deferred to SCF-083 under the Phase 7 T5 policy.
-- **Verification:** collision script, Rust namespace vectors, Python genesis tests and
-  generated-genesis scan.
+- **Verification:** `cargo run -p xtask -- stablecoin namespace-check`, Rust namespace
+  vectors, `cargo nextest run -p xtask` and generated-genesis scan.
 - **Exit gate:** **reset gate** — V1 cannot activate on state that executed before the
   address-class creation guard.
 
