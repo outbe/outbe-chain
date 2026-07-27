@@ -56,8 +56,8 @@ contract EscrowAdapter is
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
     ///         an auction-contract rotation. MUST exceed the auction-side no-reveal gate
-    ///         (`revealEnd + COMMIT_BOND_LOCK_PERIOD`), which holds while auction schedules span
-    ///         less than 9 days (daily series span ~2).
+    ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules span
+    ///         less than 29 days (daily series span ~2).
     uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter

@@ -16,7 +16,7 @@ import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
 ///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
-///      `COMMIT_BOND_LOCK_PERIOD`.
+///      `UNREVEALED_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
     IntexAuction auction;
     EscrowAdapter escrow;
@@ -230,7 +230,7 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
 
-        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD();
+        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD();
         vm.warp(claimableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
@@ -243,7 +243,7 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         auction.claimCommitBond(worldwideDay, iba1);
 
@@ -257,7 +257,7 @@ contract IntexAuctionBondTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
         auction.claimCommitBond(worldwideDay, iba1);
