@@ -69,6 +69,7 @@ const NORMATIVE_SOURCES: &[&str] = &[
 const GENERATOR_SOURCES: &[&str] = &["xtask/src/ocomp/capacity.rs", "xtask/src/ocomp/finalize.rs"];
 
 const CAPACITY_FILE: &str = "capacity-profile-v1.ocb1";
+const GENERATED_CAPACITY_FILE: &str = "generated-capacity-v1.json";
 const CORRECTNESS_FILE: &str = "correctness-profile-v1.ocb1";
 const BUNDLE_FILE: &str = "protocol-bundle-v1.ocb1";
 const COMMITTEE_FILE: &str = "result-committee-v1.ocb1";
@@ -355,6 +356,7 @@ pub fn run(
 
     for (name, bytes) in [
         (CAPACITY_FILE, capacity_bytes.as_slice()),
+        (GENERATED_CAPACITY_FILE, capacity_input_bytes.as_slice()),
         (CORRECTNESS_FILE, correctness_bytes.as_slice()),
         (BUNDLE_FILE, protocol_bundle_bytes.as_slice()),
         (COMMITTEE_FILE, committee_bytes.as_slice()),
@@ -984,6 +986,11 @@ mod tests {
                 .capacity_profile
                 .max_tributes_per_work_shard,
             256
+        );
+        assert_eq!(
+            fs::read(output.join(GENERATED_CAPACITY_FILE)).unwrap(),
+            fs::read(&capacity).unwrap(),
+            "the exact capacity manifest used for Final generation must be retained"
         );
 
         let network: serde_json::Value =

@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "ocomp-integration")]
+use sha2::{Digest as _, Sha256};
+
 const VALIDATOR_COUNT: usize = 4;
 const ROOT_FILES: &[&str] = &[
     "dkg-output.hex",
@@ -16,12 +19,33 @@ const VALIDATOR_FILES: &[&str] = &[
     "signing-key.hex",
     "signing-share.hex",
 ];
+#[cfg(feature = "ocomp-integration")]
+const ARTIFACT_FILES: &[&str] = &[
+    "capacity-profile-v1.ocb1",
+    "correctness-profile-v1.ocb1",
+    "fork-install-v1.ocb1",
+    "generated-capacity-v1.json",
+    "genesis-final.json",
+    "network-binding-v1.json",
+    "protocol-bundle-v1.ocb1",
+    "result-committee-public-v1.json",
+    "result-committee-v1.ocb1",
+    "semantic-artifacts-v1.json",
+];
 
 fn fixture_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("fixtures")
         .join("ocomp-final-v1")
         .join("base")
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn artifact_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("fixtures")
+        .join("ocomp-final-v1")
+        .join("artifacts")
 }
 
 #[test]
@@ -71,6 +95,56 @@ fn canonical_ocomp_base_fixture_has_only_bootstrap_authorities() {
             "runtime state leaked into canonical base fixture: {forbidden}"
         );
     }
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[test]
+fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
+    let root = artifact_root();
+    for relative in ARTIFACT_FILES {
+        require_regular_file(&root.join(relative));
+    }
+
+    let capacity_bytes = fs::read(root.join("generated-capacity-v1.json")).unwrap();
+    let network: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("network-binding-v1.json")).unwrap()).unwrap();
+    assert_eq!(network["classification"], "final");
+    assert_eq!(network["activation_height"], 32);
+    assert_eq!(
+        network["generated_capacity_manifest_sha256"],
+        format!("0x{}", hex::encode(Sha256::digest(&capacity_bytes))),
+        "network binding must identify the retained capacity manifest"
+    );
+
+    let genesis_path = root.join("genesis-final.json");
+    let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
+        genesis_path.to_str().expect("fixture path is UTF-8"),
+    )
+    .unwrap()
+    .as_ref()
+    .clone()
+    .map_header(outbe_primitives::OutbeHeader::new);
+    let install = outbe_node::ocomp::fork::load_ocomp_fork_install(&chain_spec)
+        .unwrap()
+        .expect("Final genesis contains an OCOMP install");
+    assert_eq!(
+        install.classification,
+        outbe_metadosis::ocomp::fork::OcompForkInstallClassification::Final
+    );
+    assert_eq!(install.activation_height, 32);
+    assert_eq!(
+        install.result_committee.ordered_members.len(),
+        VALIDATOR_COUNT
+    );
+    assert_eq!(install.result_committee.threshold, 3);
+    assert_eq!(
+        install
+            .request_profile
+            .capacity_profile
+            .max_tributes_per_work_shard,
+        256
+    );
+    assert_eq!(install.request_profile.capacity_profile.max_pending_jobs, 2);
 }
 
 fn require_regular_file(path: &Path) {
