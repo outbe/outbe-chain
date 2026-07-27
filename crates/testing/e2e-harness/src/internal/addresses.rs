@@ -20,6 +20,7 @@ pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// Desis auction owner (`getAuctionStage(uint32)`).
+#[cfg(feature = "ocomp-integration")]
 pub(crate) const DESIS_ADDR: Address = address!("0x0000000000000000000000000000000000001016");
 /// Update precompile (protocol-version governance).
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");

@@ -17,9 +17,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
-#[cfg(any(test, feature = "ocomp-integration"))]
-use eyre::ensure;
-use eyre::{bail, Result, WrapErr};
+use eyre::{bail, ensure, Result, WrapErr};
 use serde::Serialize;
 use serde_json::{json, Value};
 #[cfg(any(test, feature = "ocomp-integration"))]

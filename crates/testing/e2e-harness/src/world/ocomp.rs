@@ -85,7 +85,6 @@ use crate::ocomp_evidence::{
     OCOMP_VALIDATOR_DOMAINS,
 };
 
-#[cfg(feature = "ocomp-integration")]
 const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;

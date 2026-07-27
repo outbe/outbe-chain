@@ -32,12 +32,12 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::Serialize;
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::IMetadosis;
+use crate::internal::eth::{IDesis, IMetadosis};
 use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IDesis, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
+        self, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
         IValidatorSet, IVote, IWorldwideDay, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
