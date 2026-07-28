@@ -20,6 +20,7 @@ pub mod follower;
 pub mod l2_zk_gate;
 pub mod lifecycle;
 pub mod restart;
+pub mod stablecoin;
 pub mod stale_join;
 pub mod tribute_projection;
 pub mod zerofee;

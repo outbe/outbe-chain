@@ -32,3 +32,9 @@ pub(crate) const ZEROFEE_LOG_ADDR: Address = address!("0x00000000000000000000000
 pub(crate) const GOVERNANCE_ADDR: Address = address!("0x0000000000000000000000000000000000001018");
 /// L2 network registry precompile (`registerNetwork` / `setZkEnabled`).
 pub(crate) const L2_REGISTRY_ADDR: Address = address!("0x000000000000000000000000000000000000EE0E");
+/// Stablecoin Factory discovery and Vote target.
+pub(crate) const STABLECOIN_FACTORY_ADDR: Address =
+    address!("0x000000000000000000000000000000000000EE0F");
+/// Shared stablecoin policy registry.
+pub(crate) const STABLECOIN_POLICY_ADDR: Address =
+    address!("0x000000000000000000000000000000000000EE10");

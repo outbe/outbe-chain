@@ -142,12 +142,6 @@ fn stablecoin_policy_dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let active = crate::protocol_version::resolve(&storage)?;
-    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
-        return Err(PrecompileError::Revert(
-            "Stablecoin V1 is not active".into(),
-        ));
-    }
     outbe_stablecoinpolicy::precompile::dispatch(storage, data, caller, value)
 }
 
@@ -157,12 +151,6 @@ fn stablecoin_factory_dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    let active = crate::protocol_version::resolve(&storage)?;
-    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
-        return Err(PrecompileError::Revert(
-            "Stablecoin V1 is not active".into(),
-        ));
-    }
     outbe_stablecoinfactory::precompile::dispatch(storage, data, caller, value)
 }
 
@@ -178,13 +166,6 @@ fn stablecoin_class_dispatch(
     // it neither invokes the token ABI nor falls through to account bytecode.
     if data.is_empty() && !value.is_zero() {
         return Ok(Bytes::new());
-    }
-
-    let active = crate::protocol_version::resolve(&storage)?;
-    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
-        return Err(PrecompileError::Revert(
-            "Stablecoin V1 is not active".into(),
-        ));
     }
 
     let Some(factory_token_id) =
@@ -468,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_route_uses_current_exact_protocol_version_state() {
+    fn policy_route_is_available_from_genesis() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let route = lookup(&STABLECOIN_POLICY_REGISTRY_ADDRESS).unwrap();
@@ -477,21 +458,6 @@ mod tests {
         }
         .abi_encode();
 
-        assert!(matches!(
-            route.dispatch(
-                storage.clone(),
-                &ExecutionScope::new(),
-                None,
-                &data,
-                Address::ZERO,
-                U256::ZERO,
-            ),
-            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
-        ));
-
-        storage
-            .sstore(UPDATE_ADDRESS, U256::ZERO, U256::from(2u64))
-            .unwrap();
         let output = route
             .dispatch(
                 storage,
@@ -506,25 +472,12 @@ mod tests {
     }
 
     #[test]
-    fn factory_route_uses_current_exact_protocol_version_state() {
+    fn factory_route_is_available_from_genesis() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let route = lookup(&STABLECOIN_FACTORY_ADDRESS).unwrap();
         let data = IStablecoinFactory::tokenCountCall {}.abi_encode();
 
-        assert!(matches!(
-            route.dispatch(
-                storage.clone(),
-                &ExecutionScope::new(),
-                None,
-                &data,
-                Address::ZERO,
-                U256::ZERO,
-            ),
-            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
-        ));
-
-        activate(&storage);
         let output = route
             .dispatch(
                 storage,
@@ -555,16 +508,6 @@ mod tests {
             caller: Address::ZERO,
             value: U256::ZERO,
         }
-    }
-
-    fn activate(storage: &StorageHandle<'_>) {
-        storage
-            .sstore(
-                UPDATE_ADDRESS,
-                U256::ZERO,
-                U256::from(outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-            )
-            .unwrap();
     }
 
     fn install_token(storage: StorageHandle<'_>, marker: bool, initialize: bool) -> Address {
@@ -607,9 +550,7 @@ mod tests {
                 .initialize(&FactoryTokenInitialization {
                     token_address: token,
                     token_id,
-                    creation_protocol_version: u64::from(
-                        outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW,
-                    ),
+                    creation_protocol_version: 0,
                     payload,
                 })
                 .unwrap();
@@ -618,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn stablecoin_class_is_claimed_before_activation_and_unknown_members_fail_closed() {
+    fn stablecoin_class_is_claimed_and_unknown_members_fail_closed() {
         let token = class_address(0x11);
         assert!(matches!(resolve(&token), Some(Route::StablecoinClass)));
 
@@ -641,17 +582,6 @@ mod tests {
         );
         assert!(matches!(
             route.dispatch(
-                storage.clone(),
-                &ExecutionScope::new(),
-                None,
-                class_call(token, &[]),
-            ),
-            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
-        ));
-
-        activate(&storage);
-        assert!(matches!(
-            route.dispatch(
                 storage,
                 &ExecutionScope::new(),
                 None,
@@ -665,7 +595,6 @@ mod tests {
     fn class_authentication_requires_registration_marker_schema_and_matching_full_id() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
-        activate(&storage);
         let token = install_token(storage.clone(), false, false);
         let route = resolve(&token).unwrap();
 
@@ -700,7 +629,6 @@ mod tests {
     fn authenticated_class_dispatch_uses_the_actual_callee() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
-        activate(&storage);
         let token = install_token(storage.clone(), true, true);
         let call = outbe_stablecoin::precompile::IStablecoin::symbolCall {};
         let output = resolve(&token)

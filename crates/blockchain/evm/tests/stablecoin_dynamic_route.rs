@@ -5,13 +5,9 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::{sub_call, OutbeEvmFactory};
 use outbe_primitives::{
-    addresses::{
-        STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
-        UPDATE_ADDRESS,
-    },
+    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     block::BlockContext,
     stablecoin::{predict_stablecoin, StablecoinCreatePayload},
-    stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW,
     storage::{
         direct::DirectStorageProvider, StorageHandle, SubCallError, SubCallInput, SubCallStatus,
     },
@@ -60,12 +56,6 @@ fn funded_account() -> AccountInfo {
 
 fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Vec<Address>) {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_storage(
-        UPDATE_ADDRESS,
-        U256::ZERO,
-        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-    )
-    .unwrap();
     db.insert_account_info(CALLER, funded_account());
 
     let mut initializations = Vec::with_capacity(definitions.len());
@@ -106,7 +96,7 @@ fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Ve
             FactoryTokenInitialization {
                 token_address: token,
                 token_id,
-                creation_protocol_version: u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+                creation_protocol_version: 0,
                 payload,
             },
         ));
@@ -297,12 +287,6 @@ fn nested_call_with_insufficient_gas_halts_out_of_gas() {
 fn unregistered_class_member_reverts_without_executing_installed_bytecode() {
     let unknown = class_address(0xfe);
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_storage(
-        UPDATE_ADDRESS,
-        U256::ZERO,
-        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-    )
-    .unwrap();
     db.insert_account_info(CALLER, funded_account());
 
     // This runtime would return success if the reserved address ever fell

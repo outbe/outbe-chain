@@ -29,6 +29,7 @@ walkdir.workspace = true
 mongodb.workspace = true
 hex.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-primitives.workspace = true
 # Genesis `genesisTime` ISO-8601 formatting (bootstrap glue ported from `date -u`).
 time = { workspace = true, features = ["formatting"] }
 

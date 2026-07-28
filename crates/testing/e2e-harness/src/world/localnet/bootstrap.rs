@@ -134,6 +134,7 @@ impl Localnet {
         let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
         let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
         let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
+        let validator_balance = validator_balance_hex(tuning);
 
         let vjson: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
@@ -148,7 +149,7 @@ impl Localnet {
                 .ok_or_else(|| eyre!("validator entry missing address"))?;
             // Genesis alloc keys are the address without the `0x` prefix.
             let key = addr.trim_start_matches("0x").to_string();
-            alloc.insert(key, json!({ "balance": VALIDATOR_BALANCE_HEX }));
+            alloc.insert(key, json!({ "balance": validator_balance.clone() }));
         }
 
         let now = SystemTime::now()
@@ -322,6 +323,13 @@ fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
         .and_then(|(_, value)| value.parse().ok())
 }
 
+fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
+    tuned_optional(tuning, "TESTNET_VALIDATOR_BALANCE_COEN").map_or_else(
+        || VALIDATOR_BALANCE_HEX.to_owned(),
+        |coen| format!("0x{:x}", u128::from(coen) * 10u128.pow(18)),
+    )
+}
+
 fn patch_staking_storage(
     genesis: &mut serde_json::Value,
     unbonding: Option<u64>,
@@ -447,5 +455,17 @@ mod tests {
         let mut mock = json!({ "config": {} });
         apply_co_located_sgx_timing(&mut mock, crate::env::TeeMode::Mock).unwrap();
         assert!(mock["config"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn validator_liquid_balance_can_be_tuned_per_scenario() {
+        assert_eq!(validator_balance_hex(&[]), VALIDATOR_BALANCE_HEX);
+
+        let tuned =
+            validator_balance_hex(&[("TESTNET_VALIDATOR_BALANCE_COEN", "2100000".to_owned())]);
+        assert_eq!(
+            u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
+            2_100_000u128 * 10u128.pow(18)
+        );
     }
 }

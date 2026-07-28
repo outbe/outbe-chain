@@ -1,8 +1,8 @@
 # ADR-C-TOK-004: A governed Rust Factory owns permanent stablecoin identity and creation
 
-- **Status:** Proposed; design approved, not implemented
+- **Status:** Implemented
 - **Date:** 2026-07-27
-- **Owners/scope:** proposed `crates/core/stablecoinfactory`; creation admission,
+- **Owners/scope:** `crates/core/stablecoinfactory`; creation admission,
   address derivation, pending reservations and permanent token registry
 - **Depends on:** ADR-B-EVM-002, ADR-B-EVM-003, ADR-B-EVM-004,
   ADR-C-TOK-003, ADR-C-TOK-005, ADR-S-GOV-002
@@ -256,8 +256,8 @@ adapter. They are not EVM selectors.
 ## Determinism, bounds and replay
 
 JSON byte validation, the SIX List One 2026-01-01 ISO table snapshot, ticker
-validation, address derivation and index writes are protocol-versioned deterministic
-code. Proposal size remains bounded by
+validation, address derivation and index writes are consensus-deterministic code.
+Proposal size remains bounded by
 Vote; name and ticker bounds cap parsing/allocation. One proposal performs O(1)
 Factory and token initialization work. Duplicate proposal, execution or terminal
 hooks are rejected or idempotently observe their already-terminal state without
@@ -268,7 +268,7 @@ settling value twice.
 Wallets and protocols get predictable ERC-20 addresses and an on-chain discovery
 registry. Issuers cannot select code, bypass Vote or overwrite identity. The two-byte
 namespace gives 144 hash bits while enabling cheap dispatch, but permanently
-reserves that address class and requires a collision scan before activation.
+reserves that address class and requires a collision scan before genesis is frozen.
 
 ## Rejected alternatives
 
@@ -283,19 +283,17 @@ reserves that address class and requires a collision scan before activation.
   restrictive; no-prefix routing was rejected because current native dispatch
   requires a reserved class.
 
-### Genesis and activation classification
+### Genesis deployment classification
 
-Stablecoin V1 may activate on devnet/testnet only after a coordinated destructive
-pre-production reset that regenerates one identical genesis containing the Factory
-and Policy marker accounts. A restart that preserves old chain state is insufficient:
-the class must have been protected from CREATE/CREATE2 since block 1. Existing state
-that executed without the class guard is unsupported. Mainnet remains unsupported
-until its chain id, fresh genesis and activation manifest are separately frozen.
+Stablecoin V1 ships only in a fresh devnet/testnet genesis containing the Factory and
+Policy marker accounts. The reserved class is protected from CREATE/CREATE2 from
+block 0. Existing state that executed without the class guard is unsupported.
+Mainnet remains unsupported until its chain id and fresh genesis are separately
+frozen.
 
-## Protocol lock and technical debt
+## Protocol lock and implementation evidence
 
-Stablecoin Factory V1 activates at protocol version `0.2` (raw `2`). Namespace
-reservation remains genesis-active independently of that runtime predicate. The
+Stablecoin Factory V1 is active from genesis at chain protocol version `0`. The
 public bonded sub-cap is 16 of Vote's 64 total pending slots, with one pending public
 bonded proposal per proposer. The bond is exactly
 `1,000,000,000,000,000,000,000,000` base units (`10^24`). Invalid admission commits
@@ -308,17 +306,12 @@ Factory V1 exposes `tokenCount()` and `listTokens(offset, limit)` with caller-se
 runs in Vote's bounded begin-block path; V1 defines no separate Factory creation gas
 ceiling or gas-benchmark activation gate.
 
-- ADR-S-GOV-002 must add raw-payload compile-time target
-  admission/reservation/terminal hooks, nested handler rollback, `Error` status and
-  bond state before this design can activate.
-- ADR-B-EVM-002 first consolidates the 35 current exact routes behind one compact
-  declaration containing only dispatch adapter and base gas. The class-owning step
-  then adds exact-first resolution, passes the actual callee into class dispatch and
-  reserves the class from genesis. The static route table is not protocol-version,
-  persistence, warming or authentication authority; SCF-025 supplies exact-state
-  activation and Factory full-id/schema/marker checks authenticate each instance.
-- `DirectStorageProvider` currently rejects `set_code`; add journaled code mutation,
-  state-root notification and checked balance credit, then publish Factory hook logs
-  through the mandatory `HookEvents` receipt.
+- Vote implements raw-payload compile-time admission/reservation/terminal hooks,
+  nested target rollback, `Error` status and exact bond accounting.
+- EVM routing resolves exact addresses before the reserved class, passes the actual
+  callee into dynamic dispatch and authenticates every token through Factory
+  registration, schema and exact marker.
+- `DirectStorageProvider::set_code`, checked balance credit, state-root notification
+  and receipt-visible Factory `HookEvents` are journaled and rollback-tested.
 - Fee eligibility, payment-lane classification and reserve attestations require
   independent registries and ADRs; Factory approval must not be reused as a shortcut.

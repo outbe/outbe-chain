@@ -84,12 +84,6 @@ pub mod vote {
             payload: &[u8],
             context: VoteTargetContext,
         ) -> Result<()> {
-            let active = crate::protocol_version::resolve(&storage)?;
-            if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
-                return Err(PrecompileError::Revert(
-                    "Stablecoin V1 is not active".into(),
-                ));
-            }
             let validated =
                 StablecoinFactoryApi::validate_create(storage.clone(), context.proposer, payload)?;
             StablecoinFactoryApi::reserve(
@@ -110,13 +104,12 @@ pub mod vote {
             payload: &[u8],
             context: VoteTargetContext,
         ) -> Result<TargetExecutionOutcome> {
-            let active = crate::protocol_version::resolve(&ctx.storage)?;
             match StablecoinFactoryApi::execute_approved(
                 ctx.storage.clone(),
                 proposal_id,
                 context.proposer,
                 payload,
-                u64::from(active.raw()),
+                0,
             ) {
                 Ok(_) => Ok(TargetExecutionOutcome::Applied),
                 Err(error @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
@@ -160,12 +153,11 @@ pub mod vote {
     mod tests {
         use super::*;
         use alloy_sol_types::SolEvent;
-        use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
+        use outbe_primitives::addresses::VOTE_ADDRESS;
         use outbe_primitives::block::BlockContext;
         use outbe_primitives::stablecoin::{
             encode_canonical_stablecoin_create, StablecoinCreatePayload,
         };
-        use outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW;
         use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
         use outbe_stablecoinfactory::StablecoinFactoryContract;
         use outbe_validatorset::contract::ValidatorSet;
@@ -214,16 +206,6 @@ pub mod vote {
             }
         }
 
-        fn activate(storage: &StorageHandle<'_>) {
-            storage
-                .sstore(
-                    UPDATE_ADDRESS,
-                    U256::ZERO,
-                    U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-                )
-                .unwrap();
-        }
-
         fn register_active_validator(storage: StorageHandle<'_>, validator: Address, seed: u8) {
             let mut validator_set = ValidatorSet::new(storage);
             validator_set.config_owner.write(VALIDATOR_OWNER).unwrap();
@@ -254,7 +236,7 @@ pub mod vote {
         }
 
         #[test]
-        fn factory_target_has_exact_bond_and_reserves_only_after_activation() {
+        fn factory_target_has_exact_bond_and_reserves_from_genesis() {
             let issuer = Address::repeat_byte(0x11);
             let raw = payload(issuer);
             let target = registry().lookup(STABLECOIN_FACTORY_ADDRESS).unwrap();
@@ -271,10 +253,6 @@ pub mod vote {
 
             let mut provider = HashMapStorageProvider::new(1);
             let storage = StorageHandle::new(&mut provider);
-            assert!(target
-                .reserve(storage.clone(), U256::from(1u64), &raw, context(issuer))
-                .is_err());
-            activate(&storage);
             target
                 .reserve(storage.clone(), U256::from(1u64), &raw, context(issuer))
                 .unwrap();
@@ -292,7 +270,6 @@ pub mod vote {
             provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus);
             {
                 let storage = StorageHandle::new(&mut provider);
-                activate(&storage);
                 let mut vote = Vote::new(storage.clone());
                 let proposal_id = vote
                     .create_proposal_with_value(
@@ -322,7 +299,6 @@ pub mod vote {
             let mut mismatch_provider = HashMapStorageProvider::new(1);
             mismatch_provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND);
             let mismatch_storage = StorageHandle::new(&mut mismatch_provider);
-            activate(&mismatch_storage);
             let mut vote = Vote::new(mismatch_storage.clone());
             assert!(vote
                 .create_proposal_with_value(
@@ -355,7 +331,6 @@ pub mod vote {
             let proposal_id;
             {
                 let storage = StorageHandle::new(&mut provider);
-                activate(&storage);
                 setup_active_validators(storage.clone());
                 let mut vote = Vote::new(storage.clone());
                 let factory = StablecoinFactoryContract::new(storage.clone());
@@ -446,7 +421,6 @@ pub mod vote {
             let proposal_id;
             {
                 let storage = StorageHandle::new(&mut provider);
-                activate(&storage);
                 setup_active_validators(storage.clone());
                 let mut vote = Vote::new(storage.clone());
                 proposal_id = vote
@@ -526,7 +500,6 @@ pub mod vote {
             provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND);
             {
                 let storage = StorageHandle::new(&mut provider);
-                activate(&storage);
                 setup_active_validators(storage.clone());
                 let mut vote = Vote::new(storage.clone());
                 let proposal_id = vote
@@ -600,7 +573,6 @@ pub mod vote {
             let mut provider = HashMapStorageProvider::new(1);
             provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND * U256::from(2u64));
             let storage = StorageHandle::new(&mut provider);
-            activate(&storage);
             let mut vote = Vote::new(storage.clone());
             let first = vote
                 .create_proposal_with_value(
@@ -638,7 +610,6 @@ pub mod vote {
 
             let mut approved_provider = HashMapStorageProvider::new(1);
             let approved_storage = StorageHandle::new(&mut approved_provider);
-            activate(&approved_storage);
             target
                 .reserve(
                     approved_storage.clone(),
@@ -672,7 +643,6 @@ pub mod vote {
 
             let mut expired_provider = HashMapStorageProvider::new(1);
             let expired_storage = StorageHandle::new(&mut expired_provider);
-            activate(&expired_storage);
             target
                 .reserve(
                     expired_storage.clone(),
@@ -704,7 +674,6 @@ pub mod vote {
 
             let mut error_provider = HashMapStorageProvider::new(1);
             let error_storage = StorageHandle::new(&mut error_provider);
-            activate(&error_storage);
             target
                 .reserve(
                     error_storage.clone(),
@@ -736,7 +705,6 @@ pub mod vote {
 
             let mut fatal_provider = HashMapStorageProvider::new(1);
             let fatal_storage = StorageHandle::new(&mut fatal_provider);
-            activate(&fatal_storage);
             target
                 .reserve(
                     fatal_storage.clone(),

@@ -3648,7 +3648,7 @@ mod tests {
     use outbe_primitives::OutbeHeader;
     use outbe_primitives::{
         stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
-        stablecoin_fork::{STABLECOIN_CREATE_BOND, STABLECOIN_V1_PROTOCOL_VERSION_RAW},
+        stablecoin_fork::STABLECOIN_CREATE_BOND,
     };
     use outbe_stablecoin::StablecoinContract;
     use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
@@ -6680,13 +6680,6 @@ mod tests {
         let mut state =
             state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
                 storage
-                    .sstore(
-                        UPDATE_ADDRESS,
-                        U256::ZERO,
-                        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-                    )
-                    .unwrap();
-                storage
                     .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus)
                     .unwrap();
                 (expected_token_id, expected_token) =
@@ -6876,13 +6869,6 @@ mod tests {
         let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
         let mut state =
             state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
-                storage
-                    .sstore(
-                        UPDATE_ADDRESS,
-                        U256::ZERO,
-                        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-                    )
-                    .unwrap();
                 storage
                     .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
                     .unwrap();
@@ -7101,13 +7087,6 @@ mod tests {
                 let mut provider =
                     super::DirectStorageProvider::new(&mut state, seed_context.clone());
                 let storage = StorageHandle::new(&mut provider);
-                storage
-                    .sstore(
-                        UPDATE_ADDRESS,
-                        U256::ZERO,
-                        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-                    )
-                    .unwrap();
                 storage
                     .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
                     .unwrap();

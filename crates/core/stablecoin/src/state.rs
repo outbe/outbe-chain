@@ -8,9 +8,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::{
     encode_canonical_stablecoin_create, stablecoin_address, stablecoin_token_id,
 };
-use outbe_primitives::stablecoin_fork::{
-    STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
-};
+use outbe_primitives::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
 use outbe_stablecoinpolicy::api::{
     can_mint as policy_can_mint, can_receive as policy_can_receive, can_send as policy_can_send,
     policy_exists,
@@ -960,8 +958,6 @@ impl StablecoinContract<'_> {
         if initialization.token_address != self.address
             || initialization.token_address == Address::ZERO
             || initialization.token_id == B256::ZERO
-            || initialization.creation_protocol_version
-                < u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW)
         {
             return Err(StablecoinStateError::InvalidInitializationIdentity.into());
         }

@@ -472,7 +472,7 @@ fn full_vote_update_flow_2_of_4_yes_expires_without_update_state_change() {
 }
 
 #[test]
-fn downgrade_vote_proposal_rejected_without_update_state_change() {
+fn downgrade_vote_proposal_errors_without_update_state_change() {
     with_vote_runtime_at(100, |storage, current| {
         let mut update = Update::new(storage.clone());
         update.set_active_version(V1_3, 50).unwrap();
@@ -489,7 +489,7 @@ fn downgrade_vote_proposal_rejected_without_update_state_change() {
         run_vote_begin_block(storage.clone(), tally_block(current));
 
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();
-        assert_eq!(record.proposal_status().unwrap(), ProposalStatus::Rejected);
+        assert_eq!(record.proposal_status().unwrap(), ProposalStatus::Error);
 
         let update = Update::new(storage.clone());
         assert!(update.read_scheduled_update(proposal_id).unwrap().is_none());
@@ -499,7 +499,7 @@ fn downgrade_vote_proposal_rejected_without_update_state_change() {
 }
 
 #[test]
-fn conflicting_update_proposal_rejected_without_update_state_change() {
+fn conflicting_update_proposal_errors_without_update_state_change() {
     with_vote_runtime_at(100, |storage, current| {
         let activation = proposal_activation(current);
 
@@ -528,7 +528,7 @@ fn conflicting_update_proposal_rejected_without_update_state_change() {
         );
         assert_eq!(
             second_record.proposal_status().unwrap(),
-            ProposalStatus::Rejected
+            ProposalStatus::Error
         );
 
         let update = Update::new(storage.clone());

@@ -1,22 +1,17 @@
-//! Stablecoin Factory V1 hard-fork manifest.
+//! Stablecoin Factory V1 protocol manifest.
 //!
-//! This module is the protocol-lock source for Stablecoin V1 activation, bounds,
-//! gas metadata and tooling ownership. Runtime crates consume these values rather
-//! than copying literals. Any value change is hard-fork-equivalent and requires
-//! updated vectors and ADRs.
+//! Stablecoin V1 is part of the fresh genesis.
+//! This module is the protocol-lock source for its bounds, gas metadata and
+//! tooling ownership. Runtime crates consume these values rather than copying
+//! literals. Any value change requires updated vectors and ADRs.
 
 use alloy_primitives::{uint, U256};
 
 /// The first schema written by Stablecoin V1 Factory, Registry and token accounts.
 pub const STABLECOIN_V1_SCHEMA_VERSION: u32 = 1;
 
-/// Update protocol version `0.2`, encoded as `u8 major | u24 minor`.
-pub const STABLECOIN_V1_PROTOCOL_VERSION_RAW: u32 = 2;
-/// External dotted form accepted by the Update proposal payload.
-pub const STABLECOIN_V1_PROTOCOL_VERSION: &str = "0.2";
-pub const STABLECOIN_V1_UPDATE_ACTIVATION: &str = "begin-block-inclusive";
-pub const STABLECOIN_V1_NAMESPACE_RESERVATION: &str =
-    "genesis-active-independent-of-runtime-activation";
+pub const STABLECOIN_V1_ACTIVATION: &str = "genesis";
+pub const STABLECOIN_V1_NAMESPACE_RESERVATION: &str = "reserved-in-genesis";
 pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 2] = [
     "outbe-devnet-1-fresh-genesis",
     "outbe-testnet-1-fresh-genesis",
@@ -39,7 +34,7 @@ pub const STABLECOIN_POLICY_MEMBER_BATCH_CAP: usize = 64;
 pub const STABLECOIN_LIST_PAGE_CAP: usize = 100;
 
 /// Stablecoin V1 EIP-712 domain version. This is intentionally independent of
-/// protocol version `0.2` and schema version `1`.
+/// the chain protocol version and schema version `1`.
 pub const STABLECOIN_EIP712_DOMAIN_VERSION: &str = "1";
 
 /// V1 ships an operator CLI, not a maintained language SDK package.
@@ -53,10 +48,9 @@ pub const STABLECOIN_V1_GAS_FORMULA: &str =
 pub const STABLECOIN_V1_WALL_TIME_CLASSIFICATION: &str = "non-consensus-telemetry";
 
 /// Conditions that require reopening G0 instead of silently moving a bound.
-pub const STABLECOIN_V1_REOPEN_RULES: [&str; 4] = [
+pub const STABLECOIN_V1_REOPEN_RULES: [&str; 3] = [
     "SCF-034-or-SCF-047-measurement-plus-25-percent-rounded-up-to-10000-exceeds-its-gas-ceiling",
     "nested-and-top-level-calls-do-not-produce-identical-native-charges-for-identical-work",
-    "shipping-binary-cannot-activate-protocol-version-0.2",
     "supported-network-genesis-does-not-preserve-the-reserved-namespace",
 ];
 
@@ -135,10 +129,4 @@ pub const fn stablecoin_v1_budget_for_measurement(measured_gas: u64) -> Option<u
         None => return None,
     };
     rounded.checked_mul(budgets.gas_rounding_quantum)
-}
-
-/// Stablecoin routes are active exactly when Update's canonical active version
-/// reaches `0.2`. Update activation itself is begin-block inclusive.
-pub const fn stablecoin_v1_is_active(active_protocol_version_raw: u32) -> bool {
-    active_protocol_version_raw >= STABLECOIN_V1_PROTOCOL_VERSION_RAW
 }

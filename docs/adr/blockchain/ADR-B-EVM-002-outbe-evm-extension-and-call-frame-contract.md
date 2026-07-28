@@ -46,12 +46,11 @@ Exact routes always win. A class route receives the actual callee address and fa
 closed unless its owning registry, schema and exact marker code recognize that
 instance. Prefix membership never authenticates an instance.
 
-The complete stablecoin class is reserved from genesis independently of runtime
-activation: CREATE/CREATE2 into it is rejected and an unregistered matching address
-cannot fall through to ordinary bytecode. The class cannot be introduced late over
-potentially occupied code, nonce or storage. SCF-025 supplies one exact-state protocol
-version to top-level and nested class resolution; Ethereum `SpecId` and static route
-metadata are not activation authorities.
+The complete stablecoin class is reserved from genesis: CREATE/CREATE2 into it is
+rejected and an unregistered matching address cannot fall through to ordinary
+bytecode. The class cannot be introduced late over potentially occupied code, nonce
+or storage. Stablecoin V1 routes are present from block 0 in the genesis binary;
+Ethereum `SpecId` and static route metadata are not activation authorities.
 
 Duplicate exact routes and overlap with Ethereum precompiles are compile-time or
 mandatory construction failures. Exact/class and class/class overlap become mandatory
@@ -143,7 +142,7 @@ the pinned upstream revm handler for equivalent bytecode calls.
 |---|---|
 | Active exact-address execution facts | compact exact-route declaration |
 | Reserved class claim and exact-first resolution | class resolver introduced by the owning protocol task |
-| Exact-state protocol activation | canonical resolver introduced by SCF-025 |
+| Stablecoin V1 availability | fresh-genesis binary and reserved class from block 0 |
 | Chain/spec/mode and capability assembly | `OutbeEvmConfig` / `OutbeEvmFactory` |
 | Context-to-provider adapter | EVM dispatch seam governed by ADR-B-EVM-002 |
 | Top-level and nested precompile resolution | one shared dispatcher over exact routes and claimed classes |
@@ -306,17 +305,3 @@ and activation contract.
 26. Handler registries for Vote and Update are additional compile-time tables wired
     from this crate. Their ownership remains ADR-S-GOV-002 and ADR-S-GOV-003, but EVM conformance must
     prove their exact active version is bound to the same protocol schedule.
-27. `DispatchFn` and `outbe_dispatch_fn` currently lose the actual callee and only
-    recognize fixed addresses. Implement the reserved-class route required by
-    ADR-C-TOK-004 without changing every fixed module signature; add two-instance,
-    unregistered-prefix, top-level/nested and storage-isolation tests.
-28. The executor's fixed marker list cannot enumerate dynamic stablecoin addresses.
-    A successfully installed nonempty marker already prevents EIP-161 pruning, so do
-    not invent a per-block Factory scan as a discovery mechanism. Add journaled
-    `DirectStorageProvider::set_code`, include code in hook state-root notification,
-    prove rollback on failed initialization and add Factory logs to the mandatory
-    `HookEvents` receipt whitelist.
-29. Define one canonical Outbe protocol-version resolver and propagate its exact-block
-    result through canonical execution, payload build, validation, nested dispatch and
-    RPC. Ethereum `SpecId` or token-local schema alone is not sufficient authority for
-    global stablecoin hard-fork behavior.

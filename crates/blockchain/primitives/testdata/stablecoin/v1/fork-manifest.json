@@ -3,11 +3,8 @@
   "canonicalSource": "outbe_primitives::stablecoin_fork",
   "stablecoinSchemaVersion": 1,
   "activation": {
-    "protocolVersion": "0.2",
-    "protocolVersionRaw": 2,
-    "predicate": "activeProtocolVersionRaw >= 2",
-    "updateActivation": "begin-block-inclusive",
-    "namespaceReservation": "genesis-active-independent-of-runtime-activation",
+    "mode": "genesis",
+    "namespaceReservation": "reserved-in-genesis",
     "supportedNetworks": [
       "outbe-devnet-1-fresh-genesis",
       "outbe-testnet-1-fresh-genesis"
@@ -71,7 +68,6 @@
   "reopenRules": [
     "SCF-034-or-SCF-047-measurement-plus-25-percent-rounded-up-to-10000-exceeds-its-gas-ceiling",
     "nested-and-top-level-calls-do-not-produce-identical-native-charges-for-identical-work",
-    "shipping-binary-cannot-activate-protocol-version-0.2",
     "supported-network-genesis-does-not-preserve-the-reserved-namespace"
   ]
 }

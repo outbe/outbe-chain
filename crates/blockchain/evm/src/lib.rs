@@ -10,7 +10,6 @@ pub mod gas;
 pub mod handlers;
 pub(crate) mod precompile_routes;
 pub mod precompiles;
-mod protocol_version;
 pub mod storage;
 pub mod sub_call;
 /// Re-export of the validator EVM signer, which now lives in

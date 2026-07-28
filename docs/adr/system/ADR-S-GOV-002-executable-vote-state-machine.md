@@ -1,6 +1,6 @@
 # ADR-S-GOV-002: Vote owns executable proposal tally and dispatch
 
-- **Status:** Proposed; current implementation profiled
+- **Status:** Implemented
 - **Date:** 2026-07-17
 - **Owners/scope:** `crates/system/vote`; executable proposals, ballots, tally and
   target-handler dispatch
@@ -84,8 +84,8 @@ target reservations unchanged for the future governance decision. Terminal repla
 cannot settle value twice. A second ballot is rejected by the composite index.
 
 Pending-list removal uses swap-remove, so enumeration order is explicitly unstable.
-Proposal ids and ballot order remain stable. The proposal counter uses unchecked
-`U256 + 1` semantics and requires an explicit exhaustion contract.
+Proposal ids and ballot order remain stable. Proposal-id allocation uses checked
+`U256 + 1` and returns the typed `ProposalCounterExhausted` error without mutation.
 
 ## Security and compatibility
 
@@ -125,18 +125,7 @@ bypass.
 - Define a future validator-approved transition for retrying or closing an `Error`
   proposal and settling its retained reservations and bond. It is outside
   Stablecoin Factory V1.
-- Define counter exhaustion and bound total historical ballots/payload storage.
-- Pass original payload bytes to target validation and make canonical
-  JSON/schema/version rules explicit; semantic payload changes must not depend on a
-  `serde_json::Value` round trip.
+- Bound total historical ballots/payload storage independently of the already-bounded
+  pending set.
 - Add invariant checks for pending ids, ballot indexes and reserved packed-record
   bytes, including injected rollback failures.
-- Prove all production binaries compile the identical unique target registry.
-- Implement the compile-time admission/reservation/terminal-hook contract and exact
-  public-bonded exception required by ADR-C-TOK-004; current code remains
-  `ACTIVE`-creator-only and rejects value.
-- Add proposal bond schema, `VOTE_ADDRESS balance >= liabilities` accounting,
-  forced-surplus handling, checked balance credit, typed refund/burn events and
-  injected rollback tests at every target/cleanup/settlement step.
-- Add the nested target checkpoint before executable target dispatch; it must erase
-  partial target effects while allowing Vote to retain the `Error` status.

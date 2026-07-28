@@ -1,8 +1,8 @@
 # ADR-C-TOK-005: Stablecoins use one shared bounded policy registry
 
-- **Status:** Proposed; design approved, not implemented
+- **Status:** Implemented
 - **Date:** 2026-07-27
-- **Owners/scope:** proposed `crates/core/stablecoinpolicy`; policy identity,
+- **Owners/scope:** `crates/core/stablecoinpolicy`; policy identity,
   administration, membership and directional authorization views
 - **Depends on:** ADR-B-EVM-003, ADR-B-EVM-004, ADR-B-EVM-005
 - **Used by:** ADR-C-TOK-003, ADR-C-TOK-004
@@ -171,11 +171,11 @@ eventing are protocol requirements rather than UI conveniences.
 - Validator-only policy creation was rejected; policy creation itself moves no funds
   and Factory admission separately governs token creation.
 
-## Protocol lock and technical debt
+## Protocol lock and implementation evidence
 
-The Registry shares Stablecoin V1 activation at protocol version `0.2` (raw `2`); its
-fixed `0xEE10` marker remains genesis-active independently. One add/remove call accepts
-at most 64 accounts and validates the entire batch before the first write.
+The Registry is active from fresh genesis at chain protocol version `0`. Its fixed
+`0xEE10` marker is present from block 0. One add/remove call accepts at most 64
+accounts and validates the entire batch before the first write.
 `listPolicyMembers` has a caller-selected maximum page size of 100 and no sorting or
 ordering contract. View pagination has no separate gas-budget or benchmark gate. The
 initial policy-authorization ceiling is `10,000` gas and the 64-member mutation

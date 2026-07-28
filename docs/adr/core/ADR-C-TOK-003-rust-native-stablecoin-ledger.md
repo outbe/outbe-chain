@@ -1,8 +1,8 @@
 # ADR-C-TOK-003: Rust-native stablecoins share one hard-fork-governed issuer ledger
 
-- **Status:** Proposed; design approved, not implemented
+- **Status:** Implemented
 - **Date:** 2026-07-27
-- **Owners/scope:** proposed `crates/core/stablecoin`; per-token balances, allowances,
+- **Owners/scope:** `crates/core/stablecoin`; per-token balances, allowances,
   supply, roles, pause, freeze, policy binding and signatures
 - **Depends on:** ADR-B-EVM-002, ADR-B-EVM-003, ADR-B-EVM-004,
   ADR-B-EVM-005, ADR-C-TOK-004, ADR-C-TOK-005
@@ -31,14 +31,13 @@ selects the token's isolated storage account. The exact marker code is the one-b
 introspection and EIP-161 preservation, but execution is handled by the Rust
 precompile rather than by that bytecode.
 
-The active Outbe hard fork determines behavior for every stablecoin; there are no
+The Outbe binary determines behavior for every stablecoin; there are no
 per-token implementation pointers, proxy admins, issuer-selected templates or
 coexisting runtime versions.
 
-Each token stores `schemaVersion` and `creationProtocolVersion`. One canonical
-protocol-version resolver is propagated through canonical execution, payload build,
-validation, nested calls and exact-block RPC; token-local state never selects the
-runtime version.
+Each token stores `schemaVersion` and `creationProtocolVersion`. The genesis binary
+creates V1 tokens with `creationProtocolVersion = 0`. Token-local state never selects
+the runtime version.
 
 Stablecoin V1 reads and writes schema version 1 only. Any other schema version fails
 closed without mutation. When a real V2 schema exists, its ADR must define the exact
@@ -56,7 +55,7 @@ Creation initializes:
 - immutable numeric code present in SIX ISO 4217 List One published 2026-01-01
   (source XML SHA-256
   `838dfb991648cf36df939edd5fe3811737962b75a32252847d239cedd1e291c9`);
-- immutable `decimals` in `0..=18` (CLI/SDK default 6 only);
+- immutable `decimals` in `0..=18` (CLI default 6 only);
 - immutable issuer identity and Factory `tokenId`;
 - explicit nonzero `U256 supplyCap`, in smallest units;
 - explicit existing Policy Registry `policyId`; and
@@ -254,12 +253,12 @@ speculative V1 migration code.
 - Implicit zero-as-unlimited caps, initial minting, mutable metadata and protocol
   admin recovery were rejected as ambiguous or over-privileged.
 
-## Protocol lock and implementation follow-up
+## Protocol lock and implementation evidence
 
-Stablecoin V1 writes `schemaVersion = 1` and becomes active when Update's canonical
-active protocol version reaches `0.2` (raw `2`), with begin-block-inclusive activation.
-The EIP-712 domain version is the independent string `"1"`; it is not inferred from
-the schema or protocol version. V1 tooling is owned by `bin/outbe-cli`; generated ABI
+Stablecoin V1 writes `schemaVersion = 1` and is active from fresh genesis at chain
+protocol version `0`. The EIP-712
+domain version is the independent string `"1"`; it is not inferred from the schema
+or chain protocol version. V1 tooling is owned by `bin/outbe-cli`; generated ABI
 JSON is an integration artifact, not a maintained SDK promise.
 
 The initial native gas contract is dispatch `200`, each persistent read `100`, each
@@ -276,9 +275,9 @@ ceiling.
 - `xtask stablecoin abi-check` compares every compiled function, error and event entry
   with all four checked-in ABI exports; selected role, ERC-165 and EIP-712 semantic
   vectors add independent assertions. Any mismatch reopens protocol lock.
-- Add frozen-transition vectors for `F < B`, `F == B`, `F > B`, mixed
-  unfrozen/frozen consumption, full movement, ordinary self-transfer and rejected
-  forced self-transfer.
+- Behavioral tests cover `F < B`, `F == B`, `F > B`, mixed unfrozen/frozen
+  consumption, full movement, ordinary self-transfer and rejected forced
+  self-transfer.
 - ERC-3009, ERC-7802, reserve proofs, fee eligibility and payment-lane classification
   are explicitly outside V1 and require separate ADRs.
 - ERC-7943 compatibility vectors pin the Final standard's functions, errors, events

@@ -3,7 +3,7 @@
 - **Status:** Living inventory; coverage is not acceptance or implementation proof
 - **Generated from:** `cargo metadata --no-deps --format-version 1`, repository manifests,
   deployable source trees and registered entrypoints
-- **Last reconciled:** 2026-07-18
+- **Last reconciled:** 2026-07-28
 
 ## Purpose
 
@@ -19,7 +19,7 @@ not create a second authority.
 
 ## Rust workspace packages
 
-The current workspace contains 57 Cargo packages.
+The current workspace contains 62 Cargo packages.
 
 | Cargo package | Physical scope | Primary ADR(s) | Coverage role |
 |---|---|---|---|
@@ -57,6 +57,9 @@ The current workspace contains 57 Cargo packages.
 | `outbe-credis` | `crates/core/credis` | ADR-C-CRD-001 | Credis position FSM |
 | `outbe-credisfactory` | `crates/core/credisfactory` | ADR-C-CRD-002, PFS-003 | Credis orchestration |
 | `outbe-vaultprovider` | `crates/core/vaultprovider` | ADR-C-VLT-001 | Liquidity authority |
+| `outbe-stablecoin` | `crates/core/stablecoin` | ADR-C-TOK-003 | Dynamic Rust-native stablecoin ledger |
+| `outbe-stablecoinfactory` | `crates/core/stablecoinfactory` | ADR-C-TOK-004, ADR-S-GOV-002 | Governed stablecoin identity, reservation and creation |
+| `outbe-stablecoinpolicy` | `crates/core/stablecoinpolicy` | ADR-C-TOK-005 | Shared bounded account-eligibility policy |
 | `outbe-intex` | `crates/core/intex` | ADR-C-INX-001, PFS-009 | Native Intex ledger |
 | `outbe-intexfactory` | `crates/core/intexfactory` | ADR-C-INX-002, PFS-004 and PFS-009 | Native Intex orchestration |
 | `outbe-gem` | `crates/core/gem` | ADR-C-GEM-001 | Gem ledger |
@@ -77,13 +80,15 @@ The current workspace contains 57 Cargo packages.
 | `outbe-update` | `crates/system/update` | ADR-S-GOV-003 | Protocol activation |
 | `outbe-zerofee` | `crates/system/zerofee` | ADR-S-FEE-001 | Fee policy/hooks |
 | `outbe-zkproof` | `crates/system/zkproof` | ADR-S-ZKP-001 and ADR-S-ZKP-002 | Verifier/hash profile |
+| `outbe-l2registry` | `crates/system/l2registry` | ADR-B-XCH-001 | L2 operator, BLS key and ZK-mode registry |
 | `outbe-offchain-data` | `crates/system/offchain-data` | ADR-B-OCD-003 through ADR-B-OCD-005 | Projection/runtime readers; Blockchain responsibility |
 | `outbe-e2e` | `crates/core/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
 | `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001 and PFS-006 | Process/localnet/Mongo evidence harness |
+| `xtask` | `xtask` | ADR-B-TST-001 | Repository, ABI, namespace and generated-artifact verification |
 
 `crates/blockchain/primitives/fuzz/Cargo.toml` is deliberately outside the workspace;
 its fuzz targets are verification evidence for ADR-B-WIR-001 and ADR-B-EVM-003 and must be run by
-an explicit CI job rather than silently counted among the 58 packages.
+an explicit CI job rather than silently counted among the 62 packages.
 
 ### Executable target and command registry
 
@@ -91,7 +96,7 @@ an explicit CI job rather than silently counted among the 58 packages.
 |---|---|---|
 | `outbe-chain` | Reth `node` plus Outbe validator/follower/config extensions | ADR-B-NOD-001, ADR-B-OPS-001 and ADR-B-SUP-001 |
 | `outbe-chain dkg` | `bootstrap`, `status`, `export-share`, `import-share`, `force-restart` | ADR-B-CNS-002, ADR-S-KEY-001 and ADR-B-CLI-001 |
-| `outbe-cli` | `validator`, `staking`, `rewards`, `epoch`, `slash`, `chain`, `monitor`, `oracle`, `tribute`, `zero-fee`, `tee`, `vote` | ADR-B-CLI-001 plus the referenced System/Core owner ADR |
+| `outbe-cli` | `validator`, `staking`, `rewards`, `epoch`, `slash`, `chain`, `monitor`, `oracle`, `tribute`, `stablecoin`, `zero-fee`, `tee`, `vote` | ADR-B-CLI-001 plus the referenced System/Core owner ADR |
 | `outbe-keygen` | `generate`, `show-pubkey`, `sign-registration`, `verify`, `hybrid` | ADR-S-KEY-001 and ADR-B-CLI-001 |
 | `outbe-feeder` | external provider polling/aggregation and Oracle delivery | ADR-S-ORC-002 |
 | `outbe-tee-enclave` | production enclave transport/service | ADR-S-TEE-001 and ADR-S-KEY-001 |
@@ -229,7 +234,7 @@ row or extend an existing row in the same change that introduces it.
 - Generate this ledger mechanically from Cargo metadata, Solidity AST/artifacts, binary
   targets, RPC registration and precompile/lifecycle registries; current mapping is
   reviewer-maintained Markdown.
-- Verify the 58-row Cargo table against metadata in CI and fail on unmapped additions.
+- Verify the 62-row Cargo table against metadata in CI and fail on unmapped additions.
 - Generate ABI-selector/layout manifests for every stateful precompile and compare them
   with checked-in Solidity interfaces. Dispatch, lifecycle, RPC and MCP tool registries
   are now explicit above but remain reviewer-maintained.

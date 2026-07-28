@@ -65,14 +65,6 @@ sol! {
         function getScheduledUpdate(uint256 id) external view returns (ScheduledUpdate memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IVote {
-        function listProposals(uint256 index, uint256 count) external view returns (uint256[] memory);
-        function getProposalVoters(uint256 proposalId, uint256 index, uint256 count)
-            external
-            view
-            returns (address[] memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IGovernance {
         struct Oip {
             uint256 id;
@@ -134,6 +126,26 @@ sol! {
     }
 }
 
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IVote.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoinFactory.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoin.sol"
+);
+
 /// A dedicated multi-thread runtime that drives every RPC future, independent of
 /// whatever thread/runtime the cucumber step is on.
 fn eth_runtime() -> &'static Runtime {
@@ -179,6 +191,32 @@ where
         // tag lets some RPC implementations execute against `pending`, whose
         // timestamp can cross a UTC boundary before a block is canonical.
         let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
+        C::abi_decode_returns(&out).ok()
+    })
+}
+
+/// Execute a typed view against the exact canonical state at `height`.
+pub(crate) fn read_call_at<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> Option<C::Return>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        let out = provider
+            .call(tx)
+            .block(BlockId::number(height))
+            .await
+            .ok()?;
         C::abi_decode_returns(&out).ok()
     })
 }

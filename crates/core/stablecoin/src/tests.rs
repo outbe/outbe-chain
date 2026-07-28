@@ -3,9 +3,7 @@ use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
-use outbe_primitives::stablecoin_fork::{
-    STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
-};
+use outbe_primitives::stablecoin_fork::STABLECOIN_V1_SCHEMA_VERSION;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{PrecompileStorageProvider, StorageHandle};
 use outbe_stablecoinpolicy::{
@@ -48,7 +46,7 @@ fn initialization_for(chain_id: u64, ticker: &str) -> FactoryTokenInitialization
     FactoryTokenInitialization {
         token_address,
         token_id,
-        creation_protocol_version: u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+        creation_protocol_version: 0,
         payload: StablecoinCreatePayload {
             issuer: ISSUER,
             name: format!("{ticker} Stablecoin"),
@@ -208,7 +206,10 @@ fn factory_initialization_sets_identity_roles_and_zero_supply() {
             token.schema_version.read().unwrap(),
             u64::from(STABLECOIN_V1_SCHEMA_VERSION)
         );
-        assert_eq!(token.creation_protocol_version.read().unwrap(), 2);
+        assert_eq!(
+            token.creation_protocol_version.read().unwrap(),
+            init.creation_protocol_version
+        );
         assert_eq!(token.token_id.read().unwrap(), init.token_id);
         assert_eq!(token.name.read_string().unwrap(), "USDX Stablecoin");
         assert_eq!(token.symbol.read_string().unwrap(), "USDX");

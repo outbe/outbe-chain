@@ -49,8 +49,8 @@ the owning ADR and its vectors:
 
 1. Factory `0x...EE0F`, Policy Registry `0x...EE10`, dynamic prefix `0x53c0` and
    marker `0xef`;
-2. activation protocol version `0.2` (raw `2`), schema version `1`, destructive
-   fresh-genesis devnet/testnet applicability and unsupported mainnet activation;
+2. genesis activation with no Update/protocol-version gate, schema version `1`,
+   fresh-genesis devnet/testnet applicability and unsupported mainnet deployment;
 3. EIP-712 domain version `"1"` (role ids are frozen by SCF-001);
 4. public bonded caps 16 globally and one per proposer inside Vote's 64 total slots;
 5. policy membership batch cap 64; Factory and Policy list page cap 100 with no
@@ -108,7 +108,7 @@ Default completion rules for every implementation task:
 | T1 | Unit/state-machine/layout tests in the owning crate |
 | T2 | Property, fuzz, ABI/golden-vector and failure-injection tests |
 | T3 | Cross-crate integration through real precompile/provider interfaces |
-| T4 | Full `OutbeBlockExecutor` proposer/validator/fork-boundary parity |
+| T4 | Full `OutbeBlockExecutor` proposer/validator parity and deterministic replay |
 | T5 | Stablecoin-specific four-validator localnet E2E with restart and RPC checks |
 
 A later T4/T5 task does not excuse missing T1-T3 evidence in the behavior task that
@@ -129,18 +129,16 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
 | SCF-004 | Done | `c9c69720`, `d837e7f2` | Shared list page cap 100 and offset/final-page semantics frozen; Factory creation ceiling/gate removed; fork vectors 7/7 pass |
 | SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
-| SCF-G0 | Done | `c9c69720`, `d837e7f2`, `4c6b0c41`, `8ca8702b` | Four review blockers corrected; Forge 11/11, primitives 24/24, Vote+Update+Governance 138/138, CLI 206/206, EVM 247/247, clippy and ABI export check pass; repeat independent review READY |
+| SCF-G0 | Done | `c9c69720`, `d837e7f2`, `4c6b0c41`, `8ca8702b` | Four review blockers corrected; Forge, primitives, Vote/Governance, CLI and EVM suites, clippy and ABI export check pass; repeat independent review READY |
 | SCF-010 | Done | read-only | Exact AGENTS.md 8.1 surveys; trybuild 1/1; no long-lived runtime owner; storage review APPROVE |
 | SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 | SCF-012 | Done | `a81c22e1` | Actual unsupported set_code, nested checkpoint/storage/balance/event rollback, account/change-set preservation, transfer underflow and current overflow wrap; primitives 279/279; clippy/LSP clean |
 | SCF-013 | Done | `8c0eea17` | Baseline ACTIVE/PENDING behavior and zero-value paths characterized before SCF-026 changed ballots to ACTIVE-only; raw payload state/log, validator-change quorum, handler failure, replay and outer rollback snapshots covered |
-| SCF-014 | Done | `67d6f2a2` | Behavioral H-1/H/H+1 snapshots: Update activates at begin-block H but history is exact-height sparse; canonical/build/validation stay chain-spec sourced; nested call currently accepts PUSH0 under London and Shanghai; RPC dispatch reflects caller-selected state; Update 56/56, EVM 244/244 (1 skipped), RPC 10/10; review APPROVE |
-| SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration and reader adapter; existing empty shared-buffer behavior remains characterized until an explicit activation boundary; consolidated review deferred to SCF-G1 |
+| SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration and reader adapter; existing empty shared-buffer behavior remains characterized; consolidated review deferred to SCF-G1 |
 | SCF-021 | Done | `189b022d` | CREATE/CREATE2 reject the reserved dynamic stablecoin class before account mutation |
 | SCF-022 | Done | `d7b5532b` | Actual-callee class routing authenticates nested and top-level stablecoin calls |
 | SCF-023 | Done | `b90658cc` | Hook code deployment and balance credit participate in the EVM journal |
 | SCF-024 | Done | `11db1f54` | Factory hook events use the canonical receipt-visible log path |
-| SCF-025 | Done | `f41ad110` | Protocol version resolves from exact selected state with H-1/H/H+1 coverage |
 | SCF-026 | Done | `4c6b0c41`, `8ca8702b`, `e9b4097f` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, registry uniqueness, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission is deliberately inert until SCF-060/061 |
 | SCF-027 | Done | `5bf27e57` | Vote notifications are canonical logs and roll back with outer state |
 | SCF-030 | Done | `6ebed4f2` | Policy schema, state and typed API |
@@ -159,7 +157,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-051 | Done | `6f8ad6a4` | Canonical typed admission, proposer/policy checks, shared collision validation and fixed prediction vector pass 12 focused tests; native token-address balance is ignored and preserved |
 | SCF-052 | Done | `5bb9b9c9` | Failure after every reserve/release/consume mutation rolls back completely; release permits corrected resubmission and typed target Error retains the reservation triple |
 | SCF-053 | Done | `184b2ddf` | Approved execution revalidates the reservation, initializes zero-supply token state, installs marker, commits registry and emits one event atomically; Factory 19/19 and EVM 264/264 pass |
-| SCF-054 | Done | `943ca8e2` | Factory exposes only activation-gated views; compile-time Vote adapter owns validate/reserve/execute/release, reservation joins proposal creation checkpoint, and Factory/Vote/Update/Governance/EVM pass 431/431 |
+| SCF-054 | Done | `943ca8e2` | Factory exposes genesis-active views; compile-time Vote adapter owns validate/reserve/execute/release and reservation joins the proposal creation checkpoint |
 | SCF-055 | Review | `4d3e1ab1` | Factory 22/22 covers deterministic mixed histories, every reservation/index inverse, pending and permanent collision injection, maximum accepted payload, and failure after every mutation; independent G4 review remains |
 | SCF-060 | Review | `c04fe05f` | Bond amount/state maps append after unchanged V0 slots, zero-filled legacy proposals read as NoBond and tally, liabilities use checked atomic arithmetic, counter exhaustion is typed, and combined regression passes 436/436; storage-layout review remains |
 | SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
@@ -167,9 +165,13 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
 | SCF-064 | Review | `2d759237` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; combined suites pass and independent G5 review remains |
 | SCF-070 | Review | `023a723d`, `d7b5532b`, `943ca8e2` | Production registry owns unique fixed Factory/Policy routes, authenticated actual-callee token-class routing and the compile-time Factory Vote target; focused route, namespace, nested-call and target suites pass; independent gate review remains |
+| SCF-071 | Review | current worktree | Generated fresh genesis reserves Factory, Policy and token namespaces from block 0; the four-validator product E2E creates and reads the first token without an activation transition |
 | SCF-072 | Review | `42521789` | Real pre-exec Vote→Factory lifecycle publishes one ordered StablecoinCreated through HookEvents; the log changes receipts root and bloom, cumulative gas and marker/state are asserted, and typed Error publishes no creation/settlement log while retaining bond and reservation; independent review remains |
 | SCF-073 | Review | `caa9fe69` | Independent proposer/validator executions are byte/state equal for Approved, Expired and Error across the mandatory system-tx prefix, receipt bytes/root/bloom/gas, full in-memory state root, Factory indexes, token marker/supply/balances and Vote bond deltas; independent review remains |
+| SCF-074 | Review | current worktree | Four-validator E2E restarts the entire committee with the same binary and proves identical historical/current Factory, token and balance reads on every RPC |
 | SCF-080 | Review | `fcdc6cb5` | CLI creates mutable policies, predicts the current global identity offline and submits signer-bound canonical proposals with serialized defaults, raw/human cap, exact bond and warning; behavioral golden/raw-transaction/no-RPC tests pass and full CLI suite is 213/213; closure waits on SCF-071 |
+| SCF-082 | Review | current worktree | Stablecoin-specific Cucumber scenario passes policy, bonded proposal, voting, HookEvents/refund, ledger operations, duplicate ticker rejection and full committee restart on four validators |
+| SCF-083 | Review | current worktree | Fresh localnet starts with Stablecoin V1 at block 0 and passes the complete product/restart scenario with one unchanged binary |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -204,7 +206,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   `IStablecoinFactory.sol`, `IStablecoinPolicyRegistry.sol`, generated ABI exports and
   Solidity/Alloy vectors; update `IVote.sol` for Approved/Expired/Error proposal and
   bond views/events, plus the minimal Vote dispatch compatibility needed to keep those
-  future views explicitly inactive before bond-accounting activation.
+  future views unavailable until their backing bond-accounting state exists.
 - **Depends on:** none.
 - **Done when:** every function, custom error, event order/indexing, role id,
   Factory/Policy count+list selector, Final ERC-7943 error/id, EIP-2612 type hash and
@@ -249,12 +251,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Exit gate:** **reset gate** — V1 cannot activate on state that executed before the
   address-class creation guard.
 
-## SCF-004 — Freeze caps, gas, version and tooling ownership
+## SCF-004 — Freeze caps, gas, genesis mode and tooling ownership
 
 - **Goal:** Remove the remaining runtime-configurable or implementation-chosen values.
 - **Scope/files:** fork manifest/testdata and ADR/plan constants only.
 - **Depends on:** SCF-001 through SCF-003.
-- **Done when:** activation version, public pending cap, policy member-batch cap,
+- **Done when:** genesis activation mode, public pending cap, policy member-batch cap,
   Factory/Policy list page cap, warm/cold class semantics, token/Policy gas schedule,
   EIP-712 version and SDK owner are recorded; the SCF-002 ISO snapshot is verified,
   not replaced. Bond vector is exactly `10^24`.
@@ -303,20 +305,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-013 — Characterize Vote before public bonded admission
 
-- **Goal:** Preserve Update/Governance behavior exactly.
+- **Goal:** Preserve all existing Vote target behavior exactly.
 - **Scope/files:** Vote tests only.
 - **Depends on:** `SCF-G0`.
 - **Tests:** T0 ACTIVE-only creation, zero-value rejection, raw payload retention,
   quorum under validator changes, handler failure, terminal replay and hook rollback.
 - **Exit:** pre-feature ABI/state/log snapshots are pinned.
-
-## SCF-014 — Characterize protocol version across execution modes
-
-- **Goal:** Establish current H-1/H/H+1 behavior before introducing one resolver.
-- **Scope/files:** Update/EVM/RPC tests only.
-- **Depends on:** SCF-012; serialize in the EVM characterization lane.
-- **Tests:** T0 canonical, payload build, validation, nested call and exact-block RPC.
-- **Exit:** every current source/fallback is documented.
 
 ## SCF-020 — Consolidate exact precompile routing behind one compact declaration
 
@@ -326,11 +320,11 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   `precompiles.rs` and registration/preservation tests. One declaration generates
   exact lookup and complete exact enumeration and carries only the dispatch adapter
   (`Basic`, `BodyReadersRequired`, `BodyReadersOptional`) plus base-gas function.
-- **Non-goals:** no stablecoin class route; no protocol activation, persistence,
+- **Non-goals:** no stablecoin class route; no persistence,
   warming, reentrancy, ABI/schema, owner or sponsorship metadata; no change to
   `PrecompilesMap`/nested `warm_addresses` or `contains`; no gas schedule or current
   `Bytes`/`SharedBuffer` pricing-order change; no debug-route reachability change.
-- **Depends on:** SCF-011, SCF-014.
+- **Depends on:** SCF-011.
 - **Done when:** all 35 characterized exact routes come from one declaration; lookup
   and enumeration cannot drift; resolved route adapters replace the second reader
   match; duplicate exact declarations and Ethereum overlap fail compilation or
@@ -342,7 +336,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   interfaces; they do not read or match Rust source text.
 - **Verification:** full EVM registration, genesis/preservation and subcall suites;
   `cargo fmt --all --check`; `cargo clippy -p outbe-evm --all-targets -- -D warnings`.
-- **Exit:** routing review confirms no class, activation, warm/cold, persistence or
+- **Exit:** routing review confirms no class, warm/cold, persistence or
   gas-policy change.
 
 ## SCF-021 — Enforce genesis-active CREATE/CREATE2 reservation
@@ -368,12 +362,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 - **Status:** Done; exact routes resolve first and the production top-level/subcall
   hook claims the full reserved class. Runtime dispatch receives the actual callee
-  and requires active exact protocol state, Factory reverse registration, full-id
+  and requires Factory reverse registration, full-id
   address derivation, exact marker code, V1 token schema and matching stored token
   identity before entering the shared token ABI. Unknown or forged calldata calls
   revert/fatal without bytecode fallback; empty-calldata native value transfers
   remain valid without invoking either token ABI or account bytecode. Focused tests
-  cover inactive/unknown/marker/schema/id failures, top-level two-instance isolation,
+  cover unknown/marker/schema/id failures, top-level two-instance isolation,
   nested static calls and installed-bytecode fallback denial; the full `outbe-evm`
   suite and clippy pass.
 - **Goal:** Route many token addresses to one Rust handler without shadowing ordinary
@@ -382,8 +376,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   subcall and storage-context seams; use a test registry/handler until Factory lands.
 - **Depends on:** SCF-020, SCF-021.
 - **Done when:** exact routes win; the entire reserved prefix is claimed even before
-  runtime activation; inactive, unknown or unauthenticated members fail closed with
-  no bytecode fallback; the class route receives actual callee; registration, reverse
+  token initialization; unknown or unauthenticated members fail closed with no
+  bytecode fallback; the class route receives actual callee; registration, reverse
   full id, schema and exact marker are all required; exact/class and class/class
   overlap fail compilation or mandatory construction validation.
 - **Tests:** T1 route/auth outcomes; T3 two-instance isolation, forged marker,
@@ -428,26 +422,6 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   publishes none; non-whitelisted logs remain tracing-only.
 - **Tests:** T1 partition; T3 full receipt construction and ordering.
 
-## SCF-025 — Add one exact-state Outbe protocol-version resolver
-
-- **Status:** Done — `outbe-update` owns one canonical-width exact-state resolver;
-  fixed Policy and dynamic-token routes use it in top-level and nested calls.
-  Focused EVM tests cover H-1/H/H+1 snapshots, same-block Update visibility and
-  independence from Ethereum `SpecId`; the standard EVM factory consumes the
-  exact database snapshot selected by proposer, validator or historical RPC.
-- **Goal:** Remove `SpecId`/latest-state/token-schema ambiguity.
-- **Scope/files:** primitives/Update re-export, EVM config/dispatch/subcalls and RPC
-  exact-state construction; do not alter Update FSM.
-- **Depends on:** SCF-014, SCF-004, SCF-024; serialize after HookEvents because these
-  tasks share `outbe-primitives`/`outbe-evm` surfaces.
-- **Done when:** proposer, validator, nested call and historical RPC resolve the same
-  version from exact state and pass it explicitly into class routing; static exact
-  route metadata and Ethereum `SpecId` are not activation authorities;
-  storage/provider failure or a non-canonical version word is fatal. Version `0`
-  is the valid baseline state and is therefore not treated as a missing authority.
-- **Tests:** T1 codec/failure; T3 H-1/H/H+1 and same-block Update visibility.
-- **Exit:** Update/EVM/RPC owners approve the authority contract.
-
 ## SCF-026 — Introduce inert raw-byte Vote target APIs
 
 - **Status:** Done — the compile-time registry exposes validator-only and exact
@@ -457,7 +431,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   unsupported until SCF-060/061 add liability state and payable admission.
 - **Goal:** Give Factory admission/reservation/execution/cleanup a typed compile-time
   contract before changing Vote state.
-- **Scope/files:** Vote target registry plus adapters for existing Update/Governance.
+- **Scope/files:** Vote target registry plus adapters for existing targets.
 - **Depends on:** SCF-013, SCF-001.
 - **Done when:** target receives original bytes, proposer/value/height/chain context;
   admission distinguishes validator-only and exact public bond; executable target
@@ -534,8 +508,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Goal:** Expose ABI at the fixed address with no hidden business logic in dispatch.
 - **Scope/files:** Policy `precompile.rs`, workspace/EVM dependency, fixed marker and
   ABI vectors.
-- **Depends on:** SCF-001, SCF-032, SCF-025; fixed Policy registration is the next
-  production `outbe-evm` writer after the generic EVM/version lane.
+- **Depends on:** SCF-001, SCF-032, SCF-024; fixed Policy registration is the next
+  production `outbe-evm` writer after the provider/hook lane.
 - **Done when:** unexpected value is rejected before reads; malformed/trailing ABI
   fails; views are static-safe; nested revert removes writes/logs.
 - **Tests:** T1 every selector; T2 arbitrary calldata no-panic/no-mutation; T3
@@ -759,7 +733,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 ## SCF-054 — Wire Factory view precompile and Vote adapter
 
 - **Status:** Done in `943ca8e2`; the public Factory route exposes only the frozen
-  view ABI behind exact Stablecoin V1 activation, while the compile-time Vote target
+  view ABI from genesis, while the compile-time Vote target
   owns typed admission, reservation, approved execution and expiry release. Proposal
   creation and target reservation share one outer checkpoint; Factory execution
   reverts become proposal Error, while provider/storage/fatal errors still abort.
@@ -769,8 +743,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Done when:** public ABI has no create/reserve/release selector; Vote adapter owns
   validate/reserve/execute/release; Vote core imports no Factory storage type.
 - **Tests:** T1 views and malformed/value rejection; T3 adapter contract and nested
-  checkpoint behavior. Verified by 431/431 combined Factory/Vote/Update/Governance/EVM
-  tests, clippy with warnings denied, formatting and diff checks.
+  checkpoint behavior. Verified by the combined Factory/Vote/Governance/EVM tests,
+  clippy with warnings denied, formatting and diff checks.
 
 ## SCF-055 — Factory property and atomicity gate
 
@@ -888,32 +862,31 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ---
 
-# Phase 6 — Production activation and consensus evidence
+# Phase 6 — Production wiring and consensus evidence
 
 ## SCF-070 — Wire production routes and compile-time targets
 
 - **Goal:** Connect completed modules without runtime plugins.
 - **Scope/files:** workspace/EVM dependencies, exact Factory/Policy routes, token
-  class route, Factory Vote target and global version context.
+  class route and Factory Vote target.
 - **Depends on:** `SCF-G1`, `SCF-G2`, `SCF-G3`, `SCF-G4`, `SCF-G5`.
-- **Tests:** T1 route/target uniqueness and activation; T3 existing routes/targets
+- **Tests:** T1 route/target uniqueness and genesis availability; T3 existing routes/targets
   remain unchanged and stablecoin instances authenticate full id/schema/marker.
 - **Implementation evidence:** `023a723d` made the compact exact-route registry the
   production lookup/enumeration source, `d7b5532b` added authenticated actual-callee
-  token-class dispatch, and `943ca8e2` wired the activation-gated Factory views and
+  token-class dispatch, and `943ca8e2` wired the genesis-active Factory views and
   compile-time Factory Vote target.
 - **Verification:** executable registration 8/8, dynamic top-level/nested/static/OOG
   route 5/5, primitives namespace 2/2 and repository/genesis namespace 5/5 pass.
   Status remains Review until the dependent gate reviews are complete.
 
-## SCF-071 — Land genesis/reset activation artifact
+## SCF-071 — Land fresh-genesis namespace artifact
 
-- **Goal:** Ship namespace reservation from block 0 and selectors at the named fork.
+- **Goal:** Ship namespace reservation and Stablecoin selectors from block 0.
 - **Depends on:** SCF-003, SCF-004, SCF-021, SCF-070.
-- **Done when:** fixed markers/allocations, genesis hash/reset instructions and
-  pre-fork fail-closed/post-fork active vectors are final.
-- **Tests:** T3 genesis/fork matrix; T5 fresh pre-activation localnet.
-- **Exit:** explicit operator/network reset approval.
+- **Done when:** fixed markers/allocations and the fresh-genesis artifact are final.
+- **Tests:** T3 genesis namespace matrix; T5 fresh localnet from block 0.
+- **Exit:** the generated genesis contains the reserved Factory and Policy markers.
 
 ## SCF-072 — Prove full-executor HookEvents receipt
 
@@ -955,14 +928,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   and clippy with `-D warnings`, formatting and diff checks pass. Status remains Review
   until the independent gate review.
 
-## SCF-074 — Fork-boundary, RPC and deterministic replay
+## SCF-074 — RPC, restart and deterministic replay
 
-- **Goal:** Verify H-1/H/H+1 behavior across restart and exact-block reads.
-- **Depends on:** SCF-025, SCF-073.
+- **Goal:** Verify genesis-active behavior across restart and exact-block reads.
+- **Depends on:** SCF-073.
 - **Tests:** T4 repeated proposer/validator replay from identical snapshot; historical
-  static views, nested calls, restart and RPC at each boundary.
-- **Exit gate G6:** SCF-070..074 pass on required consensus CI architectures; no
-  activation constant remains provisional.
+  static views, nested calls, restart and RPC.
+- **Exit gate G6:** SCF-070..074 pass on required consensus CI architectures.
 
 ---
 
@@ -1006,12 +978,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T5 four validators; every node agrees on height, proposal, indexes,
   token/code, balances, receipts and bond deltas.
 
-## SCF-083 — Run localnet reset/restart and mixed-version gates
+## SCF-083 — Run fresh-localnet and restart gates
 
-- **Goal:** Validate operator activation behavior.
+- **Goal:** Validate genesis availability and restart behavior.
 - **Depends on:** SCF-071, SCF-082.
-- **Tests:** T5 fresh genesis, pre-fork rejection, activation, restart, incompatible
-  old binary/mixed manifest failure and ordinary `mise run localnet-smoke`.
+- **Tests:** T5 Stablecoin-specific fresh genesis from block 0 and full-committee
+  restart with the same binary.
 
 ## SCF-084 — Close README, ADR and audit contracts
 
@@ -1020,16 +992,16 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Scope:** root README, CLI help, module READMEs, ABI exports, ADR-S-GOV-002,
   ADR-B-EVM-002, TOK ADR statuses/index/coverage and relevant `audit_*.md` entries.
 - **Done when:** addresses, prefix, marker, bond, caps, flow, roles, policy,
-  non-endorsement, reset and schema-1 behavior are exact and evidence-linked.
+  non-endorsement, fresh-genesis and schema-1 behavior are exact and evidence-linked.
 
 ## SCF-085 — Release verification and GO/NO-GO
 
 - **Goal:** Produce a reviewable release evidence bundle.
 - **Depends on:** SCF-084.
 - **Commands/evidence:** Forge build/test/ABI export; all affected crate, CLI,
-  primitives trybuild, EVM, Vote, Update, node, RPC and e2e suites; doctests where
-  public examples changed; workspace nextest; fmt; clippy; supply-chain checks;
-  benchmarks; localnet outputs.
+  primitives trybuild, EVM, Vote, node, RPC and e2e suites; doctests where
+  public examples changed; workspace nextest; fmt; clippy and the Stablecoin-specific
+  four-validator localnet output.
 - **Pass:** no failed or ignored required test, dirty generated ABI, provisional
   constant, README/debt contradiction or unreviewed consensus finding.
 - **Exit gate G7:** release is GO only after independent consensus, storage,
@@ -1046,12 +1018,12 @@ aliases. When Taskplane packets are generated, use these exact gate dependencies
 | Gate packet | Depends on | Pass evidence |
 | --- | --- | --- |
 | `SCF-G0` | SCF-001, SCF-002, SCF-003, SCF-004 | protocol artifacts approved; no implementation-chosen constant |
-| `SCF-G1` | SCF-022, SCF-024, SCF-025, SCF-027 | EVM/provider/version/Vote infrastructure and old-behavior regressions pass |
+| `SCF-G1` | SCF-022, SCF-024, SCF-027 | EVM/provider/Vote infrastructure and old-behavior regressions pass |
 | `SCF-G2` | SCF-034 | Policy ABI/state/index/properties pass |
 | `SCF-G3` | SCF-047 | token ABI/model/crypto/Final ERC-7943/gas pass |
 | `SCF-G4` | SCF-055 | Factory index/initializer/adapter evidence passes |
 | `SCF-G5` | SCF-064 | Vote/Factory accounting and failure matrix passes |
-| `SCF-G6` | SCF-074 | full-block/fork/RPC parity passes |
+| `SCF-G6` | SCF-074 | full-block/restart/RPC parity passes |
 | `SCF-G7` | SCF-085 | operator E2E/docs/release reviews produce GO |
 
 A gate packet makes no production edit. It reads the dependency evidence, runs or
@@ -1064,9 +1036,9 @@ After `SCF-G0`:
 
 - SCF-010 (read-only survey) and SCF-013 (Vote tests) may run in parallel.
 - Every pre-Factory `outbe-evm` writer is one executable dependency chain:
-  SCF-011 → SCF-012 → SCF-014 → SCF-020 → SCF-021 → SCF-022 → SCF-023 →
-  SCF-024 → SCF-025. SCF-033 joins that same lane after both SCF-025 and the Policy
-  runtime dependency SCF-032; it cannot be scheduled as a sibling EVM writer.
+  SCF-011 → SCF-012 → SCF-020 → SCF-021 → SCF-022 → SCF-023 → SCF-024.
+  SCF-033 joins that same lane after SCF-024 and the Policy runtime dependency
+  SCF-032; it cannot be scheduled as a sibling EVM writer.
 - SCF-026 → SCF-027 is a separate sequential Vote lane and may run in parallel with
   the EVM/provider lane.
 - Policy SCF-030..032 is one sequential crate-local lane; SCF-033 waits for the EVM
@@ -1076,7 +1048,7 @@ After `SCF-G0`:
 - Factory SCF-050..055 is sequential; initializer waits for provider, Policy and token
   APIs.
 - Vote SCF-060..064 is sequential because every task changes the same proposal FSM.
-- Production activation, parity, localnet and documentation are never parallelized
+- Production wiring, parity, localnet and documentation are never parallelized
   ahead of their gates.
 
 No two agents write the same crate/worktree concurrently. Parallel work uses isolated
@@ -1095,20 +1067,20 @@ its focused test filter and records exact output.
 | `SCF-G3` | `cargo nextest run -p outbe-stablecoin`; EIP-2612/Final ERC-7943/property filters; focused dynamic-route EVM tests |
 | `SCF-G4` | `cargo nextest run -p outbe-stablecoinfactory`; focused provider/hook rollback and state-root tests |
 | `SCF-G5` | `cargo nextest run -p outbe-vote -p outbe-stablecoinfactory -p outbe-primitives -p outbe-evm` |
-| `SCF-G6` | affected Update/RPC/node/EVM suites plus dedicated full-block parity and fork-boundary targets |
-| `SCF-G7` | `cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4 --all --input crates/testing/e2e-harness/features/stablecoin.feature`; `mise run localnet-smoke`; `cargo nextest run --workspace`; `cargo test --doc --workspace`; `cargo fmt --all --check`; `cargo clippy --all-targets -- -D warnings` |
+| `SCF-G6` | affected RPC/node/EVM suites plus dedicated full-block parity, restart and historical-read targets |
+| `SCF-G7` | `cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee none --validators 4 --all --input crates/testing/e2e-harness/features/stablecoin_factory_v1.feature`; `cargo nextest run --workspace`; `cargo test --doc --workspace`; `cargo fmt --all --check`; `cargo clippy --workspace --all-targets -- -D warnings` |
 
 ## Recommended PR boundaries
 
 1. **PR-A:** SCF-001..004 — decisions, interfaces and vectors only.
-2. **PR-B:** SCF-010..014 — characterization only.
+2. **PR-B:** SCF-010..013 — characterization only.
 3. **PR-C1:** SCF-020..024 — EVM/provider infrastructure.
-4. **PR-C2:** SCF-025..027 — version, inert Vote target and rollback-safe notification infrastructure.
+4. **PR-C2:** SCF-026..027 — inert Vote target and rollback-safe notification infrastructure.
 5. **PR-D:** SCF-030..034 — Policy Registry, split by state/runtime/ABI/property commits.
 6. **PR-E:** SCF-040..045 and SCF-047 — token slices, each behavior with its tests.
 7. **PR-F:** SCF-050..055 — Factory.
 8. **PR-G:** SCF-060..064 — Vote bond and Factory finalization.
-9. **PR-H:** SCF-070..074 — activation and consensus evidence.
+9. **PR-H:** SCF-070..074 — production wiring and consensus evidence.
 10. **PR-I:** SCF-080..085 — tooling, E2E, docs and release dossier.
 
 ## Definition of done

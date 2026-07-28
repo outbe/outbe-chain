@@ -7,9 +7,7 @@ use outbe_primitives::{
     stablecoin::{
         encode_canonical_stablecoin_create, StablecoinCreatePayload, MAX_NAME_LEN, MAX_TICKER_LEN,
     },
-    stablecoin_fork::{
-        STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
-    },
+    stablecoin_fork::{STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_SCHEMA_VERSION},
     storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_stablecoin::StablecoinContract;
@@ -208,14 +206,9 @@ fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
         )
         .unwrap();
 
-        let created = StablecoinFactoryApi::execute_approved(
-            storage.clone(),
-            proposal_id,
-            issuer,
-            &raw,
-            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-        )
-        .unwrap();
+        let created =
+            StablecoinFactoryApi::execute_approved(storage.clone(), proposal_id, issuer, &raw, 0)
+                .unwrap();
         assert_eq!(created, validated);
 
         let factory = StablecoinFactoryContract::new(storage.clone());
@@ -241,7 +234,7 @@ fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
                 currency: created.payload.iso4217,
                 decimals: created.payload.decimals,
                 issuer,
-                creation_protocol_version: u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+                creation_protocol_version: 0,
             }
         );
         created
@@ -309,14 +302,7 @@ fn maximum_accepted_metadata_and_supply_cap_create_a_token() {
             },
         )
         .unwrap();
-        StablecoinFactoryApi::execute_approved(
-            storage,
-            proposal_id,
-            issuer,
-            &raw,
-            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-        )
-        .unwrap()
+        StablecoinFactoryApi::execute_approved(storage, proposal_id, issuer, &raw, 0).unwrap()
     });
 
     assert_eq!(created.payload, payload);
@@ -341,12 +327,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
         let item = reservation(&factory, 7, issuer, "EXUSD");
         factory.reserve(&item).unwrap();
         assert!(matches!(
-            factory.execute_approved(
-                proposal_id,
-                issuer,
-                &changed_raw,
-                u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW)
-            ),
+            factory.execute_approved(proposal_id, issuer, &changed_raw, 0),
             Err(PrecompileError::Fatal(_))
         ));
         assert_eq!(
@@ -367,12 +348,7 @@ fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservat
             )
             .unwrap();
         assert!(matches!(
-            factory.execute_approved(
-                proposal_id,
-                issuer,
-                &raw,
-                u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW)
-            ),
+            factory.execute_approved(proposal_id, issuer, &raw, 0),
             Err(PrecompileError::Fatal(_))
         ));
         assert_eq!(
@@ -390,7 +366,7 @@ fn failure_after_every_initializer_mutation_rolls_back_token_marker_registry_and
     let proposal_id = U256::from(7u64);
     let raw =
         encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
-    let protocol_version = u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW);
+    let protocol_version = 0;
 
     let mutation_count = {
         let mut provider = HashMapStorageProvider::new(1);
@@ -516,14 +492,7 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
             },
         )
         .unwrap();
-        StablecoinFactoryApi::execute_approved(
-            storage,
-            proposal_id,
-            issuer,
-            &raw,
-            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
-        )
-        .unwrap();
+        StablecoinFactoryApi::execute_approved(storage, proposal_id, issuer, &raw, 0).unwrap();
     });
 
     provider.flush().unwrap();

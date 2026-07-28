@@ -4,17 +4,16 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::SolValue;
 use outbe_primitives::{
     stablecoin_fork::{
-        stablecoin_v1_budget_for_measurement, stablecoin_v1_is_active,
-        MAX_PENDING_PUBLIC_BONDED_PROPOSALS, MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER,
-        STABLECOIN_CREATE_BOND, STABLECOIN_EIP712_DOMAIN_VERSION, STABLECOIN_LIST_PAGE_CAP,
+        stablecoin_v1_budget_for_measurement, MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
+        MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER, STABLECOIN_CREATE_BOND,
+        STABLECOIN_EIP712_DOMAIN_VERSION, STABLECOIN_LIST_PAGE_CAP,
         STABLECOIN_POLICY_MEMBER_BATCH_CAP, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
-        STABLECOIN_V1_ACCOUNT_ACCESS_OWNER, STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS,
-        STABLECOIN_V1_GAS_FORMULA, STABLECOIN_V1_MAINNET_STATUS, STABLECOIN_V1_MAINTAINED_SDK,
-        STABLECOIN_V1_NAMESPACE_RESERVATION, STABLECOIN_V1_PROTOCOL_VERSION,
-        STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_REOPEN_RULES,
+        STABLECOIN_V1_ACCOUNT_ACCESS_OWNER, STABLECOIN_V1_ACTIVATION,
+        STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS, STABLECOIN_V1_GAS_FORMULA,
+        STABLECOIN_V1_MAINNET_STATUS, STABLECOIN_V1_MAINTAINED_SDK,
+        STABLECOIN_V1_NAMESPACE_RESERVATION, STABLECOIN_V1_REOPEN_RULES,
         STABLECOIN_V1_SCHEMA_VERSION, STABLECOIN_V1_SUPPORTED_NETWORKS,
-        STABLECOIN_V1_TOOLING_OWNER, STABLECOIN_V1_UPDATE_ACTIVATION,
-        STABLECOIN_V1_WALL_TIME_CLASSIFICATION,
+        STABLECOIN_V1_TOOLING_OWNER, STABLECOIN_V1_WALL_TIME_CLASSIFICATION,
     },
     storage::gas::PRECOMPILE_BASE_GAS,
 };
@@ -59,18 +58,7 @@ fn fork_manifest_matches_canonical_rust_constants() {
         manifest["stablecoinSchemaVersion"],
         STABLECOIN_V1_SCHEMA_VERSION
     );
-    assert_eq!(
-        manifest["activation"]["protocolVersion"],
-        STABLECOIN_V1_PROTOCOL_VERSION
-    );
-    assert_eq!(
-        manifest["activation"]["protocolVersionRaw"],
-        STABLECOIN_V1_PROTOCOL_VERSION_RAW
-    );
-    assert_eq!(
-        manifest["activation"]["updateActivation"],
-        STABLECOIN_V1_UPDATE_ACTIVATION
-    );
+    assert_eq!(manifest["activation"]["mode"], STABLECOIN_V1_ACTIVATION);
     assert_eq!(
         manifest["activation"]["namespaceReservation"],
         STABLECOIN_V1_NAMESPACE_RESERVATION
@@ -194,14 +182,6 @@ fn fork_manifest_contains_no_provisional_values() {
         2
     );
     assert!(!manifest["reopenRules"].as_array().unwrap().is_empty());
-}
-
-#[test]
-fn activation_is_inclusive_at_protocol_version_0_2() {
-    assert!(!stablecoin_v1_is_active(0));
-    assert!(!stablecoin_v1_is_active(1));
-    assert!(stablecoin_v1_is_active(2));
-    assert!(stablecoin_v1_is_active(3));
 }
 
 #[test]
