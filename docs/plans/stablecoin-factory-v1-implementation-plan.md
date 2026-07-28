@@ -167,6 +167,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
 | SCF-064 | Review | `2d759237` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; combined suites pass and independent G5 review remains |
 | SCF-072 | Review | `42521789` | Real pre-exec Vote→Factory lifecycle publishes one ordered StablecoinCreated through HookEvents; the log changes receipts root and bloom, cumulative gas and marker/state are asserted, and typed Error publishes no creation/settlement log while retaining bond and reservation; independent review remains |
+| SCF-073 | Review | `caa9fe69` | Independent proposer/validator executions are byte/state equal for Approved, Expired and Error across the mandatory system-tx prefix, receipt bytes/root/bloom/gas, full in-memory state root, Factory indexes, token marker/supply/balances and Vote bond deltas; independent review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -933,6 +934,17 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   supply and Vote/native bond deltas.
 - **Tests:** T4 Approved, Expired and Error boundaries; no scaffold/ignored
   parity test is accepted.
+- **Implementation evidence (`caa9fe69`):** each boundary starts from an
+  independently seeded identical state, runs production pre-execution and the complete
+  mandatory begin-zone transaction prefix in proposer and validator modes, then
+  compares canonical receipt encodings/root/bloom/cumulative gas and the reconstructed
+  full in-memory state root. The comparison also covers Factory indexes, token marker
+  hash, zero initial supply/balances, proposal outcome, reservation and native bond
+  accounting.
+- **Verification:** all three boundaries pass in the normal EVM unit suite
+  (`cargo test -p outbe-evm --lib`, 163/163); EVM tests are not ignored or scaffolded,
+  and clippy with `-D warnings`, formatting and diff checks pass. Status remains Review
+  until the independent gate review.
 
 ## SCF-074 — Fork-boundary, RPC and deterministic replay
 
