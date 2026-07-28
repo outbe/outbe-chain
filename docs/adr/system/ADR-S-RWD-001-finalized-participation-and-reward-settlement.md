@@ -91,6 +91,13 @@ zero. Transfers pay voters from `REWARDS_ADDRESS`. Residue is burned from that
 balance and atomically dispatched as Metadosis terminal emission headroom. Then the
 settled tombstone is written and hash/number-indexed window state is cleared.
 
+When the OCOMP profile is active, this headroom dispatch is purpose-bound: it
+checked-adds the residue to `PromisLimit.total_unallocated` and does not invoke
+day-limit formation. The daily Cycle terminal allocation remains the sole
+`base_limit` input. Because `LateFinalizeCredits` runs before `CycleTick`, a
+residue arriving before formation is taken into that Cycle limit; a later
+residue waits for the next unformed day. Pre-OCOMP dispatch remains unchanged.
+
 The conservation contract is exact:
 
 ```text

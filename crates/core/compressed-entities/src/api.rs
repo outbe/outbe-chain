@@ -39,6 +39,27 @@ pub enum RetirementOutcome {
     Requested,
 }
 
+/// Opaque proof that one collection root came from the completed CE lifecycle
+/// for the current block. Domain owners accept this capability instead of a
+/// caller-provided hash.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SealedCollectionRoot {
+    partition: PartitionRef,
+    root: B256,
+}
+
+impl SealedCollectionRoot {
+    #[must_use]
+    pub const fn partition(self) -> PartitionRef {
+        self.partition
+    }
+
+    #[must_use]
+    pub const fn root(self) -> B256 {
+        self.root
+    }
+}
+
 /// Exact-parent authenticated leaf reader owned by one block execution.
 /// Implementations may cache only successfully verified evidence for the
 /// immutable `(parent_root, entity)` pair.
@@ -61,6 +82,19 @@ pub trait AuthenticatedParentTree: Send + Sync + core::fmt::Debug {
         partition: PartitionRef,
         expected_parent_root: B256,
     ) -> Result<bool>;
+
+    /// Returns the exact collection root committed by the authenticated parent
+    /// catalog. Implementations used only by unrelated unit tests may keep the
+    /// default fail-closed behavior.
+    fn partition_root_verified(
+        &self,
+        _partition: PartitionRef,
+        _expected_parent_root: B256,
+    ) -> Result<Option<B256>> {
+        Err(fatal_scope(
+            "authenticated parent tree does not expose collection roots",
+        ))
+    }
 
     /// Prepare an immutable, side-effect-free candidate batch against this
     /// exact parent. Implementations must authenticate the complete unique
@@ -163,6 +197,19 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
             ));
         }
         Ok(false)
+    }
+
+    fn partition_root_verified(
+        &self,
+        _partition: PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<B256>> {
+        if expected_parent_root != self.parent_root() {
+            return Err(fatal_scope(
+                "empty reference parent does not match the EVM root",
+            ));
+        }
+        Ok(None)
     }
 
     fn prepare_seal(
@@ -530,6 +577,7 @@ pub struct ExecutionScope {
     parent_identity_without_root: Mutex<Option<(u32, u64, B256)>>,
     parent_binding_configured: AtomicBool,
     rpc_read_only: AtomicBool,
+    completed_seal: Mutex<Option<crate::SealOutput>>,
     ce_work_config: CeWorkConfig,
     ce_work: Mutex<CeWorkState>,
     ce_work_failure: AtomicU8,
@@ -578,6 +626,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(false),
             rpc_read_only: AtomicBool::new(false),
+            completed_seal: Mutex::new(None),
             ce_work_config: CeWorkConfig::new(0, 0, u64::MAX),
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -604,6 +653,7 @@ impl ExecutionScope {
             parent_identity_without_root: Mutex::new(None),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            completed_seal: Mutex::new(None),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -637,6 +687,7 @@ impl ExecutionScope {
             ))),
             parent_binding_configured: AtomicBool::new(true),
             rpc_read_only: AtomicBool::new(false),
+            completed_seal: Mutex::new(None),
             ce_work_config,
             ce_work: Mutex::new(CeWorkState {
                 used: 0,
@@ -787,6 +838,103 @@ impl ExecutionScope {
 
     pub fn parent_root(&self) -> Result<B256> {
         self.opened_parent_tree().map(|tree| tree.parent_root())
+    }
+
+    /// Returns the exact global CE root recorded by this scope's completed
+    /// end-block seal. It is unavailable before the executor closes the CE
+    /// lifecycle and does not expose the mutable staging envelope.
+    pub fn completed_sealed_root(&self) -> Result<B256> {
+        Ok(self.completed_seal()?.new_root)
+    }
+
+    /// Resolves one partition root from this scope's exact completed seal.
+    ///
+    /// Terminal system phases use this instead of accepting a caller-supplied
+    /// `SealOutput`, keeping the executor-owned seal as the only authority.
+    pub fn completed_partition_root(
+        &self,
+        partition: PartitionRef,
+    ) -> Result<SealedCollectionRoot> {
+        let output = self.completed_seal()?;
+        self.sealed_collection_root(&output, partition)
+    }
+
+    fn completed_seal(&self) -> Result<crate::SealOutput> {
+        if self.phase.load(Ordering::Acquire) != PHASE_ENDED {
+            return Err(fatal_scope(
+                "compressed-entity seal requested before end-block completed",
+            ));
+        }
+        let output = self
+            .completed_seal
+            .lock()
+            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
+            .clone()
+            .ok_or_else(|| fatal_scope("completed compressed-entity seal is absent"))?;
+        if output.parent_root != output.staged_tree_batch.parent_root()
+            || output.new_root != output.staged_tree_batch.new_root()
+        {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match its staged tree batch",
+            ));
+        }
+        if self.opened_parent_tree()?.parent_root() != output.parent_root {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match the authenticated parent",
+            ));
+        }
+        Ok(output)
+    }
+
+    /// Resolves a collection root from the exact completed CE seal. A changed
+    /// collection comes from the validated provisional batch; an unchanged
+    /// collection comes from the authenticated parent catalog.
+    pub fn sealed_collection_root(
+        &self,
+        output: &crate::SealOutput,
+        partition: PartitionRef,
+    ) -> Result<SealedCollectionRoot> {
+        if self.phase.load(Ordering::Acquire) != PHASE_ENDED {
+            return Err(fatal_scope(
+                "collection root requested before compressed-entity seal completed",
+            ));
+        }
+        if self
+            .completed_seal
+            .lock()
+            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?
+            .as_ref()
+            != Some(output)
+        {
+            return Err(fatal_scope(
+                "SealOutput was not completed by this execution scope",
+            ));
+        }
+        if output.parent_root != output.staged_tree_batch.parent_root()
+            || output.new_root != output.staged_tree_batch.new_root()
+        {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match its staged tree batch",
+            ));
+        }
+
+        let parent = self.opened_parent_tree()?;
+        if parent.parent_root() != output.parent_root {
+            return Err(fatal_scope(
+                "compressed-entity SealOutput does not match the authenticated parent",
+            ));
+        }
+        let (_, key) = crate::partition_collection_key(partition)
+            .map_err(|error| fatal_scope(error.to_string()))?;
+        let root = match output.staged_tree_batch.changed_collections.get(&key) {
+            Some(crate::CollectionOperation::Mutate(batch)) => Some(batch.new_collection_root),
+            Some(crate::CollectionOperation::Retire(_)) => None,
+            None => parent.partition_root_verified(partition, output.parent_root)?,
+        }
+        .filter(|root| !root.is_zero())
+        .ok_or_else(|| fatal_scope("sealed compressed-entity collection is absent"))?;
+
+        Ok(SealedCollectionRoot { partition, root })
     }
 
     pub(crate) fn prepare_tree_seal(
@@ -1057,6 +1205,7 @@ impl ExecutionScope {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn finish(&self) -> Result<()> {
         self.phase
             .compare_exchange(
@@ -1071,6 +1220,40 @@ impl ExecutionScope {
                     "compressed-entity end_block called outside active lifecycle".into(),
                 )
             })
+    }
+
+    pub(crate) fn finish_with_seal(&self, output: &crate::SealOutput) -> Result<()> {
+        let mut completed = self
+            .completed_seal
+            .lock()
+            .map_err(|_| fatal_scope("completed compressed-entity seal lock poisoned"))?;
+        if completed.is_some() {
+            return Err(fatal_scope(
+                "compressed-entity seal identity recorded more than once",
+            ));
+        }
+        if self.phase.load(Ordering::Acquire) != PHASE_ACTIVE {
+            return Err(fatal_scope(
+                "compressed-entity end_block called outside active lifecycle",
+            ));
+        }
+        *completed = Some(output.clone());
+        if self
+            .phase
+            .compare_exchange(
+                PHASE_ACTIVE,
+                PHASE_ENDED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_err()
+        {
+            *completed = None;
+            return Err(fatal_scope(
+                "compressed-entity end_block called outside active lifecycle",
+            ));
+        }
+        Ok(())
     }
 }
 

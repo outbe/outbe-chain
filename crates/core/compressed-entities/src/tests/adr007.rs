@@ -534,6 +534,42 @@ fn same_block_transition_matrix_is_overlay_first_and_single_touch() {
 }
 
 #[test]
+fn completed_seal_projection_is_unavailable_before_end_and_exact_after_end() {
+    let day = WorldwideDay::new(2026_0707);
+    let body = tribute(
+        entity(day.value(), 0x71),
+        address!("7100000000000000000000000000000000000071"),
+        100,
+    );
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        begin_block(storage.clone(), &scope).unwrap();
+        mint(storage.clone(), &scope, BodyInput::Tribute(&body)).unwrap();
+
+        assert!(scope.completed_sealed_root().is_err());
+        assert!(scope
+            .completed_partition_root(PartitionRef::TributeWwd(day))
+            .is_err());
+
+        let seal = end_block(storage, &scope).unwrap();
+        assert_eq!(scope.completed_sealed_root().unwrap(), seal.new_root);
+        let collection = scope
+            .completed_partition_root(PartitionRef::TributeWwd(day))
+            .unwrap();
+        assert_eq!(collection.partition(), PartitionRef::TributeWwd(day));
+        assert!(!collection.root().is_zero());
+        assert_eq!(
+            collection,
+            scope
+                .sealed_collection_root(&seal, PartitionRef::TributeWwd(day))
+                .unwrap()
+        );
+    });
+}
+
+#[test]
 fn same_leaf_aba_capability_remains_value_valid() {
     let owner = address!("2000000000000000000000000000000000000002");
     let body = tribute(entity(8, 2), owner, 100);

@@ -158,6 +158,7 @@ fn create_executor_activates_the_factory_scope_against_the_exact_parent_tree() {
         },
         timestamp_millis_part: 0,
         block_hash: None,
+        block_state_root: None,
         expected_begin_system_txs: Vec::new(),
         expected_end_system_txs: Vec::new(),
         system_layout_error: None,

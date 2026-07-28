@@ -181,4 +181,16 @@ pub struct OracleContract {
 
     // Reference-currency refinancing rates
     pub reference_refinancing_rate: Mapping<u16, U256>,
+
+    // === OCOMP PoC pre-admission projection ===
+    // These trailing fields are inert until the fresh-devnet fork handler sets
+    // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
+    // their exact historical state footprint.
+    pub ocomp_profile_ready: Slot<bool>,
+    pub ocomp_day_type_pair_id: Slot<u32>,
+    // Direct O(1) lookup for the single fork-fixed auction-entry pair. The
+    // canonical UTC-day finalizer is its only mutation owner.
+    pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
+    // Advances for every Oracle mutation visible to OCOMP pre-admission.
+    pub ocomp_state_version: Slot<u64>,
 }

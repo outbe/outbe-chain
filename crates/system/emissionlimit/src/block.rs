@@ -11,11 +11,9 @@
 //! and forwards the Metadosis terminal portion through
 //! [`dispatch_terminal_remainder_at`] below.
 //!
-//! This file is intentionally tiny — it only owns the terminal
-//! dispatch call so that the Cycle handler can route the Metadosis
-//! residue to a deterministic timestamp (the finalized block's UTC
-//! day, not the dispatching block's) without going through a full
-//! sink table roundtrip.
+//! This file is intentionally tiny — it owns the purpose-bound terminal
+//! dispatch calls used by Cycle and late fee settlement. Keeping them distinct
+//! prevents a non-daily residue from becoming an OCOMP base-limit producer.
 
 use alloy_primitives::U256;
 use outbe_primitives::{
@@ -23,15 +21,13 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
 };
 
-/// Sends emission returned after delayed settlement to the Metadosis
-/// terminal sink, anchored at `timestamp`.
+/// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
+/// `timestamp`.
 ///
-/// Delayed settlement happens when finalized metadata is executed —
-/// which may be later than the finalized block itself — and when the
-/// Cycle day handler dispatches the previous UTC day's terminal
-/// Metadosis amount. The terminal sink must use the finalized /
-/// previous-day timestamp so Metadosis worldwide-day accounting lands
-/// in the right bucket regardless of when the call physically runs.
+/// The Cycle day handler dispatches the previous UTC day's terminal Metadosis
+/// amount. The sink must use that previous-day timestamp so worldwide-day
+/// accounting lands in the right bucket regardless of when the call physically
+/// runs.
 ///
 /// Returns `Fatal` if the Metadosis sink reports any unused amount —
 /// the terminal sink is required to be a sink, not a pass-through.
@@ -51,6 +47,34 @@ pub fn dispatch_terminal_remainder_at(
     if !unused.is_zero() {
         return Err(PrecompileError::Revert(
             "terminal emission sink returned unused amount".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Recycles a late fee-settlement residue into terminal Metadosis headroom.
+///
+/// This is deliberately distinct from [`dispatch_terminal_remainder_at`]:
+/// after OCOMP activation only the daily Cycle amount may form a base day
+/// limit, while late residues accumulate as carry-over for the next unformed
+/// limit. Before OCOMP activation both paths retain the same legacy behavior.
+pub fn dispatch_late_settlement_residue_at(
+    ctx: &BlockRuntimeContext,
+    amount: U256,
+    timestamp: u64,
+) -> Result<()> {
+    if amount.is_zero() {
+        return Ok(());
+    }
+
+    let mut terminal_block = ctx.block.clone();
+    terminal_block.timestamp = timestamp;
+    let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
+    let unused =
+        outbe_metadosis::emission_sink::apply_late_settlement_headroom(&terminal_ctx, amount)?;
+    if !unused.is_zero() {
+        return Err(PrecompileError::Revert(
+            "late-settlement terminal sink returned unused amount".into(),
         ));
     }
     Ok(())

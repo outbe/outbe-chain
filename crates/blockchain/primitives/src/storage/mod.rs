@@ -4,14 +4,16 @@ pub mod evm;
 pub mod gas;
 pub mod handle;
 pub mod hashmap;
+pub mod lysis_activation;
 pub mod readonly;
 pub mod types;
 
 pub use handle::StorageHandle;
+pub use lysis_activation::CertifiedLysisActivation;
 pub use revm::state::{AccountInfo, Bytecode};
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 
-use alloy_primitives::{Address, Bytes, LogData, U256};
+use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use revm::{context::journaled_state::JournalCheckpoint, context::result::HaltReason};
 
 use crate::error::Result;
@@ -185,6 +187,30 @@ pub trait StorageBacked<'storage>: Sized {
 /// Runtime code reaches providers through explicit [`StorageHandle`] values
 /// created by precompile, transaction, or block lifecycle entrypoints.
 pub trait PrecompileStorageProvider {
+    /// Opens the private execution lease for one certified Lysis activation.
+    ///
+    /// Providers deny this by default. The production EVM execution context
+    /// grants the lease only from the fork-pinned activation dispatch.
+    fn begin_lysis_activation_frame(&mut self, _activation_call_id: B256) -> Result<()> {
+        Err(crate::error::PrecompileError::Fatal(
+            "certified Lysis activation frame is not available".into(),
+        ))
+    }
+
+    /// Closes a previously granted Lysis activation lease.
+    ///
+    /// `completed` is true only after the fixed Nod, contributor, Tribute,
+    /// carry-over and terminal cursor has been consumed in order.
+    fn finish_lysis_activation_frame(
+        &mut self,
+        _activation_call_id: B256,
+        _completed: bool,
+    ) -> Result<()> {
+        Err(crate::error::PrecompileError::Fatal(
+            "certified Lysis activation frame is not available".into(),
+        ))
+    }
+
     /// Returns the chain ID.
     fn chain_id(&self) -> u64;
 

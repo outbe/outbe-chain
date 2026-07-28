@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use base64::Engine;
+use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
 use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
@@ -8,7 +9,7 @@ use outbe_primitives::error::Result;
 
 use crate::api;
 use crate::errors::NodError;
-use crate::schema::{NodBucketState, NodContract, NodItemState};
+use crate::schema::{NodBucketState, NodCertifiedGenerationProjection, NodContract, NodItemState};
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -81,6 +82,13 @@ pub fn dispatch(
                     .ok_or(NodError::BucketNotFound)?;
                 Ok(to_abi_data(&item, &bucket))
             }),
+            certifiedGeneration(c) => view(c, |c| {
+                let worldwide_day = WorldwideDay::new(c.worldwideDay);
+                Ok(to_abi_certified_generation(
+                    worldwide_day,
+                    nod.ocomp_certified_generation(worldwide_day)?,
+                ))
+            }),
         }
     })
 }
@@ -134,6 +142,42 @@ fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
+    }
+}
+
+fn to_abi_certified_generation(
+    worldwide_day: WorldwideDay,
+    generation: Option<NodCertifiedGenerationProjection>,
+) -> INod::CertifiedGenerationData {
+    match generation {
+        Some(generation) => INod::CertifiedGenerationData {
+            exists: true,
+            worldwideDay: generation.worldwide_day.into(),
+            generation: generation.generation,
+            nodRoot: generation.nod_root,
+            bucketRoot: generation.bucket_root,
+            outputManifestRoot: generation.output_manifest_root,
+            tributeCount: generation.tribute_count,
+            nodCount: generation.nod_count,
+            bucketCount: generation.bucket_count,
+            nodAmountTotal: generation.nod_amount_total,
+            nodGratisConsumed: generation.nod_gratis_consumed,
+            issuedAt: generation.issued_at,
+        },
+        None => INod::CertifiedGenerationData {
+            exists: false,
+            worldwideDay: worldwide_day.into(),
+            generation: 0,
+            nodRoot: Default::default(),
+            bucketRoot: Default::default(),
+            outputManifestRoot: Default::default(),
+            tributeCount: 0,
+            nodCount: 0,
+            bucketCount: 0,
+            nodAmountTotal: U256::ZERO,
+            nodGratisConsumed: U256::ZERO,
+            issuedAt: 0,
+        },
     }
 }
 

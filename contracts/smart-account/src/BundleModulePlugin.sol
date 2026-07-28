@@ -17,6 +17,16 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     ///      reads it as the reserve in `freeBalance = totalBalance − bundleBalance`.
     mapping(address account => mapping(address token => uint256)) private bundleBalance;
 
+    /// @notice The sole authorized caller of `dispatchDecreaseBalance` — the BundleWithdrawHook.
+    /// @dev Wired once post-deploy via `setWithdrawHook`: the hook takes this plugin's address as a
+    ///      constructor immutable and so is deployed after this plugin, forbidding a constructor
+    ///      immutable here. While unset, `dispatchDecreaseBalance` reverts for everyone (fail-closed).
+    address public withdrawHook;
+    /// @dev Authorized to call `setWithdrawHook`. Passed as a constructor arg (not captured from
+    ///      `msg.sender`) because CREATE2-factory deploys run the constructor with `msg.sender` = the
+    ///      deployment proxy (0x4e59…), not the operator.
+    address private immutable _OWNER;
+
     error HasBundleBalance(address token);
     error BundleNotInstalled();
     error TokenNotInBundle(address token);
@@ -27,7 +37,17 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     ///         observe reserve movement on the fund-holding account.
     event BundleBalanceDecreased(address indexed account, address indexed token, uint256 burned, uint256 newBalance);
 
-    constructor() {}
+    constructor(address owner_) {
+        _OWNER = owner_;
+    }
+
+    /// @notice Authorize the sole `dispatchDecreaseBalance` caller (the BundleWithdrawHook).
+    /// @dev Owner-gated. Call once after the hook is deployed and before the account factory goes
+    ///      live; the hook cannot be a constructor immutable due to the circular construction order.
+    function setWithdrawHook(address hook) external {
+        require(msg.sender == _OWNER, UnauthorizedHook());
+        withdrawHook = hook;
+    }
 
     /// @dev Called by Kernel during module installation.
     ///      When installed as an executor with empty data, this is a no-op.
@@ -129,6 +149,7 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     ///      Uses this plugin's executor registration to call executeFromExecutor, ensuring
     ///      that decreaseBundleBalance is invoked with msg.sender = smartAccount.
     function dispatchDecreaseBalance(address smartAccount, address token, uint256 amount) external {
+        require(msg.sender == withdrawHook, UnauthorizedHook());
         bytes32 execMode =
             LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory decreaseCall = abi.encodeCall(BundleModulePlugin.decreaseBundleBalance, (token, amount));

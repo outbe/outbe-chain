@@ -18,6 +18,7 @@ use reth_db::{
     cursor::DbCursorRO,
     database::Database,
     mdbx::{create_db, tx::Tx, DatabaseArguments, RO},
+    open_db_read_only,
     table::Table,
     transaction::{DbTx, DbTxMut},
     ClientVersion, DatabaseEnv,
@@ -1223,6 +1224,129 @@ pub struct CeMdbx {
     db: DatabaseEnv,
 }
 
+/// Exporter-side view of the fixed CE environment.
+///
+/// This type is deliberately distinct from [`CeMdbx`]: it opens MDBX in
+/// `Mode::ReadOnly`, exposes no mutation method and can only create an exact
+/// authenticated finalized snapshot.
+#[derive(Debug)]
+pub struct CeMdbxReadOnly {
+    path: PathBuf,
+    identity: EnvironmentIdentity,
+    db: DatabaseEnv,
+}
+
+impl CeMdbxReadOnly {
+    /// Opens the service-manager-configured CE environment without creating a
+    /// directory, table or record.
+    pub fn open(
+        datadir: &Path,
+        expected_identity: EnvironmentIdentity,
+    ) -> Result<Self, PersistenceError> {
+        validate_expected_environment_identity(&expected_identity)?;
+        let path = datadir.join(CE_SMT_RELATIVE_PATH);
+        let args = DatabaseArguments::new(ClientVersion::default());
+        let db = open_db_read_only(&path, args).map_err(|error| PersistenceError::Database {
+            path: path.clone(),
+            message: format!("{error:#}"),
+        })?;
+        let store = Self {
+            path,
+            identity: expected_identity,
+            db,
+        };
+        store.verify_existing()?;
+        Ok(store)
+    }
+
+    #[must_use]
+    pub const fn identity(&self) -> &EnvironmentIdentity {
+        &self.identity
+    }
+
+    pub fn marker(&self) -> Result<FinalizedMarker, PersistenceError> {
+        let tx = self.tx()?;
+        let marker = read_marker(&tx, &self.path)?;
+        tx.commit().map_err(|error| self.db_error(error))?;
+        Ok(marker)
+    }
+
+    /// Opens one immutable transaction and rejects any marker/root mismatch
+    /// before returning the view.
+    pub fn open_exact(
+        &self,
+        required: ExactParentIdentity,
+    ) -> Result<crate::staging::AuthenticatedCatalogView, PersistenceError> {
+        let snapshot = self.open_snapshot()?;
+        crate::staging::AuthenticatedCatalogView::open(snapshot, required)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))
+    }
+
+    fn open_snapshot(&self) -> Result<Box<dyn FinalizedTreeSnapshot>, PersistenceError> {
+        let tx = self.tx()?;
+        let marker = read_marker(&tx, &self.path)?;
+        let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
+        let wrapped = crate::sealed_root(catalog_root)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        if wrapped != marker.new_root {
+            return Err(PersistenceError::CatalogWrapperMismatch {
+                expected: marker.new_root,
+                actual: wrapped,
+            });
+        }
+        Ok(Box::new(MdbxSnapshot {
+            path: self.path.clone(),
+            tx,
+            marker,
+        }))
+    }
+
+    fn verify_existing(&self) -> Result<(), PersistenceError> {
+        let tx = self.tx()?;
+        let stored_identity = tx
+            .get::<tables::CeMetadata>(IDENTITY_KEY.to_vec())
+            .map_err(|error| self.db_error(error))?;
+        let stored_marker = tx
+            .get::<tables::CeMetadata>(LAST_APPLIED_KEY.to_vec())
+            .map_err(|error| self.db_error(error))?;
+        let (Some(identity), Some(marker)) = (stored_identity, stored_marker) else {
+            return Err(PersistenceError::PartialEnvironmentInitialization);
+        };
+        let actual_identity = EnvironmentIdentity::decode(&identity)?;
+        if actual_identity != self.identity {
+            return Err(PersistenceError::EnvironmentIdentityMismatch {
+                expected: self.identity.clone(),
+                actual: actual_identity,
+            });
+        }
+        let marker = FinalizedMarker::decode(&marker)?;
+        if marker.commitment_scheme_version != self.identity.commitment_scheme_version {
+            return Err(PersistenceError::EnvironmentMarkerSchemeMismatch);
+        }
+        let catalog_root = read_required_tree_root(&tx, &self.path, TreeNamespace::Catalog)?;
+        let wrapped = crate::sealed_root(catalog_root)
+            .map_err(|error| PersistenceError::Staging(error.to_string()))?;
+        if wrapped != marker.new_root {
+            return Err(PersistenceError::CatalogWrapperMismatch {
+                expected: marker.new_root,
+                actual: wrapped,
+            });
+        }
+        tx.commit().map_err(|error| self.db_error(error))
+    }
+
+    fn tx(&self) -> Result<Tx<RO>, PersistenceError> {
+        self.db.tx().map_err(|error| self.db_error(error))
+    }
+
+    fn db_error(&self, error: impl std::fmt::Display) -> PersistenceError {
+        PersistenceError::Database {
+            path: self.path.clone(),
+            message: error.to_string(),
+        }
+    }
+}
+
 impl CeMdbx {
     /// Opens `<datadir>/compressed_entities/smt/`, initializes an empty
     /// environment atomically, or verifies every existing identity field.
@@ -1231,17 +1355,7 @@ impl CeMdbx {
         expected_identity: EnvironmentIdentity,
         genesis_marker: FinalizedMarker,
     ) -> Result<Self, PersistenceError> {
-        if expected_identity.local_storage_schema_version != LOCAL_STORAGE_SCHEMA_VERSION {
-            return Err(PersistenceError::UnsupportedLocalSchema {
-                actual: expected_identity.local_storage_schema_version,
-            });
-        }
-        if expected_identity.tree_format.is_empty() || expected_identity.vendor_revision.is_empty()
-        {
-            return Err(PersistenceError::EmptyEnvironmentIdentityField);
-        }
-        crate::CeTopologyV1::decode(&expected_identity.topology)
-            .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+        validate_expected_environment_identity(&expected_identity)?;
         if genesis_marker.height != 0 || genesis_marker.block_hash != expected_identity.genesis_hash
         {
             return Err(PersistenceError::InvalidGenesisMarker {
@@ -1583,6 +1697,22 @@ impl CeMdbx {
     }
 }
 
+fn validate_expected_environment_identity(
+    expected_identity: &EnvironmentIdentity,
+) -> Result<(), PersistenceError> {
+    if expected_identity.local_storage_schema_version != LOCAL_STORAGE_SCHEMA_VERSION {
+        return Err(PersistenceError::UnsupportedLocalSchema {
+            actual: expected_identity.local_storage_schema_version,
+        });
+    }
+    if expected_identity.tree_format.is_empty() || expected_identity.vendor_revision.is_empty() {
+        return Err(PersistenceError::EmptyEnvironmentIdentityField);
+    }
+    crate::CeTopologyV1::decode(&expected_identity.topology)
+        .map_err(|_| PersistenceError::InvalidTopologyIdentity)?;
+    Ok(())
+}
+
 fn apply_tree_changes<T: DbTxMut>(
     tx: &T,
     db: &CeMdbx,
@@ -1653,6 +1783,10 @@ impl FinalizedTreeSnapshot for MdbxSnapshot {
 
     fn collection_root_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError> {
         count_collection_root_records(&self.tx, &self.path, collection)
+    }
+
+    fn collection_leaf_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError> {
+        count_collection_leaf_records(&self.tx, &self.path, collection)
     }
 
     fn read_branch(
@@ -1802,6 +1936,55 @@ fn count_collection_root_records<T: DbTx>(
             return Err(PersistenceError::NonCanonicalTreeNamespace);
         }
         count = count.saturating_add(1);
+        entry = cursor.next().map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    }
+    Ok(count)
+}
+
+fn count_collection_leaf_records<T: DbTx>(
+    tx: &T,
+    path: &Path,
+    collection: CollectionKey,
+) -> Result<usize, PersistenceError> {
+    const NAMESPACE_BYTES: usize = 1 + 32 + 4;
+    const LEAF_KEY_BYTES: usize = NAMESPACE_BYTES + 32;
+
+    let prefix = collection_prefix(collection);
+    let mut cursor =
+        tx.cursor_read::<tables::CeLeaves>()
+            .map_err(|error| PersistenceError::Database {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })?;
+    let mut entry = cursor
+        .seek(prefix.clone())
+        .map_err(|error| PersistenceError::Database {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
+    let mut count = 0_usize;
+    while let Some((key, value)) = entry {
+        if !key.starts_with(&prefix) {
+            break;
+        }
+        if key.len() != LEAF_KEY_BYTES {
+            return Err(PersistenceError::MalformedCollectionLeafKey);
+        }
+        let namespace = TreeNamespace::decode(&key[..NAMESPACE_BYTES])?;
+        if !matches!(
+            namespace,
+            TreeNamespace::CollectionShard(actual, _) if actual == collection
+        ) {
+            return Err(PersistenceError::NonCanonicalTreeNamespace);
+        }
+        TreeKey::decode(&key[NAMESPACE_BYTES..])?;
+        LeafValue::decode(&value)?;
+        count = count
+            .checked_add(1)
+            .ok_or(PersistenceError::CollectionLeafCountOverflow)?;
         entry = cursor.next().map_err(|error| PersistenceError::Database {
             path: path.to_path_buf(),
             message: error.to_string(),
@@ -2116,6 +2299,10 @@ pub enum PersistenceError {
         expected: usize,
         actual: usize,
     },
+    #[error("persisted collection leaf key is malformed")]
+    MalformedCollectionLeafKey,
+    #[error("persisted collection leaf count overflows usize")]
+    CollectionLeafCountOverflow,
     #[error("recomputed collection root differs from candidate")]
     NewCollectionRootMismatch,
     #[error("persisted shard root count mismatch: expected {expected}, got {actual}")]
@@ -2791,5 +2978,34 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn exporter_environment_is_really_read_only_at_the_mdbx_boundary() {
+        let directory = tempfile::tempdir().unwrap();
+        let expected_identity = identity();
+        let genesis = FinalizedMarker {
+            commitment_scheme_version: expected_identity.commitment_scheme_version,
+            height: 0,
+            block_hash: expected_identity.genesis_hash,
+            parent_block_hash: B256::ZERO,
+            parent_root: B256::ZERO,
+            new_root: crate::sealed_root(B256::ZERO).unwrap(),
+        };
+        let writer = CeMdbx::open(directory.path(), expected_identity.clone(), genesis).unwrap();
+        let expected = writer.marker().unwrap();
+        drop(writer);
+        let reader = CeMdbxReadOnly::open(directory.path(), expected_identity).unwrap();
+
+        assert_eq!(reader.marker().unwrap(), expected);
+        assert!(reader.db.tx_mut().is_err());
+        assert!(reader
+            .open_exact(ExactParentIdentity {
+                commitment_scheme_version: expected.commitment_scheme_version,
+                block_number: expected.height,
+                block_hash: B256::repeat_byte(0xFF),
+                root: expected.new_root,
+            })
+            .is_err());
     }
 }

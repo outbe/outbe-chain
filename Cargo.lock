@@ -7242,6 +7242,7 @@ dependencies = [
  "outbe-engine",
  "outbe-evm",
  "outbe-node",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tributefactory",
@@ -7435,6 +7436,7 @@ dependencies = [
  "outbe-intex",
  "outbe-intexfactory",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
  "outbe-promislimit",
  "thiserror 2.0.18",
@@ -7478,31 +7480,63 @@ dependencies = [
 name = "outbe-e2e-harness"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-network",
  "alloy-primitives",
  "alloy-provider",
+ "alloy-rlp",
  "alloy-rpc-types",
  "alloy-signer",
  "alloy-signer-local",
  "alloy-sol-types",
+ "alloy-trie",
  "bytes",
  "clap",
  "commonware-codec",
+ "commonware-consensus",
  "commonware-cryptography",
  "commonware-math",
+ "commonware-utils",
  "cucumber",
  "eyre",
  "futures",
  "hex",
+ "k256 0.13.4",
  "mongodb",
+ "outbe-common",
  "outbe-compressed-entities",
+ "outbe-consensus",
+ "outbe-fidelity",
+ "outbe-metadosis",
+ "outbe-nod",
+ "outbe-node",
+ "outbe-nodfactory",
+ "outbe-ocomp-protocol",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
+ "outbe-oracle",
+ "outbe-primitives",
+ "outbe-update",
+ "outbe-zerofee",
+ "rand 0.8.6",
  "rand_core 0.6.4",
+ "reth-chainspec",
+ "reth-ethereum",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-storage-api",
+ "reth-trie",
+ "revm",
+ "rustix",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "sha2 0.10.9",
+ "tempfile",
  "time",
  "tokio",
+ "trybuild",
  "walkdir",
  "xshell",
 ]
@@ -7549,6 +7583,7 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-node",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
  "outbe-tee",
  "outbe-teeregistry",
@@ -7580,6 +7615,7 @@ dependencies = [
  "alloy-eips 2.0.4",
  "alloy-evm",
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "alloy-sol-types",
  "commonware-codec",
  "commonware-consensus",
@@ -7609,7 +7645,9 @@ dependencies = [
  "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
+ "outbe-node",
  "outbe-nodfactory",
+ "outbe-ocomp-protocol",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
@@ -7632,11 +7670,17 @@ dependencies = [
  "outbe-zkproof",
  "proptest",
  "rand_core 0.6.4",
+ "reth-basic-payload-builder",
+ "reth-chainspec",
  "reth-ethereum",
+ "reth-ethereum-payload-builder",
  "reth-evm",
+ "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-revm",
  "reth-rpc-eth-api",
+ "reth-transaction-pool",
  "reth-trie",
  "revm",
  "serde_json",
@@ -7760,7 +7804,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
+ "revm",
  "thiserror 2.0.18",
 ]
 
@@ -7794,9 +7840,12 @@ dependencies = [
  "commonware-math",
  "eyre",
  "hex",
+ "k256 0.13.4",
  "outbe-consensus",
+ "outbe-ocomp-protocol",
  "rand_core 0.6.4",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -7821,16 +7870,33 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "hex",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-fidelity",
  "outbe-intex",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-tribute",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "outbe-lysis-v1-reference"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "num-bigint",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -7849,13 +7915,17 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-desis",
+ "outbe-fidelity",
+ "outbe-intex",
  "outbe-lysis",
  "outbe-macros",
  "outbe-nod",
  "outbe-nodfactory",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
@@ -7894,19 +7964,30 @@ dependencies = [
  "alloy-provider",
  "alloy-rlp",
  "alloy-rpc-types-engine",
+ "alloy-sol-types",
+ "alloy-trie",
  "either",
  "eyre",
  "futures",
  "hex",
+ "k256 0.13.4",
  "metrics",
  "mongodb",
+ "outbe-common",
  "outbe-compressed-entities",
+ "outbe-consensus",
  "outbe-evm",
+ "outbe-fidelity",
+ "outbe-metadosis",
+ "outbe-ocomp-protocol",
  "outbe-offchain-data",
  "outbe-offchain-storage",
+ "outbe-oracle",
  "outbe-primitives",
+ "outbe-tribute",
  "outbe-txpool",
  "outbe-validatorset",
+ "outbe-zerofee",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -7932,12 +8013,15 @@ dependencies = [
  "reth-tasks",
  "reth-tracing",
  "reth-transaction-pool",
+ "reth-trie",
  "revm",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -7952,11 +8036,78 @@ dependencies = [
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-nod",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultprovider",
+ "revm",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-ocomp"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips 2.0.4",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "clap",
+ "hex",
+ "k256 0.13.4",
+ "libc",
+ "outbe-common",
+ "outbe-compressed-entities",
+ "outbe-consensus",
+ "outbe-e2e-harness",
+ "outbe-fidelity",
+ "outbe-lysis",
+ "outbe-node",
+ "outbe-ocomp-protocol",
+ "outbe-offchain-data",
+ "outbe-offchain-storage",
+ "outbe-oracle",
+ "outbe-primitives",
+ "outbe-tribute",
+ "outbe-zerofee",
+ "reqwest 0.12.28",
+ "reth-ethereum",
+ "serde",
+ "serde_json",
+ "sha3",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-ocomp-protocol"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips 2.0.4",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-trie",
+ "commonware-codec",
+ "commonware-consensus",
+ "commonware-cryptography",
+ "commonware-utils",
+ "k256 0.13.4",
+ "libc",
+ "outbe-consensus",
+ "outbe-metadosis",
+ "outbe-node",
+ "outbe-primitives",
+ "rand 0.8.6",
+ "reth-chainspec",
+ "reth-primitives-traits",
+ "reth-storage-api",
+ "reth-trie",
+ "revm",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8029,6 +8180,7 @@ dependencies = [
  "commonware-p2p",
  "hex",
  "k256 0.13.4",
+ "outbe-ocomp-protocol",
  "proptest",
  "reth-codecs",
  "reth-ethereum",
@@ -8076,7 +8228,9 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-primitives",
+ "revm",
 ]
 
 [[package]]
@@ -8107,14 +8261,17 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "commonware-utils",
+ "outbe-common",
  "outbe-consensus",
  "outbe-emissionlimit",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
  "outbe-metadosis",
+ "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-validatorset",
  "proptest",
  "rand 0.8.6",
@@ -8264,8 +8421,10 @@ dependencies = [
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-offchain-storage",
  "outbe-primitives",
+ "revm",
  "serde",
  "tempfile",
  "thiserror 2.0.18",
@@ -8307,6 +8466,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
+ "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-zerofee",
@@ -8393,6 +8553,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-macros",
+ "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-validatorset",
@@ -13311,6 +13472,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "serdect"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14792,6 +14966,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "unsigned-varint"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15838,11 +16018,21 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
  "base64 0.22.1",
  "clap",
  "eyre",
  "filetime",
  "hex",
+ "k256 0.13.4",
+ "outbe-consensus",
+ "outbe-e2e-harness",
+ "outbe-metadosis",
+ "outbe-node",
+ "outbe-ocomp-protocol",
+ "outbe-primitives",
+ "reth-chainspec",
+ "reth-ethereum",
  "serde",
  "serde_json",
  "sha2 0.10.9",

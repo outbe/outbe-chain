@@ -77,11 +77,14 @@ impl ChainSpecParser for OutbeChainSpecParser {
         reth_ethereum::cli::chainspec::SUPPORTED_CHAINS;
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
-        Ok(reth_ethereum::cli::chainspec::chain_value_parser(s)?
-            .as_ref()
-            .clone()
-            .map_header(OutbeHeader::new)
-            .into())
+        let chain_spec: Arc<Self::ChainSpec> =
+            reth_ethereum::cli::chainspec::chain_value_parser(s)?
+                .as_ref()
+                .clone()
+                .map_header(OutbeHeader::new)
+                .into();
+        outbe_node::ocomp::fork::load_ocomp_fork_install(chain_spec.as_ref())?;
+        Ok(chain_spec)
     }
 }
 
@@ -293,6 +296,7 @@ fn run_node() -> eyre::Result<()> {
         ProjectionReadinessHandle,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
+        Arc<CompressedTreeService>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -302,11 +306,17 @@ fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
     let consensus_thread_fn = move || -> eyre::Result<()> {
-        let (node, mut args, projection_readiness, finalized_ce_committer, ce_startup_recovery) =
-            match node_rx.blocking_recv() {
-                Ok(v) => v,
-                Err(_) => return Ok(()),
-            };
+        let (
+            node,
+            mut args,
+            projection_readiness,
+            finalized_ce_committer,
+            ce_startup_recovery,
+            compressed_tree_service,
+        ) = match node_rx.blocking_recv() {
+            Ok(v) => v,
+            Err(_) => return Ok(()),
+        };
 
         args.validate()?;
 
@@ -386,9 +396,12 @@ fn run_node() -> eyre::Result<()> {
                     args,
                     node,
                     bridge_for_consensus,
-                    projection_readiness,
-                    finalized_ce_committer,
-                    ce_startup_recovery,
+                    outbe_engine::ConsensusStackServices::new(
+                        projection_readiness,
+                        finalized_ce_committer,
+                        ce_startup_recovery,
+                        compressed_tree_service,
+                    ),
                 ) => {
                     if let Err(e) = &result {
                         tracing::error!(%e, "consensus stack failed");
@@ -409,17 +422,46 @@ fn run_node() -> eyre::Result<()> {
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
     let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
+        let fork_install = outbe_node::ocomp::fork::load_ocomp_fork_install(spec.as_ref())
+            .expect("chain spec parser validated OCOMP fork install");
+        let activation = fork_install.as_ref().map_or(
+            outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
+            |install| {
+                outbe_primitives::system_tx::OcompLifecycleActivation::at_block(
+                    install.activation_height,
+                )
+            },
+        );
+        let mut evm =
+            outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone())
+                .with_ocomp_lifecycle_activation(activation);
+        if let Some(install) = fork_install {
+            evm = evm.with_ocomp_fork_install(install);
+        }
         (
-            outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone()),
+            evm,
             Arc::new(
                 OutbeBeaconConsensus::new(spec)
-                    .with_max_extra_data_size(outbe_node::consensus::OUTBE_MAX_EXTRA_DATA_SIZE),
+                    .with_max_extra_data_size(outbe_node::consensus::OUTBE_MAX_EXTRA_DATA_SIZE)
+                    .with_ocomp_lifecycle_activation(activation),
             ),
         )
     };
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        let ocomp_fork_install =
+            outbe_node::ocomp::fork::load_ocomp_fork_install(builder.config().chain.as_ref())?;
+        if let Some(install) = &ocomp_fork_install {
+            info!(
+                activation_height = install.activation_height,
+                classification = ?install.classification,
+                install_hash = %install.install_hash(
+                    &outbe_ocomp_protocol::profile::poc_schema_limits()
+                )?,
+                "validated immutable OCOMP chain-manifest fork install"
+            );
+        }
 
         let prune_config = builder
             .config()
@@ -556,6 +598,10 @@ fn run_node() -> eyre::Result<()> {
                 compressed_tree_service.clone(),
             ),
         };
+        let outbe_node = match ocomp_fork_install {
+            Some(install) => outbe_node.with_ocomp_fork_install(install),
+            None => outbe_node,
+        };
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
@@ -670,6 +716,7 @@ fn run_node() -> eyre::Result<()> {
                 projection_readiness,
                 finalized_ce_committer,
                 ce_startup_recovery,
+                compressed_tree_service,
             ));
 
             tokio::select! {

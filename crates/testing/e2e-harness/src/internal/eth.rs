@@ -113,6 +113,48 @@ sol! {
         function getTributesByDay(uint32 worldwideDay) external view returns (bytes[] memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface INod {
+        struct CertifiedGenerationData {
+            bool exists;
+            uint32 worldwideDay;
+            uint64 generation;
+            bytes32 nodRoot;
+            bytes32 bucketRoot;
+            bytes32 outputManifestRoot;
+            uint32 tributeCount;
+            uint32 nodCount;
+            uint32 bucketCount;
+            uint256 nodAmountTotal;
+            uint256 nodGratisConsumed;
+            uint64 issuedAt;
+        }
+        function totalSupply() external view returns (uint256);
+        function certifiedGeneration(uint32 worldwideDay)
+            external
+            view
+            returns (CertifiedGenerationData memory);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IMetadosis {
+        function getOffchainJob(bytes32 intentId)
+            external
+            view
+            returns (bytes memory ocompJobRecordV1);
+        function submitLysisResult(bytes calldata resultVoteV1) external;
+        function getOffchainVoteAccountability(bytes32 jobId)
+            external
+            view
+            returns (bytes memory ocompVoteAccountabilityV1);
+        function getActiveLysisGeneration(uint32 wwd)
+            external
+            view
+            returns (bytes memory activeGenerationV1);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IDesis {
+        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+    }
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IStaking {
         function stake(address v, uint256 amount) external payable;
         function claimUnbonded() external;
@@ -179,6 +221,36 @@ where
         // tag lets some RPC implementations execute against `pending`, whose
         // timestamp can cross a UTC boundary before a block is canonical.
         let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
+        C::abi_decode_returns(&out).ok()
+    })
+}
+
+/// Execute and decode one view call against an exact canonical block.
+///
+/// OCOMP uses this instead of `latest` so independently stored Metadosis and
+/// Nod projections are joined only from the same block state.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn read_call_at<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+    height: u64,
+) -> Option<C::Return>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into());
+        let out = provider
+            .call(tx)
+            .block(BlockId::number(height))
+            .await
+            .ok()?;
         C::abi_decode_returns(&out).ok()
     })
 }
@@ -271,6 +343,67 @@ pub(crate) fn raw_json_result(
     })
 }
 
+/// Broadcast one already signed public transaction without reconstructing or
+/// re-signing its envelope.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn send_raw_transaction(url: &str, raw_transaction: &[u8]) -> Result<String> {
+    let encoded = format!("0x{}", hex::encode(raw_transaction));
+    let value = raw_json_result(url, "eth_sendRawTransaction", serde_json::json!([encoded]))?;
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| eyre!("eth_sendRawTransaction returned a non-hash value"))
+}
+
+/// Public nonce from canonical chain state for one account.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn canonical_nonce(url: &str, address: Address) -> Option<u64> {
+    let value = raw_json_with_params(
+        url,
+        "eth_getTransactionCount",
+        serde_json::json!([format!("{address:#x}"), "latest"]),
+    )?;
+    u64::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
+}
+
+/// Public gas price used only as the restricted node signing seam input.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn gas_price(url: &str) -> Option<u128> {
+    let value = raw_json(url, "eth_gasPrice")?;
+    u128::from_str_radix(value.as_str()?.trim_start_matches("0x"), 16).ok()
+}
+
+/// Fetch a bounded inclusive block range with full public transactions through
+/// one shared HTTP provider. OCOMP evidence must not spend one connection
+/// setup/poll interval per block and accidentally consume the result window it
+/// is trying to observe.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn blocks_with_transactions(
+    url: &str,
+    from_height: u64,
+    to_height: u64,
+    max_blocks: usize,
+) -> Option<Vec<serde_json::Value>> {
+    let count = to_height
+        .checked_sub(from_height)?
+        .checked_add(1)
+        .and_then(|value| usize::try_from(value).ok())?;
+    if count > max_blocks {
+        return None;
+    }
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let requests = (from_height..=to_height).map(|height| {
+            provider.raw_request::<_, serde_json::Value>(
+                "eth_getBlockByNumber".into(),
+                serde_json::json!([format!("0x{height:x}"), true]),
+            )
+        });
+        futures::future::try_join_all(requests).await.ok()
+    })
+}
+
 /// Receipt success flag for `tx`, or `None` if not yet mined / unreadable.
 pub(crate) fn receipt_success(url: &str, tx: &str) -> Option<bool> {
     let url = url.to_string();
@@ -313,8 +446,54 @@ pub(crate) fn send_call<C: SolCall>(
         if let Some(v) = value {
             tx = tx.value(v);
         }
-        let pending = provider.send_transaction(tx).await?;
-        let receipt = pending.get_receipt().await?;
+        let pending = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            provider.send_transaction(tx),
+        )
+        .await
+        .map_err(|_| eyre!("timed out submitting public call transaction"))??;
+        let receipt =
+            tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
+                .await
+                .map_err(|_| eyre!("timed out waiting for public call receipt"))??;
+        Ok(format!("{:#x}", receipt.transaction_hash))
+    })
+}
+
+/// Sign and send exact calldata through the ordinary public transaction path,
+/// waiting for the mined receipt. This is used by adversarial protocol tests
+/// that must preserve a production ABI envelope while changing its payload.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn send_calldata(
+    url: &str,
+    to: Address,
+    key: &str,
+    calldata: Vec<u8>,
+    gas_limit: u64,
+) -> Result<String> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(calldata).into())
+            .gas_limit(gas_limit)
+            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_priority_fee_per_gas(0);
+        let pending = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            provider.send_transaction(tx),
+        )
+        .await
+        .map_err(|_| eyre!("timed out submitting public calldata transaction"))??;
+        let receipt =
+            tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
+                .await
+                .map_err(|_| eyre!("timed out waiting for public calldata receipt"))??;
         Ok(format!("{:#x}", receipt.transaction_hash))
     })
 }

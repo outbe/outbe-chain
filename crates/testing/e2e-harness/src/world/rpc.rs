@@ -11,20 +11,39 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+#[cfg(feature = "ocomp-integration")]
+use alloy_sol_types::SolCall as _;
 use eyre::{eyre, Result, WrapErr as _};
+#[cfg(feature = "ocomp-integration")]
+use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{PointReadRequestV1, PointReadResultV1, SelectedHeaderV1};
+#[cfg(feature = "ocomp-integration")]
+use outbe_nod::NodCertifiedGenerationProjection;
+#[cfg(feature = "ocomp-integration")]
+use outbe_nodfactory::certified_read::active_nod_set;
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocomp_protocol::{
+    profile::poc_schema_limits,
+    state::{ActiveGenerationV1, OcompJobRecordV1},
+    vote::OcompVoteAccountabilityV1,
+};
+use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
+use serde::Serialize;
 
+#[cfg(feature = "ocomp-integration")]
+use crate::internal::eth::{IDesis, IMetadosis};
 use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, IStaking, ITeeRegistry, ITribute, IUpdate, IValidatorSet,
-        IVote, IWorldwideDay, IZeroFee,
+        self, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
+        IValidatorSet, IVote, IWorldwideDay, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
 };
+use crate::ocomp_evidence::sha256_hex;
 use crate::world::state::FixtureState;
 use crate::world::validators::{Operator, Validator};
 
@@ -39,6 +58,108 @@ pub struct CompressedEntityAtHeader {
     pub header: SelectedHeaderV1,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompPublicJobRequestV1 {
+    pub intent_id: B256,
+    pub worldwide_day: u32,
+    pub pending_nonce: u64,
+    pub attempt: u32,
+    pub finality_recorded_height: u64,
+    pub open_height: u64,
+    pub deadline_height: u64,
+    pub activation_preconditions_hash: B256,
+    pub request_height: u64,
+    pub request_block_hash: B256,
+    pub transaction_hash: B256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompPublicActivationV1 {
+    pub intent_id: B256,
+    pub job_id: B256,
+    pub activation_call_id: B256,
+    pub result_digest: B256,
+    pub terminal_receipt_hash: B256,
+    pub worldwide_day: u32,
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub transaction_hash: B256,
+}
+
+/// One public `submitLysisResult(bytes)` transaction observed in a canonical
+/// finalized block. The harness derives this only from public RPC block and
+/// receipt data; Supervisor journals and chain storage are not test inputs.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompPublicResultVoteTransactionV1 {
+    pub transaction_hash: B256,
+    pub signer: Address,
+    pub block_number: u64,
+    pub block_hash: B256,
+    pub calldata_len: usize,
+    pub raw_transaction_len: usize,
+    pub block_rlp_len: usize,
+    pub gas_used: u64,
+    pub success: bool,
+}
+
+/// Public projection of the bounded accountability object. Keeping this
+/// evidence shape independent from the optional protocol crate lets ordinary
+/// harness builds retain scenario state without enabling OCOMP integration.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompPublicVoteAccountabilityV1 {
+    pub job_id: B256,
+    pub result_committee_snapshot_hash: B256,
+    pub slot_validator_indexes: Vec<u8>,
+    pub quorum_result_digest: Option<B256>,
+    pub quorum_height: Option<u64>,
+    pub quorum_signer_bitmap: Option<u8>,
+    pub closed_height: Option<u64>,
+    pub timely_bitmap: Option<u8>,
+    pub matching_bitmap: Option<u8>,
+    pub divergent_bitmap: Option<u8>,
+    pub missing_bitmap: Option<u8>,
+    pub equivocation_bitmap: Option<u8>,
+}
+
+/// Finalized, cross-owner authority for one proof-backed Nod generation.
+///
+/// Both owner projections are read at `block_number`; Mongo/CAS never supplies
+/// any field in this record.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct OcompCertifiedGenerationV1 {
+    pub worldwide_day: u32,
+    pub generation: u64,
+    pub job_id: B256,
+    pub program_semantics_hash: B256,
+    pub nod_root: B256,
+    pub bucket_root: B256,
+    pub output_manifest_root: B256,
+    pub tribute_count: u32,
+    pub nod_count: u32,
+    pub bucket_count: u32,
+    pub nod_amount_total: U256,
+    pub nod_gratis_consumed: U256,
+    pub issued_at: u64,
+    pub result_evidence_hash: B256,
+    pub block_number: u64,
+    pub block_hash: B256,
+}
+
+impl CompressedEntityAtHeader {
+    /// Hash the exact JSON transport package and extract its authenticated CE root.
+    pub fn evidence_identity(&self) -> Result<(String, String)> {
+        let proof_sha256 = sha256_hex(&serde_json::to_vec(&self.result)?);
+        let artifacts = decode_outbe_block_artifacts(&self.header.extra_data)
+            .map_err(|error| eyre!("decode compressed-entity header artifacts: {error}"))?;
+        let ce_root = artifacts
+            .compressed_entities_root
+            .ok_or_else(|| eyre!("compressed-entity header has no CE root"))?
+            .r_sealed
+            .to_string();
+        Ok((ce_root, proof_sha256))
+    }
+}
+
 impl Rpc {
     pub(crate) fn new(cfg: Config) -> Self {
         Self { cfg }
@@ -46,6 +167,21 @@ impl Rpc {
 
     fn sh(&self) -> Sh<'_> {
         Sh::new(&self.cfg)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn canonical_nonce_on(&self, port: u16, address: Address) -> Option<u64> {
+        eth::canonical_nonce(&self.url(port), address)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn gas_price_on(&self, port: u16) -> Option<u128> {
+        eth::gas_price(&self.url(port))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn send_raw_transaction_on(&self, port: u16, raw_transaction: &[u8]) -> Result<String> {
+        eth::send_raw_transaction(&self.url(port), raw_transaction)
     }
 
     fn url(&self, port: u16) -> String {
@@ -83,9 +219,38 @@ impl Rpc {
         .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
     }
 
+    /// Timestamp of one exact canonical block, in EVM seconds.
+    pub fn block_timestamp(&self, port: u16, height: u64) -> Option<u64> {
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getBlockByNumber",
+            serde_json::json!([format!("0x{height:x}"), false]),
+        )
+        .and_then(|block| block.get("timestamp").cloned())
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .and_then(|value| u64::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+    }
+
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn desis_auction_stage_on(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        block_number: u64,
+    ) -> Option<u8> {
+        eth::read_call_at(
+            &self.url(port),
+            addresses::DESIS_ADDR,
+            &IDesis::getAuctionStageCall {
+                worldwideDay: worldwide_day,
+            },
+            block_number,
+        )
     }
 
     /// Canonical block hash at `height` on the node at `port`.
@@ -652,6 +817,16 @@ impl Rpc {
         .map(|v| v.to_string())
     }
 
+    /// Nod total supply on the node at `port`.
+    pub fn nod_supply(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::totalSupplyCall {},
+        )
+        .and_then(|value| u64::try_from(value).ok())
+    }
+
     /// Canonical Tribute identities indexed by one owner.
     pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
         eth::read_call(
@@ -672,7 +847,7 @@ impl Rpc {
         )
     }
 
-    /// Metadosis worldwide-day status byte (field 2 of `getWorldwideDay`).
+    /// Metadosis worldwide-day status byte (field 1 of `getWorldwideDay`).
     pub fn wwd_status(&self, port: u16, wwd: &str) -> Option<String> {
         let day: u32 = wwd.parse().ok()?;
         let r = eth::read_call(
@@ -680,7 +855,7 @@ impl Rpc {
             addresses::WWD_ADDR,
             &IWorldwideDay::getWorldwideDayCall { day },
         )?;
-        Some(r.f1.to_string())
+        Some(r.f0.to_string())
     }
 
     /// A JSON field from `outbe_consensusStatus` on the node at `port`.
@@ -814,6 +989,497 @@ impl Rpc {
         let receipt = eth::receipt_json(&self.url(port), tx_hash)?;
         let encoded = receipt.get("blockNumber")?.as_str()?;
         u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+    }
+
+    /// Public JSON-RPC receipt used by OCOMP evidence correlation.
+    pub fn transaction_receipt(&self, tx_hash: &str, port: u16) -> Option<serde_json::Value> {
+        eth::receipt_json(&self.url(port), tx_hash)
+    }
+
+    /// Observe a finalized `OffchainJobRequested` log through the public RPC.
+    ///
+    /// This is intentionally read-only: the harness cannot create a job or
+    /// provide any of its bindings. The returned block hash is checked against
+    /// the canonical block independently read from the same validator.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request(&self, from_height: u64) -> Option<OcompPublicJobRequestV1> {
+        self.finalized_ocomp_job_request_on_url(&self.cfg.rpc0, from_height)
+    }
+
+    /// Observe the same finalized OCOMP request on one named validator.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_request_on(
+        &self,
+        port: u16,
+        from_height: u64,
+    ) -> Option<OcompPublicJobRequestV1> {
+        self.finalized_ocomp_job_request_on_url(&self.url(port), from_height)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn finalized_ocomp_job_request_on_url(
+        &self,
+        rpc_url: &str,
+        from_height: u64,
+    ) -> Option<OcompPublicJobRequestV1> {
+        const EVENT_SIGNATURE: &str = "OffchainJobRequested(bytes32,uint32,uint64,uint32,bytes32)";
+        let finalized_height = eth::finalized_number(rpc_url)?;
+        if finalized_height < from_height {
+            return None;
+        }
+        let topic0 = keccak256(EVENT_SIGNATURE.as_bytes());
+        let logs = eth::raw_json_with_params(
+            rpc_url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": format!("0x{from_height:x}"),
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [format!("{topic0:#x}")]
+            }]),
+        )?;
+        let logs = logs.as_array()?;
+        let log = logs.last()?;
+        let topics = log.get("topics")?.as_array()?;
+        if topics.len() != 3 || topics[0].as_str()? != format!("{topic0:#x}") {
+            return None;
+        }
+        let intent_id = topics[1].as_str()?.parse::<B256>().ok()?;
+        let worldwide_day = u32::try_from(parse_rpc_word(topics[2].as_str()?)?).ok()?;
+        let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
+        if data.len() != 3 * 32 {
+            return None;
+        }
+        let pending_nonce = u64::try_from(U256::from_be_slice(&data[0..32])).ok()?;
+        let attempt = u32::try_from(U256::from_be_slice(&data[32..64])).ok()?;
+        let activation_preconditions_hash = B256::from_slice(&data[64..96]);
+        let request_height = u64::from_str_radix(
+            log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
+            16,
+        )
+        .ok()?;
+        if request_height < from_height || request_height > finalized_height {
+            return None;
+        }
+        let request_block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
+        if eth::block_hash(rpc_url, request_height)?
+            .parse::<B256>()
+            .ok()?
+            != request_block_hash
+        {
+            return None;
+        }
+        let encoded_record = eth::read_call_at(
+            rpc_url,
+            addresses::WWD_ADDR,
+            &IMetadosis::getOffchainJobCall {
+                intentId: intent_id,
+            },
+            finalized_height,
+        )?;
+        let limits = poc_schema_limits();
+        let record = OcompJobRecordV1::decode_canonical(encoded_record.as_ref(), &limits).ok()?;
+        let finalized = record.finalized.as_ref()?;
+        if record.intent.intent_id(&limits).ok()? != intent_id
+            || record.intent.wwd != worldwide_day
+            || record.intent.pending_nonce != pending_nonce
+            || record.intent.attempt != attempt
+            || record
+                .intent
+                .activation_preconditions
+                .activation_preconditions_hash(&limits)
+                .ok()?
+                != activation_preconditions_hash
+            || finalized.deadline_height <= finalized.open_height
+        {
+            return None;
+        }
+        Some(OcompPublicJobRequestV1 {
+            intent_id,
+            worldwide_day,
+            pending_nonce,
+            attempt,
+            finality_recorded_height: finalized.finality_recorded_height,
+            open_height: finalized.open_height,
+            deadline_height: finalized.deadline_height,
+            activation_preconditions_hash,
+            request_height,
+            request_block_hash,
+            transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
+        })
+    }
+
+    /// Read and decode the canonical finalized job record on one validator.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_job_record_on(
+        &self,
+        port: u16,
+        intent_id: B256,
+    ) -> Option<OcompJobRecordV1> {
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        let encoded = eth::read_call_at(
+            &rpc_url,
+            addresses::WWD_ADDR,
+            &IMetadosis::getOffchainJobCall {
+                intentId: intent_id,
+            },
+            finalized_height,
+        )?;
+        OcompJobRecordV1::decode_canonical(encoded.as_ref(), &poc_schema_limits()).ok()
+    }
+
+    /// Read and decode the four fixed result-vote slots at the finalized head.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_vote_accountability_on(
+        &self,
+        port: u16,
+        job_id: B256,
+    ) -> Option<OcompPublicVoteAccountabilityV1> {
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        let encoded = eth::read_call_at(
+            &rpc_url,
+            addresses::WWD_ADDR,
+            &IMetadosis::getOffchainVoteAccountabilityCall { jobId: job_id },
+            finalized_height,
+        )?;
+        let accountability =
+            OcompVoteAccountabilityV1::decode_canonical(encoded.as_ref(), &poc_schema_limits())
+                .ok()?;
+        let quorum = accountability.quorum.as_ref();
+        let closed = accountability.closed_summary.as_ref();
+        Some(OcompPublicVoteAccountabilityV1 {
+            job_id: accountability.job_id,
+            result_committee_snapshot_hash: accountability.result_committee_snapshot_hash,
+            slot_validator_indexes: accountability
+                .slots
+                .iter()
+                .flatten()
+                .map(|slot| slot.validator_index)
+                .collect(),
+            quorum_result_digest: quorum.map(|value| value.result_digest),
+            quorum_height: quorum.map(|value| value.quorum_height),
+            quorum_signer_bitmap: quorum.map(|value| value.signer_bitmap),
+            closed_height: closed.map(|value| value.closed_height),
+            timely_bitmap: closed.map(|value| value.timely_bitmap),
+            matching_bitmap: closed.map(|value| value.matching_bitmap),
+            divergent_bitmap: closed.map(|value| value.divergent_bitmap),
+            missing_bitmap: closed.map(|value| value.missing_bitmap),
+            equivocation_bitmap: closed.map(|value| value.equivocation_bitmap),
+        })
+    }
+
+    /// Enumerate canonical finalized public result-vote transactions from a
+    /// bounded block range. This observes the real RPC -> txpool -> proposal ->
+    /// import path rather than accepting transaction identities from a helper.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_result_vote_transactions_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        to_height: u64,
+    ) -> Option<Vec<OcompPublicResultVoteTransactionV1>> {
+        if from_height > to_height {
+            return None;
+        }
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        if to_height > finalized_height {
+            return None;
+        }
+        const MAX_PUBLIC_VOTE_SCAN_BLOCKS: usize = 256;
+        let selector = outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR;
+        let mut observed = Vec::new();
+        let blocks = eth::blocks_with_transactions(
+            &rpc_url,
+            from_height,
+            to_height,
+            MAX_PUBLIC_VOTE_SCAN_BLOCKS,
+        )?;
+        for (height, block) in (from_height..=to_height).zip(blocks) {
+            let block_hash = block.get("hash")?.as_str()?.parse::<B256>().ok()?;
+            let rpc_block = serde_json::from_value::<alloy_rpc_types::Block>(block.clone()).ok()?;
+            let consensus_block: alloy_consensus::Block<alloy_consensus::TxEnvelope> =
+                rpc_block.into();
+            let block_rlp_len = alloy_rlp::Encodable::length(&consensus_block);
+            let transactions = block.get("transactions")?.as_array()?;
+            for transaction in transactions {
+                let to = transaction
+                    .get("to")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|value| value.parse::<Address>().ok());
+                if to != Some(addresses::WWD_ADDR) {
+                    continue;
+                }
+                let calldata =
+                    hex::decode(transaction.get("input")?.as_str()?.trim_start_matches("0x"))
+                        .ok()?;
+                if calldata.get(..4) != Some(selector.as_slice()) {
+                    continue;
+                }
+                let transaction_hash = transaction.get("hash")?.as_str()?.parse::<B256>().ok()?;
+                let signer = transaction.get("from")?.as_str()?.parse::<Address>().ok()?;
+                let receipt = eth::receipt_json(&rpc_url, &format!("{transaction_hash:#x}"))?;
+                let receipt_block = receipt.get("blockNumber")?.as_str().and_then(|value| {
+                    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+                })?;
+                let receipt_hash = receipt.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
+                if receipt_block != height || receipt_hash != block_hash {
+                    return None;
+                }
+                let raw_transaction_len = eth::raw_json_with_params(
+                    &rpc_url,
+                    "eth_getRawTransactionByHash",
+                    serde_json::json!([format!("{transaction_hash:#x}")]),
+                )
+                .and_then(|value| value.as_str().map(ToOwned::to_owned))
+                .and_then(|value| hex::decode(value.trim_start_matches("0x")).ok())
+                .map(|bytes| bytes.len())?;
+                let gas_used = receipt.get("gasUsed")?.as_str().and_then(|value| {
+                    u64::from_str_radix(value.trim_start_matches("0x"), 16).ok()
+                })?;
+                let success = receipt.get("status")?.as_str()? == "0x1";
+                observed.push(OcompPublicResultVoteTransactionV1 {
+                    transaction_hash,
+                    signer,
+                    block_number: height,
+                    block_hash,
+                    calldata_len: calldata.len(),
+                    raw_transaction_len,
+                    block_rlp_len,
+                    gas_used,
+                    success,
+                });
+            }
+        }
+        Some(observed)
+    }
+
+    /// Decode the exact canonical inner vote from one public transaction.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_result_vote_bytes_on(&self, port: u16, transaction_hash: B256) -> Option<Vec<u8>> {
+        let transaction = eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getTransactionByHash",
+            serde_json::json!([format!("{transaction_hash:#x}")]),
+        )?;
+        let calldata =
+            hex::decode(transaction.get("input")?.as_str()?.trim_start_matches("0x")).ok()?;
+        if calldata.len() < 68
+            || calldata.get(..4)
+                != Some(outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR.as_slice())
+            || U256::from_be_slice(&calldata[4..36]) != U256::from(32)
+        {
+            return None;
+        }
+        let payload_len = usize::try_from(U256::from_be_slice(&calldata[36..68])).ok()?;
+        let payload_end = 68_usize.checked_add(payload_len)?;
+        let padded_end = 68_usize.checked_add(payload_len.checked_add(31)? & !31)?;
+        if calldata.len() != padded_end
+            || payload_end > calldata.len()
+            || calldata[payload_end..].iter().any(|byte| *byte != 0)
+        {
+            return None;
+        }
+        Some(calldata[68..payload_end].to_vec())
+    }
+
+    /// Submit an adversarial or replayed canonical inner vote through a normal
+    /// public validator transaction. The caller supplies only bytes previously
+    /// observed from the public chain (possibly deliberately mutated); it
+    /// cannot insert protocol state directly.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn submit_ocomp_result_vote_bytes(
+        &self,
+        port: u16,
+        validator: &Validator,
+        vote_bytes: Vec<u8>,
+    ) -> Result<String> {
+        let calldata = IMetadosis::submitLysisResultCall {
+            resultVoteV1: Bytes::from(vote_bytes),
+        }
+        .abi_encode();
+        eth::send_calldata(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &validator.evm_key()?,
+            calldata,
+            outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1.max_activation_gas,
+        )
+    }
+
+    /// Observe the finalized public `LysisActivated` result on one validator.
+    pub fn finalized_ocomp_activation_on(
+        &self,
+        port: u16,
+        from_height: u64,
+        expected_intent_id: B256,
+    ) -> Option<OcompPublicActivationV1> {
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        if finalized_height < from_height {
+            return None;
+        }
+        let topic0 = keccak256(b"LysisActivated(bytes32,bytes32,bytes32,bytes32,bytes32,uint32)");
+        let logs = eth::raw_json_with_params(
+            &rpc_url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": format!("0x{from_height:x}"),
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [
+                    format!("{topic0:#x}"),
+                    format!("{expected_intent_id:#x}")
+                ]
+            }]),
+        )?;
+        let log = logs.as_array()?.last()?;
+        let topics = log.get("topics")?.as_array()?;
+        if topics.len() != 3
+            || topics[0].as_str()? != format!("{topic0:#x}")
+            || topics[1].as_str()? != format!("{expected_intent_id:#x}")
+        {
+            return None;
+        }
+        let intent_id = topics[1].as_str()?.parse::<B256>().ok()?;
+        let job_id = topics[2].as_str()?.parse::<B256>().ok()?;
+        let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
+        if data.len() != 4 * 32 {
+            return None;
+        }
+        let activation_call_id = B256::from_slice(&data[0..32]);
+        let result_digest = B256::from_slice(&data[32..64]);
+        let terminal_receipt_hash = B256::from_slice(&data[64..96]);
+        let worldwide_day = u32::try_from(U256::from_be_slice(&data[96..128])).ok()?;
+        let block_number = u64::from_str_radix(
+            log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
+            16,
+        )
+        .ok()?;
+        if block_number < from_height || block_number > finalized_height {
+            return None;
+        }
+        let block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
+        if eth::block_hash(&rpc_url, block_number)?
+            .parse::<B256>()
+            .ok()?
+            != block_hash
+        {
+            return None;
+        }
+        Some(OcompPublicActivationV1 {
+            intent_id,
+            job_id,
+            activation_call_id,
+            result_digest,
+            terminal_receipt_hash,
+            worldwide_day,
+            block_number,
+            block_hash,
+            transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
+        })
+    }
+
+    /// Read and verify the Metadosis and Nod generation projections at the
+    /// exact finalized activation block.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_ocomp_certified_generation_on(
+        &self,
+        port: u16,
+        activation: &OcompPublicActivationV1,
+    ) -> Option<OcompCertifiedGenerationV1> {
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        if finalized_height < activation.block_number {
+            return None;
+        }
+        let block_hash = eth::block_hash(&rpc_url, activation.block_number)?
+            .parse::<B256>()
+            .ok()?;
+        if block_hash != activation.block_hash {
+            return None;
+        }
+
+        let active_bytes = eth::read_call_at(
+            &rpc_url,
+            addresses::WWD_ADDR,
+            &IMetadosis::getActiveLysisGenerationCall {
+                wwd: activation.worldwide_day,
+            },
+            activation.block_number,
+        )?;
+        let limits = poc_schema_limits();
+        let active = ActiveGenerationV1::decode_canonical(active_bytes.as_ref(), &limits).ok()?;
+
+        let nod = eth::read_call_at(
+            &rpc_url,
+            addresses::NOD_ADDR,
+            &INod::certifiedGenerationCall {
+                worldwideDay: activation.worldwide_day,
+            },
+            activation.block_number,
+        )?;
+        if !nod.exists || nod.worldwideDay != activation.worldwide_day {
+            return None;
+        }
+        let nod = NodCertifiedGenerationProjection {
+            worldwide_day: WorldwideDay::new(nod.worldwideDay),
+            generation: nod.generation,
+            nod_root: nod.nodRoot,
+            bucket_root: nod.bucketRoot,
+            output_manifest_root: nod.outputManifestRoot,
+            tribute_count: nod.tributeCount,
+            nod_count: nod.nodCount,
+            bucket_count: nod.bucketCount,
+            nod_amount_total: nod.nodAmountTotal,
+            nod_gratis_consumed: nod.nodGratisConsumed,
+            issued_at: nod.issuedAt,
+        };
+        let authority = active_nod_set(&active, &nod).ok()?;
+        if authority.job_id != activation.job_id {
+            return None;
+        }
+
+        Some(OcompCertifiedGenerationV1 {
+            worldwide_day: authority.worldwide_day,
+            generation: authority.generation,
+            job_id: authority.job_id,
+            program_semantics_hash: authority.program_semantics_hash,
+            nod_root: authority.nod_root,
+            bucket_root: nod.bucket_root,
+            output_manifest_root: nod.output_manifest_root,
+            tribute_count: nod.tribute_count,
+            nod_count: authority.nod_count,
+            bucket_count: nod.bucket_count,
+            nod_amount_total: nod.nod_amount_total,
+            nod_gratis_consumed: nod.nod_gratis_consumed,
+            issued_at: nod.issued_at,
+            result_evidence_hash: active.result_evidence_hash,
+            block_number: activation.block_number,
+            block_hash,
+        })
+    }
+
+    /// Observe whether the Nod owner already had a certified generation at an
+    /// exact block. A malformed projection fails closed as `None`.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn nod_certified_generation_exists_on(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        block_number: u64,
+    ) -> Option<bool> {
+        eth::read_call_at(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::certifiedGenerationCall {
+                worldwideDay: worldwide_day,
+            },
+            block_number,
+        )
+        .map(|generation| generation.exists)
     }
 
     /// Register an L2 network in the L2Registry (permissionless precompile).
@@ -1627,6 +2293,11 @@ fn parse_rpc_u256(value: &str) -> Option<U256> {
     U256::from_str_radix(value.trim_start_matches("0x"), 16).ok()
 }
 
+#[cfg(feature = "ocomp-integration")]
+fn parse_rpc_word(encoded: &str) -> Option<U256> {
+    U256::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+}
+
 fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {
     receipt["logs"].as_array().is_some_and(|logs| {
         logs.iter().any(|log| {
@@ -1653,4 +2324,66 @@ fn receipt_has_failure_code(receipt: &serde_json::Value, code: u16) -> bool {
             })
         })
     })
+}
+
+#[cfg(test)]
+mod ocomp_tests {
+    use alloy_primitives::B256;
+    use outbe_primitives::reshare_artifact::{
+        encode_outbe_block_artifacts, CompressedEntitiesRootArtifact, OutbeBlockArtifacts,
+    };
+
+    use super::*;
+
+    fn package(root: B256) -> CompressedEntityAtHeader {
+        let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+            compressed_entities_root: Some(CompressedEntitiesRootArtifact {
+                commitment_scheme_version: 1,
+                r_sealed: root,
+            }),
+            ..OutbeBlockArtifacts::default()
+        })
+        .unwrap();
+        CompressedEntityAtHeader {
+            result: PointReadResultV1::Unavailable,
+            header: SelectedHeaderV1 {
+                block_number: 42,
+                block_hash: B256::repeat_byte(0x11),
+                extra_data: extra_data.to_vec(),
+            },
+        }
+    }
+
+    #[test]
+    fn compressed_entity_evidence_binds_transport_hash_and_header_root() {
+        let first = package(B256::repeat_byte(0x22));
+        let second = package(B256::repeat_byte(0x33));
+
+        let (first_root, first_proof) = first.evidence_identity().unwrap();
+        let (second_root, second_proof) = second.evidence_identity().unwrap();
+
+        assert_eq!(first_root, B256::repeat_byte(0x22).to_string());
+        assert_eq!(second_root, B256::repeat_byte(0x33).to_string());
+        assert_ne!(first_root, second_root);
+        assert_eq!(first_proof, second_proof);
+        assert_eq!(
+            first_proof,
+            sha256_hex(&serde_json::to_vec(&PointReadResultV1::Unavailable).unwrap())
+        );
+    }
+
+    #[test]
+    fn compressed_entity_evidence_rejects_header_without_ce_root() {
+        let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts::default()).unwrap();
+        let package = CompressedEntityAtHeader {
+            result: PointReadResultV1::Unavailable,
+            header: SelectedHeaderV1 {
+                block_number: 42,
+                block_hash: B256::repeat_byte(0x11),
+                extra_data: extra_data.to_vec(),
+            },
+        };
+
+        assert!(package.evidence_identity().is_err());
+    }
 }

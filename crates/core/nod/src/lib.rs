@@ -14,7 +14,10 @@ pub use repository::{
     from_canonical_item, NodPage, NodPageRequest, NodRepositoryError, NodRepositoryReader,
     NodRepositoryWriter,
 };
-pub use schema::{NodBucketState, NodContract, NodIssueParams, NodItemState};
+pub use schema::{
+    NodBucketState, NodCertifiedGenerationProjection, NodContract, NodIssueParams, NodItemState,
+    NodOcompTargetProjection,
+};
 
 #[cfg(test)]
 mod adr006_tests;

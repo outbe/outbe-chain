@@ -8,9 +8,13 @@ publish.workspace = true
 [dependencies]
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-ocomp-protocol.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+revm.workspace = true
 
 [lints]
 workspace = true

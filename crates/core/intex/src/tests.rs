@@ -18,6 +18,98 @@ fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
+#[test]
+fn certified_contributor_generation_is_absent_before_activation() {
+    with_registry(|storage| {
+        assert_eq!(
+            api::certified_contributor_generation(&storage, 20_260_725).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn certified_contributor_generation_reads_fail_closed_on_residual_or_malformed_state() {
+    for corrupt in 0..6 {
+        with_registry(|storage| {
+            let series_id = 20_260_726 + corrupt;
+            let intex = crate::IntexContract::new(storage.clone());
+            match corrupt {
+                0 => intex
+                    .ocomp_contributor_root
+                    .write(&series_id, alloy_primitives::B256::repeat_byte(1))
+                    .unwrap(),
+                1 => intex
+                    .ocomp_contributor_metadata
+                    .write(&series_id, U256::from(1))
+                    .unwrap(),
+                2 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(2))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(1) << 96)
+                        .unwrap();
+                }
+                3 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(3))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(1))
+                        .unwrap();
+                    intex
+                        .ocomp_eligible_nominal_total
+                        .write(&series_id, U256::from(1))
+                        .unwrap();
+                }
+                4 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(4))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(2))
+                        .unwrap();
+                }
+                5 => {
+                    api::create_series(&storage, sample_params(series_id)).unwrap();
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(5))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(3))
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(api::certified_contributor_generation(&storage, series_id).is_err());
+            assert!(api::ocomp_contributor_target_projection(&storage, series_id).is_err());
+        });
+    }
+}
+
+#[test]
+fn certified_contributor_installation_has_no_public_write_selector() {
+    let selector = alloy_primitives::keccak256(b"installCertifiedContributorRoot(bytes)");
+    let calldata = selector[..4].to_vec();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    let result = StorageHandle::enter(&mut provider, |storage| {
+        dispatch(storage, &calldata, Address::ZERO, U256::ZERO)
+    });
+    assert!(result.is_err());
+    assert!(provider.storage.is_empty());
+    assert!(provider.get_ordered_events().is_empty());
+}
+
 fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: worldwide_day,
