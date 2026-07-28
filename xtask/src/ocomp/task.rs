@@ -15,6 +15,18 @@ const PUBLIC_SCENARIO_TAGS: [&str; 4] = [
     "@ocomp-public-mutation",
 ];
 
+const E2E_SCENARIO_TAGS: [&str; 9] = [
+    "@ocomp-e2e-001",
+    "@ocomp-e2e-002",
+    "@ocomp-e2e-003",
+    "@ocomp-e2e-004",
+    "@ocomp-e2e-005",
+    "@ocomp-e2e-006",
+    "@ocomp-e2e-007",
+    "@ocomp-e2e-008",
+    "@ocomp-trace",
+];
+
 const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 6] = [
     "@ocomp-public-apply",
     "@ocomp-public-replay",
@@ -2149,18 +2161,43 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
         ],
     )?;
 
-    for (lane, tag, no_sudo) in [
-        ("OCM-E2E", "@ocomp-e2e", true),
-        ("OCM-ISO", "@ocomp-isolation", false),
-    ] {
-        let evidence_dir = run_root.join("lanes").join(lane);
-        run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag, no_sudo)?;
-        run_evidence_binary(
-            repository_root,
-            &artifact_set,
-            &["lane", lane, "--evidence-dir", path_str(&evidence_dir)?],
-        )?;
-    }
+    let e2e_evidence_dir = run_root.join("lanes").join("OCM-E2E");
+    run_exact_scenario_set(
+        repository_root,
+        &artifact_set,
+        &e2e_evidence_dir,
+        &E2E_SCENARIO_TAGS,
+        true,
+    )?;
+    run_evidence_binary(
+        repository_root,
+        &artifact_set,
+        &[
+            "lane",
+            "OCM-E2E",
+            "--evidence-dir",
+            path_str(&e2e_evidence_dir)?,
+        ],
+    )?;
+
+    let iso_evidence_dir = run_root.join("lanes").join("OCM-ISO");
+    run_exact_scenario(
+        repository_root,
+        &artifact_set,
+        &iso_evidence_dir,
+        "@ocomp-isolation",
+        false,
+    )?;
+    run_evidence_binary(
+        repository_root,
+        &artifact_set,
+        &[
+            "lane",
+            "OCM-ISO",
+            "--evidence-dir",
+            path_str(&iso_evidence_dir)?,
+        ],
+    )?;
 
     run_evidence_binary(
         repository_root,
@@ -2203,11 +2240,11 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
             &PUBLIC_SCENARIO_TAGS,
             true,
         )?,
-        "OCM-E2E" => run_exact_scenario(
+        "OCM-E2E" => run_exact_scenario_set(
             repository_root,
             &artifact_set,
             &evidence_dir,
-            "@ocomp-e2e",
+            &E2E_SCENARIO_TAGS,
             true,
         )?,
         "OCM-ISO" => run_exact_scenario(
@@ -2649,7 +2686,7 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{promote_exact_scenario_evidence, PUBLIC_SCENARIO_TAGS};
+    use super::{promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS};
 
     #[test]
     fn public_lane_is_four_closed_single_scenario_runs() {
@@ -2660,6 +2697,24 @@ mod tests {
                 "@ocomp-public-replay",
                 "@ocomp-public-expiry",
                 "@ocomp-public-mutation",
+            ]
+        );
+    }
+
+    #[test]
+    fn e2e_lane_is_nine_closed_single_scenario_runs() {
+        assert_eq!(
+            E2E_SCENARIO_TAGS,
+            [
+                "@ocomp-e2e-001",
+                "@ocomp-e2e-002",
+                "@ocomp-e2e-003",
+                "@ocomp-e2e-004",
+                "@ocomp-e2e-005",
+                "@ocomp-e2e-006",
+                "@ocomp-e2e-007",
+                "@ocomp-e2e-008",
+                "@ocomp-trace",
             ]
         );
     }
