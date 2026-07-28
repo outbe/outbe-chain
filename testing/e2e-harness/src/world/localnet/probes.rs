@@ -28,6 +28,8 @@ use crate::internal::shell::Sh;
 
 use super::Localnet;
 
+const MAX_LOG_FINDINGS: usize = 20;
+
 /// One successful testnet startup-recovery span observed from a validator.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CeStartupReplayObservationV1 {
@@ -210,7 +212,7 @@ fn read_reth_log_anchor_from_file(file: &File, offset: u64) -> Result<Vec<u8>> {
 }
 
 impl Localnet {
-    /// Audit every scenario log after its assertions and before teardown. The
+    /// Audit every scenario log after its assertions and process teardown. The
     /// unsupported-update flow may emit only its exact compatibility fatal;
     /// unrelated fatals and all panic/DKG-share/VRF/SGX/projection alarms fail
     /// the scenario even when its functional steps passed.
@@ -221,6 +223,7 @@ impl Localnet {
     ) -> Result<LogAudit> {
         let mut logs = Vec::new();
         collect_logs(&self.cfg.dir, &mut logs)?;
+        logs.sort();
         let mut findings = Vec::new();
         let expected_fragment = unsupported_version.map(|version| {
             format!(
@@ -231,6 +234,7 @@ impl Localnet {
         });
         let mut expected_by_validator = vec![0_usize; self.cfg.validators];
         let mut expected_reveal_by_validator = vec![0_usize; self.cfg.validators];
+        let mut omitted_findings = 0_usize;
         let mut counts = LogCounts {
             runtime_log_files: logs.len(),
             ..LogCounts::default()
@@ -258,32 +262,45 @@ impl Localnet {
                 }
                 counts.observe(line);
                 if unexpected_log_line(line) {
-                    findings.push(format!("{}:{}: {}", path.display(), index + 1, line));
-                    if findings.len() == 20 {
-                        break;
-                    }
+                    record_finding(
+                        &mut findings,
+                        &mut omitted_findings,
+                        format!("{}:{}: {}", path.display(), index + 1, line),
+                    );
                 }
             }
         }
         if expected_fragment.is_some() {
             for (validator, count) in expected_by_validator.into_iter().enumerate() {
                 if count == 0 {
-                    findings.push(format!(
-                        "validator-{validator}/node.log: expected unsupported-version fatal is absent"
-                    ));
+                    record_finding(
+                        &mut findings,
+                        &mut omitted_findings,
+                        format!(
+                            "validator-{validator}/node.log: expected unsupported-version fatal is absent"
+                        ),
+                    );
                 }
             }
         }
         if expected_dkg_reveal.is_some() {
             for (validator, count) in expected_reveal_by_validator.into_iter().enumerate() {
                 if count == 0 {
-                    findings.push(format!(
-                        "validator-{validator}/node.log: expected exact DKG share reveal is absent"
-                    ));
+                    record_finding(
+                        &mut findings,
+                        &mut omitted_findings,
+                        format!(
+                            "validator-{validator}/node.log: expected exact DKG share reveal is absent"
+                        ),
+                    );
                 }
             }
         }
-        Ok(LogAudit { counts, findings })
+        Ok(LogAudit {
+            counts,
+            findings,
+            omitted_findings,
+        })
     }
 
     pub(crate) fn scenario_id(&self) -> usize {
@@ -553,6 +570,28 @@ impl Localnet {
             .count()
     }
 
+    /// First runtime-log line containing `needle`, including its path and line.
+    ///
+    /// Recovery waits use this to fail immediately on a deterministic boundary
+    /// rejection instead of polling an on-chain state that can no longer change.
+    pub fn first_runtime_log_line_containing(&self, needle: &str) -> Result<Option<String>> {
+        let mut logs = Vec::new();
+        collect_logs(&self.cfg.dir, &mut logs)?;
+        logs.sort();
+        for path in logs {
+            let content = fs::read_to_string(&path)
+                .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
+            if let Some((index, line)) = content
+                .lines()
+                .enumerate()
+                .find(|(_, line)| line.contains(needle))
+            {
+                return Ok(Some(format!("{}:{}: {}", path.display(), index + 1, line)));
+            }
+        }
+        Ok(None)
+    }
+
     /// Whether validator `index`'s enclave log contains `needle`.
     pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
         let path = self.cfg.validator_dir(index).join("enclave.log");
@@ -646,11 +685,12 @@ impl LogCounts {
 pub struct LogAudit {
     counts: LogCounts,
     findings: Vec<String>,
+    omitted_findings: usize,
 }
 
 impl LogAudit {
     pub(crate) fn is_clean(&self) -> bool {
-        self.findings.is_empty()
+        self.findings.is_empty() && self.omitted_findings == 0
     }
 
     pub(crate) fn json(&self) -> Value {
@@ -658,17 +698,35 @@ impl LogAudit {
             "clean": self.is_clean(),
             "counts": self.counts.json(),
             "findings": self.findings,
+            "omitted_findings": self.omitted_findings,
         })
     }
 
     pub(crate) fn ensure_clean(&self) -> Result<()> {
         if !self.findings.is_empty() {
+            let omitted = if self.omitted_findings == 0 {
+                String::new()
+            } else {
+                format!(
+                    "\n... {} additional records omitted; full logs remain in the scenario data dir",
+                    self.omitted_findings
+                )
+            };
             bail!(
-                "unexpected fatal/alarm log records:\n{}",
-                self.findings.join("\n")
+                "unexpected fatal/alarm log records:\n{}{}",
+                self.findings.join("\n"),
+                omitted
             );
         }
         Ok(())
+    }
+}
+
+fn record_finding(findings: &mut Vec<String>, omitted_findings: &mut usize, finding: String) {
+    if findings.len() < MAX_LOG_FINDINGS {
+        findings.push(finding);
+    } else {
+        *omitted_findings += 1;
     }
 }
 
@@ -1015,8 +1073,8 @@ mod tests {
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
         exact_expected_update_fatal, is_runtime_log, parse_canonical_block_observed_at_micros,
         parse_canonical_block_processing_micros, parse_ce_startup_replay,
-        parse_finalized_block_observed_at_micros, unexpected_log_line,
-        CeStartupReplayObservationV1, LogCounts, RethLogTail,
+        parse_finalized_block_observed_at_micros, record_finding, unexpected_log_line,
+        CeStartupReplayObservationV1, LogCounts, RethLogTail, MAX_LOG_FINDINGS,
     };
 
     #[test]
@@ -1064,6 +1122,19 @@ mod tests {
         assert_eq!(json["sgx_resource_exhaustion"], 0);
         assert_eq!(json["expected_update_fatal"], 0);
         assert_eq!(json["expected_dkg_reveal"], 0);
+    }
+
+    #[test]
+    fn caps_rendered_findings_but_counts_every_omitted_record() {
+        let mut findings = Vec::new();
+        let mut omitted = 0;
+        for index in 0..MAX_LOG_FINDINGS + 7 {
+            record_finding(&mut findings, &mut omitted, format!("fatal-{index}"));
+        }
+        assert_eq!(findings.len(), MAX_LOG_FINDINGS);
+        assert_eq!(omitted, 7);
+        assert_eq!(findings.first().map(String::as_str), Some("fatal-0"));
+        assert_eq!(findings.last().map(String::as_str), Some("fatal-19"));
     }
 
     #[test]
