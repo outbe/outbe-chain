@@ -365,6 +365,10 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-025 — Add one exact-state Outbe protocol-version resolver
 
+- **Status:** In progress — `07b7ae4d` adds the canonical-width exact-state
+  resolver and uses it for the fixed Policy route in top-level and nested calls.
+  Explicit propagation into the dynamic class resolver and historical RPC
+  construction remains owned by SCF-022/025.
 - **Goal:** Remove `SpecId`/latest-state/token-schema ambiguity.
 - **Scope/files:** primitives/Update re-export, EVM config/dispatch/subcalls and RPC
   exact-state construction; do not alter Update FSM.
@@ -410,6 +414,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-030 — Add Policy schema, state and typed API
 
+- **Status:** Done in `6ebed4f2`.
 - **Goal:** Establish the fixed state authority and cross-module query surface.
 - **Scope/files:** new `crates/core/stablecoinpolicy` with
   `schema.rs`, `state.rs`, `api.rs`, `errors.rs`, tests and narrow re-exports.
@@ -423,6 +428,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-031 — Implement bounded authorization evaluation
 
+- **Status:** Done in `6ebed4f2`.
 - **Goal:** Provide O(1), non-recursive, non-mutating authorization.
 - **Scope/files:** Policy runtime/API/tests.
 - **Depends on:** SCF-030.
@@ -433,6 +439,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-032 — Implement creation, membership and two-step admin
 
+- **Status:** Done in `6ebed4f2` and `07b7ae4d`.
 - **Goal:** Complete mutable Policy state with bounded atomic operations.
 - **Scope/files:** Policy state/runtime/errors/tests.
 - **Depends on:** SCF-031, SCF-004 caps.
@@ -445,6 +452,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-033 — Wire canonical Policy precompile
 
+- **Status:** Done in `07b7ae4d`.
 - **Goal:** Expose ABI at the fixed address with no hidden business logic in dispatch.
 - **Scope/files:** Policy `precompile.rs`, workspace/EVM dependency, fixed marker and
   ABI vectors.
@@ -457,6 +465,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-034 — Policy property and bounded-work gate
 
+- **Status:** Done in `07b7ae4d`; G2 passed with the 20-test Policy suite, full
+  `outbe-evm` suite, exact ABI export check and clippy.
 - **Goal:** Prove Policy state/index consistency and bounded mutation/authorization.
 - **Depends on:** SCF-033.
 - **Tests/evidence:** worst-case 64-member batch, directional evaluation, random
