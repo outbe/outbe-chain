@@ -558,6 +558,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-044 — Implement EIP-2612
 
+- **Status:** Done; `DOMAIN_SEPARATOR` and `permit` bind the stored token name,
+  independent domain version `"1"`, provider chain id and actual dynamic token
+  address. Only canonical low-s signatures with `v=27/28` are accepted; deadline
+  equality succeeds, replay/wrong-domain/malleable signatures fail, and nonce,
+  allowance and log commit atomically. Evidence: focused token suite 34/34,
+  including an independent Foundry `cast 1.7.1` golden signature and
+  failure-after-every-write/log rollback.
 - **Goal:** Add replay-safe approvals bound to chain and dynamic token address.
 - **Depends on:** SCF-041, SCF-001.
 - **Done when:** domain separator, nonce, deadline, low-s recovery and exact v/r/s

@@ -8188,6 +8188,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
  "outbe-macros",
  "outbe-primitives",
  "outbe-stablecoinpolicy",

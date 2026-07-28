@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, B256, U256};
+use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -22,6 +22,8 @@ use crate::schema::{
 
 const CHAIN_ID: u64 = 7;
 const ISSUER: Address = address!("1000000000000000000000000000000000000001");
+const PERMIT_OWNER: Address = address!("17c5185167401ed00cf5f5b2fc97d9bbfdb7d025");
+const PERMIT_SPENDER: Address = address!("2222222222222222222222222222222222222222");
 
 fn assert_revert<E: SolError>(error: PrecompileError) {
     match error {
@@ -31,8 +33,12 @@ fn assert_revert<E: SolError>(error: PrecompileError) {
 }
 
 fn initialization(ticker: &str) -> FactoryTokenInitialization {
+    initialization_for(CHAIN_ID, ticker)
+}
+
+fn initialization_for(chain_id: u64, ticker: &str) -> FactoryTokenInitialization {
     let (token_id, token_address) = predict_stablecoin(
-        CHAIN_ID,
+        chain_id,
         STABLECOIN_FACTORY_ADDRESS,
         ISSUER,
         ticker,
@@ -53,6 +59,47 @@ fn initialization(ticker: &str) -> FactoryTokenInitialization {
             policy_id: ALLOW_ALL_POLICY_ID,
         },
     }
+}
+
+fn golden_permit_call() -> IStablecoin::permitCall {
+    IStablecoin::permitCall {
+        owner: PERMIT_OWNER,
+        spender: PERMIT_SPENDER,
+        value: U256::from(123),
+        deadline: U256::from(1_000),
+        v: 27,
+        r: b256!("c950efadce76e65dd301a34af5cfc60a8bd2eb0a7c8e3ff961b2bade7c8e7dc7"),
+        s: b256!("03b8238df3821137d7de64a1bedd28d4a846c19c0be68d1bf4ffbb57c2275380"),
+    }
+}
+
+fn permit_baseline(
+    init: &FactoryTokenInitialization,
+    current_allowance: U256,
+    frozen: U256,
+    timestamp: U256,
+) -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(timestamp);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        if !current_allowance.is_zero() {
+            token
+                .approve(PERMIT_OWNER, PERMIT_SPENDER, current_allowance)
+                .unwrap();
+        }
+        if !frozen.is_zero() {
+            token
+                .set_frozen_tokens(ISSUER, PERMIT_OWNER, frozen)
+                .unwrap();
+        }
+    });
+    provider.clear_events(init.token_address);
+    provider.clear_mutation_failure();
+    provider
 }
 
 fn transfer_from_baseline(
@@ -1407,4 +1454,281 @@ fn erc7943_abi_reports_interface_and_roundtrips_views_and_mutations() {
         IStablecoin::getFrozenTokensCall::abi_decode_returns(&output).unwrap(),
         U256::from(4)
     );
+}
+
+#[test]
+fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_paused() {
+    let init = initialization("USDX");
+    assert_eq!(
+        init.token_address,
+        address!("53c07065554d086969e4bc8944eb2331be50ff1a")
+    );
+    let mut provider = permit_baseline(&init, U256::from(200), U256::from(1), U256::from(1_000));
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .pause(ISSUER)
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    let domain_output = dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &IStablecoin::DOMAIN_SEPARATORCall {}.abi_encode(),
+        Address::repeat_byte(0x99),
+        U256::ZERO,
+    )
+    .unwrap();
+    assert_eq!(
+        IStablecoin::DOMAIN_SEPARATORCall::abi_decode_returns(&domain_output).unwrap(),
+        b256!("bbf205147c84535a518d8c96008013f7bcb49f08a374448ecfeff86c3dcfde03")
+    );
+
+    let call = golden_permit_call();
+    dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &call.abi_encode(),
+        Address::repeat_byte(0x98),
+        U256::ZERO,
+    )
+    .unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::from(123)
+        );
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::from(1));
+        assert!(token.paused.read().unwrap());
+    });
+    assert_eq!(
+        provider.get_events(init.token_address),
+        &vec![IStablecoin::Approval {
+            owner: PERMIT_OWNER,
+            spender: PERMIT_SPENDER,
+            value: U256::from(123),
+        }
+        .encode_log_data()]
+    );
+
+    assert_revert::<IStablecoin::InvalidPermitSignature>(
+        dispatch(
+            StorageHandle::new(&mut provider),
+            init.token_address,
+            &call.abi_encode(),
+            Address::repeat_byte(0x97),
+            U256::ZERO,
+        )
+        .unwrap_err(),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::from(1));
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::from(123)
+        );
+    });
+}
+
+#[test]
+fn permit_rejects_expired_wrong_domain_and_changed_message_without_nonce_effects() {
+    let init = initialization("USDX");
+    let call = golden_permit_call();
+
+    let mut expired = permit_baseline(&init, U256::ZERO, U256::ZERO, U256::from(1_001));
+    assert_revert::<IStablecoin::PermitExpired>(
+        dispatch(
+            StorageHandle::new(&mut expired),
+            init.token_address,
+            &call.abi_encode(),
+            Address::repeat_byte(0x91),
+            U256::ZERO,
+        )
+        .unwrap_err(),
+    );
+
+    let wrong_chain_init = initialization_for(CHAIN_ID + 1, "USDX");
+    let mut wrong_chain = HashMapStorageProvider::new(CHAIN_ID + 1);
+    StorageHandle::enter(&mut wrong_chain, |storage| {
+        StablecoinFactoryApi::new(storage)
+            .initialize(&wrong_chain_init)
+            .unwrap();
+    });
+    assert_revert::<IStablecoin::InvalidPermitSignature>(
+        dispatch(
+            StorageHandle::new(&mut wrong_chain),
+            wrong_chain_init.token_address,
+            &call.abi_encode(),
+            Address::repeat_byte(0x92),
+            U256::ZERO,
+        )
+        .unwrap_err(),
+    );
+
+    let wrong_token_init = initialization("EURX");
+    let mut wrong_token = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut wrong_token, |storage| {
+        StablecoinFactoryApi::new(storage)
+            .initialize(&wrong_token_init)
+            .unwrap();
+    });
+    assert_revert::<IStablecoin::InvalidPermitSignature>(
+        dispatch(
+            StorageHandle::new(&mut wrong_token),
+            wrong_token_init.token_address,
+            &call.abi_encode(),
+            Address::repeat_byte(0x93),
+            U256::ZERO,
+        )
+        .unwrap_err(),
+    );
+
+    for changed_call in [
+        IStablecoin::permitCall {
+            value: U256::from(124),
+            ..call
+        },
+        IStablecoin::permitCall {
+            spender: Address::repeat_byte(0x94),
+            ..call
+        },
+        IStablecoin::permitCall {
+            deadline: U256::from(1_001),
+            ..call
+        },
+    ] {
+        let mut provider = permit_baseline(&init, U256::ZERO, U256::ZERO, U256::from(1_000));
+        assert_revert::<IStablecoin::InvalidPermitSignature>(
+            dispatch(
+                StorageHandle::new(&mut provider),
+                init.token_address,
+                &changed_call.abi_encode(),
+                Address::repeat_byte(0x95),
+                U256::ZERO,
+            )
+            .unwrap_err(),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+            assert_eq!(
+                token
+                    .allowance_of(PERMIT_OWNER, changed_call.spender)
+                    .unwrap(),
+                U256::ZERO
+            );
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
+}
+
+#[test]
+fn permit_rejects_noncanonical_vrs_and_high_s_malleability() {
+    let init = initialization("USDX");
+    let call = golden_permit_call();
+    let high_s = b256!("fc47dc720c7deec828219b5e4122d72a12681b4aa362131fcad2a3350e0eedc1");
+    for invalid_call in [
+        IStablecoin::permitCall { v: 0, ..call },
+        IStablecoin::permitCall {
+            r: B256::ZERO,
+            ..call
+        },
+        IStablecoin::permitCall {
+            s: B256::ZERO,
+            ..call
+        },
+        IStablecoin::permitCall {
+            v: 28,
+            s: high_s,
+            ..call
+        },
+    ] {
+        let mut provider = permit_baseline(&init, U256::ZERO, U256::ZERO, U256::from(1_000));
+        assert_revert::<IStablecoin::InvalidPermitSignature>(
+            dispatch(
+                StorageHandle::new(&mut provider),
+                init.token_address,
+                &invalid_call.abi_encode(),
+                Address::repeat_byte(0x96),
+                U256::ZERO,
+            )
+            .unwrap_err(),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+            assert_eq!(
+                token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+                U256::ZERO
+            );
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
+}
+
+#[test]
+fn frozen_permit_increase_fails_after_valid_signature_without_consuming_nonce() {
+    let init = initialization("USDX");
+    let mut provider = permit_baseline(&init, U256::from(100), U256::from(1), U256::from(1_000));
+    assert_revert::<IStablecoin::FrozenAllowanceIncrease>(
+        dispatch(
+            StorageHandle::new(&mut provider),
+            init.token_address,
+            &golden_permit_call().abi_encode(),
+            Address::repeat_byte(0x88),
+            U256::ZERO,
+        )
+        .unwrap_err(),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::from(100)
+        );
+    });
+    assert!(provider.get_events(init.token_address).is_empty());
+}
+
+#[test]
+fn permit_rolls_back_nonce_allowance_and_approval_log_after_every_failure() {
+    let init = initialization("USDX");
+    let mut measured = permit_baseline(&init, U256::from(200), U256::from(1), U256::from(1_000));
+    dispatch(
+        StorageHandle::new(&mut measured),
+        init.token_address,
+        &golden_permit_call().abi_encode(),
+        Address::repeat_byte(0x81),
+        U256::ZERO,
+    )
+    .unwrap();
+    let operation_count = measured.clear_mutation_failure();
+    assert_eq!(operation_count, 3);
+
+    for failure_at in 0..operation_count {
+        let mut provider =
+            permit_baseline(&init, U256::from(200), U256::from(1), U256::from(1_000));
+        provider.fail_after_mutation_at(failure_at);
+        assert!(dispatch(
+            StorageHandle::new(&mut provider),
+            init.token_address,
+            &golden_permit_call().abi_encode(),
+            Address::repeat_byte(0x82),
+            U256::ZERO,
+        )
+        .is_err());
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+            assert_eq!(
+                token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+                U256::from(200)
+            );
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
 }

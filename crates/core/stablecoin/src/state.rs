@@ -1,6 +1,8 @@
 use std::string::String;
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{b256, keccak256, Address, B256, U256};
+use alloy_sol_types::SolValue;
+use k256::ecdsa::{RecoveryId, Signature as EcdsaSignature, VerifyingKey};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::{
@@ -23,6 +25,13 @@ use crate::schema::{
 };
 
 const ROOT_SLOT_COUNT: u64 = 19;
+const EIP712_DOMAIN_TYPEHASH: B256 =
+    b256!("8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f");
+const EIP712_VERSION_HASH: B256 =
+    b256!("c89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6");
+const PERMIT_TYPEHASH: B256 =
+    b256!("6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9");
+
 impl StablecoinContract<'_> {
     pub(crate) fn initialize_from_factory(
         &self,
@@ -129,6 +138,22 @@ impl StablecoinContract<'_> {
     pub fn allowance_of(&self, owner: Address, spender: Address) -> Result<U256> {
         self.validated_schema_version()?;
         self.allowances.read(&allowance_key(owner, spender))
+    }
+
+    pub fn domain_separator(&self) -> Result<B256> {
+        self.validated_schema_version()?;
+        let name_hash = keccak256(self.name.read()?);
+        let chain_id = U256::from(self.storage.chain_id()?);
+        Ok(keccak256(
+            (
+                EIP712_DOMAIN_TYPEHASH,
+                name_hash,
+                EIP712_VERSION_HASH,
+                chain_id,
+                self.address,
+            )
+                .abi_encode(),
+        ))
     }
 
     pub fn has_role(&self, role: B256, account: Address) -> Result<bool> {
@@ -376,24 +401,50 @@ impl StablecoinContract<'_> {
         self.validated_schema_version()?;
         self.require_nonzero(owner)?;
         self.require_nonzero(spender)?;
-        let current = self.allowances.read(&allowance_key(owner, spender))?;
-        if !self.frozen.read(&owner)?.is_zero() && value > current {
-            return Err(StablecoinStateError::FrozenAllowanceIncrease {
-                owner,
-                current_allowance: current,
-                requested_allowance: value,
-            }
-            .into());
+        self.validate_allowance_update(owner, spender, value)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| self.write_approval(owner, spender, value))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn permit(
+        &mut self,
+        owner: Address,
+        spender: Address,
+        value: U256,
+        deadline: U256,
+        v: u8,
+        r: B256,
+        s: B256,
+    ) -> Result<()> {
+        self.validated_schema_version()?;
+        self.require_nonzero(owner)?;
+        self.require_nonzero(spender)?;
+        if self.storage.timestamp()? > deadline {
+            return Err(StablecoinStateError::PermitExpired { deadline }.into());
         }
+
+        let nonce = self.nonces.read(&owner)?;
+        let struct_hash =
+            keccak256((PERMIT_TYPEHASH, owner, spender, value, nonce, deadline).abi_encode());
+        let domain_separator = self.domain_separator()?;
+        let mut payload = [0u8; 66];
+        payload[..2].copy_from_slice(&[0x19, 0x01]);
+        payload[2..34].copy_from_slice(domain_separator.as_slice());
+        payload[34..].copy_from_slice(struct_hash.as_slice());
+        let digest = keccak256(payload);
+        if recover_permit_signer(digest, v, r, s)? != owner {
+            return Err(StablecoinStateError::InvalidPermitSignature.into());
+        }
+
+        self.validate_allowance_update(owner, spender, value)?;
+        let next_nonce = nonce
+            .checked_add(U256::from(1))
+            .ok_or_else(|| PrecompileError::Fatal("stablecoin permit nonce overflow".into()))?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            self.allowances
-                .write(&allowance_key(owner, spender), value)?;
-            self.emit(IStablecoin::Approval {
-                owner,
-                spender,
-                value,
-            })
+            self.nonces.write(&owner, next_nonce)?;
+            self.write_approval(owner, spender, value)
         })
     }
 
@@ -702,6 +753,34 @@ impl StablecoinContract<'_> {
         Ok(())
     }
 
+    fn validate_allowance_update(
+        &self,
+        owner: Address,
+        spender: Address,
+        value: U256,
+    ) -> Result<()> {
+        let current = self.allowances.read(&allowance_key(owner, spender))?;
+        if !self.frozen.read(&owner)?.is_zero() && value > current {
+            return Err(StablecoinStateError::FrozenAllowanceIncrease {
+                owner,
+                current_allowance: current,
+                requested_allowance: value,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    fn write_approval(&mut self, owner: Address, spender: Address, value: U256) -> Result<()> {
+        self.allowances
+            .write(&allowance_key(owner, spender), value)?;
+        self.emit(IStablecoin::Approval {
+            owner,
+            spender,
+            value,
+        })
+    }
+
     fn require_can_send(&self, account: Address) -> Result<()> {
         let policy_id = self.policy_id.read()?;
         if !policy_can_send(self.storage.clone(), policy_id, account)? {
@@ -824,4 +903,28 @@ impl StablecoinContract<'_> {
         }
         Ok(())
     }
+}
+
+fn recover_permit_signer(digest: B256, v: u8, r: B256, s: B256) -> Result<Address> {
+    let recovery_id = match v {
+        27 | 28 => RecoveryId::from_byte(v - 27),
+        _ => None,
+    }
+    .ok_or_else(|| PrecompileError::from(StablecoinStateError::InvalidPermitSignature))?;
+
+    let mut signature_bytes = [0u8; 64];
+    signature_bytes[..32].copy_from_slice(r.as_slice());
+    signature_bytes[32..].copy_from_slice(s.as_slice());
+    let signature = EcdsaSignature::from_slice(&signature_bytes)
+        .map_err(|_| PrecompileError::from(StablecoinStateError::InvalidPermitSignature))?;
+    if signature.normalize_s().is_some() {
+        return Err(StablecoinStateError::InvalidPermitSignature.into());
+    }
+    let verifying_key =
+        VerifyingKey::recover_from_prehash(digest.as_slice(), &signature, recovery_id)
+            .map_err(|_| PrecompileError::from(StablecoinStateError::InvalidPermitSignature))?;
+    let encoded = verifying_key.to_encoded_point(false);
+    let public_key = encoded.as_bytes();
+    let hash = keccak256(&public_key[1..]);
+    Ok(Address::from_slice(&hash[12..]))
 }

@@ -60,6 +60,18 @@ pub fn dispatch(
                     token.validated_schema_version()?;
                     token.nonces.read(&call.owner)
                 }),
+                DOMAIN_SEPARATOR(call) => view(call, |_| token.domain_separator()),
+                permit(call) => mutate_void(call, caller, |_, call| {
+                    token.permit(
+                        call.owner,
+                        call.spender,
+                        call.value,
+                        call.deadline,
+                        call.v,
+                        call.r,
+                        call.s,
+                    )
+                }),
                 currency(call) => view(call, |_| {
                     token.validated_schema_version()?;
                     token.currency.read()

@@ -134,6 +134,12 @@ pub enum StablecoinStateError {
 
     #[error("forced self-transfer is forbidden")]
     ForcedSelfTransfer,
+
+    #[error("stablecoin permit expired at deadline {deadline}")]
+    PermitExpired { deadline: U256 },
+
+    #[error("invalid stablecoin permit signature")]
+    InvalidPermitSignature,
 }
 
 impl From<StablecoinStateError> for PrecompileError {
@@ -283,6 +289,12 @@ impl From<StablecoinStateError> for PrecompileError {
             StablecoinStateError::ForcedSelfTransfer => PrecompileError::RevertBytes(Bytes::from(
                 IStablecoin::ForcedSelfTransfer {}.abi_encode(),
             )),
+            StablecoinStateError::PermitExpired { deadline } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::PermitExpired { deadline }.abi_encode()),
+            ),
+            StablecoinStateError::InvalidPermitSignature => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::InvalidPermitSignature {}.abi_encode()),
+            ),
             domain_error => PrecompileError::Revert(domain_error.to_string()),
         }
     }
