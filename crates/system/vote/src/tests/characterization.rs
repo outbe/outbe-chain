@@ -174,6 +174,46 @@ static PUBLIC_BONDED_TARGET: PublicBondedTarget = PublicBondedTarget;
 static PUBLIC_BONDED_HANDLERS: &[&dyn VoteTarget] = &[&PUBLIC_BONDED_TARGET];
 static PUBLIC_BONDED_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(PUBLIC_BONDED_HANDLERS);
 
+struct FailingReserveTarget;
+
+impl VoteTarget for FailingReserveTarget {
+    fn target_module(&self) -> Address {
+        UPDATE_ADDRESS
+    }
+
+    fn validate(&self, _payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        Ok(())
+    }
+
+    fn reserve(
+        &self,
+        storage: StorageHandle<'_>,
+        _proposal_id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<()> {
+        storage.sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
+        Err(PrecompileError::Revert(
+            "characterized reservation failure".into(),
+        ))
+    }
+
+    fn handle_approved(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _proposal_id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        Ok(TargetExecutionOutcome::Applied)
+    }
+}
+
+static FAILING_RESERVE_TARGET: FailingReserveTarget = FailingReserveTarget;
+static FAILING_RESERVE_HANDLERS: &[&dyn VoteTarget] = &[&FAILING_RESERVE_TARGET];
+static FAILING_RESERVE_REGISTRY: VoteTargetRegistry =
+    VoteTargetRegistry::new(FAILING_RESERVE_HANDLERS);
+
 fn block_context(storage: StorageHandle<'_>, block_number: u64) -> BlockRuntimeContext<'_> {
     BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
 }
@@ -207,6 +247,32 @@ fn creation_preserves_original_payload_bytes_in_state_and_log() {
     let decoded = IVote::ProposalCreated::decode_log_data(created).unwrap();
     assert_eq!(decoded.proposalId, proposal_id);
     assert_eq!(decoded.payload, RAW_PAYLOAD);
+}
+
+#[test]
+fn target_reservation_failure_rolls_back_proposal_target_state_and_log() {
+    let mut provider = HashMapStorageProvider::new(1);
+    {
+        let storage = StorageHandle::new(&mut provider);
+        setup_default_validators(storage.clone());
+        let mut vote = Vote::new(storage.clone());
+        assert!(vote
+            .create_proposal(
+                PROPOSER,
+                UPDATE_ADDRESS,
+                RAW_PAYLOAD,
+                10,
+                &FAILING_RESERVE_REGISTRY,
+            )
+            .is_err());
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+        assert_eq!(vote.pending_proposal_ids.len().unwrap(), 0);
+        assert_eq!(
+            storage.sload(UPDATE_ADDRESS, U256::from(999u64)).unwrap(),
+            U256::ZERO
+        );
+    }
+    assert!(provider.get_events(VOTE_ADDRESS).is_empty());
 }
 
 #[test]

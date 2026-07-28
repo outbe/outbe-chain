@@ -1,5 +1,5 @@
 use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
-use alloy_sol_types::{SolError, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::{
     addresses::{STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     block::BlockContext,
@@ -20,6 +20,7 @@ use revm::{
 use crate::{
     abi::IStablecoinFactory as I,
     api::{FactoryReservation, StablecoinFactoryApi},
+    precompile::dispatch,
     schema::StablecoinFactoryContract,
 };
 
@@ -50,6 +51,21 @@ fn assert_revert<E: SolError>(error: PrecompileError) {
         PrecompileError::RevertBytes(bytes) => assert_eq!(&bytes[..4], E::SELECTOR),
         other => panic!("expected revert, got {other:?}"),
     }
+}
+
+fn invoke<C: SolCall>(
+    provider: &mut HashMapStorageProvider,
+    caller: Address,
+    call: C,
+) -> C::Return {
+    let output = dispatch(
+        StorageHandle::new(provider),
+        &call.abi_encode(),
+        caller,
+        U256::ZERO,
+    )
+    .unwrap();
+    C::abi_decode_returns(&output).unwrap()
 }
 
 fn create_payload(issuer: Address, policy_id: U256) -> StablecoinCreatePayload {
@@ -489,6 +505,79 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
             .as_ref(),
         STABLECOIN_MARKER_CODE
     );
+}
+
+#[test]
+fn factory_precompile_exposes_only_the_frozen_view_surface() {
+    let issuer = Address::repeat_byte(0x11);
+    let mut provider = HashMapStorageProvider::new(1);
+    let predicted = invoke(
+        &mut provider,
+        issuer,
+        I::predictTokenAddressCall {
+            issuer,
+            ticker: "EXUSD".into(),
+        },
+    );
+    assert_eq!(
+        predicted.tokenId,
+        b256!("2cf34bcaf12fe89ab2f3f6f34667f667dc28c8716bdac45fd1696b34000f2863")
+    );
+    assert_eq!(
+        invoke(&mut provider, issuer, I::tokenCountCall {}),
+        U256::ZERO
+    );
+    assert!(!invoke(
+        &mut provider,
+        issuer,
+        I::isStablecoinCall {
+            token: predicted.token
+        }
+    ));
+    assert!(invoke(
+        &mut provider,
+        issuer,
+        I::listTokensCall {
+            offset: U256::ZERO,
+            limit: U256::from(10u64),
+        },
+    )
+    .is_empty());
+}
+
+#[test]
+fn factory_precompile_rejects_value_malformed_and_trailing_calldata_without_writes() {
+    let caller = Address::repeat_byte(0x11);
+    let call = I::tokenCountCall {}.abi_encode();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    assert_revert::<I::UnexpectedValue>(
+        dispatch(
+            StorageHandle::new(&mut provider),
+            &call,
+            caller,
+            U256::from(1u64),
+        )
+        .unwrap_err(),
+    );
+    assert!(dispatch(
+        StorageHandle::new(&mut provider),
+        &[0x01, 0x02, 0x03],
+        caller,
+        U256::ZERO,
+    )
+    .is_err());
+    let mut trailing = call;
+    trailing.push(0);
+    assert!(dispatch(
+        StorageHandle::new(&mut provider),
+        &trailing,
+        caller,
+        U256::ZERO,
+    )
+    .is_err());
+    assert!(provider.storage.is_empty());
+    assert!(provider.get_events(STABLECOIN_FACTORY_ADDRESS).is_empty());
 }
 
 #[test]

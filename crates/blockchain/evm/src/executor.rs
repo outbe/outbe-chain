@@ -3779,7 +3779,7 @@ mod tests {
         use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
-            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS,
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
             STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
@@ -3787,7 +3787,7 @@ mod tests {
         // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
         // marker. Each exemption is justified; adding a state-owning precompile here
         // instead of to the marker list would re-open reth22-1.
-        const MARKER_EXEMPT: [Address; 7] = [
+        const MARKER_EXEMPT: [Address; 8] = [
             // Stateless verifiers — no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
@@ -3799,8 +3799,9 @@ mod tests {
             ZEROFEE_ADDRESS,
             VAULT_PROVIDER_ADDRESS,
             GOVERNANCE_ADDRESS,
-            // Stablecoin Policy Registry marker code is genesis-active even
-            // before Stablecoin V1 runtime activation.
+            // Stablecoin Factory and Policy Registry marker code is genesis-active
+            // even before Stablecoin V1 runtime activation.
+            STABLECOIN_FACTORY_ADDRESS,
             STABLECOIN_POLICY_REGISTRY_ADDRESS,
         ];
 

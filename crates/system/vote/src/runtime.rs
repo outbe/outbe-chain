@@ -81,35 +81,47 @@ impl Vote<'_> {
             return Err(VoteError::TooManyPendingByValidator.into());
         }
 
+        let target_context = VoteTargetContext {
+            proposer,
+            attached_value: U256::ZERO,
+            block_number: current_height,
+            chain_id,
+        };
         handlers::validate_target_payload(
             registry,
             target_module,
             payload.as_bytes(),
-            VoteTargetContext {
-                proposer,
-                attached_value: U256::ZERO,
-                block_number: current_height,
-                chain_id,
-            },
+            target_context,
         )?;
 
         let voting_deadline = current_height.saturating_add(voting_window_blocks(chain_id));
-        let proposal_id = self.write_proposal(
-            proposer,
-            target_module,
-            payload,
-            current_height,
-            voting_deadline,
-            ProposalStatus::Pending,
-        )?;
-        self.notify_proposal_created(
-            proposal_id,
-            proposer,
-            target_module,
-            payload,
-            voting_deadline,
-        )?;
-        Ok(proposal_id)
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let proposal_id = self.write_proposal(
+                proposer,
+                target_module,
+                payload,
+                current_height,
+                voting_deadline,
+                ProposalStatus::Pending,
+            )?;
+            handlers::reserve_target_proposal(
+                registry,
+                storage.clone(),
+                target_module,
+                proposal_id,
+                payload.as_bytes(),
+                target_context,
+            )?;
+            self.notify_proposal_created(
+                proposal_id,
+                proposer,
+                target_module,
+                payload,
+                voting_deadline,
+            )?;
+            Ok(proposal_id)
+        })
     }
 
     /// ABI entry: `castVote(uint256 proposalId, bool approve)`.

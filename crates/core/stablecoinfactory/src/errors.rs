@@ -8,6 +8,9 @@ use crate::abi::IStablecoinFactory;
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StablecoinFactoryError {
+    #[error("unexpected native value {value}")]
+    UnexpectedValue { value: U256 },
+
     #[error("invalid issuer {issuer}")]
     InvalidIssuer { issuer: Address },
 
@@ -56,6 +59,9 @@ impl From<StablecoinFactoryError> for PrecompileError {
         use IStablecoinFactory as I;
 
         let encoded = match error {
+            StablecoinFactoryError::UnexpectedValue { value } => {
+                I::UnexpectedValue { value }.abi_encode()
+            }
             StablecoinFactoryError::InvalidIssuer { issuer } => {
                 I::InvalidIssuer { issuer }.abi_encode()
             }

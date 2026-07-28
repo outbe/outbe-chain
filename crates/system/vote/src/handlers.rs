@@ -3,6 +3,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::VoteError;
 use crate::schema::{ProposalRecord, ProposalStatus};
@@ -48,6 +49,17 @@ pub trait VoteTarget: Send + Sync {
 
     /// Fail-fast validation used during proposal creation.
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()>;
+
+    /// Atomically reserves target-owned admission state for the allocated proposal id.
+    fn reserve(
+        &self,
+        _storage: StorageHandle<'_>,
+        _proposal_id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<()> {
+        Ok(())
+    }
 
     /// Applies side effects when a proposal is approved.
     fn handle_approved(
@@ -117,6 +129,19 @@ pub fn validate_target_payload(
 ) -> Result<()> {
     let target = registry.lookup(target_module)?;
     target.validate(payload, context)
+}
+
+pub fn reserve_target_proposal(
+    registry: &VoteTargetRegistry,
+    storage: StorageHandle<'_>,
+    target_module: Address,
+    proposal_id: U256,
+    payload: &[u8],
+    context: VoteTargetContext,
+) -> Result<()> {
+    registry
+        .lookup(target_module)?
+        .reserve(storage, proposal_id, payload, context)
 }
 
 /// Dispatches a terminal proposal outcome to its target module.

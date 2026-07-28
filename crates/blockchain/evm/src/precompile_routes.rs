@@ -151,6 +151,21 @@ fn stablecoin_policy_dispatch(
     outbe_stablecoinpolicy::precompile::dispatch(storage, data, caller, value)
 }
 
+fn stablecoin_factory_dispatch(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    let active = crate::protocol_version::resolve(&storage)?;
+    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
+        return Err(PrecompileError::Revert(
+            "Stablecoin V1 is not active".into(),
+        ));
+    }
+    outbe_stablecoinfactory::precompile::dispatch(storage, data, caller, value)
+}
+
 fn stablecoin_class_dispatch(
     storage: StorageHandle,
     token: Address,
@@ -298,6 +313,7 @@ define_exact_routes! {
     ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_groth16), outbe_zkproof::groth16_base_gas),
     TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::precompile::dispatch), default_base_gas),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas),
+    STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas),
     GOVERNANCE_ADDRESS => (DispatchAdapter::Basic(outbe_governance::precompile::dispatch), default_base_gas),
     VOTE_ADDRESS => (DispatchAdapter::Basic(vote_dispatch), default_base_gas),
@@ -380,7 +396,9 @@ mod tests {
     use alloy_sol_types::SolCall;
     use outbe_primitives::stablecoin::StablecoinCreatePayload;
     use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
-    use outbe_stablecoinfactory::{FactoryReservation, StablecoinFactoryApi as RegistryApi};
+    use outbe_stablecoinfactory::{
+        precompile::IStablecoinFactory, FactoryReservation, StablecoinFactoryApi as RegistryApi,
+    };
     use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
     use revm::state::Bytecode;
 
@@ -485,6 +503,42 @@ mod tests {
             )
             .unwrap();
         assert!(IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&output).unwrap());
+    }
+
+    #[test]
+    fn factory_route_uses_current_exact_protocol_version_state() {
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let route = lookup(&STABLECOIN_FACTORY_ADDRESS).unwrap();
+        let data = IStablecoinFactory::tokenCountCall {}.abi_encode();
+
+        assert!(matches!(
+            route.dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            ),
+            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
+        ));
+
+        activate(&storage);
+        let output = route
+            .dispatch(
+                storage,
+                &ExecutionScope::new(),
+                None,
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
+        assert_eq!(
+            IStablecoinFactory::tokenCountCall::abi_decode_returns(&output).unwrap(),
+            U256::ZERO
+        );
     }
 
     fn class_address(last: u8) -> Address {
