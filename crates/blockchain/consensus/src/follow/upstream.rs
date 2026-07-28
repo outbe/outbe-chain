@@ -1,8 +1,8 @@
 //! Transport seam for the follower: where finalized blocks come from.
 //!
 //! The follower never runs consensus and is never admitted to the validators'
-//! `authenticated::lookup` P2P network (it has no registered signing key —
-//! transport A, the Tempo model). Instead it pulls already-finalized blocks
+//! `authenticated::lookup` P2P network because it has no registered signing key.
+//! Instead it pulls already-finalized blocks
 //! from an UPSTREAM node over RPC. This module defines the abstract seam so the
 //! verification core (marshal + `CommitteeChain` + resolver + driver) can be
 //! wired and compiled independently of any concrete RPC client.

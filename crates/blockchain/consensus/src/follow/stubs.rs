@@ -7,8 +7,7 @@
 //! module provides a null broadcast: a [`buffered::Engine`] over a random
 //! ephemeral key with an empty static peer set, so nothing is ever sent.
 //!
-//! Mirrors Tempo's `follow/stubs.rs`, but keyed by `bls12381::PublicKey`
-//! (outbe's consensus identity) instead of ed25519.
+//! The stubs are keyed by `bls12381::PublicKey`, Outbe's consensus identity.
 
 use std::num::NonZeroUsize;
 

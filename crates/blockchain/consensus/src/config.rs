@@ -65,11 +65,11 @@ pub const STARTUP_GENESIS_FORMATION_PROBE_INTERVAL: Duration = Duration::from_se
 pub const STARTUP_GENESIS_FORMATION_PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Time to give the payload builder to execute transactions before resolving.
-/// Mirrors Tempo's `time_to_prepare_proposal_transactions` (default 200ms).
+/// The production default is 200ms.
 pub const DEFAULT_PAYLOAD_RESOLVE_TIME: Duration = Duration::from_millis(200);
 
 /// Minimum time before sending a proposal (keeps block times stable).
-/// Mirrors Tempo's `minimum_time_before_propose` (default 450ms).
+/// The production default is 450ms.
 pub const DEFAULT_PAYLOAD_RETURN_TIME: Duration = Duration::from_millis(450);
 
 /// Maximum P2P message size (2 MB — enough for max block + overhead).
@@ -132,7 +132,7 @@ pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
-// Marshal storage constants (matching Tempo's production defaults)
+// Marshal storage constants used by Outbe production nodes
 // ---------------------------------------------------------------------------
 
 /// Items per section in immutable archive.

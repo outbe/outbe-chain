@@ -105,13 +105,11 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.use-local-defaults", default_value_t = false)]
     pub use_local_defaults: bool,
 
-    /// Time (ms) to prepare proposal transactions before resolving payload.
-    /// Mirrors Tempo's `--consensus.time-to-prepare-proposal-transactions`.
+    /// Time (ms) to prepare proposal transactions before resolving the payload.
     #[arg(long = "consensus.payload-resolve-time-ms", default_value_t = 200)]
     pub payload_resolve_time_ms: u64,
 
-    /// Minimum time (ms) before sending a proposal (keeps block times stable).
-    /// Mirrors Tempo's `--consensus.minimum-time-before-propose`.
+    /// Minimum time (ms) before sending a proposal to keep block times stable.
     #[arg(long = "consensus.payload-return-time-ms", default_value_t = 450)]
     pub payload_return_time_ms: u64,
 
