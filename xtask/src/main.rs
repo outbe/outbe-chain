@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
-use xtask::release::sgx;
+use xtask::{release::sgx, stablecoin};
 
 #[derive(Debug, Parser)]
 #[command(about = "Outbe repository development and release automation")]
@@ -11,10 +11,36 @@ struct Cli {
     command: Command,
 }
 
+// Parsed once at process startup; heap-boxing the release command solely to equalize
+// enum variant size adds indirection without reducing a long-lived allocation.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Build, verify and publish release artifacts.
     Release(ReleaseArgs),
+    /// Validate Stablecoin V1 repository and genesis invariants.
+    Stablecoin(StablecoinArgs),
+}
+
+#[derive(Debug, Args)]
+struct StablecoinArgs {
+    #[command(subcommand)]
+    command: StablecoinCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum StablecoinCommand {
+    /// Compare every checked-in ABI export with its compiled Solidity interface.
+    AbiCheck,
+    /// Check fixed addresses, planned classes, predeploys and genesis files.
+    NamespaceCheck {
+        /// Genesis files to validate. May be repeated.
+        #[arg(long)]
+        genesis: Vec<PathBuf>,
+        /// Allow missing fixed marker accounts when checking a pre-seed genesis.
+        #[arg(long)]
+        preseed: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -205,6 +231,26 @@ fn main() -> Result<()> {
                     println!("verified testnet ReleaseManifest: {}", output.display());
                 }
             },
+        },
+        Command::Stablecoin(stablecoin_args) => match stablecoin_args.command {
+            StablecoinCommand::AbiCheck => {
+                let report = stablecoin::check_abi_exports(&repo_root)?;
+                println!(
+                    "stablecoin ABI exports ok: {} complete interfaces",
+                    report.interfaces
+                );
+            }
+            StablecoinCommand::NamespaceCheck { genesis, preseed } => {
+                let report = stablecoin::check_namespace(&repo_root, &genesis, preseed)?;
+                println!(
+                    "stablecoin namespace ok: {} declared addresses, {} Ethereum built-ins, {} genesis files, {} seed predeploys, {} planned classes",
+                    report.declared_addresses,
+                    report.ethereum_builtins,
+                    report.genesis_files,
+                    report.predeploy_addresses,
+                    report.planned_classes,
+                );
+            }
         },
     }
     Ok(())

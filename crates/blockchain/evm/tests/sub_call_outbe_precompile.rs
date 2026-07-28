@@ -37,10 +37,12 @@ use revm::{
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
     primitives::hardfork::SpecId,
+    state::{AccountInfo, Bytecode},
     Context,
 };
 
 const CALLER: Address = Address::new([0xC0; 20]);
+const POSEIDON_CALLER: Address = Address::new([0xA7; 20]);
 
 #[derive(Debug)]
 struct StaticAuthenticatedParent {
@@ -138,6 +140,68 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         "gas_used must be within the requested budget, got {}",
         result.gas_used,
     );
+}
+
+#[test]
+fn contract_originated_poseidon_call_keeps_characterized_shared_buffer_pricing() {
+    // The inner CALL forwards 1,800 gas and 32 bytes. Current dispatch prices the
+    // SharedBuffer before materialization, so Poseidon's empty-input base cost (1,500)
+    // is charged rather than the materialized 32-byte cost (2,000). SCF-020 preserves
+    // this existing behavior; changing it requires a separate gas protocol decision.
+    let mut code = vec![
+        0x60, 0x01, // PUSH1 1
+        0x60, 0x00, // PUSH1 0
+        0x52, // MSTORE: one field element at memory[0..32]
+        0x60, 0x20, // return size
+        0x60, 0x20, // return offset
+        0x60, 0x20, // input size
+        0x60, 0x00, // input offset
+        0x60, 0x00, // value
+        0x73, // PUSH20 poseidon address
+    ];
+    code.extend_from_slice(ZKPROOF_POSEIDON_ADDRESS.as_slice());
+    code.extend_from_slice(&[
+        0x61, 0x07, 0x08, // PUSH2 1,800 gas
+        0xf1, // CALL
+        0x60, 0x40, // status output offset
+        0x52, // MSTORE CALL status
+        0x60, 0x20, // return size
+        0x60, 0x40, // return offset
+        0xf3, // RETURN
+    ]);
+
+    let mut db = CacheDB::new(EmptyDB::default());
+    let bytecode = Bytecode::new_raw(Bytes::from(code));
+    db.insert_account_info(
+        POSEIDON_CALLER,
+        AccountInfo {
+            code_hash: bytecode.hash_slow(),
+            code: Some(bytecode),
+            ..Default::default()
+        },
+    );
+    let mut ctx = Context::mainnet().with_db(db);
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        None,
+        Arc::new(ExecutionScope::new()),
+        SubCallInput {
+            target: POSEIDON_CALLER,
+            value: U256::ZERO,
+            calldata: Bytes::new(),
+            gas_limit: 100_000,
+            is_static: false,
+        },
+    )
+    .expect("outer contract call");
+
+    assert!(matches!(result.status, SubCallStatus::Success));
+    assert_eq!(result.returndata.len(), 32);
+    assert_eq!(result.returndata[31], 1, "inner Poseidon CALL must succeed");
 }
 
 #[test]

@@ -1,0 +1,72 @@
+{
+  "manifestVersion": 1,
+  "canonicalSource": "outbe_primitives::stablecoin_fork",
+  "stablecoinSchemaVersion": 1,
+  "activation": {
+    "protocolVersion": "0.2",
+    "protocolVersionRaw": 2,
+    "predicate": "activeProtocolVersionRaw >= 2",
+    "updateActivation": "begin-block-inclusive",
+    "namespaceReservation": "genesis-active-independent-of-runtime-activation",
+    "supportedNetworks": [
+      "outbe-devnet-1-fresh-genesis",
+      "outbe-testnet-1-fresh-genesis"
+    ],
+    "mainnet": "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen"
+  },
+  "proposal": {
+    "bondBaseUnits": "1000000000000000000000000",
+    "maxPendingPublicBonded": 16,
+    "maxPendingPublicBondedPerProposer": 1,
+    "absoluteVotePendingCap": 64
+  },
+  "policy": {
+    "memberBatchCap": 64,
+    "memberPagination": "not-exposed-in-v1"
+  },
+  "gas": {
+    "dispatchBase": 200,
+    "storageRead": 100,
+    "storageWrite": 5000,
+    "storageRefund": 0,
+    "nativeColdSurcharge": 0,
+    "ecrecover": 3000,
+    "keccakBase": 30,
+    "keccakWord": 6,
+    "dynamicClassEnumeratedAsWarm": false,
+    "accountAccessOwner": "revm",
+    "formula": "dispatchBase + explicitCryptoAndHash + actualStorageOperations"
+  },
+  "benchmarkBudgets": {
+    "policyAuthorizationGas": 10000,
+    "policyMemberBatchGas": 750000,
+    "transferWithPolicyGas": 100000,
+    "permitGas": 125000,
+    "factoryCreationGas": 500000,
+    "o1P99Micros": 1000,
+    "batchOrCreationP99Micros": 5000,
+    "measurementMarginPercent": 125,
+    "gasRoundingQuantum": 10000,
+    "wallTimeClassification": "non-consensus-telemetry"
+  },
+  "eip712": {
+    "domainVersion": "1",
+    "domainFields": [
+      "name",
+      "version",
+      "chainId",
+      "verifyingContract"
+    ]
+  },
+  "tooling": {
+    "owner": "bin/outbe-cli",
+    "maintainedSdk": false,
+    "abiExports": "contract-artifacts-not-sdk-support"
+  },
+  "reopenRules": [
+    "SCF-034-SCF-047-or-SCF-055-measurement-plus-25-percent-rounded-up-to-10000-exceeds-its-gas-ceiling",
+    "nested-and-top-level-calls-do-not-produce-identical-native-charges-for-identical-work",
+    "shipping-binary-cannot-activate-protocol-version-0.2",
+    "supported-network-genesis-does-not-preserve-the-reserved-namespace"
+  ]
+}

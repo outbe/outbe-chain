@@ -23,7 +23,6 @@ import argparse
 import ipaddress
 import json
 import os
-import sys
 
 # --- Keccak256 ---
 
@@ -127,13 +126,13 @@ def _pure_python_keccak256(data: bytes) -> bytes:
 
 
 try:
-    from Crypto.Hash import keccak as _keccak_mod
+    from Crypto.Hash import keccak as _keccak_mod  # pyright: ignore[reportMissingImports]
 
     def keccak256(data: bytes) -> bytes:
         return _keccak_mod.new(data=data, digest_bits=256).digest()
 except ImportError:
     try:
-        import sha3
+        import sha3  # pyright: ignore[reportMissingImports]
 
         def keccak256(data: bytes) -> bytes:
             return sha3.keccak_256(data).digest()
@@ -205,6 +204,12 @@ COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
 # policy is seeded it also gets genesis marker bytecode so slot 2 survives to
 # block 1. Mirrors `outbe_primitives::addresses::TEE_REGISTRY_ADDRESS`.
 TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
+# Stablecoin Factory/Policy fixed accounts and the dynamic-token address class.
+# These mirror outbe_primitives::addresses and are reserved from genesis even
+# before production dispatch activates.
+STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
+STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
 MIN_STAKE = 100_000 * 10**18
@@ -225,7 +230,8 @@ ALL_PRECOMPILE_ADDRESSES = [
     NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
     CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
-    GOVERNANCE_ADDRESS,
+    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
+    STABLECOIN_POLICY_REGISTRY_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
     ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
@@ -269,6 +275,70 @@ def address_bytes(addr_hex: str) -> bytes:
     addr = addr_hex.lower().replace("0x", "")
     assert len(addr) == 40, f"invalid address length: {addr_hex}"
     return bytes.fromhex(addr)
+
+
+def validate_stablecoin_namespace_alloc(
+    alloc: dict, *, require_reserved_markers: bool
+) -> None:
+    """Reject genesis state that collides with the Stablecoin V1 namespace.
+
+    The two fixed accounts may contain only the exact marker and zero-valued
+    account metadata. Every dynamic-class allocation is forbidden, including a
+    balance-only account, because CREATE/CREATE2 reservation starts at genesis.
+    """
+    normalized = {}
+    for raw_address, account in alloc.items():
+        normalized_address = address_bytes(raw_address).hex()
+        if normalized_address in normalized:
+            raise ValueError(
+                "duplicate genesis alloc address after normalization: "
+                f"{raw_address} and {normalized[normalized_address][0]}"
+            )
+        if not isinstance(account, dict):
+            raise ValueError(f"genesis alloc {raw_address} must be an object")
+        normalized[normalized_address] = (raw_address, account)
+
+        if normalized_address.startswith(STABLECOIN_ADDRESS_PREFIX):
+            raise ValueError(
+                f"genesis alloc {raw_address} collides with reserved stablecoin "
+                f"prefix 0x{STABLECOIN_ADDRESS_PREFIX}"
+            )
+
+    for address in (
+        STABLECOIN_FACTORY_ADDRESS,
+        STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    ):
+        item = normalized.get(address)
+        if item is None:
+            if require_reserved_markers:
+                raise ValueError(f"missing stablecoin reserved account 0x{address}")
+            continue
+        raw_address, account = item
+        code = account.get("code")
+        if code is not None and str(code).lower() != MARKER_CODE:
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} has conflicting code"
+            )
+        if require_reserved_markers and str(code).lower() != MARKER_CODE:
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} is missing marker code"
+            )
+        if account.get("storage"):
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} has conflicting storage"
+            )
+        for field in ("balance", "nonce"):
+            value = account.get(field, "0x0")
+            try:
+                nonzero = int(str(value), 0) != 0
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"stablecoin reserved account {raw_address} has invalid {field}"
+                ) from error
+            if nonzero:
+                raise ValueError(
+                    f"stablecoin reserved account {raw_address} has nonzero {field}"
+                )
 
 
 def u32_bytes(val: int) -> bytes:
@@ -1478,6 +1548,7 @@ def main():
             raise ValueError("validators.json must contain a JSON array")
 
     alloc = genesis.setdefault("alloc", {})
+    validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=False)
 
     # Ensure all precompile addresses have marker bytecode
     for addr in ALL_PRECOMPILE_ADDRESSES:
@@ -1723,6 +1794,8 @@ def main():
     # carry a real balance keep it (setdefault is a no-op for them).
     for account in alloc.values():
         account.setdefault("balance", "0x0")
+
+    validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=True)
 
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)

@@ -16,17 +16,6 @@ use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_offchain_data::RuntimeBodyReaders;
-use outbe_primitives::addresses::{
-    AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
-    DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GOVERNANCE_ADDRESS,
-    GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
-    L2_REGISTRY_ADDRESS, METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS,
-    OUTBE_SYSTEM_TX_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS,
-    REWARDS_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS,
-    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS,
-    VAULT_PROVIDER_ADDRESS, VOTE_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS,
-    ZKPROOF_POSEIDON_ADDRESS,
-};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 use revm::{
@@ -40,213 +29,9 @@ use std::sync::Arc;
 
 use crate::{
     gas::SubcallGasMeter,
+    precompile_routes,
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
 };
-
-type DispatchFn = fn(
-    StorageHandle,
-    &[u8],
-    Address,
-    alloy_primitives::U256,
-) -> outbe_primitives::error::Result<Bytes>;
-
-/// Per-precompile base gas function. Charged by the registry layer
-/// before the dispatch body runs; `outbe_ctx_dispatch` debits
-/// `max(PRECOMPILE_BASE_GAS, base_gas_fn(data))` from `inputs.gas_limit`.
-///
-/// Most precompiles use [`default_base_gas`] (flat `PRECOMPILE_BASE_GAS`);
-/// computationally heavy stateless precompiles (Poseidon hash, zk
-/// proof verification) declare their own.
-type BaseGasFn = fn(&[u8]) -> u64;
-
-/// Default base-gas function — returns the flat `PRECOMPILE_BASE_GAS`.
-fn default_base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
-}
-fn vote_dispatch(
-    storage: StorageHandle,
-    data: &[u8],
-    caller: Address,
-    value: alloy_primitives::U256,
-) -> outbe_primitives::error::Result<Bytes> {
-    outbe_vote::precompile::dispatch_with_handlers(
-        storage,
-        data,
-        caller,
-        value,
-        crate::handlers::vote::registry(),
-    )
-}
-
-fn body_reader_required_dispatch(
-    _storage: StorageHandle,
-    _data: &[u8],
-    _caller: Address,
-    _value: alloy_primitives::U256,
-) -> outbe_primitives::error::Result<Bytes> {
-    Err(outbe_primitives::error::PrecompileError::Fatal(
-        "off-chain body read authority was not supplied".into(),
-    ))
-}
-/// Resolve outbe address to its dispatch entrypoint. Single source of truth
-/// for the registered outbe stateful-precompile table.
-fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, BaseGasFn)> {
-    let entry: (&'static str, DispatchFn, BaseGasFn) = match *address {
-        a if a == GRATIS_ADDRESS => (
-            "gratis",
-            outbe_gratis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == GRATIS_FACTORY_ADDRESS => (
-            "gratisfactory",
-            outbe_gratisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_ADDRESS => (
-            "promis",
-            outbe_promis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_FACTORY_ADDRESS => (
-            "promisfactory",
-            outbe_promisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == TRIBUTE_ADDRESS => ("tribute", body_reader_required_dispatch, default_base_gas),
-        a if a == NOD_ADDRESS => ("nod", body_reader_required_dispatch, default_base_gas),
-        a if a == NOD_FACTORY_ADDRESS => (
-            "nodfactory",
-            body_reader_required_dispatch,
-            default_base_gas,
-        ),
-        a if a == GEM_ADDRESS => ("gem", outbe_gem::precompile::dispatch, default_base_gas),
-        a if a == GEM_FACTORY_ADDRESS => (
-            "gemfactory",
-            outbe_gemfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == INTEX_ADDRESS => ("intex", outbe_intex::precompile::dispatch, default_base_gas),
-        a if a == INTEX_FACTORY_ADDRESS => (
-            "intexfactory",
-            outbe_intexfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == DESIS_ADDRESS => ("desis", outbe_desis::precompile::dispatch, default_base_gas),
-        a if a == VAULT_PROVIDER_ADDRESS => (
-            "vaultprovider",
-            outbe_vaultprovider::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == CREDIS_ADDRESS => (
-            "credis",
-            outbe_credis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == CREDIS_FACTORY_ADDRESS => (
-            "credisfactory",
-            outbe_credisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == TRIBUTE_FACTORY_ADDRESS => (
-            "tributefactory",
-            body_reader_required_dispatch,
-            default_base_gas,
-        ),
-        a if a == VALIDATOR_SET_ADDRESS => (
-            "validatorset",
-            outbe_validatorset::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == SLASH_INDICATOR_ADDRESS => (
-            "slashindicator",
-            outbe_slashindicator::precompile::dispatch,
-            outbe_slashindicator::precompile::base_gas,
-        ),
-        a if a == STAKING_ADDRESS => (
-            "staking",
-            outbe_staking::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == REWARDS_ADDRESS => (
-            "rewards",
-            outbe_rewards::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == AGENT_REWARD_ADDRESS => (
-            "agentreward",
-            outbe_agentreward::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == METADOSIS_ADDRESS => (
-            "metadosis",
-            outbe_metadosis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == FIDELITY_ADDRESS => (
-            "fidelity",
-            outbe_fidelity::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_LIMIT_ADDRESS => (
-            "promislimit",
-            outbe_promislimit::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == ORACLE_ADDRESS => (
-            "oracle",
-            outbe_oracle::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == ZEROFEE_ADDRESS => (
-            "zerofee",
-            outbe_zerofee::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == OUTBE_SYSTEM_TX_ADDRESS => (
-            "outbe-system-tx",
-            crate::begin_block_precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == DEBUG_SUBCALL_PRECOMPILE_ADDRESS => (
-            "debug-subcall",
-            crate::debug_subcall::dispatch,
-            default_base_gas,
-        ),
-        a if a == ZKPROOF_POSEIDON_ADDRESS => (
-            "zkproof-poseidon",
-            outbe_zkproof::dispatch_poseidon,
-            outbe_zkproof::poseidon_base_gas,
-        ),
-        a if a == ZKPROOF_GROTH16_ADDRESS => (
-            "zkproof-groth16",
-            outbe_zkproof::dispatch_groth16,
-            outbe_zkproof::groth16_base_gas,
-        ),
-        a if a == TEE_REGISTRY_ADDRESS => (
-            "teeregistry",
-            outbe_teeregistry::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == L2_REGISTRY_ADDRESS => (
-            "l2registry",
-            outbe_l2registry::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == GOVERNANCE_ADDRESS => (
-            "governance",
-            outbe_governance::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == VOTE_ADDRESS => ("vote", vote_dispatch, default_base_gas),
-        a if a == UPDATE_ADDRESS => (
-            "update",
-            outbe_update::precompile::dispatch,
-            default_base_gas,
-        ),
-        _ => return None,
-    };
-    Some(entry)
-}
 
 /// ABI-encode a revert reason as the Solidity-standard `Error(string)`
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
@@ -305,46 +90,11 @@ pub fn map_outbe_precompile_result(
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
-/// Single source of truth for tests that need to enumerate outbe addresses
-/// without re-typing the table. Keep in sync with the match arms in
-/// [`extend_outbe_precompiles`]; tests in
-/// `crates/blockchain/evm/tests/outbe_precompile_registration.rs` assert
-/// the two lists agree.
+/// Lookup and enumeration are generated from the same compact declaration in
+/// [`crate::precompile_routes`], so dispatch-recognized exact routes cannot be omitted
+/// from this list.
 pub fn outbe_precompile_addresses() -> &'static [Address] {
-    &[
-        GRATIS_ADDRESS,
-        GRATIS_FACTORY_ADDRESS,
-        PROMIS_ADDRESS,
-        PROMIS_FACTORY_ADDRESS,
-        TRIBUTE_ADDRESS,
-        NOD_ADDRESS,
-        NOD_FACTORY_ADDRESS,
-        GEM_ADDRESS,
-        GEM_FACTORY_ADDRESS,
-        INTEX_ADDRESS,
-        INTEX_FACTORY_ADDRESS,
-        DESIS_ADDRESS,
-        CREDIS_ADDRESS,
-        CREDIS_FACTORY_ADDRESS,
-        TRIBUTE_FACTORY_ADDRESS,
-        VALIDATOR_SET_ADDRESS,
-        SLASH_INDICATOR_ADDRESS,
-        STAKING_ADDRESS,
-        REWARDS_ADDRESS,
-        AGENT_REWARD_ADDRESS,
-        METADOSIS_ADDRESS,
-        FIDELITY_ADDRESS,
-        PROMIS_LIMIT_ADDRESS,
-        ORACLE_ADDRESS,
-        ZEROFEE_ADDRESS,
-        OUTBE_SYSTEM_TX_ADDRESS,
-        ZKPROOF_POSEIDON_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
-        TEE_REGISTRY_ADDRESS,
-        L2_REGISTRY_ADDRESS,
-        VOTE_ADDRESS,
-        UPDATE_ADDRESS,
-    ]
+    precompile_routes::EXACT_ADDRESSES
 }
 
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
@@ -369,7 +119,7 @@ pub fn extend_outbe_precompiles<DB>(
 {
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
-        |addr: &Address| outbe_dispatch_fn(addr).is_some(),
+        |addr: &Address| precompile_routes::lookup(addr).is_some(),
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
@@ -405,7 +155,7 @@ where
     DB::Error: Debug,
 {
     let address = inputs.bytecode_address;
-    let Some((_name, dispatch_fn, base_gas_fn)) = outbe_dispatch_fn(&address) else {
+    let Some(route) = precompile_routes::lookup(&address) else {
         return Ok(None);
     };
 
@@ -418,7 +168,7 @@ where
 
     // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
     // existing flat-cost contract still holds for default precompiles.
-    let base_gas = base_gas_fn(data.as_ref()).max(PRECOMPILE_BASE_GAS);
+    let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
     if inputs.gas_limit < base_gas {
         let out = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0);
         return Ok(Some(precompile_output_to_interpreter_result(
@@ -478,56 +228,14 @@ where
         },
     );
     let storage = StorageHandle::new(&mut provider);
-    let result = match (address, runtime_body_readers) {
-        (TRIBUTE_ADDRESS, Some(readers)) => outbe_tribute::precompile::dispatch(
-            storage,
-            execution_scope.as_ref(),
-            readers,
-            data.as_ref(),
-            caller,
-            value,
-        ),
-        (TRIBUTE_FACTORY_ADDRESS, Some(readers)) => outbe_tributefactory::precompile::dispatch(
-            storage,
-            execution_scope.as_ref(),
-            readers,
-            data.as_ref(),
-            caller,
-            value,
-        ),
-        (NOD_ADDRESS, Some(readers)) => outbe_nod::precompile::dispatch(
-            storage,
-            execution_scope.as_ref(),
-            readers,
-            data.as_ref(),
-            caller,
-            value,
-        ),
-        (NOD_FACTORY_ADDRESS, Some(readers)) => outbe_nodfactory::precompile::dispatch(
-            storage,
-            execution_scope.as_ref(),
-            readers,
-            data.as_ref(),
-            caller,
-            value,
-        ),
-        (OUTBE_SYSTEM_TX_ADDRESS, Some(readers)) => {
-            crate::begin_block_precompile::dispatch_with_readers(
-                storage,
-                execution_scope.as_ref(),
-                readers,
-                data.as_ref(),
-                caller,
-                value,
-            )
-        }
-        (TRIBUTE_ADDRESS | TRIBUTE_FACTORY_ADDRESS | NOD_ADDRESS | NOD_FACTORY_ADDRESS, None) => {
-            Err(outbe_primitives::error::PrecompileError::Fatal(
-                "execution body read authority was not supplied".into(),
-            ))
-        }
-        _ => dispatch_fn(storage, data.as_ref(), caller, value),
-    };
+    let result = route.dispatch(
+        storage,
+        execution_scope.as_ref(),
+        runtime_body_readers,
+        data.as_ref(),
+        caller,
+        value,
+    );
 
     if let Some(readers) = runtime_body_readers {
         if let Err(error) = &result {

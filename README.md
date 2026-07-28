@@ -143,6 +143,21 @@ offer caller is a registered L1 operator address and its network has
 commonware `sign_message` recipe) or the call reverts; unregistered callers and
 zk-disabled networks pass empty bytes.
 
+**Current implementation note — Stablecoin Factory V1 reservation.** The fixed
+Factory and shared Policy Registry accounts are reserved at `0x...EE0F` and
+`0x...EE10`. Dynamic stablecoin addresses use `0x53c0` followed by the rightmost
+144 bits of the full token id; their exact native marker is `0xef`. These constants
+are staged for protocol version `0.2` (raw `2`), but token/Factory/Policy dispatch is
+not yet active. Public bonded proposals are capped at 16 globally and one per proposer
+inside Vote's 64-slot total; the exact bond is `10^24` base units. Policy membership
+batches are capped at 64. EIP-712 domains use version `"1"`. V1 tooling ownership is
+assigned to the planned `bin/outbe-cli` flows; no maintained SDK is promised, and ABI
+exports alone do not constitute SDK support. Devnet/testnet
+activation requires a destructive fresh-genesis reset and a genesis-active
+CREATE/CREATE2 class guard; in-place activation over earlier chain state and mainnet
+activation are unsupported until their remaining gates close. See
+`docs/plans/stablecoin-factory-v1-implementation-plan.md`.
+
 ## Stateful Runtime Module Contract
 
 Stateful runtime modules (validator set, staking, rewards, slashing, emission,

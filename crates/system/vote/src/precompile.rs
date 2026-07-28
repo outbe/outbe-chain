@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
@@ -66,6 +66,9 @@ fn dispatch_vote_call(
                 c.count,
             )
         }),
+        getProposalBond(_) | unsettledBondLiabilities(_) => Err(PrecompileError::Revert(
+            "proposal bond accounting is not active".to_owned(),
+        )),
     }
 }
 

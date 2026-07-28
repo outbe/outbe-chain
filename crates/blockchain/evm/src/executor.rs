@@ -3777,19 +3777,25 @@ mod tests {
         use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, VAULT_PROVIDER_ADDRESS,
             ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
 
         // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
-        // marker. Each exemption is justified; adding a stateful precompile here
+        // marker. Each exemption is justified; adding a state-owning precompile here
         // instead of to the marker list would re-open reth22-1.
-        const MARKER_EXEMPT: [Address; 3] = [
+        const MARKER_EXEMPT: [Address; 6] = [
             // Stateless verifiers — no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
-            // Seeded with genesis bytecode + storage (scripts/seed_genesis.py
-            // ALL_PRECOMPILE_ADDRESSES), so its account is never EIP-161-empty.
+            // Debug adapter owns no persistent state; any child effects are journaled
+            // against the actual child target.
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
+            // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
+            // accounts are never EIP-161-empty.
             ZEROFEE_ADDRESS,
+            VAULT_PROVIDER_ADDRESS,
+            GOVERNANCE_ADDRESS,
         ];
 
         for addr in outbe_precompile_addresses() {
