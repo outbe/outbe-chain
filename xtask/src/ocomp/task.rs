@@ -2484,16 +2484,17 @@ fn promote_exact_scenario_evidence(
     );
 
     let destination = lane_evidence_dir.join(format!("scenario-{ordinal:03}.json"));
-    ensure!(
-        !destination.exists(),
-        "refusing to overwrite promoted scenario evidence {}",
-        destination.display()
-    );
-    std::fs::rename(entry.path(), &destination).wrap_err_with(|| {
+    std::fs::hard_link(entry.path(), &destination).wrap_err_with(|| {
         format!(
-            "promote scenario evidence {} to {}",
+            "atomically promote scenario evidence {} to unused destination {}",
             entry.path().display(),
             destination.display()
+        )
+    })?;
+    std::fs::remove_file(entry.path()).wrap_err_with(|| {
+        format!(
+            "remove isolated scenario evidence after promotion {}",
+            entry.path().display()
         )
     })?;
     std::fs::remove_dir(isolated_evidence_dir).wrap_err_with(|| {
@@ -2689,5 +2690,28 @@ mod tests {
             b"{\"result\":\"passed\"}\n"
         );
         assert!(!isolated.exists());
+    }
+
+    #[test]
+    fn exact_scenario_evidence_never_replaces_an_existing_destination() {
+        let root = tempfile::tempdir().expect("temporary evidence root");
+        let lane = root.path().join("OCM-PUBLIC");
+        let isolated = root.path().join("scenario-run-002");
+        std::fs::create_dir_all(&lane).expect("lane directory");
+        std::fs::create_dir_all(&isolated).expect("isolated scenario directory");
+        std::fs::write(lane.join("scenario-002.json"), b"{\"existing\":true}\n")
+            .expect("existing lane evidence");
+        std::fs::write(isolated.join("scenario-001.json"), b"{\"new\":true}\n")
+            .expect("new isolated evidence");
+
+        assert!(promote_exact_scenario_evidence(&isolated, &lane, 2).is_err());
+        assert_eq!(
+            std::fs::read(lane.join("scenario-002.json")).expect("existing lane evidence"),
+            b"{\"existing\":true}\n"
+        );
+        assert_eq!(
+            std::fs::read(isolated.join("scenario-001.json")).expect("isolated evidence"),
+            b"{\"new\":true}\n"
+        );
     }
 }
