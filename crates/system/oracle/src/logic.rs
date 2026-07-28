@@ -646,6 +646,66 @@ fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<(String
 }
 
 impl OracleContract<'_> {
+    /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
+    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let (base, quote) = crate::api::DAY_TYPE_PAIR;
+            let expected_pair_id = self.get_pair_id(base, quote)?;
+            if expected_pair_id == 0 {
+                return Err(PrecompileError::Fatal(
+                    "Oracle OCOMP day-type pair is not registered".into(),
+                ));
+            }
+
+            if self.ocomp_profile_ready.read()? {
+                if self.ocomp_day_type_pair_id.read()? != expected_pair_id
+                    || self.ocomp_state_version.read()? == 0
+                {
+                    return Err(PrecompileError::Fatal(
+                        "Oracle OCOMP profile does not match the registered day-type pair".into(),
+                    ));
+                }
+                return Ok(());
+            }
+            if self.ocomp_day_type_pair_id.read()? != 0 || self.ocomp_state_version.read()? != 0 {
+                return Err(PrecompileError::Fatal(
+                    "Oracle OCOMP profile contains partial pre-fork state".into(),
+                ));
+            }
+
+            self.ocomp_day_type_pair_id.write(expected_pair_id)?;
+            self.ocomp_state_version.write(1)?;
+            self.ocomp_profile_ready.write(true)
+        })
+    }
+
+    /// Reserves the next OCOMP-visible Oracle version before its owner writes.
+    ///
+    /// Returning `None` keeps every historical pre-fork mutation byte-for-byte
+    /// inert. Overflow is rejected before any related owner state changes.
+    pub(crate) fn next_ocomp_state_version(&self) -> Result<Option<u64>> {
+        if !self.ocomp_profile_ready.read()? {
+            return Ok(None);
+        }
+        let current = self.ocomp_state_version.read()?;
+        if current == 0 {
+            return Err(PrecompileError::BodyReadCorruption(
+                "Oracle OCOMP profile is ready with zero state version".into(),
+            ));
+        }
+        current.checked_add(1).map(Some).ok_or_else(|| {
+            PrecompileError::BodyReadCorruption("Oracle OCOMP state version overflow".into())
+        })
+    }
+
+    pub(crate) fn commit_ocomp_state_version(&self, next: Option<u64>) -> Result<()> {
+        if let Some(version) = next {
+            self.ocomp_state_version.write(version)?;
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Pair Registry
     // -----------------------------------------------------------------------
@@ -1019,7 +1079,24 @@ impl OracleContract<'_> {
     /// Each entry is (pair_id, rate, volume). The snapshot is appended at
     /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
     pub fn write_snapshot(&mut self, timestamp: u64, entries: &[(u32, U256, U256)]) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
+        } else {
+            self.write_snapshot_inner(timestamp, entries)
+        }
+    }
+
+    fn write_snapshot_inner(
+        &mut self,
+        timestamp: u64,
+        entries: &[(u32, U256, U256)],
+    ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
+        let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
+            PrecompileError::BodyReadCorruption("Oracle snapshot write index overflow".into())
+        })?;
+        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.snapshot_timestamp.write(&idx, timestamp)?;
         self.snapshot_pair_count.write(&idx, entries.len() as u32)?;
@@ -1035,7 +1112,7 @@ impl OracleContract<'_> {
             volume_map.write(&pi, *volume)?;
         }
 
-        self.snapshot_write_idx.write(idx + 1)?;
+        self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
         for (pair_id, rate, volume) in entries {
@@ -1056,7 +1133,7 @@ impl OracleContract<'_> {
         // Evict old entries beyond retention window
         self.evict_old_snapshots(timestamp)?;
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Evicts snapshots older than the retention window.
@@ -1534,7 +1611,24 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| {
+                self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+            })
+        } else {
+            self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+        }
+    }
+
+    fn store_worldwide_day_vwap_snapshot_inner(
+        &mut self,
+        worldwide_day: WorldwideDay,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<()> {
         let (pair_ids, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
+        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
         self.worldwide_day_vwap_start
@@ -1552,7 +1646,7 @@ impl OracleContract<'_> {
             value_map.write(&i, *vwap)?;
         }
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Returns a stored WorldwideDay VWAP snapshot.
@@ -1619,6 +1713,15 @@ impl OracleContract<'_> {
     /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
     /// watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.finalize_utc_day_vwap_inner(utc_day))
+        } else {
+            self.finalize_utc_day_vwap_inner(utc_day)
+        }
+    }
+
+    fn finalize_utc_day_vwap_inner(&mut self, utc_day: u32) -> Result<()> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
@@ -1629,6 +1732,12 @@ impl OracleContract<'_> {
             Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => return Ok(()),
             Err(e) => return Err(e),
         };
+        let next_ocomp_version = self.next_ocomp_state_version()?;
+        let ocomp_pair_id = self
+            .ocomp_profile_ready
+            .read()?
+            .then(|| self.ocomp_day_type_pair_id.read())
+            .transpose()?;
 
         // `pair_ids.len()` is bounded by the registry's u32 `pair_count`, so the
         // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
@@ -1641,17 +1750,23 @@ impl OracleContract<'_> {
             let vwap = vwaps[i as usize];
             pair_id_map.write(&i, pair_id)?;
             value_map.write(&i, vwap)?;
+            if Some(pair_id) == ocomp_pair_id {
+                self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
+            }
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
                 pairId: pair_id,
                 vwap,
             };
-            let _ = self
+            let event_result = self
                 .storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            if next_ocomp_version.is_some() {
+                event_result?;
+            }
         }
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Returns the finalized per-UTC-day VWAP for `pair_id` on `utc_day`

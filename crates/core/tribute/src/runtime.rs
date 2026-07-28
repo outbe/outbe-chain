@@ -39,6 +39,20 @@ impl TributeContract<'_> {
         verified_count: u32,
         verified_nominal: alloy_primitives::U256,
     ) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "populated OCOMP Tribute input requires certified retirement".into(),
+            ));
+        }
+        self.consume_lysis_partition_inner(day, verified_count, verified_nominal)
+    }
+
+    pub(crate) fn consume_lysis_partition_inner(
+        &mut self,
+        day: WorldwideDay,
+        verified_count: u32,
+        verified_nominal: alloy_primitives::U256,
+    ) -> Result<()> {
         let mut totals = self.get_day_totals(day)?;
         if !totals.initialized
             || !totals.is_sealed
@@ -66,18 +80,28 @@ impl TributeContract<'_> {
         self.store_day_totals(&totals)
     }
 
-    /// Requests the one authenticated Catalog delete only after Metadosis has
-    /// committed COMPLETED and the sealed DayTotals are zero.
+    /// Requests the one authenticated Catalog retirement after the sealed
+    /// DayTotals are empty. The legacy terminal path calls this after
+    /// completion; certified activation calls the private inner transition
+    /// inside the same outer checkpoint as terminal completion.
     pub fn retire_completed_partition(
         &mut self,
         scope: &ExecutionScope,
         day: WorldwideDay,
     ) -> Result<RetirementOutcome> {
+        if self.ocomp_profile_ready.read()? {
+            let admission = self.pre_admission_projection(day)?;
+            if admission.is_sealed && admission.tribute_count != 0 {
+                return Err(outbe_primitives::error::PrecompileError::Revert(
+                    "populated OCOMP Tribute input requires certified retirement".into(),
+                ));
+            }
+        }
         let storage = self.storage_handle();
         storage.with_checkpoint(|| self.retire_completed_partition_inner(scope, day))
     }
 
-    fn retire_completed_partition_inner(
+    pub(crate) fn retire_completed_partition_inner(
         &mut self,
         scope: &ExecutionScope,
         day: WorldwideDay,
@@ -148,6 +172,7 @@ impl TributeContract<'_> {
         }
 
         self.bump_day_bucket(tribute.worldwide_day, 1, tribute.nominal_amount_minor)?;
+        self.update_pre_admission_for_tribute(tribute, true)?;
 
         let supply = self.total_supply.read()?.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -209,6 +234,7 @@ impl TributeContract<'_> {
         let LoadedTribute { body, current } = loaded;
         let tribute = body;
         self.bump_day_bucket(tribute.worldwide_day, -1, tribute.nominal_amount_minor)?;
+        self.update_pre_admission_for_tribute(&tribute, false)?;
 
         let supply = self.total_supply.read()?.checked_sub(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(
@@ -263,6 +289,9 @@ impl TributeContract<'_> {
     }
 
     pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
+        if self.pre_admission_projection(day)?.is_sealed {
+            return Err(TributeError::PreAdmissionSealed.into());
+        }
         let mut totals = self.get_day_totals(day)?;
         totals.initialized = true;
         totals.is_sealed = false;
@@ -272,5 +301,48 @@ impl TributeContract<'_> {
             isSealed: false,
         })?;
         Ok(())
+    }
+
+    /// Freezes the bounded Tribute projection after the WWD and its CE
+    /// collection have both been sealed. The root must come from the
+    /// terminal CE lifecycle; callers cannot replace an already sealed value.
+    pub fn seal_pre_admission(
+        &mut self,
+        day: WorldwideDay,
+        sealed_collection: outbe_compressed_entities::SealedCollectionRoot,
+    ) -> Result<crate::TributePreAdmissionProjection> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            if !self.ocomp_profile_ready.read()? {
+                return Err(TributeError::OcompProfileNotReady.into());
+            }
+            if sealed_collection.partition()
+                != outbe_compressed_entities::PartitionRef::TributeWwd(day)
+            {
+                return Err(TributeError::InvalidSealedCollectionRoot.into());
+            }
+            let sealed_collection_root = sealed_collection.root();
+            if sealed_collection_root.is_zero() {
+                return Err(TributeError::InvalidSealedCollectionRoot.into());
+            }
+            let totals = self.get_day_totals(day)?;
+            if !totals.initialized || !totals.is_sealed {
+                return Err(TributeError::WorldwideDaySealed.into());
+            }
+            let mut admission = self
+                .day_pre_admission
+                .get(day)?
+                .unwrap_or_else(|| crate::DayPreAdmission::with_key(day));
+            if admission.is_sealed {
+                return Err(TributeError::PreAdmissionSealed.into());
+            }
+            admission.initialized = true;
+            admission.is_sealed = true;
+            admission.sealed_collection_root = sealed_collection_root;
+            admission.sealed_tribute_count = totals.tribute_count;
+            admission.sealed_tribute_nominal_amount = totals.tribute_nominal_amount;
+            self.store_day_pre_admission(&admission)?;
+            self.pre_admission_projection(day)
+        })
     }
 }

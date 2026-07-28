@@ -8,19 +8,24 @@ use outbe_offchain_storage::{
 };
 
 use crate::{
-    repository::TributeRecordWithMetadata,
     repository::{
         day_index_key, decode_body, namespace, owner_index_key, primary_key,
         TRIBUTES_BY_DAY_NAMESPACE, TRIBUTES_BY_OWNER_NAMESPACE, TRIBUTES_NAMESPACE,
+    },
+    retention::{
+        RetainedTributePin, RetainedTributeReader, OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
+        OCOMP_RETAINED_TRIBUTES_NAMESPACE,
     },
     TributeData, TributeRepositoryError,
 };
 
 /// Code-defined namespaces owned by the Tribute repository.
-pub const TRIBUTE_PROJECTION_NAMESPACES: [&str; 3] = [
+pub const TRIBUTE_PROJECTION_NAMESPACES: [&str; 5] = [
     TRIBUTES_NAMESPACE,
     TRIBUTES_BY_OWNER_NAMESPACE,
     TRIBUTES_BY_DAY_NAMESPACE,
+    OCOMP_RETAINED_TRIBUTES_NAMESPACE,
+    OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE,
 ];
 
 /// Repository-owned prior state plus an in-block overlay for Tribute projection.
@@ -29,17 +34,41 @@ pub const TRIBUTE_PROJECTION_NAMESPACES: [&str; 3] = [
 /// [`crate::TributeRepositoryReader::projection_session`]. They cannot supply or omit an
 /// arbitrary semantic prior body.
 pub struct TributeProjectionSession {
-    records: BTreeMap<EntityId36, Option<TributeRecordWithMetadata>>,
+    records: BTreeMap<EntityId36, Option<ProjectionTributeRecord>>,
+}
+
+struct ProjectionTributeRecord {
+    body: TributeData,
+    metadata: Option<StorageMetadata>,
+    stored_body: Value,
 }
 
 impl TributeProjectionSession {
     pub(crate) fn from_records(
         tribute_ids: &[EntityId36],
-        records: Vec<Option<TributeRecordWithMetadata>>,
-    ) -> Self {
-        Self {
-            records: tribute_ids.iter().copied().zip(records).collect(),
-        }
+        records: Vec<Option<StoredValue>>,
+    ) -> Result<Self, TributeRepositoryError> {
+        let records = tribute_ids
+            .iter()
+            .copied()
+            .zip(records)
+            .map(|(tribute_id, record)| {
+                let record = record
+                    .map(|record| {
+                        let body = decode_body(tribute_id, record.value.as_bytes())?;
+                        Ok::<ProjectionTributeRecord, TributeRepositoryError>(
+                            ProjectionTributeRecord {
+                                body,
+                                metadata: record.metadata,
+                                stored_body: record.value,
+                            },
+                        )
+                    })
+                    .transpose()?;
+                Ok((tribute_id, record))
+            })
+            .collect::<Result<_, TributeRepositoryError>>()?;
+        Ok(Self { records })
     }
 
     /// Returns the current semantic body from the repository snapshot or in-block overlay.
@@ -62,7 +91,7 @@ impl TributeProjectionSession {
             .get(&tribute_id)
             .ok_or(TributeRepositoryError::UntrackedProjectionIdentity { tribute_id })?
         {
-            Some((body, metadata)) => Ok(Some((body, metadata.as_ref()))),
+            Some(record) => Ok(Some((&record.body, record.metadata.as_ref()))),
             None => Ok(None),
         }
     }
@@ -75,6 +104,7 @@ impl TributeProjectionSession {
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
         let body = decode_body(tribute_id, stored_body.as_bytes())?;
+        let overlay_body = stored_body.clone();
         let old = self.current(tribute_id)?;
         let batch = plan_tribute_mutation(
             old,
@@ -84,7 +114,14 @@ impl TributeProjectionSession {
                 metadata: metadata.clone(),
             },
         )?;
-        self.records.insert(tribute_id, Some((body, metadata)));
+        self.records.insert(
+            tribute_id,
+            Some(ProjectionTributeRecord {
+                body,
+                metadata,
+                stored_body: overlay_body,
+            }),
+        );
         Ok(batch)
     }
 
@@ -96,6 +133,32 @@ impl TributeProjectionSession {
         let old = self.current(tribute_id)?;
         let batch = plan_tribute_mutation(old, TributeMutation::Delete { tribute_id })?;
         self.records.insert(tribute_id, None);
+        Ok(batch)
+    }
+
+    /// Plans an immutable job-retained copy followed by the canonical delete.
+    ///
+    /// The caller must apply the returned operations in the same transaction
+    /// as the finalized projection checkpoint.
+    pub fn retain_then_delete(
+        &mut self,
+        retained: &RetainedTributeReader,
+        pin: RetainedTributePin,
+        tribute_id: EntityId36,
+    ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
+        let stored_body = self
+            .records
+            .get(&tribute_id)
+            .ok_or(TributeRepositoryError::UntrackedProjectionIdentity { tribute_id })?
+            .as_ref()
+            .map(|record| record.stored_body.clone())
+            .ok_or(TributeRepositoryError::MissingCurrentBodyForRetention { tribute_id })?;
+        let retained_batch = retained.plan_retain_stored(pin, tribute_id, stored_body)?;
+        let delete_batch = self.delete(tribute_id)?;
+        let mut batch = AtomicWriteBatch::new();
+        batch.extend(retained_batch.operations().iter().cloned());
+        batch.extend(delete_batch.operations().iter().cloned());
+        batch.validate()?;
         Ok(batch)
     }
 }

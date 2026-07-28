@@ -19,13 +19,14 @@ not create a second authority.
 
 ## Rust workspace packages
 
-The current workspace contains 62 Cargo packages.
+The current workspace contains 65 Cargo packages.
 
 | Cargo package | Physical scope | Primary ADR(s) | Coverage role |
 |---|---|---|---|
 | `outbe-chain` | `bin/outbe-chain` | ADR-B-NOD-001, ADR-B-SUP-001, ADR-B-OPS-001 | Process entrypoint/lifecycle/deployment profile |
 | `outbe-cli` | `bin/outbe-cli` | ADR-B-CLI-001 | Operator transaction intent |
 | `outbe-feeder` | `bin/outbe-feeder` | ADR-S-ORC-002 | External Oracle ingestion entrypoint |
+| `outbe-ocomp` | `bin/outbe-ocomp` | ADR-S-OCM-001 through ADR-S-OCM-003 | OCOMP supervisor, export and worker entrypoint |
 | `outbe-keygen` | `bin/outbe-keygen` | ADR-S-KEY-001 | Validator key ceremony entrypoint |
 | `outbe-tee-enclave` | `bin/outbe-tee-enclave` | ADR-S-TEE-001, ADR-S-KEY-001 | Enclave and mock entrypoints |
 | `outbe-consensus` | `crates/blockchain/consensus` | ADR-B-CNS-001 through ADR-B-CNS-003, ADR-B-CRY-001 | Consensus/DKG/delivery authority |
@@ -78,17 +79,34 @@ The current workspace contains 62 Cargo packages.
 | `outbe-teeregistry` | `crates/system/teeregistry` | ADR-S-TEE-002 | Enclave/key registry |
 | `outbe-vote` | `crates/system/vote` | ADR-S-GOV-002 | Vote FSM |
 | `outbe-update` | `crates/system/update` | ADR-S-GOV-003 | Protocol activation |
+| `outbe-ocomp-protocol` | `crates/system/ocomp-protocol` | ADR-S-OCM-001 through ADR-S-OCM-004 | Shared OCOMP protocol types and local control contract |
 | `outbe-zerofee` | `crates/system/zerofee` | ADR-S-FEE-001 | Fee policy/hooks |
 | `outbe-zkproof` | `crates/system/zkproof` | ADR-S-ZKP-001 and ADR-S-ZKP-002 | Verifier/hash profile |
 | `outbe-l2registry` | `crates/system/l2registry` | ADR-B-XCH-001 | L2 operator, BLS key and ZK-mode registry |
 | `outbe-offchain-data` | `crates/system/offchain-data` | ADR-B-OCD-003 through ADR-B-OCD-005 | Projection/runtime readers; Blockchain responsibility |
 | `outbe-e2e` | `crates/core/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
-| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001 and PFS-006 | Process/localnet/Mongo evidence harness |
+| `outbe-lysis-v1-reference` | `crates/testing/lysis-v1-reference` | ADR-C-LYS-001 and ADR-B-TST-001 | Independent Lysis V1 reference evidence |
+| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 | Process/localnet/Mongo evidence harness; OCOMP PFS-002 remains a Gap |
 | `xtask` | `xtask` | ADR-B-TST-001 | Repository, ABI, namespace and generated-artifact verification |
 
 `crates/blockchain/primitives/fuzz/Cargo.toml` is deliberately outside the workspace;
 its fuzz targets are verification evidence for ADR-B-WIR-001 and ADR-B-EVM-003 and must be run by
-an explicit CI job rather than silently counted among the 62 packages.
+an explicit CI job rather than silently counted among the 65 packages.
+
+### Planned OCOMP PoC surfaces
+
+These surfaces are required by ADR-S-OCM-001 through ADR-S-OCM-004 and PFS-002,
+but do not yet exist in the workspace. Listing them here records a coverage Gap,
+not a package or implementation claim.
+
+| Planned surface | Owning ADR(s) | Required boundary |
+|---|---|---|
+| OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate, full-result votes and typed quorum apply |
+| standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003 | cursor, planner, scheduler, reducer and journal; no key/writer |
+| standalone snapshot exporter | ADR-S-OCM-001, ADR-S-OCM-002 | opaque finalized read lease to authenticated CAS manifest |
+| standalone worker | ADR-S-OCM-001, ADR-S-OCM-003 | one immutable `UnitId`, sandboxed and retryable |
+| validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004 | submit its own signed full result through the restricted ZeroFee seam; no relay or public activator |
+| OCOMP local stores | ADR-S-OCM-002 through ADR-S-OCM-004 | pin/export/CAS/supervisor/sign-once journals with separate authority |
 
 ### Executable target and command registry
 
@@ -101,7 +119,7 @@ an explicit CI job rather than silently counted among the 62 packages.
 | `outbe-feeder` | external provider polling/aggregation and Oracle delivery | ADR-S-ORC-002 |
 | `outbe-tee-enclave` | production enclave transport/service | ADR-S-TEE-001 and ADR-S-KEY-001 |
 | `outbe-tee-enclave-mock` | explicitly non-production enclave test service | ADR-S-TEE-001 and ADR-B-TST-001 |
-| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001 and PFS-006 |
+| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 |
 
 Every command that signs, deletes, imports, resets or publishes state is an operator
 mutation even when it bypasses EVM transactions. In particular DKG `force-restart` and

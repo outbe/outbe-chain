@@ -10,12 +10,17 @@
 //! sub-call driver in [`crate::sub_call`].
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
 use outbe_offchain_data::RuntimeBodyReaders;
+use outbe_primitives::addresses::{
+    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+};
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 use revm::{
@@ -32,6 +37,11 @@ use crate::{
     precompile_routes,
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
 };
+
+/// Shared marker retained in the sub-call context while q-forming apply
+/// accounting is migrated to the direct result-vote path.
+#[derive(Debug, Default)]
+pub struct OcompActivationBlockMeter;
 
 /// ABI-encode a revert reason as the Solidity-standard `Error(string)`
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
@@ -87,6 +97,15 @@ pub fn map_outbe_precompile_result(
     }
 }
 
+fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, value: U256) -> bool {
+    address == outbe_ocomp_protocol::abi::METADOSIS_ADDRESS
+        && data.get(..4).is_some_and(|selector| {
+            selector == outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR
+        })
+        && !is_static
+        && value.is_zero()
+}
+
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
@@ -113,10 +132,14 @@ pub fn extend_outbe_precompiles<DB>(
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_lifecycle_active: bool,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 ) where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
         |addr: &Address| precompile_routes::resolve(addr).is_some(),
@@ -134,40 +157,71 @@ pub fn extend_outbe_precompiles<DB>(
             outbe_ctx_dispatch::<DB>(
                 ctx,
                 inputs,
-                spec,
-                runtime_body_readers.as_ref(),
-                &execution_scope,
+                OutbeDispatchRuntime {
+                    spec,
+                    runtime_body_readers: runtime_body_readers.as_ref(),
+                    execution_scope: &execution_scope,
+                    ocomp_finality_authority: ocomp_finality_authority.clone(),
+                    ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+                    ocomp_lifecycle_active,
+                    ocomp_fork_install: ocomp_fork_install.clone(),
+                },
             )
         },
     );
+}
+
+/// Executor-owned runtime authorities carried into one Outbe dispatch.
+struct OutbeDispatchRuntime<'a> {
+    spec: SpecId,
+    runtime_body_readers: Option<&'a RuntimeBodyReaders>,
+    execution_scope: &'a Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 /// Dispatch one outbe precompile call with full context access.
 fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
-    spec: SpecId,
-    runtime_body_readers: Option<&RuntimeBodyReaders>,
-    execution_scope: &Arc<ExecutionScope>,
+    runtime: OutbeDispatchRuntime<'_>,
 ) -> Result<Option<InterpreterResult>, String>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let OutbeDispatchRuntime {
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_activation_block_meter,
+        ocomp_lifecycle_active,
+        ocomp_fork_install,
+    } = runtime;
+
+    use revm::context_interface::{Block as _, ContextTr};
+
     let address = inputs.bytecode_address;
     let Some(route) = precompile_routes::resolve(&address) else {
         return Ok(None);
     };
+    let block_number = ctx.block().number().saturating_to::<u64>();
 
-    // Pre-decode call data to evaluate the base-gas function over the
-    // exact bytes the dispatch body will see.
-    let data: Bytes = match &inputs.input {
-        revm::interpreter::CallInput::Bytes(b) => b.clone(),
-        revm::interpreter::CallInput::SharedBuffer(_) => Bytes::new(),
-    };
+    // Materialize the exact calldata before choosing the consensus gas charge.
+    // Contract -> precompile calls arrive as SharedBuffer and must pay the same
+    // activation charge as top-level Bytes calls.
+    let data: Bytes = inputs.input.bytes_local(ctx.local());
 
     // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
     // existing flat-cost contract still holds for default precompiles.
+    let is_active_result_vote_selector = ocomp_lifecycle_active
+        && address == METADOSIS_ADDRESS
+        && data.get(..4).is_some_and(|selector| {
+            selector == outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR
+        });
     let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
     if inputs.gas_limit < base_gas {
         let out = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0);
@@ -193,16 +247,19 @@ where
 
     let is_static = inputs.is_static;
     let caller = inputs.caller;
+    if caller == METADOSIS_ADDRESS && matches!(address, FIDELITY_ADDRESS | ORACLE_ADDRESS) {
+        let selector = data.get(..4).map(alloy_primitives::hex::encode);
+        tracing::warn!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=forbidden_calculation_entry block={block_number} \
+             target={address:#x} selector={}",
+            selector.as_deref().unwrap_or("missing")
+        );
+    }
     let value = match inputs.value {
         revm::interpreter::CallValue::Transfer(v) => v,
         revm::interpreter::CallValue::Apparent(v) => v,
     };
-    // revm hands contract -> precompile calls as `CallInput::SharedBuffer`
-    // (a range into the caller's shared memory) to skip an alloc. Use the
-    // upstream `bytes_local` helper so both variants materialize the actual calldata
-    use revm::context_interface::ContextTr;
-    let data: Bytes = inputs.input.bytes_local(ctx.local());
-
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
 
@@ -225,20 +282,69 @@ where
             spec,
             runtime_body_readers: runtime_body_readers.cloned(),
             execution_scope: execution_scope.clone(),
+            ocomp_finality_authority: ocomp_finality_authority.clone(),
+            ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+            ocomp_lifecycle_active,
+            lysis_activation_entitled: is_lysis_result_vote_call(
+                address,
+                data.as_ref(),
+                is_static,
+                value,
+            ) && ocomp_lifecycle_active,
         },
     );
     let storage = StorageHandle::new(&mut provider);
-    let result = route.dispatch(
-        storage,
-        execution_scope.as_ref(),
-        runtime_body_readers,
-        precompile_routes::RouteCall {
-            callee: address,
-            data: data.as_ref(),
-            caller,
+    let result = if is_active_result_vote_selector {
+        outbe_metadosis::ocomp::vote::dispatch_public_result_vote(
+            storage,
+            execution_scope.as_ref(),
+            data.as_ref(),
             value,
-        },
-    );
+            is_static,
+        )
+    } else if address == OUTBE_SYSTEM_TX_ADDRESS {
+        if let Some(readers) = runtime_body_readers {
+            crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
+                storage,
+                execution_scope.as_ref(),
+                readers,
+                ocomp_fork_install.as_deref(),
+                data.as_ref(),
+                caller,
+                value,
+            )
+        } else {
+            route.dispatch(
+                storage,
+                execution_scope.as_ref(),
+                runtime_body_readers,
+                precompile_routes::RouteCall {
+                    callee: address,
+                    data: data.as_ref(),
+                    caller,
+                    value,
+                },
+            )
+        }
+    } else {
+        route.dispatch(
+            storage,
+            execution_scope.as_ref(),
+            runtime_body_readers,
+            precompile_routes::RouteCall {
+                callee: address,
+                data: data.as_ref(),
+                caller,
+                value,
+            },
+        )
+    };
+    if result.is_ok() && is_active_result_vote_selector {
+        tracing::info!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
+        );
+    }
 
     if let Some(readers) = runtime_body_readers {
         if let Err(error) = &result {
@@ -288,6 +394,9 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     spec: SpecId,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
     _db: PhantomData<fn() -> DB>,
 }
 
@@ -296,12 +405,18 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         spec: SpecId,
         runtime_body_readers: Option<RuntimeBodyReaders>,
         execution_scope: Arc<ExecutionScope>,
+        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+        ocomp_lifecycle_active: bool,
     ) -> Self {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
             runtime_body_readers,
             execution_scope,
+            ocomp_finality_authority,
+            ocomp_activation_block_meter,
+            ocomp_lifecycle_active,
             _db: PhantomData,
         }
     }
@@ -333,9 +448,15 @@ where
         if let Some(result) = outbe_ctx_dispatch::<DB>(
             &mut **context,
             inputs,
-            self.spec,
-            self.runtime_body_readers.as_ref(),
-            &self.execution_scope,
+            OutbeDispatchRuntime {
+                spec: self.spec,
+                runtime_body_readers: self.runtime_body_readers.as_ref(),
+                execution_scope: &self.execution_scope,
+                ocomp_finality_authority: self.ocomp_finality_authority.clone(),
+                ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
+                ocomp_lifecycle_active: self.ocomp_lifecycle_active,
+                ocomp_fork_install: None,
+            },
         )? {
             return Ok(Some(result));
         }
@@ -354,5 +475,48 @@ where
 
     fn contains(&self, address: &Address) -> bool {
         self.eth.contains(address)
+    }
+}
+
+#[cfg(test)]
+mod lysis_activation_entitlement_tests {
+    use super::is_lysis_result_vote_call;
+    use alloy_primitives::{Address, U256};
+    use outbe_ocomp_protocol::abi::{
+        GET_OFFCHAIN_JOB_SELECTOR, METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
+    };
+
+    #[test]
+    fn only_exact_non_static_value_free_metadosis_result_vote_is_entitled() {
+        assert!(is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            Address::repeat_byte(1),
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &GET_OFFCHAIN_JOB_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            true,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::from(1),
+        ));
     }
 }

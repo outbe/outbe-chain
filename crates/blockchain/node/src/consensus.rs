@@ -32,6 +32,7 @@
 //! `crates/blockchain/node/tests/consensus_stateless.rs`.
 
 use alloy_consensus::{BlockHeader as _, Transaction as _};
+use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
     OutbeReceipt,
@@ -82,6 +83,7 @@ pub struct OutbeBeaconConsensus<ChainSpec> {
     inner: EthBeaconConsensus<ChainSpec>,
     chain_spec: Arc<ChainSpec>,
     skip_gas_limit_ramp_check: bool,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<ChainSpec> OutbeBeaconConsensus<ChainSpec>
@@ -94,6 +96,7 @@ where
             inner: EthBeaconConsensus::new(chain_spec.clone()),
             chain_spec,
             skip_gas_limit_ramp_check: false,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
         }
     }
 
@@ -124,6 +127,13 @@ where
     /// Disables the requests hash check in post-execution validation.
     pub fn with_skip_requests_hash_check(mut self, skip: bool) -> Self {
         self.inner = self.inner.with_skip_requests_hash_check(skip);
+        self
+    }
+
+    /// Installs structural OCOMP lifecycle activation. Normal construction is
+    /// inert until OCM-26 wires the canonical fresh-devnet schedule.
+    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.ocomp_lifecycle_activation = activation;
         self
     }
 
@@ -180,7 +190,11 @@ where
         body: &OutbeBlockBody,
         header: &SealedHeader<OutbeHeader>,
     ) -> Result<(), ConsensusError> {
-        validate_system_tx_consensus_boundary(body, header.header())?;
+        validate_system_tx_consensus_boundary_for_activation(
+            body,
+            header.header(),
+            self.ocomp_lifecycle_activation,
+        )?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_body_against_header(
             &self.inner,
             body,
@@ -193,7 +207,11 @@ where
         block: &SealedBlock<OutbeBlock>,
     ) -> Result<(), ConsensusError> {
         validate_block_transport_size(block)?;
-        validate_system_tx_consensus_boundary(block.body(), block.header())?;
+        validate_system_tx_consensus_boundary_for_activation(
+            block.body(),
+            block.header(),
+            self.ocomp_lifecycle_activation,
+        )?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution(
             &self.inner,
             block,
@@ -206,7 +224,11 @@ where
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
         validate_block_transport_size(block)?;
-        validate_system_tx_consensus_boundary(block.body(), block.header())?;
+        validate_system_tx_consensus_boundary_for_activation(
+            block.body(),
+            block.header(),
+            self.ocomp_lifecycle_activation,
+        )?;
         <EthBeaconConsensus<ChainSpec> as Consensus<OutbeBlock>>::validate_block_pre_execution_with_tx_root(
             &self.inner,
             block,
@@ -260,6 +282,18 @@ pub fn validate_system_tx_consensus_boundary(
     body: &OutbeBlockBody,
     header: &OutbeHeader,
 ) -> Result<(), ConsensusError> {
+    validate_system_tx_consensus_boundary_for_activation(
+        body,
+        header,
+        OcompLifecycleActivation::Disabled,
+    )
+}
+
+pub fn validate_system_tx_consensus_boundary_for_activation(
+    body: &OutbeBlockBody,
+    header: &OutbeHeader,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+) -> Result<(), ConsensusError> {
     if header.number() > 0 && header.beneficiary() != REWARDS_ADDRESS {
         return Err(consensus_other(format!(
             "non-genesis block beneficiary must be REWARDS_ADDRESS {}: got {}",
@@ -279,11 +313,12 @@ pub fn validate_system_tx_consensus_boundary(
     let layout = outbe_evm::system_tx::split_system_layout(&body.transactions)
         .map_err(|error| consensus_other(format!("invalid system tx layout: {error}")))?;
     let has_tee_bootstrap = layout.has_begin_kind(outbe_evm::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_evm::system_tx::validate_active_system_tx_set(
+    outbe_evm::system_tx::validate_system_tx_set_for_activation(
         &layout,
         header.number(),
         has_boundary_outcome,
         has_tee_bootstrap,
+        ocomp_lifecycle_activation,
     )
     .map_err(|error| consensus_other(format!("invalid system tx set: {error}")))?;
 
@@ -437,7 +472,20 @@ fn validate_header_timestamp_millis_part(header: &OutbeHeader) -> Result<(), Con
 /// Consensus builder that produces `OutbeBeaconConsensus` with increased extra_data limit.
 #[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct OutbeConsensusBuilder;
+pub struct OutbeConsensusBuilder {
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+}
+
+impl OutbeConsensusBuilder {
+    #[must_use]
+    pub const fn with_ocomp_lifecycle_activation(
+        mut self,
+        activation: OcompLifecycleActivation,
+    ) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+}
 
 impl<Node> ConsensusBuilder<Node> for OutbeConsensusBuilder
 where
@@ -453,7 +501,8 @@ where
     async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
         Ok(Arc::new(
             OutbeBeaconConsensus::new(ctx.chain_spec())
-                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE),
+                .with_max_extra_data_size(OUTBE_MAX_EXTRA_DATA_SIZE)
+                .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation),
         ))
     }
 }

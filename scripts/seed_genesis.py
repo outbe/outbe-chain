@@ -165,6 +165,10 @@ INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
 # the Rust constants in `outbe_primitives::addresses`.
 NOD_FACTORY_ADDRESS = "0000000000000000000000000000000000001007"
 GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
+# Gem NFT token precompile. Genesis can seed Settled gems (see `seed_gems`) so a
+# demo account has a mineable gem to convert Gem -> Promis -> Gratis; Gratis and
+# Promis are TEE-encrypted and can no longer be plaintext-seeded at genesis.
+GEM_ADDRESS = "0000000000000000000000000000000000001013"
 # VaultProvider precompile. Genesis seeds the owner (slot 0) and the default
 # liquidity source/target registry (see `seed_vault_provider`). Mirrors the Rust
 # constant `outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`.
@@ -227,7 +231,7 @@ INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
-    NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
+    NOD_ADDRESS, GEM_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
     CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
     GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
@@ -633,33 +637,93 @@ def pair_hash(base: str, quote: str) -> bytes:
 
 # --- Seeders ---
 
-def seed_gratis(storage: StorageBuilder, balances: dict):
-    """
-    Gratis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances (available)
-      slot 2: mapping(address => U256) pledged_balances (not seeded here)
-    """
-    total = 0
-    for addr, amount_str in balances.items():
-        amount = parse_int(amount_str)
-        total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+# Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
+# genesis-seeded — `add_gem` parks Issued gems in a bin-tree index this seeder
+# does not reproduce, and `mineGemPromis` requires state == Settled.
+GEM_STATE_SETTLED = 2
+# Default gem type when unspecified (GemTypes::Wallet). Not validated by
+# `mineGemPromis`, so any agent class works.
+GEM_TYPE_WALLET = 3
 
 
-def seed_promis(storage: StorageBuilder, balances: dict):
+def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
+    """Genesis gem id = keccak256("gem" ++ owner_20B ++ gem_load_be32 ++ index_be8).
+
+    Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
+    block number); `index` disambiguates multiple genesis gems for one owner.
+    The demo scripts never need to predict this — they discover the id via
+    `IGem.tokenOfOwnerByIndex(owner, 0)`.
     """
-    Promis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances
+    buf = b"gem" + address_bytes(owner) + to_be32(gem_load) + u64_bytes(index)
+    return keccak256(buf)
+
+
+def gem_owner_index_key(owner: str, index: int) -> bytes:
+    """keccak256(owner_20B ++ index_be4) — matches GemContract::owner_index_key."""
+    return keccak256(address_bytes(owner) + u32_bytes(index))
+
+
+def seed_gems(storage: StorageBuilder, gems: list):
+    """Seed Settled gems into the flat `GemContract` storage at GEM_ADDRESS.
+
+    Reproduces exactly what `GemContract::add_gem` writes for a Settled gem, so a
+    seeded gem is fully mineable (`mineGemPromis` -> confidential Promis) and
+    burns cleanly. Layout pinned by the `gem_storage_layout_matches_genesis_seeder`
+    test in `crates/core/gem/src/tests.rs`:
+
+      slot 0:      total_supply (u64)
+      slots 1-10:  gem_items Map<U256, GemData> record fields keyed by gem_id:
+                     1 owner              2 gem_type           3 gem_load
+                     4 entry_price        5 cost_amount        6 floor_price
+                     7 issuance_currency  8 reference_currency 9 state
+                     10 issued_at
+      slot 11:     owner_gem_counts Map<Address, u32>
+      slot 12:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
+      slot 13:     all_gem_ids      List<U256>  (len @ slot 13, data @ keccak(13)+i)
+      slot 14:     gem_index        Map<U256, u32>
+
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 15+), so
+    those slots are intentionally left empty (add_gem only indexes Issued gems).
     """
-    total = 0
-    for addr, amount_str in balances.items():
-        amount = parse_int(amount_str)
-        total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+    owner_counts: dict[str, int] = {}
+    for i, gem in enumerate(gems):
+        owner = gem["owner"]
+        gem_load = parse_int(gem["gem_load"])
+        state = parse_int(gem.get("state", GEM_STATE_SETTLED))
+        if state != GEM_STATE_SETTLED:
+            raise ValueError(
+                f"seed_gems only supports Settled gems (state={GEM_STATE_SETTLED}); "
+                f"got state={state}"
+            )
+        gem_id = gem_id_gen(owner, gem_load, i)
+
+        # gem_items record (slots 1-10, keyed by gem_id).
+        storage.set_mapping(1, gem_id, address_as_u256(owner))
+        storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
+        storage.set_mapping(3, gem_id, gem_load)
+        storage.set_mapping(4, gem_id, parse_int(gem.get("entry_price", "0")))
+        storage.set_mapping(5, gem_id, parse_int(gem.get("cost_amount", "0")))
+        storage.set_mapping(6, gem_id, parse_int(gem.get("floor_price", "0")))
+        storage.set_mapping(7, gem_id, parse_int(gem.get("issuance_currency", 840)))
+        storage.set_mapping(8, gem_id, parse_int(gem.get("reference_currency", 840)))
+        storage.set_mapping(9, gem_id, state)
+        storage.set_mapping(10, gem_id, parse_int(gem.get("issued_at", 0)))
+
+        # owner_gem_ids index (slot 12) + swap-and-pop counter (slot 11 below).
+        oi = owner_counts.get(owner.lower(), 0)
+        storage.set_mapping(12, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        owner_counts[owner.lower()] = oi + 1
+
+        # all_gem_ids List element i (slot 13 data region) + gem_index (slot 14).
+        storage.set_raw_slot(data_slot(13) + i, int.from_bytes(gem_id, "big"))
+        storage.set_mapping(14, gem_id, i)
+
+    for owner, count in owner_counts.items():
+        storage.set_mapping(11, address_bytes(owner), count)
+
+    # total_supply (slot 0) and all_gem_ids length (slot 13).
+    storage.set_slot(0, len(gems))
+    storage.set_slot(13, len(gems))
 
 
 def seed_coen(alloc: dict, balances: dict):
@@ -1703,23 +1767,29 @@ def main():
     # config.teePolicy, but only when `tee_policy` is present in the seed config.
     seed_tee_policy(genesis, alloc, seed)
 
-    # Seed Gratis
-    if "gratis_balances" in seed:
-        gratis_storage = StorageBuilder()
-        seed_gratis(gratis_storage, seed["gratis_balances"])
-        entry = alloc[GRATIS_ADDRESS]
-        entry.setdefault("storage", {}).update(gratis_storage.entries)
-        print(f"  Gratis: {len(seed['gratis_balances'])} balances, "
-              f"{len(gratis_storage.entries)} storage entries")
+    # Gratis and Promis are TEE-encrypted at rest: per-account balances are
+    # ciphertext keyed off enclave state keys, so they can NOT be plaintext-seeded
+    # at genesis. (The old flat writes were dead — worse, they set total_supply to
+    # a non-zero value with no backing encrypted balances.) A demo account instead
+    # gets a Settled gem (see below) and mines Gem -> Promis -> Gratis through the
+    # enclave. Fail loudly if a stale seed still carries these keys.
+    for _encrypted_key in ("gratis_balances", "promis_balances"):
+        if _encrypted_key in seed:
+            raise ValueError(
+                f"{_encrypted_key} is no longer supported: this token is TEE-encrypted "
+                f"and cannot be plaintext-seeded at genesis. Seed a `gems` entry instead "
+                f"and mine Gem -> Promis -> Gratis "
+                f"(see examples/credis-flow/src/0-setup-gratis.ts)."
+            )
 
-    # Seed Promis
-    if "promis_balances" in seed:
-        promis_storage = StorageBuilder()
-        seed_promis(promis_storage, seed["promis_balances"])
-        entry = alloc[PROMIS_ADDRESS]
-        entry.setdefault("storage", {}).update(promis_storage.entries)
-        print(f"  Promis: {len(seed['promis_balances'])} balances, "
-              f"{len(promis_storage.entries)} storage entries")
+    # Seed Gems (Settled) so a demo account can mine Gem -> Promis -> Gratis.
+    if "gems" in seed:
+        gem_storage = StorageBuilder()
+        seed_gems(gem_storage, seed["gems"])
+        entry = alloc[GEM_ADDRESS]
+        entry.setdefault("storage", {}).update(gem_storage.entries)
+        print(f"  Gem: {len(seed['gems'])} settled gems, "
+              f"{len(gem_storage.entries)} storage entries")
 
     # Seed Tributes
     if "tributes" in seed:

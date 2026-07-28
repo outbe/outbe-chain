@@ -15,8 +15,13 @@ pub(crate) const STK_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const SLASH_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 /// Tribute precompile (`totalSupply()`).
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
+/// Nod precompile (`totalSupply()`).
+pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
+/// Desis auction owner (`getAuctionStage(uint32)`).
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const DESIS_ADDR: Address = address!("0x0000000000000000000000000000000000001016");
 /// Update precompile (protocol-version governance).
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");
 /// Vote precompile (generic proposal/voting).

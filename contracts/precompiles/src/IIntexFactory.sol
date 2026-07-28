@@ -14,9 +14,16 @@ interface IIntexFactory {
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
     function settle(uint32 seriesId, address intexHolder, uint256 amount) external;
 
-    /// @notice Burn settled Intexes and mint Promis, gated by off-chain proof
-    ///         of work. Caller is the holder. Returns the minted Promis amount.
-    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) external returns (uint256 promisAmount);
+    /// @notice Burn settled Intexes and mint confidential Promis, gated by
+    ///         off-chain proof of work. Caller is the holder. Authorized by the
+    ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the holder's current on-chain promis
+    ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
+    ///         bound amount is `promis_load_minor * amount`. Returns the minted
+    ///         Promis amount.
+    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+        external
+        returns (uint256 promisAmount);
 
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
@@ -51,6 +58,6 @@ interface IIntexFactory {
     event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
 
     /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
-    ///         swept to the reserve vault instead of being distributed.
-    event ProceedsSweptToReserve(uint32 indexed seriesId, uint256 amount);
+    ///         burned instead of being distributed.
+    event ProceedsBurned(uint32 indexed seriesId, uint256 amount);
 }

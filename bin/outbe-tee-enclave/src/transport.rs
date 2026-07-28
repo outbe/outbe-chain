@@ -385,9 +385,38 @@ pub fn dispatch(
                 result: Box::new(result),
             }
         }
+        EnclaveRequest::ApplyPromisOp { request } => {
+            // Same resident-key derivation + attestation as ApplyGratisOp, over the
+            // independent Promis key domain (mint/burn on an encrypted balance).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyPromisOp: no resident group key (DKG not complete)".to_string(),
+                };
+            };
+            let state_key =
+                match crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        return EnclaveResponse::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+            let mut result = crate::promis::apply_op(&state_key, &request);
+            let preimage = outbe_tee::protocol::promis_op_attestation_preimage(
+                result.inputs_canonical_hash,
+                &result,
+            );
+            result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+            EnclaveResponse::PromisOpApplied {
+                result: Box::new(result),
+            }
+        }
         EnclaveRequest::DeriveAccountKeys {
+            ledger,
             account,
             requester_ephemeral_pubkey,
+            owner_sig,
         } => {
             // OFF-CHAIN key delivery only (served over RPC, never during block
             // execution): derive the account's view + modify keys and seal them to
@@ -398,11 +427,38 @@ pub fn dispatch(
                         .to_string(),
                 };
             };
+            // Prove the caller controls `account` INSIDE the enclave before releasing
+            // its (secret) view/modify keys. The host RPC recovers the same signature
+            // as a fast reject, but a compromised host reaches this transport directly,
+            // so the release decision must run in the enclave's trust domain, not the
+            // host's. Same shared preimage + recover_signer the host uses (one impl, no
+            // divergence).
+            let Ok(sig65) = <[u8; 65]>::try_from(owner_sig.as_slice()) else {
+                return EnclaveResponse::Error {
+                    message: "DeriveAccountKeys: owner signature must be 65 bytes".to_string(),
+                };
+            };
+            let prehash = outbe_tee::protocol::eip191_hash(
+                &outbe_tee::protocol::derive_account_keys_message(
+                    ledger,
+                    account,
+                    alloy_primitives::B256::from(requester_ephemeral_pubkey),
+                ),
+            );
+            match outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65) {
+                Ok(signer) if signer == account => {}
+                _ => {
+                    return EnclaveResponse::Error {
+                        message: "DeriveAccountKeys: owner signature does not control account"
+                            .to_string(),
+                    };
+                }
+            }
             let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
-                let state_key =
-                    crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)?;
-                let view_key = crate::gratis::derive_view_key(&state_key, account)?;
-                let modify_key = crate::gratis::derive_modify_key(&state_key, account)?;
+                let domain = crate::confidential::domain_for(ledger);
+                let state_key = domain.derive_state_key(derived.group_sig(), chain_id, 0)?;
+                let view_key = domain.derive_view_key(&state_key, account)?;
+                let modify_key = domain.derive_modify_key(&state_key, account)?;
                 let mut plaintext = view_key.to_vec();
                 plaintext.extend_from_slice(&modify_key);
                 crate::crypto::encrypt_share(&requester_ephemeral_pubkey, &plaintext)
@@ -1289,5 +1345,114 @@ mod tests {
         }
         // The newcomer must NOT have installed any key.
         assert!(newcomer.offer_key.get().is_none());
+    }
+
+    /// An enclave with a resident group key installed, so `DeriveAccountKeys` can
+    /// derive per-account keys (mirrors the handoff tests' setup).
+    fn resident_enclave(seed: u8) -> Enclave {
+        let group_sig = vec![0x5a_u8; 96];
+        let e = Enclave::new(seed);
+        let (secret, public) =
+            crate::crypto::derive_tribute_offer_secret_from_group_sig(&group_sig, e.chain_id, 0)
+                .expect("derive");
+        e.offer_key
+            .set(DerivedTributeOfferKey::from_parts(
+                secret, public, group_sig,
+            ))
+            .ok()
+            .expect("install");
+        e
+    }
+
+    /// Deterministic secp256k1 signer and its EVM address.
+    fn evm_signer(seed: u8) -> (k256::ecdsa::SigningKey, alloy_primitives::Address) {
+        let sk = k256::ecdsa::SigningKey::from_slice(&[seed; 32]).expect("key");
+        let point = sk.verifying_key().to_encoded_point(false);
+        let addr = alloy_primitives::Address::from_slice(
+            &alloy_primitives::keccak256(&point.as_bytes()[1..])[12..],
+        );
+        (sk, addr)
+    }
+
+    /// EIP-191 owner signature over the shared derive-keys message — the exact
+    /// preimage the enclave arm recomputes.
+    fn owner_sig(
+        sk: &k256::ecdsa::SigningKey,
+        account: alloy_primitives::Address,
+        ephemeral: [u8; 32],
+    ) -> Vec<u8> {
+        use k256::ecdsa::signature::hazmat::PrehashSigner;
+        let prehash =
+            outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_gratis_keys_message(
+                account,
+                alloy_primitives::B256::from(ephemeral),
+            ));
+        let (sig, recid): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+            sk.sign_prehash(prehash.as_slice()).expect("sign");
+        let mut sig65 = [0u8; 65];
+        sig65[..64].copy_from_slice(sig.to_bytes().as_slice());
+        sig65[64] = recid.to_byte();
+        sig65.to_vec()
+    }
+
+    #[test]
+    fn derive_account_keys_requires_owner_sig() {
+        let mut enclave = resident_enclave(1);
+        let (owner, account) = evm_signer(7);
+        let ephemeral = [0x22_u8; 32];
+
+        // Correct owner signature -> keys sealed.
+        let good = owner_sig(&owner, account, ephemeral);
+        match enclave.call(EnclaveRequest::DeriveAccountKeys {
+            ledger: outbe_tee::protocol::Ledger::Gratis,
+            account,
+            requester_ephemeral_pubkey: ephemeral,
+            owner_sig: good,
+        }) {
+            EnclaveResponse::AccountKeysSealed { account: a, .. } => assert_eq!(a, account),
+            other => panic!("expected AccountKeysSealed, got {other:?}"),
+        }
+
+        // A signature by a DIFFERENT key over the same account: an attacker who does
+        // not control `account` (e.g. a compromised host) cannot obtain its keys.
+        let (attacker, attacker_addr) = evm_signer(9);
+        assert_ne!(attacker_addr, account);
+        let forged = owner_sig(&attacker, account, ephemeral);
+        assert!(
+            matches!(
+                enclave.call(EnclaveRequest::DeriveAccountKeys {
+                    ledger: outbe_tee::protocol::Ledger::Gratis,
+                    account,
+                    requester_ephemeral_pubkey: ephemeral,
+                    owner_sig: forged,
+                }),
+                EnclaveResponse::Error { .. }
+            ),
+            "keys must not be released without a signature by `account`"
+        );
+    }
+
+    #[test]
+    fn derive_account_keys_ephemeral_binding() {
+        let mut enclave = resident_enclave(2);
+        let (owner, account) = evm_signer(7);
+        let e1 = [0x11_u8; 32];
+        let e2 = [0x99_u8; 32];
+
+        // A valid signature over ephemeral E1 cannot be replayed to seal keys to a
+        // different requester ephemeral E2 (the signed message binds the ephemeral).
+        let sig_over_e1 = owner_sig(&owner, account, e1);
+        assert!(
+            matches!(
+                enclave.call(EnclaveRequest::DeriveAccountKeys {
+                    ledger: outbe_tee::protocol::Ledger::Gratis,
+                    account,
+                    requester_ephemeral_pubkey: e2,
+                    owner_sig: sig_over_e1,
+                }),
+                EnclaveResponse::Error { .. }
+            ),
+            "owner_sig must bind the requester ephemeral (no cross-target replay)"
+        );
     }
 }

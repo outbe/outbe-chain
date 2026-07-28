@@ -6,7 +6,10 @@
 //! one exact candidate atomically before advancing retention and removing
 //! cache entries.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::B256;
 use outbe_primitives::error::PrecompileError;
@@ -19,11 +22,356 @@ use crate::{
         PersistenceError,
     },
     staging::{
-        CandidateCache, CandidateCacheLimits, ProvisionalTreeBatch, PublicationOutcome,
-        StagedTreeBatch, StagingError,
+        AuthenticatedCatalogView, CandidateCache, CandidateCacheLimits, ProvisionalTreeBatch,
+        PublicationOutcome, StagedTreeBatch, StagingError,
     },
     MdbxAuthenticatedTree,
 };
+
+/// PoC default for the small gate before the next finalized CE apply.
+///
+/// Production wiring may set a stricter value, but may not leave the gate
+/// unbounded.
+pub const DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT: Duration = Duration::from_secs(2);
+const EXPORT_LEASE_OFFER_DOMAIN: [u8; 4] = *b"OCEO";
+const EXPORT_LEASE_OPEN_ACK_DOMAIN: [u8; 4] = *b"OCEA";
+const EXPORT_LEASE_WIRE_LEN: usize = 4 + 8 + 32 + 4 + 8 + 32 + 32;
+
+/// Observable state of one opaque CE export lease generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExportLeaseStatus {
+    Pending,
+    Opened,
+    TimedOut,
+}
+
+/// Fixed-size offer sent to the exporter. Its fields are private so only the
+/// tree owner can mint a generation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportLeaseOffer {
+    generation: u64,
+    challenge: B256,
+    identity: ExactParentIdentity,
+}
+
+impl ExportLeaseOffer {
+    #[must_use]
+    pub const fn generation(self) -> u64 {
+        self.generation
+    }
+
+    #[must_use]
+    pub const fn identity(self) -> ExactParentIdentity {
+        self.identity
+    }
+
+    #[must_use]
+    pub fn encode_fixed(self) -> [u8; EXPORT_LEASE_WIRE_LEN] {
+        encode_export_lease(
+            EXPORT_LEASE_OFFER_DOMAIN,
+            self.generation,
+            self.challenge,
+            self.identity,
+        )
+    }
+
+    pub fn decode_fixed(bytes: &[u8]) -> Result<Self, TreeServiceError> {
+        let (generation, challenge, identity) =
+            decode_export_lease(bytes, EXPORT_LEASE_OFFER_DOMAIN)?;
+        Ok(Self {
+            generation,
+            challenge,
+            identity,
+        })
+    }
+
+    /// Constructs an acknowledgement only from a view that actually opened the
+    /// exact offered marker/root.
+    pub fn confirm_open(
+        self,
+        view: &AuthenticatedCatalogView,
+    ) -> Result<ExportLeaseOpenAck, TreeServiceError> {
+        let actual = view.identity();
+        if actual != self.identity {
+            return Err(TreeServiceError::ExportLeaseIdentityMismatch {
+                expected: self.identity,
+                actual,
+            });
+        }
+        Ok(ExportLeaseOpenAck {
+            generation: self.generation,
+            challenge: self.challenge,
+            identity: self.identity,
+        })
+    }
+}
+
+/// Opaque acknowledgement minted only after an exact read-only view opens.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExportLeaseOpenAck {
+    generation: u64,
+    challenge: B256,
+    identity: ExactParentIdentity,
+}
+
+impl ExportLeaseOpenAck {
+    #[must_use]
+    pub fn encode_fixed(self) -> [u8; EXPORT_LEASE_WIRE_LEN] {
+        encode_export_lease(
+            EXPORT_LEASE_OPEN_ACK_DOMAIN,
+            self.generation,
+            self.challenge,
+            self.identity,
+        )
+    }
+
+    fn decode_fixed(bytes: &[u8]) -> Result<Self, TreeServiceError> {
+        let (generation, challenge, identity) =
+            decode_export_lease(bytes, EXPORT_LEASE_OPEN_ACK_DOMAIN)?;
+        Ok(Self {
+            generation,
+            challenge,
+            identity,
+        })
+    }
+}
+
+fn encode_export_lease(
+    domain: [u8; 4],
+    generation: u64,
+    challenge: B256,
+    identity: ExactParentIdentity,
+) -> [u8; EXPORT_LEASE_WIRE_LEN] {
+    let mut bytes = [0_u8; EXPORT_LEASE_WIRE_LEN];
+    bytes[..4].copy_from_slice(&domain);
+    bytes[4..12].copy_from_slice(&generation.to_be_bytes());
+    bytes[12..44].copy_from_slice(challenge.as_slice());
+    bytes[44..48].copy_from_slice(&identity.commitment_scheme_version.to_be_bytes());
+    bytes[48..56].copy_from_slice(&identity.block_number.to_be_bytes());
+    bytes[56..88].copy_from_slice(identity.block_hash.as_slice());
+    bytes[88..120].copy_from_slice(identity.root.as_slice());
+    bytes
+}
+
+fn decode_export_lease(
+    bytes: &[u8],
+    expected_domain: [u8; 4],
+) -> Result<(u64, B256, ExactParentIdentity), TreeServiceError> {
+    if bytes.len() != EXPORT_LEASE_WIRE_LEN || bytes[..4] != expected_domain {
+        return Err(TreeServiceError::MalformedExportLease);
+    }
+    let generation = u64::from_be_bytes(
+        bytes[4..12]
+            .try_into()
+            .map_err(|_| TreeServiceError::MalformedExportLease)?,
+    );
+    if generation == 0 {
+        return Err(TreeServiceError::MalformedExportLease);
+    }
+    let challenge = B256::from_slice(&bytes[12..44]);
+    if challenge.is_zero() {
+        return Err(TreeServiceError::MalformedExportLease);
+    }
+    let commitment_scheme_version = u32::from_be_bytes(
+        bytes[44..48]
+            .try_into()
+            .map_err(|_| TreeServiceError::MalformedExportLease)?,
+    );
+    let block_number = u64::from_be_bytes(
+        bytes[48..56]
+            .try_into()
+            .map_err(|_| TreeServiceError::MalformedExportLease)?,
+    );
+    Ok((
+        generation,
+        challenge,
+        ExactParentIdentity {
+            commitment_scheme_version,
+            block_number,
+            block_hash: B256::from_slice(&bytes[56..88]),
+            root: B256::from_slice(&bytes[88..120]),
+        },
+    ))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveExportLease {
+    offer: ExportLeaseOffer,
+    deadline: Instant,
+}
+
+#[derive(Debug)]
+struct ExportLeaseState {
+    next_generation: u64,
+    active: Option<ActiveExportLease>,
+    last: Option<(ExportLeaseOffer, ExportLeaseStatus)>,
+}
+
+#[derive(Debug)]
+struct ExportLeaseGate {
+    timeout: Duration,
+    state: Mutex<ExportLeaseState>,
+    changed: Condvar,
+}
+
+impl ExportLeaseGate {
+    fn new(timeout: Duration) -> Result<Self, TreeServiceError> {
+        if timeout.is_zero() || timeout > DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT {
+            return Err(TreeServiceError::InvalidExportLeaseTimeout);
+        }
+        Ok(Self {
+            timeout,
+            state: Mutex::new(ExportLeaseState {
+                next_generation: 1,
+                active: None,
+                last: None,
+            }),
+            changed: Condvar::new(),
+        })
+    }
+
+    fn arm(
+        &self,
+        identity: ExactParentIdentity,
+        challenge: B256,
+    ) -> Result<ExportLeaseOffer, TreeServiceError> {
+        if challenge.is_zero() {
+            return Err(TreeServiceError::ZeroExportLeaseChallenge);
+        }
+        let mut state = self.lock()?;
+        expire_if_due(&mut state, Instant::now());
+        if let Some(active) = state.active {
+            if active.offer.identity == identity && active.offer.challenge == challenge {
+                return Ok(active.offer);
+            }
+            return Err(TreeServiceError::ConflictingExportLease {
+                active: active.offer.identity,
+                requested: identity,
+            });
+        }
+        let generation = state.next_generation;
+        state.next_generation = generation
+            .checked_add(1)
+            .ok_or(TreeServiceError::ExportLeaseGenerationOverflow)?;
+        let deadline = Instant::now()
+            .checked_add(self.timeout)
+            .ok_or(TreeServiceError::InvalidExportLeaseTimeout)?;
+        let offer = ExportLeaseOffer {
+            generation,
+            challenge,
+            identity,
+        };
+        state.active = Some(ActiveExportLease { offer, deadline });
+        state.last = Some((offer, ExportLeaseStatus::Pending));
+        Ok(offer)
+    }
+
+    fn acknowledge(&self, ack: ExportLeaseOpenAck) -> Result<(), TreeServiceError> {
+        let mut state = self.lock()?;
+        expire_if_due(&mut state, Instant::now());
+        let Some(active) = state.active else {
+            if let Some((last, ExportLeaseStatus::Opened)) = state.last {
+                if last.generation == ack.generation
+                    && last.challenge == ack.challenge
+                    && last.identity == ack.identity
+                {
+                    return Ok(());
+                }
+            }
+            return Err(stale_export_lease(&state, ack.generation));
+        };
+        if active.offer.generation != ack.generation {
+            return Err(stale_export_lease(&state, ack.generation));
+        }
+        if active.offer.identity != ack.identity {
+            return Err(TreeServiceError::ExportLeaseIdentityMismatch {
+                expected: active.offer.identity,
+                actual: ack.identity,
+            });
+        }
+        if active.offer.challenge != ack.challenge {
+            return Err(TreeServiceError::ExportLeaseChallengeMismatch);
+        }
+        state.active = None;
+        state.last = Some((active.offer, ExportLeaseStatus::Opened));
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    fn status(&self, generation: u64) -> Result<ExportLeaseStatus, TreeServiceError> {
+        let mut state = self.lock()?;
+        expire_if_due(&mut state, Instant::now());
+        if state
+            .active
+            .is_some_and(|active| active.offer.generation == generation)
+        {
+            return Ok(ExportLeaseStatus::Pending);
+        }
+        match state.last {
+            Some((actual, status)) if actual.generation == generation => Ok(status),
+            _ => Err(stale_export_lease(&state, generation)),
+        }
+    }
+
+    fn wait_before_next_apply(&self, current: FinalizedMarker) -> Result<(), TreeServiceError> {
+        let expected = exact_identity(current);
+        let mut state = self.lock()?;
+        loop {
+            expire_if_due(&mut state, Instant::now());
+            let Some(active) = state.active else {
+                return Ok(());
+            };
+            if active.offer.identity != expected {
+                return Err(TreeServiceError::ConflictingExportLease {
+                    active: active.offer.identity,
+                    requested: expected,
+                });
+            }
+            let remaining = active.deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                expire_if_due(&mut state, Instant::now());
+                return Ok(());
+            }
+            let (next, _) = self
+                .changed
+                .wait_timeout(state, remaining)
+                .map_err(|_| TreeServiceError::LockPoisoned("export lease gate"))?;
+            state = next;
+        }
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ExportLeaseState>, TreeServiceError> {
+        self.state
+            .lock()
+            .map_err(|_| TreeServiceError::LockPoisoned("export lease gate"))
+    }
+}
+
+fn expire_if_due(state: &mut ExportLeaseState, now: Instant) {
+    if let Some(active) = state.active {
+        if now >= active.deadline {
+            state.active = None;
+            state.last = Some((active.offer, ExportLeaseStatus::TimedOut));
+        }
+    }
+}
+
+fn stale_export_lease(state: &ExportLeaseState, requested: u64) -> TreeServiceError {
+    let actual = state
+        .active
+        .map(|active| active.offer.generation)
+        .or_else(|| state.last.map(|(offer, _)| offer.generation));
+    TreeServiceError::StaleExportLease { requested, actual }
+}
+
+fn exact_identity(marker: FinalizedMarker) -> ExactParentIdentity {
+    ExactParentIdentity {
+        commitment_scheme_version: marker.commitment_scheme_version,
+        block_number: marker.height,
+        block_hash: marker.block_hash,
+        root: marker.new_root,
+    }
+}
 
 /// Result of applying an exact finalized block to the CE materialization.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,6 +397,7 @@ pub struct CompressedTreeService {
     candidates: Mutex<CandidateCache>,
     retention: CeRetentionCursor,
     finalization: Mutex<()>,
+    export_lease: ExportLeaseGate,
 }
 
 impl CompressedTreeService {
@@ -61,13 +410,72 @@ impl CompressedTreeService {
     /// Takes ownership of the CE MDBX environment and seeds retention from its
     /// already-verified finalized marker.
     pub fn new(db: CeMdbx, limits: CandidateCacheLimits) -> Result<Self, TreeServiceError> {
+        Self::new_with_export_lease_timeout(db, limits, DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT)
+    }
+
+    pub fn new_with_export_lease_timeout(
+        db: CeMdbx,
+        limits: CandidateCacheLimits,
+        export_lease_timeout: Duration,
+    ) -> Result<Self, TreeServiceError> {
         let marker = db.marker()?;
         Ok(Self {
             db: Arc::new(db),
             candidates: Mutex::new(CandidateCache::new(limits)),
             retention: CeRetentionCursor::from_verified_marker(marker),
             finalization: Mutex::new(()),
+            export_lease: ExportLeaseGate::new(export_lease_timeout)?,
         })
+    }
+
+    /// Arms one exact marker while holding the same serialization boundary as
+    /// finalized apply. A missed marker is a local availability failure.
+    pub fn arm_finalized_export(
+        &self,
+        required: FinalizedMarker,
+        challenge: B256,
+    ) -> Result<ExportLeaseOffer, TreeServiceError> {
+        let _guard = self
+            .finalization
+            .lock()
+            .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
+        let current = self.db.marker()?;
+        if current != required {
+            return Err(TreeServiceError::ExportLeaseMarkerAdvanced {
+                requested: required,
+                current,
+            });
+        }
+        self.export_lease.arm(exact_identity(required), challenge)
+    }
+
+    /// Returns the fixed identity of the CE environment owned by this service.
+    ///
+    /// Snapshot handoff exposes only the schema number from this identity; it
+    /// never exposes the database path or a writer-capable handle.
+    #[must_use]
+    pub fn environment_identity(&self) -> &crate::persistence::EnvironmentIdentity {
+        self.db.identity()
+    }
+
+    pub(crate) fn acknowledge_export_open(
+        &self,
+        ack: ExportLeaseOpenAck,
+    ) -> Result<(), TreeServiceError> {
+        self.export_lease.acknowledge(ack)
+    }
+
+    /// Accepts only the acknowledgement wire domain emitted after an exporter
+    /// opened and verified the exact read-only snapshot.
+    pub fn acknowledge_export_open_bytes(&self, bytes: &[u8]) -> Result<(), TreeServiceError> {
+        self.acknowledge_export_open(ExportLeaseOpenAck::decode_fixed(bytes)?)
+    }
+
+    pub fn export_lease_status(
+        &self,
+        generation: u64,
+    ) -> Result<ExportLeaseStatus, TreeServiceError> {
+        self.export_lease.status(generation)
     }
 
     /// Opens one exact-parent tree session over one immutable MDBX snapshot.
@@ -186,9 +594,13 @@ impl CompressedTreeService {
             .finalization
             .lock()
             .map_err(|_| TreeServiceError::LockPoisoned("finalization boundary"))?;
+        let marker_before = self.db.marker()?;
+        if block_number > marker_before.height {
+            self.export_lease.wait_before_next_apply(marker_before)?;
+        }
 
         let Some(candidate) = self.candidate(block_number, block_hash)? else {
-            let marker = self.db.marker()?;
+            let marker = marker_before;
             if marker.height == block_number
                 && marker.block_hash == block_hash
                 && marker.new_root == authoritative_root
@@ -283,6 +695,35 @@ pub enum TreeServiceError {
     ParentView(PrecompileError),
     #[error("compressed-tree {0} lock is poisoned")]
     LockPoisoned(&'static str),
+    #[error("CE export lease timeout must be non-zero and no greater than the PoC bound")]
+    InvalidExportLeaseTimeout,
+    #[error("CE export lease generation overflow")]
+    ExportLeaseGenerationOverflow,
+    #[error("CE export lease challenge cannot be zero")]
+    ZeroExportLeaseChallenge,
+    #[error("CE export lease acknowledgement challenge does not match the active offer")]
+    ExportLeaseChallengeMismatch,
+    #[error("CE export lease fixed-size encoding is malformed")]
+    MalformedExportLease,
+    #[error(
+        "CE export marker was missed: requested {requested:?}, current finalized marker {current:?}"
+    )]
+    ExportLeaseMarkerAdvanced {
+        requested: FinalizedMarker,
+        current: FinalizedMarker,
+    },
+    #[error("conflicting CE export lease: active {active:?}, requested {requested:?}")]
+    ConflictingExportLease {
+        active: ExactParentIdentity,
+        requested: ExactParentIdentity,
+    },
+    #[error("stale CE export lease generation {requested}; current generation is {actual:?}")]
+    StaleExportLease { requested: u64, actual: Option<u64> },
+    #[error("CE export lease identity mismatch: expected {expected:?}, got {actual:?}")]
+    ExportLeaseIdentityMismatch {
+        expected: ExactParentIdentity,
+        actual: ExactParentIdentity,
+    },
     #[error(
         "candidate {block_hash} requested at height {requested_height}, stored at {candidate_height}"
     )]
@@ -361,17 +802,42 @@ mod tests {
         }
     }
 
-    fn service(directory: &std::path::Path) -> CompressedTreeService {
+    fn service_with_lease_timeout(
+        directory: &std::path::Path,
+        lease_timeout: std::time::Duration,
+    ) -> CompressedTreeService {
         let db = CeMdbx::open(directory, environment(), genesis()).unwrap();
         // These are test fixture bounds, not production defaults.
-        CompressedTreeService::new(
+        CompressedTreeService::new_with_export_lease_timeout(
             db,
             CandidateCacheLimits {
                 max_candidates: 4,
                 max_encoded_bytes: 1_000_000,
             },
+            lease_timeout,
         )
         .unwrap()
+    }
+
+    fn service(directory: &std::path::Path) -> CompressedTreeService {
+        service_with_lease_timeout(directory, std::time::Duration::from_secs(1))
+    }
+
+    #[test]
+    fn ocomp_lease_configuration_rejects_a_timeout_above_the_poc_bound() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = CeMdbx::open(directory.path(), environment(), genesis()).unwrap();
+        assert!(matches!(
+            CompressedTreeService::new_with_export_lease_timeout(
+                db,
+                CandidateCacheLimits {
+                    max_candidates: 4,
+                    max_encoded_bytes: 1_000_000,
+                },
+                DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT + std::time::Duration::from_nanos(1),
+            ),
+            Err(TreeServiceError::InvalidExportLeaseTimeout)
+        ));
     }
 
     fn genesis_identity() -> ExactParentIdentity {
@@ -381,6 +847,102 @@ mod tests {
             block_hash: genesis().block_hash,
             root: genesis().new_root,
         }
+    }
+
+    const CHILD_ROOT: &str = "OUTBE_CE_TEST_ROOT";
+    const CHILD_OFFER: &str = "OUTBE_CE_TEST_OFFER";
+    const CHILD_ACK: &str = "OUTBE_CE_TEST_ACK";
+    const CHILD_RELEASE: &str = "OUTBE_CE_TEST_RELEASE";
+
+    struct ReadOnlyExporterChild {
+        child: std::process::Child,
+        acknowledgement_path: std::path::PathBuf,
+        release_path: std::path::PathBuf,
+    }
+
+    impl ReadOnlyExporterChild {
+        fn wait_for_ack(&mut self) -> ExportLeaseOpenAck {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Ok(bytes) = std::fs::read(&self.acknowledgement_path) {
+                    return ExportLeaseOpenAck::decode_fixed(&bytes).unwrap();
+                }
+                if let Some(status) = self.child.try_wait().unwrap() {
+                    panic!("read-only exporter exited before acknowledgement: {status}");
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "read-only exporter acknowledgement timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+        }
+
+        fn release_and_wait(mut self) {
+            std::fs::write(&self.release_path, []).unwrap();
+            let status = self.child.wait().unwrap();
+            assert!(status.success(), "read-only exporter failed: {status}");
+        }
+    }
+
+    fn spawn_read_only_exporter(
+        directory: &std::path::Path,
+        offer: ExportLeaseOffer,
+    ) -> ReadOnlyExporterChild {
+        let control = directory.join(format!(
+            "lease-{}-{:#x}",
+            offer.generation(),
+            offer.challenge
+        ));
+        std::fs::create_dir_all(&control).unwrap();
+        let offer_path = control.join("offer");
+        let acknowledgement_path = control.join("ack");
+        let release_path = control.join("release");
+        std::fs::write(&offer_path, offer.encode_fixed()).unwrap();
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tree_manager::tests::ce_read_only_exporter_child",
+                "--nocapture",
+            ])
+            .env(CHILD_ROOT, directory)
+            .env(CHILD_OFFER, &offer_path)
+            .env(CHILD_ACK, &acknowledgement_path)
+            .env(CHILD_RELEASE, &release_path)
+            .spawn()
+            .unwrap();
+        ReadOnlyExporterChild {
+            child,
+            acknowledgement_path,
+            release_path,
+        }
+    }
+
+    #[test]
+    fn ce_read_only_exporter_child() {
+        let Some(root) = std::env::var_os(CHILD_ROOT) else {
+            return;
+        };
+        let offer_path = std::env::var_os(CHILD_OFFER).unwrap();
+        let acknowledgement_path = std::env::var_os(CHILD_ACK).unwrap();
+        let release_path = std::env::var_os(CHILD_RELEASE).unwrap();
+        let offer = ExportLeaseOffer::decode_fixed(&std::fs::read(offer_path).unwrap()).unwrap();
+        let read_only =
+            crate::CeMdbxReadOnly::open(std::path::Path::new(&root), environment()).unwrap();
+        let view = read_only.open_exact(offer.identity()).unwrap();
+        let catalog_root = view.catalog_root();
+        let acknowledgement = offer.confirm_open(&view).unwrap();
+        std::fs::write(acknowledgement_path, acknowledgement.encode_fixed()).unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !std::path::Path::new(&release_path).exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "parent did not release read-only exporter"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(view.catalog_root(), catalog_root);
     }
 
     #[test]
@@ -640,5 +1202,176 @@ mod tests {
             Err(TreeServiceError::NonContiguousPublication { .. })
         ));
         assert!(service.candidate(1, b256(2)).unwrap().is_none());
+    }
+
+    #[test]
+    fn ocm_exporter_opens_one_exact_read_only_snapshot_before_the_writer_advances() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = service(directory.path());
+        let offer = service.arm_finalized_export(genesis(), b256(70)).unwrap();
+        let mut exporter = spawn_read_only_exporter(directory.path(), offer);
+        let opened = exporter.wait_for_ack();
+        service.acknowledge_export_open(opened).unwrap();
+
+        let entity = EntityRef::Tribute(EntityId36::new(WorldwideDay::new(7), [0x44_u8; 32]));
+        let commitment = Commitment::try_from(b256(17).0).unwrap();
+        let provisional = service
+            .open_parent(genesis_identity())
+            .unwrap()
+            .prepare_seal(
+                1,
+                &[FinalLeafMutation {
+                    entity,
+                    final_leaf: Some(commitment),
+                }],
+                &[],
+            )
+            .unwrap();
+        let block_hash = b256(2);
+        let new_root = provisional.new_root();
+        service.publish_candidate(block_hash, provisional).unwrap();
+        service.apply_finalized(1, block_hash, new_root).unwrap();
+
+        assert_ne!(
+            service.finalized_marker().unwrap().new_root,
+            genesis().new_root
+        );
+        exporter.release_and_wait();
+    }
+
+    #[test]
+    fn ocm_export_offer_bytes_cannot_acknowledge_an_unopened_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = service(directory.path());
+        let offer = service.arm_finalized_export(genesis(), b256(71)).unwrap();
+
+        assert!(matches!(
+            service.acknowledge_export_open_bytes(&offer.encode_fixed()),
+            Err(TreeServiceError::MalformedExportLease)
+        ));
+        assert_eq!(
+            service.export_lease_status(offer.generation()).unwrap(),
+            ExportLeaseStatus::Pending
+        );
+
+        let mut exporter = spawn_read_only_exporter(directory.path(), offer);
+        let opened = exporter.wait_for_ack();
+        service
+            .acknowledge_export_open_bytes(&opened.encode_fixed())
+            .unwrap();
+        service
+            .acknowledge_export_open_bytes(&opened.encode_fixed())
+            .expect("lost acknowledgement response must replay exactly");
+        assert_eq!(
+            service.export_lease_status(offer.generation()).unwrap(),
+            ExportLeaseStatus::Opened
+        );
+        exporter.release_and_wait();
+    }
+
+    #[test]
+    fn ocm_lease_restart_challenge_rejects_an_old_ack_at_a_reused_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let (old_offer, old_ack) = {
+            let service = service(directory.path());
+            let offer = service.arm_finalized_export(genesis(), b256(80)).unwrap();
+            let mut exporter = spawn_read_only_exporter(directory.path(), offer);
+            let ack = exporter.wait_for_ack();
+            service.acknowledge_export_open(ack).unwrap();
+            exporter.release_and_wait();
+            (offer, ack)
+        };
+
+        let restarted = service(directory.path());
+        let fresh = restarted.arm_finalized_export(genesis(), b256(81)).unwrap();
+        assert_eq!(fresh.generation(), old_offer.generation());
+        assert_ne!(fresh.encode_fixed(), old_offer.encode_fixed());
+        assert!(matches!(
+            restarted.acknowledge_export_open(old_ack),
+            Err(TreeServiceError::ExportLeaseChallengeMismatch)
+        ));
+        assert_eq!(
+            restarted.export_lease_status(fresh.generation()).unwrap(),
+            ExportLeaseStatus::Pending
+        );
+
+        let mut exporter = spawn_read_only_exporter(directory.path(), fresh);
+        let fresh_ack = exporter.wait_for_ack();
+        restarted.acknowledge_export_open(fresh_ack).unwrap();
+        exporter.release_and_wait();
+    }
+
+    #[test]
+    fn ocm_lease_generation_rejects_stale_ack_and_marker_races() {
+        let directory = tempfile::tempdir().unwrap();
+        let service = service(directory.path());
+
+        let first = service.arm_finalized_export(genesis(), b256(72)).unwrap();
+        let mut first_exporter = spawn_read_only_exporter(directory.path(), first);
+        let first_ack = first_exporter.wait_for_ack();
+        service.acknowledge_export_open(first_ack).unwrap();
+        first_exporter.release_and_wait();
+
+        let provisional = service
+            .open_parent(genesis_identity())
+            .unwrap()
+            .prepare_seal(1, &[], &[])
+            .unwrap();
+        let block_hash = b256(2);
+        let root = provisional.new_root();
+        service.publish_candidate(block_hash, provisional).unwrap();
+        let marker = service
+            .apply_finalized(1, block_hash, root)
+            .unwrap()
+            .marker();
+
+        assert!(matches!(
+            service.arm_finalized_export(genesis(), b256(73)),
+            Err(TreeServiceError::ExportLeaseMarkerAdvanced { .. })
+        ));
+
+        let second = service.arm_finalized_export(marker, b256(74)).unwrap();
+        assert!(second.generation() > first.generation());
+        assert!(matches!(
+            service.acknowledge_export_open(first_ack),
+            Err(TreeServiceError::StaleExportLease { .. })
+        ));
+        let mut second_exporter = spawn_read_only_exporter(directory.path(), second);
+        let second_ack = second_exporter.wait_for_ack();
+        service.acknowledge_export_open(second_ack).unwrap();
+        second_exporter.release_and_wait();
+        assert_eq!(
+            service.export_lease_status(second.generation()).unwrap(),
+            ExportLeaseStatus::Opened
+        );
+    }
+
+    #[test]
+    fn ocm_lease_timeout_is_bounded_and_the_next_finalized_apply_continues() {
+        let directory = tempfile::tempdir().unwrap();
+        let timeout = std::time::Duration::from_millis(25);
+        let service = service_with_lease_timeout(directory.path(), timeout);
+
+        let provisional = service
+            .open_parent(genesis_identity())
+            .unwrap()
+            .prepare_seal(1, &[], &[])
+            .unwrap();
+        let block_hash = b256(2);
+        let root = provisional.new_root();
+        service.publish_candidate(block_hash, provisional).unwrap();
+        let offer = service.arm_finalized_export(genesis(), b256(75)).unwrap();
+
+        let started = std::time::Instant::now();
+        service.apply_finalized(1, block_hash, root).unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(elapsed >= timeout);
+        assert!(elapsed < std::time::Duration::from_secs(1));
+        assert_eq!(
+            service.export_lease_status(offer.generation()).unwrap(),
+            ExportLeaseStatus::TimedOut
+        );
+        assert_eq!(service.finalized_marker().unwrap().height, 1);
     }
 }

@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultprovider.workspace = true
@@ -27,6 +28,7 @@ outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
+revm.workspace = true
 
 [features]
 default = []

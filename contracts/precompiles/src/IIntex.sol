@@ -8,6 +8,19 @@ pragma solidity ^0.8.30;
 ///      reads for off-chain observability. `promisLoadMinor` is returned as uint256
 ///      (its storage representation); it is bounded by the Origin `uint128`.
 interface IIntex {
+    /// @notice Constant-size owner event for one certified contributor root.
+    ///         There is deliberately no matching public installation selector.
+    event CertifiedContributorRootInstalled(
+        bytes32 indexed activationCallId,
+        uint32 indexed seriesId,
+        uint64 seriesVersionBefore,
+        uint64 seriesVersionAfter,
+        uint32 contributorCount,
+        bytes32 contributorRoot,
+        uint256 eligibleNominalTotal,
+        bytes32 stateEventDigest
+    );
+
     struct SeriesData {
         uint32 seriesId;
         uint256 promisLoadMinor;

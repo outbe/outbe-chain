@@ -99,7 +99,10 @@ jobs:
         with:
           working-directory: contracts/${{ inputs.project }}
 
+      # smart-account depends on kernel-7579-plugins, whose bare `src/...` self-imports the lint
+      # engine (solar) cannot resolve; solc compiles fine. Skip solar lint for that project only.
       - name: Run lint
+        if: inputs.project != 'smart-account'
         run: forge lint --severity high
 
   abi:

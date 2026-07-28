@@ -53,11 +53,10 @@ interface EscrowWireArgs {
   escrowContract: string;
   intexAuctionContract: string;
   compactContract: string;
-  vaultProvider: string;
   paymentToken: string;
 }
 
-interface BNBBridgeWireArgs {
+interface TargetBridgeWireArgs {
   bridgeContract: string;
   intexAuctionContract: string;
   intexContract: string;
@@ -65,7 +64,7 @@ interface BNBBridgeWireArgs {
   nftBridgeContract: string;
 }
 
-interface OutbeBridgeWireArgs {
+interface OriginBridgeWireArgs {
   bridgeContract: string;
   desisContract: string;
   intexFactoryContract: string;
@@ -138,7 +137,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
   console.log(`  Escrow: ${args.escrowContract}`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
   console.log(`  Compact: ${args.compactContract}`);
-  console.log(`  VaultProvider: ${args.vaultProvider}`);
   console.log(`  PaymentToken: ${args.paymentToken}`);
 
   const escrow = (await viem.getContractAt(
@@ -148,25 +146,22 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     read: {
       intexAuctionContract: () => Promise<`0x${string}`>;
       compact: () => Promise<`0x${string}`>;
-      vaultProvider: () => Promise<`0x${string}`>;
       paymentToken: () => Promise<`0x${string}`>;
     };
     write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const [currentAuction, currentCompact, currentVaultProvider, currentStable] = await Promise.all([
+  const [currentAuction, currentCompact, currentStable] = await Promise.all([
     escrow.read.intexAuctionContract(),
     escrow.read.compact(),
-    escrow.read.vaultProvider(),
     escrow.read.paymentToken(),
   ]);
 
   const allMatch =
     currentAuction.toLowerCase() === args.intexAuctionContract.toLowerCase() &&
     currentCompact.toLowerCase() === args.compactContract.toLowerCase() &&
-    currentVaultProvider.toLowerCase() === args.vaultProvider.toLowerCase() &&
     currentStable.toLowerCase() === args.paymentToken.toLowerCase();
 
   if (allMatch) {
@@ -178,7 +173,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     const changed = [
       currentAuction.toLowerCase() !== args.intexAuctionContract.toLowerCase() && "auction",
       currentCompact.toLowerCase() !== args.compactContract.toLowerCase() && "compact",
-      currentVaultProvider.toLowerCase() !== args.vaultProvider.toLowerCase() && "vaultProvider",
       currentStable.toLowerCase() !== args.paymentToken.toLowerCase() && "paymentToken",
     ].filter(Boolean);
     console.log(`🔄 Rewiring EscrowAdapter (changed: ${changed.join(", ")})`);
@@ -188,7 +182,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     escrow.write.wire([
       args.intexAuctionContract as `0x${string}`,
       args.compactContract as `0x${string}`,
-      args.vaultProvider as `0x${string}`,
       args.paymentToken as `0x${string}`,
     ]),
   );
@@ -212,11 +205,6 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
     defaultValue: "",
   })
   .addOption({
-    name: "vaultProvider",
-    description: "outbe-vault VaultProvider address (router that EscrowAdapter calls depositLiquidity on)",
-    defaultValue: "",
-  })
-  .addOption({
     name: "paymentToken",
     description: "PaymentToken address",
     defaultValue: "",
@@ -227,7 +215,7 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
 // TargetRouter Wire
 // ============================================================================
 
-const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
+const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) => {
   const auction = (args.intexAuctionContract ?? "").trim();
   const intex = (args.intexContract ?? "").trim();
   const escrow = (args.escrowContract ?? "").trim();
@@ -308,7 +296,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
 };
 
-const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
+const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
   .addOption({
     name: "bridgeContract",
     description: "TargetRouter contract address",
@@ -334,13 +322,13 @@ const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Int
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
-  .setAction(lazy(bnbBridgeWireAction));
+  .setAction(lazy(targetBridgeWireAction));
 
 // ============================================================================
 // OriginRouter Wire
 // ============================================================================
 
-const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) => {
+const originBridgeWireAction = async (args: OriginBridgeWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
   
   console.log(`Wiring OriginRouter...`);
@@ -390,7 +378,7 @@ const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) =>
   console.log(`✅ OriginRouter wired. Tx: ${txHash}`);
 };
 
-const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
+const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
   .addOption({
     name: "bridgeContract",
     description: "OriginRouter contract address",
@@ -406,7 +394,7 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + 
     description: "IntexFactory contract address",
     defaultValue: "",
   })
-  .setAction(lazy(outbeBridgeWireAction));
+  .setAction(lazy(originBridgeWireAction));
 
 // ============================================================================
 // IntexNFT1155Bridge Wire (grant SYSTEM_RELAYER_ROLE)
@@ -928,9 +916,9 @@ const grantSystemRelayerRole = task(
 export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
-  bnbBridgeWire.build(),
+  targetBridgeWire.build(),
   nftBridgeWire.build(),
-  outbeBridgeWire.build(),
+  originBridgeWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),

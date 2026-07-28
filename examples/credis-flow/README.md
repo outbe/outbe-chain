@@ -78,7 +78,7 @@ src/
 ├── 0-info.ts                   Print current state of all actors
 ├── 0-setup-native.ts           Fund user + CCA with native COEN
 ├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault provider
-├── 0-setup-gratis.ts           Convert user's seeded Promis → confidential Gratis
+├── 0-setup-gratis.ts           Mine seeded gem → Promis → confidential Gratis
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
 ├── 1-pledge-gratis.ts          User pledges Gratis (amount + modify-key MAC) → pledge handle
 ├── 1.1-unpledge-gratis.ts      Direct reclaim of an UNSPENT pledge (e.g. credis rejected)
@@ -179,10 +179,12 @@ npx tsx src/0-info.ts outbe-peira
 # Setup
 npx tsx src/0-setup-native.ts
 npx tsx src/0-setup-erc20.ts
-# Convert the user's genesis-seeded Promis into confidential Gratis. Gratis is
-# TEE-encrypted at rest, so it can't be plaintext-seeded at genesis — the user
-# gets it by burning public Promis 1:1 via IGratisFactory.mineFromPromis.
-npx tsx src/0-setup-gratis.ts                          # converts 1000 Promis by default
+# Bootstrap confidential Gratis for the user. Gratis AND Promis are both
+# TEE-encrypted at rest, so neither can be plaintext-seeded at genesis — instead
+# genesis seeds the user a Settled *gem* (scripts/seed-testnet.json "gems"). This
+# script burns it for confidential Promis (IGemFactory.mineGemPromis), then
+# converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineFromPromis).
+npx tsx src/0-setup-gratis.ts                          # converts the whole gem load by default
 
 # User pledges 77 Gratis with a random commitment
 npx tsx src/1-pledge-gratis.ts                          # default amount/commitment

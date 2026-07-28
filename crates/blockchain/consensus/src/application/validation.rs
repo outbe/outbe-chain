@@ -15,7 +15,7 @@ use commonware_cryptography::{
     certificate::{Provider as _, Scheme as _},
 };
 use commonware_utils::ordered::Quorum as _;
-use outbe_primitives::addresses::REWARDS_ADDRESS;
+use outbe_primitives::{addresses::REWARDS_ADDRESS, system_tx::OcompLifecycleActivation};
 use reth_ethereum::primitives::SignedTransaction as _;
 
 use crate::block::ConsensusBlock;
@@ -113,11 +113,12 @@ pub(crate) fn validate_context_parent_binding(
 /// CertifiedParentAccounting parent-hash binding, BoundaryOutcome consistency
 /// with the header artifact, per-tx signature-hash binding, and that every
 /// system tx is signed by the consensus leader's EVM address.
-pub(crate) fn validate_system_tx_leader_binding(
+pub(crate) fn validate_system_tx_leader_binding_for_activation(
     block: &ConsensusBlock,
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
 ) -> Result<(), String> {
@@ -135,11 +136,12 @@ pub(crate) fn validate_system_tx_leader_binding(
     );
     let has_tee_bootstrap =
         layout.has_begin_kind(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap);
-    outbe_primitives::system_tx::validate_active_system_tx_set(
+    outbe_primitives::system_tx::validate_system_tx_set_for_activation(
         &layout,
         raw_block.header.number(),
         has_boundary_outcome,
         has_tee_bootstrap,
+        ocomp_lifecycle_activation,
     )
     .map_err(|error| format!("invalid system tx set: {error}"))?;
 
@@ -260,10 +262,30 @@ pub(crate) fn validate_system_tx_leader_binding(
 }
 
 #[cfg(test)]
+pub(crate) fn validate_system_tx_leader_binding(
+    block: &ConsensusBlock,
+    round: Round,
+    proposer: &PublicKey,
+    chain_id: u64,
+    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    committee_provider: &CommitteeProvider,
+) -> Result<(), String> {
+    validate_system_tx_leader_binding_for_activation(
+        block,
+        round,
+        proposer,
+        chain_id,
+        OcompLifecycleActivation::Disabled,
+        certificate_scheme_provider,
+        committee_provider,
+    )
+}
+
+#[cfg(test)]
 mod tests {
     use super::{
         validate_context_parent_binding, validate_rewards_beneficiary,
-        validate_system_tx_leader_binding,
+        validate_system_tx_leader_binding, validate_system_tx_leader_binding_for_activation,
     };
     use crate::digest::Digest;
     use crate::dkg_manager;
@@ -275,7 +297,7 @@ mod tests {
         encode_consensus_header_artifact, ConsensusHeaderArtifact,
     };
     use outbe_primitives::signer::OutbeEvmSigner;
-    use outbe_primitives::system_tx::SystemTxInputV2;
+    use outbe_primitives::system_tx::{OcompLifecycleActivation, SystemTxInputV2};
 
     #[test]
     fn rewards_beneficiary_rejects_non_genesis_mismatch() {
@@ -405,6 +427,64 @@ mod tests {
             &committee_provider,
         )
         .expect("validator must accept the payload builder's visible gas plan");
+    }
+
+    #[test]
+    fn system_tx_leader_binding_uses_the_manifest_activation_height() {
+        const ACTIVATION_HEIGHT: u64 = 32;
+
+        let (keys, _) = participants();
+        let signer = OutbeEvmSigner::from_secret_bytes([7u8; 32]).unwrap();
+        let mut validator_set = validator_set_from_keys(&keys);
+        validator_set.addresses[0] = signer.address();
+        let (scheme_provider, committee_provider) =
+            leader_binding_providers(Epoch::new(0), &validator_set);
+        let parent_hash = B256::ZERO;
+        let block = block_with_gas_planned_system_inputs(
+            &signer,
+            ACTIVATION_HEIGHT,
+            parent_hash,
+            Bytes::new(),
+            vec![
+                SystemTxInputV2::CertifiedParentAccounting {
+                    metadata: finalized_metadata(parent_hash),
+                },
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: Default::default(),
+                },
+                SystemTxInputV2::OcompLifecycleBegin,
+                SystemTxInputV2::CycleTick,
+                SystemTxInputV2::OracleSlashWindow,
+                SystemTxInputV2::HookEvents,
+                SystemTxInputV2::OcompTerminalRequest,
+            ],
+            outbe_primitives::chain::CHAIN_ID,
+            30_000_000,
+        );
+        let round = Round::new(Epoch::new(0), View::new(1));
+
+        validate_system_tx_leader_binding_for_activation(
+            &block,
+            round,
+            &keys[0].public_key(),
+            outbe_primitives::chain::CHAIN_ID,
+            OcompLifecycleActivation::at_block(ACTIVATION_HEIGHT),
+            &scheme_provider,
+            &committee_provider,
+        )
+        .expect("consensus verifier must accept the active payload layout at H");
+
+        let error = validate_system_tx_leader_binding_for_activation(
+            &block,
+            round,
+            &keys[0].public_key(),
+            outbe_primitives::chain::CHAIN_ID,
+            OcompLifecycleActivation::Disabled,
+            &scheme_provider,
+            &committee_provider,
+        )
+        .expect_err("the same payload must be invalid when OCOMP is not armed");
+        assert!(error.contains("active system tx set mismatch"));
     }
 
     #[test]

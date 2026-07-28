@@ -36,6 +36,9 @@ pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
 
+/// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
+pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
+
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 

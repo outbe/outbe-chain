@@ -27,7 +27,6 @@ import {
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 interface IUpgradeProbe {
     function upgradeProbe() external pure returns (uint256);
@@ -76,6 +75,11 @@ contract UpgradeDrillTest is CrossChainTest {
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
     }
 
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))
+    // Mirrors IntexNFT1155V2Reinit's private storage slot (UpgradeStubs.sol) so the migrated
+    // field can be read via vm.load without a dedicated getter on the stub.
+    bytes32 private constant _V2_REINIT_SLOT = 0xa6131e184e5aae318840a83507194e5ed64c56b50a1ac526e8c519cdd8bb2200;
+
     /// @dev Exercises the `upgradeToAndCall` init-data path: upgrade runs a `reinitializer(2)`
     ///      migration that sets a new v2 field, while pre-upgrade state survives.
     function test_Drill_IntexNFT1155_ReinitializerPath() public {
@@ -93,7 +97,8 @@ contract UpgradeDrillTest is CrossChainTest {
 
         bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
-        assertEq(IntexNFT1155V2Reinit(address(nft)).migratedFlag(), UPGRADE_PROBE, "reinitializer did not run");
+        uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
+        assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
         assertEq(nft.balanceOf(holder, 7), 3, "balance lost across reinit");
         assertEq(nft.totalSupply(7), 3, "supply lost across reinit");
     }
@@ -144,11 +149,10 @@ contract UpgradeDrillTest is CrossChainTest {
         EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
         MockERC20 token = new MockERC20("Mock USD", "MUSD", 6);
         MockTheCompact compactMock = new MockTheCompact();
-        MockVaultProvider vault = new MockVaultProvider();
         address auction = makeAddr("auction");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compactMock), address(vault), address(token));
+        escrow.wire(auction, address(compactMock), address(token));
         uint96 allocatorId = escrow.allocatorId();
         bytes12 lockTag = escrow.lockTag();
 

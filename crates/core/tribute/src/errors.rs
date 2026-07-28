@@ -21,6 +21,15 @@ pub enum TributeError {
     #[error("worldwide day is sealed")]
     WorldwideDaySealed,
 
+    #[error("tribute pre-admission inputs are sealed")]
+    PreAdmissionSealed,
+
+    #[error("sealed Tribute collection root must be non-zero")]
+    InvalidSealedCollectionRoot,
+
+    #[error("Tribute OCOMP profile is not initialized")]
+    OcompProfileNotReady,
+
     #[error("owner balance overflow")]
     OwnerBalanceOverflow,
 
@@ -64,7 +73,20 @@ impl From<TributeRepositoryError> for PrecompileError {
             | TributeRepositoryError::InvalidDayCursor { .. }
             | TributeRepositoryError::NonAscendingIdPage { .. }
             | TributeRepositoryError::InvalidPageContinuation { .. }
-            | TributeRepositoryError::UntrackedProjectionIdentity { .. } => {
+            | TributeRepositoryError::UntrackedProjectionIdentity { .. }
+            | TributeRepositoryError::MissingCurrentBodyForRetention { .. }
+            | TributeRepositoryError::RetainedDayMismatch { .. }
+            | TributeRepositoryError::RetainedIdentity(_)
+            | TributeRepositoryError::RetainedCommitment(_)
+            | TributeRepositoryError::ConflictingRetainedBody { .. }
+            | TributeRepositoryError::RetainedCommitmentMismatch { .. }
+            | TributeRepositoryError::RetainedMetadata { .. }
+            | TributeRepositoryError::DanglingRetainedIndex { .. }
+            | TributeRepositoryError::MissingRetainedIndex { .. }
+            | TributeRepositoryError::NonAscendingRetainedPage { .. }
+            | TributeRepositoryError::InvalidRetainedCursor { .. }
+            | TributeRepositoryError::InvalidRetainedContinuation { .. }
+            | TributeRepositoryError::RetainedNamespaceMismatch { .. } => {
                 PrecompileError::BodyReadCorruption(message)
             }
         }

@@ -482,7 +482,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         targets = probed.filter((x) => isActiveStage(x.stage)).map((x) => x.worldwideDay).sort((x, y) => x - y);
       }
       const refundDelay = Number(
-        (await n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "REFUND_DELAY" })) as number,
+        (await n.client.readContract({ address: addr(n, "escrow"), abi: ESCROW_ABI, functionName: "UNFINALIZED_REFUND_DELAY" })) as number,
       );
       const bids = await Promise.all(
         targets.map(async (wwd) => {
@@ -507,7 +507,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             // that window a no-reveal commit left it behind.
             if (!revealed && !isActiveStage(stage)) {
               hints.push(
-                "entry bond left by a no-reveal commit; reclaim via intex_claim_commit_bond (immediately on a cancelled day, else 21 days past revealEnd)",
+                "entry bond left by a no-reveal commit; reclaim via intex_claim_commit_bond (immediately on a cancelled day, else 24 hours past revealEnd)",
               );
             }
           }
@@ -562,7 +562,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "Commit a sealed Intex bid: signs the EIP-712 RevealBid and submits keccak256(signature) as the commit " +
       "hash (no separate salt). When the auction carries an entry bond (commitBondMinor > 0), commitBid pulls " +
       "it into escrow in the same transaction — the tool auto-approves the escrow if the allowance is short. " +
-      "The bond returns at reveal/cancel; a green-day no-reveal locks it for 21 days past revealEnd " +
+      "The bond returns at reveal/cancel; a green-day no-reveal locks it for 24 hours past revealEnd " +
       "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate); you must repeat them to " +
       "reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
@@ -599,7 +599,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         }
         note =
           `Commit locks a ${bondHuman} ${symbol} entry bond in escrow; it returns at reveal/cancel. ` +
-          `A green-day no-reveal keeps it locked until 21 days past revealEnd (intex_claim_commit_bond).`;
+          `A green-day no-reveal keeps it locked until 24 hours past revealEnd (intex_claim_commit_bond).`;
       }
 
       const signature = await signReveal(n, account, worldwideDay, quantity, bidRate);
@@ -697,7 +697,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     "intex_claim_commit_bond",
     "Reclaim an entry bond left behind by a no-reveal commit. Permissionless and always pays the stored " +
       "bidder: a cancelled (red-day) auction releases immediately, otherwise the bond is claimable only " +
-      "21 days past revealEnd. Requires OUTBE_PRIVATE_KEY.",
+      "24 hours past revealEnd. Requires OUTBE_PRIVATE_KEY.",
     { worldwideDay: worldwideDayArg, bidder: accountArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ worldwideDay, bidder, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");

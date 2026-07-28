@@ -28,6 +28,63 @@ pub(crate) const H_SEC: u64 = 365 * 86_400;
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
 /// (≈ 526.583690 days). `526583689924471619584 = round(365/ln2 · 10^18)`.
 pub(crate) const L_FP: U256 = U256::from_limbs([10074855860604174336, 28, 0, 0]);
+pub(crate) const MIN_LEAGUE: u16 = 1;
+pub(crate) const MAX_LEAGUE: u16 = 4096;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RcfiAccumulator {
+    numerator: U256,
+    denominator: U256,
+}
+
+impl RcfiAccumulator {
+    pub(crate) fn add_active(
+        &mut self,
+        size: U256,
+        acquired_at: u64,
+        timestamp: u64,
+    ) -> Option<()> {
+        let contribution = size.checked_mul(t_dec(timestamp.saturating_sub(acquired_at)))?;
+        self.numerator = self.numerator.checked_add(contribution)?;
+        self.denominator = self.denominator.checked_add(contribution)?;
+        Some(())
+    }
+
+    pub(crate) fn add_sold(
+        &mut self,
+        size: U256,
+        acquired_at: u64,
+        sold_at: u64,
+        timestamp: u64,
+    ) -> Option<()> {
+        let held = t_dec(timestamp.saturating_sub(acquired_at))
+            .saturating_sub(t_dec(timestamp.saturating_sub(sold_at)));
+        self.denominator = self.denominator.checked_add(size.checked_mul(held)?)?;
+        Some(())
+    }
+
+    pub(crate) fn finish(self, qualified_start: u64, timestamp: u64) -> Option<(U256, U256, U256)> {
+        if qualified_start == 0 {
+            return Some((U256::ZERO, U256::ZERO, U256::ZERO));
+        }
+        let d_dec_age = t_dec(timestamp.saturating_sub(qualified_start));
+        let efficiency = if self.denominator.is_zero() {
+            U256::ZERO
+        } else {
+            self.numerator.checked_mul(SCALE)? / self.denominator
+        };
+        let rcfi = d_dec_age.checked_mul(efficiency)? / SCALE;
+        Some((rcfi, efficiency, d_dec_age))
+    }
+}
+
+pub(crate) fn league_from_rcfi(rcfi: U256, maximum_rcfi: U256) -> Option<u16> {
+    if maximum_rcfi.is_zero() {
+        return Some(MIN_LEAGUE);
+    }
+    let slot = rcfi.checked_mul(U256::from(MAX_LEAGUE))? / maximum_rcfi;
+    Some(MIN_LEAGUE + slot.min(U256::from(MAX_LEAGUE - 1)).to::<u16>())
+}
 
 /// `HALF_POW_TABLE[i] = round((1/2)^(2^-(i+1)) · 10^18)` for `i = 0..=62`,
 /// i.e. the factor applied when the `2^-(i+1)` fractional bit of `x` is set.

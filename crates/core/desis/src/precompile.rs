@@ -5,7 +5,7 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -27,8 +27,9 @@ pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
     caller: Address,
-    _value: U256,
+    value: U256,
 ) -> Result<Bytes> {
+    reject_value(&value)?;
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
         match call {

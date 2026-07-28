@@ -9,7 +9,7 @@
 // the typed error so operators can diagnose the fail-closed startup decision.
 #![allow(clippy::result_large_err)]
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
 
 use alloy_primitives::B256;
 use outbe_compressed_entities::{
@@ -174,7 +174,22 @@ impl CeStartupRecovery for CeStartupRecoveryCoordinator {
             RestartClassification::Behind {
                 first_missing,
                 target,
-            } => self.replay(marker, first_missing, target, checkpoint),
+            } => {
+                let started = Instant::now();
+                let recovered = self.replay(marker, first_missing, target, checkpoint)?;
+                let replayed_blocks = target - first_missing + 1;
+                let elapsed_micros =
+                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                tracing::info!(
+                    first_missing,
+                    target_height = target,
+                    target_hash = %checkpoint.block_hash,
+                    replayed_blocks,
+                    elapsed_micros,
+                    "compressed-entity startup replay completed"
+                );
+                Ok(recovered)
+            }
         }
     }
 }
@@ -293,9 +308,57 @@ pub enum CeStartupRecoveryError {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{
+        io,
+        sync::{Arc, Mutex},
+    };
 
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct CapturedLogWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogWriter {
+        fn contents(&self) -> String {
+            String::from_utf8(
+                self.bytes
+                    .lock()
+                    .expect("captured CE recovery log mutex")
+                    .clone(),
+            )
+            .expect("CE recovery log is UTF-8")
+        }
+    }
+
+    struct CapturedLogGuard {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for CapturedLogGuard {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.bytes
+                .lock()
+                .expect("captured CE recovery log mutex")
+                .extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
+        type Writer = CapturedLogGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogGuard {
+                bytes: self.bytes.clone(),
+            }
+        }
+    }
 
     fn hash(value: u8) -> B256 {
         B256::from([value; 32])
@@ -416,6 +479,29 @@ mod tests {
         let (recovery, tree) = coordinator(marker(1), marker(4), blocks);
         assert_eq!(recovery.recover_before_participation(4).unwrap(), marker(4));
         assert_eq!(*tree.applied.lock().unwrap(), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn successful_startup_replay_emits_its_complete_canonical_span() {
+        let writer = CapturedLogWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(writer.clone())
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let blocks = BTreeMap::from([(2, block(2)), (3, block(3)), (4, block(4))]);
+        let (recovery, _) = coordinator(marker(1), marker(4), blocks);
+
+        assert_eq!(recovery.recover_before_participation(4).unwrap(), marker(4));
+
+        let log = writer.contents();
+        assert!(log.contains("compressed-entity startup replay completed"));
+        assert!(log.contains("first_missing=2"));
+        assert!(log.contains("target_height=4"));
+        assert!(log.contains(&format!("target_hash={}", marker(4).block_hash)));
+        assert!(log.contains("replayed_blocks=3"));
+        assert!(log.contains("elapsed_micros="));
     }
 
     #[test]

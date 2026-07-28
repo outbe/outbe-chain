@@ -4,19 +4,15 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Proceeds-recipient configuration and its finalize guard.
 contract EscrowAdapterProceedsTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockVaultProvider provider;
 
     address admin = address(1);
     address bridger = address(2);
@@ -32,13 +28,9 @@ contract EscrowAdapterProceedsTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
-        MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        provider = new MockVaultProvider();
-        provider.addVault(vault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(provider), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         paymentToken.mint(bidder1, 10_000 * 10 ** 6);

@@ -60,6 +60,11 @@ impl MdbxAuthenticatedTree {
         let snapshot = db.open_snapshot().map_err(classify_snapshot_error)?;
         let view =
             AuthenticatedCatalogView::open(snapshot, identity).map_err(classify_staging_error)?;
+        Self::from_view(view)
+    }
+
+    pub(crate) fn from_view(view: AuthenticatedCatalogView) -> Result<Self> {
+        let identity = view.identity();
         let catalog_root = TreeRoot::from_be_bytes(view.catalog_root().0)
             .map_err(|error| tree_corruption(error.to_string()))?;
         let catalog_store =
@@ -287,6 +292,56 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
             .get(&key)
             .and_then(|collection| collection.parent_collection_root)
             .is_some())
+    }
+
+    fn partition_root_verified(
+        &self,
+        partition: crate::PartitionRef,
+        expected_parent_root: B256,
+    ) -> Result<Option<B256>> {
+        if expected_parent_root != self.identity.root {
+            return Err(tree_corruption(
+                "requested EVM root does not match exact catalog view",
+            ));
+        }
+        let (domain, key) = crate::partition_collection_key(partition)
+            .map_err(|error| tree_corruption(error.to_string()))?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| tree_corruption("authenticated catalog session lock poisoned"))?;
+        if !state.collections.contains_key(&key) {
+            if state.catalog_tree.is_some() {
+                self.ensure_collection(&mut state, domain, key)?;
+            } else {
+                // `prepare_seal` consumes the mutable catalog session. Root
+                // capabilities are issued only after that point, so verify an
+                // untouched collection through a fresh read-only tree over the
+                // same exact-parent MDBX snapshot.
+                let catalog_root = TreeRoot::from_be_bytes(self.view.catalog_root().0)
+                    .map_err(|error| tree_corruption(error.to_string()))?;
+                let catalog_store = StagingCkbStore::new(
+                    self.view.clone(),
+                    TreeNamespace::Catalog,
+                    self.view.catalog_root(),
+                );
+                let mut verification = SessionState {
+                    catalog_tree: Some(PoseidonSmt::open_with_store(catalog_root, catalog_store)),
+                    collections: BTreeMap::new(),
+                    verified_leaves: BTreeMap::new(),
+                };
+                self.ensure_collection(&mut verification, domain, key)?;
+                let collection = verification
+                    .collections
+                    .remove(&key)
+                    .ok_or_else(|| tree_corruption("verified collection cache entry is missing"))?;
+                state.collections.insert(key, collection);
+            }
+        }
+        Ok(state
+            .collections
+            .get(&key)
+            .and_then(|collection| collection.parent_collection_root))
     }
 
     fn prepare_seal(

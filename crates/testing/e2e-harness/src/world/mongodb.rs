@@ -1,7 +1,5 @@
 //! Projection MongoDB owned by a scenario unless the caller supplies a URI.
 
-use std::net::TcpListener;
-use std::process::Stdio;
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -12,9 +10,10 @@ use outbe_compressed_entities::decode_stored_tribute_v1;
 
 use crate::env::Environment;
 use crate::internal::config::Config;
-use crate::internal::proc::{base_cmd, docker_rm, wait_tcp, DockerGuard};
+use crate::internal::proc::{base_cmd, docker_rm};
+use crate::mongo_fixture::ManagedMongoReplicaSet;
+use crate::ocomp_evidence::sha256_hex;
 
-const MANAGED_MONGO_IMAGE: &str = "mongo:7.0";
 const COLLECTIONS: [&str; 3] = ["tributes", "tributes_by_owner", "tributes_by_day"];
 
 /// Scenario-scoped projection store and its managed-container lifetime guard.
@@ -25,7 +24,7 @@ pub struct MongoDb {
     scenario: usize,
     validators: usize,
     #[allow(dead_code)]
-    guard: Option<DockerGuard>,
+    guard: Option<ManagedMongoReplicaSet>,
 }
 
 /// Exact primary projection value needed to verify one compressed Tribute.
@@ -41,12 +40,38 @@ pub struct TributeProjectionSnapshot {
     pub documents: [Document; 3],
 }
 
+/// Stable hashes of the exact BSON documents retained by one validator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TributeProjectionDigests {
+    pub primary_sha256: String,
+    pub owner_index_sha256: String,
+    pub worldwide_day_index_sha256: String,
+}
+
+impl TributeProjectionSnapshot {
+    pub fn evidence_digests(&self) -> Result<TributeProjectionDigests> {
+        let [primary, owner, day] = &self.documents;
+        Ok(TributeProjectionDigests {
+            primary_sha256: document_sha256(primary)?,
+            owner_index_sha256: document_sha256(owner)?,
+            worldwide_day_index_sha256: document_sha256(day)?,
+        })
+    }
+}
+
+fn document_sha256(document: &Document) -> Result<String> {
+    let mut encoded = Vec::new();
+    document.to_writer(&mut encoded)?;
+    Ok(sha256_hex(&encoded))
+}
+
 impl MongoDb {
     /// Use the configured URI, or replace `auto` with an owned replica set.
     pub(crate) fn connect_or_start(cfg: &mut Config) -> Result<Self> {
         let guard = if cfg.projection_mongodb_uri == "auto" {
-            let (uri, guard) = start_replica_set(cfg)?;
-            cfg.projection_mongodb_uri = uri;
+            let name = format!("outbe-e2e-mongodb-{}-s{}", cfg.run_tag, cfg.scenario);
+            let guard = ManagedMongoReplicaSet::start_named(&name, cfg.sudo)?;
+            cfg.projection_mongodb_uri = guard.uri().to_owned();
             Some(guard)
         } else {
             None
@@ -351,72 +376,40 @@ fn exact_index_document(
     }
 }
 
-fn start_replica_set(cfg: &Config) -> Result<(String, DockerGuard)> {
-    let port = free_tcp_port()?;
-    let name = format!("outbe-e2e-mongodb-{}-s{}", cfg.run_tag, cfg.scenario);
-    docker_rm(&name, cfg.sudo);
+#[cfg(test)]
+mod tests {
+    use mongodb::bson::{doc, spec::BinarySubtype, Binary, Bson};
 
-    let output = base_cmd("docker", cfg.sudo)
-        .args([
-            "run",
-            "-d",
-            "--name",
-            &name,
-            "--network",
-            "host",
-            MANAGED_MONGO_IMAGE,
-            "--replSet",
-            "rs0",
-            "--bind_ip",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .output()
-        .wrap_err("start managed MongoDB container")?;
-    if !output.status.success() {
-        bail!(
-            "start managed MongoDB container: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+    use super::TributeProjectionSnapshot;
+
+    fn binary(bytes: &[u8]) -> Bson {
+        Bson::Binary(Binary {
+            subtype: BinarySubtype::Generic,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    #[test]
+    fn projection_evidence_hashes_exact_bson_documents_independently() {
+        let snapshot = TributeProjectionSnapshot {
+            documents: [
+                doc! {"_id": "tribute-1", "value": binary(&[1, 2, 3])},
+                doc! {"_id": "owner-1", "value": binary(&[])},
+                doc! {"_id": "day-1", "value": binary(&[])},
+            ],
+        };
+        let baseline = snapshot.evidence_digests().unwrap();
+        assert_eq!(baseline, snapshot.evidence_digests().unwrap());
+
+        let mut changed = snapshot.clone();
+        changed.documents[0].insert("value", binary(&[1, 2, 4]));
+        let changed = changed.evidence_digests().unwrap();
+
+        assert_ne!(changed.primary_sha256, baseline.primary_sha256);
+        assert_eq!(changed.owner_index_sha256, baseline.owner_index_sha256);
+        assert_eq!(
+            changed.worldwide_day_index_sha256,
+            baseline.worldwide_day_index_sha256
         );
     }
-    let guard = DockerGuard::new(&name, cfg.sudo);
-    if !wait_tcp(port, 200) {
-        bail!("managed MongoDB did not listen on 127.0.0.1:{port}");
-    }
-
-    let init = format!("rs.initiate({{_id:'rs0',members:[{{_id:0,host:'127.0.0.1:{port}'}}]}})");
-    let mut ready = false;
-    for _ in 0..60 {
-        let status = base_cmd("docker", cfg.sudo)
-            .args([
-                "exec",
-                &name,
-                "mongosh",
-                "--quiet",
-                "--port",
-                &port.to_string(),
-                "--eval",
-                &init,
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if status.is_ok_and(|status| status.success()) {
-            ready = true;
-            break;
-        }
-        sleep(Duration::from_millis(250));
-    }
-    if !ready {
-        bail!("managed MongoDB replica set initialization failed");
-    }
-
-    let uri = format!("mongodb://127.0.0.1:{port}/?replicaSet=rs0&directConnection=true");
-    Ok((uri, guard))
-}
-
-fn free_tcp_port() -> Result<u16> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).wrap_err("reserve MongoDB port")?;
-    Ok(listener.local_addr()?.port())
 }

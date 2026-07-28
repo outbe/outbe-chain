@@ -8,8 +8,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     error::{PrecompileError, Result},
     storage::{
-        CheckpointGuard, PrecompileStorageProvider, StorageBacked, SubCallError, SubCallInput,
-        SubCallOutput, SubCallStatus,
+        CertifiedLysisActivation, CheckpointGuard, PrecompileStorageProvider, StorageBacked,
+        SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
     },
 };
 
@@ -24,6 +24,41 @@ use crate::{
 #[derive(Clone)]
 pub struct StorageHandle<'storage> {
     pub(crate) inner: Rc<RefCell<&'storage mut dyn PrecompileStorageProvider>>,
+}
+
+struct LysisActivationFrameGuard<'storage> {
+    storage: StorageHandle<'storage>,
+    activation_call_id: B256,
+    closed: bool,
+}
+
+impl<'storage> LysisActivationFrameGuard<'storage> {
+    fn open(storage: &StorageHandle<'storage>, activation_call_id: B256) -> Result<Self> {
+        storage
+            .with_provider(|provider| provider.begin_lysis_activation_frame(activation_call_id))?;
+        Ok(Self {
+            storage: storage.clone(),
+            activation_call_id,
+            closed: false,
+        })
+    }
+
+    fn close(mut self, completed: bool) -> Result<()> {
+        self.closed = true;
+        self.storage.with_provider(|provider| {
+            provider.finish_lysis_activation_frame(self.activation_call_id, completed)
+        })
+    }
+}
+
+impl Drop for LysisActivationFrameGuard<'_> {
+    fn drop(&mut self) {
+        if !self.closed {
+            let _ = self.storage.with_provider(|provider| {
+                provider.finish_lysis_activation_frame(self.activation_call_id, false)
+            });
+        }
+    }
 }
 
 impl<'storage> StorageHandle<'storage> {
@@ -223,6 +258,31 @@ impl<'storage> StorageHandle<'storage> {
         let result = f()?;
         checkpoint.commit();
         Ok(result)
+    }
+
+    /// Runs the fixed Lysis activation owner sequence under a provider-granted
+    /// execution-frame lease.
+    ///
+    /// The capability cannot escape the closure or be cloned. A successful
+    /// return is accepted only after all owner steps and the terminal step
+    /// have consumed the cursor in order.
+    pub fn with_lysis_activation_frame<R>(
+        &self,
+        activation_call_id: B256,
+        f: impl for<'frame> FnOnce(&mut CertifiedLysisActivation<'frame>) -> Result<R>,
+    ) -> Result<R> {
+        let frame = LysisActivationFrameGuard::open(self, activation_call_id)?;
+        let mut capability = CertifiedLysisActivation::new(activation_call_id);
+        let outcome = f(&mut capability);
+        let completed = outcome.is_ok() && capability.is_complete();
+        frame.close(completed)?;
+        match outcome {
+            Ok(value) if completed => Ok(value),
+            Ok(_) => Err(PrecompileError::Fatal(
+                "certified Lysis activation frame returned before terminal completion".into(),
+            )),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn checkpoint_commit(&self) {

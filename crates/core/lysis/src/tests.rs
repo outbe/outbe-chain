@@ -658,7 +658,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
-    let result = StorageHandle::enter(&mut storage, |s| {
+    let (result, pure_result) = StorageHandle::enter(&mut storage, |s| {
         let scope = ExecutionScope::new();
         seed_compressed_entities_genesis(&s);
         begin_block(s.clone(), &scope).unwrap();
@@ -712,10 +712,35 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         //    Single-FI fast path returns `f_fp = LYSIS_LIMIT_MIN` (8%), so
         //    gratis_load = 100 * 0.08 = 8 COEN.
         let gratis_allocation = nominal / U256::from(10u64);
+        let league_id = outbe_fidelity::api::league(s.clone(), owner).unwrap();
+        let pure_result = crate::program_v1::execute(crate::program_v1::ProgramInputV1 {
+            worldwide_day: wwd,
+            logical_evaluation_time: T_NOW,
+            gratis_allocation,
+            mandatory_entry_price_840: crate::program_v1::ObservationValueV1::Value(cost_of_gratis),
+            tributes: vec![crate::program_v1::ObservedTributeV1 {
+                tribute: crate::program_v1::TributeInputV1 {
+                    tribute_id: entity_id(wwd, owner),
+                    owner,
+                    worldwide_day: wwd,
+                    issuance_currency: 1,
+                    nominal_amount_minor: nominal,
+                    reference_currency: 840,
+                    tribute_price_minor: U256::ZERO,
+                    exclude_from_intex_issuance: false,
+                },
+                first_league: crate::program_v1::ObservationValueV1::Value(league_id),
+                second_league: crate::program_v1::ObservationValueV1::Value(league_id),
+                conditional_entry_price_minor: crate::program_v1::ObservationValueV1::Unavailable,
+                nod_target_available: true,
+            }],
+        })
+        .expect("pure Lysis V1");
+
         let result = lysis(s.clone(), &scope, &bodies, wwd, gratis_allocation).unwrap();
         assert_eq!(result.nod_ids.len(), 1, "expected one NOD issued");
         end_block(s, &scope).unwrap();
-        result
+        (result, pure_result)
     });
 
     // 4. Decode the canonical projection event and assert the documented scale invariant.
@@ -727,6 +752,18 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
         .expect("NOD body event");
     assert_eq!(item.nod_id, result.nod_ids[0]);
     assert_eq!(item.reference_currency, 840);
+    let expected_action = &pure_result.nod_actions[0];
+    assert_eq!(item.nod_id, expected_action.nod_id);
+    assert_eq!(item.owner, expected_action.owner);
+    assert_eq!(item.worldwide_day, expected_action.worldwide_day);
+    assert_eq!(item.league_id, expected_action.league_id);
+    assert_eq!(item.floor_price_minor, expected_action.floor_price_minor);
+    assert_eq!(item.gratis_load_minor, expected_action.gratis_load_minor);
+    assert_eq!(item.bucket_key, expected_action.bucket_key);
+    assert_eq!(item.cost_amount_minor, expected_action.cost_amount_minor);
+    assert_eq!(item.issuance_currency, expected_action.issuance_currency);
+    assert_eq!(item.reference_currency, expected_action.reference_currency);
+    assert_eq!(item.issued_at, expected_action.issued_at);
 
     let expected = cost_of_gratis * item.gratis_load_minor / SCALE_1E18;
     assert_eq!(

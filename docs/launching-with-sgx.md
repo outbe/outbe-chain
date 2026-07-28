@@ -3,8 +3,9 @@
 In this setup, tribute enclaves run under `gramine-sgx` on real SGX hardware with
 confidential execution and EGETKEY sealing. Each enclave generates its own DKG
 identity from the hardware RNG. The committee then converges on one tribute offer
-key and publishes it on-chain. The e2e suite uses a different path:
-`gramine-direct`, with mock SGX and a deterministic `--dkg-seed`.
+key and publishes it on-chain. The E2E suite uses the production enclave binary
+under `gramine-direct`, without SGX hardware and with a deterministic
+`--dkg-seed`.
 
 > The manifest ships with `sgx.remote_attestation = "none"`. The enclaves still
 > provide confidential execution, real MRENCLAVE/MRSIGNER measurements, and

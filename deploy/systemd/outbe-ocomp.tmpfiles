@@ -1,0 +1,10 @@
+d /var/lib/outbe-ocomp 0750 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1/objects 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1/refs 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1/staging 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1/staging/exporter 0770 outbe-ocomp-export outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/cas-v1/staging/supervisor 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/exporter-v1 0750 outbe-ocomp-export outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/supervisor-v1 0700 outbe-ocomp-supervisor outbe-ocomp-artifacts -
+d /var/lib/outbe-ocomp/worker-inbox-v1 0770 outbe-ocomp-supervisor outbe-ocomp-artifacts -

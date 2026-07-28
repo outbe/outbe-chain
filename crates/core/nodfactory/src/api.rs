@@ -7,6 +7,8 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::runtime;
 
+pub use crate::certified::{install_certified_generation, CertifiedNodGenerationV1};
+
 pub fn issue_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,

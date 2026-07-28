@@ -7,9 +7,13 @@ publish.workspace = true
 
 [dependencies]
 outbe-macros.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+
+[dev-dependencies]
+revm.workspace = true
 
 [lints]
 workspace = true

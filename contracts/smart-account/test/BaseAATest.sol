@@ -69,12 +69,13 @@ abstract contract BaseAATest is Test {
         KernelFactory kf = new KernelFactory(uups, immutableEcdsa);
 
         sudoPolicy = new SudoPolicy();
-        bundlePlugin = new BundleModulePlugin();
+        bundlePlugin = new BundleModulePlugin(address(this));
         bundleCallerHook = new CallerHook();
         bundleSpendProtectorHook = new BundleSpendProtectorHook(address(bundlePlugin));
         withdrawalLimitPolicy = new WithdrawalLimitPolicy();
         ecdsaSigner = new ECDSASigner();
         bundleWithdrawHook = new BundleWithdrawHook(address(bundlePlugin));
+        bundlePlugin.setWithdrawHook(address(bundleWithdrawHook));
 
         factory = new SmartAccountFactory(
             address(kf),

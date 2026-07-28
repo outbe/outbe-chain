@@ -263,8 +263,9 @@ where
         self.serve_compressed_entity(request).await
     }
 
-    async fn derive_gratis_keys(
+    async fn derive_keys(
         &self,
+        ledger: outbe_tee::protocol::Ledger,
         account: Address,
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
@@ -273,7 +274,7 @@ where
 
         // Prove the caller controls `account` before the enclave derives its
         // (secret) modify key: recover the EIP-191 personal_sign signer over
-        // `"outbe/gratis/derive-keys/v1" || account || ephemeralPubkey` and require
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey` and require
         // it to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
             invalid_params_err(format!(
@@ -281,7 +282,13 @@ where
                 signature.len()
             ))
         })?;
-        let prehash = eip191_hash(&derive_gratis_keys_message(account, ephemeral_pubkey));
+        // Fast reject: recover the signer here so an unauthorized request is dropped
+        // before the enclave round-trip. This is defense-in-depth only — the enclave
+        // re-verifies the same signature, because a compromised host could bypass this
+        // check and reach the enclave transport directly (see DeriveAccountKeys arm).
+        let prehash = outbe_tee::protocol::eip191_hash(
+            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
+        );
         let recovered = outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65)
             .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
         if recovered != account {
@@ -291,10 +298,14 @@ where
         }
 
         // Off-chain key delivery via the process-global enclave client (no state).
+        // Thread `owner_sig` through so the enclave enforces ownership in its own
+        // trust domain, not ours.
         let response = outbe_tee::try_with_enclave(|client| {
             client.request(&EnclaveRequest::DeriveAccountKeys {
+                ledger,
                 account,
                 requester_ephemeral_pubkey: ephemeral_pubkey.0,
+                owner_sig: sig65.to_vec(),
             })
         })
         .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
@@ -317,6 +328,22 @@ where
                 "unexpected enclave response: {other:?}"
             ))),
         }
+    }
+
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        // Deprecated alias — the Gratis ledger of the unified `deriveKeys`.
+        self.derive_keys(
+            outbe_tee::protocol::Ledger::Gratis,
+            account,
+            ephemeral_pubkey,
+            signature,
+        )
+        .await
     }
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
@@ -602,26 +629,6 @@ fn invalid_params(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
 
 fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     invalid_params(msg)
-}
-
-/// Domain-tagged message a caller personal-signs to prove control of `account`
-/// before `outbe_deriveGratisKeys` reveals its keys:
-/// `"outbe/gratis/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
-fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
-    let mut m = Vec::with_capacity(27 + 20 + 32);
-    m.extend_from_slice(b"outbe/gratis/derive-keys/v1");
-    m.extend_from_slice(account.as_slice());
-    m.extend_from_slice(ephemeral_pubkey.as_slice());
-    m
-}
-
-/// EIP-191 `personal_sign` digest of `message` — matches ethers `signMessage`.
-fn eip191_hash(message: &[u8]) -> B256 {
-    let mut buf = Vec::with_capacity(message.len() + 40);
-    buf.extend_from_slice(b"\x19Ethereum Signed Message:\n");
-    buf.extend_from_slice(message.len().to_string().as_bytes());
-    buf.extend_from_slice(message);
-    alloy_primitives::keccak256(buf)
 }
 
 #[cfg(test)]
