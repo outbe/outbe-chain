@@ -72,6 +72,24 @@ fn transfer_from_baseline(
     provider
 }
 
+fn pending_admin_baseline(
+    init: &FactoryTokenInitialization,
+    candidate: Address,
+) -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(init)
+            .unwrap();
+        StablecoinContract::new(storage, init.token_address)
+            .begin_admin_transfer(ISSUER, candidate)
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+    provider.clear_mutation_failure();
+    provider
+}
+
 #[test]
 fn layout_is_pinned_to_the_documented_root_slots() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -698,6 +716,289 @@ fn transfer_from_rolls_back_allowance_balances_and_log_at_every_failure_point() 
             assert_eq!(token.balance_of(recipient).unwrap(), U256::ZERO);
             assert_eq!(token.allowance_of(owner, spender).unwrap(), U256::from(60));
             assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
+}
+
+#[test]
+fn operational_roles_are_admin_managed_and_repeats_are_eventless_noops() {
+    let init = initialization("USDX");
+    let account = Address::repeat_byte(0x91);
+    let attacker = Address::repeat_byte(0x92);
+    let unknown_role = B256::repeat_byte(0xcc);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        assert_revert::<IStablecoin::Unauthorized>(
+            token
+                .grant_role(attacker, ISSUER_ROLE, account)
+                .unwrap_err(),
+        );
+        assert_revert::<IStablecoin::UnsupportedRole>(
+            token.grant_role(ISSUER, ADMIN_ROLE, account).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::UnsupportedRole>(
+            token.grant_role(ISSUER, unknown_role, account).unwrap_err(),
+        );
+        assert!(!token.has_role(unknown_role, account).unwrap());
+
+        token.grant_role(ISSUER, ISSUER_ROLE, account).unwrap();
+        assert!(token.has_role(ISSUER_ROLE, account).unwrap());
+    });
+    let events_after_grant = provider.get_events(init.token_address).len();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.grant_role(ISSUER, ISSUER_ROLE, account).unwrap();
+    });
+    assert_eq!(
+        provider.get_events(init.token_address).len(),
+        events_after_grant
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.revoke_role(ISSUER, ISSUER_ROLE, account).unwrap();
+        assert!(!token.has_role(ISSUER_ROLE, account).unwrap());
+    });
+    let events_after_revoke = provider.get_events(init.token_address).len();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.revoke_role(ISSUER, ISSUER_ROLE, account).unwrap();
+    });
+    assert_eq!(
+        provider.get_events(init.token_address).len(),
+        events_after_revoke
+    );
+
+    let events = provider.get_events(init.token_address);
+    assert_eq!(events.len(), 2);
+    assert_eq!(
+        events[0],
+        IStablecoin::RoleGranted {
+            role: ISSUER_ROLE,
+            account,
+            actor: ISSUER,
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        events[1],
+        IStablecoin::RoleRevoked {
+            role: ISSUER_ROLE,
+            account,
+            actor: ISSUER,
+        }
+        .encode_log_data()
+    );
+}
+
+#[test]
+fn token_admin_transfer_is_two_step_and_never_creates_two_admins() {
+    let init = initialization("USDX");
+    let candidate = Address::repeat_byte(0xa1);
+    let other = Address::repeat_byte(0xa2);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        assert_revert::<IStablecoin::InvalidPendingAdmin>(
+            token
+                .begin_admin_transfer(ISSUER, Address::ZERO)
+                .unwrap_err(),
+        );
+        assert_revert::<IStablecoin::Unauthorized>(
+            token.begin_admin_transfer(other, candidate).unwrap_err(),
+        );
+        token.begin_admin_transfer(ISSUER, candidate).unwrap();
+        assert_eq!(token.pending_admin.read().unwrap(), candidate);
+        assert_revert::<IStablecoin::NotPendingAdmin>(
+            token.accept_admin_transfer(other).unwrap_err(),
+        );
+        token.cancel_admin_transfer(ISSUER).unwrap();
+        assert_eq!(token.pending_admin.read().unwrap(), Address::ZERO);
+
+        token.begin_admin_transfer(ISSUER, candidate).unwrap();
+        token.accept_admin_transfer(candidate).unwrap();
+        assert_eq!(token.admin.read().unwrap(), candidate);
+        assert_eq!(token.pending_admin.read().unwrap(), Address::ZERO);
+        assert!(!token.has_role(ADMIN_ROLE, ISSUER).unwrap());
+        assert!(token.has_role(ADMIN_ROLE, candidate).unwrap());
+        assert_revert::<IStablecoin::Unauthorized>(
+            token.grant_role(ISSUER, GUARDIAN_ROLE, other).unwrap_err(),
+        );
+        token.grant_role(candidate, GUARDIAN_ROLE, other).unwrap();
+    });
+}
+
+#[test]
+fn pause_blocks_ledger_paths_but_keeps_recovery_paths_available() {
+    let init = initialization("USDX");
+    let holder = Address::repeat_byte(0xb1);
+    let spender = Address::repeat_byte(0xb2);
+    let guardian = Address::repeat_byte(0xb3);
+    let role_member = Address::repeat_byte(0xb4);
+    let admin_candidate = Address::repeat_byte(0xb5);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint(ISSUER, holder, U256::from(100)).unwrap();
+        token.approve(holder, spender, U256::from(70)).unwrap();
+        token.grant_role(ISSUER, GUARDIAN_ROLE, guardian).unwrap();
+        token.revoke_role(ISSUER, GUARDIAN_ROLE, ISSUER).unwrap();
+        token.pause(guardian).unwrap();
+
+        assert_revert::<IStablecoin::TokenPaused>(
+            token.transfer(holder, spender, U256::ZERO).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::TokenPaused>(
+            token
+                .transfer_from(spender, holder, spender, U256::from(1))
+                .unwrap_err(),
+        );
+        assert_revert::<IStablecoin::TokenPaused>(
+            token.mint(ISSUER, holder, U256::from(1)).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::TokenPaused>(token.burn(ISSUER, U256::from(1)).unwrap_err());
+        assert_revert::<IStablecoin::TokenPaused>(
+            token.burn_from(spender, holder, U256::from(1)).unwrap_err(),
+        );
+
+        // Recovery/configuration remains live while paused.
+        token.approve(holder, spender, U256::from(20)).unwrap();
+        token
+            .grant_role(ISSUER, COMPLIANCE_ROLE, role_member)
+            .unwrap();
+        token.set_supply_cap(ISSUER, U256::from(1_000)).unwrap();
+        token.begin_admin_transfer(ISSUER, admin_candidate).unwrap();
+        token.cancel_admin_transfer(ISSUER).unwrap();
+
+        assert_eq!(token.allowance_of(holder, spender).unwrap(), U256::from(20));
+        assert_eq!(token.balance_of(holder).unwrap(), U256::from(100));
+        assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        assert_revert::<IStablecoin::Unauthorized>(token.unpause(guardian).unwrap_err());
+        token.unpause(ISSUER).unwrap();
+        assert_revert::<IStablecoin::TokenNotPaused>(token.unpause(ISSUER).unwrap_err());
+        token.transfer(holder, spender, U256::from(1)).unwrap();
+    });
+}
+
+#[test]
+fn mint_burn_burn_from_and_cap_follow_the_fixed_roles() {
+    let init = initialization("USDX");
+    let holder = Address::repeat_byte(0xc1);
+    let spender = Address::repeat_byte(0xc2);
+    let attacker = Address::repeat_byte(0xc3);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        assert_revert::<IStablecoin::Unauthorized>(
+            token.mint(attacker, holder, U256::from(1)).unwrap_err(),
+        );
+        token.mint(ISSUER, holder, U256::from(100)).unwrap();
+        token.mint(ISSUER, ISSUER, U256::from(20)).unwrap();
+        token.burn(ISSUER, U256::from(5)).unwrap();
+
+        token.approve(holder, spender, U256::from(40)).unwrap();
+        token.burn_from(spender, holder, U256::from(15)).unwrap();
+        assert_eq!(token.allowance_of(holder, spender).unwrap(), U256::from(25));
+        token.approve(holder, spender, U256::MAX).unwrap();
+        token.burn_from(spender, holder, U256::from(10)).unwrap();
+        assert_eq!(token.allowance_of(holder, spender).unwrap(), U256::MAX);
+        assert_eq!(token.balance_of(holder).unwrap(), U256::from(75));
+        assert_eq!(token.balance_of(ISSUER).unwrap(), U256::from(15));
+        assert_eq!(token.total_supply().unwrap(), U256::from(90));
+
+        assert_revert::<IStablecoin::Unauthorized>(
+            token.set_supply_cap(attacker, U256::from(100)).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::SupplyCapBelowSupply>(
+            token.set_supply_cap(ISSUER, U256::from(89)).unwrap_err(),
+        );
+        token.set_supply_cap(ISSUER, U256::from(90)).unwrap();
+        assert_eq!(token.supply_cap.read().unwrap(), U256::from(90));
+    });
+}
+
+#[test]
+fn unauthorized_role_and_recovery_sequences_never_mutate_state() {
+    let init = initialization("USDX");
+    let attacker = Address::repeat_byte(0xd1);
+    let target = Address::repeat_byte(0xd2);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        for step in 0..256 {
+            let error = match step % 8 {
+                0 => token.grant_role(attacker, ISSUER_ROLE, target),
+                1 => token.revoke_role(attacker, ISSUER_ROLE, ISSUER),
+                2 => token.pause(attacker),
+                3 => token.unpause(attacker),
+                4 => token.set_supply_cap(attacker, U256::from(step)),
+                5 => token.begin_admin_transfer(attacker, target),
+                6 => token.mint(attacker, target, U256::from(1)),
+                7 => token.burn(attacker, U256::from(1)),
+                _ => unreachable!(),
+            }
+            .unwrap_err();
+            assert_revert::<IStablecoin::Unauthorized>(error);
+        }
+
+        assert_eq!(token.admin.read().unwrap(), ISSUER);
+        assert_eq!(token.pending_admin.read().unwrap(), Address::ZERO);
+        assert!(!token.paused.read().unwrap());
+        assert_eq!(token.supply_cap.read().unwrap(), init.payload.supply_cap);
+        assert_eq!(token.total_supply().unwrap(), U256::ZERO);
+        assert!(!token.has_role(ISSUER_ROLE, target).unwrap());
+    });
+    assert!(provider.get_events(init.token_address).is_empty());
+}
+
+#[test]
+fn admin_acceptance_rolls_back_both_roles_and_slots_at_every_failure_point() {
+    let init = initialization("USDX");
+    let candidate = Address::repeat_byte(0xe1);
+    let mut measured = pending_admin_baseline(&init, candidate);
+    StorageHandle::enter(&mut measured, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .accept_admin_transfer(candidate)
+            .unwrap();
+    });
+    let operation_count = measured.clear_mutation_failure();
+    assert!(operation_count >= 5);
+
+    for failure_at in 0..operation_count {
+        let mut provider = pending_admin_baseline(&init, candidate);
+        provider.fail_after_mutation_at(failure_at);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(StablecoinContract::new(storage, init.token_address)
+                .accept_admin_transfer(candidate)
+                .is_err());
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.admin.read().unwrap(), ISSUER);
+            assert_eq!(token.pending_admin.read().unwrap(), candidate);
+            assert!(token.has_role(ADMIN_ROLE, ISSUER).unwrap());
+            assert!(!token.has_role(ADMIN_ROLE, candidate).unwrap());
         });
         assert!(provider.get_events(init.token_address).is_empty());
     }

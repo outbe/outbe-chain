@@ -514,6 +514,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-042 — Implement roles, pause and two-step token admin
 
+- **Status:** Done; the six frozen role ids, ADMIN-only operational membership,
+  idempotent eventless repeat grant/revoke, GUARDIAN pause, ADMIN unpause,
+  ISSUER mint/self-burn, allowance-backed burnFrom, CAP_MANAGER cap changes and
+  two-step single-ADMIN transfer are wired through the token ABI. Evidence: the
+  23-test focused suite includes the paused recovery matrix, 256 unauthorized
+  transitions with no mutation, and failure-after-every-write rollback of admin
+  acceptance.
 - **Goal:** Enforce the fixed authority topology.
 - **Depends on:** SCF-041.
 - **Done when:** ADMIN/ISSUER/CAP_MANAGER/GUARDIAN/COMPLIANCE/ENFORCER behavior,

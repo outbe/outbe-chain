@@ -14,7 +14,10 @@ use outbe_stablecoinpolicy::api::policy_exists;
 use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, TokenIdentity};
 use crate::errors::StablecoinStateError;
-use crate::schema::{allowance_key, role_key, StablecoinContract, ADMIN_ROLE, OPERATIONAL_ROLES};
+use crate::schema::{
+    allowance_key, role_key, StablecoinContract, ADMIN_ROLE, CAP_MANAGER_ROLE, GUARDIAN_ROLE,
+    ISSUER_ROLE, OPERATIONAL_ROLES,
+};
 
 const ROOT_SLOT_COUNT: u64 = 19;
 
@@ -126,6 +129,172 @@ impl StablecoinContract<'_> {
         self.allowances.read(&allowance_key(owner, spender))
     }
 
+    pub fn has_role(&self, role: B256, account: Address) -> Result<bool> {
+        self.validated_schema_version()?;
+        if role != ADMIN_ROLE && !OPERATIONAL_ROLES.contains(&role) {
+            return Ok(false);
+        }
+        let member = self.roles.read(&role_key(role, account))?;
+        if role == ADMIN_ROLE {
+            let admin = self.admin.read()?;
+            if member != (account == admin) {
+                return Err(PrecompileError::Fatal(
+                    "stablecoin ADMIN slot/role membership mismatch".into(),
+                ));
+            }
+        }
+        Ok(member)
+    }
+
+    pub fn grant_role(&mut self, actor: Address, role: B256, account: Address) -> Result<()> {
+        self.require_role(ADMIN_ROLE, actor)?;
+        self.require_operational_role(role)?;
+        self.require_nonzero(account)?;
+        let key = role_key(role, account);
+        if self.roles.read(&key)? {
+            return Ok(());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.roles.write(&key, true)?;
+            self.emit(IStablecoin::RoleGranted {
+                role,
+                account,
+                actor,
+            })
+        })
+    }
+
+    pub fn revoke_role(&mut self, actor: Address, role: B256, account: Address) -> Result<()> {
+        self.require_role(ADMIN_ROLE, actor)?;
+        self.require_operational_role(role)?;
+        self.require_nonzero(account)?;
+        let key = role_key(role, account);
+        if !self.roles.read(&key)? {
+            return Ok(());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.roles.write(&key, false)?;
+            self.emit(IStablecoin::RoleRevoked {
+                role,
+                account,
+                actor,
+            })
+        })
+    }
+
+    pub fn begin_admin_transfer(&mut self, actor: Address, candidate: Address) -> Result<()> {
+        self.require_role(ADMIN_ROLE, actor)?;
+        if candidate == Address::ZERO || candidate == actor {
+            return Err(StablecoinStateError::InvalidPendingAdmin { candidate }.into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.pending_admin.write(candidate)?;
+            self.emit(IStablecoin::AdminTransferStarted {
+                currentAdmin: actor,
+                pendingAdmin: candidate,
+            })
+        })
+    }
+
+    pub fn cancel_admin_transfer(&mut self, actor: Address) -> Result<()> {
+        self.require_role(ADMIN_ROLE, actor)?;
+        let pending = self.pending_admin.read()?;
+        if pending == Address::ZERO {
+            return Err(StablecoinStateError::InvalidPendingAdmin {
+                candidate: Address::ZERO,
+            }
+            .into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.pending_admin.write(Address::ZERO)?;
+            self.emit(IStablecoin::AdminTransferCancelled {
+                admin: actor,
+                cancelledPendingAdmin: pending,
+            })
+        })
+    }
+
+    pub fn accept_admin_transfer(&mut self, actor: Address) -> Result<()> {
+        self.validated_schema_version()?;
+        let pending = self.pending_admin.read()?;
+        if actor == Address::ZERO || actor != pending {
+            return Err(StablecoinStateError::NotPendingAdmin { caller: actor }.into());
+        }
+        let previous = self.admin.read()?;
+        if previous == Address::ZERO
+            || !self.roles.read(&role_key(ADMIN_ROLE, previous))?
+            || self.roles.read(&role_key(ADMIN_ROLE, actor))?
+        {
+            return Err(PrecompileError::Fatal(
+                "stablecoin admin transfer reached inconsistent role state".into(),
+            ));
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.roles.write(&role_key(ADMIN_ROLE, previous), false)?;
+            self.roles.write(&role_key(ADMIN_ROLE, actor), true)?;
+            self.admin.write(actor)?;
+            self.pending_admin.write(Address::ZERO)?;
+            self.emit(IStablecoin::AdminTransferred {
+                previousAdmin: previous,
+                newAdmin: actor,
+            })
+        })
+    }
+
+    pub fn pause(&mut self, actor: Address) -> Result<()> {
+        self.require_role(GUARDIAN_ROLE, actor)?;
+        if self.paused.read()? {
+            return Err(StablecoinStateError::TokenPaused.into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.paused.write(true)?;
+            self.emit(IStablecoin::Paused { actor })
+        })
+    }
+
+    pub fn unpause(&mut self, actor: Address) -> Result<()> {
+        self.require_role(ADMIN_ROLE, actor)?;
+        if !self.paused.read()? {
+            return Err(StablecoinStateError::TokenNotPaused.into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.paused.write(false)?;
+            self.emit(IStablecoin::Unpaused { actor })
+        })
+    }
+
+    pub fn set_supply_cap(&mut self, actor: Address, new_cap: U256) -> Result<()> {
+        self.require_role(CAP_MANAGER_ROLE, actor)?;
+        let supply = self.total_supply.read()?;
+        if new_cap < supply {
+            return Err(StablecoinStateError::SupplyCapBelowSupply {
+                requested_cap: new_cap,
+                total_supply: supply,
+            }
+            .into());
+        }
+        let previous = self.supply_cap.read()?;
+        if previous == new_cap {
+            return Ok(());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.supply_cap.write(new_cap)?;
+            self.emit(IStablecoin::SupplyCapChanged {
+                previousCap: previous,
+                newCap: new_cap,
+                actor,
+            })
+        })
+    }
+
     pub fn approve(&mut self, owner: Address, spender: Address, value: U256) -> Result<()> {
         self.validated_schema_version()?;
         self.require_nonzero(owner)?;
@@ -144,6 +313,7 @@ impl StablecoinContract<'_> {
 
     pub fn transfer(&mut self, from: Address, to: Address, value: U256) -> Result<()> {
         self.validated_schema_version()?;
+        self.require_not_paused()?;
         self.require_nonzero(from)?;
         self.require_nonzero(to)?;
         let from_balance = self.balances.read(&from)?;
@@ -181,6 +351,7 @@ impl StablecoinContract<'_> {
         value: U256,
     ) -> Result<()> {
         self.validated_schema_version()?;
+        self.require_not_paused()?;
         self.require_nonzero(spender)?;
         self.require_nonzero(from)?;
         self.require_nonzero(to)?;
@@ -226,8 +397,46 @@ impl StablecoinContract<'_> {
         })
     }
 
-    // Wired by the role-checked public entrypoint in SCF-042.
-    #[allow(dead_code)]
+    pub fn mint(&mut self, actor: Address, to: Address, amount: U256) -> Result<()> {
+        self.require_role(ISSUER_ROLE, actor)?;
+        self.require_not_paused()?;
+        self.mint_core(to, amount)
+    }
+
+    pub fn burn(&mut self, actor: Address, amount: U256) -> Result<()> {
+        self.require_role(ISSUER_ROLE, actor)?;
+        self.require_not_paused()?;
+        self.burn_core(actor, amount)
+    }
+
+    pub fn burn_from(&mut self, spender: Address, from: Address, amount: U256) -> Result<()> {
+        self.validated_schema_version()?;
+        self.require_not_paused()?;
+        self.require_nonzero(spender)?;
+        self.require_nonzero(from)?;
+        self.require_nonzero_amount(amount)?;
+
+        let key = allowance_key(from, spender);
+        let allowance = self.allowances.read(&key)?;
+        if allowance < amount {
+            return Err(StablecoinStateError::InsufficientAllowance {
+                owner: from,
+                spender,
+                available: allowance,
+                required: amount,
+            }
+            .into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.burn_core(from, amount)?;
+            if allowance != U256::MAX {
+                self.allowances.write(&key, allowance - amount)?;
+            }
+            Ok(())
+        })
+    }
+
     pub(crate) fn mint_core(&mut self, to: Address, amount: U256) -> Result<()> {
         self.validated_schema_version()?;
         self.require_nonzero(to)?;
@@ -270,8 +479,6 @@ impl StablecoinContract<'_> {
         })
     }
 
-    // Wired by the role-checked public entrypoints in SCF-042.
-    #[allow(dead_code)]
     pub(crate) fn burn_core(&mut self, from: Address, amount: U256) -> Result<()> {
         self.validated_schema_version()?;
         self.require_nonzero(from)?;
@@ -309,11 +516,30 @@ impl StablecoinContract<'_> {
         Ok(())
     }
 
-    // Shared by the role-checked mint and burn entrypoints in SCF-042.
-    #[allow(dead_code)]
     fn require_nonzero_amount(&self, amount: U256) -> Result<()> {
         if amount.is_zero() {
             return Err(StablecoinStateError::InvalidAmount.into());
+        }
+        Ok(())
+    }
+
+    fn require_not_paused(&self) -> Result<()> {
+        if self.paused.read()? {
+            return Err(StablecoinStateError::TokenPaused.into());
+        }
+        Ok(())
+    }
+
+    fn require_role(&self, role: B256, caller: Address) -> Result<()> {
+        if !self.has_role(role, caller)? {
+            return Err(StablecoinStateError::Unauthorized { role, caller }.into());
+        }
+        Ok(())
+    }
+
+    fn require_operational_role(&self, role: B256) -> Result<()> {
+        if !OPERATIONAL_ROLES.contains(&role) {
+            return Err(StablecoinStateError::UnsupportedRole { role }.into());
         }
         Ok(())
     }

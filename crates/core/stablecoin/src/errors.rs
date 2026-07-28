@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -66,6 +66,32 @@ pub enum StablecoinStateError {
         supply_cap: U256,
         requested_supply: U256,
     },
+
+    #[error("caller {caller} does not hold stablecoin role {role}")]
+    Unauthorized { role: B256, caller: Address },
+
+    #[error("unsupported stablecoin role {role}")]
+    UnsupportedRole { role: B256 },
+
+    #[error("stablecoin token is paused")]
+    TokenPaused,
+
+    #[error("stablecoin token is not paused")]
+    TokenNotPaused,
+
+    #[error(
+        "requested stablecoin supply cap {requested_cap} is below total supply {total_supply}"
+    )]
+    SupplyCapBelowSupply {
+        requested_cap: U256,
+        total_supply: U256,
+    },
+
+    #[error("invalid pending stablecoin admin {candidate}")]
+    InvalidPendingAdmin { candidate: Address },
+
+    #[error("caller {caller} is not the pending stablecoin admin")]
+    NotPendingAdmin { caller: Address },
 }
 
 impl From<StablecoinStateError> for PrecompileError {
@@ -130,6 +156,36 @@ impl From<StablecoinStateError> for PrecompileError {
                 }
                 .abi_encode(),
             )),
+            StablecoinStateError::Unauthorized { role, caller } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::Unauthorized { role, caller }.abi_encode()),
+            ),
+            StablecoinStateError::UnsupportedRole { role } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::UnsupportedRole { role }.abi_encode()),
+            ),
+            StablecoinStateError::TokenPaused => {
+                PrecompileError::RevertBytes(Bytes::from(IStablecoin::TokenPaused {}.abi_encode()))
+            }
+            StablecoinStateError::TokenNotPaused => PrecompileError::RevertBytes(Bytes::from(
+                IStablecoin::TokenNotPaused {}.abi_encode(),
+            )),
+            StablecoinStateError::SupplyCapBelowSupply {
+                requested_cap,
+                total_supply,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IStablecoin::SupplyCapBelowSupply {
+                    requestedCap: requested_cap,
+                    totalSupply: total_supply,
+                }
+                .abi_encode(),
+            )),
+            StablecoinStateError::InvalidPendingAdmin { candidate } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IStablecoin::InvalidPendingAdmin { candidate }.abi_encode(),
+                ))
+            }
+            StablecoinStateError::NotPendingAdmin { caller } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::NotPendingAdmin { caller }.abi_encode()),
+            ),
             domain_error => PrecompileError::Revert(domain_error.to_string()),
         }
     }
