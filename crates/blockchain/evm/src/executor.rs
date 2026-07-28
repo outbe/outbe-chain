@@ -3973,14 +3973,14 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
+    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxReceipt as _};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_evm::{
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
     };
     use alloy_primitives::{
-        address, keccak256, Address, Bytes, Log, Signature, TxKind, B256, U256,
+        address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
     };
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
@@ -3997,7 +3997,8 @@ mod tests {
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
     use outbe_primitives::addresses::{
         CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
-        SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
+        SLASH_INDICATOR_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
+        STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
     };
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::{
@@ -4011,7 +4012,18 @@ mod tests {
     };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
+    use outbe_primitives::{
+        stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
+        stablecoin_fork::STABLECOIN_CREATE_BOND,
+    };
+    use outbe_stablecoin::StablecoinContract;
+    use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+    use outbe_vote::{
+        constants::VOTING_WINDOW_BLOCKS,
+        precompile::IVote,
+        schema::{BondSettlement, ProposalStatus, Vote},
+    };
     use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_ethereum::evm::revm::db::State;
     use reth_ethereum::{evm::RethReceiptBuilder, Receipt};
@@ -4156,19 +4168,30 @@ mod tests {
         use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
-            ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
+            STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS,
+            ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
 
         // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
-        // marker. Each exemption is justified; adding a stateful precompile here
+        // marker. Each exemption is justified; adding a state-owning precompile here
         // instead of to the marker list would re-open reth22-1.
-        const MARKER_EXEMPT: [Address; 3] = [
+        const MARKER_EXEMPT: [Address; 8] = [
             // Stateless verifiers — no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
-            // Seeded with genesis bytecode + storage (scripts/seed_genesis.py
-            // ALL_PRECOMPILE_ADDRESSES), so its account is never EIP-161-empty.
+            // Debug adapter owns no persistent state; any child effects are journaled
+            // against the actual child target.
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
+            // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
+            // accounts are never EIP-161-empty.
             ZEROFEE_ADDRESS,
+            VAULT_PROVIDER_ADDRESS,
+            GOVERNANCE_ADDRESS,
+            // Stablecoin Factory and Policy Registry marker code is genesis-active
+            // even before Stablecoin V1 runtime activation.
+            STABLECOIN_FACTORY_ADDRESS,
+            STABLECOIN_POLICY_REGISTRY_ADDRESS,
         ];
 
         for addr in outbe_precompile_addresses() {
@@ -4359,6 +4382,10 @@ mod tests {
         let marker_addresses = [
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             outbe_primitives::addresses::ORACLE_ADDRESS,
+            VOTE_ADDRESS,
+            UPDATE_ADDRESS,
+            STABLECOIN_FACTORY_ADDRESS,
+            STABLECOIN_POLICY_REGISTRY_ADDRESS,
             CYCLE_ADDRESS,
             SLASH_INDICATOR_ADDRESS,
             outbe_primitives::addresses::STAKING_ADDRESS,
@@ -7481,6 +7508,740 @@ mod tests {
     }
 
     #[test]
+    fn real_factory_approval_is_published_in_hook_events_receipt() {
+        const CREATION_BLOCK: u64 = 7;
+        const HOOK_EVENTS_GAS: u64 = 21_000;
+        let issuer = Address::repeat_byte(0x11);
+        let validators = [
+            (Address::repeat_byte(0xa1), dummy_pubkey(0xa1)),
+            (Address::repeat_byte(0xa2), dummy_pubkey(0xa2)),
+            (Address::repeat_byte(0xa3), dummy_pubkey(0xa3)),
+        ];
+        let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+            issuer,
+            name: "Example Dollar".into(),
+            ticker: "EXUSD".into(),
+            iso4217: 840,
+            decimals: 6,
+            supply_cap: U256::from(1_000_000u64),
+            policy_id: U256::from(1u64),
+        })
+        .expect("canonical Factory payload");
+        let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
+        let forced_surplus = U256::from(7u64);
+        let mut expected_token_id = B256::ZERO;
+        let mut expected_token = Address::ZERO;
+        let mut state =
+            state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
+                storage
+                    .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus)
+                    .unwrap();
+                (expected_token_id, expected_token) =
+                    StablecoinFactoryContract::new(storage.clone())
+                        .predict_token_address(issuer, "EXUSD")
+                        .unwrap();
+                let mut vote = Vote::new(storage);
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        CREATION_BLOCK,
+                        STABLECOIN_CREATE_BOND,
+                        crate::handlers::vote::registry(),
+                    )
+                    .unwrap();
+                assert_eq!(proposal_id, U256::from(1u64));
+                vote.cast_vote_approve(proposal_id, validators[0].0, true, CREATION_BLOCK + 1)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, validators[1].0, true, CREATION_BLOCK + 1)
+                    .unwrap();
+            });
+
+        let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
+        let block_context = BlockContext::new(
+            finalization_block,
+            1_700_000_000,
+            outbe_primitives::chain::CHAIN_ID,
+            issuer,
+            validators.iter().map(|(address, _)| *address).collect(),
+        );
+        let (_, hook_events) =
+            super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
+                super::run_outbe_pre_execution_hooks(hook_ctx, None)
+            })
+            .expect("real Vote -> Factory pre-exec lifecycle should commit");
+        let (receipt_logs, _) = partition_hook_events(&hook_events);
+
+        let factory_logs: Vec<_> = receipt_logs
+            .iter()
+            .filter(|log| {
+                log.address == STABLECOIN_FACTORY_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+            })
+            .collect();
+        assert_eq!(factory_logs.len(), 1);
+        let factory_log_index = receipt_logs
+            .iter()
+            .position(|log| {
+                log.address == STABLECOIN_FACTORY_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+            })
+            .unwrap();
+        let refund_log_index = receipt_logs
+            .iter()
+            .position(|log| {
+                log.address == VOTE_ADDRESS
+                    && log.data.topics().first()
+                        == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+            })
+            .expect("Approved proposal must emit one refund");
+        assert!(
+            factory_log_index < refund_log_index,
+            "target event must precede settlement event in committed hook order"
+        );
+
+        {
+            let mut provider = super::DirectStorageProvider::new(&mut state, block_context.clone());
+            let storage = StorageHandle::new(&mut provider);
+            let vote = Vote::new(storage.clone());
+            let factory = StablecoinFactoryContract::new(storage.clone());
+            assert_eq!(
+                vote.proposals
+                    .get(U256::from(1u64))
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Approved
+            );
+            assert_eq!(
+                vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
+                BondSettlement::Refunded
+            );
+            assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+            assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            assert_eq!(storage.balance(issuer).unwrap(), STABLECOIN_CREATE_BOND);
+            assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
+            assert_eq!(
+                factory.registered_token_id(expected_token).unwrap(),
+                Some(expected_token_id)
+            );
+            assert_eq!(
+                factory.token_id_of(expected_token).unwrap(),
+                expected_token_id
+            );
+            assert!(!factory.reservations.exists(U256::from(1u64)).unwrap());
+        }
+        let token_account = state
+            .basic(expected_token)
+            .expect("token account read")
+            .expect("created token account");
+        assert_eq!(
+            token_account
+                .code
+                .as_ref()
+                .expect("created token marker")
+                .original_bytes()
+                .as_ref(),
+            outbe_primitives::addresses::STABLECOIN_MARKER_CODE
+        );
+
+        let config = OutbeEvmConfig::new(test_chain_spec());
+        let evm = config.evm_with_env(
+            &mut state,
+            test_evm_env(finalization_block, REWARDS_ADDRESS),
+        );
+        let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+        executor
+            .push_hook_events_receipt(
+                alloy_consensus::TxType::Legacy,
+                receipt_logs,
+                HOOK_EVENTS_GAS,
+            )
+            .expect("HookEvents receipt should publish committed Factory log");
+
+        let receipt = executor.receipts().last().expect("HookEvents receipt");
+        assert!(receipt.success);
+        assert_eq!(receipt.cumulative_gas_used, HOOK_EVENTS_GAS);
+        assert_eq!(
+            receipt
+                .logs
+                .iter()
+                .filter(|log| {
+                    log.address == STABLECOIN_FACTORY_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+                })
+                .count(),
+            1
+        );
+        let with_factory_root =
+            alloy_consensus::proofs::calculate_receipt_root(&[receipt.with_bloom_ref()]);
+        let mut without_factory_log = receipt.clone();
+        without_factory_log.logs.retain(|log| {
+            log.address != STABLECOIN_FACTORY_ADDRESS
+                || log.data.topics().first()
+                    != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+        });
+        let without_factory_root =
+            alloy_consensus::proofs::calculate_receipt_root(
+                &[without_factory_log.with_bloom_ref()],
+            );
+        assert_ne!(
+            with_factory_root, without_factory_root,
+            "StablecoinCreated must contribute to the receipts root"
+        );
+        assert_ne!(
+            logs_bloom(receipt.logs.iter()),
+            logs_bloom(without_factory_log.logs.iter()),
+            "StablecoinCreated must contribute to the logs bloom"
+        );
+    }
+
+    #[test]
+    fn real_factory_execution_error_has_no_factory_receipt_log() {
+        const CREATION_BLOCK: u64 = 7;
+        let issuer = Address::repeat_byte(0x11);
+        let validators = [
+            (Address::repeat_byte(0xb1), dummy_pubkey(0xb1)),
+            (Address::repeat_byte(0xb2), dummy_pubkey(0xb2)),
+            (Address::repeat_byte(0xb3), dummy_pubkey(0xb3)),
+        ];
+        let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+            issuer,
+            name: "Example Dollar".into(),
+            ticker: "EXUSD".into(),
+            iso4217: 840,
+            decimals: 6,
+            supply_cap: U256::from(1_000_000u64),
+            policy_id: U256::from(1u64),
+        })
+        .expect("canonical Factory payload");
+        let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
+        let mut state =
+            state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
+                storage
+                    .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
+                    .unwrap();
+                let mut vote = Vote::new(storage);
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        CREATION_BLOCK,
+                        STABLECOIN_CREATE_BOND,
+                        crate::handlers::vote::registry(),
+                    )
+                    .unwrap();
+                let mut corrupted = vote.proposals.get(proposal_id).unwrap().unwrap();
+                corrupted.payload = "{".into();
+                vote.proposals.update(&corrupted).unwrap();
+                vote.cast_vote_approve(proposal_id, validators[0].0, true, CREATION_BLOCK + 1)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, validators[1].0, true, CREATION_BLOCK + 1)
+                    .unwrap();
+            });
+
+        let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
+        let block_context = BlockContext::new(
+            finalization_block,
+            1_700_000_000,
+            outbe_primitives::chain::CHAIN_ID,
+            issuer,
+            validators.iter().map(|(address, _)| *address).collect(),
+        );
+        let (_, hook_events) =
+            super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
+                super::run_outbe_pre_execution_hooks(hook_ctx, None)
+            })
+            .expect("typed target Error must not fail the outer hook batch");
+        let (receipt_logs, _) = partition_hook_events(&hook_events);
+        assert!(receipt_logs.iter().all(|log| {
+            log.address != STABLECOIN_FACTORY_ADDRESS
+                || log.data.topics().first()
+                    != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+        }));
+        assert!(receipt_logs.iter().all(|log| {
+            log.address != VOTE_ADDRESS
+                || (log.data.topics().first() != Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+                    && log.data.topics().first()
+                        != Some(&IVote::ProposalBondBurned::SIGNATURE_HASH))
+        }));
+        {
+            let config = OutbeEvmConfig::new(test_chain_spec());
+            let evm = config.evm_with_env(
+                &mut state,
+                test_evm_env(finalization_block, REWARDS_ADDRESS),
+            );
+            let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+            executor
+                .push_hook_events_receipt(alloy_consensus::TxType::Legacy, receipt_logs, 21_000)
+                .expect("Error outcome HookEvents receipt");
+            let receipt = executor.receipts().last().expect("HookEvents receipt");
+            assert!(receipt.logs.iter().all(|log| {
+                log.address != STABLECOIN_FACTORY_ADDRESS
+                    || log.data.topics().first()
+                        != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+            }));
+        }
+
+        let mut provider = super::DirectStorageProvider::new(&mut state, block_context);
+        let storage = StorageHandle::new(&mut provider);
+        let vote = Vote::new(storage.clone());
+        let factory = StablecoinFactoryContract::new(storage.clone());
+        assert_eq!(
+            vote.proposals
+                .get(U256::from(1u64))
+                .unwrap()
+                .unwrap()
+                .proposal_status()
+                .unwrap(),
+            ProposalStatus::Error
+        );
+        assert_eq!(
+            vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
+            BondSettlement::Unsettled
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
+        assert_eq!(
+            storage.balance(VOTE_ADDRESS).unwrap(),
+            STABLECOIN_CREATE_BOND
+        );
+        assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+        assert!(factory.reservations.exists(U256::from(1u64)).unwrap());
+    }
+
+    #[test]
+    fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
+        use std::collections::BTreeMap;
+
+        use reth_primitives_traits::Account as TrieAccount;
+        use reth_trie::test_utils::state_root;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Boundary {
+            Approved,
+            Expired,
+            Error,
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        struct Output {
+            state_root: B256,
+            receipts_root: B256,
+            logs_bloom: alloy_primitives::Bloom,
+            receipt_bytes: Vec<Vec<u8>>,
+            receipt_success: Vec<bool>,
+            cumulative_gas: Vec<u64>,
+            created_logs: usize,
+            refunded_logs: usize,
+            burned_logs: usize,
+            status: ProposalStatus,
+            settlement: BondSettlement,
+            factory_count: U256,
+            registered_token_id: Option<B256>,
+            token_by_id: Address,
+            token_by_ticker: Address,
+            token_code_hash: Option<B256>,
+            token_total_supply: U256,
+            issuer_token_balance: U256,
+            issuer_balance: U256,
+            vote_balance: U256,
+            liabilities: U256,
+            reservation_exists: bool,
+        }
+
+        fn full_state_root(state: &State<CacheDB<EmptyDBTyped<ProviderError>>>) -> B256 {
+            let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = state
+                .database
+                .cache
+                .accounts
+                .iter()
+                .filter_map(|(address, account)| {
+                    account.info().map(|info| {
+                        (
+                            *address,
+                            (
+                                info,
+                                account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
+                            ),
+                        )
+                    })
+                })
+                .collect();
+            for (address, cached) in &state.cache.accounts {
+                match &cached.account {
+                    Some(current) => {
+                        let entry = accounts
+                            .entry(*address)
+                            .or_insert_with(|| (current.info.clone(), BTreeMap::new()));
+                        entry.0 = current.info.clone();
+                        entry
+                            .1
+                            .extend(current.storage.iter().map(|(k, v)| (*k, *v)));
+                    }
+                    None => {
+                        accounts.remove(address);
+                    }
+                }
+            }
+            state_root(accounts.into_iter().map(|(address, (info, storage))| {
+                let bytecode_hash = (!info.code_hash.is_zero() && info.code_hash != keccak256([]))
+                    .then_some(info.code_hash);
+                let account = TrieAccount {
+                    nonce: info.nonce,
+                    balance: info.balance,
+                    bytecode_hash,
+                };
+                let storage = storage
+                    .into_iter()
+                    .filter(|(_, value)| !value.is_zero())
+                    .map(|(slot, value)| (B256::from(slot.to_be_bytes::<32>()), value));
+                (address, (account, storage))
+            }))
+        }
+
+        fn run(boundary: Boundary, validator_execution: bool) -> Output {
+            const CREATION_BLOCK: u64 = 7;
+            let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let issuer = Address::repeat_byte(0x31);
+            let validators = [
+                (proposer, dummy_pubkey(0xc1)),
+                (Address::repeat_byte(0xc2), dummy_pubkey(0xc2)),
+                (Address::repeat_byte(0xc3), dummy_pubkey(0xc3)),
+            ];
+            let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+                issuer,
+                name: "Parity Dollar".into(),
+                ticker: "PARUSD".into(),
+                iso4217: 840,
+                decimals: 6,
+                supply_cap: U256::from(1_000_000u64),
+                policy_id: U256::from(1u64),
+            })
+            .expect("canonical Factory payload");
+            let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
+
+            let mut state =
+                state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
+            let seed_context = BlockContext::new(
+                CREATION_BLOCK,
+                1_700_000_000,
+                CHAIN_ID,
+                proposer,
+                validators.iter().map(|(address, _)| *address).collect(),
+            );
+            let (expected_token_id, expected_token) = {
+                let mut provider =
+                    super::DirectStorageProvider::new(&mut state, seed_context.clone());
+                let storage = StorageHandle::new(&mut provider);
+                storage
+                    .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
+                    .unwrap();
+                let predicted = StablecoinFactoryContract::new(storage.clone())
+                    .predict_token_address(issuer, "PARUSD")
+                    .unwrap();
+                let mut vote = Vote::new(storage.clone());
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        CREATION_BLOCK,
+                        STABLECOIN_CREATE_BOND,
+                        crate::handlers::vote::registry(),
+                    )
+                    .unwrap();
+                match boundary {
+                    Boundary::Approved | Boundary::Error => {
+                        vote.cast_vote_approve(
+                            proposal_id,
+                            validators[0].0,
+                            true,
+                            CREATION_BLOCK + 1,
+                        )
+                        .unwrap();
+                        vote.cast_vote_approve(
+                            proposal_id,
+                            validators[1].0,
+                            true,
+                            CREATION_BLOCK + 1,
+                        )
+                        .unwrap();
+                    }
+                    Boundary::Expired => {}
+                }
+                if matches!(boundary, Boundary::Error) {
+                    let mut corrupted = vote.proposals.get(proposal_id).unwrap().unwrap();
+                    corrupted.payload = "{".into();
+                    vote.proposals.update(&corrupted).unwrap();
+                }
+                let progress_context = BlockRuntimeContext::new(seed_context, storage.clone());
+                outbe_accounting::record_phase1_progress(&progress_context, finalization_block - 2)
+                    .unwrap();
+                provider.flush().expect("seed direct storage");
+                predicted
+            };
+
+            let parent_hash = B256::repeat_byte(0x71);
+            let mut metadata = test_metadata();
+            metadata.finalized_block_number = finalization_block - 1;
+            metadata.finalized_block_hash = parent_hash;
+            metadata.ordered_committee = validators.iter().map(|(address, _)| *address).collect();
+            metadata.signer_bitmap = vec![1; validators.len()];
+
+            let bridge = ConsensusExecutionBridge::new();
+            bridge.record_execution_summary(
+                metadata.finalized_block_number,
+                parent_hash,
+                ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                1_700_000_000,
+            );
+            let config =
+                OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge).with_evm_signer(signer);
+            let system_txs = begin_system_txs_for_test(
+                &config,
+                finalization_block,
+                parent_hash,
+                &Bytes::new(),
+                Some(metadata.clone()),
+                proposer,
+            );
+            let evm = config.evm_with_env(
+                &mut state,
+                test_evm_env(finalization_block, REWARDS_ADDRESS),
+            );
+            let mut execution = execution_ctx(Some(0), Bytes::new());
+            execution.inner.parent_hash = parent_hash;
+            execution.parent_consensus_metadata = Some(metadata);
+            execution.proposer_evm_address = Some(proposer);
+            if validator_execution {
+                execution.expected_begin_system_txs = system_txs.clone();
+            }
+            let mut executor = config.create_executor(evm, execution);
+            super::with_phase1_verify_disabled(|| {
+                executor
+                    .apply_pre_execution_changes()
+                    .expect("stablecoin boundary pre-execution");
+            });
+            for transaction in system_txs {
+                executor
+                    .execute_transaction(transaction)
+                    .expect("mandatory begin-zone transaction");
+            }
+
+            let receipts = executor.receipts().to_vec();
+            let receipt_bytes = receipts
+                .iter()
+                .map(|receipt| receipt.with_bloom_ref().encoded_2718())
+                .collect();
+            let receipt_blooms: Vec<_> = receipts
+                .iter()
+                .map(|receipt| receipt.with_bloom_ref())
+                .collect();
+            let receipts_root = alloy_consensus::proofs::calculate_receipt_root(&receipt_blooms);
+            let block_bloom = logs_bloom(receipts.iter().flat_map(|receipt| receipt.logs.iter()));
+            let receipt_success = receipts.iter().map(|receipt| receipt.success).collect();
+            let cumulative_gas = receipts
+                .iter()
+                .map(|receipt| receipt.cumulative_gas_used)
+                .collect();
+            let created_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == STABLECOIN_FACTORY_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+                })
+                .count();
+            let refunded_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == VOTE_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+                })
+                .count();
+            let burned_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == VOTE_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+                })
+                .count();
+            drop(executor);
+
+            let read_context = BlockContext::new(
+                finalization_block,
+                1_700_000_000,
+                CHAIN_ID,
+                proposer,
+                validators.iter().map(|(address, _)| *address).collect(),
+            );
+            let (
+                status,
+                settlement,
+                factory_count,
+                registered_token_id,
+                token_by_id,
+                token_by_ticker,
+                token_total_supply,
+                issuer_token_balance,
+                issuer_balance,
+                vote_balance,
+                liabilities,
+                reservation_exists,
+            ) = {
+                let mut provider = super::DirectStorageProvider::new(&mut state, read_context);
+                let storage = StorageHandle::new(&mut provider);
+                let vote = Vote::new(storage.clone());
+                let factory = StablecoinFactoryContract::new(storage.clone());
+                let factory_count = factory.token_count().unwrap();
+                let (token_total_supply, issuer_token_balance) = if factory_count == U256::ONE {
+                    let token = StablecoinContract::new(storage.clone(), expected_token);
+                    (
+                        token.total_supply().unwrap(),
+                        token.balance_of(issuer).unwrap(),
+                    )
+                } else {
+                    (U256::ZERO, U256::ZERO)
+                };
+                (
+                    vote.proposals
+                        .get(U256::from(1u64))
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
+                    factory_count,
+                    factory.registered_token_id(expected_token).unwrap(),
+                    factory.token_by_id(expected_token_id).unwrap(),
+                    factory.token_by_ticker("PARUSD").unwrap(),
+                    token_total_supply,
+                    issuer_token_balance,
+                    storage.balance(issuer).unwrap(),
+                    storage.balance(VOTE_ADDRESS).unwrap(),
+                    vote.bond_liabilities().unwrap(),
+                    factory.reservations.exists(U256::from(1u64)).unwrap(),
+                )
+            };
+            let token_code_hash = state
+                .basic(expected_token)
+                .expect("token account read")
+                .map(|account| account.code_hash);
+            let state_root = full_state_root(&state);
+
+            if matches!(boundary, Boundary::Approved) {
+                assert_eq!(registered_token_id, Some(expected_token_id));
+            }
+            Output {
+                state_root,
+                receipts_root,
+                logs_bloom: block_bloom,
+                receipt_bytes,
+                receipt_success,
+                cumulative_gas,
+                created_logs,
+                refunded_logs,
+                burned_logs,
+                status,
+                settlement,
+                factory_count,
+                registered_token_id,
+                token_by_id,
+                token_by_ticker,
+                token_code_hash,
+                token_total_supply,
+                issuer_token_balance,
+                issuer_balance,
+                vote_balance,
+                liabilities,
+                reservation_exists,
+            }
+        }
+
+        for boundary in [Boundary::Approved, Boundary::Expired, Boundary::Error] {
+            let proposer = run(boundary, false);
+            let validator = run(boundary, true);
+            assert_eq!(
+                proposer, validator,
+                "{boundary:?} must be byte/state equal across execution roles"
+            );
+            assert_eq!(proposer.receipt_success, vec![true; 5]);
+            assert_eq!(proposer.cumulative_gas.len(), 5);
+            match boundary {
+                Boundary::Approved => {
+                    assert_eq!(proposer.created_logs, 1);
+                    assert_eq!(proposer.refunded_logs, 1);
+                    assert_eq!(proposer.burned_logs, 0);
+                    assert_eq!(proposer.status, ProposalStatus::Approved);
+                    assert_eq!(proposer.settlement, BondSettlement::Refunded);
+                    assert_eq!(proposer.factory_count, U256::ONE);
+                    assert_ne!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_id, proposer.token_by_ticker);
+                    assert_eq!(
+                        proposer.token_code_hash,
+                        Some(keccak256(
+                            outbe_primitives::addresses::STABLECOIN_MARKER_CODE
+                        ))
+                    );
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                    assert_eq!(proposer.issuer_token_balance, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, STABLECOIN_CREATE_BOND);
+                    assert_eq!(proposer.vote_balance, U256::ZERO);
+                    assert_eq!(proposer.liabilities, U256::ZERO);
+                    assert!(!proposer.reservation_exists);
+                }
+                Boundary::Expired => {
+                    assert_eq!(proposer.created_logs, 0);
+                    assert_eq!(proposer.refunded_logs, 0);
+                    assert_eq!(proposer.burned_logs, 1);
+                    assert_eq!(proposer.status, ProposalStatus::Expired);
+                    assert_eq!(proposer.settlement, BondSettlement::Burned);
+                    assert_eq!(proposer.factory_count, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, U256::ZERO);
+                    assert_eq!(proposer.vote_balance, U256::ZERO);
+                    assert_eq!(proposer.liabilities, U256::ZERO);
+                    assert!(!proposer.reservation_exists);
+                    assert!(proposer.registered_token_id.is_none());
+                    assert_eq!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_ticker, Address::ZERO);
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                }
+                Boundary::Error => {
+                    assert_eq!(proposer.created_logs, 0);
+                    assert_eq!(proposer.refunded_logs, 0);
+                    assert_eq!(proposer.burned_logs, 0);
+                    assert_eq!(proposer.status, ProposalStatus::Error);
+                    assert_eq!(proposer.settlement, BondSettlement::Unsettled);
+                    assert_eq!(proposer.factory_count, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, U256::ZERO);
+                    assert_eq!(proposer.vote_balance, STABLECOIN_CREATE_BOND);
+                    assert_eq!(proposer.liabilities, STABLECOIN_CREATE_BOND);
+                    assert!(proposer.reservation_exists);
+                    assert!(proposer.registered_token_id.is_none());
+                    assert_eq!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_ticker, Address::ZERO);
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn independent_body_stores_produce_identical_full_block_state_receipts_and_balances() {
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
@@ -8791,7 +9552,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_block_hook_batch_error_rolls_back_prior_hook_writes() {
+    fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
         let mut state = State::builder()
             .with_database(db)
@@ -8801,8 +9562,11 @@ mod tests {
         let address = address!("0x1111111111111111111111111111111111111111");
         let slot = U256::from(0x46u64);
         let value = U256::from(0x193u64);
+        let marker = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+        let marker_hash = marker.hash_slow();
 
         let err = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
+            hook_ctx.storage.set_code(address, marker.clone())?;
             hook_ctx.storage.sstore(address, slot, value)?;
             assert_eq!(hook_ctx.storage.sload(address, slot)?, value);
             Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -8813,9 +9577,17 @@ mod tests {
 
         assert!(err.to_string().contains("oracle hook failed"));
         assert_eq!(state.storage(address, slot).unwrap(), U256::ZERO);
+        assert!(
+            state
+                .basic(address)
+                .unwrap()
+                .is_none_or(|info| info.is_empty_code_hash()),
+            "failed hook batch must not persist code"
+        );
 
         let ctx = BlockContext::new(8, 96, CHAIN_ID, OWNER, Vec::new());
         let (changes, events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
+            hook_ctx.storage.set_code(address, marker.clone())?;
             hook_ctx.storage.sstore(address, slot, value)?;
             Ok(())
         })
@@ -8824,6 +9596,8 @@ mod tests {
         let account = changes
             .get(&address)
             .expect("successful batch must report changed account");
+        assert_eq!(account.info.code_hash, marker_hash);
+        assert_eq!(account.info.code, Some(marker));
         let changed_slot = account
             .storage
             .get(&slot)

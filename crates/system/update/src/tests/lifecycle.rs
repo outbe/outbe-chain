@@ -10,6 +10,38 @@ use crate::schema::Update;
 use super::{min_activation, schedule_update, with_update, UpdateTestExt, PV, V1_2, V1_3};
 
 #[test]
+fn activation_boundary_is_begin_block_inclusive() {
+    with_update(|storage| {
+        let mut update = Update::new(storage.clone());
+        let current = 100u64;
+        let activation = min_activation(current);
+        schedule_update(&mut update, U256::from(1), PV, activation, "", current).unwrap();
+
+        update.process_begin_block_test(activation - 1).unwrap();
+        assert_eq!(
+            get_active_version(storage.clone()).unwrap(),
+            crate::ProtocolVersion::ZERO
+        );
+        assert_eq!(
+            version_at_height(storage.clone(), activation - 1).unwrap(),
+            crate::ProtocolVersion::ZERO
+        );
+
+        update.process_begin_block_test(activation).unwrap();
+        assert_eq!(get_active_version(storage.clone()).unwrap(), PV);
+        assert_eq!(version_at_height(storage.clone(), activation).unwrap(), PV);
+
+        update.process_begin_block_test(activation + 1).unwrap();
+        assert_eq!(get_active_version(storage.clone()).unwrap(), PV);
+        assert_eq!(
+            version_at_height(storage, activation + 1).unwrap(),
+            crate::ProtocolVersion::ZERO,
+            "legacy history records only the exact activation height"
+        );
+    });
+}
+
+#[test]
 fn lifecycle_activates_scheduled_update() {
     with_update(|storage| {
         let mut update = Update::new(storage.clone());

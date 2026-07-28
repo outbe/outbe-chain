@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::{SolCall, SolEvent};
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 
 use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
 use outbe_primitives::error::PrecompileError;
@@ -7,11 +7,11 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::precompile::{dispatch_with_handlers, IVote};
-use crate::schema::Vote;
+use crate::schema::{BondSettlement, Vote};
 
 use super::{
-    create_proposal_test, empty_update_payload, setup_default_validators, test_vote_registry,
-    PROPOSER, VOTER_A, VOTER_B,
+    characterization::PUBLIC_BONDED_REGISTRY, create_proposal_test, empty_update_payload,
+    setup_default_validators, test_vote_registry, PROPOSER, VOTER_A, VOTER_B,
 };
 
 fn dispatch(
@@ -37,6 +37,8 @@ fn precompile_abi_compiles() {
     let _ = IVote::createProposalCall::SIGNATURE;
     let _ = IVote::castVoteCall::SIGNATURE;
     let _ = IVote::getProposalCall::SIGNATURE;
+    let _ = IVote::getProposalBondCall::SIGNATURE;
+    let _ = IVote::unsettledBondLiabilitiesCall::SIGNATURE;
 }
 
 #[test]
@@ -55,6 +57,41 @@ fn dispatch_create_proposal_emits_event() {
     });
 
     assert!(has_event(&provider, IVote::ProposalCreated::SIGNATURE_HASH,));
+}
+
+#[test]
+fn dispatch_create_proposal_accepts_exact_public_bond_only() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(100);
+    provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let data = IVote::createProposalCall {
+            targetModule: UPDATE_ADDRESS,
+            payload: r#"{"kind":"public"}"#.into(),
+        }
+        .abi_encode();
+        let output = dispatch_with_handlers(
+            storage.clone(),
+            &data,
+            Address::repeat_byte(0x99),
+            U256::from(123u64),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+        let proposal_id = IVote::createProposalCall::abi_decode_returns(&output).unwrap();
+        let vote = Vote::new(storage);
+        assert_eq!(
+            vote.proposal_bond(proposal_id).unwrap().settlement,
+            BondSettlement::Unsettled
+        );
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
+    }
+    assert!(has_event(
+        &provider,
+        IVote::ProposalBondEscrowed::SIGNATURE_HASH
+    ));
+    assert!(has_event(&provider, IVote::ProposalCreated::SIGNATURE_HASH));
 }
 
 #[test]
@@ -93,6 +130,52 @@ fn dispatch_rejects_non_zero_value() {
             err,
             PrecompileError::Revert(msg) if msg.contains("non-payable")
         ));
+    });
+}
+
+#[test]
+fn bond_views_return_legacy_no_bond_and_recorded_liability() {
+    with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let proposal_id = create_proposal_test(
+            &mut vote,
+            PROPOSER,
+            UPDATE_ADDRESS,
+            &empty_update_payload(100),
+            100,
+        )
+        .unwrap();
+        let bond_data = IVote::getProposalBondCall {
+            proposalId: proposal_id,
+        }
+        .abi_encode();
+        let bond = IVote::getProposalBondCall::abi_decode_returns(
+            &dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bond.amount, U256::ZERO);
+        assert_eq!(bond.settlement, IVote::BondSettlement::NoBond);
+
+        let liability_data = IVote::unsettledBondLiabilitiesCall {}.abi_encode();
+        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
+            &dispatch(storage.clone(), &liability_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(liabilities, U256::ZERO);
+
+        vote.record_proposal_bond(proposal_id, U256::from(123u64))
+            .unwrap();
+        let bond = IVote::getProposalBondCall::abi_decode_returns(
+            &dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bond.amount, U256::from(123u64));
+        assert_eq!(bond.settlement, IVote::BondSettlement::Unsettled);
+        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
+            &dispatch(storage, &liability_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(liabilities, U256::from(123u64));
     });
 }
 
@@ -157,10 +240,12 @@ fn dispatch_create_proposal_rejects_non_zero_value_before_state_change() {
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &data, PROPOSER, U256::from(1)).unwrap_err();
-        assert!(matches!(
-            err,
-            PrecompileError::Revert(msg) if msg.contains("non-payable")
-        ));
+        match err {
+            PrecompileError::RevertBytes(bytes) => {
+                assert_eq!(&bytes[..4], IVote::InvalidProposalBond::SELECTOR)
+            }
+            other => panic!("expected InvalidProposalBond, got {other:?}"),
+        }
         assert_eq!(vote.proposal_count.read().unwrap(), before);
     });
 }

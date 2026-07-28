@@ -1,22 +1,22 @@
 //! ABI surface and EVM dispatch for the Vote precompile.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
+use crate::api::{
+    get_proposal, get_proposal_bond, get_proposal_voters, list_proposals, list_proposals_by_status,
+    unsettled_bond_liabilities,
+};
 use crate::errors::VoteError;
 use crate::handlers::VoteTargetRegistry;
-use crate::schema::Vote;
+use crate::schema::{BondSettlement, Vote};
 use crate::state::{ProposalInfo, ProposalStatus, VoteTally};
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IVote.sol"
-);
+pub use crate::abi::IVote;
 
 /// Dispatches an ABI-encoded call to the Vote precompile.
 pub fn dispatch_with_handlers(
@@ -26,9 +26,8 @@ pub fn dispatch_with_handlers(
     value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
-    reject_value(&value)?;
     dispatch_call(data, IVote::IVoteCalls::abi_decode, |call| {
-        dispatch_vote_call(storage, call, caller, registry)
+        dispatch_vote_call(storage, call, caller, value, registry)
     })
 }
 
@@ -36,14 +35,25 @@ fn dispatch_vote_call(
     storage: StorageHandle<'_>,
     call: IVote::IVoteCalls,
     caller: Address,
+    value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
     let mut governance = Vote::new(storage.clone());
     use IVote::IVoteCalls::*;
+    if !matches!(&call, createProposal(_)) {
+        reject_value(&value)?;
+    }
     match call {
         createProposal(c) => mutate(c, caller, |sender, c| {
             let block_number = storage.block_number()?;
-            governance.create_proposal(sender, c.targetModule, &c.payload, block_number, registry)
+            governance.create_proposal_with_value(
+                sender,
+                c.targetModule,
+                &c.payload,
+                block_number,
+                value,
+                registry,
+            )
         }),
         castVote(c) => mutate_void(c, caller, |sender, c| {
             let block_number = storage.block_number()?;
@@ -66,6 +76,14 @@ fn dispatch_vote_call(
                 c.count,
             )
         }),
+        getProposalBond(c) => view(c, |c| {
+            let bond = get_proposal_bond(storage.clone(), c.proposalId)?;
+            Ok(IVote::getProposalBondReturn {
+                amount: bond.amount,
+                settlement: bond_settlement_to_abi(bond.settlement),
+            })
+        }),
+        unsettledBondLiabilities(c) => view(c, |_| unsettled_bond_liabilities(storage.clone())),
     }
 }
 
@@ -96,6 +114,7 @@ fn proposal_status_to_abi(status: ProposalStatus) -> IVote::ProposalStatus {
         ProposalStatus::Approved => IVote::ProposalStatus::Approved,
         ProposalStatus::Rejected => IVote::ProposalStatus::Rejected,
         ProposalStatus::Expired => IVote::ProposalStatus::Expired,
+        ProposalStatus::Error => IVote::ProposalStatus::Error,
     }
 }
 
@@ -105,6 +124,16 @@ fn proposal_status_from_abi(status: IVote::ProposalStatus) -> ProposalStatus {
         IVote::ProposalStatus::Approved => ProposalStatus::Approved,
         IVote::ProposalStatus::Rejected => ProposalStatus::Rejected,
         IVote::ProposalStatus::Expired => ProposalStatus::Expired,
+        IVote::ProposalStatus::Error => ProposalStatus::Error,
         _ => ProposalStatus::Pending,
+    }
+}
+
+fn bond_settlement_to_abi(settlement: BondSettlement) -> IVote::BondSettlement {
+    match settlement {
+        BondSettlement::NoBond => IVote::BondSettlement::NoBond,
+        BondSettlement::Unsettled => IVote::BondSettlement::Unsettled,
+        BondSettlement::Refunded => IVote::BondSettlement::Refunded,
+        BondSettlement::Burned => IVote::BondSettlement::Burned,
     }
 }

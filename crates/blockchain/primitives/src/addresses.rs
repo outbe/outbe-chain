@@ -214,6 +214,32 @@ pub const COMPRESSED_ENTITIES_ADDRESS: Address =
 /// registered network key. All mutating methods are permissionless by design.
 pub const L2_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0E");
 
+/// Stablecoin Factory precompile address.
+///
+/// The public EVM surface is read-only. Creation is available only through the
+/// compile-time Vote target adapter.
+pub const STABLECOIN_FACTORY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE0F");
+
+/// Shared stablecoin Policy Registry precompile address.
+pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE10");
+
+/// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
+pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
+
+/// Exact marker bytecode installed at stablecoin fixed and dynamic precompile accounts.
+///
+/// The nonempty legacy byte preserves state under EIP-161 and supports introspection;
+/// native Rust dispatch, not this byte, implements the account.
+pub const STABLECOIN_MARKER_CODE: [u8; 1] = [0xef];
+
+/// Returns whether an address belongs to the reserved dynamic stablecoin class.
+pub const fn is_stablecoin_address(address: Address) -> bool {
+    address.0 .0[0] == STABLECOIN_ADDRESS_PREFIX[0]
+        && address.0 .0[1] == STABLECOIN_ADDRESS_PREFIX[1]
+}
+
 /// System address used for system-only calls (block hooks).
 pub const SYSTEM_ADDRESS: Address = Address::ZERO;
 

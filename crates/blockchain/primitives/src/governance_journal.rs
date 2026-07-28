@@ -112,6 +112,17 @@ pub enum JournalRecord {
         reject_reason: String,
     },
 
+    /// Quorum reached but the target module reported a proposal execution error.
+    ProposalErrored {
+        #[serde(flatten)]
+        ctx: EventContext,
+        #[serde(flatten)]
+        proposal: ProposalRef,
+        #[serde(flatten)]
+        tally: VoteTallyRef,
+        execution_error: String,
+    },
+
     /// Voting deadline passed without reaching quorum.
     ProposalExpired {
         #[serde(flatten)]
@@ -176,6 +187,21 @@ impl JournalRecord {
             proposal,
             tally,
             reject_reason,
+        }
+    }
+
+    /// Journal entry for a proposal whose target execution returned an error outcome.
+    pub fn proposal_errored(
+        block_number: u64,
+        proposal: ProposalRef,
+        tally: VoteTallyRef,
+        execution_error: String,
+    ) -> Self {
+        Self::ProposalErrored {
+            ctx: EventContext::at(block_number),
+            proposal,
+            tally,
+            execution_error,
         }
     }
 

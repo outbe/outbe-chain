@@ -8,7 +8,7 @@ interface ITributeFactory {
     // the ABI without a migration plan — the fields are part of the external
     // contract surface.
     //
-    // `signature` is the L2 network's BLS MinPk signature (96 bytes) over
+    // `signature` is the L2 network's BLS MinPk signature G2 (128 bytes) over
     // `zkMerkleRoot`. When the caller is registered in the L2Registry as an L1
     // operator address and that network has ZK verification enabled, the
     // signature must verify against the network's registered public key or the

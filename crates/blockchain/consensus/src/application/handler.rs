@@ -5,7 +5,7 @@
 //! consensus with Reth's execution layer via `beacon_engine_handle` and
 //! `payload_builder_handle`.
 //!
-//! Block availability uses Commonware's marshal actor (Tempo-style):
+//! Block availability uses Commonware's marshal actor:
 //! - Proposer disseminates blocks via `buffered::Engine` (broadcast)
 //! - Non-proposers resolve blocks via `marshal::resolver` (on-demand P2P)
 //! - No ad-hoc block propagation channel or local cache admission
@@ -1246,7 +1246,7 @@ impl ApplicationShared {
         }
     }
 
-    /// Uses FCU-based flow (like tempo): sends fork_choice_updated with payload
+    /// Uses an FCU-based flow: sends fork_choice_updated with payload
     /// attributes through the executor actor, so the engine starts building
     /// a payload on the correct canonical state with txpool access.
     #[allow(clippy::too_many_arguments)]
@@ -2185,6 +2185,7 @@ async fn validate_header_consensus_artifacts_for_activation(
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 async fn validate_header_consensus_artifacts(
     block: &ConsensusBlock,
     parent_block: Option<&ConsensusBlock>,

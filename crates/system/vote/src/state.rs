@@ -1,12 +1,12 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 use tracing::warn;
 
 use crate::constants::MAX_PAGE_SIZE;
 use crate::errors::VoteError;
-use crate::schema::{ProposalRecord, Vote, VoteRecord};
+use crate::schema::{BondSettlement, ProposalRecord, Vote, VoteRecord};
 
 pub use crate::schema::ProposalStatus;
 
@@ -64,6 +64,13 @@ pub struct ProposalInfo {
     pub status: ProposalStatus,
     pub state: VoteTally,
     pub voters_count: u64,
+}
+
+/// Native bond accounting recorded on one proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProposalBond {
+    pub amount: U256,
+    pub settlement: BondSettlement,
 }
 
 /// Materialized vote read from storage.
@@ -139,7 +146,9 @@ impl<'storage> Vote<'storage> {
     /// Returns the next proposal id without incrementing the counter.
     pub fn peek_next_proposal_id(&self) -> Result<U256> {
         let current = self.proposal_count.read()?;
-        Ok(current + U256::from(1))
+        current
+            .checked_add(U256::from(1))
+            .ok_or_else(|| VoteError::ProposalCounterExhausted.into())
     }
 
     /// Returns `true` when `proposal_id` has been allocated by `write_proposal`.
@@ -170,6 +179,97 @@ impl<'storage> Vote<'storage> {
             state,
             voters_count,
         }))
+    }
+
+    pub fn proposal_bond(&self, proposal_id: U256) -> Result<ProposalBond> {
+        self.proposals
+            .get(proposal_id)?
+            .ok_or(VoteError::ProposalNotFound)?;
+        let settlement =
+            BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?;
+        let amount = self.proposal_bond_amount.read(&proposal_id)?;
+        let valid_pair = match settlement {
+            BondSettlement::NoBond => amount.is_zero(),
+            BondSettlement::Unsettled | BondSettlement::Refunded | BondSettlement::Burned => {
+                !amount.is_zero()
+            }
+        };
+        if !valid_pair {
+            return Err(PrecompileError::Fatal(format!(
+                "proposal {proposal_id} has inconsistent bond amount and settlement"
+            )));
+        }
+        Ok(ProposalBond { amount, settlement })
+    }
+
+    pub fn bond_liabilities(&self) -> Result<U256> {
+        self.unsettled_bond_liabilities.read()
+    }
+
+    /// Records one new proposal liability. The caller may wrap this in a wider
+    /// admission checkpoint; this method is independently atomic as well.
+    pub fn record_proposal_bond(&mut self, proposal_id: U256, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Err(VoteError::InvalidBondAmount.into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.proposals
+                .get(proposal_id)?
+                .ok_or(VoteError::ProposalNotFound)?;
+            if BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?
+                != BondSettlement::NoBond
+                || !self.proposal_bond_amount.read(&proposal_id)?.is_zero()
+            {
+                return Err(VoteError::ProposalBondAlreadyRecorded.into());
+            }
+            let liabilities = self
+                .unsettled_bond_liabilities
+                .read()?
+                .checked_add(amount)
+                .ok_or(VoteError::BondLiabilityOverflow)?;
+            self.proposal_bond_amount.write(&proposal_id, amount)?;
+            self.proposal_bond_settlement
+                .write(&proposal_id, BondSettlement::Unsettled.to_u8())?;
+            self.unsettled_bond_liabilities.write(liabilities)
+        })
+    }
+
+    /// Applies the accounting half of an exact refund or burn. SCF-063 couples
+    /// this with the native-balance mutation inside its terminal checkpoint.
+    pub fn settle_proposal_bond_accounting(
+        &mut self,
+        proposal_id: U256,
+        settlement: BondSettlement,
+    ) -> Result<U256> {
+        if !matches!(
+            settlement,
+            BondSettlement::Refunded | BondSettlement::Burned
+        ) {
+            return Err(VoteError::InvalidBondSettlement.into());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.proposals
+                .get(proposal_id)?
+                .ok_or(VoteError::ProposalNotFound)?;
+            let amount = self.proposal_bond_amount.read(&proposal_id)?;
+            if BondSettlement::from_u8(self.proposal_bond_settlement.read(&proposal_id)?)?
+                != BondSettlement::Unsettled
+                || amount.is_zero()
+            {
+                return Err(VoteError::ProposalBondNotUnsettled.into());
+            }
+            let liabilities = self
+                .unsettled_bond_liabilities
+                .read()?
+                .checked_sub(amount)
+                .ok_or(VoteError::BondLiabilityUnderflow)?;
+            self.proposal_bond_settlement
+                .write(&proposal_id, settlement.to_u8())?;
+            self.unsettled_bond_liabilities.write(liabilities)?;
+            Ok(amount)
+        })
     }
 
     pub fn read_vote(&self, proposal_id: U256, voter: Address) -> Result<Option<VoteInfo>> {
@@ -351,10 +451,12 @@ impl<'storage> Vote<'storage> {
         proposal.set_proposal_status(new_status);
         self.proposals.update(&proposal)?;
 
-        if old_status == ProposalStatus::Pending {
+        let old_unsettled = matches!(old_status, ProposalStatus::Pending | ProposalStatus::Error);
+        let new_unsettled = matches!(new_status, ProposalStatus::Pending | ProposalStatus::Error);
+        if old_unsettled && !new_unsettled {
             self.remove_pending_proposal_id(proposal_id)?;
         }
-        if new_status == ProposalStatus::Pending {
+        if !old_unsettled && new_unsettled {
             self.pending_proposal_ids.push(proposal_id)?;
         }
 

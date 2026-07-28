@@ -149,12 +149,12 @@ fn invalid_update_payload_is_rejected_at_creation() {
 }
 
 #[test]
-fn handler_conflict_marks_proposal_rejected() {
+fn handler_conflict_marks_proposal_error() {
     with_vote(|storage| {
         let mut vote = Vote::new(storage.clone());
         let current = 250u64;
         let deadline = current + VOTING_WINDOW_BLOCKS + 1;
-        let activation = min_activation(deadline);
+        let activation = min_activation(deadline + 1);
         let payload = encode_schedule_update_json(PV, activation, "");
 
         let first = vote
@@ -202,7 +202,7 @@ fn handler_conflict_marks_proposal_rejected() {
                 .unwrap()
                 .proposal_status()
                 .unwrap(),
-            ProposalStatus::Rejected
+            ProposalStatus::Error
         );
     });
 }

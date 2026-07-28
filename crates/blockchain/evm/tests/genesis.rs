@@ -280,14 +280,15 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// binds the genesis seed list as the third source of truth so a precompile
 /// that is neither marked nor seeded fails loudly instead of silently pruning.
 ///
-/// The two STATELESS verifiers (`ZKPROOF_POSEIDON_ADDRESS`,
-/// `ZKPROOF_GROTH16_ADDRESS`) are skipped: they hold no EVM storage to
-/// preserve, exactly matching the `MARKER_EXEMPT` rationale in the executor's
-/// `marker_list_covers_stateful_precompiles` unit test.
+/// The two stateless verifiers and the storage-free debug adapter are skipped:
+/// they own no EVM storage to preserve, matching the `MARKER_EXEMPT` rationale
+/// in the executor's `marker_list_covers_stateful_precompiles` unit test.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_primitives::addresses::{ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
+    use outbe_primitives::addresses::{
+        DEBUG_SUBCALL_PRECOMPILE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    };
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -295,14 +296,17 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
         FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
     );
 
-    // Stateless verifiers have no storage to preserve, so neither the marker
-    // list nor genesis bytecode needs to cover them.
-    let stateless: [alloy_primitives::Address; 2] =
-        [ZKPROOF_POSEIDON_ADDRESS, ZKPROOF_GROTH16_ADDRESS];
+    // These routes own no storage, so neither runtime markers nor genesis code
+    // need to cover them.
+    let storage_free: [alloy_primitives::Address; 3] = [
+        ZKPROOF_POSEIDON_ADDRESS,
+        ZKPROOF_GROTH16_ADDRESS,
+        DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
+    ];
 
     let mut checked = 0usize;
     for addr in outbe_evm::precompiles::outbe_precompile_addresses() {
-        if stateless.contains(addr) {
+        if storage_free.contains(addr) {
             continue;
         }
         checked += 1;

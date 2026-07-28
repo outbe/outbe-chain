@@ -1,12 +1,14 @@
 pub mod begin_block_precompile;
 pub mod builder;
 pub mod config;
+mod create_guard;
 pub mod debug_subcall;
 pub mod executor;
 pub mod factory;
 pub mod failure_receipt;
 pub mod gas;
 pub mod handlers;
+pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
