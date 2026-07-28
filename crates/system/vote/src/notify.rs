@@ -68,6 +68,32 @@ impl Vote<'_> {
         })
     }
 
+    pub(crate) fn notify_proposal_bond_refunded(
+        &mut self,
+        proposal_id: U256,
+        owner: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.emit(IVote::ProposalBondRefunded {
+            proposalId: proposal_id,
+            owner,
+            amount,
+        })
+    }
+
+    pub(crate) fn notify_proposal_bond_burned(
+        &mut self,
+        proposal_id: U256,
+        owner: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.emit(IVote::ProposalBondBurned {
+            proposalId: proposal_id,
+            owner,
+            amount,
+        })
+    }
+
     /// Emits canonical terminal proposal receipt evidence.
     pub(crate) fn notify_proposal_finalized(
         &mut self,

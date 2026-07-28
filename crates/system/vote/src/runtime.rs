@@ -16,8 +16,10 @@ use crate::handlers::{
     self, TargetAdmission, TargetExecutionOutcome, VoteTargetContext, VoteTargetRegistry,
 };
 use crate::notify::ProposalFinalization;
-use crate::schema::Vote;
-use crate::state::{active_validator_addresses, calculate_vote_tally, ProposalStatus, VoteKind};
+use crate::schema::{BondSettlement, Vote};
+use crate::state::{
+    active_validator_addresses, calculate_vote_tally, ProposalBond, ProposalStatus, VoteKind,
+};
 
 const LOCALNET_CHAIN_ID: u64 = 54_322_345;
 
@@ -296,6 +298,7 @@ impl Vote<'_> {
         };
         let bond = self.proposal_bond(proposal_id)?;
 
+        let finalization_checkpoint = self.storage.checkpoint_guard();
         let target_checkpoint = self.storage.checkpoint_guard();
         let target_outcome = handlers::handle_target_tally(
             registry,
@@ -309,6 +312,7 @@ impl Vote<'_> {
             TargetExecutionOutcome::Applied => {
                 target_checkpoint.commit();
                 self.set_proposal_status(proposal_id, status)?;
+                self.settle_terminal_bond(proposal_id, proposal.proposer, bond, status)?;
                 match status {
                     ProposalStatus::Approved => ProposalFinalization::Approved,
                     ProposalStatus::Expired => ProposalFinalization::Expired,
@@ -324,6 +328,43 @@ impl Vote<'_> {
             }
         };
 
-        self.notify_proposal_finalized(&proposal, &tally, outcome)
+        self.notify_proposal_finalized(&proposal, &tally, outcome)?;
+        finalization_checkpoint.commit();
+        Ok(())
+    }
+
+    fn settle_terminal_bond(
+        &mut self,
+        proposal_id: U256,
+        owner: Address,
+        bond: ProposalBond,
+        status: ProposalStatus,
+    ) -> Result<()> {
+        match bond.settlement {
+            BondSettlement::NoBond => return Ok(()),
+            BondSettlement::Unsettled => {}
+            BondSettlement::Refunded | BondSettlement::Burned => {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                    "pending proposal {proposal_id} has an already settled bond"
+                )));
+            }
+        }
+
+        match status {
+            ProposalStatus::Approved => {
+                self.storage
+                    .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;
+                self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Refunded)?;
+                self.notify_proposal_bond_refunded(proposal_id, owner, bond.amount)
+            }
+            ProposalStatus::Expired => {
+                self.storage.decrease_balance(VOTE_ADDRESS, bond.amount)?;
+                self.settle_proposal_bond_accounting(proposal_id, BondSettlement::Burned)?;
+                self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
+            }
+            ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
+                unreachable!("only Approved or Expired can settle a proposal bond")
+            }
+        }
     }
 }
