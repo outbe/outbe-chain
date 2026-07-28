@@ -8,7 +8,7 @@
 // Crypto primitives use Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256,
 // ChaCha20-Poly1305) plus `@noble/curves` for raw-byte X25519 ECDH.
 
-import { createHmac, hkdfSync, createDecipheriv } from "node:crypto";
+import { createHash, createHmac, hkdfSync, createDecipheriv } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519";
 import { ethers } from "ethers";
 
@@ -22,10 +22,41 @@ export enum GratisOp {
   UnlockToEoa = 5,
 }
 
+// PromisOp discriminants — MUST match `outbe_tee::protocol::PromisOp` order.
+export enum PromisOp {
+  Mint = 0,
+  Burn = 1,
+}
+
+// The two TEE-confidential ledgers. Selects the enclave key domain, so Gratis and
+// Promis derive cryptographically independent keys — matches `outbe_tee::protocol::Ledger`.
+export type Ledger = "Gratis" | "Promis";
+
+// Per-ledger domain-separation labels — MUST match the Rust constants
+// (crates/system/tee/src/lib.rs + bin/outbe-tee-enclave/src/confidential.rs).
+// Note: the modify-key HKDF label ("…/modify-key/v1") differs from the MAC
+// preimage tag ("…/modify/v1"); only the latter appears here (the enclave applies
+// the former server-side when deriving the modify key).
+interface LedgerLabels {
+  deriveKeysTag: Uint8Array; // personal_sign domain for outbe_deriveKeys
+  nonceInfo: Uint8Array; // per-slot AEAD nonce HKDF info
+  modifyTag: Uint8Array; // modify-MAC preimage tag
+}
+const LEDGER_LABELS: Record<Ledger, LedgerLabels> = {
+  Gratis: {
+    deriveKeysTag: utf8("outbe/gratis/derive-keys/v1"),
+    nonceInfo: utf8("outbe/gratis/nonce/v1"),
+    modifyTag: utf8("outbe/gratis/modify/v1"),
+  },
+  Promis: {
+    deriveKeysTag: utf8("outbe/promis/derive-keys/v1"),
+    nonceInfo: utf8("outbe/promis/nonce/v1"),
+    modifyTag: utf8("outbe/promis/modify/v1"),
+  },
+};
+
 // Domain-separation labels — MUST match the Rust constants.
 const DKG_SHARE_INFO = utf8("outbe/tee/dkg-share/v1"); // crypto.rs
-const NONCE_INFO = utf8("outbe/gratis/nonce/v1"); // lib.rs GRATIS_NONCE_INFO
-const MODIFY_TAG = utf8("outbe/gratis/modify/v1"); // gratis.rs MODIFY_PREIMAGE_TAG
 const SPEND_BIND_TAG = utf8("outbe/gratis/credis-bind/v1"); // gratis.rs SPEND_BIND_TAG
 
 const FIELD_BALANCE = 0;
@@ -108,31 +139,33 @@ export interface GratisKeys {
 }
 
 /**
- * Fetch the signer's own enclave-derived view + modify keys via the
- * `outbe_deriveGratisKeys` RPC. The enclave seals them to a fresh client
- * ephemeral X25519 key (the `decrypt_share` scheme in `crypto.rs`).
+ * Fetch the signer's own enclave-derived view + modify keys for `ledger` via the
+ * unified `outbe_deriveKeys(ledger, …)` RPC. The enclave seals them to a fresh
+ * client ephemeral X25519 key (the `decrypt_share` scheme in `crypto.rs`).
  *
  * The RPC authenticates control of the account: we prove it with an EIP-191
- * `personal_sign` over `"outbe/gratis/derive-keys/v1" || account || ephemeralPubkey`
+ * `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey`
  * (recovered + matched server-side), so only the account's key holder can obtain
  * its keys.
  */
-export async function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
+export async function deriveKeys(signer: ethers.Wallet, ledger: Ledger): Promise<GratisKeys> {
   const provider = signer.provider as ethers.JsonRpcProvider | null;
-  if (!provider) throw new Error("deriveGratisKeys: signer must be connected to a JsonRpcProvider");
+  if (!provider) throw new Error("deriveKeys: signer must be connected to a JsonRpcProvider");
   const account = ethers.getAddress(await signer.getAddress());
+  const labels = LEDGER_LABELS[ledger];
 
   const ephSecret = x25519.utils.randomPrivateKey();
   const ephPublic = x25519.getPublicKey(ephSecret);
 
   // Ownership proof: personal_sign over the domain-tagged message (raw bytes).
   const message = ethers.getBytes(
-    ethers.concat([utf8("outbe/gratis/derive-keys/v1"), ethers.getBytes(account), ephPublic]),
+    ethers.concat([labels.deriveKeysTag, ethers.getBytes(account), ephPublic]),
   );
   const signature = await signer.signMessage(message);
 
   const resp: { sealed: string; nonce: string; enclaveEphemeralPubkey: string } =
-    await provider.send("outbe_deriveGratisKeys", [
+    await provider.send("outbe_deriveKeys", [
+      ledger,
       account,
       ethers.hexlify(ephPublic),
       signature,
@@ -147,35 +180,51 @@ export async function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKey
   const key = hkdf32(ephPublic, shared, DKG_SHARE_INFO);
   const plaintext = chachaDecrypt(key, nonce, sealed);
   if (plaintext.length !== 64) {
-    throw new Error(`deriveGratisKeys: expected 64 bytes (view||modify), got ${plaintext.length}`);
+    throw new Error(`deriveKeys: expected 64 bytes (view||modify), got ${plaintext.length}`);
   }
   return { viewKey: plaintext.slice(0, 32), modifyKey: plaintext.slice(32, 64) };
+}
+
+/** Backward-compatible alias for the Gratis ledger. */
+export function deriveGratisKeys(signer: ethers.Wallet): Promise<GratisKeys> {
+  return deriveKeys(signer, "Gratis");
 }
 
 // ---------------------------------------------------------------------------
 // Balance / pledged decryption (view key, client-side)
 // ---------------------------------------------------------------------------
 
-function decryptField(viewKey: Uint8Array, account: string, field: number, blobHex: string): bigint {
+function decryptField(
+  viewKey: Uint8Array,
+  account: string,
+  field: number,
+  blobHex: string,
+  ledger: Ledger,
+): bigint {
   const blob = ethers.getBytes(blobHex);
   if (blob.length === 0) return 0n; // fresh slot
   const version = blob.slice(0, 8); // version(8 BE)
   const ct = blob.slice(8);
   // slot nonce = HKDF(salt=view_key, ikm=account||field||version)[..12]
   const ikm = concat(addressBytes(account), Uint8Array.of(field), version);
-  const nonce = hkdf32(viewKey, ikm, NONCE_INFO).slice(0, 12);
+  const nonce = hkdf32(viewKey, ikm, LEDGER_LABELS[ledger].nonceInfo).slice(0, 12);
   const pt = chachaDecrypt(viewKey, nonce, ct);
   return bytesToBigIntBE(pt);
 }
 
 /** Decrypt an account's `balanceOf(...)` ciphertext blob into a bigint. */
-export function decryptBalance(viewKey: Uint8Array, account: string, blobHex: string): bigint {
-  return decryptField(viewKey, account, FIELD_BALANCE, blobHex);
+export function decryptBalance(
+  viewKey: Uint8Array,
+  account: string,
+  blobHex: string,
+  ledger: Ledger = "Gratis",
+): bigint {
+  return decryptField(viewKey, account, FIELD_BALANCE, blobHex, ledger);
 }
 
-/** Decrypt an account's `pledgedOf(...)` ciphertext blob into a bigint. */
+/** Decrypt a Gratis account's `pledgedOf(...)` ciphertext blob into a bigint. */
 export function decryptPledged(viewKey: Uint8Array, account: string, blobHex: string): bigint {
-  return decryptField(viewKey, account, FIELD_PLEDGED, blobHex);
+  return decryptField(viewKey, account, FIELD_PLEDGED, blobHex, "Gratis");
 }
 
 // ---------------------------------------------------------------------------
@@ -184,19 +233,21 @@ export function decryptPledged(viewKey: Uint8Array, account: string, blobHex: st
 
 /**
  * The modify-key MAC a write must carry:
- * `HMAC(modify_key, "modify/v1" || account || op || amount || opNonce || chainId)`.
- * `opNonce` MUST equal the account's current on-chain `op_nonce`.
+ * `HMAC(modify_key, "<ledger>/modify/v1" || account || op || amount || opNonce || chainId)`.
+ * `opNonce` MUST equal the account's current on-chain `op_nonce` for that ledger.
+ * `op` is the ledger op discriminant (`GratisOp` or `PromisOp`).
  */
 export function modifyMac(
   modifyKey: Uint8Array,
   account: string,
-  op: GratisOp,
+  op: GratisOp | PromisOp,
   amount: bigint,
   opNonce: bigint,
   chainId: bigint,
+  ledger: Ledger = "Gratis",
 ): string {
   const preimage = concat(
-    MODIFY_TAG,
+    LEDGER_LABELS[ledger].modifyTag,
     addressBytes(account),
     Uint8Array.of(op),
     be(amount, 32),
@@ -204,6 +255,20 @@ export function modifyMac(
     be(chainId, 32),
   );
   return ethers.hexlify(hmacSha256(modifyKey, preimage));
+}
+
+/**
+ * Find a proof-of-work nonce for an entity id (Gem / Nod), matching
+ * `outbe_common::pow`: SHA256(ascii(hex(id_be32)) || nonce_be8) must have
+ * `POW_DIFFICULTY` (= 1) leading zero bytes. Difficulty 1 needs ~256 tries.
+ */
+export function findPowNonce(id: bigint): bigint {
+  const idHex = utf8(id.toString(16).padStart(64, "0")); // ascii(hex(id_be32))
+  for (let n = 0n; n < 1_000_000n; n++) {
+    const hash = createHash("sha256").update(Buffer.from(concat(idHex, be(n, 8)))).digest();
+    if (hash[0] === 0) return n;
+  }
+  throw new Error("findPowNonce: no valid nonce found in 1e6 attempts");
 }
 
 /**

@@ -45,7 +45,11 @@ pub fn dispatch(
                 minePromis(c) => {
                     reject_value(&value)?;
                     mutate(c, caller, |sender, c| {
-                        runtime::mine_promis(&storage, c.seriesId, sender, c.amount, c.nonce)
+                        let auth = outbe_promisfactory::api::ModifyAuth {
+                            mac: c.mac.0,
+                            op_nonce: c.opNonce,
+                        };
+                        runtime::mine_promis(&storage, c.seriesId, sender, c.amount, c.nonce, auth)
                     })
                 }
                 setAuthorizedSettler(c) => {

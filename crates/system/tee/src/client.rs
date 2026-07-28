@@ -562,6 +562,29 @@ pub fn verify_gratis_op_attestation(
         .map_err(|e| TransportError::GratisOpAttestation(format!("signature invalid: {e}")))
 }
 
+/// Verify a Promis-op attestation tag — the [`verify_gratis_op_attestation`]
+/// analogue over [`crate::protocol::promis_op_attestation_preimage`]. Same
+/// verify-then-discard semantics; the tag proves the encrypted-balance transition
+/// was computed inside the attested enclave and is never persisted.
+pub fn verify_promis_op_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::PromisOpResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(attestation_pub)
+        .map_err(|e| TransportError::PromisOpAttestation(format!("bad attestation key: {e}")))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::PromisOpAttestation(format!("bad tag length {}", tag.len()))
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    let preimage = crate::protocol::promis_op_attestation_preimage(inputs_canonical_hash, result);
+    vk.verify_strict(&preimage, &sig)
+        .map_err(|e| TransportError::PromisOpAttestation(format!("signature invalid: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

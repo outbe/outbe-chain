@@ -7750,6 +7750,8 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultprovider",
  "thiserror 2.0.18",
 ]
@@ -8209,6 +8211,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -8219,6 +8223,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
