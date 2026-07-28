@@ -116,7 +116,6 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub orphan_recovery: Option<OcompOrphanRecoveryObservationV1>,
     pub empty_compatibility_verified: Option<bool>,
-    pub zero_limit_compatibility_verified: Option<bool>,
     pub duplicate_exclusion_verified: Option<bool>,
     pub restart_replay_verified: Option<bool>,
 }
@@ -220,7 +219,6 @@ pub struct FixtureState {
     pub ocomp_tentative_candidate: Option<OcompTentativeCandidateObservationV1>,
     pub ocomp_orphan_recovery_observation: Option<OcompOrphanRecoveryObservationV1>,
     pub ocomp_empty_compatibility_verified: Option<bool>,
-    pub ocomp_zero_limit_compatibility_verified: Option<bool>,
     pub ocomp_duplicate_exclusion_verified: Option<bool>,
     pub ocomp_restart_replay_verified: Option<bool>,
 
@@ -317,7 +315,6 @@ impl Default for FixtureState {
             ocomp_tentative_candidate: None,
             ocomp_orphan_recovery_observation: None,
             ocomp_empty_compatibility_verified: None,
-            ocomp_zero_limit_compatibility_verified: None,
             ocomp_duplicate_exclusion_verified: None,
             ocomp_restart_replay_verified: None,
             l2_bls_private_hex: None,
@@ -379,7 +376,6 @@ impl FixtureState {
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             orphan_recovery: self.ocomp_orphan_recovery_observation.clone(),
             empty_compatibility_verified: self.ocomp_empty_compatibility_verified,
-            zero_limit_compatibility_verified: self.ocomp_zero_limit_compatibility_verified,
             duplicate_exclusion_verified: self.ocomp_duplicate_exclusion_verified,
             restart_replay_verified: self.ocomp_restart_replay_verified,
         }

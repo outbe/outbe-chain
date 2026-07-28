@@ -82,6 +82,12 @@ At most one selected READY day is processed per command today:
 | expiry/conflict with retry | keep Lysis budget and prior brief; create no duplicate effect | READY |
 | terminal no-retry outcome | credit full `lysis_budget` once | FAILED |
 
+The zero-limit and `UNKNOWN` rows are defensive state-integrity guards, not
+states produced by the current production lifecycle. Cycle forms the day limit
+before Metadosis runs, and the transition out of `FORMING` resolves the day type
+to `GREEN` or `RED`. Tests may cover those guards at the Metadosis module seam,
+but an end-to-end fixture must not manufacture either impossible READY state.
+
 Metadosis owns the day transition and frozen request values. ADR-S-OCM-004 owns
 job evidence/vote/quorum-apply ordering. Metadosis does not own Lysis allocation
 mathematics, Promis ledger rules or Tribute/Nod storage.

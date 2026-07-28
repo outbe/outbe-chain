@@ -1748,7 +1748,7 @@ version matrices remain BoundedMVP work under parent section 15.
 | POC-23 | CORE | tentative pin | pin is durable before vote/prune; one orphan releases it and cannot be signed |
 | POC-24 | CORE | version isolation | one incompatible node/supervisor handshake refuses OCOMP while blocks continue |
 | POC-25 | DEMO | active generation authority | finalized state and replay select the same `ActiveGenerationV1`, independent of supervisor storage |
-| POC-26 | COMPAT | fork boundary | pre-fork, active-PoC, empty and ineligible WWD cases follow their parent-defined paths |
+| POC-26 | COMPAT | fork boundary | pre-fork, active-PoC and reachable empty-WWD cases follow their parent-defined paths |
 
 ## 15. Implementation surfaces to plan
 

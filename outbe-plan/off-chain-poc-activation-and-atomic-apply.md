@@ -272,16 +272,19 @@ canonical due key, but it cannot call the legacy non-empty
 `process_metadosis -> lysis` branch. The terminal OCOMP system phase owns the
 one bounded inspection.
 
-The terminal phase handles four cases:
+The terminal phase handles three production cases:
 
 1. empty day: the existing direct empty compatibility result;
-2. zero limit, unknown day type or other legacy-ineligible case: its frozen
-   compatibility branch;
-3. eligible non-empty but unknown/over-limit/unapplicable: typed `Deferred`
+2. eligible non-empty but unknown/over-limit/unapplicable: typed `Deferred`
    and reinsertion at the fixed next height;
-4. eligible bounded non-empty: atomic split/effect/intent transition.
+3. eligible bounded non-empty: atomic split/effect/intent transition.
 
-Only case 4 creates OCOMP state. No branch invokes Lysis.
+The zero-limit and `UNKNOWN` guards remain defensive Metadosis state-integrity
+branches. The production Cycle forms the day limit before Metadosis, and a WWD
+leaving `FORMING` resolves to `GREEN` or `RED`; therefore PoC E2E fixtures must
+not inject either impossible READY state.
+
+Only case 3 creates OCOMP state. No branch invokes Lysis.
 
 ### 5.2 O(1) authenticated pre-admission
 

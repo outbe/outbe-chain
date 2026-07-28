@@ -52,22 +52,17 @@ const OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, None, false);
+    start_ocomp_measurement_localnet(world, None);
 }
 
 #[given("a fresh four-validator OCOMP public measurement localnet")]
 fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), false);
+    start_ocomp_measurement_localnet(world, Some(0));
 }
 
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), false);
-}
-
-#[given("a fresh four-validator OCOMP zero-limit compatibility localnet")]
-fn fresh_ocomp_zero_limit_compatibility_localnet(world: &mut World) {
-    start_ocomp_measurement_localnet(world, Some(0), true);
+    start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
 }
 
 #[given("the canonical four-validator OCOMP Final devnet")]
@@ -139,12 +134,7 @@ fn start_canonical_ocomp_final_devnet(
 fn start_ocomp_measurement_localnet(
     world: &mut World,
     public_capacity_tribute_count: Option<usize>,
-    zero_day_limit: bool,
 ) {
-    assert!(
-        !zero_day_limit || public_capacity_tribute_count == Some(0),
-        "zero-limit compatibility uses the one-Tribute public fixture"
-    );
     let shorten_public_day = public_capacity_tribute_count.is_some();
     bootstrap_localnet(world, 6, &[]);
     let mut start_opts = if shorten_public_day {
@@ -171,10 +161,6 @@ fn start_ocomp_measurement_localnet(
         StartOpts::default()
     };
     let measurement_fork = match public_capacity_tribute_count {
-        Some(0) if zero_day_limit => world
-            .ocomp
-            .prepare_zero_limit_public_measurement_fork_install()
-            .expect("publish the immutable zero-limit compatibility fork before node launch"),
         Some(0) => world
             .ocomp
             .prepare_public_measurement_fork_install()
@@ -1914,75 +1900,6 @@ fn empty_tribute_day_uses_terminal_compatibility(world: &mut World) {
         );
     }
     world.state.ocomp_empty_compatibility_verified = Some(true);
-}
-
-#[then("the zero-limit day fails without a JobIntent, auction brief, Tribute retirement or Nod")]
-fn zero_limit_day_uses_failed_compatibility_branch(world: &mut World) {
-    let worldwide_day = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("zero-limit WorldwideDay")
-        .parse::<u32>()
-        .expect("numeric zero-limit WorldwideDay");
-    let ports = world.validators.committee_ports();
-    let timeout = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
-    let finalized_heights = loop {
-        let statuses = ports
-            .iter()
-            .copied()
-            .map(|port| world.rpc.wwd_status(port, &worldwide_day.to_string()))
-            .collect::<Vec<_>>();
-        let finalized = ports
-            .iter()
-            .copied()
-            .map(|port| world.rpc.finalized(port))
-            .collect::<Vec<_>>();
-        if statuses.iter().all(|status| status.as_deref() == Some("7"))
-            && finalized.iter().all(Option::is_some)
-        {
-            break finalized
-                .into_iter()
-                .map(|height| height.expect("checked above"))
-                .collect::<Vec<_>>();
-        }
-        assert!(
-            Instant::now() < timeout,
-            "zero-limit day did not reach the pinned FAILED branch: statuses={statuses:?}, \
-             finalized={finalized:?}"
-        );
-        sleep(Duration::from_millis(250));
-    };
-
-    for (port, finalized_height) in ports.into_iter().zip(finalized_heights) {
-        assert!(
-            world
-                .rpc
-                .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
-                .is_none(),
-            "zero-limit day created a JobIntent on port {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .desis_auction_stage_on(port, worldwide_day, finalized_height),
-            Some(0),
-            "zero-limit day created an auction brief on port {port}"
-        );
-        assert_eq!(
-            world.rpc.supply(port).as_deref(),
-            Some("1"),
-            "zero-limit day retired or changed Tribute supply on port {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .nod_certified_generation_exists_on(port, worldwide_day, finalized_height,),
-            Some(false),
-            "zero-limit day created a Nod generation on port {port}"
-        );
-    }
-    world.state.ocomp_zero_limit_compatibility_verified = Some(true);
 }
 
 #[then("the certified Lysis generation contains only the original Tribute")]

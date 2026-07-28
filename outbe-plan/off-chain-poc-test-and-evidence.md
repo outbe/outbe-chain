@@ -206,7 +206,6 @@ IDs so a single happy-path receipt cannot imply all four claims.
 |---|---|
 | `OCM-E2E-001` | exact thirteen-step populated-day story beginning with the existing public encrypted-Tribute projection/CE path, including heterogeneous input, one stopped supervisor, q=3, 1/2/4 workers, mutations, sign-once, delay comparison, q<3 expiry and public output |
 | `OCM-E2E-002` | empty Tribute compatibility branch with compute plane stopped |
-| `OCM-E2E-003` | zero-limit/ineligible compatibility branch |
 | `OCM-E2E-004` | duplicate owner/day public admission rejection and later manifest absence |
 | `OCM-E2E-005` | tentative request reorg/orphan on a finalizing four-node network |
 | `OCM-E2E-006` | public q-forming full-result vote with a named owner failpoint: third slot and all owner effects roll back on unexpected failure, followed by successful exact retry and complete four-node state equality |
@@ -509,10 +508,9 @@ ledger. In summary:
 - `PFS-002-22..24` cover version refusal, generation replay and forbidden-call
   trace.
 
-Pre-fork, fork activation and post-fork blocks are all executed. Empty,
-zero-limit and other ineligible compatibility branches use their pinned direct
-behavior and do not create an OCOMP job. The populated active-fork branch has no
-synchronous fallback.
+Pre-fork, fork activation and post-fork blocks are all executed. The reachable
+empty compatibility branch uses its pinned direct behavior and does not create
+an OCOMP job. The populated active-fork branch has no synchronous fallback.
 
 ## 9. Implementation ownership for the later task graph
 

@@ -21,16 +21,6 @@ Feature: Off-chain computation PoC closure
     Then the empty Tribute day completes without a JobIntent or Nod and records its direct remainder
     And no validator projects a tribute
 
-  @ocomp-e2e @ocomp-e2e-003
-  # OCOMP-TEST-ID: OCM-E2E-003
-  Scenario: A populated zero-limit day remains on the pinned compatibility branch
-    Given a fresh four-validator OCOMP zero-limit compatibility localnet
-    When an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then the zero-limit day fails without a JobIntent, auction brief, Tribute retirement or Nod
-    And every validator serves the same independently verified compressed tribute
-
   @ocomp-e2e @ocomp-e2e-004
   # OCOMP-TEST-ID: OCM-E2E-004
   Scenario: A rejected duplicate Tribute never enters the later Lysis generation

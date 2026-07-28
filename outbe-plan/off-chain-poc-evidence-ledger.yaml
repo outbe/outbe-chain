@@ -823,22 +823,6 @@ tests:
       - FINALIZED_PUBLIC_STATE
     evidence:
       - no_job_no_nod_and_direct_remainder
-  OCM-E2E-003:
-    status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: zero-limit and ineligible compatibility branches
-    real_components:
-      - four_nodes
-      - public_rpc
-      - production_metadosis
-    substitutions: []
-    oracles:
-      - FINALIZED_PUBLIC_STATE
-      - PUBLIC_TX_RECEIPT
-    evidence:
-      - failed_no_brief_no_tribute_nod_mutation
   OCM-E2E-004:
     status: planned
     layer: E2E
@@ -1003,7 +987,6 @@ task_ownership:
   OCM-27:
     - OCM-E2E-001
     - OCM-E2E-002
-    - OCM-E2E-003
     - OCM-E2E-004
     - OCM-E2E-005
     - OCM-E2E-006
@@ -1275,7 +1258,7 @@ requirements:
     POC-23: [OCM-PIN-001, OCM-E2E-005]
     POC-24: [OCM-CTL-001, OCM-E2E-007]
     POC-25: [OCM-PUB-004, OCM-E2E-008]
-    POC-26: [OCM-BYT-002, OCM-E2E-002, OCM-E2E-003, OCM-E2E-004]
+    POC-26: [OCM-BYT-002, OCM-E2E-002, OCM-E2E-004]
 
   pfs:
     PFS-002-01:
@@ -1284,9 +1267,6 @@ requirements:
     PFS-002-02:
       status: required
       tests: [OCM-E2E-002]
-    PFS-002-03:
-      status: required
-      tests: [OCM-E2E-003]
     PFS-002-04:
       status: required
       tests: [OCM-EXP-001, OCM-E2E-001]

@@ -15,10 +15,9 @@ const PUBLIC_SCENARIO_TAGS: [&str; 4] = [
     "@ocomp-public-mutation",
 ];
 
-const E2E_SCENARIO_TAGS: [&str; 9] = [
+const E2E_SCENARIO_TAGS: [&str; 8] = [
     "@ocomp-e2e-001",
     "@ocomp-e2e-002",
-    "@ocomp-e2e-003",
     "@ocomp-e2e-004",
     "@ocomp-e2e-005",
     "@ocomp-e2e-006",
@@ -2702,13 +2701,12 @@ mod tests {
     }
 
     #[test]
-    fn e2e_lane_is_nine_closed_single_scenario_runs() {
+    fn e2e_lane_is_eight_closed_single_scenario_runs() {
         assert_eq!(
             E2E_SCENARIO_TAGS,
             [
                 "@ocomp-e2e-001",
                 "@ocomp-e2e-002",
-                "@ocomp-e2e-003",
                 "@ocomp-e2e-004",
                 "@ocomp-e2e-005",
                 "@ocomp-e2e-006",

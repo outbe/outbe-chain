@@ -51,7 +51,7 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-const E2E_SCENARIOS: [(&str, &str, &str); 9] = [
+const E2E_SCENARIOS: [(&str, &str, &str); 8] = [
     (
         "OCM-E2E-001",
         "Final public Tribute flows through four independent domains to certified Nod",
@@ -60,11 +60,6 @@ const E2E_SCENARIOS: [(&str, &str, &str); 9] = [
     (
         "OCM-E2E-002",
         "An empty Tribute day uses the terminal compatibility branch",
-        "FINALIZED_PUBLIC_STATE",
-    ),
-    (
-        "OCM-E2E-003",
-        "A populated zero-limit day remains on the pinned compatibility branch",
         "FINALIZED_PUBLIC_STATE",
     ),
     (
@@ -749,15 +744,6 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
                         .get("certified_generation")
                         .is_some_and(Value::is_null),
                 "empty-day scenario did not prove the direct compatibility branch"
-            );
-            Ok(())
-        }
-        "OCM-E2E-003" => {
-            ensure!(
-                bool_field(public, "zero_limit_compatibility_verified")?
-                    && public.get("job_request").is_some_and(Value::is_null)
-                    && public.get("activation").is_some_and(Value::is_null),
-                "zero-limit scenario created OCOMP authority or lacks its negative proof"
             );
             Ok(())
         }

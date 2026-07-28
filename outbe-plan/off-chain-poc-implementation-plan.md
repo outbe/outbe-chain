@@ -324,7 +324,7 @@ Parallelizable groups:
 | `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all public/E2E IDs |
 | `OCM-25` | public fork/vote/quorum-apply measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-001/002/003/004` |
 | `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001` |
-| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001..008`, `OCM-ISO-001`, `OCM-TRC-001` |
+| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/002/004..008`, `OCM-ISO-001`, `OCM-TRC-001` |
 
 ## 6. Detailed task cards
 
@@ -1988,7 +1988,7 @@ production release gate, TargetLarge or second program.
 
 **Test first/owned IDs:**
 
-- `OCM-E2E-001..008`;
+- `OCM-E2E-001/002/004..008`;
 - `OCM-ISO-001`;
 - `OCM-TRC-001`;
 - rerun every mandatory fast/integration/public ID on exact final artifacts.

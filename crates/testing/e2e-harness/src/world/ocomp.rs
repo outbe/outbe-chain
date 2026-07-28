@@ -863,7 +863,7 @@ impl OcompTopology {
     /// `genesis.config` does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(None, &[], false)
+        self.prepare_measurement_fork_install_inner(None, &[])
     }
 
     /// Prepare the same immutable measurement fork plus a short, pre-start
@@ -875,21 +875,6 @@ impl OcompTopology {
         self.prepare_measurement_fork_install_inner(
             Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
             &[],
-            false,
-        )
-    }
-
-    /// Prepare the real zero-limit compatibility fixture before genesis is
-    /// hashed. Runtime state, requests and results remain reachable only through
-    /// the ordinary four-node block lifecycle and public RPC.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn prepare_zero_limit_public_measurement_fork_install(
-        &self,
-    ) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(
-            Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
-            &[],
-            true,
         )
     }
 
@@ -910,7 +895,6 @@ impl OcompTopology {
         let prepared = self.prepare_measurement_fork_install_inner(
             Some(OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS),
             &private_keys,
-            false,
         )?;
         Ok((prepared, private_keys))
     }
@@ -986,27 +970,19 @@ impl OcompTopology {
         &self,
         public_offering_after_genesis_secs: Option<u64>,
         capacity_tribute_private_keys: &[String],
-        zero_day_limit: bool,
     ) -> Result<OcompMeasurementForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
         let chain_id = genesis_chain_id(&genesis)?;
         let capacity_accounts_changed =
             fund_capacity_tribute_accounts(&mut genesis, capacity_tribute_private_keys)?;
-        let public_day_changed =
-            if let Some(offering_after_genesis_secs) = public_offering_after_genesis_secs {
-                schedule_public_measurement_day(
-                    &mut genesis,
-                    chain_id,
-                    offering_after_genesis_secs,
-                    zero_day_limit,
-                )?
-            } else {
-                if zero_day_limit {
-                    eyre::bail!("zero-limit OCOMP fixture requires a scheduled public day");
-                }
-                false
-            };
+        let public_day_changed = if let Some(offering_after_genesis_secs) =
+            public_offering_after_genesis_secs
+        {
+            schedule_public_measurement_day(&mut genesis, chain_id, offering_after_genesis_secs)?
+        } else {
+            false
+        };
         let update_changed = schedule_protocol_v1_update(
             &mut genesis,
             chain_id,
@@ -2836,7 +2812,6 @@ fn schedule_public_measurement_day(
     genesis: &mut serde_json::Value,
     chain_id: u64,
     offering_after_genesis_secs: u64,
-    zero_day_limit: bool,
 ) -> Result<bool> {
     if offering_after_genesis_secs == 0 {
         eyre::bail!("OCOMP public measurement offering duration must be non-zero");
@@ -2890,15 +2865,9 @@ fn schedule_public_measurement_day(
         }
         let previous_offering_end = day.offering_end().read()?;
         let previous_scheduled = day.scheduled_process_time().read()?;
-        let previous_day_limit = day.metadosis_limit_amount().read()?;
         day.offering_end().write(offering_end)?;
         day.scheduled_process_time().write(offering_end)?;
-        if zero_day_limit {
-            day.metadosis_limit_amount().write(U256::ZERO)?;
-        }
-        Ok(previous_offering_end != offering_end
-            || previous_scheduled != offering_end
-            || (zero_day_limit && !previous_day_limit.is_zero()))
+        Ok(previous_offering_end != offering_end || previous_scheduled != offering_end)
     })?;
 
     if !changed {
