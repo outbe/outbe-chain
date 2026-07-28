@@ -84,14 +84,15 @@ impl BlockLifecycle for CompressedEntitiesLifecycle {
             state.write_root(new_root)?;
             state.cleanup()
         })?;
-        // Close every precompile capability only after the complete root and
-        // overlay cleanup change set succeeds.
-        ctx.scope.finish()?;
-        Ok(SealOutput {
+        let output = SealOutput {
             parent_root,
             new_root,
             staged_tree_batch,
-        })
+        };
+        // Close every precompile capability only after the complete root and
+        // overlay cleanup change set succeeds.
+        ctx.scope.finish_with_seal(&output)?;
+        Ok(output)
     }
 }
 

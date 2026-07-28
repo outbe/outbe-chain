@@ -79,11 +79,26 @@ The current workspace contains 57 Cargo packages.
 | `outbe-zkproof` | `crates/system/zkproof` | ADR-S-ZKP-001 and ADR-S-ZKP-002 | Verifier/hash profile |
 | `outbe-offchain-data` | `crates/system/offchain-data` | ADR-B-OCD-003 through ADR-B-OCD-005 | Projection/runtime readers; Blockchain responsibility |
 | `outbe-e2e` | `crates/core/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
-| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001 and PFS-006 | Process/localnet/Mongo evidence harness |
+| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 | Process/localnet/Mongo evidence harness; OCOMP PFS-002 remains a Gap |
 
 `crates/blockchain/primitives/fuzz/Cargo.toml` is deliberately outside the workspace;
 its fuzz targets are verification evidence for ADR-B-WIR-001 and ADR-B-EVM-003 and must be run by
 an explicit CI job rather than silently counted among the 58 packages.
+
+### Planned OCOMP PoC surfaces
+
+These surfaces are required by ADR-S-OCM-001 through ADR-S-OCM-004 and PFS-002,
+but do not yet exist in the workspace. Listing them here records a coverage Gap,
+not a package or implementation claim.
+
+| Planned surface | Owning ADR(s) | Required boundary |
+|---|---|---|
+| OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate, full-result votes and typed quorum apply |
+| standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003 | cursor, planner, scheduler, reducer and journal; no key/writer |
+| standalone snapshot exporter | ADR-S-OCM-001, ADR-S-OCM-002 | opaque finalized read lease to authenticated CAS manifest |
+| standalone worker | ADR-S-OCM-001, ADR-S-OCM-003 | one immutable `UnitId`, sandboxed and retryable |
+| validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004 | submit its own signed full result through the restricted ZeroFee seam; no relay or public activator |
+| OCOMP local stores | ADR-S-OCM-002 through ADR-S-OCM-004 | pin/export/CAS/supervisor/sign-once journals with separate authority |
 
 ### Executable target and command registry
 
@@ -96,7 +111,7 @@ an explicit CI job rather than silently counted among the 58 packages.
 | `outbe-feeder` | external provider polling/aggregation and Oracle delivery | ADR-S-ORC-002 |
 | `outbe-tee-enclave` | production enclave transport/service | ADR-S-TEE-001 and ADR-S-KEY-001 |
 | `outbe-tee-enclave-mock` | explicitly non-production enclave test service | ADR-S-TEE-001 and ADR-B-TST-001 |
-| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001 and PFS-006 |
+| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 |
 
 Every command that signs, deletes, imports, resets or publishes state is an operator
 mutation even when it bypasses EVM transactions. In particular DKG `force-restart` and

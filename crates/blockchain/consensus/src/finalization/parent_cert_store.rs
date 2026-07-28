@@ -630,6 +630,43 @@ impl FinalizedParentCertStore {
         self.lock_read().finalization.get(&key).cloned()
     }
 
+    /// Return every persisted finalization record for one exact block identity.
+    ///
+    /// OCOMP proof construction accepts exactly one record and treats zero or
+    /// multiple records as local abstention. Returning the complete,
+    /// deterministically ordered set keeps that policy outside the consensus
+    /// store and prevents this adapter from silently choosing among proofs.
+    pub fn finalizations_for_block(
+        &self,
+        block_number: u64,
+        block_hash: B256,
+    ) -> Vec<CertifiedParentProofRecord> {
+        self.lock_read()
+            .finalization
+            .values()
+            .filter(|record| {
+                record.finalized_block_hash == block_hash
+                    && record.finalized_block_number() == Some(block_number)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Return every persisted finalization record at one block height.
+    ///
+    /// Retention restart reconciliation uses this complete set to distinguish
+    /// an exact finalized candidate from a proven competing canonical block.
+    /// The caller must treat an empty or internally ambiguous set as
+    /// unavailable; this store never guesses a winner.
+    pub fn finalizations_at_height(&self, block_number: u64) -> Vec<CertifiedParentProofRecord> {
+        self.lock_read()
+            .finalization
+            .values()
+            .filter(|record| record.finalized_block_number() == Some(block_number))
+            .cloned()
+            .collect()
+    }
+
     pub fn get_certified_notarization(
         &self,
         key: CertifiedParentProofKey,

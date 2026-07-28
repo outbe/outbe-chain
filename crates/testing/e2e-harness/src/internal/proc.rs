@@ -59,12 +59,17 @@ impl ChildGuard {
     pub(crate) fn pid(&self) -> u32 {
         self.child.id()
     }
+
+    /// Stop and synchronously reap this owned process. Idempotent after exit.
+    pub(crate) fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl Drop for ChildGuard {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.stop();
     }
 }
 
@@ -117,9 +122,8 @@ pub(crate) struct EnclaveSpec {
     /// the Gramine test image. Reused across restarts to preserve MRSIGNER.
     pub signing_key: PathBuf,
     pub sudo: bool,
-    /// Mock enclave (`gramine-direct`) — when false, real SGX device passthrough
-    /// is attempted if the host exposes the device nodes.
-    pub mock: bool,
+    /// Pass real SGX device nodes through when the host exposes them.
+    pub pass_sgx_devices: bool,
     /// `--dkg-seed <hex>` for the container, or `None` (real+seal self-generates).
     pub dkg_seed: Option<String>,
     pub seal: Option<SealSpec>,
@@ -214,9 +218,15 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
         "host",
     ]);
 
-    // Real SGX: pass through the device nodes when present (mock stays emulated).
-    if !spec.mock && Path::new("/dev/sgx_enclave").exists() {
-        cmd.args(["--device", "/dev/sgx_enclave"]);
+    // Real SGX: fail closed when no enclave device exists. The test image has a
+    // deliberate gramine-direct fallback, so silently omitting the device here
+    // would record a false hardware-mode observation.
+    if let Some(enclave_device) = select_sgx_enclave_device(
+        spec.pass_sgx_devices,
+        Path::new("/dev/sgx_enclave").exists(),
+        Path::new("/dev/sgx/enclave").exists(),
+    )? {
+        cmd.args(["--device", enclave_device]);
         if Path::new("/dev/sgx_provision").exists() {
             cmd.args(["--device", "/dev/sgx_provision"]);
         }
@@ -294,6 +304,23 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
         child,
         docker: DockerGuard::new(spec.name, spec.sudo),
     })
+}
+
+fn select_sgx_enclave_device(
+    pass_sgx_devices: bool,
+    legacy_exists: bool,
+    modern_exists: bool,
+) -> Result<Option<&'static str>> {
+    if !pass_sgx_devices {
+        return Ok(None);
+    }
+    if legacy_exists {
+        return Ok(Some("/dev/sgx_enclave"));
+    }
+    if modern_exists {
+        return Ok(Some("/dev/sgx/enclave"));
+    }
+    bail!("real SGX mode requires /dev/sgx_enclave or /dev/sgx/enclave")
 }
 
 /// A `Command` for `program`, `sudo`-wrapped when requested.
@@ -422,6 +449,16 @@ mod tests {
         assert_eq!(
             a,
             vec!["node", "--http.port", "8545", "--datadir", "/tmp/x/data"]
+        );
+    }
+
+    #[test]
+    fn real_mode_fails_closed_without_an_sgx_enclave_device() {
+        assert!(select_sgx_enclave_device(true, false, false).is_err());
+        assert_eq!(
+            select_sgx_enclave_device(false, true, true).unwrap(),
+            None,
+            "gramine-direct must not inherit host SGX devices"
         );
     }
 

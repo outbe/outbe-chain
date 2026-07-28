@@ -395,6 +395,118 @@ fn require_finalized_checkpoint(
     Ok(local_finalized)
 }
 
+/// OCOMP-specific interpretation of a durable Mongo projection checkpoint.
+///
+/// Unlike execution readiness, a projection may be ahead of the finalized job
+/// height because Mongo is transport, not authority. Both the projection
+/// checkpoint and the requested job identity are still checked against local
+/// finalized canonical Reth history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OcompProjectionContainment {
+    Behind {
+        checkpoint: ProjectionCheckpoint,
+        required: ProjectionCheckpoint,
+    },
+    Contains {
+        checkpoint: ProjectionCheckpoint,
+        required: ProjectionCheckpoint,
+    },
+}
+
+pub fn ocomp_projection_contains<P>(
+    checkpoint: ProjectionCheckpoint,
+    required: ProjectionCheckpoint,
+    canonical: &P,
+) -> eyre::Result<OcompProjectionContainment>
+where
+    P: BlockHashReader + BlockIdReader,
+{
+    let finalized = canonical
+        .finalized_block_num_hash()
+        .wrap_err("read local Reth finality for OCOMP projection containment")?
+        .map(|block| FinalizedTarget::new(block.number, block.hash))
+        .ok_or_else(|| eyre::eyre!("OCOMP projection containment has no local finalized block"))?;
+    let checkpoint_hash = canonical
+        .block_hash(checkpoint.block_number)
+        .wrap_err("read canonical hash for OCOMP projection checkpoint")?;
+    let required_hash = canonical
+        .block_hash(required.block_number)
+        .wrap_err("read canonical hash for OCOMP finalized job")?;
+    evaluate_ocomp_projection_containment(
+        checkpoint,
+        required,
+        finalized,
+        checkpoint_hash,
+        required_hash,
+    )
+}
+
+fn evaluate_ocomp_projection_containment(
+    checkpoint: ProjectionCheckpoint,
+    required: ProjectionCheckpoint,
+    finalized: FinalizedTarget,
+    checkpoint_canonical_hash: Option<B256>,
+    required_canonical_hash: Option<B256>,
+) -> eyre::Result<OcompProjectionContainment> {
+    if checkpoint.block_number > finalized.number {
+        bail!(
+            "OCOMP Mongo checkpoint {} ({}) is not finalized; local finality is {} ({})",
+            checkpoint.block_number,
+            checkpoint.block_hash,
+            finalized.number,
+            finalized.hash
+        );
+    }
+    if required.block_number > finalized.number {
+        bail!(
+            "OCOMP job checkpoint {} ({}) is not finalized; local finality is {} ({})",
+            required.block_number,
+            required.block_hash,
+            finalized.number,
+            finalized.hash
+        );
+    }
+    match checkpoint_canonical_hash {
+        Some(hash) if hash == checkpoint.block_hash => {}
+        Some(hash) => bail!(
+            "OCOMP Mongo checkpoint hash conflict at {}: stored {}, canonical {}",
+            checkpoint.block_number,
+            checkpoint.block_hash,
+            hash
+        ),
+        None => bail!(
+            "OCOMP Mongo checkpoint {} ({}) is unavailable in local canonical history",
+            checkpoint.block_number,
+            checkpoint.block_hash
+        ),
+    }
+    match required_canonical_hash {
+        Some(hash) if hash == required.block_hash => {}
+        Some(hash) => bail!(
+            "OCOMP finalized job hash conflict at {}: requested {}, canonical {}",
+            required.block_number,
+            required.block_hash,
+            hash
+        ),
+        None => bail!(
+            "OCOMP finalized job {} ({}) is unavailable in local canonical history",
+            required.block_number,
+            required.block_hash
+        ),
+    }
+    if checkpoint.block_number < required.block_number {
+        Ok(OcompProjectionContainment::Behind {
+            checkpoint,
+            required,
+        })
+    } else {
+        Ok(OcompProjectionContainment::Contains {
+            checkpoint,
+            required,
+        })
+    }
+}
+
 struct ProjectionRuntime {
     projector: OffchainDataProjection,
     readiness_publisher: ProjectionReadinessPublisher,
@@ -1357,10 +1469,12 @@ mod tests {
     };
 
     use super::{
-        prepare_offchain_data_projection, project_through_target, projection_failure_class,
-        record_finalized_target, record_or_publish_finalized_target, require_finalized_checkpoint,
-        run_projection_loop, spawn_detached_projection_work, supervise_projection_future,
-        FinalizedTarget, OffchainDataProjectionConfig, ProjectionRuntime, MONGO_RECONNECT_DEADLINE,
+        evaluate_ocomp_projection_containment, prepare_offchain_data_projection,
+        project_through_target, projection_failure_class, record_finalized_target,
+        record_or_publish_finalized_target, require_finalized_checkpoint, run_projection_loop,
+        spawn_detached_projection_work, supervise_projection_future, FinalizedTarget,
+        OcompProjectionContainment, OffchainDataProjectionConfig, ProjectionRuntime,
+        MONGO_RECONNECT_DEADLINE,
     };
     use alloy_consensus::Header;
     use alloy_primitives::B256;
@@ -1374,7 +1488,113 @@ mod tests {
     use reth_ethereum::{exex::ExExEvent, Block};
     use reth_provider::test_utils::MockEthProvider;
 
-    use outbe_primitives::projection::{projection_readiness, ProjectionCheckpoint};
+    use outbe_primitives::projection::{
+        projection_readiness, ProjectionCheckpoint, ProjectionStatus, WaitOutcome,
+    };
+
+    fn checkpoint(number: u64, byte: u8) -> ProjectionCheckpoint {
+        ProjectionCheckpoint {
+            block_number: number,
+            block_hash: B256::repeat_byte(byte),
+        }
+    }
+
+    #[test]
+    fn ocomp_projection_containment_accepts_exact_and_ahead_but_reports_behind() {
+        let required = checkpoint(10, 0x10);
+        let finalized = FinalizedTarget::new(20, B256::repeat_byte(0x20));
+
+        let behind = checkpoint(9, 0x09);
+        assert_eq!(
+            evaluate_ocomp_projection_containment(
+                behind,
+                required,
+                finalized,
+                Some(behind.block_hash),
+                Some(required.block_hash),
+            )
+            .unwrap(),
+            OcompProjectionContainment::Behind {
+                checkpoint: behind,
+                required,
+            }
+        );
+
+        for contained in [required, checkpoint(15, 0x15)] {
+            assert_eq!(
+                evaluate_ocomp_projection_containment(
+                    contained,
+                    required,
+                    finalized,
+                    Some(contained.block_hash),
+                    Some(required.block_hash),
+                )
+                .unwrap(),
+                OcompProjectionContainment::Contains {
+                    checkpoint: contained,
+                    required,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn ocomp_projection_containment_rejects_unfinalized_or_conflicting_history() {
+        let required = checkpoint(10, 0x10);
+        let projection = checkpoint(15, 0x15);
+        let finalized = FinalizedTarget::new(20, B256::repeat_byte(0x20));
+
+        assert!(evaluate_ocomp_projection_containment(
+            projection,
+            required,
+            finalized,
+            Some(B256::repeat_byte(0xEE)),
+            Some(required.block_hash),
+        )
+        .is_err());
+        assert!(evaluate_ocomp_projection_containment(
+            projection,
+            required,
+            finalized,
+            Some(projection.block_hash),
+            Some(B256::repeat_byte(0xEE)),
+        )
+        .is_err());
+        assert!(evaluate_ocomp_projection_containment(
+            checkpoint(21, 0x21),
+            required,
+            finalized,
+            Some(B256::repeat_byte(0x21)),
+            Some(required.block_hash),
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn ocomp_ahead_containment_does_not_change_execution_readiness_semantics() {
+        let required = checkpoint(10, 0x10);
+        let ahead = checkpoint(15, 0x15);
+        let (_publisher, readiness) = projection_readiness(
+            checkpoint(0, 0x01),
+            ProjectionStatus::Ready { checkpoint: ahead },
+        );
+
+        assert_eq!(
+            readiness.wait_for(required, std::future::pending()).await,
+            WaitOutcome::ProjectionAhead
+        );
+        assert!(matches!(
+            evaluate_ocomp_projection_containment(
+                ahead,
+                required,
+                FinalizedTarget::new(20, B256::repeat_byte(0x20)),
+                Some(ahead.block_hash),
+                Some(required.block_hash),
+            )
+            .unwrap(),
+            OcompProjectionContainment::Contains { .. }
+        ));
+    }
 
     #[test]
     fn finalized_targets_coalesce_to_the_latest_height() {

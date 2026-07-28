@@ -1,4 +1,4 @@
-@tee @min-validators-4
+@tee @gramine-direct @min-validators-4
 Feature: Encrypted tribute projection
   @pfs-001-01
   Scenario: A successful tribute is persisted by every validator

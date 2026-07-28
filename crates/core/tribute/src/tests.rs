@@ -1,11 +1,12 @@
+use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
-    begin_block, decode_tribute_v1, derive_poseidon_entity_id, end_block, EntityId36,
-    ExecutionScope,
+    begin_block, decode_tribute_v1, derive_poseidon_entity_id, encode_tribute_v1, end_block,
+    EntityId36, ExecutionScope, PartitionRef,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, TRIBUTE_ADDRESS};
@@ -245,6 +246,342 @@ fn test_day_bucket_tracks_nominal_and_gratis() {
         );
         assert!(!totals.is_sealed);
     });
+}
+
+#[test]
+fn pre_admission_projection_tracks_exact_incremental_tribute_inputs() {
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let first = sample_tribute();
+        let mut second = sample_tribute();
+        set_owner(
+            &mut second,
+            address!("0x2222222222222222222222222222222222222222"),
+        );
+        second.reference_currency = 978;
+        second.nominal_amount_minor = U256::from(7);
+
+        open_sample_day(tc);
+        tc.issue(&first).unwrap();
+        tc.issue(&second).unwrap();
+
+        let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
+        let expected_body_bytes = [
+            encode_tribute_v1(&crate::canonical_body(&first)).unwrap(),
+            encode_tribute_v1(&crate::canonical_body(&second)).unwrap(),
+        ]
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>();
+
+        assert!(!projection.is_sealed);
+        assert_eq!(projection.tribute_count, 2);
+        assert_eq!(
+            projection.tribute_nominal_amount,
+            first.nominal_amount_minor + second.nominal_amount_minor
+        );
+        assert_eq!(
+            projection.canonical_body_bytes,
+            u64::try_from(expected_body_bytes).unwrap()
+        );
+        assert_eq!(projection.distinct_owner_count, 2);
+        assert_eq!(projection.distinct_reference_currency_count, 2);
+    });
+}
+
+#[test]
+fn pre_admission_projection_removes_burned_tribute_contribution() {
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let first = sample_tribute();
+        let mut second = sample_tribute();
+        set_owner(
+            &mut second,
+            address!("0x2222222222222222222222222222222222222222"),
+        );
+        second.nominal_amount_minor = U256::from(7);
+
+        open_sample_day(tc);
+        tc.issue(&first).unwrap();
+        tc.issue(&second).unwrap();
+        tc.burn(first.tribute_id).unwrap();
+
+        let projection = tc.pre_admission_projection(first.worldwide_day).unwrap();
+        let expected_body_bytes = encode_tribute_v1(&crate::canonical_body(&second))
+            .unwrap()
+            .len();
+
+        assert_eq!(projection.tribute_count, 1);
+        assert_eq!(
+            projection.tribute_nominal_amount,
+            second.nominal_amount_minor
+        );
+        assert_eq!(
+            projection.canonical_body_bytes,
+            u64::try_from(expected_body_bytes).unwrap()
+        );
+        assert_eq!(projection.distinct_owner_count, 1);
+        assert_eq!(projection.distinct_reference_currency_count, 1);
+    });
+}
+
+#[test]
+fn sealed_pre_admission_projection_is_immutable() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let (reader, _writer) = body_repository();
+    let scope = ExecutionScope::new();
+    let tribute = sample_tribute();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &scope).unwrap();
+        let mut contract = TributeContract::new(storage);
+        contract.initialize_fresh_ocomp_profile().unwrap();
+        contract.unseal_day(tribute.worldwide_day).unwrap();
+        contract.issue(&scope, &reader, &tribute).unwrap();
+        contract.seal_day(tribute.worldwide_day).unwrap();
+    });
+    let seal = StorageHandle::enter(&mut provider, |storage| end_block(storage, &scope).unwrap());
+
+    let mut forged = seal.clone();
+    forged.new_root = B256::repeat_byte(0x31);
+    assert!(scope
+        .sealed_collection_root(&forged, PartitionRef::TributeWwd(tribute.worldwide_day))
+        .is_err());
+
+    let mut sibling_provider = HashMapStorageProvider::new(1);
+    let sibling_scope = ExecutionScope::new();
+    let mut sibling_tribute = sample_tribute();
+    set_owner(
+        &mut sibling_tribute,
+        alloy_primitives::Address::repeat_byte(0x62),
+    );
+    StorageHandle::enter(&mut sibling_provider, |storage| {
+        seed_compressed_entities_genesis(&storage);
+        begin_block(storage.clone(), &sibling_scope).unwrap();
+        let mut contract = TributeContract::new(storage);
+        contract.unseal_day(sibling_tribute.worldwide_day).unwrap();
+        contract
+            .issue(&sibling_scope, &reader, &sibling_tribute)
+            .unwrap();
+        contract.seal_day(sibling_tribute.worldwide_day).unwrap();
+    });
+    let sibling_seal = StorageHandle::enter(&mut sibling_provider, |storage| {
+        end_block(storage, &sibling_scope).unwrap()
+    });
+    assert!(scope
+        .sealed_collection_root(
+            &sibling_seal,
+            PartitionRef::TributeWwd(tribute.worldwide_day)
+        )
+        .is_err());
+
+    let sealed_collection = scope
+        .sealed_collection_root(&seal, PartitionRef::TributeWwd(tribute.worldwide_day))
+        .unwrap();
+    let sealed = StorageHandle::enter(&mut provider, |storage| {
+        TributeContract::new(storage)
+            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
+            .unwrap()
+    });
+
+    assert!(sealed.is_sealed);
+    assert_eq!(sealed.sealed_collection_root, sealed_collection.root());
+    assert_eq!(sealed.tribute_count, 1);
+    assert_eq!(sealed.tribute_nominal_amount, tribute.nominal_amount_minor);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut contract = TributeContract::new(storage);
+        assert!(contract.unseal_day(tribute.worldwide_day).is_err());
+        assert!(contract
+            .seal_pre_admission(tribute.worldwide_day, sealed_collection)
+            .is_err());
+        assert_eq!(
+            contract
+                .pre_admission_projection(tribute.worldwide_day)
+                .unwrap(),
+            sealed
+        );
+    });
+}
+
+#[test]
+fn incremental_pre_admission_matches_independent_randomized_full_fold() {
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let day = 20241220u32.into();
+        let mut seed = 0x4f43_4d30_3600_0001_u64;
+        let mut entries = Vec::<(TributeData, bool)>::new();
+
+        open_sample_day(tc);
+        for owner_byte in 1_u8..=32 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let mut tribute = sample_tribute();
+            set_owner(
+                &mut tribute,
+                alloy_primitives::Address::repeat_byte(owner_byte),
+            );
+            tribute.reference_currency = 800 + u16::try_from(seed % 5).unwrap();
+            tribute.nominal_amount_minor = U256::from((seed % 10_000) + 1);
+            tc.issue(&tribute).unwrap();
+            entries.push((tribute, true));
+            assert_pre_admission_matches_fold(tc, day, &entries);
+        }
+
+        for index in (0..entries.len()).step_by(3) {
+            tc.burn(entries[index].0.tribute_id).unwrap();
+            entries[index].1 = false;
+            assert_pre_admission_matches_fold(tc, day, &entries);
+        }
+    });
+}
+
+#[test]
+fn pre_admission_overflow_rolls_back_the_entire_issue() {
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let tribute = sample_tribute();
+        open_sample_day(tc);
+        tc.day_pre_admission
+            .create(&crate::DayPreAdmission {
+                worldwide_day: tribute.worldwide_day,
+                initialized: true,
+                is_sealed: false,
+                sealed_collection_root: B256::ZERO,
+                sealed_tribute_count: 0,
+                sealed_tribute_nominal_amount: U256::ZERO,
+                canonical_body_bytes: u64::MAX,
+                distinct_owner_count: 0,
+                distinct_reference_currency_count: 0,
+                source_generation: 0,
+            })
+            .unwrap();
+        let before = tc.pre_admission_projection(tribute.worldwide_day).unwrap();
+
+        assert!(tc.issue(&tribute).is_err());
+
+        assert_eq!(
+            tc.pre_admission_projection(tribute.worldwide_day).unwrap(),
+            before
+        );
+        let totals = tc.get_day_totals(tribute.worldwide_day).unwrap();
+        assert_eq!(totals.tribute_count, 0);
+        assert_eq!(totals.tribute_nominal_amount, U256::ZERO);
+        assert_eq!(tc.total_supply().unwrap(), 0);
+        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_none());
+    });
+}
+
+#[test]
+fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
+    with_tribute(|tc| {
+        tc.initialize_fresh_ocomp_profile().unwrap();
+        let day = 20241220u32.into();
+        open_sample_day(tc);
+
+        for seed in 1_u16..=257 {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&seed.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute.reference_currency = 840 + (seed % 3);
+            tc.issue(&tribute).unwrap();
+        }
+
+        let second_shard = tc.pre_admission_projection(day).unwrap();
+        assert_eq!(second_shard.tribute_count, 257);
+        assert_eq!(second_shard.distinct_owner_count, 257);
+        assert_eq!(tc.total_supply().unwrap(), 257);
+
+        for seed in 258_u16..=513 {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&seed.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute.reference_currency = 840 + (seed % 3);
+            tc.issue(&tribute).unwrap();
+        }
+
+        let third_shard = tc.pre_admission_projection(day).unwrap();
+        assert_eq!(third_shard.tribute_count, 513);
+        assert_eq!(third_shard.distinct_owner_count, 513);
+        assert_eq!(tc.total_supply().unwrap(), 513);
+
+        let last = {
+            let mut tribute = sample_tribute();
+            let mut owner = [0_u8; 20];
+            owner[18..].copy_from_slice(&513_u16.to_be_bytes());
+            set_owner(&mut tribute, alloy_primitives::Address::from(owner));
+            tribute
+        };
+        tc.burn(last.tribute_id).unwrap();
+
+        let after_burn = tc.pre_admission_projection(day).unwrap();
+        assert_eq!(after_burn.tribute_count, 512);
+        assert_eq!(after_burn.distinct_owner_count, 512);
+    });
+}
+
+#[test]
+fn pre_fork_tribute_issue_is_unchanged_and_cannot_backfill_ocomp_lazily() {
+    with_tribute(|tc| {
+        let tribute = sample_tribute();
+        open_sample_day(tc);
+        tc.issue(&tribute).unwrap();
+
+        let projection = tc.pre_admission_projection(tribute.worldwide_day).unwrap();
+        assert!(!projection.profile_ready);
+        assert_eq!(projection.canonical_body_bytes, 0);
+        assert_eq!(projection.distinct_owner_count, 0);
+        assert_eq!(projection.distinct_reference_currency_count, 0);
+        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert!(tc.initialize_fresh_ocomp_profile().is_err());
+        assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_some());
+    });
+}
+
+fn assert_pre_admission_matches_fold(
+    tc: &TestTribute<'_, '_>,
+    day: outbe_common::WorldwideDay,
+    entries: &[(TributeData, bool)],
+) {
+    let mut count = 0_u32;
+    let mut nominal = U256::ZERO;
+    let mut canonical_body_bytes = 0_u64;
+    let mut owners = BTreeSet::new();
+    let mut currencies = BTreeSet::new();
+    for (tribute, is_live) in entries {
+        if !is_live {
+            continue;
+        }
+        count = count.checked_add(1).unwrap();
+        nominal = nominal.checked_add(tribute.nominal_amount_minor).unwrap();
+        canonical_body_bytes = canonical_body_bytes
+            .checked_add(
+                u64::try_from(
+                    encode_tribute_v1(&crate::canonical_body(tribute))
+                        .unwrap()
+                        .len(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        owners.insert(tribute.owner);
+        currencies.insert(tribute.reference_currency);
+    }
+
+    let projection = tc.pre_admission_projection(day).unwrap();
+    assert_eq!(projection.tribute_count, count);
+    assert_eq!(projection.tribute_nominal_amount, nominal);
+    assert_eq!(projection.canonical_body_bytes, canonical_body_bytes);
+    assert_eq!(
+        projection.distinct_owner_count,
+        u32::try_from(owners.len()).unwrap()
+    );
+    assert_eq!(
+        projection.distinct_reference_currency_count,
+        u16::try_from(currencies.len()).unwrap()
+    );
 }
 
 #[test]

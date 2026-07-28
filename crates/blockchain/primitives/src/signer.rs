@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use alloy_consensus::{SignableTransaction as _, TxLegacy};
+use alloy_consensus::{SignableTransaction as _, TxEip1559, TxLegacy};
 use alloy_primitives::{keccak256, Address, Signature};
 use k256::ecdsa::{signature::hazmat::PrehashSigner, SigningKey};
 use reth_ethereum::TransactionSigned;
@@ -67,6 +67,25 @@ impl OutbeEvmSigner {
     }
 
     pub fn sign_unsigned(&self, tx: TxLegacy) -> Result<TransactionSigned, SignerError> {
+        let signing_key = signing_key_from_bytes(&self.secret)?;
+        let hash = tx.signature_hash();
+        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+            signing_key
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| SignerError::SigningFailed(error.to_string()))?;
+
+        let signature_bytes = signature.to_bytes();
+        let bytes = signature_bytes.as_slice();
+        if bytes.len() != 64 {
+            return Err(SignerError::SignatureEncoding { len: bytes.len() });
+        }
+        let signature =
+            Signature::from_bytes_and_parity(bytes, recovery_id.to_byte() != 0).normalized_s();
+        Ok(tx.into_signed(signature).into())
+    }
+
+    /// Signs the restricted EIP-1559 envelope used by validator result votes.
+    pub fn sign_eip1559(&self, tx: TxEip1559) -> Result<TransactionSigned, SignerError> {
         let signing_key = signing_key_from_bytes(&self.secret)?;
         let hash = tx.signature_hash();
         let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =

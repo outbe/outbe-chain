@@ -1,0 +1,11 @@
+# Fixed PoC role identities. The shared group grants read access to immutable
+# CAS/input/receipt artifacts; method authority remains bound to peer UID.
+g outbe-ocomp-artifacts -
+g outbe-ocomp-worker-launch -
+u outbe-ocomp-supervisor - "Outbe OCOMP supervisor" /nonexistent -
+u outbe-ocomp-export - "Outbe OCOMP snapshot exporter" /nonexistent -
+u outbe-ocomp-worker - "Outbe OCOMP deterministic worker" /nonexistent -
+m outbe-ocomp-supervisor outbe-ocomp-artifacts
+m outbe-ocomp-export outbe-ocomp-artifacts
+m outbe-ocomp-worker outbe-ocomp-artifacts
+m outbe-ocomp-supervisor outbe-ocomp-worker-launch

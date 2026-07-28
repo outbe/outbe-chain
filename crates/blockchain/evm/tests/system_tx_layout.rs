@@ -4,12 +4,19 @@
 //! block-0 prohibition of begin-zone system txs. Codec-level rejection of V1
 //! input bytes is tested at every legacy selector + version combination.
 
+use alloy_consensus::{SignableTransaction as _, TxLegacy};
+use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
 use outbe_evm::system_tx::{
-    expected_begin_block_kinds, validate_active_system_tx_set, BodyZone, SystemTxError,
-    SystemTxInputV2, SystemTxKind, SystemTxLayout, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
-    SYSTEM_TX_INPUT_VERSION,
+    build_unsigned_system_tx, expected_begin_block_kinds,
+    expected_begin_block_kinds_for_activation, expected_end_block_kinds, split_system_layout,
+    validate_active_system_tx_set, validate_system_tx_set_for_activation, BodyZone,
+    OcompLifecycleActivation, SystemTxError, SystemTxInputV2, SystemTxKind, SystemTxLayout,
+    SystemTxPhase, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+    CYCLE_TICK_SELECTOR, OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
+    ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_INPUT_VERSION,
 };
+use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
+use reth_ethereum::TransactionSigned;
 
 /// Empty layout — used by the block-1 / block-0 layout tests that only need to
 /// drive the membership check, not the structural splitter.
@@ -19,6 +26,55 @@ fn empty_layout() -> SystemTxLayout<'static> {
         user: Vec::new(),
         end: Vec::new(),
     }
+}
+
+const OCOMP_TEST_BLOCK: u64 = 32;
+const OCOMP_TEST_CHAIN_ID: u64 = 2026;
+
+fn ocomp_system_input(kind: SystemTxKind) -> SystemTxInputV2 {
+    match kind {
+        SystemTxKind::CertifiedParentAccounting => SystemTxInputV2::CertifiedParentAccounting {
+            metadata: CertifiedParentAccountingMetadata::default(),
+        },
+        SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
+            artifact: Default::default(),
+        },
+        SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
+        SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
+        SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
+        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+        SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
+        other => panic!("layout fixture does not use {other:?}"),
+    }
+}
+
+fn signed_ocomp_system_tx(kind: SystemTxKind, ordinal: u8) -> TransactionSigned {
+    build_unsigned_system_tx(
+        kind,
+        ordinal,
+        OCOMP_TEST_BLOCK,
+        OCOMP_TEST_CHAIN_ID,
+        ocomp_system_input(kind)
+            .encode()
+            .expect("system input encodes"),
+    )
+    .expect("system tx builds")
+    .into_signed(Signature::test_signature())
+    .into()
+}
+
+fn user_tx() -> TransactionSigned {
+    TxLegacy {
+        chain_id: Some(OCOMP_TEST_CHAIN_ID),
+        nonce: 0,
+        gas_price: 0,
+        gas_limit: 21_000,
+        to: TxKind::Call(address!("4444444444444444444444444444444444444444")),
+        value: U256::ZERO,
+        input: Bytes::new(),
+    }
+    .into_signed(Signature::test_signature())
+    .into()
 }
 
 /// AC4: active selectors are present and have their fork-specific byte
@@ -145,6 +201,213 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
         expected_with_bo.is_empty(),
         "block 0 must have no expected begin-zone system tx kinds even with has_boundary_outcome=true; got {expected_with_bo:?}",
     );
+}
+
+#[test]
+fn ocomp_lifecycle_appears_at_activation_height_in_canonical_zones() {
+    const ACTIVATION_HEIGHT: u64 = 32;
+    let activation = OcompLifecycleActivation::at_block(ACTIVATION_HEIGHT);
+
+    let before = expected_begin_block_kinds_for_activation(31, false, false, activation);
+    assert_eq!(
+        before,
+        vec![
+            SystemTxKind::CertifiedParentAccounting,
+            SystemTxKind::LateFinalizeCredits,
+            SystemTxKind::CycleTick,
+            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::HookEvents,
+        ]
+    );
+    assert!(expected_end_block_kinds(31, activation).is_empty());
+
+    for height in [ACTIVATION_HEIGHT, ACTIVATION_HEIGHT + 1] {
+        let begin = expected_begin_block_kinds_for_activation(height, false, false, activation);
+        assert_eq!(
+            begin,
+            vec![
+                SystemTxKind::CertifiedParentAccounting,
+                SystemTxKind::LateFinalizeCredits,
+                SystemTxKind::OcompLifecycleBegin,
+                SystemTxKind::CycleTick,
+                SystemTxKind::OracleSlashWindow,
+                SystemTxKind::HookEvents,
+            ]
+        );
+        assert_eq!(
+            expected_end_block_kinds(height, activation),
+            vec![SystemTxKind::OcompTerminalRequest]
+        );
+    }
+
+    assert_eq!(
+        SystemTxInputV2::OcompLifecycleBegin
+            .encode()
+            .expect("lifecycle begin encodes"),
+        [
+            &OCOMP_LIFECYCLE_BEGIN_SELECTOR[..],
+            &[SYSTEM_TX_INPUT_VERSION]
+        ]
+        .concat()
+    );
+    assert_eq!(
+        SystemTxInputV2::OcompTerminalRequest
+            .encode()
+            .expect("terminal request encodes"),
+        [
+            &OCOMP_TERMINAL_REQUEST_SELECTOR[..],
+            &[SYSTEM_TX_INPUT_VERSION],
+        ]
+        .concat()
+    );
+    assert_eq!(
+        SystemTxKind::OcompLifecycleBegin.body_zone(),
+        BodyZone::BeginBlock
+    );
+    assert_eq!(
+        SystemTxKind::OcompTerminalRequest.body_zone(),
+        BodyZone::EndBlock
+    );
+}
+
+#[test]
+fn active_ocomp_layout_splits_begin_users_and_terminal_request() {
+    let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
+    let txs = vec![
+        signed_ocomp_system_tx(SystemTxKind::CertifiedParentAccounting, 0),
+        signed_ocomp_system_tx(SystemTxKind::LateFinalizeCredits, 1),
+        signed_ocomp_system_tx(SystemTxKind::OcompLifecycleBegin, 2),
+        signed_ocomp_system_tx(SystemTxKind::CycleTick, 3),
+        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 4),
+        signed_ocomp_system_tx(SystemTxKind::HookEvents, 5),
+        user_tx(),
+        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 6),
+    ];
+
+    let layout = split_system_layout(&txs).expect("canonical begin/user/end layout splits");
+    validate_system_tx_set_for_activation(&layout, OCOMP_TEST_BLOCK, false, false, activation)
+        .expect("active lifecycle set validates");
+
+    assert_eq!(
+        layout.begin_block_kinds().unwrap(),
+        expected_begin_block_kinds_for_activation(OCOMP_TEST_BLOCK, false, false, activation)
+    );
+    assert_eq!(layout.user.len(), 1);
+    assert_eq!(
+        layout.end_block_kinds().unwrap(),
+        vec![SystemTxKind::OcompTerminalRequest]
+    );
+}
+
+#[test]
+fn active_ocomp_layout_supports_an_empty_user_zone() {
+    let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
+    let mut txs = canonical_active_ocomp_transactions();
+    txs.remove(6);
+
+    let layout =
+        split_system_layout(&txs).expect("terminal suffix remains distinct without user txs");
+    validate_system_tx_set_for_activation(&layout, OCOMP_TEST_BLOCK, false, false, activation)
+        .expect("empty user zone is a valid active lifecycle layout");
+
+    assert!(layout.user.is_empty());
+    assert_eq!(
+        layout.end_block_kinds().unwrap(),
+        vec![SystemTxKind::OcompTerminalRequest]
+    );
+}
+
+#[test]
+fn active_ocomp_cursor_places_lifecycle_begin_before_cycle_tick() {
+    assert_eq!(
+        SystemTxPhase::initial_for_block_with_ocomp(1, 1, true),
+        SystemTxPhase::OcompLifecycleBegin { body_index: 0 }
+    );
+
+    let phase = SystemTxPhase::initial_for_block_with_ocomp(OCOMP_TEST_BLOCK, 1, true);
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::LateFinalizeCredits { body_index: 1 });
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::OcompLifecycleBegin { body_index: 2 });
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::CycleTick { body_index: 3 });
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::OracleSlashWindow { body_index: 4 });
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::HookEvents { body_index: 5 });
+    assert_eq!(
+        phase.advance_after_commit_with_ocomp(false, false, true),
+        SystemTxPhase::UserTxs
+    );
+}
+
+fn canonical_active_ocomp_transactions() -> Vec<TransactionSigned> {
+    vec![
+        signed_ocomp_system_tx(SystemTxKind::CertifiedParentAccounting, 0),
+        signed_ocomp_system_tx(SystemTxKind::LateFinalizeCredits, 1),
+        signed_ocomp_system_tx(SystemTxKind::OcompLifecycleBegin, 2),
+        signed_ocomp_system_tx(SystemTxKind::CycleTick, 3),
+        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 4),
+        signed_ocomp_system_tx(SystemTxKind::HookEvents, 5),
+        user_tx(),
+        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 6),
+    ]
+}
+
+#[test]
+fn malformed_ocomp_suffixes_and_cross_fork_envelopes_are_rejected() {
+    let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
+
+    let mut missing_terminal = canonical_active_ocomp_transactions();
+    missing_terminal.pop();
+    let layout = split_system_layout(&missing_terminal).unwrap();
+    assert!(matches!(
+        validate_system_tx_set_for_activation(&layout, OCOMP_TEST_BLOCK, false, false, activation,),
+        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
+    ));
+
+    let mut duplicate_terminal = canonical_active_ocomp_transactions();
+    duplicate_terminal.push(signed_ocomp_system_tx(
+        SystemTxKind::OcompTerminalRequest,
+        7,
+    ));
+    assert!(matches!(
+        split_system_layout(&duplicate_terminal),
+        Err(SystemTxError::OutOfOrder {
+            zone: BodyZone::EndBlock,
+            ..
+        })
+    ));
+
+    let mut user_after_end = canonical_active_ocomp_transactions();
+    user_after_end.push(user_tx());
+    assert!(matches!(
+        split_system_layout(&user_after_end),
+        Err(SystemTxError::MidBlockSystemTx { .. })
+    ));
+
+    let mut misordered_begin = canonical_active_ocomp_transactions();
+    misordered_begin.swap(2, 3);
+    assert!(matches!(
+        split_system_layout(&misordered_begin),
+        Err(SystemTxError::OutOfOrder {
+            zone: BodyZone::BeginBlock,
+            ..
+        })
+    ));
+
+    let canonical = canonical_active_ocomp_transactions();
+    let layout = split_system_layout(&canonical).unwrap();
+    assert!(matches!(
+        validate_system_tx_set_for_activation(
+            &layout,
+            OCOMP_TEST_BLOCK - 1,
+            false,
+            false,
+            activation,
+        ),
+        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
+    ));
 }
 
 /// V2 begin-zone ordering: CertifiedParentAccounting (≥2), CycleTick (≥1),

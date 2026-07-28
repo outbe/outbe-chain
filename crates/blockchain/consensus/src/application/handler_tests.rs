@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256};
+use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
@@ -35,7 +36,7 @@ use std::{
     io,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
     time::Duration,
@@ -49,6 +50,7 @@ use crate::finalization::attestation::{
 use crate::finalization::util::build_signer_bitmap;
 use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
+use crate::ocomp_retention::{OcompRetentionHook, OcompRetentionHookError};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
@@ -508,6 +510,7 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
+        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
         certificate_scheme_provider: provider,
         elector_config_provider,
@@ -530,6 +533,7 @@ fn finalizer_test_shared(
         late_sig_store: crate::finalization::late_sig_store::shared(
             outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
         ),
+        ocomp_retention: Arc::new(crate::ocomp_retention::NoopOcompRetentionHook),
     };
     TestApplicationShared {
         shared,
@@ -616,6 +620,113 @@ fn projected_parent_gate_requires_the_exact_checkpoint() {
                 .await
                 .expect_err("a fatal projection state must propagate to the existing error path");
         assert!(error.to_string().contains("test checkpoint mismatch"));
+    });
+}
+
+struct ImportedBeforeRetentionHook {
+    imported: Arc<AtomicBool>,
+    prepared: Arc<AtomicBool>,
+}
+
+impl OcompRetentionHook for ImportedBeforeRetentionHook {
+    fn prepare_candidate(&self, _block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
+        if !self.imported.load(Ordering::SeqCst) {
+            return Err(OcompRetentionHookError::new(
+                "candidate execution was not imported before retention",
+            ));
+        }
+        self.prepared.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn reconcile_finalized(&self, _block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn locally_built_candidate_is_execution_visible_before_retention_ack() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        use reth_ethereum::node::api::BeaconEngineMessage;
+
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = super::EngineHandle::new(engine_tx);
+        let imported = Arc::new(AtomicBool::new(false));
+        let prepared = Arc::new(AtomicBool::new(false));
+        let hook = ImportedBeforeRetentionHook {
+            imported: imported.clone(),
+            prepared: prepared.clone(),
+        };
+        let block = consensus_block_with_number(0x71, 9);
+
+        let prepare = super::prepare_built_candidate(
+            &engine,
+            &hook,
+            &block,
+            outbe_primitives::projection::ExecutionReadBudget::new(),
+        );
+        let execution = async {
+            let message = engine_rx
+                .recv()
+                .await
+                .expect("candidate import reaches the execution engine");
+            let BeaconEngineMessage::NewPayload { payload, tx } = message else {
+                panic!("candidate preparation must use new_payload");
+            };
+            assert_eq!(
+                reth_node_builder::ExecutionPayload::block_hash(&payload),
+                block.block_hash()
+            );
+            imported.store(true, Ordering::SeqCst);
+            tx.send(Ok(PayloadStatus::new(
+                PayloadStatusEnum::Valid,
+                Some(block.block_hash()),
+            )))
+            .expect("execution status receiver remains live");
+        };
+
+        let (prepared_result, ()) = futures::join!(prepare, execution);
+        prepared_result.expect("VALID execution is followed by durable retention");
+        assert!(prepared.load(Ordering::SeqCst));
+    });
+}
+
+#[test]
+fn locally_built_candidate_is_not_retained_when_execution_is_not_ready() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        use reth_ethereum::node::api::BeaconEngineMessage;
+
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = super::EngineHandle::new(engine_tx);
+        let imported = Arc::new(AtomicBool::new(false));
+        let prepared = Arc::new(AtomicBool::new(false));
+        let hook = ImportedBeforeRetentionHook {
+            imported,
+            prepared: prepared.clone(),
+        };
+        let block = consensus_block_with_number(0x72, 10);
+
+        let prepare = super::prepare_built_candidate(
+            &engine,
+            &hook,
+            &block,
+            outbe_primitives::projection::ExecutionReadBudget::new(),
+        );
+        let execution = async {
+            let BeaconEngineMessage::NewPayload { tx, .. } = engine_rx
+                .recv()
+                .await
+                .expect("candidate import reaches the execution engine")
+            else {
+                panic!("candidate preparation must use new_payload");
+            };
+            tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Syncing)))
+                .expect("execution status receiver remains live");
+        };
+
+        let (prepared_result, ()) = futures::join!(prepare, execution);
+        assert!(prepared_result.is_err());
+        assert!(!prepared.load(Ordering::SeqCst));
     });
 }
 

@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
+use crate::ocomp::OcompSubmitResultVoteHook;
 use crate::oracle::OracleSubmitVoteHook;
 
 /// A minimal, execution-layer independent transaction view for zero-fee hooks.
@@ -27,6 +28,8 @@ pub struct ZeroFeeTransaction<'a> {
 pub enum ZeroFeeHookId {
     /// `Oracle.submitVote(ExchangeRateTuple[])`.
     OracleSubmitVote,
+    /// `Metadosis.submitLysisResult(bytes)`.
+    OcompSubmitResultVote,
 }
 
 /// A transaction that matched a hook's stateless zero-fee envelope.
@@ -315,7 +318,9 @@ impl ZeroFeeRegistry {
 }
 
 static ORACLE_SUBMIT_VOTE_HOOK: OracleSubmitVoteHook = OracleSubmitVoteHook;
-static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] = &[&ORACLE_SUBMIT_VOTE_HOOK];
+static OCOMP_SUBMIT_RESULT_VOTE_HOOK: OcompSubmitResultVoteHook = OcompSubmitResultVoteHook;
+static ZERO_FEE_HOOKS: &[&dyn ZeroFeeHook] =
+    &[&ORACLE_SUBMIT_VOTE_HOOK, &OCOMP_SUBMIT_RESULT_VOTE_HOOK];
 
 /// Returns the Outbe system zero-fee hook registry.
 pub const fn registry() -> ZeroFeeRegistry {

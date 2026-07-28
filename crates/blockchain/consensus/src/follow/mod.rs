@@ -38,7 +38,10 @@ pub mod upstream;
 
 pub use engine::{run_follow_engine, FollowEngineConfig};
 pub use epocher::FollowerEpocher;
-pub use upstream::{CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource};
+pub use upstream::{
+    decode_public_finalized_block, CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource,
+    PublicFinalizedBlockDecodeError, TipSource,
+};
 
 /// Builds and chains per-epoch finalization verifiers from finalized boundary
 /// blocks, anchored on the trusted genesis committee. Verifiers are kept in a
