@@ -649,13 +649,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function uri(uint256) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
-        return string.concat('data:application/json,{"name":"Intex","description":"', _s().collectionDescription, '"}');
+        return string.concat(
+            "data:application/json,{\"name\":\"Intex\",\"description\":\"", _s().collectionDescription, "\"}"
+        );
     }
 
     /// @inheritdoc IIntexNFT1155
     function contractURI() external view returns (string memory) {
         return string.concat(
-            'data:application/json,{"name":"Intex","description":"', _s().collectionDescription, '"}'
+            "data:application/json,{\"name\":\"Intex\",\"description\":\"", _s().collectionDescription, "\"}"
         );
     }
 

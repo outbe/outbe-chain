@@ -26,8 +26,7 @@ contract IntexNFT1155MetadataTest is Test {
     }
 
     function test_contractURI_returnsCollectionJson() public view {
-        string memory expected =
-            string.concat('data:application/json,{"name":"Intex","description":"', DESC, '"}');
+        string memory expected = string.concat('data:application/json,{"name":"Intex","description":"', DESC, '"}');
         assertEq(token.contractURI(), expected);
     }
 }
