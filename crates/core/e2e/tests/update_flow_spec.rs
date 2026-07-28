@@ -110,6 +110,7 @@ fn with_runtime_at<F: FnOnce(StorageHandle, u64)>(current: u64, f: F) {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(current);
     let storage = StorageHandle::new(&mut provider);
+    seed_oracle_for_pre_exec(storage.clone());
     f(storage, current);
 }
 
@@ -286,6 +287,7 @@ fn lifecycle_events_visible_in_provider() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100);
     let storage = StorageHandle::new(&mut provider);
+    seed_oracle_for_pre_exec(storage.clone());
 
     let activation = min_activation(100);
     let proposal_id = U256::from(1);
@@ -308,6 +310,7 @@ fn lifecycle_events_visible_in_hook_events_receipt_partition() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100);
     let storage = StorageHandle::new(&mut provider);
+    seed_oracle_for_pre_exec(storage.clone());
 
     let activation = min_activation(100);
     let proposal_id = U256::from(1);
