@@ -39,19 +39,19 @@ fn complete_exported_abis_match_golden_hashes() {
 
     assert_eq!(
         canonical_abi_hash(token),
-        b256!("1a8515c0408559770e2ee4932e83e994dddd49545873ed38be2b5721d3d4f5b9")
+        b256!("d8b6eb011c35cce3d2c3f18596944d8e56c2d63c245d940e9179f02fad9aceb0")
     );
     assert_eq!(
         canonical_abi_hash(factory),
-        b256!("a6a5298b3e98f2adaa5b7137e85cf9c6a27cf4c5f50c84a3c80e2cf8846afa57")
+        b256!("dfd85fac20bf8c8f46819895ead7457e597ff697e0ec7680bc4282d846bbb261")
     );
     assert_eq!(
         canonical_abi_hash(policy),
-        b256!("173497d729677043bff9e1a0c2e25794d87435368210a51602409f17ad707741")
+        b256!("3dd4455f37103cd40b3f3dae8e935db51926f033b135942a271f793fd39f1f31")
     );
     assert_eq!(
         canonical_abi_hash(vote),
-        b256!("915426835b210f2ba818816a665f6452ff8193c9e7bf8819adcbfbe9718ab8f3")
+        b256!("a6507e6860b3747b4a31c7e7f615c2a0fb79fce105f02f9e7e82db5767bda11d")
     );
 }
 
@@ -70,8 +70,20 @@ fn alloy_call_selectors_match_solidity_vectors() {
         [0xc5, 0xab, 0x02, 0x80]
     );
     assert_eq!(
+        IStablecoinFactory::listTokensCall::SELECTOR,
+        [0xe3, 0x0e, 0x5a, 0xe9]
+    );
+    assert_eq!(
         IStablecoinPolicyRegistry::createDirectionalPolicyCall::SELECTOR,
         [0xba, 0xa1, 0x72, 0x5c]
+    );
+    assert_eq!(
+        IStablecoinPolicyRegistry::policyMemberCountCall::SELECTOR,
+        [0x20, 0xaa, 0x75, 0x1c]
+    );
+    assert_eq!(
+        IStablecoinPolicyRegistry::listPolicyMembersCall::SELECTOR,
+        [0xb5, 0x4e, 0x03, 0x19]
     );
     assert_eq!(
         IVote::getProposalBondCall::SELECTOR,
@@ -132,6 +144,26 @@ fn alloy_event_and_error_selectors_match_solidity_vectors() {
     assert_eq!(
         IStablecoinPolicyRegistry::MembershipUnchanged::SELECTOR,
         [0x0c, 0xdf, 0x47, 0x3a]
+    );
+    assert_eq!(
+        IStablecoin::ERC7943CannotSend::SELECTOR,
+        [0x45, 0xba, 0xe9, 0xe2]
+    );
+    assert_eq!(
+        IStablecoin::ERC7943CannotReceive::SELECTOR,
+        [0x70, 0x5c, 0x1e, 0xed]
+    );
+    assert_eq!(
+        IStablecoin::ERC7943CannotTransfer::SELECTOR,
+        [0x22, 0xdd, 0xa4, 0xbe]
+    );
+    assert_eq!(
+        IStablecoin::ERC7943InsufficientUnfrozenBalance::SELECTOR,
+        [0x00, 0x38, 0x4e, 0x71]
+    );
+    assert_eq!(
+        IVote::ProposalErrored::SIGNATURE_HASH,
+        b256!("c67a227da837cfcd61a6205491c7c4e5e187f7f490ff3ff1ba7735fe96f6f724")
     );
 }
 

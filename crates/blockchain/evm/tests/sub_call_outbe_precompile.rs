@@ -143,11 +143,10 @@ fn subcall_reaches_outbe_poseidon_precompile() {
 }
 
 #[test]
-fn contract_originated_poseidon_call_keeps_characterized_shared_buffer_pricing() {
-    // The inner CALL forwards 1,800 gas and 32 bytes. Current dispatch prices the
-    // SharedBuffer before materialization, so Poseidon's empty-input base cost (1,500)
-    // is charged rather than the materialized 32-byte cost (2,000). SCF-020 preserves
-    // this existing behavior; changing it requires a separate gas protocol decision.
+fn contract_originated_poseidon_call_charges_materialized_calldata() {
+    // The inner CALL forwards 2,500 gas for one 32-byte Poseidon input.
+    // SCF-020 preserves the contract-originated call path and its materialized
+    // calldata.
     let mut code = vec![
         0x60, 0x01, // PUSH1 1
         0x60, 0x00, // PUSH1 0
@@ -161,7 +160,7 @@ fn contract_originated_poseidon_call_keeps_characterized_shared_buffer_pricing()
     ];
     code.extend_from_slice(ZKPROOF_POSEIDON_ADDRESS.as_slice());
     code.extend_from_slice(&[
-        0x61, 0x07, 0x08, // PUSH2 1,800 gas
+        0x61, 0x09, 0xc4, // PUSH2 2,500 gas
         0xf1, // CALL
         0x60, 0x40, // status output offset
         0x52, // MSTORE CALL status

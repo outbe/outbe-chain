@@ -34,11 +34,14 @@ interface IStablecoinFactory {
     error TickerAlreadyRegistered(string ticker, address token);
     error TokenAddressCollision(address token, bytes32 existingTokenId, bytes32 requestedTokenId);
     error TokenIndexOutOfBounds(uint256 index, uint256 tokenCount);
+    error InvalidListLimit(uint256 limit, uint256 maximum);
     error UnknownStablecoin(address token);
 
     function tokenCount() external view returns (uint256);
 
-    function tokenAt(uint256 index) external view returns (address);
+    /// @notice Returns up to `limit` registered token addresses starting at `offset`.
+    /// @dev `limit` must be between 1 and 100. No ordering guarantee is provided.
+    function listTokens(uint256 offset, uint256 limit) external view returns (address[] memory);
 
     function tokenById(bytes32 tokenId) external view returns (address);
 

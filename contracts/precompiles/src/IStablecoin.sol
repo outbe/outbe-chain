@@ -35,7 +35,10 @@ interface IStablecoin {
     error TokenNotPaused();
     error InsufficientBalance(address account, uint256 available, uint256 required);
     error InsufficientAllowance(address owner, address spender, uint256 available, uint256 required);
-    error InsufficientUnfrozenBalance(address account, uint256 available, uint256 required);
+    error ERC7943CannotSend(address account);
+    error ERC7943CannotReceive(address account);
+    error ERC7943CannotTransfer(address from, address to, uint256 amount);
+    error ERC7943InsufficientUnfrozenBalance(address account, uint256 amount, uint256 unfrozen);
     error FrozenAllowanceIncrease(address owner, uint256 currentAllowance, uint256 requestedAllowance);
     error SupplyCapExceeded(uint256 supplyCap, uint256 requestedSupply);
     error SupplyCapBelowSupply(uint256 requestedCap, uint256 totalSupply);

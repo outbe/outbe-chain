@@ -6,7 +6,7 @@ use outbe_primitives::{
     stablecoin_fork::{
         stablecoin_v1_budget_for_measurement, stablecoin_v1_is_active,
         MAX_PENDING_PUBLIC_BONDED_PROPOSALS, MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER,
-        STABLECOIN_CREATE_BOND, STABLECOIN_EIP712_DOMAIN_VERSION,
+        STABLECOIN_CREATE_BOND, STABLECOIN_EIP712_DOMAIN_VERSION, STABLECOIN_LIST_PAGE_CAP,
         STABLECOIN_POLICY_MEMBER_BATCH_CAP, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
         STABLECOIN_V1_ACCOUNT_ACCESS_OWNER, STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS,
         STABLECOIN_V1_GAS_FORMULA, STABLECOIN_V1_MAINNET_STATUS, STABLECOIN_V1_MAINTAINED_SDK,
@@ -107,6 +107,10 @@ fn fork_manifest_matches_canonical_rust_constants() {
         STABLECOIN_POLICY_MEMBER_BATCH_CAP
     );
     assert_eq!(
+        manifest["lists"]["maximumPageSize"],
+        STABLECOIN_LIST_PAGE_CAP
+    );
+    assert_eq!(
         manifest["eip712"]["domainVersion"],
         STABLECOIN_EIP712_DOMAIN_VERSION
     );
@@ -153,12 +157,8 @@ fn fork_manifest_matches_canonical_rust_constants() {
         expected.transfer_with_policy_gas
     );
     assert_eq!(budgets["permitGas"], expected.permit_gas);
-    assert_eq!(budgets["factoryCreationGas"], expected.factory_creation_gas);
     assert_eq!(budgets["o1P99Micros"], expected.o1_p99_micros);
-    assert_eq!(
-        budgets["batchOrCreationP99Micros"],
-        expected.batch_or_creation_p99_micros
-    );
+    assert_eq!(budgets["batchP99Micros"], expected.batch_p99_micros);
     assert_eq!(
         budgets["measurementMarginPercent"],
         expected.measurement_margin_percent
@@ -216,6 +216,9 @@ fn bounds_preserve_governance_capacity_and_pin_atomic_batch_edges() {
     assert_eq!(STABLECOIN_POLICY_MEMBER_BATCH_CAP, 64);
     assert_eq!(STABLECOIN_POLICY_MEMBER_BATCH_CAP - 1, 63);
     assert_eq!(STABLECOIN_POLICY_MEMBER_BATCH_CAP + 1, 65);
+    assert_eq!(STABLECOIN_LIST_PAGE_CAP, 100);
+    assert_eq!(STABLECOIN_LIST_PAGE_CAP - 1, 99);
+    assert_eq!(STABLECOIN_LIST_PAGE_CAP + 1, 101);
     assert_eq!(
         STABLECOIN_CREATE_BOND,
         U256::from(1_000_000u64) * U256::from(10u64).pow(U256::from(18u64))
@@ -241,24 +244,15 @@ fn gas_schedule_matches_stateful_precompile_contract_and_budget_vectors() {
     assert_eq!(budgets.policy_member_batch_gas, 750_000);
     assert_eq!(budgets.transfer_with_policy_gas, 100_000);
     assert_eq!(budgets.permit_gas, 125_000);
-    assert_eq!(budgets.factory_creation_gas, 500_000);
     assert_eq!(budgets.measurement_margin_percent, 125);
     assert_eq!(budgets.gas_rounding_quantum, 10_000);
 }
 
 #[test]
-fn benchmark_margin_rounds_up_and_reopens_at_one_over_factory_ceiling() {
+fn benchmark_margin_rounds_up_and_detects_overflow() {
     assert_eq!(stablecoin_v1_budget_for_measurement(0), Some(0));
     assert_eq!(stablecoin_v1_budget_for_measurement(8_000), Some(10_000));
     assert_eq!(stablecoin_v1_budget_for_measurement(8_001), Some(20_000));
-    assert_eq!(
-        stablecoin_v1_budget_for_measurement(400_000),
-        Some(STABLECOIN_V1_BENCHMARK_BUDGETS.factory_creation_gas)
-    );
-    assert!(
-        stablecoin_v1_budget_for_measurement(400_001).unwrap()
-            > STABLECOIN_V1_BENCHMARK_BUDGETS.factory_creation_gas
-    );
     assert_eq!(stablecoin_v1_budget_for_measurement(u64::MAX), None);
 }
 

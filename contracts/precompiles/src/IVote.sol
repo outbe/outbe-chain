@@ -8,7 +8,8 @@ interface IVote {
         Pending,
         Approved,
         Rejected,
-        Expired
+        Expired,
+        Error
     }
 
     enum BondSettlement {
@@ -62,13 +63,16 @@ interface IVote {
     /// @notice Proposal was approved by majority (2/3).
     event ProposalApproved(uint256 indexed proposalId, VoteTally state);
 
+    /// @notice Approved target execution returned an error and its target effects were rolled back.
+    event ProposalErrored(uint256 indexed proposalId, VoteTally state);
+
     /// @notice A target-specific proposal bond was recorded as an unsettled liability.
     event ProposalBondEscrowed(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
     /// @notice A successful target execution refunded its recorded proposal bond.
     event ProposalBondRefunded(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
-    /// @notice A non-success terminal outcome burned its recorded proposal bond.
+    /// @notice An expired proposal burned its recorded proposal bond.
     event ProposalBondBurned(uint256 indexed proposalId, address indexed owner, uint256 amount);
 
     error InvalidProposalBond(uint256 expected, uint256 actual);

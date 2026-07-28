@@ -35,6 +35,8 @@ pub const MAX_PENDING_PUBLIC_BONDED_PROPOSALS: u32 = 16;
 pub const MAX_PENDING_PUBLIC_BONDED_PROPOSALS_PER_PROPOSER: u32 = 1;
 /// Maximum accounts accepted by one atomic Policy Registry add/remove call.
 pub const STABLECOIN_POLICY_MEMBER_BATCH_CAP: usize = 64;
+/// Maximum caller-selected page size for Factory and Policy list views.
+pub const STABLECOIN_LIST_PAGE_CAP: usize = 100;
 
 /// Stablecoin V1 EIP-712 domain version. This is intentionally independent of
 /// protocol version `0.2` and schema version `1`.
@@ -52,7 +54,7 @@ pub const STABLECOIN_V1_WALL_TIME_CLASSIFICATION: &str = "non-consensus-telemetr
 
 /// Conditions that require reopening G0 instead of silently moving a bound.
 pub const STABLECOIN_V1_REOPEN_RULES: [&str; 4] = [
-    "SCF-034-SCF-047-or-SCF-055-measurement-plus-25-percent-rounded-up-to-10000-exceeds-its-gas-ceiling",
+    "SCF-034-or-SCF-047-measurement-plus-25-percent-rounded-up-to-10000-exceeds-its-gas-ceiling",
     "nested-and-top-level-calls-do-not-produce-identical-native-charges-for-identical-work",
     "shipping-binary-cannot-activate-protocol-version-0.2",
     "supported-network-genesis-does-not-preserve-the-reserved-namespace",
@@ -95,9 +97,8 @@ pub struct StablecoinBenchmarkBudgets {
     pub policy_member_batch_gas: u64,
     pub transfer_with_policy_gas: u64,
     pub permit_gas: u64,
-    pub factory_creation_gas: u64,
     pub o1_p99_micros: u64,
-    pub batch_or_creation_p99_micros: u64,
+    pub batch_p99_micros: u64,
     pub measurement_margin_percent: u64,
     pub gas_rounding_quantum: u64,
 }
@@ -108,9 +109,8 @@ pub const STABLECOIN_V1_BENCHMARK_BUDGETS: StablecoinBenchmarkBudgets =
         policy_member_batch_gas: 750_000,
         transfer_with_policy_gas: 100_000,
         permit_gas: 125_000,
-        factory_creation_gas: 500_000,
         o1_p99_micros: 1_000,
-        batch_or_creation_p99_micros: 5_000,
+        batch_p99_micros: 5_000,
         measurement_margin_percent: 125,
         gas_rounding_quantum: 10_000,
     };

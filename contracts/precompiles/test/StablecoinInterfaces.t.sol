@@ -13,7 +13,7 @@ contract StablecoinInterfacesTest {
         _assertEq(IVote.unsettledBondLiabilities.selector, 0x112faae4);
 
         _assertEq(IStablecoinFactory.tokenCount.selector, 0x9f181b5e);
-        _assertEq(IStablecoinFactory.tokenAt.selector, 0x92a91a3a);
+        _assertEq(IStablecoinFactory.listTokens.selector, 0xe30e5ae9);
         _assertEq(IStablecoinFactory.tokenById.selector, 0xce7127fb);
         _assertEq(IStablecoinFactory.tokenByTicker.selector, 0x5f637078);
         _assertEq(IStablecoinFactory.tokenIdOf.selector, 0x773c02d4);
@@ -24,6 +24,8 @@ contract StablecoinInterfacesTest {
         _assertEq(IStablecoinPolicyRegistry.createDirectionalPolicy.selector, 0xbaa1725c);
         _assertEq(IStablecoinPolicyRegistry.addMembers.selector, 0x4ab6ba7c);
         _assertEq(IStablecoinPolicyRegistry.removeMembers.selector, 0x627cf4b0);
+        _assertEq(IStablecoinPolicyRegistry.policyMemberCount.selector, 0x20aa751c);
+        _assertEq(IStablecoinPolicyRegistry.listPolicyMembers.selector, 0xb54e0319);
 
         _assertEq(IStablecoin.transferWithMemo.selector, 0x95777d59);
         _assertEq(IStablecoin.transferFromWithMemo.selector, 0x929c2539);
@@ -31,6 +33,14 @@ contract StablecoinInterfacesTest {
         _assertEq(IStablecoin.burnWithMemo.selector, 0x38f23b0b);
         _assertEq(IStablecoin.burnFromWithMemo.selector, 0x93329d36);
         _assertEq(IStablecoin.forcedTransferWithMemo.selector, 0xea245fb8);
+    }
+
+    function testVoteStatusEncodingIsAppendOnly() public pure {
+        require(uint8(IVote.ProposalStatus.Pending) == 0, "pending status");
+        require(uint8(IVote.ProposalStatus.Approved) == 1, "approved status");
+        require(uint8(IVote.ProposalStatus.Rejected) == 2, "rejected status");
+        require(uint8(IVote.ProposalStatus.Expired) == 3, "expired status");
+        require(uint8(IVote.ProposalStatus.Error) == 4, "error status");
     }
 
     function testPolicyOperationEncodingIsFrozen() public pure {
@@ -65,6 +75,14 @@ contract StablecoinInterfacesTest {
             IVote.ProposalBondRefunded.selector, 0x7950ce6864caac9d287350308e53b11c391f3bd7bc455e58e1c814db754ecf60
         );
         _assertEq(IVote.ProposalBondBurned.selector, 0xb7e5d2683c51bcb2296756a4963c8b5130542b95b0f975446e6f3ac3f02dfb89);
+        _assertEq(IVote.ProposalErrored.selector, 0xc67a227da837cfcd61a6205491c7c4e5e187f7f490ff3ff1ba7735fe96f6f724);
+    }
+
+    function testFinalErc7943ErrorsAreFrozen() public pure {
+        _assertEq(IStablecoin.ERC7943CannotSend.selector, 0x45bae9e2);
+        _assertEq(IStablecoin.ERC7943CannotReceive.selector, 0x705c1eed);
+        _assertEq(IStablecoin.ERC7943CannotTransfer.selector, 0x22dda4be);
+        _assertEq(IStablecoin.ERC7943InsufficientUnfrozenBalance.selector, 0x00384e71);
     }
 
     function testRoleIdsAreFrozen() public pure {
@@ -121,7 +139,7 @@ contract StablecoinInterfacesTest {
     function testFactoryHasNoPublicCreationSelector() public pure {
         bytes4 forbidden = bytes4(keccak256("create(address,string,uint16,uint8,uint256,uint256)"));
         require(forbidden != IStablecoinFactory.tokenCount.selector, "public create selector");
-        require(forbidden != IStablecoinFactory.tokenAt.selector, "public create selector");
+        require(forbidden != IStablecoinFactory.listTokens.selector, "public create selector");
         require(forbidden != IStablecoinFactory.tokenById.selector, "public create selector");
         require(forbidden != IStablecoinFactory.tokenByTicker.selector, "public create selector");
         require(forbidden != IStablecoinFactory.tokenIdOf.selector, "public create selector");

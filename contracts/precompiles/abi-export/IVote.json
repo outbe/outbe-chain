@@ -402,6 +402,37 @@
   },
   {
     "type": "event",
+    "name": "ProposalErrored",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "state",
+        "type": "tuple",
+        "indexed": false,
+        "internalType": "struct IVote.VoteTally",
+        "components": [
+          {
+            "name": "yes",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "no",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProposalExpired",
     "inputs": [
       {
