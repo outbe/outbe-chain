@@ -20,6 +20,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // - isApprovedForAll(address account, address operator) external view returns (bool)
     // - safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes calldata data) external
     // - safeBatchTransferFrom(address from, address to, uint256[] calldata ids, uint256[] calldata amounts, bytes calldata data) external
+    //
+    // safeTransferFrom/safeBatchTransferFrom are state-gated, not unconditional: a Settled token id is
+    // soulbound (always reverts SoulboundSettled), and an Issued token id on a Called series is frozen
+    // holder-to-holder (reverts TransferOnCalledForbidden). Check the series' IntexState/IntexStatus
+    // before transferring to avoid a revert.
 
     // --- Types ---
 
@@ -354,6 +359,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id to render.
     /// @return The token URI containing on-chain metadata.
     function uri(uint256 tokenId) external view returns (string memory);
+
+    /// @notice Collection-level metadata as an on-chain JSON data URI (ERC-7572).
+    /// @return The collection metadata URI.
+    function contractURI() external view returns (string memory);
 
     /// @notice Amount won at auction for a specific address in a series (recorded at mint, never changes).
     /// @param seriesId Series identifier.
