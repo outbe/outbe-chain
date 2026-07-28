@@ -411,7 +411,7 @@ pub mod vote {
         }
 
         #[test]
-        fn real_factory_vote_expiry_after_set_change_releases_and_burns_once() {
+        fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
             let issuer = Address::repeat_byte(0x11);
             let raw = payload(issuer);
             let raw = core::str::from_utf8(&raw).unwrap();
@@ -479,6 +479,28 @@ pub mod vote {
                 assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
             }
 
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                let mut vote = Vote::new(storage.clone());
+                let retry_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        raw,
+                        7 + VOTING_WINDOW_BLOCKS + 2,
+                        STABLECOIN_CREATE_BOND,
+                        registry(),
+                    )
+                    .unwrap();
+                assert_eq!(retry_id, proposal_id + U256::from(1u64));
+                assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 1);
+                assert!(StablecoinFactoryContract::new(storage)
+                    .reservations
+                    .exists(retry_id)
+                    .unwrap());
+            }
+
             assert_eq!(
                 provider
                     .get_events(VOTE_ADDRESS)
@@ -489,15 +511,17 @@ pub mod vote {
                     .count(),
                 1
             );
+            assert!(provider.get_events(STABLECOIN_FACTORY_ADDRESS).is_empty());
         }
 
         #[test]
-        fn real_factory_vote_execution_error_retains_reservation_and_bond() {
+        fn pfs_010_06_execution_error_retains_reservation_bond_and_pending_cap() {
             let issuer = Address::repeat_byte(0x11);
             let raw = payload(issuer);
             let raw = core::str::from_utf8(&raw).unwrap();
             let mut provider = HashMapStorageProvider::new(1);
             provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND);
+            let reserved_token;
             {
                 let storage = StorageHandle::new(&mut provider);
                 setup_active_validators(storage.clone());
@@ -548,7 +572,27 @@ pub mod vote {
                 assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
                 let factory = StablecoinFactoryContract::new(storage);
                 assert_eq!(factory.token_count().unwrap(), U256::ZERO);
-                assert!(factory.reservations.exists(proposal_id).unwrap());
+                let reservation = factory.reservations.get(proposal_id).unwrap().unwrap();
+                reserved_token = reservation.token;
+                assert_eq!(
+                    factory
+                        .pending_token_id
+                        .read(&reservation.token_id)
+                        .unwrap(),
+                    proposal_id
+                );
+                assert_eq!(
+                    factory
+                        .pending_ticker
+                        .read(&reservation.ticker_hash)
+                        .unwrap(),
+                    proposal_id
+                );
+                assert_eq!(
+                    factory.pending_address.read(&reservation.token).unwrap(),
+                    proposal_id
+                );
+                assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 1);
             }
             assert_eq!(
                 provider
@@ -562,6 +606,13 @@ pub mod vote {
                     .count(),
                 0
             );
+            assert!(provider.get_events(STABLECOIN_FACTORY_ADDRESS).is_empty());
+            assert!(provider
+                .get_account_info(reserved_token)
+                .is_none_or(|account| account
+                    .code
+                    .as_ref()
+                    .is_none_or(|code| code.original_bytes().is_empty())));
         }
 
         #[test]
@@ -737,6 +788,116 @@ pub mod vote {
                 ),
                 Err(PrecompileError::Fatal(_))
             ));
+        }
+
+        #[test]
+        fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
+            let issuer = Address::repeat_byte(0x11);
+            let raw = payload(issuer);
+            let raw_text = core::str::from_utf8(&raw).unwrap();
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND);
+
+            let (proposal_id, reservation) = {
+                let storage = StorageHandle::new(&mut provider);
+                setup_active_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        raw_text,
+                        7,
+                        STABLECOIN_CREATE_BOND,
+                        registry(),
+                    )
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+
+                let factory = StablecoinFactoryContract::new(storage);
+                let reservation = factory.reservations.get(proposal_id).unwrap().unwrap();
+                factory.pending_address.clear(&reservation.token).unwrap();
+                (proposal_id, reservation)
+            };
+            let vote_events_before = provider.get_events(VOTE_ADDRESS).len();
+            let factory_events_before = provider.get_events(STABLECOIN_FACTORY_ADDRESS).len();
+
+            {
+                let storage = StorageHandle::new(&mut provider);
+                let deadline = 7 + VOTING_WINDOW_BLOCKS;
+                let ctx = finalize_context(storage.clone(), deadline + 1, issuer);
+                let result = ctx.with_checkpoint(|| {
+                    Vote::new(storage.clone()).process_begin_block(&ctx, registry())
+                });
+                assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+
+                let vote = Vote::new(storage.clone());
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Pending
+                );
+                assert_eq!(vote.pending_proposal_count_by_proposer(issuer).unwrap(), 1);
+                assert_eq!(
+                    vote.proposal_bond(proposal_id).unwrap().settlement,
+                    BondSettlement::Unsettled
+                );
+                assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
+                assert_eq!(
+                    storage.balance(VOTE_ADDRESS).unwrap(),
+                    STABLECOIN_CREATE_BOND
+                );
+                assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
+
+                let factory = StablecoinFactoryContract::new(storage.clone());
+                assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+                assert_eq!(
+                    factory
+                        .pending_token_id
+                        .read(&reservation.token_id)
+                        .unwrap(),
+                    proposal_id
+                );
+                assert_eq!(
+                    factory
+                        .pending_ticker
+                        .read(&reservation.ticker_hash)
+                        .unwrap(),
+                    proposal_id
+                );
+                assert!(factory
+                    .pending_address
+                    .read(&reservation.token)
+                    .unwrap()
+                    .is_zero());
+                assert_eq!(
+                    factory.reservations.get(proposal_id).unwrap(),
+                    Some(reservation.clone())
+                );
+                assert_eq!(
+                    storage.sload(reservation.token, U256::ZERO).unwrap(),
+                    U256::ZERO
+                );
+            }
+
+            assert_eq!(provider.get_events(VOTE_ADDRESS).len(), vote_events_before);
+            assert_eq!(
+                provider.get_events(STABLECOIN_FACTORY_ADDRESS).len(),
+                factory_events_before
+            );
+            assert!(provider
+                .get_account_info(reservation.token)
+                .is_none_or(|account| account
+                    .code
+                    .as_ref()
+                    .is_none_or(|code| code.original_bytes().is_empty())));
         }
     }
 }

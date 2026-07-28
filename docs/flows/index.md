@@ -76,6 +76,7 @@ seam or unresolved policy named explicitly.
 | [PFS-007](007-zerofee-sponsorship-and-paid-fallback.md) | EIP-7702 delegation receives bounded sponsorship and retains paid fallback | ADR-B-GEN-001, ADR-B-EVM-001, ADR-B-TXP-001, ADR-B-CLI-001; ADR-S-FEE-001; ADR-C-AGR-001 | Draft | Live Rust/Cucumber replay, restart, authorization and day-boundary scenarios implemented |
 | [PFS-008](008-follower-sync-recovery-and-warm-promotion.md) | Followers synchronize, validators recover and warm data is promoted safely | ADR-B-NOD-001, ADR-B-CNS-001 through ADR-B-CNS-003, ADR-B-OPS-001; ADR-S-VAL-001, ADR-S-STK-001 | Draft | Live upstream-loss and restart-safe promotion scenarios implemented |
 | [PFS-009](009-multichain-auction-day.md) | A worldwide day is auctioned across chains and creators are paid | ADR-S-CYC-001; ADR-C-MET-001, ADR-C-LYS-001, ADR-C-DES-001, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-PRM-003; ADR-B-XCH-001 | Draft | Partial: in-process green/red/gate scenarios; live transport walk manual |
+| [PFS-010](010-stablecoin-factory-lifecycle.md) | Validator-approved stablecoin identity and ledger state survive conflict rejection and committee restart | ADR-B-CNS-003, ADR-B-EVM-002 through ADR-B-EVM-005, ADR-B-TST-001; ADR-S-GOV-002; ADR-C-TOK-003 through ADR-C-TOK-005 | Draft | Live PFS-010-01 through -04; in-process PFS-010-05 through -08 |
 
 ## Relationship to test documentation
 

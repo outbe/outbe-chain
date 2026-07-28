@@ -300,10 +300,6 @@ run = "cargo xtask ocomp task OCM-26"
 description = "Run and independently verify the exact four-domain OCOMP E2E lane"
 run = 'cargo xtask ocomp lane OCM-E2E "$@"'
 
-[tasks.ocomp-poc-isolation]
-description = "Run and independently verify the exact systemd/cgroup isolation lane"
-run = 'cargo xtask ocomp lane OCM-ISO "$@"'
-
 [tasks.ocomp-poc-evidence-verify]
 description = "Independently verify one OCOMP run-manifest.json"
 run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- verify "$@"'

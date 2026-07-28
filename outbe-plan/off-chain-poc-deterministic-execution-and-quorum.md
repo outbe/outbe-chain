@@ -42,13 +42,14 @@ finalized JobId + verified InputManifestV1
   -> node reloads the finalized job/export binding and reconstructs ResultDigest
   -> node durably installs one SignOnceRecordV1
   -> node releases one validator-index signature
-  -> external relay collects three distinct matching announcements
-  -> relay builds one ordinary public activation transaction
+  -> local Supervisor submits one public ResultVoteV1 transaction
+  -> normal block execution records the validator's bounded slot
+  -> the third matching vote atomically applies the canonical result
 ```
 
 The four domains do not exchange plans, manifests, artifacts or results before
-signing. The relay is the first inter-domain convergence point. Four worker
-processes inside one domain still produce at most that domain's single
+signing. The blockchain is the first inter-domain convergence point. Four
+worker processes inside one domain still produce at most that domain's single
 validator-index signature.
 
 The safety claim is intentionally narrow:
@@ -69,8 +70,8 @@ The safety claim is intentionally narrow:
 | `BTreeMap` ordering and checked/wrapping `U256` operations in current Lysis | exact baseline selected by ticket #3 | pin every order/arithmetic operation in the independent corpus and work-output schemas |
 | workspace `k256 = 0.13` and `OutbeEvmSigner` prehash use | library/profile precedent | add a separate node-only OCOMP key type; do not reuse the EVM signer, address or recoverable 65-byte format |
 | Commonware committee/index/certificate code | precedent for distinct indexed participants and duplicate rejection | OCOMP remains a separate four-member secp256k1 snapshot/certificate |
-| `outbe_getFinalization(height)` | exact Commonware finalization and block byte transport | relay verifies it; never trusts RPC JSON as authority |
-| Reth standard Ethereum RPC | exact block/header and EIP-1186 state-proof transport | PoC node retains request history and relay uses exact block-hash `eth_getProof` |
+| `outbe_getFinalization(height)` | exact Commonware finalization and block byte transport | Supervisor uses it for readiness/inclusion monitoring; node consensus state remains authority |
+| Reth standard Ethereum RPC | public transaction submission plus exact block/receipt transport | each Supervisor submits and monitors only its own node-signed vote bytes |
 | slashing/governance JSONL journals | operational diagnostics only | not reusable for sign-once: they use JSON, only flush, swallow write errors and have no recovery authority |
 | E2E harness child guards/restart controls | real process kill/restart ownership | add worker schedule, node signer fault points and cross-domain evidence |
 
@@ -1038,10 +1039,10 @@ write set, central calculator or one crate per phase.
 | semantic failure/first error | no successful result/signature |
 | one domain unavailable | other three may form exact q=3 |
 | two domains unavailable | no threshold lowering; ticket #8 expiry |
-| one domain computes a different digest | separate relay group below q; no signature rewriting |
+| one domain computes a different digest | separate on-chain slot below q; no signature rewriting |
 | signer store unavailable/ambiguous/full | that domain does not sign; consensus key unaffected |
-| relay corrupts/mixes/drops | verification rejects or activation delays |
-| public historical proof unavailable | relay waits/fails; no private bypass |
+| vote transport drops/delays | Supervisor retries exact signed bytes until deadline |
+| public historical proof unavailable | local vote preparation waits/fails; no private bypass |
 
 No failure invokes on-chain/synchronous Lysis.
 
@@ -1058,10 +1059,10 @@ Later implementation is complete only when retained evidence proves:
 6. the node, not supervisor/worker, derives and signs the digest;
 7. exact sign retry is idempotent and conflicting retry refuses after restart;
 8. four certificate subsets pass and all signer/digest mutations fail;
-9. a stopped fourth supervisor is absent from the successful three-signature
-   certificate;
-10. relay builds finality/state proof from public exact-block data and submits
-    through the normal transaction surface;
+9. a stopped fourth supervisor leaves its on-chain vote slot empty while three
+   matching timely votes still complete the job;
+10. every domain submits its own signed full result through the normal
+    transaction surface, and the q-forming vote applies in the same block;
 11. no test counts workers as voters or uses a central result;
 12. logs/evidence contain public bytes/digests and failure codes, never private
     key bytes.

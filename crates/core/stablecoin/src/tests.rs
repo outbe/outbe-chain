@@ -415,7 +415,7 @@ fn self_transfer_preserves_max_balance_and_still_emits() {
 }
 
 #[test]
-fn erc20_core_mint_burn_cap_and_zero_amount_edges_are_atomic() {
+fn pfs_010_07_cap_failures_restore_supply_balances_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0x31);
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
@@ -423,6 +423,9 @@ fn erc20_core_mint_burn_cap_and_zero_amount_edges_are_atomic() {
         StablecoinFactoryApi::new(storage.clone())
             .initialize(&init)
             .unwrap();
+    });
+
+    StorageHandle::enter(&mut provider, |storage| {
         let mut token = StablecoinContract::new(storage, init.token_address);
 
         assert!(matches!(
@@ -433,14 +436,29 @@ fn erc20_core_mint_burn_cap_and_zero_amount_edges_are_atomic() {
             token.burn_core(alice, U256::ZERO),
             Err(PrecompileError::RevertBytes(_))
         ));
-        token.mint_core(alice, init.payload.supply_cap).unwrap();
+    });
+    assert!(provider.get_events(init.token_address).is_empty());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .mint_core(alice, init.payload.supply_cap)
+            .unwrap();
+    });
+    assert_eq!(provider.get_events(init.token_address).len(), 1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
         assert!(matches!(
             token.mint_core(alice, U256::from(1)),
             Err(PrecompileError::RevertBytes(_))
         ));
         assert_eq!(token.total_supply().unwrap(), init.payload.supply_cap);
         assert_eq!(token.balance_of(alice).unwrap(), init.payload.supply_cap);
+    });
+    assert_eq!(provider.get_events(init.token_address).len(), 1);
 
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
         token.burn_core(alice, U256::from(17)).unwrap();
         assert_eq!(
             token.total_supply().unwrap(),
@@ -450,11 +468,25 @@ fn erc20_core_mint_burn_cap_and_zero_amount_edges_are_atomic() {
             token.balance_of(alice).unwrap(),
             init.payload.supply_cap - U256::from(17)
         );
+    });
+    assert_eq!(provider.get_events(init.token_address).len(), 2);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
         assert!(matches!(
             token.burn_core(alice, init.payload.supply_cap),
             Err(PrecompileError::RevertBytes(_))
         ));
+        assert_eq!(
+            token.total_supply().unwrap(),
+            init.payload.supply_cap - U256::from(17)
+        );
+        assert_eq!(
+            token.balance_of(alice).unwrap(),
+            init.payload.supply_cap - U256::from(17)
+        );
     });
+    assert_eq!(provider.get_events(init.token_address).len(), 2);
 }
 
 #[test]
@@ -1056,7 +1088,7 @@ fn mint_burn_burn_from_and_cap_follow_the_fixed_roles() {
 }
 
 #[test]
-fn unauthorized_role_and_recovery_sequences_never_mutate_state() {
+fn pfs_010_07_role_failures_restore_state_and_events() {
     let init = initialization("USDX");
     let attacker = Address::repeat_byte(0xd1);
     let target = Address::repeat_byte(0xd2);
@@ -1315,7 +1347,7 @@ fn forced_transfer_bypasses_source_checks_consumes_only_frozen_units_and_orders_
 }
 
 #[test]
-fn forced_transfer_requires_recipient_policy_and_rolls_back_every_write_and_log() {
+fn pfs_010_07_policy_failures_restore_balances_freeze_supply_and_events() {
     let init = initialization("USDX");
     let alice = Address::repeat_byte(0xc1);
     let bob = Address::repeat_byte(0xc2);
@@ -1586,7 +1618,7 @@ fn permit_domain_and_cast_golden_signature_are_exact_and_work_at_deadline_while_
 }
 
 #[test]
-fn permit_rejects_expired_wrong_domain_and_changed_message_without_nonce_effects() {
+fn pfs_010_07_signature_failures_restore_nonce_allowance_and_events() {
     let init = initialization("USDX");
     let call = golden_permit_call();
 
@@ -1601,6 +1633,15 @@ fn permit_rejects_expired_wrong_domain_and_changed_message_without_nonce_effects
         )
         .unwrap_err(),
     );
+    StorageHandle::enter(&mut expired, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::ZERO
+        );
+    });
+    assert!(expired.get_events(init.token_address).is_empty());
 
     let wrong_chain_init = initialization_for(CHAIN_ID + 1, "USDX");
     let mut wrong_chain = HashMapStorageProvider::new(CHAIN_ID + 1);
@@ -1619,6 +1660,17 @@ fn permit_rejects_expired_wrong_domain_and_changed_message_without_nonce_effects
         )
         .unwrap_err(),
     );
+    StorageHandle::enter(&mut wrong_chain, |storage| {
+        let token = StablecoinContract::new(storage, wrong_chain_init.token_address);
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::ZERO
+        );
+    });
+    assert!(wrong_chain
+        .get_events(wrong_chain_init.token_address)
+        .is_empty());
 
     let wrong_token_init = initialization("EURX");
     let mut wrong_token = HashMapStorageProvider::new(CHAIN_ID);
@@ -1637,6 +1689,17 @@ fn permit_rejects_expired_wrong_domain_and_changed_message_without_nonce_effects
         )
         .unwrap_err(),
     );
+    StorageHandle::enter(&mut wrong_token, |storage| {
+        let token = StablecoinContract::new(storage, wrong_token_init.token_address);
+        assert_eq!(token.nonces.read(&PERMIT_OWNER).unwrap(), U256::ZERO);
+        assert_eq!(
+            token.allowance_of(PERMIT_OWNER, PERMIT_SPENDER).unwrap(),
+            U256::ZERO
+        );
+    });
+    assert!(wrong_token
+        .get_events(wrong_token_init.token_address)
+        .is_empty());
 
     for changed_call in [
         IStablecoin::permitCall {

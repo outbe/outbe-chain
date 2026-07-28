@@ -2,7 +2,7 @@
 
 Date: 2026-07-26
 
-Status: implemented on `feat/ocomp-poc`; exact public/E2E/isolation closure
+Status: implemented on `feat/ocomp-poc`; exact public/E2E closure
 evidence pending. The superseded relay, digest-only-vote and separate-activation
 paths are not part of the runtime protocol. Section 22 values are generated
 from the checked-in registries and must pass the freeze checks before PoC
@@ -237,7 +237,7 @@ These are PoC-SCAFFOLD, not architectural shortcuts:
 - a simple durable local sign-once journal;
 - one local pinned checkpoint whose export may be recomputed after restart;
 - a per-validator filesystem content-addressed store;
-- a fixed unprivileged local worker template and basic cgroup limits;
+- a fixed Supervisor-owned one-unit worker adapter with a concurrency cap;
 - direct public result-vote submission by each validator-domain Supervisor
   through the closed validator ZeroFee hook;
 - structured logs and demo metrics instead of production observability;
@@ -269,25 +269,25 @@ The following do not count as the PoC:
 Each of the four validator administrative domains contains:
 
 ```text
-outbe-chain.service
+outbe-chain child process
   consensus and finality
   JobIntent/FSM/expiry
   bounded OcompControl UDS endpoint
   OcompAttestationGate and sign-once journal
   separate OCOMP private key
 
-outbe-ocomp-supervisor.service
+outbe-ocomp supervisor child process
   finalized-job cursor
   local admission and immutable job binding
   deterministic planner/scheduler/reducer
   local job journal
 
-outbe-ocomp-snapshot-exporter.service
+outbe-ocomp snapshot-exporter child process
   read-only immutable checkpoint
   paged root-bound input export
   input-root/count reconstruction
 
-outbe-ocomp-worker@.service
+outbe-ocomp one-unit worker child process
   one immutable UnitId per invocation
   read-only inputs and private scratch
   no node DB, validator key or default network
@@ -302,10 +302,10 @@ result vote through the normal public transaction path. Any client may
 rebroadcast identical signed bytes, but no off-chain collector chooses the
 result, forms consensus evidence or performs a later activation.
 
-The service manager starts node, exporter and supervisor as sibling services.
-Starting them after the node is allowed, but the node must not have
-`Requires=`, `BindsTo=` or `PartOf=` lifecycle dependence on OCOMP services.
-The node never spawns the supervisor.
+The Rust E2E harness starts node, exporter and supervisor as independent
+sibling processes. Starting compute processes after the node is allowed. The
+node never spawns the supervisor and does not depend on any OCOMP process for
+its lifecycle.
 
 ### 3.1 Failure boundary
 
@@ -319,9 +319,10 @@ The node never spawns the supervisor.
 - `consensus_ready`, `execution_ready` and `ocomp_ready` are distinct health
   signals.
 
-PoC uses separate UIDs/directories and basic cgroup CPU, memory, task and I/O
-limits. A production launch broker, hardened namespaces, aggregate lease
-accounting and remote compute policy are DEFERRED to MVP.
+PoC uses separate process handles/directories plus protocol, frame,
+concurrency and CAS bounds. Production service identities, cgroup enforcement,
+a launch broker, hardened namespaces, aggregate lease accounting and remote
+compute policy are DEFERRED to MVP.
 
 ### 3.2 Trust and access matrix
 
@@ -333,7 +334,7 @@ accounting and remote compute policy are DEFERRED to MVP.
 | worker | exact job-scoped inputs | private scratch and one CAS result | never | produces a rejected artifact or wastes bounded resources |
 | CAS/body transport | opaque chunks | its own stored chunks | never | may omit/corrupt/withhold, but cannot forge authenticated roots |
 | public submitter | canonical signed vote/typed result bytes | ordinary public transaction submission | never | may delay/drop its own delivery, but cannot choose quorum or mutate another validator's slot |
-| service manager | fixed unit configuration | process lifecycle and cgroups | never | host-administrator compromise, outside the in-protocol fault boundary |
+| E2E process owner | fixed launch configuration | test process lifecycle | never | may stop or replace a local process; evidence binds the exact executable and arguments |
 
 The supervisor has no MDBX/Mongo writer, validator-key directory, arbitrary node
 RPC, shell callback or code-download capability. Process separation is fault
@@ -384,7 +385,10 @@ binaries.
 Each five-run capacity set uses read-only snapshots of the exact executed
 binaries, not mutable `target/` paths. Rebuilding any binary creates a new
 artifact set and requires a new five-run measurement; existing evidence is
-never retargeted. The recorded finality latency is the maximum positive
+never retargeted. The harness also resolves the test Gramine Docker tag to its
+canonical `sha256:` image ID before launch, runs every enclave by that immutable
+ID and includes the same ID in scenario and capacity artifact-set evidence.
+The recorded finality latency is the maximum positive
 four-validator interval between canonical application of the q-forming block
 and finalization acknowledgement for that exact block.
 
@@ -1615,7 +1619,7 @@ MVP replaces the operational implementations around these interfaces:
 | checkpoint | one pinned export; recompute allowed | crash-safe pin/export/pruning/restore FSM |
 | scheduling | one parent job, deterministic multi-shard queue and shard retry | bounded fair multi-job queues and resumable journals |
 | worker launch | fixed unprivileged template | audited broker and aggregate lease accounting |
-| isolation | separate processes/basic cgroups | hardened identities, policies and quotas |
+| isolation | independent harness-owned processes and bounded protocols | hardened identities, service-manager policies and resource quotas |
 | storage | local CAS | production retention/bootstrap policy |
 | reliability | selected failures | exhaustive crash/disk/OOM/Byzantine chaos |
 | operations | logs/demo metrics | SLOs, alerts, dashboards and runbooks |
@@ -2054,7 +2058,8 @@ applicable item before any dependent consensus or runtime task starts:
    data source used by full-result vote verification;
 7. checkpoint API supported by the current Reth/MDBX integration;
 8. local CAS layout, quota and cleanup rule;
-9. exact systemd/container topology, UIDs, UDS paths and cgroup budget;
+9. exact PoC process/binary/socket topology, launch arguments and bounded CAS
+   profile; production service-manager and host-isolation policy is deferred;
 10. OCOMP key storage format and sign-journal durability primitive;
 11. full-result `ResultVoteV1`, four-slot/quorum/accountability schemas and
     public vote encoding;
