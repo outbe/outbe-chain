@@ -34,12 +34,12 @@ interface IERC7786TokenBridge {
     ) external payable returns (bytes32 sendId);
 }
 
-/// @title BnbVaultRouter
-/// @notice Fixed BNB adapter for the Outbe cross-chain WCOEN vault.
+/// @title TargetChainVaultRouter
+/// @notice Fixed target-chain adapter for the Outbe cross-chain WCOEN vault.
 /// @dev Tokens arrive through ERC7786TokenBridge.sendAndCall, are deposited into one immutable
 ///      1:1 vault, and the resulting real vault shares remain in this contract. Outbe stores only
 ///      the mirrored receipt balance. This contract has no vault/source/target management registry.
-contract BnbVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Ownable, ReentrancyGuard {
+contract TargetChainVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant DEPOSIT_REQUEST = 1;

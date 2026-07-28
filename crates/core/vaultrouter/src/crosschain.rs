@@ -12,7 +12,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::ICrosschainVaultRouter;
+use crate::api::IVaultRouterCrosschainExtention;
 use crate::errors::VaultRouterError;
 use crate::schema::VaultRouterContract;
 use crate::sol_ext::{IERC7786Bridge, IERC7786TokenBridge, IERC20};
@@ -70,7 +70,7 @@ pub fn set_asset(
     contract
         .crosschain_destination_chain_id
         .write(destination_chain_id)?;
-    contract.emit(ICrosschainVaultRouter::CrosschainAssetUpdated {
+    contract.emit(IVaultRouterCrosschainExtention::CrosschainAssetUpdated {
         oldAsset: old_asset,
         newAsset: asset,
         tokenBridge: token_bridge,
@@ -136,7 +136,7 @@ pub fn deposit(
         erc20_approve(&storage, config.asset, config.token_bridge, U256::ZERO)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
-        contract.emit(ICrosschainVaultRouter::CrosschainDepositSent {
+        contract.emit(IVaultRouterCrosschainExtention::CrosschainDepositSent {
             operationId: operation_id,
             user,
             assetsAmount: amount,
@@ -217,7 +217,7 @@ pub fn withdraw(
         )?;
         let send_id = IERC7786Bridge::sendMessageCall::abi_decode_returns(&ret)
             .map_err(|_| VaultRouterError::UndecodableReturn("ERC7786Bridge sendMessage"))?;
-        contract.emit(ICrosschainVaultRouter::CrosschainWithdrawalSent {
+        contract.emit(IVaultRouterCrosschainExtention::CrosschainWithdrawalSent {
             operationId: operation_id,
             user,
             receiptShares: amount,
@@ -257,12 +257,14 @@ pub fn receive_deposit_acknowledgement(
             .operation_statuses
             .write(&operation_id, STATUS_COMPLETED)?;
         decrement_pending_operations(&contract)?;
-        contract.emit(ICrosschainVaultRouter::CrosschainDepositFinalized {
-            operationId: operation_id,
-            user,
-            assetsAmount: amount,
-            receiptShares: amount,
-        })
+        contract.emit(
+            IVaultRouterCrosschainExtention::CrosschainDepositFinalized {
+                operationId: operation_id,
+                user,
+                assetsAmount: amount,
+                receiptShares: amount,
+            },
+        )
     })
 }
 
@@ -295,12 +297,14 @@ pub fn receive_withdrawal_return(
             .operation_statuses
             .write(&operation_id, STATUS_COMPLETED)?;
         decrement_pending_operations(&contract)?;
-        contract.emit(ICrosschainVaultRouter::CrosschainWithdrawalFinalized {
-            operationId: operation_id,
-            user,
-            receiptShares: amount,
-            assetsAmount: amount,
-        })
+        contract.emit(
+            IVaultRouterCrosschainExtention::CrosschainWithdrawalFinalized {
+                operationId: operation_id,
+                user,
+                receiptShares: amount,
+                assetsAmount: amount,
+            },
+        )
     })
 }
 

@@ -16,7 +16,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::{ICrosschainVaultRouter, IVaultRouter};
+use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::errors::VaultRouterError;
 use crate::schema::{VaultRouterContract, UNKNOWN};
 use crate::sol_ext::{IReferenceCurrency, ITokenBundle, IVaultV2, IERC20};
@@ -53,7 +53,7 @@ pub fn set_crosschain_bridge(
     let mut contract = VaultRouterContract::new(storage);
     let old_bridge = contract.crosschain_bridge.read()?;
     contract.crosschain_bridge.write(bridge)?;
-    contract.emit(ICrosschainVaultRouter::CrosschainBridgeUpdated {
+    contract.emit(IVaultRouterCrosschainExtention::CrosschainBridgeUpdated {
         oldBridge: old_bridge,
         newBridge: bridge,
     })
@@ -81,7 +81,7 @@ pub fn set_remote_vault_router(
     } else {
         contract.remote_vault_routers.write(&chain_id, router)?;
     }
-    contract.emit(ICrosschainVaultRouter::RemoteVaultRouterUpdated {
+    contract.emit(IVaultRouterCrosschainExtention::RemoteVaultRouterUpdated {
         chainId: chain_id,
         oldRouter: old_router,
         newRouter: router,

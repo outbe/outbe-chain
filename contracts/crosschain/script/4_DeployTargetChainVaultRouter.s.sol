@@ -4,16 +4,16 @@ pragma solidity ^0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
-import {BnbVaultRouter} from "src/BnbVaultRouter.sol";
+import {TargetChainVaultRouter} from "src/TargetChainVaultRouter.sol";
 
-/// @notice Deploys the fixed BNB WCOEN vault adapter.
+/// @notice Deploys the fixed target-chain WCOEN vault adapter.
 /// @dev Required env: PRIVATE_KEY, DEPLOYER_ADDRESS, BRIDGE_ADDRESS, BSC_CHAIN_ID,
 ///      OUTBE_CHAIN_ID, BSC_WCOEN_TOKEN, BSC_WCOEN_BRIDGE, BNB_WCOEN_VAULT.
 ///      Optional env: OUTBE_ROUTER (default 0x1017), ROUTER_OWNER (default DEPLOYER_ADDRESS).
-contract DeployBnbVaultRouter is Script {
+contract DeployTargetChainVaultRouter is Script {
     address internal constant OUTBE_VAULT_ROUTER_PRECOMPILE = 0x0000000000000000000000000000000000001017;
 
-    function run() external returns (BnbVaultRouter router) {
+    function run() external returns (TargetChainVaultRouter router) {
         uint256 privateKey = vm.parseUint(vm.envString("PRIVATE_KEY"));
         address deployer = vm.addr(privateKey);
         address configuredDeployer = vm.envAddress("DEPLOYER_ADDRESS");
@@ -32,10 +32,12 @@ contract DeployBnbVaultRouter is Script {
         require(deployer == configuredDeployer, "PRIVATE_KEY != DEPLOYER_ADDRESS");
 
         vm.startBroadcast(privateKey);
-        router = new BnbVaultRouter(asset, vault, tokenBridge, messageBridge, uint32(outbeChainId), outbeRouter, owner);
+        router = new TargetChainVaultRouter(
+            asset, vault, tokenBridge, messageBridge, uint32(outbeChainId), outbeRouter, owner
+        );
         vm.stopBroadcast();
 
-        console2.log("BnbVaultRouter:", address(router));
+        console2.log("TargetChainVaultRouter:", address(router));
         console2.log("WCOEN:", asset);
         console2.log("1:1 vault:", vault);
         console2.log("WCOEN token bridge:", tokenBridge);

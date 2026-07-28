@@ -11,9 +11,9 @@ use alloy_sol_types::{SolCall, SolValue};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{Bytecode, StorageHandle};
 
-use crate::api::{ICrosschainVaultRouter, IVaultRouter};
+use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::crosschain;
-use crate::precompile::dispatch;
+use crate::precompile::{dispatch, dispatch_crosschain};
 use crate::runtime;
 use crate::schema::VaultRouterContract;
 use crate::sol_ext::{IReferenceCurrency, IVaultV2};
@@ -115,22 +115,49 @@ fn management_methods_reject_non_owner() {
 // --- centralized management -------------------------------------------------
 
 #[test]
+fn crosschain_abi_is_not_exposed_by_default() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+
+        let err = dispatch(
+            storage.clone(),
+            &IVaultRouterCrosschainExtention::setCrosschainBridgeCall { bridge: bridge() }
+                .abi_encode(),
+            owner(),
+            U256::ZERO,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("decode error"), "{err}");
+        assert_eq!(
+            VaultRouterContract::new(storage)
+                .crosschain_bridge
+                .read()
+                .unwrap(),
+            Address::ZERO
+        );
+    });
+}
+
+#[test]
 fn owner_configures_bridge_and_remote_router_through_abi() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
         let bsc_chain_id = U256::from(56);
 
-        dispatch(
+        dispatch_crosschain(
             storage.clone(),
-            &ICrosschainVaultRouter::setCrosschainBridgeCall { bridge: bridge() }.abi_encode(),
+            &IVaultRouterCrosschainExtention::setCrosschainBridgeCall { bridge: bridge() }
+                .abi_encode(),
             owner(),
             U256::ZERO,
         )
         .unwrap();
-        dispatch(
+        dispatch_crosschain(
             storage.clone(),
-            &ICrosschainVaultRouter::setRemoteVaultRouterCall {
+            &IVaultRouterCrosschainExtention::setRemoteVaultRouterCall {
                 chainId: bsc_chain_id,
                 router: remote_router(),
             }
@@ -140,21 +167,22 @@ fn owner_configures_bridge_and_remote_router_through_abi() {
         )
         .unwrap();
 
-        let bridge_out = dispatch(
+        let bridge_out = dispatch_crosschain(
             storage.clone(),
-            &ICrosschainVaultRouter::crosschainBridgeCall {}.abi_encode(),
+            &IVaultRouterCrosschainExtention::crosschainBridgeCall {}.abi_encode(),
             stranger(),
             U256::ZERO,
         )
         .unwrap();
         assert_eq!(
-            ICrosschainVaultRouter::crosschainBridgeCall::abi_decode_returns(&bridge_out).unwrap(),
+            IVaultRouterCrosschainExtention::crosschainBridgeCall::abi_decode_returns(&bridge_out)
+                .unwrap(),
             bridge()
         );
 
-        let router_out = dispatch(
+        let router_out = dispatch_crosschain(
             storage.clone(),
-            &ICrosschainVaultRouter::remoteVaultRouterCall {
+            &IVaultRouterCrosschainExtention::remoteVaultRouterCall {
                 chainId: bsc_chain_id,
             }
             .abi_encode(),
@@ -163,7 +191,8 @@ fn owner_configures_bridge_and_remote_router_through_abi() {
         )
         .unwrap();
         assert_eq!(
-            ICrosschainVaultRouter::remoteVaultRouterCall::abi_decode_returns(&router_out).unwrap(),
+            IVaultRouterCrosschainExtention::remoteVaultRouterCall::abi_decode_returns(&router_out)
+                .unwrap(),
             remote_router()
         );
 
@@ -186,12 +215,12 @@ fn crosschain_deposit_stays_pending_until_authenticated_ack() {
         set_owner(&storage, owner());
         configure_crosschain(&storage);
 
-        let quote = ICrosschainVaultRouter::quoteCrosschainDepositCall {
+        let quote = IVaultRouterCrosschainExtention::quoteCrosschainDepositCall {
             assetsAmount: amount,
             destinationGasLimit: U256::from(600_000),
             acknowledgementGasLimit: U256::from(250_000),
         };
-        let quote_out = dispatch(
+        let quote_out = dispatch_crosschain(
             storage.clone(),
             &quote.abi_encode(),
             source_account(),
@@ -199,17 +228,21 @@ fn crosschain_deposit_stays_pending_until_authenticated_ack() {
         )
         .unwrap();
         let quoted =
-            ICrosschainVaultRouter::quoteCrosschainDepositCall::abi_decode_returns(&quote_out)
-                .unwrap();
+            IVaultRouterCrosschainExtention::quoteCrosschainDepositCall::abi_decode_returns(
+                &quote_out,
+            )
+            .unwrap();
         assert_eq!(quoted.nativeFee, fee);
 
-        let call = ICrosschainVaultRouter::crosschainDepositCall {
+        let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
             assetsAmount: amount,
             destinationGasLimit: quote.destinationGasLimit,
             acknowledgementGasLimit: quote.acknowledgementGasLimit,
         };
-        let out = dispatch(storage.clone(), &call.abi_encode(), source_account(), fee).unwrap();
-        let sent = ICrosschainVaultRouter::crosschainDepositCall::abi_decode_returns(&out).unwrap();
+        let out = dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
+            .unwrap();
+        let sent = IVaultRouterCrosschainExtention::crosschainDepositCall::abi_decode_returns(&out)
+            .unwrap();
         assert_eq!(sent.operationId, quoted.operationId);
         assert_eq!(sent.sendId, send_id);
 
@@ -240,24 +273,24 @@ fn crosschain_deposit_stays_pending_until_authenticated_ack() {
             .into();
         let sender: Bytes = crosschain::format_evm_v1(U256::from(56), remote_router()).into();
 
-        let wrong = ICrosschainVaultRouter::receiveMessageCall {
+        let wrong = IVaultRouterCrosschainExtention::receiveMessageCall {
             receiveId: B256::ZERO,
             sender: sender.clone(),
             payload: payload.clone(),
         };
-        let err =
-            dispatch(storage.clone(), &wrong.abi_encode(), stranger(), U256::ZERO).unwrap_err();
+        let err = dispatch_crosschain(storage.clone(), &wrong.abi_encode(), stranger(), U256::ZERO)
+            .unwrap_err();
         assert!(
             err.to_string().contains("invalid crosschain sender"),
             "{err}"
         );
 
-        let ack = ICrosschainVaultRouter::receiveMessageCall {
+        let ack = IVaultRouterCrosschainExtention::receiveMessageCall {
             receiveId: B256::ZERO,
             sender,
             payload,
         };
-        dispatch(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap();
+        dispatch_crosschain(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap();
 
         let contract = VaultRouterContract::new(storage.clone());
         assert_eq!(
@@ -274,7 +307,8 @@ fn crosschain_deposit_stays_pending_until_authenticated_ack() {
             U256::ZERO
         );
 
-        let err = dispatch(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO).unwrap_err();
+        let err = dispatch_crosschain(storage.clone(), &ack.abi_encode(), bridge(), U256::ZERO)
+            .unwrap_err();
         assert!(err.to_string().contains("already completed"), "{err}");
     });
 }
@@ -300,12 +334,12 @@ fn crosschain_withdraw_burns_receipt_then_completes_on_token_return() {
             .write(U256::from(100))
             .unwrap();
 
-        let quote = ICrosschainVaultRouter::quoteCrosschainWithdrawCall {
+        let quote = IVaultRouterCrosschainExtention::quoteCrosschainWithdrawCall {
             sharesAmount: amount,
             requestGasLimit: U256::from(300_000),
             returnGasLimit: U256::from(450_000),
         };
-        let quote_out = dispatch(
+        let quote_out = dispatch_crosschain(
             storage.clone(),
             &quote.abi_encode(),
             source_account(),
@@ -313,18 +347,22 @@ fn crosschain_withdraw_burns_receipt_then_completes_on_token_return() {
         )
         .unwrap();
         let quoted =
-            ICrosschainVaultRouter::quoteCrosschainWithdrawCall::abi_decode_returns(&quote_out)
-                .unwrap();
+            IVaultRouterCrosschainExtention::quoteCrosschainWithdrawCall::abi_decode_returns(
+                &quote_out,
+            )
+            .unwrap();
         assert_eq!(quoted.nativeFee, fee);
 
-        let call = ICrosschainVaultRouter::crosschainWithdrawCall {
+        let call = IVaultRouterCrosschainExtention::crosschainWithdrawCall {
             sharesAmount: amount,
             requestGasLimit: quote.requestGasLimit,
             returnGasLimit: quote.returnGasLimit,
         };
-        let out = dispatch(storage.clone(), &call.abi_encode(), source_account(), fee).unwrap();
+        let out = dispatch_crosschain(storage.clone(), &call.abi_encode(), source_account(), fee)
+            .unwrap();
         let sent =
-            ICrosschainVaultRouter::crosschainWithdrawCall::abi_decode_returns(&out).unwrap();
+            IVaultRouterCrosschainExtention::crosschainWithdrawCall::abi_decode_returns(&out)
+                .unwrap();
         assert_eq!(sent.operationId, quoted.operationId);
 
         let contract = VaultRouterContract::new(storage.clone());
@@ -349,13 +387,13 @@ fn crosschain_withdraw_burns_receipt_then_completes_on_token_return() {
         )
             .abi_encode()
             .into();
-        let returned = ICrosschainVaultRouter::onCrosschainTokensReceivedCall {
+        let returned = IVaultRouterCrosschainExtention::onCrosschainTokensReceivedCall {
             sourceDomain: 56,
             from: crosschain::format_evm_v1(U256::from(56), remote_router()).into(),
             amount,
             extraData: extra_data,
         };
-        dispatch(
+        dispatch_crosschain(
             storage.clone(),
             &returned.abi_encode(),
             token_bridge(),
@@ -383,12 +421,12 @@ fn failed_crosschain_deposit_does_not_consume_nonce_or_shares() {
     StorageHandle::enter(&mut storage, |storage| {
         set_owner(&storage, owner());
         configure_crosschain(&storage);
-        let call = ICrosschainVaultRouter::crosschainDepositCall {
+        let call = IVaultRouterCrosschainExtention::crosschainDepositCall {
             assetsAmount: U256::from(100),
             destinationGasLimit: U256::from(600_000),
             acknowledgementGasLimit: U256::from(250_000),
         };
-        let err = dispatch(
+        let err = dispatch_crosschain(
             storage.clone(),
             &call.abi_encode(),
             source_account(),

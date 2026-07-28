@@ -1,14 +1,21 @@
 //! ABI dispatch for the vaultrouter precompile at `VAULT_ROUTER_ADDRESS`.
 
-use alloy_primitives::{Address, Bytes, FixedBytes, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+#[cfg(test)]
+use alloy_primitives::FixedBytes;
+use alloy_primitives::{Address, Bytes, U256};
+#[cfg(test)]
+use alloy_sol_types::SolCall;
+use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::types::StorageSet;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::{ICrosschainVaultRouter, IVaultRouter};
+use crate::api::IVaultRouter;
+#[cfg(test)]
+use crate::api::IVaultRouterCrosschainExtention as CrosschainExt;
+#[cfg(test)]
 use crate::crosschain;
 use crate::runtime;
 use crate::schema::VaultRouterContract;
@@ -19,11 +26,10 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    if IVaultRouter::IVaultRouterCalls::abi_decode(data).is_ok() {
-        dispatch_local(storage, data, caller, value)
-    } else {
-        dispatch_crosschain(storage, data, caller, value)
-    }
+    // TODO(crosschain): Enable `IVaultRouterCrosschainExtention` only through an explicit
+    // feature/configuration gate, then route its selectors to `dispatch_crosschain`.
+    // Until that opt-in exists, the deployed precompile exposes only `IVaultRouter`.
+    dispatch_local(storage, data, caller, value)
 }
 
 fn dispatch_local(
@@ -160,7 +166,8 @@ fn dispatch_local(
     })
 }
 
-fn dispatch_crosschain(
+#[cfg(test)]
+pub(crate) fn dispatch_crosschain(
     storage: StorageHandle<'_>,
     data: &[u8],
     caller: Address,
@@ -168,9 +175,9 @@ fn dispatch_crosschain(
 ) -> Result<Bytes> {
     dispatch_call(
         data,
-        ICrosschainVaultRouter::ICrosschainVaultRouterCalls::abi_decode,
+        CrosschainExt::IVaultRouterCrosschainExtentionCalls::abi_decode,
         |call| {
-            use ICrosschainVaultRouter::ICrosschainVaultRouterCalls::*;
+            use CrosschainExt::IVaultRouterCrosschainExtentionCalls::*;
             if !matches!(
                 &call,
                 crosschainDeposit(_) | crosschainWithdraw(_) | receiveMessage(_)
@@ -245,13 +252,13 @@ fn dispatch_crosschain(
                     let contract = VaultRouterContract::new(storage.clone());
                     let kind = contract.operation_kinds.read(&c.operationId)?;
                     let status = contract.operation_statuses.read(&c.operationId)?;
-                    Ok(ICrosschainVaultRouter::crosschainOperationReturn {
+                    Ok(CrosschainExt::crosschainOperationReturn {
                         user: contract.operation_users.read(&c.operationId)?,
                         amount: contract.operation_amounts.read(&c.operationId)?,
-                        kind: ICrosschainVaultRouter::CrosschainOperationKind::try_from(kind)
-                            .unwrap_or(ICrosschainVaultRouter::CrosschainOperationKind::Unknown),
-                        status: ICrosschainVaultRouter::CrosschainOperationStatus::try_from(status)
-                            .unwrap_or(ICrosschainVaultRouter::CrosschainOperationStatus::Unknown),
+                        kind: CrosschainExt::CrosschainOperationKind::try_from(kind)
+                            .unwrap_or(CrosschainExt::CrosschainOperationKind::Unknown),
+                        status: CrosschainExt::CrosschainOperationStatus::try_from(status)
+                            .unwrap_or(CrosschainExt::CrosschainOperationStatus::Unknown),
                     })
                 }),
                 quoteCrosschainDeposit(c) => view(c, |c| {
@@ -262,7 +269,7 @@ fn dispatch_crosschain(
                         c.destinationGasLimit,
                         c.acknowledgementGasLimit,
                     )?;
-                    Ok(ICrosschainVaultRouter::quoteCrosschainDepositReturn {
+                    Ok(CrosschainExt::quoteCrosschainDepositReturn {
                         nativeFee: native_fee,
                         operationId: operation_id,
                     })
@@ -276,7 +283,7 @@ fn dispatch_crosschain(
                         c.acknowledgementGasLimit,
                         value,
                     )?;
-                    Ok(ICrosschainVaultRouter::crosschainDepositReturn {
+                    Ok(CrosschainExt::crosschainDepositReturn {
                         operationId: operation_id,
                         sendId: send_id,
                     })
@@ -289,7 +296,7 @@ fn dispatch_crosschain(
                         c.requestGasLimit,
                         c.returnGasLimit,
                     )?;
-                    Ok(ICrosschainVaultRouter::quoteCrosschainWithdrawReturn {
+                    Ok(CrosschainExt::quoteCrosschainWithdrawReturn {
                         nativeFee: native_fee,
                         operationId: operation_id,
                     })
@@ -303,7 +310,7 @@ fn dispatch_crosschain(
                         c.returnGasLimit,
                         value,
                     )?;
-                    Ok(ICrosschainVaultRouter::crosschainWithdrawReturn {
+                    Ok(CrosschainExt::crosschainWithdrawReturn {
                         operationId: operation_id,
                         sendId: send_id,
                     })
@@ -317,7 +324,7 @@ fn dispatch_crosschain(
                         &c.payload,
                     )?;
                     Ok(FixedBytes::<4>::from_slice(
-                        &ICrosschainVaultRouter::receiveMessageCall::SELECTOR,
+                        &CrosschainExt::receiveMessageCall::SELECTOR,
                     ))
                 }),
                 onCrosschainTokensReceived(c) => mutate(c, caller, |_token_bridge, c| {
@@ -330,7 +337,7 @@ fn dispatch_crosschain(
                         &c.extraData,
                     )?;
                     Ok(FixedBytes::<4>::from_slice(
-                        &ICrosschainVaultRouter::onCrosschainTokensReceivedCall::SELECTOR,
+                        &CrosschainExt::onCrosschainTokensReceivedCall::SELECTOR,
                     ))
                 }),
             }

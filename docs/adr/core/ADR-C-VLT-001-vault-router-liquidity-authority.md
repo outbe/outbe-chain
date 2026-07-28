@@ -99,9 +99,9 @@ shares. Treasury authority and external-contract risk become visible in one arch
 audit.
 
 Cross-chain vault routing is an independent optional ABI capability:
-`ICrosschainVaultRouter` contains only cross-chain configuration, flow and
+`IVaultRouterCrosschainExtention` contains only cross-chain configuration, flow and
 callback methods. A future cross-chain-enabled VaultRouter implementation can
-compose `IVaultRouter` and `ICrosschainVaultRouter`; consumers that only need
+compose `IVaultRouter` and `IVaultRouterCrosschainExtention`; consumers that only need
 local reserve routing do not depend on cross-chain configuration or callback
 methods.
 

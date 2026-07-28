@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 /// @notice Standalone cross-chain vault-routing capability.
 /// @dev A concrete implementation may compose this interface with {IVaultRouter}
 ///      without forcing every cross-chain implementation to implement local routing.
-interface ICrosschainVaultRouter {
+interface IVaultRouterCrosschainExtention {
     enum CrosschainOperationKind {
         Unknown,
         Deposit,

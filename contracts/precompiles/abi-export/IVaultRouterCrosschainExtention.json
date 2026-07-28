@@ -96,12 +96,12 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum ICrosschainVaultRouter.CrosschainOperationKind"
+        "internalType": "enum IVaultRouterCrosschainExtention.CrosschainOperationKind"
       },
       {
         "name": "status",
         "type": "uint8",
-        "internalType": "enum ICrosschainVaultRouter.CrosschainOperationStatus"
+        "internalType": "enum IVaultRouterCrosschainExtention.CrosschainOperationStatus"
       }
     ],
     "stateMutability": "view"

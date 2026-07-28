@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {BnbVaultRouter} from "src/BnbVaultRouter.sol";
+import {TargetChainVaultRouter} from "src/TargetChainVaultRouter.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "src/interfaces/IERC7786.sol";
 import {IERC7786TokenReceiver} from "src/interfaces/IERC7786TokenReceiver.sol";
 
@@ -88,7 +88,7 @@ contract MockMessageBridge is IERC7786GatewaySource, IGatewayQuote {
         emit MessageSent(sendId, "", recipient, payload, msg.value, new bytes[](0));
     }
 
-    function deliver(BnbVaultRouter recipient, bytes32 receiveId, bytes calldata sender, bytes calldata payload)
+    function deliver(TargetChainVaultRouter recipient, bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         external
         returns (bytes4)
     {
@@ -137,7 +137,7 @@ contract MockTokenBridge {
     }
 
     function deliverDeposit(
-        BnbVaultRouter recipient,
+        TargetChainVaultRouter recipient,
         uint32 sourceDomain,
         bytes calldata from,
         uint256 amount,
@@ -148,7 +148,7 @@ contract MockTokenBridge {
     }
 }
 
-contract BnbVaultRouterTest is Test {
+contract TargetChainVaultRouterTest is Test {
     uint32 internal constant OUTBE_DOMAIN = 54_322_345;
     address internal constant OUTBE_ROUTER = 0x0000000000000000000000000000000000001017;
     uint256 internal constant ACK_GAS_LIMIT = 300_000;
@@ -158,7 +158,7 @@ contract BnbVaultRouterTest is Test {
     MockOneToOneVault internal vault;
     MockMessageBridge internal messageBridge;
     MockTokenBridge internal tokenBridge;
-    BnbVaultRouter internal router;
+    TargetChainVaultRouter internal router;
     address internal user;
     bytes internal outbeSender;
 
@@ -167,7 +167,7 @@ contract BnbVaultRouterTest is Test {
         vault = new MockOneToOneVault(asset);
         messageBridge = new MockMessageBridge();
         tokenBridge = new MockTokenBridge(asset);
-        router = new BnbVaultRouter(
+        router = new TargetChainVaultRouter(
             address(asset),
             address(vault),
             address(tokenBridge),
@@ -240,14 +240,14 @@ contract BnbVaultRouterTest is Test {
         uint256 amount = 100 ether;
         bytes32 operationId = keccak256("bad-shares");
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
         tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
         assertEq(asset.balanceOf(address(router)), 0);
         assertEq(asset.balanceOf(address(vault)), 0);
         assertEq(vault.balanceOf(address(router)), 0);
-        (BnbVaultRouter.OperationKind kind,,) = router.operations(operationId);
-        assertEq(uint256(kind), uint256(BnbVaultRouter.OperationKind.None));
+        (TargetChainVaultRouter.OperationKind kind,,) = router.operations(operationId);
+        assertEq(uint256(kind), uint256(TargetChainVaultRouter.OperationKind.None));
     }
 
     function test_depositRequiresGasTankAndRemainsRetryable() external {
@@ -255,7 +255,9 @@ contract BnbVaultRouterTest is Test {
         uint256 amount = 10 ether;
         bytes32 operationId = keccak256("needs-gas");
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultRouter.InsufficientNativeGas.selector, uint256(0), 1 ether));
+        vm.expectRevert(
+            abi.encodeWithSelector(TargetChainVaultRouter.InsufficientNativeGas.selector, uint256(0), 1 ether)
+        );
         tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
         vm.deal(address(router), 1 ether);
@@ -272,13 +274,13 @@ contract BnbVaultRouterTest is Test {
         bytes32 operationId = keccak256("bad-withdraw-shares");
         bytes memory payload = abi.encode(router.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
         messageBridge.deliver(router, bytes32(uint256(1)), outbeSender, payload);
 
         assertEq(vault.balanceOf(address(router)), deposited);
         assertEq(router.totalManagedShares(), deposited);
-        (BnbVaultRouter.OperationKind kind,,) = router.operations(operationId);
-        assertEq(uint256(kind), uint256(BnbVaultRouter.OperationKind.None));
+        (TargetChainVaultRouter.OperationKind kind,,) = router.operations(operationId);
+        assertEq(uint256(kind), uint256(TargetChainVaultRouter.OperationKind.None));
     }
 
     function test_withdrawRequiresGasTankAndRemainsRetryable() external {
@@ -291,7 +293,9 @@ contract BnbVaultRouterTest is Test {
         bytes memory payload = abi.encode(router.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
         tokenBridge.setFee(returnFee);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultRouter.InsufficientNativeGas.selector, uint256(0), returnFee));
+        vm.expectRevert(
+            abi.encodeWithSelector(TargetChainVaultRouter.InsufficientNativeGas.selector, uint256(0), returnFee)
+        );
         messageBridge.deliver(router, bytes32(uint256(1)), outbeSender, payload);
         assertEq(vault.balanceOf(address(router)), deposited);
         assertEq(router.totalManagedShares(), deposited);
@@ -307,10 +311,10 @@ contract BnbVaultRouterTest is Test {
         bytes32 operationId = keccak256("replay");
         _deposit(operationId, amount);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultRouter.OperationAlreadyExecuted.selector, operationId));
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.OperationAlreadyExecuted.selector, operationId));
         tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
-        vm.expectRevert(BnbVaultRouter.UnauthorizedCrosschainSender.selector);
+        vm.expectRevert(TargetChainVaultRouter.UnauthorizedCrosschainSender.selector);
         tokenBridge.deliverDeposit(
             router,
             OUTBE_DOMAIN,
