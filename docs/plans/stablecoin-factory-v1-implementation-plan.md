@@ -163,6 +163,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-055 | Review | `4d3e1ab1` | Factory 22/22 covers deterministic mixed histories, every reservation/index inverse, pending and permanent collision injection, maximum accepted payload, and failure after every mutation; independent G4 review remains |
 | SCF-060 | Review | `c04fe05f` | Bond amount/state maps append after unchanged V0 slots, zero-filled legacy proposals read as NoBond and tally, liabilities use checked atomic arithmetic, counter exhaustion is typed, and combined regression passes 436/436; storage-layout review remains |
 | SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
+| SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -818,6 +819,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-062 — Implement typed nested finalization
 
+- **Status:** Done in `d10519be`; finalization reads the append-only proposal bond
+  record and passes its exact amount to the target. The existing nested checkpoint
+  commits target state only for Applied, rolls target execution back before recording
+  Error, and lets infrastructure/provider errors escape unchanged. A bonded
+  characterization proves the admission reservation and unsettled liability survive
+  Error while a partial target write does not. Factory reservation/release/consume
+  mutation injection, Vote status/index/log outer rollback, current ACTIVE-set tally
+  tests and the combined Vote/Factory/Stablecoin/Governance/EVM regression all pass.
 - **Goal:** Record target execution failure without committing partial target state.
 - **Depends on:** SCF-053, SCF-061.
 - **Done when:** approved target work runs in a nested checkpoint; success commits
