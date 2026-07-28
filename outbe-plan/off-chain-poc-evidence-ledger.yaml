@@ -11,7 +11,9 @@ scope:
   validator_domains: 4
   quorum: 3
   required_poc_ids: POC-01..POC-26
-  required_pfs_ids: PFS-002-01..PFS-002-25
+  cataloged_pfs_ids: PFS-002-01..PFS-002-25
+  required_pfs_ids: PFS-002-01/02/04..06/09..25
+  retired_pfs_ids: PFS-002-03
   story_steps: 1..13
   accepted_protocol_corrections:
     option_a_input_codec_binding:
@@ -39,6 +41,14 @@ scope:
     - synchronous_post_fork_lysis_fallback
     - on_chain_lysis_as_reference_oracle
     - undocumented_manual_evidence
+
+retired_tests:
+  OCM-E2E-003:
+    status: RETIRED
+    reason: >-
+      The zero-Lysis-limit READY premise is not produced by the production
+      Cycle-to-Metadosis lifecycle; the executable scenario and its state
+      injection fixture were removed, and this ID must not be reused.
 
 deferred:
   PFS-002-07:
@@ -1267,6 +1277,13 @@ requirements:
     PFS-002-02:
       status: required
       tests: [OCM-E2E-002]
+    PFS-002-03:
+      status: RETIRED
+      tests: []
+      reason: >-
+        Production Cycle forms a non-zero day limit before Metadosis, while a
+        WWD leaving FORMING resolves to GREEN or RED; the former E2E premise
+        required an impossible READY state.
     PFS-002-04:
       status: required
       tests: [OCM-EXP-001, OCM-E2E-001]

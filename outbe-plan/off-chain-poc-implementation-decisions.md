@@ -37,7 +37,7 @@ Resolved by the source documents and goal:
 
 - plan one fresh-devnet Lysis V1 vertical slice over bounded work units;
 - preserve the OCOMP-kernel/typed-program boundary and PoC-to-BoundedMVP core;
-- require `POC-01..POC-26`, non-deferred `PFS-002` scenarios and the exact
+- require `POC-01..POC-26`, required `PFS-002` scenarios and the exact
   thirteen-step demonstration;
 - make tests, reproducible commands and retained evidence part of every task's
   Definition of Done;
@@ -358,7 +358,7 @@ Type: Discuss
 ### Question
 
 What test IDs, commands, allowed oracles, retained artifacts and CI gates prove
-every ADR invariant, `POC-01..POC-26`, non-deferred `PFS-002` row and each step
+every ADR invariant, `POC-01..POC-26`, required `PFS-002` row and each step
 of the thirteen-step story?
 
 ### Answer
@@ -370,9 +370,10 @@ machine-readable
 
 PoC proof is split into byte/pure/model, production-seam integration,
 public fork/execution, four-domain E2E and privileged isolation layers. The
-ledger defines 37 stable planned test IDs and maps all 34 invariants from
-ADR-S-OCM-001..004, `POC-01..POC-26`, `PFS-002-01..25` and story steps 1..13.
-Only `PFS-002-07/-08` are DEFERRED.
+ledger defines 36 active stable planned test IDs plus the retired
+`OCM-E2E-003` tombstone, and maps all 34 invariants from ADR-S-OCM-001..004,
+`POC-01..POC-26`, required `PFS-002` rows and story steps 1..13.
+`PFS-002-03` is RETIRED; only `PFS-002-07/-08` are DEFERRED.
 
 The existing Rust/Cucumber harness remains the single orchestration owner. It
 gains OCOMP process/CAS handles, public OCOMP reads/transactions, declared fault
@@ -425,10 +426,11 @@ fork arming; final E2E runs only against those exact generated artifacts.
 
 The companion
 [`planning ledger`](off-chain-poc-evidence-ledger.yaml) now gives every one of
-the 37 stable test IDs exactly one closing task owner. Contributing tasks keep
-task-local tests but cannot claim a system requirement closed. This makes
-requirement -> test -> evidence -> lane -> task and task -> acceptance/evidence
-traversable in both directions.
+the 36 active stable test IDs exactly one closing task owner and retains
+`OCM-E2E-003` as a non-executable tombstone. Contributing tasks keep task-local
+tests but cannot claim a system requirement closed. This makes requirement ->
+test -> evidence -> lane -> task and task -> acceptance/evidence traversable in
+both directions.
 
 The dependency review found and removed the only structural cycle: capacity
 needed the real public path, while the earlier freeze wording required final
@@ -454,11 +456,12 @@ Resolved. See the
 [`implementation-plan audit`](off-chain-poc-implementation-audit.md).
 
 Reverse checks cover the 34 source-derived ADR invariants, all 26 POC rows, all
-24 PFS identities, the thirteen-step story, section 17 deliverables, all
+25 PFS identities, the thirteen-step story, section 17 deliverables, all
 section 22 decisions and the eleven planning-goal requirements. The
-machine-readable ledger has 37 stable tests; every test is required somewhere
-and has exactly one closing task. All 28 tasks are represented, including tasks
-whose merge evidence is local and whose system evidence closes downstream.
+machine-readable ledger has 36 active stable tests plus one retired tombstone;
+every active test is required somewhere and has exactly one closing task. All
+28 tasks are represented, including tasks whose merge evidence is local and
+whose system evidence closes downstream.
 
 The audit found and fixed real planning defects: runtime capability placement
 would have required a public factory/dependency cycle; incremental and closure

@@ -30,8 +30,9 @@ artifacts produce a verified evidence bundle in which:
 ```text
 all mandatory ADR invariant records = PASS
 and POC-01..POC-26 = PASS
-and every non-deferred PFS-002 row = PASS
+and every required PFS-002 row = PASS
 and story steps 1..13 = PASS
+and PFS-002-03 = RETIRED with its unreachable-production-state reason
 and PFS-002-07/-08 = DEFERRED with their fixed reasons
 and skipped/todo/quarantined/missing/retried-away assertions = 0
 and closure verifier result = PASS
@@ -416,9 +417,10 @@ Future planned IDs remain visibly `MISSING`; the report can claim only that
 named task, never PoC closure.
 
 `mise run ocomp-poc-closure -- --evidence-dir <dir>` is the only closure mode.
-It runs all six lanes against one exact artifact set and fails on any
-non-deferred missing/non-PASS ID. CI job names, JSON status and Markdown reports
-carry the mode, so task progress cannot be mistaken for full success.
+It runs all six lanes against one exact artifact set and fails on any required
+missing/non-PASS ID. Retired and deferred planning rows never become runtime
+assertions. CI job names, JSON status and Markdown reports carry the mode, so
+task progress cannot be mistaken for full success.
 
 ### 6.5 Independent closure verifier
 
@@ -500,8 +502,11 @@ Every PFS row has its stable historical ID. The full mapping is in the planning
 ledger. In summary:
 
 - `PFS-002-01` is the aggregate thirteen-step report;
-- `PFS-002-02..06` cover empty, zero/ineligible, source mutation, duplicate
-  identity and certified owner rollback;
+- `PFS-002-02` covers the reachable empty compatibility branch;
+- `PFS-002-03` and its former `OCM-E2E-003` test ID are `RETIRED` tombstones:
+  the zero-limit READY premise is not produced by the production lifecycle;
+- `PFS-002-04..06` cover source mutation, duplicate identity and certified
+  owner rollback;
 - `PFS-002-07` and `PFS-002-08` remain explicitly `DEFERRED`;
 - `PFS-002-09..15` cover cursor, orphan, CAS, schedules, q=3/q<3 and sign-once;
 - `PFS-002-16..21` cover full-result votes/quorum/result/receipt/time/deadline/caps;
@@ -577,4 +582,5 @@ harness determine the answer:
 - require a real four-domain public path and a separate real isolation claim;
 - retain exact artifacts and let an independent verifier compute closure;
 - treat skips, todo, retries and trusted local storage as non-evidence;
+- retire exactly PFS-002-03 and its invalid E2E test identity;
 - defer exactly PFS-002-07/-08 and no other PoC requirement.

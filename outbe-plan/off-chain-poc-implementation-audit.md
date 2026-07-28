@@ -47,7 +47,7 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | current production seams and gaps | [current-code map](off-chain-poc-current-code-map.md), rechecked against current CodeGraph source | covered |
 | four OCOMP ADRs | 34 source-derived invariant IDs in the [ledger](off-chain-poc-evidence-ledger.yaml) | covered |
 | `POC-01..POC-26` | all 26 exact IDs map to non-empty planned test sets | covered |
-| `PFS-002-01..25` | 23 required rows map to tests; only 07/08 are exact `DEFERRED` records | covered |
+| `PFS-002-01..25` | 22 required rows map to tests; 03 is the exact `RETIRED` tombstone and only 07/08 are `DEFERRED` | covered |
 | exact thirteen-step story | steps `1..13` each map to tests and an allowed oracle; `OCM-E2E-001` owns the correlated full story | covered |
 | existing Tribute E2E integration | `OCM-24/27` reuse the current public transaction, four-validator Mongo projection and independently verified CE path before observing `JobIntent`; `OCM-E2E-001/004` retain the correlation evidence | covered |
 | section 17 PoC deliverables | protocol/runtime/semantic/evidence owners listed below | covered |

@@ -21,6 +21,8 @@ pub struct PlanningLedger {
     pub kind: String,
     /// Planning status; runtime evidence must not reinterpret it as PASS.
     pub status: String,
+    /// Stable test IDs removed from executable acceptance without becoming reusable.
+    pub retired_tests: BTreeMap<String, RetiredTest>,
     /// The only normative requirements allowed to remain deferred.
     pub deferred: BTreeMap<String, DeferredRequirement>,
     /// Registered CI lanes.
@@ -47,6 +49,15 @@ pub struct DeferredRequirement {
     /// Must be `DEFERRED`.
     pub status: String,
     /// Human-readable, non-empty frozen reason.
+    pub reason: String,
+}
+
+/// Stable test tombstone retained after its production premise was invalidated.
+#[derive(Clone, Debug, Deserialize)]
+pub struct RetiredTest {
+    /// Must be `RETIRED`.
+    pub status: String,
+    /// Human-readable, non-empty retirement reason.
     pub reason: String,
 }
 
@@ -142,13 +153,16 @@ pub struct DescribedRequirement {
     pub tests: Vec<String>,
 }
 
-/// PFS row that is required or explicitly deferred.
+/// PFS row that is required, explicitly deferred or retired as unreachable.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PfsRequirement {
-    /// `required` or `DEFERRED`.
+    /// `required`, `DEFERRED` or `RETIRED`.
     pub status: String,
-    /// Stable tests; empty only for an allowed deferral.
+    /// Stable tests; empty only for an allowed deferral or retirement.
     pub tests: Vec<String>,
+    /// Required only for a retired historical row.
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// One story step and its primary oracle.
@@ -280,6 +294,25 @@ impl PlanningLedger {
         }
 
         let test_ids = self.tests.keys().cloned().collect::<BTreeSet<_>>();
+        let expected_retired_tests = BTreeSet::from(["OCM-E2E-003".to_owned()]);
+        ensure!(
+            self.retired_tests.keys().cloned().collect::<BTreeSet<_>>() == expected_retired_tests,
+            "only OCM-E2E-003 may be a retired stable test"
+        );
+        for (test_id, retired) in &self.retired_tests {
+            ensure!(
+                !test_ids.contains(test_id),
+                "retired test {test_id} remains executable"
+            );
+            ensure!(
+                retired.status == "RETIRED",
+                "retired test {test_id} status drifted"
+            );
+            ensure!(
+                !retired.reason.trim().is_empty(),
+                "retired test {test_id} has no reason"
+            );
+        }
         let mut owners = BTreeMap::<String, Vec<String>>::new();
         for expected in 0..=27 {
             let task_id = format!("OCM-{expected:02}");
@@ -345,6 +378,8 @@ impl PlanningLedger {
             ensure!(!deferred.reason.trim().is_empty(), "{id} has no reason");
         }
         let mut observed_deferred = BTreeSet::new();
+        let expected_retired = BTreeSet::from(["PFS-002-03".to_owned()]);
+        let mut observed_retired = BTreeSet::new();
         for (id, requirement) in &self.requirements.pfs {
             match requirement.status.as_str() {
                 "required" => validate_test_refs(id, &requirement.tests, &test_ids, false)?,
@@ -356,12 +391,34 @@ impl PlanningLedger {
                     );
                     observed_deferred.insert(id.clone());
                 }
+                "RETIRED" => {
+                    ensure!(
+                        expected_retired.contains(id),
+                        "PFS requirement {id} cannot be retired"
+                    );
+                    ensure!(
+                        requirement.tests.is_empty(),
+                        "retired requirement {id} owns tests"
+                    );
+                    ensure!(
+                        requirement
+                            .reason
+                            .as_deref()
+                            .is_some_and(|reason| !reason.trim().is_empty()),
+                        "retired requirement {id} has no reason"
+                    );
+                    observed_retired.insert(id.clone());
+                }
                 status => bail!("PFS requirement {id} has illegal status {status}"),
             }
         }
         ensure!(
             observed_deferred == expected_deferred,
             "PFS deferrals do not match the frozen pair"
+        );
+        ensure!(
+            observed_retired == expected_retired,
+            "PFS retirements do not match the frozen tombstone"
         );
 
         for (step, requirement) in &self.requirements.story {
@@ -437,7 +494,7 @@ impl PlanningLedger {
             .collect()
     }
 
-    /// Every non-deferred requirement and the tests mapped to it.
+    /// Every required requirement and the tests mapped to it.
     #[must_use]
     pub fn required_coverage(&self) -> BTreeMap<String, Vec<String>> {
         let mut coverage = BTreeMap::new();

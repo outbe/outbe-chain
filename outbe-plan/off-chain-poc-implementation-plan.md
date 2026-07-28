@@ -2010,9 +2010,9 @@ Mitigation: exact discovery, no automatic retry, retained first failure,
 independent recomputation and systemd runner requirement.
 
 **DoD:** `G8` verifier reports PASS for every cataloged OCM ADR invariant,
-`POC-01..26`, every non-deferred `PFS-002` row and story `1..13`; only
-`PFS-002-07/-08` are DEFERRED; no mandatory status is missing/skipped/todo/
-quarantined/retried-away.
+`POC-01..26`, every required `PFS-002` row and story `1..13`;
+`PFS-002-03` is the sole RETIRED tombstone and only `PFS-002-07/-08` are
+DEFERRED; no mandatory status is missing/skipped/todo/quarantined/retried-away.
 
 ## 7. Stable commands and CI ownership
 
@@ -2073,8 +2073,9 @@ revised ledger parser enforces:
 
 - every ledger test has exactly one closing task;
 - all `OCM-00..27` tasks have one task-local command;
-- every normative requirement reaches a non-deferred test/task/command/oracle;
+- every required normative requirement reaches a test/task/command/oracle;
 - every task dependency exists and the graph is acyclic;
+- exactly `PFS-002-03`/`OCM-E2E-003` are retired and cannot be reused;
 - exactly `PFS-002-07/-08` are deferred;
 - all referenced lanes, oracles, planned paths and substitution discharges are
   valid.
