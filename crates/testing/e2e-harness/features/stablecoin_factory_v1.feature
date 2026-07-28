@@ -1,5 +1,6 @@
 @min-validators-4
 Feature: Stablecoin Factory V1 product lifecycle
+  @pfs-010-01 @pfs-010-02 @pfs-010-03 @pfs-010-04
   Scenario: A governed stablecoin survives full ledger use and committee restart
     Given a fresh stablecoin localnet with a 20-block voting window
     And the committee has reached a usable height

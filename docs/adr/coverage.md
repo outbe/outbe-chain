@@ -86,7 +86,7 @@ The current workspace contains 65 Cargo packages.
 | `outbe-offchain-data` | `crates/system/offchain-data` | ADR-B-OCD-003 through ADR-B-OCD-005 | Projection/runtime readers; Blockchain responsibility |
 | `outbe-e2e` | `crates/core/e2e` | ADR-B-TST-001, PFS-002 and PFS-005 | In-process integration evidence, not process E2E |
 | `outbe-lysis-v1-reference` | `crates/testing/lysis-v1-reference` | ADR-C-LYS-001 and ADR-B-TST-001 | Independent Lysis V1 reference evidence |
-| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 | Process/localnet/Mongo evidence harness; OCOMP PFS-002 remains a Gap |
+| `outbe-e2e-harness` | `crates/testing/e2e-harness` | ADR-B-TST-001, PFS-001, PFS-002, PFS-006 and PFS-010 | Process/localnet/Mongo evidence harness; OCOMP PFS-002 remains a Gap |
 | `xtask` | `xtask` | ADR-B-TST-001 | Repository, ABI, namespace and generated-artifact verification |
 
 `crates/blockchain/primitives/fuzz/Cargo.toml` is deliberately outside the workspace;
@@ -119,7 +119,7 @@ not a package or implementation claim.
 | `outbe-feeder` | external provider polling/aggregation and Oracle delivery | ADR-S-ORC-002 |
 | `outbe-tee-enclave` | production enclave transport/service | ADR-S-TEE-001 and ADR-S-KEY-001 |
 | `outbe-tee-enclave-mock` | explicitly non-production enclave test service | ADR-S-TEE-001 and ADR-B-TST-001 |
-| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001, PFS-002 and PFS-006 |
+| `outbe-e2e` | process/localnet scenario runner | ADR-B-TST-001, PFS-001, PFS-002, PFS-006 and PFS-010 |
 
 Every command that signs, deletes, imports, resets or publishes state is an operator
 mutation even when it bypasses EVM transactions. In particular DKG `force-restart` and

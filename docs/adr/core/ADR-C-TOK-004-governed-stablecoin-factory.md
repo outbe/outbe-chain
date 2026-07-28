@@ -6,7 +6,7 @@
   address derivation, pending reservations and permanent token registry
 - **Depends on:** ADR-B-EVM-002, ADR-B-EVM-003, ADR-B-EVM-004,
   ADR-C-TOK-003, ADR-C-TOK-005, ADR-S-GOV-002
-- **Related:** ADR-S-GOV-003, ADR-S-FEE-001
+- **Related:** ADR-S-GOV-003, ADR-S-FEE-001, PFS-010
 
 ## Context
 
@@ -298,8 +298,9 @@ public bonded sub-cap is 16 of Vote's 64 total pending slots, with one pending p
 bonded proposal per proposer. The bond is exactly
 `1,000,000,000,000,000,000,000,000` base units (`10^24`). Invalid admission commits
 no reservation, liability or log. An `Error` proposal retains its bond liability,
-reservation triple and pending-cap occupancy until a future validator-approved
-governance transition resolves it.
+reservation triple and pending-cap occupancy. Factory V1 defines no retry, close or
+other later transition for it; any such lifecycle belongs to Vote/governance and
+requires its own decision.
 
 Factory V1 exposes `tokenCount()` and `listTokens(offset, limit)` with caller-selected
 `1 <= limit <= 100`. The list has no sorting or ordering guarantee. Factory creation
@@ -313,5 +314,12 @@ ceiling or gas-benchmark activation gate.
   registration, schema and exact marker.
 - `DirectStorageProvider::set_code`, checked balance credit, state-root notification
   and receipt-visible Factory `HookEvents` are journaled and rollback-tested.
+- PFS-010 live evidence covers canonical prediction, bonded admission, three-validator
+  approval, exact refund, one receipt-visible creation event, permanent id/ticker
+  lookup, duplicate-ticker rejection without allocation/debit and same-binary
+  committee restart.
+- PFS-010-05, -06 and -08 in-process tests cover expiry release and single burn,
+  deterministic `Error` retention, fatal propagation through the outer block
+  checkpoint and rollback after every initializer mutation.
 - Fee eligibility, payment-lane classification and reserve attestations require
   independent registries and ADRs; Factory approval must not be reused as a shortcut.

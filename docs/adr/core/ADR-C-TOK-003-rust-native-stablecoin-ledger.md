@@ -6,7 +6,7 @@
   supply, roles, pause, freeze, policy binding and signatures
 - **Depends on:** ADR-B-EVM-002, ADR-B-EVM-003, ADR-B-EVM-004,
   ADR-B-EVM-005, ADR-C-TOK-004, ADR-C-TOK-005
-- **Related:** ADR-C-TOK-001, ADR-C-TOK-002
+- **Related:** ADR-C-TOK-001, ADR-C-TOK-002, PFS-010
 
 ## Context
 
@@ -278,6 +278,13 @@ ceiling.
 - Behavioral tests cover `F < B`, `F == B`, `F > B`, mixed unfrozen/frozen
   consumption, full movement, ordinary self-transfer and rejected forced
   self-transfer.
+- PFS-010 live evidence enters through the production CLI/RPC/native ABI path and
+  covers mint, transfer, permit, memo, pause rejection, freeze, forced transfer and
+  exact ledger reads before and after full-committee restart in
+  `crates/testing/e2e-harness/features/stablecoin_factory_v1.feature`.
+- PFS-010-07 component scenarios inject policy, role, permit-signature and supply-cap
+  failures and assert exact ledger and event rollback through executable contract
+  seams.
 - ERC-3009, ERC-7802, reserve proofs, fee eligibility and payment-lane classification
   are explicitly outside V1 and require separate ADRs.
 - ERC-7943 compatibility vectors pin the Final standard's functions, errors, events
