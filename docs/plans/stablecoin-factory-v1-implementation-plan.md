@@ -166,6 +166,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
 | SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
 | SCF-064 | Review | `2d759237` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; combined suites pass and independent G5 review remains |
+| SCF-070 | Review | `023a723d`, `d7b5532b`, `943ca8e2` | Production registry owns unique fixed Factory/Policy routes, authenticated actual-callee token-class routing and the compile-time Factory Vote target; focused route, namespace, nested-call and target suites pass; independent gate review remains |
 | SCF-072 | Review | `42521789` | Real pre-exec Vote→Factory lifecycle publishes one ordered StablecoinCreated through HookEvents; the log changes receipts root and bloom, cumulative gas and marker/state are asserted, and typed Error publishes no creation/settlement log while retaining bond and reservation; independent review remains |
 | SCF-073 | Review | `caa9fe69` | Independent proposer/validator executions are byte/state equal for Approved, Expired and Error across the mandatory system-tx prefix, receipt bytes/root/bloom/gas, full in-memory state root, Factory indexes, token marker/supply/balances and Vote bond deltas; independent review remains |
 
@@ -896,6 +897,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** `SCF-G1`, `SCF-G2`, `SCF-G3`, `SCF-G4`, `SCF-G5`.
 - **Tests:** T1 route/target uniqueness and activation; T3 existing routes/targets
   remain unchanged and stablecoin instances authenticate full id/schema/marker.
+- **Implementation evidence:** `023a723d` made the compact exact-route registry the
+  production lookup/enumeration source, `d7b5532b` added authenticated actual-callee
+  token-class dispatch, and `943ca8e2` wired the activation-gated Factory views and
+  compile-time Factory Vote target.
+- **Verification:** executable registration 8/8, dynamic top-level/nested/static/OOG
+  route 5/5, primitives namespace 2/2 and repository/genesis namespace 5/5 pass.
+  Status remains Review until the dependent gate reviews are complete.
 
 ## SCF-071 — Land genesis/reset activation artifact
 
