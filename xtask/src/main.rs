@@ -99,7 +99,7 @@ enum OcompCommand {
     },
     /// Execute one exact OCOMP evidence lane without claiming full closure.
     Lane {
-        /// Registered execution lane: OCM-FAST, OCM-INT, OCM-PUBLIC, OCM-E2E or OCM-ISO.
+        /// Registered execution lane: OCM-FAST, OCM-INT, OCM-PUBLIC or OCM-E2E.
         lane: String,
         /// New root for the artifact set and immutable lane evidence.
         #[arg(long, alias = "evidence-dir")]

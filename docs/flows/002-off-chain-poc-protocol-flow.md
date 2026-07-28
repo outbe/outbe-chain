@@ -1,6 +1,6 @@
 # PFS-002: Off-chain PoC transforms sealed Tributes into Nods
 
-- **Status:** Implemented on `feat/ocomp-poc`; exact public/E2E/isolation
+- **Status:** Implemented on `feat/ocomp-poc`; exact public/E2E
   closure evidence pending
 - **Actors:** Cycle, Metadosis, OCOMP kernel, four validator domains, node
   attestation gates, snapshot exporters, supervisors, workers, CAS stores,
@@ -431,7 +431,7 @@ The relay, digest-only vote and separate public activation paths are absent.
 Unit and integration coverage exists for protocol bytes, finality binding,
 sign-once submission, q=3 apply/rollback, fourth-slot accountability, ZeroFee,
 txpool and direct-injection prevention. This PFS is not yet a release claim:
-the exact four-domain public/E2E/isolation run and hash-indexed closure bundle
+the exact four-domain public/E2E run and hash-indexed closure bundle
 remain mandatory under ADR-B-TST-001.
 
 ## Open questions and technical debt

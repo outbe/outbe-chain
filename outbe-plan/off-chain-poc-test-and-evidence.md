@@ -70,7 +70,6 @@ No single layer may claim a boundary it substitutes.
 | `PROCESS` | UDS, checkpoint export, CAS, workers, attestation and restart | real sibling processes and real files/sockets/databases |
 | `EXECUTION` | proposer/import/replay ordering, public transaction and state parity | real executor/storage/system-transaction path |
 | `E2E` | consensus/finality/RPC/P2P/process wiring and public outcome | fresh four-validator devnet using released-form binaries |
-| `ISOLATION` | UID/cgroup/mount/socket/quota failure separation | real Linux systemd/cgroup-v2 deployment |
 
 Allowed oracle types are closed:
 
@@ -84,7 +83,7 @@ Allowed oracle types are closed:
 | `PUBLIC_TX_RECEIPT` | canonical transaction, receipt, log and inclusion/finality references |
 | `STATE_ROOT_DIFF` | exact common-height pre/post state roots plus scoped public proofs |
 | `MODULE_STATE` | exact typed production storage fields, events and rollback snapshot before/after one focused module dispatch |
-| `PROCESS_BOUNDARY` | owned child/systemd state, PID/UID/cgroup/mount/socket and exit status |
+| `PROCESS_BOUNDARY` | harness-owned child state, PID/socket identity and exit status |
 | `DURABLE_JOURNAL` | exact persisted pin/sign-once bytes verified after process restart |
 | `DIGESTED_ARTIFACT` | same-descriptor length/digest/manifest-membership verification |
 | `RESOURCE_COUNTER` | decoder/allocation/crypto/work counters at a real bounded interface |
@@ -125,7 +124,7 @@ The PoC extends this owner instead of creating another harness. Required gaps
 are:
 
 1. an `OcompTopology` handle owning four supervisor/exporter/CAS domains,
-   socket-activated worker instances and node control sockets;
+   bounded one-unit worker processes and node control sockets;
 2. supervisor-only stop/restart, event-drop, CAS/Mongo corruption, worker
    schedule and bundle-mismatch controls;
 3. public OCOMP transaction/view/proof helpers and exact-block state snapshots;
@@ -208,14 +207,13 @@ and `OCM-PUB-004`) intentionally share one completed-job scenario. Expiry and
 pre-quorum mutation remain separate because they require incompatible terminal
 states.
 
-### 4.4 Four-domain and isolation gates
+### 4.4 Four-domain gates
 
 | Test ID | Scenario |
 |---|---|
 | `OCM-E2E-001` | one tracer public Tribute -> finalized JobIntent -> four independent compute domains -> q=3 -> certified Nod, with exact request/quorum replay trace |
 | `OCM-E2E-007` | one incompatible supervisor refuses OCOMP while its node continues finality |
 | `OCM-E2E-008` | completed nodes and compute processes restart/replay and select the same public active generation without CAS authority |
-| `OCM-ISO-001` | actual PIDs, UIDs, cgroups, mounts, CAS quotas, worker concurrency and `SO_PEERCRED` match the fixed topology; supervisor/worker/CAS faults do not stop nodes |
 | `OCM-TRC-001` | second assertion over the retained `OCM-E2E-001` tracer scenario: proposer/import/replay traces for exact request and q-forming vote blocks contain zero calls to mutating Lysis, Fidelity league and Oracle calculation boundaries |
 
 Stable IDs whose names historically contain `E2E` remain valid but no longer
@@ -226,10 +224,6 @@ start four nodes:
 | `OCM-E2E-002` | `OCM-INT` | production Metadosis empty-day branch, Desis brief, carry-over and zero Job/Nod state |
 | `OCM-E2E-004` | `OCM-INT` | production Tribute changed-body duplicate rejection with unchanged supply, totals, pre-admission and owner/day indexes; `PFS-002-05` separately also requires `OCM-EXP-001` exact export completeness |
 | `OCM-E2E-006` | `OCM-INT` | production q-forming dispatch and outer checkpoint rollback for every owner failure, followed by exact retry on the same fixture |
-
-`OCM-ISO-001` is the only privileged lane. The ordinary E2E still uses real
-sibling processes and sockets, but cannot claim UID/mount/cgroup isolation when
-run unprivileged.
 
 `OCM-E2E-003` and `OCM-E2E-005` are retired tombstones and cannot be reused.
 The former depended on an unreachable zero-limit premise; the latter attempted
@@ -285,8 +279,8 @@ validator domain 0..3
   outbe-chain node               owns consensus, pin and OCOMP key
   outbe-ocomp supervisor         owns scheduling journal
   outbe-ocomp snapshot-exporter  read-only checkpoint + Mongo access
-  validator-local CAS volume     own quota, never chain authority
-  socket-activated workers       1..4 immutable units, read-only CAS
+  validator-local CAS directory  never chain authority
+  Supervisor-launched workers    1..4 bounded one-unit child processes
 
 validator node vote submitter
   receives one bounded signed result from its local supervisor
@@ -294,8 +288,9 @@ validator node vote submitter
 ```
 
 Each domain has a distinct node data directory, Mongo logical database, CAS,
-pin/sign journal, UDS namespace and OCOMP key/index. The final isolation run also
-uses distinct service UIDs/cgroups/mount namespaces and fixed socket ACLs.
+pin/sign journal, UDS namespace and OCOMP key/index. Operating-system
+service-manager hardening remains outside the PoC: it is an MVP deployment
+concern, not protocol evidence.
 
 There is no relay or public activation transaction. Each validator domain submits
 its own full-result vote. The transaction that records the third matching slot
@@ -315,7 +310,7 @@ evidence ledger.
 | 1 | `OCM-E2E-001`, `OCM-E2E-004` | finalized public Tribute receipts, deterministic fixture bytes and CE/Mongo commitment parity for leagues/currencies/exclusion |
 | 2 | `OCM-E2E-001`, `OCM-REQ-001` | request block/finality refs, split receipt, intent OCB1, voting/apply preconditions, expiry and event |
 | 3 | `OCM-E2E-001` | exact request-height public proofs showing one early effect, zero new Nod/contributor/Tribute-consume effect and no duplicate on retry |
-| 4 | `OCM-E2E-001`, `OCM-ISO-001` | supervisor-3 exit/service status while node-3 and committee finality advance |
+| 4 | `OCM-E2E-001` | supervisor-3 exit status while node-3 and committee finality advance |
 | 5 | `OCM-E2E-001`, `OCM-EXP-001`, `OCM-DET-001` | three independent manifest roots, plan hashes and identical result digests; domain-local process/artifact identities |
 | 6 | `OCM-E2E-001`, `OCM-VOT-001`, `OCM-PUB-001` | three separately signed full-result vote transactions, compact slots, identical derived digest and txpool/gossip/inclusion refs |
 | 7 | `OCM-E2E-001`, `OCM-APL-002` | finalized q-forming vote receipt, the one stored canonical result, terminal job and all public owner/generation reads and proofs |
@@ -323,7 +318,7 @@ evidence ledger.
 | 9 | `OCM-E2E-001`, `OCM-DET-001` | 1/2/4-worker schedules, seeds/retries and byte-identical artifacts |
 | 10 | `OCM-E2E-001`, `OCM-SIG-001`, `OCM-PUB-002` | durable first sign record, typed refusal and failed public mutation receipts with unchanged live state |
 | 11 | `OCM-E2E-001`, `OCM-TIM-001` | correlated delay=0/delay=N fresh fixtures and normalized semantic equality |
-| 12 | `OCM-E2E-001`, `OCM-PUB-003`, `OCM-ISO-001` | two supervisors stopped, finality advancing, finalized expiry/release/requeue and zero Nod/fallback |
+| 12 | `OCM-E2E-001`, `OCM-PUB-003` | two supervisors stopped, finality advancing, finalized expiry/release/requeue and zero Nod/fallback |
 | 13 | `OCM-E2E-001`, `OCM-TRC-001` | exact-block traces from proposer/import/replay plus static boundary result; forbidden counters all zero |
 
 For step 11, `OCM-TIM-001` uses the same production request and quorum-apply
@@ -388,15 +383,15 @@ The run manifest binds:
 - exact executable hashes for node, `outbe-ocomp`, CLI and evidence
   verifier;
 - exact hashes and retained bytes for every node/OCOMP/Mongo/network
-  configuration, generated systemd unit and environment file, with secrets
-  represented only by public identity/hash;
+  configuration and environment file, with secrets represented only by public
+  identity/hash;
 - chain ID, genesis/block-0 hash, fork height/ID, protocol bundle, correctness
   profile, capacity profile, object registry and generated limit manifests;
 - static OCOMP committee indexes, public keys, PoPs and key epoch;
-- command line, test discovery set, seed, machine/kernel/filesystem/systemd/
-  cgroup facts and Mongo image digest;
-- per-domain PIDs, UIDs/GIDs, cgroups, mounts, sockets, peer credentials,
-  databases, CAS devices/quotas and process exit history;
+- command line, test discovery set, seed, machine/kernel/filesystem facts and
+  Mongo image digest;
+- per-domain PIDs, sockets, peer credentials, databases, CAS identity and
+  process exit history;
 - request/q-forming-vote/expiry block height/hash/state root/finality proof;
 - transaction/calldata/receipt/log identities and public query/proof responses;
 - input/plan/unit/result/vote/quorum/receipt/active-generation digests;
@@ -436,17 +431,23 @@ Future planned IDs remain visibly `MISSING`; the report can claim only that
 named task, never PoC closure.
 
 `mise run ocomp-poc-closure -- --evidence-dir <dir>` is the only closure mode.
-It runs all six lanes against one exact artifact set and fails on any required
+It runs all four lanes against one exact artifact set and fails on any required
 missing/non-PASS ID. Retired and deferred planning rows never become runtime
 assertions. CI job names, JSON status and Markdown reports carry the mode, so
 task progress cannot be mistaken for full success.
+
+For `gramine-direct`, the exact artifact set includes the canonical Docker
+`sha256:` image ID resolved before the run. Enclave and signing-key containers
+are launched by that immutable ID rather than the mutable local test tag;
+scenario aggregation rejects a missing or different ID, and capacity hashing
+binds the ID together with the exact Rust binaries.
 
 ### 6.5 Independent closure verifier
 
 A small test-only `outbe-e2e-evidence` binary in the existing harness package:
 
 1. validates the repository planning ledger and run schema;
-2. requires exact source/binary/config/service-unit/profile identity and a
+2. requires exact source/binary/config/launch/image/profile identity and a
    clean source tree;
 3. recomputes every file hash and protocol digest it can derive;
 4. verifies finality proofs, vote signatures, compact quorum evidence, receipts,
@@ -474,7 +475,6 @@ tests with the narrower claim defined in section 6.4:
 | `OCM-INT` | `mise run ocomp-poc-integration` | Linux + Mongo, every relevant PR | 30 min | mandatory |
 | `OCM-PUBLIC` | `mise run ocomp-poc-public-path` | fresh four-node process localnet, every relevant PR | 45 min | mandatory |
 | `OCM-E2E` | `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | privileged Linux with the production enclave binary under `gramine-direct`, every closure candidate and scheduled on main | 120 min | mandatory |
-| `OCM-ISO` | `mise run ocomp-poc-isolation -- --evidence-dir <dir>` | systemd/cgroup-v2 runner, every closure candidate | 60 min | mandatory |
 | `OCM-VERIFY` | `mise run ocomp-poc-evidence-verify -- <manifest>` | clean Linux, every evidence bundle | 15 min | mandatory final gate |
 | `OCM-CLOSURE` | `mise run ocomp-poc-closure -- --evidence-dir <dir>` | closure runner, exact revision/artifacts | 240 min | aggregates all above |
 
@@ -492,10 +492,6 @@ cargo run --locked -p outbe-e2e-harness --bin outbe-e2e -- \
 production `outbe-tee-enclave` binary but makes no SGX hardware/attestation
 claim. All four nodes, consensus instances and OCOMP domains remain separate
 real processes.
-
-The isolation task selects the companion OCOMP isolation feature and a planned
-explicit systemd-isolation CLI mode. It cannot silently fall back to ordinary
-child processes.
 
 Rules:
 
@@ -602,7 +598,8 @@ harness determine the answer:
 
 - keep the existing Rust/Cucumber harness and add only OCOMP-specific handles;
 - use layered tests, but close them through one machine-readable ledger;
-- require a real four-domain public path and a separate real isolation claim;
+- require a real four-domain public path and real independent process
+  boundaries without claiming host isolation;
 - retain exact artifacts and let an independent verifier compute closure;
 - treat skips, todo, retries and trusted local storage as non-evidence;
 - retire exactly PFS-002-03 and its invalid E2E test identity;

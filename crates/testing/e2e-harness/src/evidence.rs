@@ -22,6 +22,7 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub scenario_dir: &'a Path,
     pub elapsed: Duration,
     pub audit: &'a LogAudit,
+    pub gramine_image_id: Option<&'a str>,
     pub ocomp: &'a OcompScenarioTopologyV1,
     pub ocomp_public: &'a OcompPublicScenarioEvidenceV1,
 }
@@ -89,6 +90,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
             "validators": input.env.validators,
             "tee": input.env.tee_mode.evidence_name(),
             "all": input.env.all,
+            "gramine_image_id": input.gramine_image_id,
         },
         "scenario_data_dir": input.scenario_dir,
         "log_audit": input.audit.json(),

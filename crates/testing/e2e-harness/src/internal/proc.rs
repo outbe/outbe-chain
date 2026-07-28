@@ -22,6 +22,30 @@ use eyre::{bail, eyre, Result, WrapErr};
 
 const TEST_ENCLAVE_IMAGE: &str = "outbe-tee-enclave-gramine-test";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DockerImageId(String);
+
+impl DockerImageId {
+    pub(crate) fn from_inspect_output(output: &str) -> Result<Self> {
+        let value = output.trim();
+        let digest = value
+            .strip_prefix("sha256:")
+            .ok_or_else(|| eyre!("Docker image identity is not a sha256 ID"))?;
+        if digest.len() != 64
+            || !digest
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            bail!("Docker image identity is not a canonical sha256 ID");
+        }
+        Ok(Self(value.to_owned()))
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Build a `Vec<String>` of process arguments from `Display` tokens.
 ///
 /// Every argument is stringified once (`to_string`), so callers write clean
@@ -121,6 +145,8 @@ pub(crate) struct EnclaveSpec {
     /// Scenario-scoped test signing key, mounted read-only and never baked into
     /// the Gramine test image. Reused across restarts to preserve MRSIGNER.
     pub signing_key: PathBuf,
+    /// Immutable Docker image identity resolved before the scenario starts.
+    pub image_id: DockerImageId,
     pub sudo: bool,
     /// Pass real SGX device nodes through when the host exposes them.
     pub pass_sgx_devices: bool,
@@ -136,7 +162,11 @@ pub(crate) struct EnclaveSpec {
 /// Build the explicit test-only Gramine image and create one scenario-scoped
 /// signing key outside the image. Release images are pre-signed and do not use
 /// this adapter.
-pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) -> Result<()> {
+pub(crate) fn ensure_enclave_image(
+    repo: &Path,
+    sudo: bool,
+    signing_key: &Path,
+) -> Result<DockerImageId> {
     let present = base_cmd("docker", sudo)
         .args(["image", "inspect", TEST_ENCLAVE_IMAGE])
         .stdout(Stdio::null())
@@ -159,6 +189,25 @@ pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) 
         }
     }
 
+    let inspected = base_cmd("docker", sudo)
+        .args([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            TEST_ENCLAVE_IMAGE,
+        ])
+        .output()
+        .wrap_err("inspect test-only Gramine enclave image identity")?;
+    if !inspected.status.success() {
+        bail!(
+            "inspect Docker image {TEST_ENCLAVE_IMAGE} failed: {}",
+            String::from_utf8_lossy(&inspected.stderr)
+        );
+    }
+    let image_id = DockerImageId::from_inspect_output(&String::from_utf8_lossy(&inspected.stdout))
+        .wrap_err("validate test-only Gramine enclave image identity")?;
+
     if signing_key.exists() {
         let metadata = fs::symlink_metadata(signing_key)?;
         if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -173,7 +222,7 @@ pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) 
                 signing_key.display()
             );
         }
-        return Ok(());
+        return Ok(image_id);
     }
     let parent = signing_key
         .parent()
@@ -189,7 +238,7 @@ pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) 
         .arg(format!("{}:{}", owner.uid(), owner.gid()))
         .args(["--entrypoint", "gramine-sgx-gen-private-key", "-v"])
         .arg(format!("{}:/keys", parent.display()))
-        .arg(TEST_ENCLAVE_IMAGE)
+        .arg(image_id.as_str())
         .arg(Path::new("/keys").join(name))
         .status()
         .wrap_err("generate scenario-scoped test SGX signing key")?;
@@ -197,16 +246,10 @@ pub(crate) fn ensure_enclave_image(repo: &Path, sudo: bool, signing_key: &Path) 
         bail!("test SGX signing key generation failed");
     }
     fs::set_permissions(signing_key, fs::Permissions::from_mode(0o600))?;
-    Ok(())
+    Ok(image_id)
 }
 
-/// `docker run` the enclave in the **foreground** (no `-d`) as an owned child,
-/// returning a guard that kills the client + `docker rm -f`s the container on drop.
-/// The caller waits on socket readiness with [`wait_tcp`].
-pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
-    // Remove any stale container of the same name first.
-    docker_rm(&spec.name, spec.sudo);
-
+fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
     cmd.args([
         "run",
@@ -262,7 +305,7 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
             "{}:/run/secrets/outbe-test-sgx-key.pem:ro",
             signing_key.display()
         ),
-        TEST_ENCLAVE_IMAGE,
+        spec.image_id.as_str(),
         "--socket",
         &format!("127.0.0.1:{}", spec.tee_port),
     ]);
@@ -272,6 +315,17 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
     if let Some(seal) = &spec.seal {
         cmd.args(["--tee-dir", "/tee", "--chain-id", &seal.chain_id_hex]);
     }
+    Ok(cmd)
+}
+
+/// `docker run` the enclave in the **foreground** (no `-d`) as an owned child,
+/// returning a guard that kills the client + `docker rm -f`s the container on drop.
+/// The caller waits on socket readiness with [`wait_tcp`].
+pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
+    // Remove any stale container of the same name first.
+    docker_rm(&spec.name, spec.sudo);
+
+    let mut cmd = build_enclave_command(&spec)?;
 
     // Foreground: own the `docker run` child, stream its logs to <node>/enclave.log.
     let log = OpenOptions::new()
@@ -430,6 +484,62 @@ pub(crate) fn run_capture(program: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn docker_image_identity_accepts_only_a_canonical_sha256_id() {
+        let digest = format!("sha256:{}\n", "ab".repeat(32));
+        let identity =
+            DockerImageId::from_inspect_output(&digest).expect("canonical Docker image ID");
+        assert_eq!(identity.as_str(), digest.trim());
+
+        for invalid in [
+            TEST_ENCLAVE_IMAGE.to_owned(),
+            format!("sha256:{}", "ab".repeat(31)),
+            format!("sha256:{}", "AB".repeat(32)),
+            format!("sha256:{}z", "ab".repeat(31)),
+        ] {
+            assert!(
+                DockerImageId::from_inspect_output(&invalid).is_err(),
+                "accepted non-canonical Docker image identity: {invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn enclave_command_uses_the_pinned_image_id_instead_of_the_mutable_tag() {
+        let root = tempfile::tempdir().expect("temporary enclave command inputs");
+        let enclave_bin = root.path().join("outbe-tee-enclave");
+        let signing_key = root.path().join("signing-key.pem");
+        fs::write(&enclave_bin, b"binary").expect("write enclave binary fixture");
+        fs::write(&signing_key, b"key").expect("write signing key fixture");
+        let image_id = DockerImageId::from_inspect_output(&format!("sha256:{}", "cd".repeat(32)))
+            .expect("pinned image ID");
+        let spec = EnclaveSpec {
+            name: "validator-0-tee".to_owned(),
+            tee_port: 19500,
+            enclave_bin,
+            signing_key,
+            image_id: image_id.clone(),
+            sudo: false,
+            pass_sgx_devices: false,
+            dkg_seed: None,
+            seal: None,
+            log_path: root.path().join("enclave.log"),
+            debug: false,
+        };
+
+        let command = build_enclave_command(&spec).expect("build enclave command");
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(arguments
+            .iter()
+            .any(|argument| argument == image_id.as_str()));
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument == TEST_ENCLAVE_IMAGE));
+    }
 
     #[test]
     fn first_hex_runs() {
