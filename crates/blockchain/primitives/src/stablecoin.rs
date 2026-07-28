@@ -253,7 +253,8 @@ pub fn is_supported_iso4217(code: u16) -> bool {
     ISO_4217_NUMERIC_CODES.binary_search(&code).is_ok()
 }
 
-fn validate_ticker(ticker: &str) -> Result<(), StablecoinCodecError> {
+/// Validates the canonical V1 ticker grammar without deriving an identity.
+pub fn validate_ticker(ticker: &str) -> Result<(), StablecoinCodecError> {
     let bytes = ticker.as_bytes();
     if !(MIN_TICKER_LEN..=MAX_TICKER_LEN).contains(&bytes.len())
         || !bytes.first().is_some_and(u8::is_ascii_uppercase)

@@ -609,6 +609,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-050 — Add Factory schema, state, views and typed API
 
+- **Status:** Done; `outbe-stablecoinfactory` owns the pinned V1 schema, permanent
+  token set and forward/reverse indexes, all three pending reservation indexes and
+  the proposal reservation record. Its typed API reserves, releases or consumes one
+  complete triple atomically under the caller's checkpoint; public-facing state
+  methods implement count/list/prediction and exact lookups without exposing a
+  creation selector. Evidence: 8 focused tests cover raw slots, page limits 1 and
+  100, global cross-issuer ticker uniqueness, address/full-id collision, rollback,
+  corrupt-state fail-closed behavior and 128 mixed lifecycle histories; clippy passes.
 - **Goal:** Own permanent identity and pending reservations.
 - **Scope/files:** new complex `crates/core/stablecoinfactory` with README,
   schema/state/api/errors/tests.

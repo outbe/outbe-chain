@@ -54,6 +54,7 @@ members = [
     "crates/core/governance",
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
+    "crates/core/stablecoinfactory",
     "crates/core/e2e",
     "crates/core/common",
     # binaries
@@ -142,6 +143,7 @@ outbe-gratisfactory = { path = "crates/core/gratisfactory" }
 outbe-governance = { path = "crates/core/governance" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }
+outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
 outbe-e2e = { path = "crates/core/e2e" }
 outbe-common = { path = "crates/core/common" }
 
