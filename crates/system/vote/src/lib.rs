@@ -8,6 +8,8 @@
 //! - `lifecycle.rs` — begin-block tally entrypoint.
 //! - `events.rs` — domain event payloads used by runtime/precompile wiring.
 
+mod abi;
+
 pub mod api;
 pub mod constants;
 pub mod errors;

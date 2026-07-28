@@ -1,6 +1,8 @@
 use alloy_primitives::{Address, U256};
+use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+use outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::logic::status;
@@ -60,14 +62,49 @@ impl Vote<'_> {
         current_height: u64,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
+        self.create_proposal_with_value(
+            proposer,
+            target_module,
+            payload,
+            current_height,
+            U256::ZERO,
+            registry,
+        )
+    }
+
+    /// Creates a proposal with the exact native value permitted by its
+    /// compile-time target admission class.
+    pub fn create_proposal_with_value(
+        &mut self,
+        proposer: Address,
+        target_module: Address,
+        payload: &str,
+        current_height: u64,
+        attached_value: U256,
+        registry: &VoteTargetRegistry,
+    ) -> Result<U256> {
         let chain_id = self.storage.chain_id()?;
         let target = registry.lookup(target_module)?;
-        match target.admission() {
+        let admission = target.admission();
+        match admission {
             TargetAdmission::ActiveValidatorOnly => {
+                if !attached_value.is_zero() {
+                    return Err(VoteError::InvalidProposalBond {
+                        expected: U256::ZERO,
+                        actual: attached_value,
+                    }
+                    .into());
+                }
                 ensure_active_validator(self.storage.clone(), proposer)?;
             }
-            TargetAdmission::PublicBonded { .. } => {
-                return Err(PrecompileError::Unsupported);
+            TargetAdmission::PublicBonded { amount } => {
+                if attached_value != amount {
+                    return Err(VoteError::InvalidProposalBond {
+                        expected: amount,
+                        actual: attached_value,
+                    }
+                    .into());
+                }
             }
         }
 
@@ -76,14 +113,28 @@ impl Vote<'_> {
             return Err(VoteError::TooManyPending.into());
         }
 
-        let proposer_pending = self.pending_proposal_count_by_proposer(proposer)?;
-        if proposer_pending >= MAX_PENDING_PROPOSALS_PER_VALIDATOR {
-            return Err(VoteError::TooManyPendingByValidator.into());
+        match admission {
+            TargetAdmission::ActiveValidatorOnly => {
+                let proposer_pending = self.pending_proposal_count_by_proposer(proposer)?;
+                if proposer_pending >= MAX_PENDING_PROPOSALS_PER_VALIDATOR {
+                    return Err(VoteError::TooManyPendingByValidator.into());
+                }
+            }
+            TargetAdmission::PublicBonded { .. } => {
+                let (public_total, public_by_proposer) =
+                    self.pending_public_bonded_counts(registry, proposer)?;
+                if public_total >= MAX_PENDING_PUBLIC_BONDED_PROPOSALS {
+                    return Err(VoteError::TooManyPendingPublicBonded.into());
+                }
+                if public_by_proposer > 0 {
+                    return Err(VoteError::TooManyPendingPublicBondedByProposer.into());
+                }
+            }
         }
 
         let target_context = VoteTargetContext {
             proposer,
-            attached_value: U256::ZERO,
+            attached_value,
             block_number: current_height,
             chain_id,
         };
@@ -113,6 +164,19 @@ impl Vote<'_> {
                 payload.as_bytes(),
                 target_context,
             )?;
+            if let TargetAdmission::PublicBonded { amount } = admission {
+                self.record_proposal_bond(proposal_id, amount)?;
+                let liabilities = self.bond_liabilities()?;
+                let balance = storage.balance(VOTE_ADDRESS)?;
+                if balance < liabilities {
+                    return Err(VoteError::BondLiabilityInvariant {
+                        balance,
+                        liabilities,
+                    }
+                    .into());
+                }
+                self.notify_proposal_bond_escrowed(proposal_id, proposer, amount)?;
+            }
             self.notify_proposal_created(
                 proposal_id,
                 proposer,
@@ -122,6 +186,31 @@ impl Vote<'_> {
             )?;
             Ok(proposal_id)
         })
+    }
+
+    fn pending_public_bonded_counts(
+        &self,
+        registry: &VoteTargetRegistry,
+        proposer: Address,
+    ) -> Result<(u32, u32)> {
+        let mut total = 0u32;
+        let mut by_proposer = 0u32;
+        for proposal_id in self.list_pending_proposal_ids()? {
+            let proposal = self
+                .proposals
+                .get(proposal_id)?
+                .ok_or(VoteError::ProposalNotFound)?;
+            if matches!(
+                registry.lookup(proposal.target_module)?.admission(),
+                TargetAdmission::PublicBonded { .. }
+            ) {
+                total = total.saturating_add(1);
+                if proposal.proposer == proposer {
+                    by_proposer = by_proposer.saturating_add(1);
+                }
+            }
+        }
+        Ok((total, by_proposer))
     }
 
     /// ABI entry: `castVote(uint256 proposalId, bool approve)`.

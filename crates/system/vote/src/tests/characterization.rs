@@ -1,9 +1,10 @@
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
     addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
     block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
+    stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use serde_json::Value;
@@ -14,7 +15,7 @@ use crate::{
         TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
     },
     precompile::IVote,
-    schema::{ProposalStatus, Vote},
+    schema::{BondSettlement, ProposalStatus, Vote},
 };
 
 use super::{
@@ -155,7 +156,28 @@ impl VoteTarget for PublicBondedTarget {
         }
     }
 
-    fn validate(&self, _payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+    fn validate(&self, _payload: &[u8], context: VoteTargetContext) -> Result<()> {
+        if context.attached_value != U256::from(123u64) {
+            return Err(PrecompileError::Fatal(
+                "public bonded target received the wrong attached value".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn reserve(
+        &self,
+        storage: StorageHandle<'_>,
+        _proposal_id: U256,
+        payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<()> {
+        if payload == b"fail" {
+            storage.sstore(UPDATE_ADDRESS, U256::from(998u64), U256::from(1u64))?;
+            return Err(PrecompileError::Revert(
+                "characterized public reservation failure".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -172,7 +194,8 @@ impl VoteTarget for PublicBondedTarget {
 
 static PUBLIC_BONDED_TARGET: PublicBondedTarget = PublicBondedTarget;
 static PUBLIC_BONDED_HANDLERS: &[&dyn VoteTarget] = &[&PUBLIC_BONDED_TARGET];
-static PUBLIC_BONDED_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(PUBLIC_BONDED_HANDLERS);
+pub(super) static PUBLIC_BONDED_REGISTRY: VoteTargetRegistry =
+    VoteTargetRegistry::new(PUBLIC_BONDED_HANDLERS);
 
 struct FailingReserveTarget;
 
@@ -322,7 +345,7 @@ fn registry_rejects_duplicate_target_modules() {
 }
 
 #[test]
-fn public_bonded_admission_keeps_its_exact_amount_but_is_inert_before_bond_accounting() {
+fn public_bonded_admission_records_only_its_exact_liability() {
     assert_eq!(
         PUBLIC_BONDED_REGISTRY
             .lookup(UPDATE_ADDRESS)
@@ -334,20 +357,155 @@ fn public_bonded_admission_keeps_its_exact_amount_but_is_inert_before_bond_accou
     );
 
     let mut provider = HashMapStorageProvider::new(1);
+    provider.set_balance(VOTE_ADDRESS, U256::from(130u64));
     let storage = StorageHandle::new(&mut provider);
-    let mut vote = Vote::new(storage);
-    assert!(matches!(
-        vote.create_proposal(
+    let proposal_id = {
+        let mut vote = Vote::new(storage);
+        vote.create_proposal_with_value(
             Address::repeat_byte(0x99),
             UPDATE_ADDRESS,
             RAW_PAYLOAD,
             10,
+            U256::from(123u64),
             &PUBLIC_BONDED_REGISTRY,
-        ),
-        Err(PrecompileError::Unsupported)
-    ));
-    assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
-    assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
+        )
+        .unwrap()
+    };
+    let vote = Vote::new(StorageHandle::new(&mut provider));
+    assert_eq!(
+        vote.proposal_bond(proposal_id).unwrap().settlement,
+        BondSettlement::Unsettled
+    );
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
+    drop(vote);
+    assert_eq!(provider.get_balance(VOTE_ADDRESS), U256::from(130u64));
+}
+
+#[test]
+fn public_bonded_value_identity_and_global_caps_fail_before_allocation() {
+    let outsider = Address::repeat_byte(0x99);
+
+    let mut invalid_provider = HashMapStorageProvider::new(1);
+    {
+        let storage = StorageHandle::new(&mut invalid_provider);
+        let mut vote = Vote::new(storage);
+        for actual in [U256::ZERO, U256::from(122u64), U256::from(124u64)] {
+            match vote
+                .create_proposal_with_value(
+                    outsider,
+                    UPDATE_ADDRESS,
+                    RAW_PAYLOAD,
+                    10,
+                    actual,
+                    &PUBLIC_BONDED_REGISTRY,
+                )
+                .unwrap_err()
+            {
+                PrecompileError::RevertBytes(bytes) => {
+                    assert_eq!(&bytes[..4], IVote::InvalidProposalBond::SELECTOR)
+                }
+                other => panic!("expected InvalidProposalBond, got {other:?}"),
+            }
+        }
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+    }
+    assert!(invalid_provider.storage.is_empty());
+    assert!(invalid_provider.get_events(VOTE_ADDRESS).is_empty());
+
+    let mut identity_provider = HashMapStorageProvider::new(1);
+    identity_provider.set_balance(VOTE_ADDRESS, U256::from(246u64));
+    {
+        let storage = StorageHandle::new(&mut identity_provider);
+        let mut vote = Vote::new(storage);
+        vote.create_proposal_with_value(
+            outsider,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            U256::from(123u64),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+        assert!(matches!(
+            vote.create_proposal_with_value(
+                outsider,
+                UPDATE_ADDRESS,
+                RAW_PAYLOAD,
+                10,
+                U256::from(123u64),
+                &PUBLIC_BONDED_REGISTRY,
+            ),
+            Err(PrecompileError::Revert(message))
+                if message == "proposer already has a pending public bonded proposal"
+        ));
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::from(1u64));
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
+    }
+
+    let mut cap_provider = HashMapStorageProvider::new(1);
+    let cap = MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
+    cap_provider.set_balance(VOTE_ADDRESS, U256::from(123u64) * U256::from(cap + 1));
+    {
+        let storage = StorageHandle::new(&mut cap_provider);
+        let mut vote = Vote::new(storage);
+        for index in 0..cap {
+            vote.create_proposal_with_value(
+                Address::from_word(U256::from(index + 1).into()),
+                UPDATE_ADDRESS,
+                RAW_PAYLOAD,
+                10,
+                U256::from(123u64),
+                &PUBLIC_BONDED_REGISTRY,
+            )
+            .unwrap();
+        }
+        assert!(matches!(
+            vote.create_proposal_with_value(
+                Address::repeat_byte(0xaa),
+                UPDATE_ADDRESS,
+                RAW_PAYLOAD,
+                10,
+                U256::from(123u64),
+                &PUBLIC_BONDED_REGISTRY,
+            ),
+            Err(PrecompileError::Revert(message))
+                if message == "too many pending public bonded proposals"
+        ));
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::from(cap));
+        assert_eq!(
+            vote.bond_liabilities().unwrap(),
+            U256::from(123u64) * U256::from(cap)
+        );
+    }
+}
+
+#[test]
+fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
+    {
+        let storage = StorageHandle::new(&mut provider);
+        let mut vote = Vote::new(storage.clone());
+        assert!(vote
+            .create_proposal_with_value(
+                Address::repeat_byte(0x99),
+                UPDATE_ADDRESS,
+                "fail",
+                10,
+                U256::from(123u64),
+                &PUBLIC_BONDED_REGISTRY,
+            )
+            .is_err());
+        assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+        assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+        assert_eq!(
+            storage.sload(UPDATE_ADDRESS, U256::from(998u64)).unwrap(),
+            U256::ZERO
+        );
+    }
+    assert!(provider.storage.is_empty());
+    assert!(provider.get_events(VOTE_ADDRESS).is_empty());
 }
 
 #[test]

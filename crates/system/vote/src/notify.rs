@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
-use crate::precompile::IVote;
+use crate::abi::IVote;
 use crate::schema::{ProposalRecord, Vote};
 use crate::state::VoteTally;
 
@@ -51,6 +51,20 @@ impl Vote<'_> {
             proposalId: proposal_id,
             validator: voter,
             approve,
+        })
+    }
+
+    /// Emits canonical evidence that a proposal bond became an unsettled liability.
+    pub(crate) fn notify_proposal_bond_escrowed(
+        &mut self,
+        proposal_id: U256,
+        owner: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.emit(IVote::ProposalBondEscrowed {
+            proposalId: proposal_id,
+            owner,
+            amount,
         })
     }
 

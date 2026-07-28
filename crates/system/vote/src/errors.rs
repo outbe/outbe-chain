@@ -1,4 +1,8 @@
+use alloy_primitives::{Bytes, U256};
+use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
+
+use crate::abi::IVote;
 
 /// Vote module errors.
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +21,10 @@ pub enum VoteError {
     TooManyPending,
     #[error("validator has too many pending proposals")]
     TooManyPendingByValidator,
+    #[error("too many pending public bonded proposals")]
+    TooManyPendingPublicBonded,
+    #[error("proposer already has a pending public bonded proposal")]
+    TooManyPendingPublicBondedByProposer,
     #[error("invalid proposal status")]
     InvalidProposalStatus,
     #[error("invalid vote kind")]
@@ -35,6 +43,10 @@ pub enum VoteError {
     BondLiabilityOverflow,
     #[error("proposal bond liability underflow")]
     BondLiabilityUnderflow,
+    #[error("invalid proposal bond: expected {expected}, got {actual}")]
+    InvalidProposalBond { expected: U256, actual: U256 },
+    #[error("proposal bond liabilities {liabilities} exceed Vote balance {balance}")]
+    BondLiabilityInvariant { balance: U256, liabilities: U256 },
     #[error("invalid proposal payload")]
     InvalidPayload,
     #[error("unknown vote target module")]
@@ -46,9 +58,13 @@ pub enum VoteError {
 impl From<VoteError> for PrecompileError {
     fn from(err: VoteError) -> Self {
         match err {
+            VoteError::InvalidProposalBond { expected, actual } => PrecompileError::RevertBytes(
+                Bytes::from(IVote::InvalidProposalBond { expected, actual }.abi_encode()),
+            ),
             VoteError::InvalidBondSettlement
             | VoteError::BondLiabilityOverflow
-            | VoteError::BondLiabilityUnderflow => PrecompileError::Fatal(err.to_string()),
+            | VoteError::BondLiabilityUnderflow
+            | VoteError::BondLiabilityInvariant { .. } => PrecompileError::Fatal(err.to_string()),
             _ => PrecompileError::Revert(err.to_string()),
         }
     }

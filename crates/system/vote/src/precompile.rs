@@ -1,7 +1,7 @@
 //! ABI surface and EVM dispatch for the Vote precompile.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
@@ -16,10 +16,7 @@ use crate::handlers::VoteTargetRegistry;
 use crate::schema::{BondSettlement, Vote};
 use crate::state::{ProposalInfo, ProposalStatus, VoteTally};
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IVote.sol"
-);
+pub use crate::abi::IVote;
 
 /// Dispatches an ABI-encoded call to the Vote precompile.
 pub fn dispatch_with_handlers(
@@ -29,9 +26,8 @@ pub fn dispatch_with_handlers(
     value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
-    reject_value(&value)?;
     dispatch_call(data, IVote::IVoteCalls::abi_decode, |call| {
-        dispatch_vote_call(storage, call, caller, registry)
+        dispatch_vote_call(storage, call, caller, value, registry)
     })
 }
 
@@ -39,14 +35,25 @@ fn dispatch_vote_call(
     storage: StorageHandle<'_>,
     call: IVote::IVoteCalls,
     caller: Address,
+    value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
     let mut governance = Vote::new(storage.clone());
     use IVote::IVoteCalls::*;
+    if !matches!(&call, createProposal(_)) {
+        reject_value(&value)?;
+    }
     match call {
         createProposal(c) => mutate(c, caller, |sender, c| {
             let block_number = storage.block_number()?;
-            governance.create_proposal(sender, c.targetModule, &c.payload, block_number, registry)
+            governance.create_proposal_with_value(
+                sender,
+                c.targetModule,
+                &c.payload,
+                block_number,
+                value,
+                registry,
+            )
         }),
         castVote(c) => mutate_void(c, caller, |sender, c| {
             let block_number = storage.block_number()?;
