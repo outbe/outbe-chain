@@ -158,6 +158,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-050 | Done | `990314f2` | Factory registry, count/list views and reservation triple state pass 8 focused tests |
 | SCF-051 | Done | `6f8ad6a4` | Canonical typed admission, proposer/policy checks, shared collision validation and fixed prediction vector pass 12 focused tests; native token-address balance is ignored and preserved |
 | SCF-052 | Done | `5bb9b9c9` | Failure after every reserve/release/consume mutation rolls back completely; release permits corrected resubmission and typed target Error retains the reservation triple |
+| SCF-053 | Done | `184b2ddf` | Approved execution revalidates the reservation, initializes zero-supply token state, installs marker, commits registry and emits one event atomically; Factory 19/19 and EVM 264/264 pass |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -726,6 +727,15 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-053 — Implement atomic token initializer
 
+- **Status:** Done in `184b2ddf`; approved execution revalidates canonical payload,
+  proposer, policy, reservation triple, derived identity, permanent indexes and the
+  reserved account's nonce/code before one outer checkpoint initializes the
+  zero-supply ledger, installs exact `0xef`, consumes the reservation, commits all
+  permanent indexes and emits `StablecoinCreated`. Failure after every initializer
+  mutation rolls token storage, marker, registry and event back while retaining the
+  reservation. The real `DirectStorageProvider` flush test proves code/storage
+  changes and forced COEN preservation. Factory 19/19, EVM 264/264, clippy and
+  formatting pass.
 - **Goal:** Convert one approved reservation into one permanent token.
 - **Depends on:** SCF-023, `SCF-G3`, SCF-052.
 - **Done when:** Factory revalidates reservation/policy/address, initializes ledger,
