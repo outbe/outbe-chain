@@ -160,6 +160,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-052 | Done | `5bb9b9c9` | Failure after every reserve/release/consume mutation rolls back completely; release permits corrected resubmission and typed target Error retains the reservation triple |
 | SCF-053 | Done | `184b2ddf` | Approved execution revalidates the reservation, initializes zero-supply token state, installs marker, commits registry and emits one event atomically; Factory 19/19 and EVM 264/264 pass |
 | SCF-054 | Done | `943ca8e2` | Factory exposes only activation-gated views; compile-time Vote adapter owns validate/reserve/execute/release, reservation joins proposal creation checkpoint, and Factory/Vote/Update/Governance/EVM pass 431/431 |
+| SCF-055 | Review | `4d3e1ab1` | Factory 22/22 covers deterministic mixed histories, every reservation/index inverse, pending and permanent collision injection, maximum accepted payload, and failure after every mutation; independent G4 review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -764,6 +765,9 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-055 — Factory property and atomicity gate
 
+- **Status:** Review in `4d3e1ab1`; all requested executable evidence passes
+  22/22 Factory tests with no production-code change. The independent G4 storage
+  and atomicity review remains before this gate can become Done.
 - **Goal:** Prove index consistency, reservation lifecycle and atomic creation.
 - **Depends on:** SCF-054.
 - **Evidence:** random pending/permanent histories, collision injection, max input,
