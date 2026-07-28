@@ -18,7 +18,6 @@ use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_promis::Promis;
 
 /// Pledge `amount` gratis from `caller` into a pending pledge-lock ticket (authorized
 /// by the caller's modify key). Returns the confidential pledge handle to present at
@@ -68,21 +67,23 @@ pub fn mint(
     Ok(())
 }
 
-/// Burn `amount` public promis from `account` and mint the matching Gratis 1:1.
-/// The gratis mint is authorized by the account owner's Gratis modify key
-/// (`auth`): the confidential mint runs inside the enclave, so the caller must
-/// supply a valid `mac`/`opNonce` bound to their current gratis op-nonce.
+/// Burn `amount` confidential promis from `account` and mint the matching Gratis
+/// 1:1. Both tokens are enclave-confidential and independently authorized: the
+/// promis burn takes the account owner's **Promis** modify key (`promis_auth`) and
+/// the gratis mint takes their **Gratis** modify key (`gratis_auth`). Each `auth`
+/// binds `amount` to that ledger's own current op-nonce, so the caller supplies two
+/// `mac`/`opNonce` pairs.
 pub fn mine_from_promis(
     storage: StorageHandle<'_>,
     account: Address,
     amount: U256,
-    auth: ModifyAuth,
+    gratis_auth: ModifyAuth,
+    promis_auth: ModifyAuth,
 ) -> Result<U256> {
-    let mut promis = Promis::new(storage.clone());
-    promis.burn(account, amount)?;
+    outbe_promis::api::burn(storage.clone(), account, amount, promis_auth)?;
 
     // Reuse `mint`: gratis mint + fresh Fidelity cohort at the current block time.
-    mint(storage, account, amount, auth)?;
+    mint(storage, account, amount, gratis_auth)?;
 
     Ok(amount)
 }

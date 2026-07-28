@@ -33,12 +33,19 @@ interface IGratisFactory {
     function mineCoen(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice Convert `amount` promis to confidential Gratis at 1:1 (burns the
-    ///         caller's public promis, mints gratis). The gratis mint runs inside
-    ///         the enclave and is authorized by the caller's Gratis modify key:
-    ///         `mac = HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
-    ///         caller's current on-chain gratis op-nonce (fetch via
-    ///         `outbe_deriveGratisKeys` + the gratis op-nonce).
-    function mineFromPromis(uint256 amount, bytes32 mac, uint64 opNonce) external returns (uint256);
+    ///         caller's confidential promis, mints gratis). Both tokens are
+    ///         enclave-confidential, so the caller supplies TWO modify
+    ///         authorizations, each binding `amount` to that ledger's own current
+    ///         op-nonce: `(mac, opNonce)` is the Gratis modify auth for the mint and
+    ///         `(promisMac, promisOpNonce)` is the Promis modify auth for the burn.
+    ///         Fetch each via `outbe_deriveKeys(<ledger>, ...)` + `opNonceOf`.
+    function mineFromPromis(
+        uint256 amount,
+        bytes32 mac,
+        uint64 opNonce,
+        bytes32 promisMac,
+        uint64 promisOpNonce
+    ) external returns (uint256);
 
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

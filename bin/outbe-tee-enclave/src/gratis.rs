@@ -16,17 +16,15 @@ use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
 
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
-use outbe_tee::{
-    GRATIS_MODIFY_KEY_INFO, GRATIS_NONCE_INFO, GRATIS_PLEDGE_HANDLE_INFO, GRATIS_STATE_HKDF_INFO,
-    GRATIS_VIEW_KEY_INFO,
-};
+use outbe_tee::GRATIS_PLEDGE_HANDLE_INFO;
 
+use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
 
 /// AEAD-slot field tags folded into the nonce derivation so a ciphertext cannot be
-/// lifted between an account's balance and pledged slots.
-const FIELD_BALANCE: u8 = 0;
+/// lifted between an account's balance and pledged slots. `FIELD_BALANCE` (tag 0)
+/// is shared and imported from [`crate::confidential`]; pledged/eoa are Gratis-local.
 const FIELD_PLEDGED: u8 = 1;
 /// Folded into the sealed-EOA nonce IKM so its nonce can never collide with an amount
 /// blob or a pledge ticket sealed under the same state key + handle.
@@ -43,36 +41,25 @@ const EOA_CT_LEN: usize = 12 + 20 + 16;
 /// by the Credis position, not here.
 const RECORD_PLAINTEXT_LEN: usize = 32 + 20;
 
-/// Amount blob length: `version(8, BE) ‖ ChaCha20Poly1305(U256 amount)` where the
-/// ct is a 32-byte plaintext + 16-byte Poly1305 tag = 56 bytes. Constant for every
-/// amount, so the ciphertext size never leaks the balance/pledged magnitude. This
-/// is the byte length `IGratis.balanceOf` / `pledgedOf` return (empty for a fresh
-/// slot); keep it in sync with those Solidity comments.
-const AMOUNT_BLOB_LEN: usize = 8 + 32 + 16;
-
-const MODIFY_PREIMAGE_TAG: &[u8] = b"outbe/gratis/modify/v1";
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
 
-// --- Key derivation -------------------------------------------------------------
+// --- Key derivation (delegates to the shared confidential core) ------------------
 
-/// Derive the resident Gratis state key from the DKG group signature — identical
-/// across every committee enclave (so encrypted state is byte-identical), bound to
-/// chain + epoch. Mirrors [`crate::crypto::derive_tribute_offer_secret_from_group_sig`].
+/// Derive the resident Gratis state key from the DKG group signature. See
+/// [`crate::confidential::Domain::derive_state_key`].
 pub fn derive_gratis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
-    let mut info = GRATIS_STATE_HKDF_INFO.to_vec();
-    info.extend_from_slice(epoch.to_string().as_bytes());
-    hkdf_sha256(chain_id.as_slice(), group_sig, &info)
+    GRATIS.derive_state_key(group_sig, chain_id, epoch)
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance/pledged blobs, so a holder can decrypt its own state client-side.
 pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    hkdf_sha256(state_key, account.as_slice(), GRATIS_VIEW_KEY_INFO)
+    GRATIS.derive_view_key(state_key, account)
 }
 
 /// Per-account modify key: authorizes writes (via HMAC); never decrypts state.
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-    hkdf_sha256(state_key, account.as_slice(), GRATIS_MODIFY_KEY_INFO)
+    GRATIS.derive_modify_key(state_key, account)
 }
 
 /// Deterministic pledge handle (public record id) that replaces the old ZK
@@ -95,24 +82,8 @@ pub fn derive_pledge_handle(
 
 // --- Authorization MACs (also used by clients/tests to produce the auth) --------
 
-fn modify_preimage(
-    account: Address,
-    op: GratisOp,
-    amount: U256,
-    op_nonce: u64,
-    chain_id: B256,
-) -> Vec<u8> {
-    let mut b = MODIFY_PREIMAGE_TAG.to_vec();
-    b.extend_from_slice(account.as_slice());
-    b.push(op as u8);
-    b.extend_from_slice(&amount.to_be_bytes::<32>());
-    b.extend_from_slice(&op_nonce.to_be_bytes());
-    b.extend_from_slice(chain_id.as_slice());
-    b
-}
-
 /// `HMAC-SHA256(modify_key, preimage)` — the write authorization the client sends
-/// and the enclave re-checks.
+/// and the enclave re-checks. See [`crate::confidential::Domain::modify_mac`].
 pub fn modify_mac(
     modify_key: &[u8; 32],
     account: Address,
@@ -121,14 +92,7 @@ pub fn modify_mac(
     op_nonce: u64,
     chain_id: B256,
 ) -> [u8; 32] {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, modify_key);
-    let tag = hmac::sign(
-        &key,
-        &modify_preimage(account, op, amount, op_nonce, chain_id),
-    );
-    let mut out = [0u8; 32];
-    out.copy_from_slice(tag.as_ref());
-    out
+    GRATIS.modify_mac(modify_key, account, op as u8, amount, op_nonce, chain_id)
 }
 
 fn verify_modify_auth(
@@ -140,13 +104,9 @@ fn verify_modify_auth(
     chain_id: B256,
     mac: &[u8; 32],
 ) -> bool {
-    let key = hmac::Key::new(hmac::HMAC_SHA256, modify_key);
-    hmac::verify(
-        &key,
-        &modify_preimage(account, op, amount, op_nonce, chain_id),
-        mac,
+    GRATIS.verify_modify_auth(
+        modify_key, account, op as u8, amount, op_nonce, chain_id, mac,
     )
-    .is_ok()
 }
 
 /// Per-pledge spend secret the EOA derives locally from its modify key + the
@@ -172,15 +132,10 @@ pub fn spend_auth_mac(pledge_secret: &[u8; 32], bundle: Address) -> [u8; 32] {
     out
 }
 
-// --- Versioned deterministic AEAD over per-account amounts ----------------------
+// --- Versioned deterministic AEAD over per-account amounts (shared core) ---------
 
 fn slot_nonce(key: &[u8; 32], ikm: &[u8], version: u64) -> Result<[u8; 12]> {
-    let mut buf = ikm.to_vec();
-    buf.extend_from_slice(&version.to_be_bytes());
-    let okm = hkdf_sha256(key, &buf, GRATIS_NONCE_INFO)?;
-    let mut nonce = [0u8; 12];
-    nonce.copy_from_slice(&okm[..12]);
-    Ok(nonce)
+    GRATIS.slot_nonce(key, ikm, version)
 }
 
 /// Decrypt a `version ‖ ct` amount blob; an empty blob is a fresh slot (`0`).
@@ -190,23 +145,7 @@ fn read_amount(
     field: u8,
     blob: &[u8],
 ) -> Result<(u64, U256)> {
-    if blob.is_empty() {
-        return Ok((0, U256::ZERO));
-    }
-    if blob.len() < 8 {
-        return Err(TeeError::DecryptFailed);
-    }
-    let mut vbytes = [0u8; 8];
-    vbytes.copy_from_slice(&blob[..8]);
-    let version = u64::from_be_bytes(vbytes);
-    let mut ikm = account.as_slice().to_vec();
-    ikm.push(field);
-    let nonce = slot_nonce(view_key, &ikm, version)?;
-    let pt = chacha20poly1305_decrypt(view_key, &nonce, &blob[8..])?;
-    if pt.len() != 32 {
-        return Err(TeeError::DecryptFailed);
-    }
-    Ok((version, U256::from_be_slice(&pt)))
+    GRATIS.read_amount(view_key, account, field, blob)
 }
 
 /// Encrypt `amount` into a fresh `version+1 ‖ ct` blob.
@@ -217,19 +156,7 @@ fn write_amount(
     prev_version: u64,
     amount: U256,
 ) -> Result<Vec<u8>> {
-    let version = prev_version.saturating_add(1);
-    let mut ikm = account.as_slice().to_vec();
-    ikm.push(field);
-    let nonce = slot_nonce(view_key, &ikm, version)?;
-    let ct = chacha20poly1305_encrypt(view_key, &nonce, &amount.to_be_bytes::<32>())?;
-    let mut blob = version.to_be_bytes().to_vec();
-    blob.extend_from_slice(&ct);
-    debug_assert_eq!(
-        blob.len(),
-        AMOUNT_BLOB_LEN,
-        "gratis amount blob must be a fixed {AMOUNT_BLOB_LEN} bytes"
-    );
-    Ok(blob)
+    GRATIS.write_amount(view_key, account, field, prev_version, amount)
 }
 
 /// Client-side helper: decrypt an account's balance blob with its view key (the
@@ -671,6 +598,36 @@ mod tests {
             bundle_account: None,
             spend_auth: None,
         }
+    }
+
+    /// Known-answer vectors pinning the Gratis key-derivation / amount-AEAD /
+    /// modify-MAC byte layouts to literal hex. These guard the shared
+    /// [`crate::confidential`] core against silent format drift: any change to an
+    /// HKDF label, nonce IKM, blob layout, or MAC preimage would make persisted
+    /// on-chain Gratis ciphertext undecryptable and split the DKG-derived state key
+    /// across validators — a break the round-trip tests below cannot catch because
+    /// they start from empty storage. Regenerate ONLY on an intentional, reviewed
+    /// format change (bump the on-chain layout version accordingly).
+    #[test]
+    fn gratis_known_answer_vectors() {
+        const KAT_GROUP_SIG: &[u8] = b"kat-fixed-gratis-group-signature-48b-padding";
+        let sk = derive_gratis_state_key(KAT_GROUP_SIG, CHAIN, 0).unwrap();
+        assert_eq!(
+            alloy_primitives::hex::encode(sk),
+            "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
+        );
+        let vk = derive_view_key(&sk, alice()).unwrap();
+        let blob = write_amount(&vk, alice(), FIELD_BALANCE, 0, U256::from(1000u64)).unwrap();
+        assert_eq!(
+            alloy_primitives::hex::encode(&blob),
+            "0000000000000001186436dfe4774b400beaa3115d0ab9abae57d6defa6f80943ec703ede5ea855d8823cdeb05b2de5491aaf6829c5b213b"
+        );
+        let mk = derive_modify_key(&sk, alice()).unwrap();
+        let mac = modify_mac(&mk, alice(), GratisOp::Mint, U256::from(1000u64), 0, CHAIN);
+        assert_eq!(
+            alloy_primitives::hex::encode(mac),
+            "688879e6e80acafeb78b7804de6edbd1032d95b2b654a049824c269c4aace152"
+        );
     }
 
     #[test]

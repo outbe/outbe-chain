@@ -22,8 +22,8 @@ pub mod tee_dkg;
 
 pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistration};
 pub use client::{
-    verify_gratis_op_attestation, verify_peer_quote, verify_tribute_offer_attestation,
-    AttestedPeerKeys, EnclaveClient, QuotePolicy,
+    verify_gratis_op_attestation, verify_peer_quote, verify_promis_op_attestation,
+    verify_tribute_offer_attestation, AttestedPeerKeys, EnclaveClient, QuotePolicy,
 };
 pub use client_global::{
     install_enclave_client, is_enclave_configured, seal_offer_key_for_registry, try_with_enclave,
@@ -77,3 +77,24 @@ pub const GRATIS_NONCE_INFO: &[u8] = b"outbe/gratis/nonce/v1";
 /// `HKDF(salt = gratis_state_key, ikm = account ‖ amount ‖ op_nonce,
 /// info = GRATIS_PLEDGE_HANDLE_INFO)`.
 pub const GRATIS_PLEDGE_HANDLE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";
+
+// --- Promis confidential ledger (independent key domain from Gratis) ---
+//
+// The Promis token mirrors Gratis's confidential balance model (encrypted
+// per-account balances, enclave-routed mint/burn, modify-key write auth) but is a
+// separate ledger, so it uses distinct HKDF `info` labels: the derived
+// state/view/modify keys are cryptographically independent from Gratis's. Same
+// derivation contract as the `GRATIS_*` labels above (state info carries a
+// trailing slash because the epoch string is appended; the others do not).
+
+/// HKDF `info` for the resident Promis state key (`info = PROMIS_STATE_HKDF_INFO || epoch`).
+pub const PROMIS_STATE_HKDF_INFO: &[u8] = b"outbe/promis/state-key/v1/";
+
+/// HKDF `info` for a per-account Promis **view key** (read capability + AEAD key).
+pub const PROMIS_VIEW_KEY_INFO: &[u8] = b"outbe/promis/view-key/v1";
+
+/// HKDF `info` for a per-account Promis **modify key** (write authorization MAC).
+pub const PROMIS_MODIFY_KEY_INFO: &[u8] = b"outbe/promis/modify-key/v1";
+
+/// HKDF `info` for the per-slot deterministic Promis AEAD nonce.
+pub const PROMIS_NONCE_INFO: &[u8] = b"outbe/promis/nonce/v1";

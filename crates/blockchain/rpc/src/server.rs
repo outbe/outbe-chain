@@ -263,8 +263,9 @@ where
         self.serve_compressed_entity(request).await
     }
 
-    async fn derive_gratis_keys(
+    async fn derive_keys(
         &self,
+        ledger: outbe_tee::protocol::Ledger,
         account: Address,
         ephemeral_pubkey: B256,
         signature: alloy_primitives::Bytes,
@@ -273,7 +274,7 @@ where
 
         // Prove the caller controls `account` before the enclave derives its
         // (secret) modify key: recover the EIP-191 personal_sign signer over
-        // `"outbe/gratis/derive-keys/v1" || account || ephemeralPubkey` and require
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey` and require
         // it to equal `account`.
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
             invalid_params_err(format!(
@@ -286,7 +287,7 @@ where
         // re-verifies the same signature, because a compromised host could bypass this
         // check and reach the enclave transport directly (see DeriveAccountKeys arm).
         let prehash = outbe_tee::protocol::eip191_hash(
-            &outbe_tee::protocol::derive_gratis_keys_message(account, ephemeral_pubkey),
+            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
         );
         let recovered = outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65)
             .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
@@ -301,6 +302,7 @@ where
         // trust domain, not ours.
         let response = outbe_tee::try_with_enclave(|client| {
             client.request(&EnclaveRequest::DeriveAccountKeys {
+                ledger,
                 account,
                 requester_ephemeral_pubkey: ephemeral_pubkey.0,
                 owner_sig: sig65.to_vec(),
@@ -326,6 +328,22 @@ where
                 "unexpected enclave response: {other:?}"
             ))),
         }
+    }
+
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        // Deprecated alias — the Gratis ledger of the unified `deriveKeys`.
+        self.derive_keys(
+            outbe_tee::protocol::Ledger::Gratis,
+            account,
+            ephemeral_pubkey,
+            signature,
+        )
+        .await
     }
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {

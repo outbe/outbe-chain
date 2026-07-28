@@ -8,6 +8,7 @@ use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_promis::api::ModifyAuth;
 
 use crate::runtime;
 
@@ -27,7 +28,11 @@ pub fn dispatch(
             use IPromisFactory::IPromisFactoryCalls::*;
             match call {
                 mineCoen(c) => mutate(c, caller, |sender, c| {
-                    runtime::mine_coen(storage.clone(), sender, c.amount)
+                    let auth = ModifyAuth {
+                        mac: c.mac.0,
+                        op_nonce: c.opNonce,
+                    };
+                    runtime::mine_coen(storage.clone(), sender, c.amount, auth)
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;

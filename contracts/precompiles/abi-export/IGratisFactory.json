@@ -46,6 +46,16 @@
         "name": "opNonce",
         "type": "uint64",
         "internalType": "uint64"
+      },
+      {
+        "name": "promisMac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "promisOpNonce",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "outputs": [
