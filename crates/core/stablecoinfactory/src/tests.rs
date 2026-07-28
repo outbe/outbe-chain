@@ -4,7 +4,9 @@ use outbe_primitives::{
     addresses::{STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     block::BlockContext,
     error::PrecompileError,
-    stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
+    stablecoin::{
+        encode_canonical_stablecoin_create, StablecoinCreatePayload, MAX_NAME_LEN, MAX_TICKER_LEN,
+    },
     stablecoin_fork::{
         STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
     },
@@ -274,6 +276,55 @@ fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
         }
         .encode_log_data()]
     );
+}
+
+#[test]
+fn maximum_accepted_metadata_and_supply_cap_create_a_token() {
+    let issuer = Address::repeat_byte(0x11);
+    let proposal_id = U256::from(8u64);
+    let payload = StablecoinCreatePayload {
+        issuer,
+        name: "N".repeat(MAX_NAME_LEN),
+        ticker: "MAXBOUNDARY1".into(),
+        iso4217: 840,
+        decimals: 18,
+        supply_cap: U256::MAX,
+        policy_id: U256::from(1u64),
+    };
+    assert_eq!(payload.name.len(), MAX_NAME_LEN);
+    assert_eq!(payload.ticker.len(), MAX_TICKER_LEN);
+    let raw = encode_canonical_stablecoin_create(&payload).unwrap();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    let created = StorageHandle::enter(&mut provider, |storage| {
+        let validated =
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+        StablecoinFactoryApi::reserve(
+            storage.clone(),
+            &FactoryReservation {
+                proposal_id,
+                token_id: validated.token_id,
+                ticker: validated.payload.ticker.clone(),
+                token: validated.token,
+            },
+        )
+        .unwrap();
+        StablecoinFactoryApi::execute_approved(
+            storage,
+            proposal_id,
+            issuer,
+            &raw,
+            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+        )
+        .unwrap()
+    });
+
+    assert_eq!(created.payload, payload);
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, created.token);
+        assert_eq!(token.total_supply().unwrap(), U256::ZERO);
+        assert_eq!(token.supply_cap.read().unwrap(), U256::MAX);
+    });
 }
 
 #[test]
@@ -706,6 +757,18 @@ fn ticker_is_global_across_issuers_and_pending_address_reserves_full_id() {
             factory
                 .reserve(&third)
                 .expect_err("ticker remains globally permanent"),
+        );
+
+        let permanent_address_collision = FactoryReservation {
+            proposal_id: U256::from(5u64),
+            token_id: B256::repeat_byte(0x55),
+            ticker: "GBP1".into(),
+            token: first.token,
+        };
+        assert_revert::<I::TokenAddressCollision>(
+            factory
+                .reserve(&permanent_address_collision)
+                .expect_err("registered address cannot be reserved under another full id"),
         );
     });
 }
