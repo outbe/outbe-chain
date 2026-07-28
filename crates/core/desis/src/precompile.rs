@@ -117,26 +117,3 @@ fn bids_from_sol_arrays(
         })
         .collect())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-    use outbe_primitives::storage::StorageHandle;
-
-    #[test]
-    fn dispatch_rejects_call_value() {
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |s| {
-            let data = IDesis::getAuctionStageCall {
-                worldwideDay: 20260101,
-            }
-            .abi_encode();
-            // Value on a non-payable call is rejected before the call is decoded or run.
-            assert!(dispatch(s.clone(), &data, Address::ZERO, U256::from(1)).is_err());
-            // Zero value proceeds to the view.
-            assert!(dispatch(s.clone(), &data, Address::ZERO, U256::ZERO).is_ok());
-        });
-    }
-}

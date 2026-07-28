@@ -20,11 +20,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // - isApprovedForAll(address account, address operator) external view returns (bool)
     // - safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes calldata data) external
     // - safeBatchTransferFrom(address from, address to, uint256[] calldata ids, uint256[] calldata amounts, bytes calldata data) external
-    //
-    // safeTransferFrom/safeBatchTransferFrom are state-gated, not unconditional: a Settled token id is
-    // soulbound (always reverts SoulboundSettled), and an Issued token id on a Called series is frozen
-    // holder-to-holder (reverts TransferOnCalledForbidden). Check the series' IntexState/IntexStatus
-    // before transferring to avoid a revert.
 
     // --- Types ---
 
