@@ -11,7 +11,7 @@ use outbe_validatorset::logic::status;
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
 use crate::errors::VoteError;
-use crate::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetRegistry};
+use crate::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry};
 use crate::runtime::quorum_reached;
 use crate::schema::ProposalStatus;
 use crate::schema::Vote;
@@ -29,8 +29,8 @@ impl VoteTarget for TestUpdateVoteTarget {
         UPDATE_ADDRESS
     }
 
-    fn validate(&self, payload: &Value, _current_height: u64, _chain_id: u64) -> Result<()> {
-        if payload.is_object() {
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
             Ok(())
         } else {
             Err(VoteError::InvalidPayload.into())
@@ -41,7 +41,8 @@ impl VoteTarget for TestUpdateVoteTarget {
         &self,
         _ctx: &BlockRuntimeContext,
         _proposal_id: U256,
-        _payload: &Value,
+        _payload: &[u8],
+        _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         Ok(TargetExecutionOutcome::Applied)
     }

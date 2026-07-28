@@ -3,13 +3,28 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use serde_json::Value;
 
 use crate::errors::VoteError;
 use crate::schema::{ProposalRecord, ProposalStatus};
 
 /// Static handler table entry type.
 pub type VoteTargetHandlers = &'static [&'static dyn VoteTarget];
+
+/// Compile-time proposal admission class owned by a target module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetAdmission {
+    ActiveValidatorOnly,
+    PublicBonded { amount: U256 },
+}
+
+/// Consensus context passed explicitly to target validation and execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VoteTargetContext {
+    pub proposer: Address,
+    pub attached_value: U256,
+    pub block_number: u64,
+    pub chain_id: u64,
+}
 
 /// Deterministic result of applying an approved proposal to its target module.
 ///
@@ -26,15 +41,21 @@ pub trait VoteTarget: Send + Sync {
     /// Precompile address this handler serves.
     fn target_module(&self) -> Address;
 
+    /// Compile-time admission class. V1 targets default to validator-only, zero value.
+    fn admission(&self) -> TargetAdmission {
+        TargetAdmission::ActiveValidatorOnly
+    }
+
     /// Fail-fast validation used during proposal creation.
-    fn validate(&self, payload: &Value, current_height: u64, chain_id: u64) -> Result<()>;
+    fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()>;
 
     /// Applies side effects when a proposal is approved.
     fn handle_approved(
         &self,
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
-        payload: &Value,
+        payload: &[u8],
+        context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome>;
 
     /// Dispatches terminal proposal outcomes to the target module.
@@ -43,11 +64,12 @@ pub trait VoteTarget: Send + Sync {
         &self,
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
-        payload: &Value,
+        payload: &[u8],
+        context: VoteTargetContext,
         status: ProposalStatus,
     ) -> Result<TargetExecutionOutcome> {
         match status {
-            ProposalStatus::Approved => self.handle_approved(ctx, proposal_id, payload),
+            ProposalStatus::Approved => self.handle_approved(ctx, proposal_id, payload, context),
             ProposalStatus::Rejected
             | ProposalStatus::Expired
             | ProposalStatus::Pending
@@ -86,21 +108,15 @@ impl VoteTargetRegistry {
     }
 }
 
-fn parse_payload_json(payload: &str) -> Result<Value> {
-    serde_json::from_str(payload).map_err(|_| VoteError::InvalidPayload.into())
-}
-
 /// Validates a target payload during proposal creation.
 pub fn validate_target_payload(
     registry: &VoteTargetRegistry,
     target_module: Address,
-    payload: &str,
-    current_height: u64,
-    chain_id: u64,
+    payload: &[u8],
+    context: VoteTargetContext,
 ) -> Result<()> {
     let target = registry.lookup(target_module)?;
-    let json = parse_payload_json(payload)?;
-    target.validate(&json, current_height, chain_id)
+    target.validate(payload, context)
 }
 
 /// Dispatches a terminal proposal outcome to its target module.
@@ -112,6 +128,17 @@ pub fn handle_target_tally(
     status: ProposalStatus,
 ) -> Result<TargetExecutionOutcome> {
     let target = registry.lookup(proposal.target_module)?;
-    let json = parse_payload_json(proposal.payload.as_str())?;
-    target.handle_tally(ctx, proposal_id, &json, status)
+    let context = VoteTargetContext {
+        proposer: proposal.proposer,
+        attached_value: U256::ZERO,
+        block_number: ctx.block.block_number,
+        chain_id: ctx.storage.chain_id()?,
+    };
+    target.handle_tally(
+        ctx,
+        proposal_id,
+        proposal.payload.as_bytes(),
+        context,
+        status,
+    )
 }

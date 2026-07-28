@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
-    handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetRegistry},
+    handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry},
     precompile::IVote,
     schema::{ProposalStatus, Vote},
 };
@@ -26,8 +26,8 @@ impl VoteTarget for RejectingApprovedTarget {
         UPDATE_ADDRESS
     }
 
-    fn validate(&self, payload: &Value, _current_height: u64, _chain_id: u64) -> Result<()> {
-        if payload.is_object() {
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
             Ok(())
         } else {
             Err(PrecompileError::Revert("expected object".into()))
@@ -38,7 +38,8 @@ impl VoteTarget for RejectingApprovedTarget {
         &self,
         ctx: &BlockRuntimeContext,
         _proposal_id: U256,
-        _payload: &Value,
+        _payload: &[u8],
+        _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         ctx.storage
             .sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
@@ -59,8 +60,8 @@ impl VoteTarget for TechnicallyFailingTarget {
         UPDATE_ADDRESS
     }
 
-    fn validate(&self, payload: &Value, _current_height: u64, _chain_id: u64) -> Result<()> {
-        if payload.is_object() {
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
             Ok(())
         } else {
             Err(PrecompileError::Revert("expected object".into()))
@@ -71,7 +72,8 @@ impl VoteTarget for TechnicallyFailingTarget {
         &self,
         ctx: &BlockRuntimeContext,
         _proposal_id: U256,
-        _payload: &Value,
+        _payload: &[u8],
+        _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         ctx.storage
             .sstore(UPDATE_ADDRESS, U256::from(999u64), U256::from(1u64))?;
@@ -86,13 +88,50 @@ static TECHNICALLY_FAILING_HANDLERS: &[&dyn VoteTarget] = &[&TECHNICALLY_FAILING
 static TECHNICALLY_FAILING_REGISTRY: VoteTargetRegistry =
     VoteTargetRegistry::new(TECHNICALLY_FAILING_HANDLERS);
 
+const RAW_PAYLOAD: &str = "{ \"z\":1, \"a\": [2, 3] }";
+
+struct RawContextTarget;
+
+impl VoteTarget for RawContextTarget {
+    fn target_module(&self) -> Address {
+        UPDATE_ADDRESS
+    }
+
+    fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
+        if payload != RAW_PAYLOAD.as_bytes()
+            || context.proposer != PROPOSER
+            || context.attached_value != U256::ZERO
+            || context.block_number != 10
+            || context.chain_id != 1
+        {
+            return Err(PrecompileError::Revert(
+                "raw payload or target context changed".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn handle_approved(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _proposal_id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        Ok(TargetExecutionOutcome::Applied)
+    }
+}
+
+static RAW_CONTEXT_TARGET: RawContextTarget = RawContextTarget;
+static RAW_CONTEXT_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET];
+static RAW_CONTEXT_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(RAW_CONTEXT_HANDLERS);
+
 fn block_context(storage: StorageHandle<'_>, block_number: u64) -> BlockRuntimeContext<'_> {
     BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
 }
 
 #[test]
 fn creation_preserves_original_payload_bytes_in_state_and_log() {
-    const RAW_PAYLOAD: &str = "{ \"z\":1, \"a\": [2, 3] }";
     let mut provider = HashMapStorageProvider::new(1);
     let proposal_id;
     {
@@ -105,7 +144,7 @@ fn creation_preserves_original_payload_bytes_in_state_and_log() {
                 UPDATE_ADDRESS,
                 RAW_PAYLOAD,
                 10,
-                &REJECTING_REGISTRY,
+                &RAW_CONTEXT_REGISTRY,
             )
             .unwrap();
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();

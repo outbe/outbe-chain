@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::logic::status;
@@ -10,7 +10,9 @@ use crate::constants::{
     QUORUM_NUMERATOR, VOTING_WINDOW_BLOCKS,
 };
 use crate::errors::VoteError;
-use crate::handlers::{self, TargetExecutionOutcome, VoteTargetRegistry};
+use crate::handlers::{
+    self, TargetAdmission, TargetExecutionOutcome, VoteTargetContext, VoteTargetRegistry,
+};
 use crate::notify::ProposalFinalization;
 use crate::schema::Vote;
 use crate::state::{active_validator_addresses, calculate_vote_tally, ProposalStatus, VoteKind};
@@ -59,7 +61,15 @@ impl Vote<'_> {
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
         let chain_id = self.storage.chain_id()?;
-        ensure_active_validator(self.storage.clone(), proposer)?;
+        let target = registry.lookup(target_module)?;
+        match target.admission() {
+            TargetAdmission::ActiveValidatorOnly => {
+                ensure_active_validator(self.storage.clone(), proposer)?;
+            }
+            TargetAdmission::PublicBonded { .. } => {
+                return Err(PrecompileError::Unsupported);
+            }
+        }
 
         let pending_len = self.pending_proposal_ids.len()?;
         if pending_len >= MAX_PENDING_PROPOSALS {
@@ -74,9 +84,13 @@ impl Vote<'_> {
         handlers::validate_target_payload(
             registry,
             target_module,
-            payload,
-            current_height,
-            chain_id,
+            payload.as_bytes(),
+            VoteTargetContext {
+                proposer,
+                attached_value: U256::ZERO,
+                block_number: current_height,
+                chain_id,
+            },
         )?;
 
         let voting_deadline = current_height.saturating_add(voting_window_blocks(chain_id));

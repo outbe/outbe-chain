@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result as PrecompileResult;
-use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget};
+use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 use outbe_vote::schema::Vote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,22 +76,26 @@ impl VoteTarget for GovernanceVoteTarget {
         GOVERNANCE_ADDRESS
     }
 
-    fn validate(
-        &self,
-        payload: &Value,
-        _current_height: u64,
-        _chain_id: u64,
-    ) -> PrecompileResult<()> {
-        GovernanceVotePayload::validate_json(payload).map_err(Into::into)
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> PrecompileResult<()> {
+        let payload: Value = serde_json::from_slice(payload).map_err(|_| {
+            outbe_primitives::error::PrecompileError::Revert("invalid proposal payload".into())
+        })?;
+        GovernanceVotePayload::validate_json(&payload).map_err(Into::into)
     }
 
     fn handle_approved(
         &self,
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
-        payload: &Value,
+        payload: &[u8],
+        _context: VoteTargetContext,
     ) -> PrecompileResult<TargetExecutionOutcome> {
-        let decoded = GovernanceVotePayload::from_value(payload)?;
+        let payload: Value = serde_json::from_slice(payload).map_err(|_| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "stored Governance proposal payload is invalid".into(),
+            )
+        })?;
+        let decoded = GovernanceVotePayload::from_value(&payload)?;
         decoded.validate()?;
 
         let vote = Vote::new(ctx.storage.clone());
