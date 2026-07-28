@@ -481,6 +481,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-040 — Add callee-scoped schema and Factory-only initialization API
 
+- **Status:** Done; `outbe-stablecoin` pins the 19-slot V1 root layout, uses
+  actual-callee construction with no initialization ABI selector, validates Factory
+  identity/policy inputs, initializes zero supply and all six frozen role vectors,
+  and treats impossible pre-existing/schema state as fatal. Evidence: 8 focused
+  tests including address isolation, exact `MigrationRequired`, raw layout and
+  failure-after-every-write rollback, plus clippy/fmt.
 - **Goal:** Define isolated per-token state and a narrow creation seam.
 - **Scope/files:** new `crates/core/stablecoin` with schema/state/api/errors and tests;
   actual address is supplied by dynamic dispatch. This task records the V1 schema

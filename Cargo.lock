@@ -8183,6 +8183,18 @@ name = "outbe-sparse-merkle-tree-v061-pristine"
 version = "0.6.1"
 
 [[package]]
+name = "outbe-stablecoin"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-stablecoinpolicy",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-stablecoinpolicy"
 version = "0.1.0"
 dependencies = [
