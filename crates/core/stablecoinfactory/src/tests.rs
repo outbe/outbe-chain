@@ -1,11 +1,20 @@
 use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
-use alloy_sol_types::SolError;
+use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
-    addresses::STABLECOIN_FACTORY_ADDRESS,
+    addresses::{STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
+    block::BlockContext,
     error::PrecompileError,
     stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
-    stablecoin_fork::{STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_SCHEMA_VERSION},
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    stablecoin_fork::{
+        STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
+    },
+    storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
+};
+use outbe_stablecoin::StablecoinContract;
+use revm::{
+    database::{CacheDB, EmptyDB},
+    state::{AccountInfo, Bytecode},
+    Database,
 };
 
 use crate::{
@@ -154,6 +163,332 @@ fn admission_checks_the_same_pending_and_permanent_indexes_as_reservation() {
                 .expect_err("permanent identity"),
         );
     });
+}
+
+#[test]
+fn approved_execution_initializes_marker_registry_and_one_canonical_event() {
+    let issuer = Address::repeat_byte(0x11);
+    let proposal_id = U256::from(7u64);
+    let raw = encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64)))
+        .expect("valid payload");
+    let token = address!("53c0f667dc28c8716bdac45fd1696b34000f2863");
+    let native_balance = U256::from(777u64);
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_balance(token, native_balance);
+
+    let created = StorageHandle::enter(&mut provider, |storage| {
+        let validated =
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+        StablecoinFactoryApi::reserve(
+            storage.clone(),
+            &FactoryReservation {
+                proposal_id,
+                token_id: validated.token_id,
+                ticker: validated.payload.ticker.clone(),
+                token: validated.token,
+            },
+        )
+        .unwrap();
+
+        let created = StablecoinFactoryApi::execute_approved(
+            storage.clone(),
+            proposal_id,
+            issuer,
+            &raw,
+            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+        )
+        .unwrap();
+        assert_eq!(created, validated);
+
+        let factory = StablecoinFactoryContract::new(storage.clone());
+        assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
+        assert_eq!(
+            factory.token_by_id(created.token_id).unwrap(),
+            created.token
+        );
+        assert_eq!(
+            factory.token_by_ticker(&created.payload.ticker).unwrap(),
+            created.token
+        );
+        assert!(!factory.reservations.exists(proposal_id).unwrap());
+
+        let ledger = StablecoinContract::new(storage.clone(), created.token);
+        assert_eq!(ledger.total_supply().unwrap(), U256::ZERO);
+        assert_eq!(
+            outbe_stablecoin::api::identity(storage, created.token).unwrap(),
+            outbe_stablecoin::TokenIdentity {
+                token_id: created.token_id,
+                name: created.payload.name.clone(),
+                symbol: created.payload.ticker.clone(),
+                currency: created.payload.iso4217,
+                decimals: created.payload.decimals,
+                issuer,
+                creation_protocol_version: u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+            }
+        );
+        created
+    });
+
+    let account = provider
+        .get_account_info(created.token)
+        .expect("created token account");
+    assert_eq!(
+        account
+            .code
+            .as_ref()
+            .expect("marker code")
+            .original_bytes()
+            .as_ref(),
+        STABLECOIN_MARKER_CODE
+    );
+    assert_eq!(provider.get_balance(created.token), native_balance);
+    assert_eq!(
+        provider.get_events(STABLECOIN_FACTORY_ADDRESS),
+        &[I::StablecoinCreated {
+            tokenId: created.token_id,
+            token: created.token,
+            issuer,
+            proposalId: proposal_id,
+            name: created.payload.name,
+            ticker: created.payload.ticker,
+            iso4217: created.payload.iso4217,
+            decimals: created.payload.decimals,
+            supplyCap: created.payload.supply_cap,
+            policyId: created.payload.policy_id,
+        }
+        .encode_log_data()]
+    );
+}
+
+#[test]
+fn execution_revalidation_rejects_payload_or_account_mismatch_and_keeps_reservation() {
+    let issuer = Address::repeat_byte(0x11);
+    let proposal_id = U256::from(7u64);
+    let raw =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+    let mut changed_payload = create_payload(issuer, U256::from(1u64));
+    changed_payload.ticker = "OTHER".into();
+    let changed_raw = encode_canonical_stablecoin_create(&changed_payload).unwrap();
+
+    with_factory(|storage, mut factory| {
+        let item = reservation(&factory, 7, issuer, "EXUSD");
+        factory.reserve(&item).unwrap();
+        assert!(matches!(
+            factory.execute_approved(
+                proposal_id,
+                issuer,
+                &changed_raw,
+                u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW)
+            ),
+            Err(PrecompileError::Fatal(_))
+        ));
+        assert_eq!(
+            factory.pending_token_id.read(&item.token_id).unwrap(),
+            proposal_id
+        );
+        assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+        assert_eq!(storage.sload(item.token, U256::ZERO).unwrap(), U256::ZERO);
+    });
+
+    with_factory(|storage, mut factory| {
+        let item = reservation(&factory, 7, issuer, "EXUSD");
+        factory.reserve(&item).unwrap();
+        storage
+            .set_code(
+                item.token,
+                Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[0x01])),
+            )
+            .unwrap();
+        assert!(matches!(
+            factory.execute_approved(
+                proposal_id,
+                issuer,
+                &raw,
+                u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW)
+            ),
+            Err(PrecompileError::Fatal(_))
+        ));
+        assert_eq!(
+            factory.pending_token_id.read(&item.token_id).unwrap(),
+            proposal_id
+        );
+        assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+        assert_eq!(storage.sload(item.token, U256::ZERO).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn failure_after_every_initializer_mutation_rolls_back_token_marker_registry_and_event() {
+    let issuer = Address::repeat_byte(0x11);
+    let proposal_id = U256::from(7u64);
+    let raw =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+    let protocol_version = u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW);
+
+    let mutation_count = {
+        let mut provider = HashMapStorageProvider::new(1);
+        let validated = StorageHandle::enter(&mut provider, |storage| {
+            let validated =
+                StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+            StablecoinFactoryApi::reserve(
+                storage,
+                &FactoryReservation {
+                    proposal_id,
+                    token_id: validated.token_id,
+                    ticker: validated.payload.ticker.clone(),
+                    token: validated.token,
+                },
+            )
+            .unwrap();
+            validated
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            StablecoinFactoryApi::execute_approved(
+                storage,
+                proposal_id,
+                issuer,
+                &raw,
+                protocol_version,
+            )
+            .unwrap();
+        });
+        let count = provider.clear_mutation_failure();
+        assert_eq!(provider.get_events(STABLECOIN_FACTORY_ADDRESS).len(), 1);
+        assert!(provider.get_account_info(validated.token).is_some());
+        count
+    };
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(1);
+        let validated = StorageHandle::enter(&mut provider, |storage| {
+            let validated =
+                StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+            StablecoinFactoryApi::reserve(
+                storage,
+                &FactoryReservation {
+                    proposal_id,
+                    token_id: validated.token_id,
+                    ticker: validated.payload.ticker.clone(),
+                    token: validated.token,
+                },
+            )
+            .unwrap();
+            validated
+        });
+        provider.clear_mutation_failure();
+        provider.fail_after_mutation_at(operation);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(matches!(
+                StablecoinFactoryApi::execute_approved(
+                    storage,
+                    proposal_id,
+                    issuer,
+                    &raw,
+                    protocol_version
+                ),
+                Err(PrecompileError::Storage(_))
+            ));
+        });
+        provider.clear_mutation_failure();
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let factory = StablecoinFactoryContract::new(storage.clone());
+            assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+            assert_eq!(
+                factory.pending_token_id.read(&validated.token_id).unwrap(),
+                proposal_id
+            );
+            assert_eq!(
+                storage.sload(validated.token, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+        });
+        if let Some(account) = provider.get_account_info(validated.token) {
+            assert!(
+                account
+                    .code
+                    .as_ref()
+                    .is_none_or(|code| code.original_bytes().is_empty()),
+                "operation {operation} left marker code"
+            );
+        }
+        assert!(provider.get_events(STABLECOIN_FACTORY_ADDRESS).is_empty());
+    }
+}
+
+#[test]
+fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
+    let issuer = Address::repeat_byte(0x11);
+    let proposal_id = U256::from(7u64);
+    let raw =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+    let token = address!("53c0f667dc28c8716bdac45fd1696b34000f2863");
+    let native_balance = U256::from(777u64);
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(
+        token,
+        AccountInfo {
+            balance: native_balance,
+            ..Default::default()
+        },
+    );
+    let context = BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]);
+    let mut provider = DirectStorageProvider::new(&mut db, context);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let validated =
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+        StablecoinFactoryApi::reserve(
+            storage.clone(),
+            &FactoryReservation {
+                proposal_id,
+                token_id: validated.token_id,
+                ticker: validated.payload.ticker,
+                token: validated.token,
+            },
+        )
+        .unwrap();
+        StablecoinFactoryApi::execute_approved(
+            storage,
+            proposal_id,
+            issuer,
+            &raw,
+            u64::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+        )
+        .unwrap();
+    });
+
+    provider.flush().unwrap();
+    let changes = provider.take_committed_changes();
+    let token_change = changes.get(&token).expect("token state/code change");
+    assert_eq!(token_change.info.balance, native_balance);
+    assert_eq!(
+        token_change
+            .info
+            .code
+            .as_ref()
+            .expect("marker")
+            .original_bytes()
+            .as_ref(),
+        STABLECOIN_MARKER_CODE
+    );
+    assert!(!token_change.storage.is_empty());
+    assert!(changes.contains_key(&STABLECOIN_FACTORY_ADDRESS));
+    let events = provider.take_events();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].address, STABLECOIN_FACTORY_ADDRESS);
+    drop(provider);
+
+    let persisted = db.basic(token).unwrap().expect("persisted token account");
+    assert_eq!(persisted.balance, native_balance);
+    assert_eq!(
+        db.code_by_hash(persisted.code_hash)
+            .unwrap()
+            .original_bytes()
+            .as_ref(),
+        STABLECOIN_MARKER_CODE
+    );
 }
 
 #[test]

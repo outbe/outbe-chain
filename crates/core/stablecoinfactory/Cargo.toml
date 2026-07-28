@@ -10,7 +10,9 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-stablecoin.workspace = true
 outbe-stablecoinpolicy.workspace = true
+revm.workspace = true
 thiserror.workspace = true
 
 [lints]

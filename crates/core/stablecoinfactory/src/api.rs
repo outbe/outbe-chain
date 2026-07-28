@@ -37,6 +37,21 @@ impl StablecoinFactoryApi {
         StablecoinFactoryContract::new(storage).reserve(reservation)
     }
 
+    pub fn execute_approved(
+        storage: StorageHandle<'_>,
+        proposal_id: U256,
+        proposer: Address,
+        raw_payload: &[u8],
+        creation_protocol_version: u64,
+    ) -> Result<ValidatedStablecoinCreate> {
+        StablecoinFactoryContract::new(storage).execute_approved(
+            proposal_id,
+            proposer,
+            raw_payload,
+            creation_protocol_version,
+        )
+    }
+
     pub fn release(storage: StorageHandle<'_>, proposal_id: U256) -> Result<ReservationRecord> {
         StablecoinFactoryContract::new(storage).release(proposal_id)
     }

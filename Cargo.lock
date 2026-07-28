@@ -8205,7 +8205,9 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-stablecoin",
  "outbe-stablecoinpolicy",
+ "revm",
  "thiserror 2.0.18",
 ]
 

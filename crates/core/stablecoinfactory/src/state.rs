@@ -1,12 +1,18 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS},
+    addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     error::{PrecompileError, Result},
     stablecoin::{decode_canonical_stablecoin_create, predict_stablecoin, validate_ticker},
     stablecoin_fork::STABLECOIN_LIST_PAGE_CAP,
 };
+use outbe_stablecoin::{
+    FactoryTokenInitialization, StablecoinFactoryApi as StablecoinTokenFactoryApi,
+};
+use revm::state::Bytecode;
 
 use crate::{
+    abi::IStablecoinFactory,
     api::{FactoryReservation, ValidatedStablecoinCreate},
     errors::StablecoinFactoryError,
     schema::{ReservationRecord, StablecoinFactoryContract, FACTORY_SCHEMA_VERSION},
@@ -167,6 +173,115 @@ impl StablecoinFactoryContract<'_> {
             token_id: reservation.token_id,
             ticker_hash,
             token: reservation.token,
+        })
+    }
+
+    pub(crate) fn execute_approved(
+        &mut self,
+        proposal_id: U256,
+        proposer: Address,
+        raw_payload: &[u8],
+        creation_protocol_version: u64,
+    ) -> Result<ValidatedStablecoinCreate> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let validated = self.validate_reserved_create(proposal_id, proposer, raw_payload)?;
+            self.require_pristine_token_account(validated.token)?;
+
+            StablecoinTokenFactoryApi::new(storage.clone()).initialize(
+                &FactoryTokenInitialization {
+                    token_address: validated.token,
+                    token_id: validated.token_id,
+                    creation_protocol_version,
+                    payload: validated.payload.clone(),
+                },
+            )?;
+            storage.set_code(
+                validated.token,
+                Bytecode::new_raw(Bytes::copy_from_slice(&STABLECOIN_MARKER_CODE)),
+            )?;
+            self.consume_and_register(proposal_id)?;
+            storage.emit_event(
+                STABLECOIN_FACTORY_ADDRESS,
+                IStablecoinFactory::StablecoinCreated {
+                    tokenId: validated.token_id,
+                    token: validated.token,
+                    issuer: validated.payload.issuer,
+                    proposalId: proposal_id,
+                    name: validated.payload.name.clone(),
+                    ticker: validated.payload.ticker.clone(),
+                    iso4217: validated.payload.iso4217,
+                    decimals: validated.payload.decimals,
+                    supplyCap: validated.payload.supply_cap,
+                    policyId: validated.payload.policy_id,
+                }
+                .encode_log_data(),
+            )?;
+            Ok(validated)
+        })
+    }
+
+    fn validate_reserved_create(
+        &self,
+        proposal_id: U256,
+        proposer: Address,
+        raw_payload: &[u8],
+    ) -> Result<ValidatedStablecoinCreate> {
+        self.ensure_compatible_schema()?;
+        let payload = decode_canonical_stablecoin_create(raw_payload)
+            .map_err(|_| StablecoinFactoryError::NonCanonicalPayload)?;
+        if proposer != payload.issuer {
+            return Err(StablecoinFactoryError::InvalidIssuer {
+                issuer: payload.issuer,
+            }
+            .into());
+        }
+        if !outbe_stablecoinpolicy::api::policy_exists(self.storage.clone(), payload.policy_id)? {
+            return Err(StablecoinFactoryError::UnknownPolicy {
+                policy_id: payload.policy_id,
+            }
+            .into());
+        }
+
+        let (token_id, token) = self.predict_token_address(payload.issuer, &payload.ticker)?;
+        let reservation = self.required_reservation(proposal_id)?;
+        self.require_pending_triple(&reservation)?;
+        let ticker_hash = ticker_hash(&payload.ticker)?;
+        if reservation.token_id != token_id
+            || reservation.ticker_hash != ticker_hash
+            || reservation.token != token
+        {
+            return Err(StablecoinFactoryError::Invariant {
+                reason: format!(
+                    "proposal {proposal_id} payload does not match its Factory reservation"
+                ),
+            }
+            .into());
+        }
+        self.require_permanent_indexes_empty(&reservation)?;
+        Ok(ValidatedStablecoinCreate {
+            payload,
+            token_id,
+            token,
+        })
+    }
+
+    fn require_pristine_token_account(&self, token: Address) -> Result<()> {
+        self.storage.with_account_info(token, |info| {
+            let has_code = info
+                .code
+                .as_ref()
+                .is_some_and(|code| !code.original_bytes().is_empty());
+            let code_hash_is_empty = info.code_hash.is_zero() || info.code_hash == keccak256([]);
+            if info.nonce != 0 || has_code || !code_hash_is_empty {
+                return Err(StablecoinFactoryError::Invariant {
+                    reason: format!(
+                        "reserved stablecoin address {token} has pre-existing nonce or code"
+                    ),
+                }
+                .into());
+            }
+            Ok(())
         })
     }
 
