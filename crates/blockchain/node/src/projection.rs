@@ -468,31 +468,39 @@ fn evaluate_ocomp_projection_containment(
     }
     match checkpoint_canonical_hash {
         Some(hash) if hash == checkpoint.block_hash => {}
-        Some(hash) => bail!(
-            "OCOMP Mongo checkpoint hash conflict at {}: stored {}, canonical {}",
-            checkpoint.block_number,
-            checkpoint.block_hash,
-            hash
-        ),
-        None => bail!(
-            "OCOMP Mongo checkpoint {} ({}) is unavailable in local canonical history",
-            checkpoint.block_number,
-            checkpoint.block_hash
-        ),
+        Some(hash) => {
+            bail!(
+                "OCOMP Mongo checkpoint hash conflict at {}: stored {}, canonical {}",
+                checkpoint.block_number,
+                checkpoint.block_hash,
+                hash
+            );
+        }
+        None => {
+            bail!(
+                "OCOMP Mongo checkpoint {} ({}) is unavailable in local canonical history",
+                checkpoint.block_number,
+                checkpoint.block_hash
+            );
+        }
     }
     match required_canonical_hash {
         Some(hash) if hash == required.block_hash => {}
-        Some(hash) => bail!(
-            "OCOMP finalized job hash conflict at {}: requested {}, canonical {}",
-            required.block_number,
-            required.block_hash,
-            hash
-        ),
-        None => bail!(
-            "OCOMP finalized job {} ({}) is unavailable in local canonical history",
-            required.block_number,
-            required.block_hash
-        ),
+        Some(hash) => {
+            bail!(
+                "OCOMP finalized job hash conflict at {}: requested {}, canonical {}",
+                required.block_number,
+                required.block_hash,
+                hash
+            );
+        }
+        None => {
+            bail!(
+                "OCOMP finalized job {} ({}) is unavailable in local canonical history",
+                required.block_number,
+                required.block_hash
+            );
+        }
     }
     if checkpoint.block_number < required.block_number {
         Ok(OcompProjectionContainment::Behind {

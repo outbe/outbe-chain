@@ -217,6 +217,29 @@ pub struct FixtureState {
     pub zerofee_new_day_receipt: Option<serde_json::Value>,
     pub zerofee_new_day_balance_before: Option<alloy_primitives::U256>,
     pub zerofee_new_day_balance_after: Option<alloy_primitives::U256>,
+
+    // ---- Stablecoin Factory V1 live scenario ----
+    pub stablecoin: Option<StablecoinFixture>,
+}
+
+#[derive(Debug)]
+pub struct StablecoinFixture {
+    pub issuer_key: String,
+    pub second_issuer_key: String,
+    pub recipient_key: String,
+    pub spender_key: String,
+    pub issuer: alloy_primitives::Address,
+    pub second_issuer: alloy_primitives::Address,
+    pub recipient: alloy_primitives::Address,
+    pub spender: alloy_primitives::Address,
+    pub policy_id: alloy_primitives::U256,
+    pub proposal_id: u64,
+    pub token_id: alloy_primitives::B256,
+    pub token: alloy_primitives::Address,
+    pub created_block: u64,
+    pub snapshot_height: Option<u64>,
+    pub snapshot_supply: Option<alloy_primitives::U256>,
+    pub snapshot_balances: Option<[alloy_primitives::U256; 3]>,
 }
 
 impl Default for FixtureState {
@@ -298,6 +321,7 @@ impl Default for FixtureState {
             zerofee_new_day_receipt: None,
             zerofee_new_day_balance_before: None,
             zerofee_new_day_balance_after: None,
+            stablecoin: None,
         }
     }
 }

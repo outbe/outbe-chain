@@ -11,7 +11,7 @@ use outbe_validatorset::logic::status;
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
 use crate::errors::VoteError;
-use crate::handlers::{VoteTarget, VoteTargetRegistry};
+use crate::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry};
 use crate::runtime::quorum_reached;
 use crate::schema::ProposalStatus;
 use crate::schema::Vote;
@@ -29,8 +29,8 @@ impl VoteTarget for TestUpdateVoteTarget {
         UPDATE_ADDRESS
     }
 
-    fn validate(&self, payload: &Value, _current_height: u64, _chain_id: u64) -> Result<()> {
-        if payload.is_object() {
+    fn validate(&self, payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        if serde_json::from_slice::<Value>(payload).is_ok_and(|value| value.is_object()) {
             Ok(())
         } else {
             Err(VoteError::InvalidPayload.into())
@@ -41,9 +41,10 @@ impl VoteTarget for TestUpdateVoteTarget {
         &self,
         _ctx: &BlockRuntimeContext,
         _proposal_id: U256,
-        _payload: &Value,
-    ) -> Result<()> {
-        Ok(())
+        _payload: &[u8],
+        _context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        Ok(TargetExecutionOutcome::Applied)
     }
 }
 
@@ -77,6 +78,8 @@ pub(super) const VOTER_B: Address = address!("0x33333333333333333333333333333333
 pub(super) const PENDING_VOTER: Address = address!("0x4444444444444444444444444444444444444444");
 pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
+mod bond;
+mod characterization;
 mod guards;
 mod precompile;
 
@@ -161,13 +164,16 @@ impl VoteTestExt for Vote<'_> {
 fn proposal_status_storage_roundtrip() {
     assert_eq!(ProposalStatus::Pending.to_u8(), 0);
     assert_eq!(ProposalStatus::Expired.to_u8(), 3);
+    assert_eq!(ProposalStatus::Error.to_u8(), 4);
     assert_eq!(
         ProposalStatus::from_u8(ProposalStatus::Approved.to_u8()).unwrap(),
         ProposalStatus::Approved
     );
     assert!(ProposalStatus::Approved.is_terminal());
     assert!(!ProposalStatus::Pending.is_terminal());
-    assert!(ProposalStatus::from_u8(4).is_err());
+    assert!(!ProposalStatus::Error.is_terminal());
+    assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
+    assert!(ProposalStatus::from_u8(5).is_err());
 }
 
 #[test]

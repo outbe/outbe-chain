@@ -143,6 +143,27 @@ offer caller is a registered L1 operator address and its network has
 commonware `sign_message` recipe) or the call reverts; unregistered callers and
 zk-disabled networks pass empty bytes.
 
+**Stablecoin Factory V1.** Fresh devnet/testnet genesis includes the fixed Factory
+at `0x...EE0F`, the shared Policy Registry at `0x...EE10`, and the CREATE/CREATE2
+guard for the dynamic `0x53c0` address class. Every registered token uses the exact
+native marker `0xef` and starts with zero supply.
+
+An issuer submits a canonical proposal through Vote with the exact `10^24` base-unit
+bond. Only current `ACTIVE` validators vote. Approval creates the token and refunds
+the bond; expiry releases its reservations and burns the bond; a typed target
+execution error records proposal status `Error` and retains its bond and reservation
+for a future validator-approved transition outside V1. Public bonded proposals are
+capped at 16 globally and one per proposer inside Vote's 64-slot total.
+
+Tokens implement ERC-20, EIP-2612, Final ERC-7943 and fixed `bytes32` memo variants.
+Shared Policy membership batches are capped at 64. EIP-712 domains use version
+`"1"`. Operator tooling lives under `outbe-cli stablecoin`; no maintained SDK is
+promised. Factory admission is not evidence of backing, redeemability, price
+stability, issuer solvency, fee-asset eligibility or payment-lane eligibility.
+Existing chain state created without the reserved-class guard and mainnet deployment
+are outside V1. See
+`docs/plans/stablecoin-factory-v1-implementation-plan.md`.
+
 ## Stateful Runtime Module Contract
 
 Stateful runtime modules (validator set, staking, rewards, slashing, emission,

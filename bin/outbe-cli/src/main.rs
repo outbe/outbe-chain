@@ -88,6 +88,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::vote::VoteCmd,
     },
+    /// Stablecoin policies, deterministic identity and bonded proposals.
+    Stablecoin {
+        #[command(subcommand)]
+        cmd: commands::stablecoin::StablecoinCmd,
+    },
 }
 
 #[tokio::main]
@@ -108,6 +113,7 @@ async fn main() -> Result<()> {
         Commands::ZeroFee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Tee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Vote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Stablecoin { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
     }
 }
 
@@ -216,6 +222,22 @@ mod tests {
     #[test]
     fn test_cli_parse_vote_status() {
         let cli = Cli::try_parse_from(["outbe-cli", "vote", "status", "--proposal-id", "1"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_stablecoin_predict() {
+        let cli = Cli::try_parse_from([
+            "outbe-cli",
+            "stablecoin",
+            "predict",
+            "--chain-id",
+            "1337",
+            "--issuer",
+            "0x1111111111111111111111111111111111111111",
+            "--ticker",
+            "EXUSD",
+        ]);
         assert!(cli.is_ok());
     }
 

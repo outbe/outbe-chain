@@ -251,6 +251,70 @@ pub struct GratisOpResult {
     pub attestation_tag: Vec<u8>,
 }
 
+/// The confidential ledger a key-derivation / op request targets. Selects the
+/// enclave key domain (state/view/modify HKDF labels) so Gratis and Promis derive
+/// cryptographically independent keys from the same resident group signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Ledger {
+    Gratis,
+    Promis,
+}
+
+/// A Promis write operation the enclave applies over the encrypted per-account
+/// balance. Promis is a mint/burn-only confidential ledger (no pledge/credis
+/// machinery), so its op set is a strict subset of [`GratisOp`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PromisOp {
+    /// Mint `amount` to `account` (credit balance; `total_supply += amount`).
+    Mint,
+    /// Burn `amount` from `account` (debit balance; `total_supply -= amount`).
+    Burn,
+}
+
+/// Inputs for a single `ApplyPromisOp`. The host reads the current balance
+/// ciphertext (`version(8 BE) ‖ ct`, empty for a fresh account) from committed
+/// storage and forwards it verbatim; the enclave decrypts, enforces the balance
+/// invariant + modify-key authorization, and re-encrypts deterministically.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromisOpRequest {
+    pub op: PromisOp,
+    pub chain_id: B256,
+    pub account: Address,
+    pub amount: U256,
+    /// Current balance blob (`version(8 BE) ‖ ciphertext`); empty when the account
+    /// has no state yet.
+    pub current_balance: Vec<u8>,
+    /// Modify-key authorization (required for both Mint and Burn).
+    pub modify_auth: ModifyAuth,
+}
+
+/// Outcome of a single Promis op.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PromisOpStatus {
+    Applied,
+    Rejected { reason: String },
+}
+
+/// Public result of an `ApplyPromisOp`: the new balance ciphertext to store
+/// verbatim plus the plaintext receipt (event amount, next op-nonce). The
+/// per-account plaintext balance never appears here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PromisOpResult {
+    pub status: PromisOpStatus,
+    /// New balance blob (`version ‖ ct`) to store verbatim.
+    pub new_balance: Vec<u8>,
+    /// Amount for the emitted event (mint/burn magnitude).
+    pub event_amount: U256,
+    /// The account's next modify-auth nonce (for the host to persist).
+    pub next_op_nonce: u64,
+    /// Diagnostic hash of the canonical request inputs; the host recomputes it to
+    /// detect enclave non-determinism, then discards.
+    pub inputs_canonical_hash: B256,
+    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the host
+    /// verifies it against the pinned enclave attestation key, then discards.
+    pub attestation_tag: Vec<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
     /// Callable BEFORE the Noise handshake (unauthenticated). `nonce` provides
@@ -373,18 +437,25 @@ pub enum EnclaveRequest {
     /// validator).
     ApplyGratisOp { request: Box<GratisOpRequest> },
 
-    /// Off-chain key delivery: derive `account`'s view + modify keys from the
-    /// resident state key and seal them to the requester's ephemeral X25519 key.
-    /// NOT a consensus path — served only over RPC, never during block execution.
+    /// Like [`EnclaveRequest::ApplyGratisOp`] but for the confidential Promis
+    /// ledger (mint/burn over an encrypted balance). Consensus path, re-executed
+    /// by every validator.
+    ApplyPromisOp { request: Box<PromisOpRequest> },
+
+    /// Off-chain key delivery: derive `account`'s view + modify keys for `ledger`
+    /// from the matching resident state key and seal them to the requester's
+    /// ephemeral X25519 key. NOT a consensus path — served only over RPC, never
+    /// during block execution.
     ///
     /// `owner_sig` is the 65-byte (`r||s||v`) EIP-191 `personal_sign` signature by
-    /// `account` over `derive_gratis_keys_message(account, requester_ephemeral_pubkey)`.
-    /// The enclave recovers it and rejects unless the signer equals `account`, so the
-    /// keys are released only to the account owner — the trust boundary is the
-    /// enclave, not the (untrusted) host RPC that also checks it as a fast reject.
-    /// Carried as `Vec<u8>` because serde does not derive for `[u8; 65]`; the enclave
-    /// validates the length.
+    /// `account` over `derive_account_keys_message(ledger, account,
+    /// requester_ephemeral_pubkey)`. The enclave recovers it and rejects unless the
+    /// signer equals `account`, so the keys are released only to the account owner —
+    /// the trust boundary is the enclave, not the (untrusted) host RPC that also
+    /// checks it as a fast reject. Carried as `Vec<u8>` because serde does not derive
+    /// for `[u8; 65]`; the enclave validates the length.
     DeriveAccountKeys {
+        ledger: Ledger,
         account: Address,
         requester_ephemeral_pubkey: [u8; 32],
         owner_sig: Vec<u8>,
@@ -417,18 +488,33 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
 }
 
 /// Domain-tagged message a caller personal-signs to prove control of `account`
-/// before `DeriveAccountKeys` reveals its keys:
-/// `"outbe/gratis/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
+/// before `DeriveAccountKeys` reveals its keys, bound to the target `ledger`:
+/// `"outbe/<ledger>/derive-keys/v1" || account(20) || ephemeralPubkey(32)`.
 ///
 /// SHARED by the host RPC (fast reject) and the enclave (the trust boundary) so
 /// the two hash an identical preimage — a divergence would let one accept a
-/// signature the other rejects.
-pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
-    let mut m = Vec::with_capacity(27 + 20 + 32);
-    m.extend_from_slice(b"outbe/gratis/derive-keys/v1");
+/// signature the other rejects. The Gratis tag byte-matches the historical
+/// [`derive_gratis_keys_message`], so existing Gratis clients are unaffected.
+pub fn derive_account_keys_message(
+    ledger: Ledger,
+    account: Address,
+    ephemeral_pubkey: B256,
+) -> Vec<u8> {
+    let tag: &[u8] = match ledger {
+        Ledger::Gratis => b"outbe/gratis/derive-keys/v1",
+        Ledger::Promis => b"outbe/promis/derive-keys/v1",
+    };
+    let mut m = Vec::with_capacity(tag.len() + 20 + 32);
+    m.extend_from_slice(tag);
     m.extend_from_slice(account.as_slice());
     m.extend_from_slice(ephemeral_pubkey.as_slice());
     m
+}
+
+/// Backward-compatible alias for the Gratis key-derivation message
+/// (`derive_account_keys_message(Ledger::Gratis, …)`).
+pub fn derive_gratis_keys_message(account: Address, ephemeral_pubkey: B256) -> Vec<u8> {
+    derive_account_keys_message(Ledger::Gratis, account, ephemeral_pubkey)
 }
 
 /// EIP-191 `personal_sign` digest of `message` — matches ethers `signMessage`.
@@ -571,6 +657,10 @@ pub enum EnclaveResponse {
     GratisOpApplied {
         result: Box<GratisOpResult>,
     },
+    /// Result of an `ApplyPromisOp`: new balance ciphertext + plaintext receipt.
+    PromisOpApplied {
+        result: Box<PromisOpResult>,
+    },
     /// Result of `DeriveAccountKeys`: `AEAD(ECDHE(enclave, requester_ephemeral),
     /// view_key ‖ modify_key)` sealed to the requester. Opaque to the host.
     AccountKeysSealed {
@@ -644,6 +734,43 @@ pub fn gratis_op_attestation_preimage(
     let result_json = serde_json::to_vec(&probe).unwrap_or_default();
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/gratis-attestation/v1");
+    buf.extend_from_slice(inputs_canonical_hash.as_slice());
+    buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&result_json);
+    buf
+}
+
+/// Deterministic hash over the canonical inputs of a single Promis op (the
+/// [`promis_op_canonical_hash`] analogue of [`gratis_op_canonical_hash`]). SHARED
+/// by the enclave (returned in `PromisOpResult`) and the host (recomputed and
+/// compared — a mismatch is enclave non-determinism). Length-prefixed;
+/// diagnostic only — never written to state.
+pub fn promis_op_canonical_hash(req: &PromisOpRequest) -> B256 {
+    let mut buf: Vec<u8> = Vec::new();
+    buf.push(req.op as u8);
+    buf.extend_from_slice(req.chain_id.as_slice());
+    buf.extend_from_slice(req.account.as_slice());
+    buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
+    buf.extend_from_slice(&(req.current_balance.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&req.current_balance);
+    buf.extend_from_slice(&req.modify_auth.mac);
+    buf.extend_from_slice(&req.modify_auth.op_nonce.to_be_bytes());
+    alloy_primitives::keccak256(buf)
+}
+
+/// Domain-separated preimage the enclave signs (Ed25519 attestation key) and the
+/// host verifies for a Promis op — the [`gratis_op_attestation_preimage`]
+/// analogue, with its own domain tag so a Gratis attestation can never be replayed
+/// as a Promis one. Local-only — never written to chain state.
+pub fn promis_op_attestation_preimage(
+    inputs_canonical_hash: B256,
+    result: &PromisOpResult,
+) -> Vec<u8> {
+    let mut probe = result.clone();
+    probe.attestation_tag = Vec::new();
+    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
+    buf.extend_from_slice(b"outbe/tee/promis-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

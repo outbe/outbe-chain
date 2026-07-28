@@ -57,6 +57,7 @@ pub enum RecordedRpcCall {
         from: Address,
         to: Address,
         data: Vec<u8>,
+        value: U256,
     },
     EthSendRawTransaction {
         raw_tx: Vec<u8>,

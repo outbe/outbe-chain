@@ -74,7 +74,9 @@ impl TxSigner {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
         let gas_price = buffered_gas_price(client.eth_gas_price().await?);
-        let gas_limit = client.eth_estimate_gas(self.address, to, &data).await?;
+        let gas_limit = client
+            .eth_estimate_gas(self.address, to, &data, value)
+            .await?;
         // Add 20% buffer to gas estimate
         let gas_limit = gas_limit
             .checked_add(gas_limit / 5)
@@ -581,6 +583,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data: data.clone(),
+                    value: tx_value(),
                 },
                 "gas estimate unavailable",
             ),
@@ -604,6 +607,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data,
+                    value: tx_value(),
                 },
             ]
         );
@@ -636,6 +640,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data: data.clone(),
+                    value: tx_value(),
                 },
                 RecordedRpcResponse::U64(gas_estimate),
             ),
@@ -665,6 +670,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data,
+                    value: tx_value(),
                 },
                 RecordedRpcCall::EthSendRawTransaction { raw_tx },
             ]
@@ -698,6 +704,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data: data.clone(),
+                    value: tx_value(),
                 },
                 RecordedRpcResponse::U64(gas_estimate),
             ),
@@ -742,6 +749,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data: data.clone(),
+                    value: tx_value(),
                 },
                 RecordedRpcResponse::U64(gas_estimate),
             ),
@@ -784,6 +792,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data: data.clone(),
+                    value: tx_value(),
                 },
                 RecordedRpcResponse::U64(u64::MAX),
             ),
@@ -807,6 +816,7 @@ mod tests {
                     from: signer.address(),
                     to: tx_target(),
                     data,
+                    value: tx_value(),
                 },
             ]
         );

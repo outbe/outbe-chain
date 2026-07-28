@@ -129,8 +129,9 @@ where
     // Construct fresh borrow-mode Evm wrapping &mut ctx.
     // CTX = &mut EthEvmContext<DB> impls ContextTr via #[auto_impl(&mut, Box)]
     // on the trait.
-    let instructions =
+    let mut instructions =
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
+    crate::create_guard::install(&mut instructions);
     let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
         spec,
         runtime_body_readers,

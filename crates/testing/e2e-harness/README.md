@@ -42,7 +42,8 @@ coverage of assertions that the row explicitly marks as a gap.
 
 - `features/` — Gherkin fixtures. `update_operator.feature` is wired end-to-end;
   `tribute_projection.feature` covers encrypted-offer projection plus compressed
-  entity presence and absence proofs.
+  entity presence and absence proofs; `stablecoin_factory_v1.feature` covers the
+  fresh-genesis Factory product flow and full-committee restart.
 - `release-features/` — the separate exact-artifact hardware-SGX acceptance scenario.
   It does not bootstrap a localnet or MongoDB and never rebuilds the release image.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the

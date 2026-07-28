@@ -209,15 +209,27 @@ pub trait OutbeApi {
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
 
-    /// Derive the account's confidential Gratis view + modify keys inside the
-    /// enclave and return them sealed to `ephemeralPubkey` (a client X25519 public
-    /// key). Off-chain key delivery — it never touches consensus state.
+    /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`
+    /// or `Promis`) inside the enclave and return them sealed to `ephemeralPubkey`
+    /// (a client X25519 public key). Off-chain key delivery — it never touches
+    /// consensus state.
     ///
     /// The caller MUST prove control of `account`: `signature` is an EIP-191
-    /// `personal_sign` over `"outbe/gratis/derive-keys/v1" ‖ account ‖
+    /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" ‖ account ‖
     /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
-    /// matching signature the enclave is never asked — otherwise anyone could
-    /// obtain any account's modify key.
+    /// matching signature the enclave is never asked — otherwise anyone could obtain
+    /// any account's modify key.
+    #[method(name = "deriveKeys")]
+    async fn derive_keys(
+        &self,
+        ledger: outbe_tee::protocol::Ledger,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
+
+    /// Deprecated alias for `deriveKeys(Gratis, …)`, kept for existing Gratis
+    /// clients.
     #[method(name = "deriveGratisKeys")]
     async fn derive_gratis_keys(
         &self,

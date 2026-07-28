@@ -297,3 +297,24 @@ fn precompile_balance_and_owner_views() {
         assert_eq!(total, U256::from(1u64));
     });
 }
+
+/// Pins the flat `GemContract` storage layout that `scripts/seed_genesis.py`
+/// (`seed_gems`) depends on to genesis-seed a Settled gem. If the schema field
+/// order or `GemData` field count changes, these slots shift and the Python
+/// seeder must be updated in lockstep — this test is the tripwire.
+#[test]
+fn gem_storage_layout_matches_genesis_seeder() {
+    use outbe_primitives::storage::dsl::StorageRecord;
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.total_supply.slot(), U256::from(0u64));
+        assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
+        // GemData record spans 10 slots (owner@+0 .. issued_at@+9), so the
+        // schema fields after gem_items start at 1 + 10 = 11.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 10);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(11u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(12u64));
+        // all_gem_ids (List) occupies slot 13.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(14u64));
+    });
+}

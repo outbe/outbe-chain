@@ -23,8 +23,23 @@ impl Update<'_> {
         payload: &Value,
         current_height: u64,
     ) -> Result<()> {
-        let (version, activation_height, info) = decode_schedule_update_json(payload)?;
-        self.schedule_update_from_propose_fields(
+        self.schedule_update_from_propose_classified(proposal_id, payload, current_height)?
+            .map_err(Into::into)
+    }
+
+    /// Schedules an approved Vote payload while preserving the boundary between
+    /// deterministic domain rejection and storage/provider failure.
+    pub(crate) fn schedule_update_from_propose_classified(
+        &mut self,
+        proposal_id: U256,
+        payload: &Value,
+        current_height: u64,
+    ) -> Result<std::result::Result<(), UpdateError>> {
+        let (version, activation_height, info) = match decode_schedule_update_json(payload) {
+            Ok(decoded) => decoded,
+            Err(err) => return Ok(Err(err)),
+        };
+        self.schedule_update_from_propose_fields_classified(
             proposal_id,
             version,
             activation_height,
@@ -33,40 +48,40 @@ impl Update<'_> {
         )
     }
 
-    fn schedule_update_from_propose_fields(
+    fn schedule_update_from_propose_fields_classified(
         &mut self,
         proposal_id: U256,
         version: ProtocolVersion,
         activation_height: u64,
         info: &str,
         current_height: u64,
-    ) -> Result<()> {
+    ) -> Result<std::result::Result<(), UpdateError>> {
         if self.read_scheduled_update(proposal_id)?.is_some() {
-            return Err(UpdateError::ScheduledUpdateAlreadyExists.into());
+            return Ok(Err(UpdateError::ScheduledUpdateAlreadyExists));
         }
 
         if version.is_zero() {
-            return Err(UpdateError::InvalidVersion.into());
+            return Ok(Err(UpdateError::InvalidVersion));
         }
 
         let active = self.get_active_version()?;
         if version <= active {
-            return Err(UpdateError::DowngradeNotAllowed.into());
+            return Ok(Err(UpdateError::DowngradeNotAllowed));
         }
 
         let chain_id = self.storage.chain_id()?;
         let min_activation = current_height.saturating_add(min_activation_buffer(chain_id));
         if activation_height < min_activation {
-            return Err(UpdateError::HeightInPast.into());
+            return Ok(Err(UpdateError::HeightInPast));
         }
 
         if self.scheduled_activation_conflict(activation_height)? {
-            return Err(UpdateError::ActivationConflict.into());
+            return Ok(Err(UpdateError::ActivationConflict));
         }
 
         let waiting_len = self.waiting_for_activation_proposal_ids.len()?;
         if waiting_len >= MAX_WAITING_FOR_ACTIVATION_UPDATES {
-            return Err(UpdateError::TooManyWaitingForActivation.into());
+            return Ok(Err(UpdateError::TooManyWaitingForActivation));
         }
 
         self.write_scheduled_update(proposal_id, version, activation_height, info)?;
@@ -75,7 +90,8 @@ impl Update<'_> {
             version: version.raw(),
             activationHeight: activation_height,
             info: info.as_bytes().to_vec().into(),
-        })
+        })?;
+        Ok(Ok(()))
     }
 
     /// Activates scheduled updates at the current block height using `registry`.

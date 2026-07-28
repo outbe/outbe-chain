@@ -355,6 +355,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The token URI containing on-chain metadata.
     function uri(uint256 tokenId) external view returns (string memory);
 
+    /// @notice Collection-level metadata as an on-chain JSON data URI (ERC-7572).
+    /// @return The collection metadata URI.
+    function contractURI() external view returns (string memory);
+
     /// @notice Amount won at auction for a specific address in a series (recorded at mint, never changes).
     /// @param seriesId Series identifier.
     /// @param account Address to read.
