@@ -6,7 +6,7 @@
 //! durable on-chain hint; it is never used to force the scheduler.
 
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{keccak256, Address, B256};
 use cucumber::{given, then, when};
@@ -18,6 +18,35 @@ const EPOCH_BLOCKS: u64 = 60;
 const PREPARE_BLOCKS: u64 = 20;
 const ACTIVATION_GRACE_BLOCKS: u64 = 30;
 const CEREMONY_LOG: &str = "freezing validator set and starting DKG rotation";
+const RECOVERY_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const RECOVERY_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+const RECOVERY_POST_GRACE_BLOCKS: u64 = 2;
+const BOUNDARY_HASH_FATAL: &str = "active_set_hash changed without validator-set change";
+
+#[derive(Debug, PartialEq, Eq)]
+enum RecoveryDecision {
+    Continue,
+    Recovered,
+    WindowMissed,
+    FinalityStalled,
+}
+
+fn recovery_decision(
+    participant: bool,
+    finalized: Option<u64>,
+    observation_end: u64,
+    idle: Duration,
+) -> RecoveryDecision {
+    if participant {
+        RecoveryDecision::Recovered
+    } else if finalized.is_some_and(|height| height > observation_end) {
+        RecoveryDecision::WindowMissed
+    } else if idle >= RECOVERY_STALL_TIMEOUT {
+        RecoveryDecision::FinalityStalled
+    } else {
+        RecoveryDecision::Continue
+    }
+}
 
 fn boot_profiled_localnet(world: &mut World, owner: Option<usize>) {
     let mut profile = BootstrapProfile::default()
@@ -462,10 +491,60 @@ fn repair_flag_is_visible_everywhere(world: &mut World) {
 fn wait_for_periodic_recovery(world: &mut World, validator_name: String) {
     let primary = world.validators.primary_port();
     let address = validator_address(world, &validator_name);
-    assert!(
-        world.rpc.wait_participant(primary, &address, 90),
-        "{validator_name} did not recover through a periodic reshare"
-    );
+    let expected_activation = planned_activation(world);
+    let observation_end = expected_activation
+        .saturating_add(ACTIVATION_GRACE_BLOCKS)
+        .saturating_add(RECOVERY_POST_GRACE_BLOCKS);
+    let mut last_progress = Instant::now();
+    let mut last_finalized = world.rpc.finalized(primary);
+
+    loop {
+        if let Some(line) = world
+            .localnet
+            .first_runtime_log_line_containing(BOUNDARY_HASH_FATAL)
+            .expect("scan runtime logs for recovery boundary fatal")
+        {
+            panic!(
+                "{validator_name} recovery boundary failed before activation \
+                 {expected_activation}: {line}"
+            );
+        }
+
+        let participant = world.rpc.is_participant(primary, &address);
+        let finalized = world.rpc.finalized(primary);
+        let advanced = match (last_finalized, finalized) {
+            (None, Some(_)) => true,
+            (Some(previous), Some(current)) => current > previous,
+            _ => false,
+        };
+        if advanced {
+            last_finalized = finalized;
+            last_progress = Instant::now();
+        }
+
+        match recovery_decision(
+            participant,
+            finalized,
+            observation_end,
+            last_progress.elapsed(),
+        ) {
+            RecoveryDecision::Recovered => return,
+            RecoveryDecision::WindowMissed => panic!(
+                "{validator_name} missed recovery activation {expected_activation} and its \
+                 grace window ending at {observation_end}; finalized height: {finalized:?}"
+            ),
+            RecoveryDecision::FinalityStalled => panic!(
+                "{validator_name} recovery stopped making finality progress for {}s \
+                 before activation {expected_activation} (observation end {observation_end}); \
+                 last finalized height: {:?}",
+                RECOVERY_STALL_TIMEOUT.as_secs(),
+                last_finalized
+            ),
+            RecoveryDecision::Continue => {}
+        }
+
+        sleep(RECOVERY_POLL_INTERVAL);
+    }
 }
 
 #[then(expr = "{string} is ACTIVE with a share and participates again")]
@@ -655,4 +734,35 @@ fn restaked_joiner_stays_excluded(world: &mut World) {
         Some(4),
         "unconfirmed restake changed the ACTIVE set"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{recovery_decision, RecoveryDecision, RECOVERY_STALL_TIMEOUT};
+    use std::time::Duration;
+
+    #[test]
+    fn recovery_wait_respects_grace_and_idle_progress() {
+        let end = 92;
+        assert_eq!(
+            recovery_decision(false, Some(end), end, Duration::from_secs(179)),
+            RecoveryDecision::Continue
+        );
+        assert_eq!(
+            recovery_decision(false, Some(end + 1), end, Duration::ZERO),
+            RecoveryDecision::WindowMissed
+        );
+        assert_eq!(
+            recovery_decision(false, Some(end), end, RECOVERY_STALL_TIMEOUT),
+            RecoveryDecision::FinalityStalled
+        );
+    }
+
+    #[test]
+    fn observed_recovery_wins_at_the_last_allowed_height() {
+        assert_eq!(
+            recovery_decision(true, Some(92), 92, RECOVERY_STALL_TIMEOUT),
+            RecoveryDecision::Recovered
+        );
+    }
 }

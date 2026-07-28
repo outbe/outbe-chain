@@ -164,10 +164,13 @@ pub async fn run() {
             .boxed_local()
         })
         // Tear the localnet down after every scenario (pass or fail) so the
-        // network/enclave containers never outlive the run. Skipped scenarios
-        // build no `World`, so there is nothing to stop.
+        // network/enclave containers never outlive the run. Stop it before the
+        // log audit: a failed boundary can otherwise keep emitting the same
+        // fatal while the audit walks growing files. Skipped scenarios build no
+        // `World`, so there is nothing to stop.
         .after(move |feature, _rule, scenario, event, world| {
             if let Some(world) = world {
+                world.localnet.teardown();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -179,7 +182,6 @@ pub async fn run() {
                 let audit = match audit {
                     Ok(audit) => audit,
                     Err(error) => {
-                        world.localnet.teardown();
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
@@ -222,14 +224,11 @@ pub async fn run() {
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
                 }) {
-                    world.localnet.teardown();
                     panic!("E2E evidence write failed: {error:#}");
                 }
                 if let Err(error) = audit.ensure_clean() {
-                    world.localnet.teardown();
                     panic!("E2E log-safety audit failed: {error:#}");
                 }
-                world.localnet.teardown();
             }
             async move {}.boxed_local()
         })

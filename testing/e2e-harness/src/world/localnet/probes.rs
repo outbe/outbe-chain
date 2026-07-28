@@ -519,6 +519,14 @@ impl Localnet {
             .count()
     }
 
+    /// First runtime-log line containing `needle`, including its path and line.
+    ///
+    /// Recovery waits use this to fail immediately on a deterministic boundary
+    /// rejection instead of polling an on-chain state that can no longer change.
+    pub fn first_runtime_log_line_containing(&self, needle: &str) -> Result<Option<String>> {
+        super::log_audit::first_runtime_log_line_containing(&self.cfg.dir, needle)
+    }
+
     /// Whether validator `index`'s enclave log contains `needle`.
     pub fn enclave_log_has(&self, index: usize, needle: &str) -> bool {
         let path = self.cfg.validator_dir(index).join("enclave.log");
