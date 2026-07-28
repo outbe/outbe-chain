@@ -164,6 +164,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-060 | Review | `c04fe05f` | Bond amount/state maps append after unchanged V0 slots, zero-filled legacy proposals read as NoBond and tally, liabilities use checked atomic arithmetic, counter exhaustion is typed, and combined regression passes 436/436; storage-layout review remains |
 | SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
 | SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
+| SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -840,6 +841,16 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-063 — Implement refund/burn settlement
 
+- **Status:** Review in `0563b233`; terminal finalization now owns an outer
+  per-proposal checkpoint around the nested target checkpoint, Vote status/index,
+  native value movement, checked liability accounting and both settlement/finalization
+  events. Approved uses `transfer_balance(VOTE_ADDRESS, proposer, amount)`, Expired
+  uses `decrease_balance`, and Error performs no settlement. Focused tests prove exact
+  refund/burn events, forced-surplus preservation, inert terminal replay, retained
+  Error liability, insufficient-escrow rollback and rollback after every Approved
+  finalization mutation. Vote 53/53 and the combined
+  Vote/Factory/Stablecoin/Governance/EVM regression pass; the required independent
+  accounting review remains.
 - **Goal:** Settle one recorded liability exactly once.
 - **Depends on:** SCF-062, SCF-023.
 - **Done when:** Approved refunds exactly `10^24`; Expired burns exactly `10^24`
