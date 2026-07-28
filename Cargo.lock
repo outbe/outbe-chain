@@ -8513,7 +8513,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
- "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-zerofee",
