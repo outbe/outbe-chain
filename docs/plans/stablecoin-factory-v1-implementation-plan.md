@@ -159,6 +159,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-051 | Done | `6f8ad6a4` | Canonical typed admission, proposer/policy checks, shared collision validation and fixed prediction vector pass 12 focused tests; native token-address balance is ignored and preserved |
 | SCF-052 | Done | `5bb9b9c9` | Failure after every reserve/release/consume mutation rolls back completely; release permits corrected resubmission and typed target Error retains the reservation triple |
 | SCF-053 | Done | `184b2ddf` | Approved execution revalidates the reservation, initializes zero-supply token state, installs marker, commits registry and emits one event atomically; Factory 19/19 and EVM 264/264 pass |
+| SCF-054 | Done | `943ca8e2` | Factory exposes only activation-gated views; compile-time Vote adapter owns validate/reserve/execute/release, reservation joins proposal creation checkpoint, and Factory/Vote/Update/Governance/EVM pass 431/431 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -747,12 +748,19 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-054 — Wire Factory view precompile and Vote adapter
 
+- **Status:** Done in `943ca8e2`; the public Factory route exposes only the frozen
+  view ABI behind exact Stablecoin V1 activation, while the compile-time Vote target
+  owns typed admission, reservation, approved execution and expiry release. Proposal
+  creation and target reservation share one outer checkpoint; Factory execution
+  reverts become proposal Error, while provider/storage/fatal errors still abort.
+  PublicBonded remains intentionally inert until SCF-060/SCF-061.
 - **Goal:** Expose views publicly and mutation hooks only to compile-time Vote target.
 - **Depends on:** SCF-053, SCF-026.
 - **Done when:** public ABI has no create/reserve/release selector; Vote adapter owns
   validate/reserve/execute/release; Vote core imports no Factory storage type.
 - **Tests:** T1 views and malformed/value rejection; T3 adapter contract and nested
-  checkpoint behavior.
+  checkpoint behavior. Verified by 431/431 combined Factory/Vote/Update/Governance/EVM
+  tests, clippy with warnings denied, formatting and diff checks.
 
 ## SCF-055 — Factory property and atomicity gate
 
