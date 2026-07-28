@@ -34,9 +34,7 @@ impl VoteTarget for UpdateVoteTarget {
             ctx.block.block_number,
         ) {
             Ok(()) => Ok(TargetExecutionOutcome::Applied),
-            Err(PrecompileError::Revert(reason)) => {
-                Ok(TargetExecutionOutcome::Error { reason })
-            }
+            Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
             Err(err) => Err(err),
         }
     }
