@@ -19,6 +19,10 @@ use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, Seal
 
 use super::{Localnet, StartOpts};
 
+fn unix_time_offset_arg(offset: i64) -> String {
+    format!("--testnet.unix-time-offset-secs={offset}")
+}
+
 impl Localnet {
     /// Start the committee (and, when TEE is enabled, its enclaves). Idempotent:
     /// indices whose owned node is still alive are skipped, so [`restart`] only
@@ -324,7 +328,7 @@ impl Localnet {
             cmd.env("OUTBE_E2E_OCOMP_OWNER_FAILPOINT", failpoint);
         }
         if let Some(offset) = opts.unix_time_offset_secs {
-            a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
+            a.push(unix_time_offset_arg(offset));
         }
         if let Some(protocol_bundle_hash) = opts.ocomp_protocol_bundle_hash.as_deref() {
             let domain = vd.join("ocomp").join("domain-v1");
@@ -542,8 +546,24 @@ fn verified_compressed_entities_reconstruction_path(
 mod tests {
     use super::{
         cargo_package_version, compressed_entities_reconstruction_path, rewrite_workspace_version,
-        verified_compressed_entities_reconstruction_path,
+        unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
     };
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct ClockOffsetArgs {
+        #[arg(long = "testnet.unix-time-offset-secs")]
+        unix_time_offset_secs: Option<i64>,
+    }
+
+    #[test]
+    fn negative_clock_offset_is_one_clap_parseable_argument() {
+        let offset_arg = unix_time_offset_arg(-3);
+        let parsed = ClockOffsetArgs::try_parse_from(["outbe-chain", offset_arg.as_str()])
+            .expect("negative clock offset must remain the option value");
+
+        assert_eq!(parsed.unix_time_offset_secs, Some(-3));
+    }
 
     #[test]
     fn expands_protocol_version_to_cargo_semver() {
