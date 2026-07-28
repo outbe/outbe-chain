@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolError;
+use alloy_sol_types::{SolError, SolValue};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -92,6 +92,48 @@ pub enum StablecoinStateError {
 
     #[error("caller {caller} is not the pending stablecoin admin")]
     NotPendingAdmin { caller: Address },
+
+    #[error("unknown stablecoin policy {policy_id}")]
+    UnknownPolicy { policy_id: U256 },
+
+    #[error("stablecoin policy {policy_id} denied operation {operation} for account {account}")]
+    PolicyDenied {
+        policy_id: U256,
+        account: Address,
+        operation: u8,
+    },
+
+    #[error("ERC-7943 cannot send from {account}")]
+    ERC7943CannotSend { account: Address },
+
+    #[error("ERC-7943 cannot receive to {account}")]
+    ERC7943CannotReceive { account: Address },
+
+    #[error("ERC-7943 cannot transfer {amount} from {from} to {to}")]
+    ERC7943CannotTransfer {
+        from: Address,
+        to: Address,
+        amount: U256,
+    },
+
+    #[error("ERC-7943 unfrozen balance for {account} is {unfrozen}, less than requested {amount}")]
+    ERC7943InsufficientUnfrozenBalance {
+        account: Address,
+        amount: U256,
+        unfrozen: U256,
+    },
+
+    #[error(
+        "frozen owner {owner} cannot increase allowance from {current_allowance} to {requested_allowance}"
+    )]
+    FrozenAllowanceIncrease {
+        owner: Address,
+        current_allowance: U256,
+        requested_allowance: U256,
+    },
+
+    #[error("forced self-transfer is forbidden")]
+    ForcedSelfTransfer,
 }
 
 impl From<StablecoinStateError> for PrecompileError {
@@ -186,6 +228,61 @@ impl From<StablecoinStateError> for PrecompileError {
             StablecoinStateError::NotPendingAdmin { caller } => PrecompileError::RevertBytes(
                 Bytes::from(IStablecoin::NotPendingAdmin { caller }.abi_encode()),
             ),
+            StablecoinStateError::UnknownPolicy { policy_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IStablecoin::UnknownPolicy {
+                        policyId: policy_id,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            StablecoinStateError::PolicyDenied {
+                policy_id,
+                account,
+                operation,
+            } => {
+                let mut encoded = IStablecoin::PolicyDenied::SELECTOR.to_vec();
+                encoded.extend((policy_id, account, U256::from(operation)).abi_encode_params());
+                PrecompileError::RevertBytes(Bytes::from(encoded))
+            }
+            StablecoinStateError::ERC7943CannotSend { account } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::ERC7943CannotSend { account }.abi_encode()),
+            ),
+            StablecoinStateError::ERC7943CannotReceive { account } => PrecompileError::RevertBytes(
+                Bytes::from(IStablecoin::ERC7943CannotReceive { account }.abi_encode()),
+            ),
+            StablecoinStateError::ERC7943CannotTransfer { from, to, amount } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IStablecoin::ERC7943CannotTransfer { from, to, amount }.abi_encode(),
+                ))
+            }
+            StablecoinStateError::ERC7943InsufficientUnfrozenBalance {
+                account,
+                amount,
+                unfrozen,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IStablecoin::ERC7943InsufficientUnfrozenBalance {
+                    account,
+                    amount,
+                    unfrozen,
+                }
+                .abi_encode(),
+            )),
+            StablecoinStateError::FrozenAllowanceIncrease {
+                owner,
+                current_allowance,
+                requested_allowance,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IStablecoin::FrozenAllowanceIncrease {
+                    owner,
+                    currentAllowance: current_allowance,
+                    requestedAllowance: requested_allowance,
+                }
+                .abi_encode(),
+            )),
+            StablecoinStateError::ForcedSelfTransfer => PrecompileError::RevertBytes(Bytes::from(
+                IStablecoin::ForcedSelfTransfer {}.abi_encode(),
+            )),
             domain_error => PrecompileError::Revert(domain_error.to_string()),
         }
     }

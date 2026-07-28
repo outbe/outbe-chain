@@ -9,7 +9,10 @@ use outbe_primitives::stablecoin::{
 use outbe_primitives::stablecoin_fork::{
     STABLECOIN_V1_PROTOCOL_VERSION_RAW, STABLECOIN_V1_SCHEMA_VERSION,
 };
-use outbe_stablecoinpolicy::api::policy_exists;
+use outbe_stablecoinpolicy::api::{
+    can_mint as policy_can_mint, can_receive as policy_can_receive, can_send as policy_can_send,
+    policy_exists,
+};
 
 use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, TokenIdentity};
@@ -20,7 +23,6 @@ use crate::schema::{
 };
 
 const ROOT_SLOT_COUNT: u64 = 19;
-
 impl StablecoinContract<'_> {
     pub(crate) fn initialize_from_factory(
         &self,
@@ -295,10 +297,94 @@ impl StablecoinContract<'_> {
         })
     }
 
+    pub fn set_policy_id(&mut self, actor: Address, new_policy_id: U256) -> Result<()> {
+        self.require_role(crate::schema::COMPLIANCE_ROLE, actor)?;
+        if !policy_exists(self.storage.clone(), new_policy_id)? {
+            return Err(StablecoinStateError::UnknownPolicy {
+                policy_id: new_policy_id,
+            }
+            .into());
+        }
+        let previous = self.policy_id.read()?;
+        if previous == new_policy_id {
+            return Ok(());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.policy_id.write(new_policy_id)?;
+            self.emit(IStablecoin::PolicyChanged {
+                previousPolicyId: previous,
+                newPolicyId: new_policy_id,
+                actor,
+            })
+        })
+    }
+
+    pub fn frozen_tokens(&self, account: Address) -> Result<U256> {
+        self.validated_schema_version()?;
+        self.frozen.read(&account)
+    }
+
+    pub fn set_frozen_tokens(
+        &mut self,
+        actor: Address,
+        account: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.require_role(crate::schema::COMPLIANCE_ROLE, actor)?;
+        self.require_nonzero(account)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.frozen.write(&account, amount)?;
+            self.emit(IStablecoin::Frozen { account, amount })
+        })
+    }
+
+    pub fn can_send(&self, account: Address) -> Result<bool> {
+        self.validated_schema_version()?;
+        if self.paused.read()? || account == Address::ZERO {
+            return Ok(false);
+        }
+        policy_can_send(self.storage.clone(), self.policy_id.read()?, account)
+    }
+
+    pub fn can_receive(&self, account: Address) -> Result<bool> {
+        self.validated_schema_version()?;
+        if self.paused.read()? || account == Address::ZERO {
+            return Ok(false);
+        }
+        policy_can_receive(self.storage.clone(), self.policy_id.read()?, account)
+    }
+
+    pub fn can_transfer(&self, from: Address, to: Address, value: U256) -> Result<bool> {
+        self.validated_schema_version()?;
+        if self.paused.read()? || from == Address::ZERO || to == Address::ZERO {
+            return Ok(false);
+        }
+        let policy_id = self.policy_id.read()?;
+        if !policy_can_send(self.storage.clone(), policy_id, from)?
+            || !policy_can_receive(self.storage.clone(), policy_id, to)?
+        {
+            return Ok(false);
+        }
+        let balance = self.balances.read(&from)?;
+        let frozen = self.frozen.read(&from)?;
+        Ok(frozen.is_zero() || value <= Self::unfrozen(balance, frozen))
+    }
+
     pub fn approve(&mut self, owner: Address, spender: Address, value: U256) -> Result<()> {
         self.validated_schema_version()?;
         self.require_nonzero(owner)?;
         self.require_nonzero(spender)?;
+        let current = self.allowances.read(&allowance_key(owner, spender))?;
+        if !self.frozen.read(&owner)?.is_zero() && value > current {
+            return Err(StablecoinStateError::FrozenAllowanceIncrease {
+                owner,
+                current_allowance: current,
+                requested_allowance: value,
+            }
+            .into());
+        }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.allowances
@@ -316,6 +402,8 @@ impl StablecoinContract<'_> {
         self.require_not_paused()?;
         self.require_nonzero(from)?;
         self.require_nonzero(to)?;
+        self.require_can_send(from)?;
+        self.require_can_receive(to)?;
         let from_balance = self.balances.read(&from)?;
         if from_balance < value {
             return Err(StablecoinStateError::InsufficientBalance {
@@ -325,6 +413,7 @@ impl StablecoinContract<'_> {
             }
             .into());
         }
+        self.require_unfrozen(from, from_balance, value)?;
 
         let next_to = if from == to {
             from_balance
@@ -355,6 +444,8 @@ impl StablecoinContract<'_> {
         self.require_nonzero(spender)?;
         self.require_nonzero(from)?;
         self.require_nonzero(to)?;
+        self.require_can_send(from)?;
+        self.require_can_receive(to)?;
 
         let key = allowance_key(from, spender);
         let allowance = self.allowances.read(&key)?;
@@ -376,6 +467,7 @@ impl StablecoinContract<'_> {
             }
             .into());
         }
+        self.require_unfrozen(from, from_balance, value)?;
         let next_to = if from == to {
             from_balance
         } else {
@@ -400,13 +492,30 @@ impl StablecoinContract<'_> {
     pub fn mint(&mut self, actor: Address, to: Address, amount: U256) -> Result<()> {
         self.require_role(ISSUER_ROLE, actor)?;
         self.require_not_paused()?;
+        self.require_nonzero(to)?;
+        self.require_can_mint(to)?;
         self.mint_core(to, amount)
     }
 
     pub fn burn(&mut self, actor: Address, amount: U256) -> Result<()> {
         self.require_role(ISSUER_ROLE, actor)?;
         self.require_not_paused()?;
-        self.burn_core(actor, amount)
+        self.require_nonzero_amount(amount)?;
+        let balance = self.balances.read(&actor)?;
+        if balance < amount {
+            return Err(StablecoinStateError::InsufficientBalance {
+                account: actor,
+                available: balance,
+                required: amount,
+            }
+            .into());
+        }
+        let frozen = self.frozen.read(&actor)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.consume_frozen(actor, balance, frozen, amount)?;
+            self.burn_core(actor, amount)
+        })
     }
 
     pub fn burn_from(&mut self, spender: Address, from: Address, amount: U256) -> Result<()> {
@@ -415,6 +524,7 @@ impl StablecoinContract<'_> {
         self.require_nonzero(spender)?;
         self.require_nonzero(from)?;
         self.require_nonzero_amount(amount)?;
+        self.require_can_send(from)?;
 
         let key = allowance_key(from, spender);
         let allowance = self.allowances.read(&key)?;
@@ -427,6 +537,16 @@ impl StablecoinContract<'_> {
             }
             .into());
         }
+        let balance = self.balances.read(&from)?;
+        if balance < amount {
+            return Err(StablecoinStateError::InsufficientBalance {
+                account: from,
+                available: balance,
+                required: amount,
+            }
+            .into());
+        }
+        self.require_unfrozen(from, balance, amount)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.burn_core(from, amount)?;
@@ -435,6 +555,51 @@ impl StablecoinContract<'_> {
             }
             Ok(())
         })
+    }
+
+    pub fn forced_transfer(
+        &mut self,
+        actor: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+    ) -> Result<()> {
+        self.require_role(crate::schema::ENFORCER_ROLE, actor)?;
+        self.require_not_paused()?;
+        self.require_nonzero(from)?;
+        self.require_nonzero(to)?;
+        self.require_nonzero_amount(amount)?;
+        if from == to {
+            return Err(StablecoinStateError::ForcedSelfTransfer.into());
+        }
+        self.require_can_receive(to)?;
+        let from_balance = self.balances.read(&from)?;
+        if from_balance < amount {
+            return Err(StablecoinStateError::InsufficientBalance {
+                account: from,
+                available: from_balance,
+                required: amount,
+            }
+            .into());
+        }
+        let to_balance = self.balances.read(&to)?;
+        let next_to = to_balance.checked_add(amount).ok_or_else(|| {
+            PrecompileError::Fatal("stablecoin forced-transfer recipient overflow".into())
+        })?;
+        let frozen = self.frozen.read(&from)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.consume_frozen(from, from_balance, frozen, amount)?;
+            self.balances.write(&from, from_balance - amount)?;
+            self.balances.write(&to, next_to)?;
+            self.emit(IStablecoin::Transfer {
+                from,
+                to,
+                value: amount,
+            })?;
+            self.emit(IStablecoin::ForcedTransfer { from, to, amount })
+        })?;
+        Ok(())
     }
 
     pub(crate) fn mint_core(&mut self, to: Address, amount: U256) -> Result<()> {
@@ -535,6 +700,73 @@ impl StablecoinContract<'_> {
             return Err(StablecoinStateError::Unauthorized { role, caller }.into());
         }
         Ok(())
+    }
+
+    fn require_can_send(&self, account: Address) -> Result<()> {
+        let policy_id = self.policy_id.read()?;
+        if !policy_can_send(self.storage.clone(), policy_id, account)? {
+            return Err(StablecoinStateError::ERC7943CannotSend { account }.into());
+        }
+        Ok(())
+    }
+
+    fn require_can_receive(&self, account: Address) -> Result<()> {
+        let policy_id = self.policy_id.read()?;
+        if !policy_can_receive(self.storage.clone(), policy_id, account)? {
+            return Err(StablecoinStateError::ERC7943CannotReceive { account }.into());
+        }
+        Ok(())
+    }
+
+    fn require_can_mint(&self, account: Address) -> Result<()> {
+        let policy_id = self.policy_id.read()?;
+        if !policy_can_mint(self.storage.clone(), policy_id, account)? {
+            return Err(StablecoinStateError::ERC7943CannotReceive { account }.into());
+        }
+        Ok(())
+    }
+
+    fn require_unfrozen(&self, account: Address, balance: U256, amount: U256) -> Result<()> {
+        let available = Self::unfrozen(balance, self.frozen.read(&account)?);
+        if amount > available {
+            return Err(StablecoinStateError::ERC7943InsufficientUnfrozenBalance {
+                account,
+                amount,
+                unfrozen: available,
+            }
+            .into());
+        }
+        Ok(())
+    }
+
+    fn consume_frozen(
+        &mut self,
+        account: Address,
+        balance: U256,
+        frozen: U256,
+        amount: U256,
+    ) -> Result<()> {
+        let available = Self::unfrozen(balance, frozen);
+        let consumed = if amount > available {
+            amount - available
+        } else {
+            U256::ZERO
+        };
+        if consumed.is_zero() {
+            return Ok(());
+        }
+        let next_frozen = frozen.checked_sub(consumed).ok_or_else(|| {
+            PrecompileError::Fatal("stablecoin frozen-balance invariant is corrupted".into())
+        })?;
+        self.frozen.write(&account, next_frozen)?;
+        self.emit(IStablecoin::Frozen {
+            account,
+            amount: next_frozen,
+        })
+    }
+
+    fn unfrozen(balance: U256, frozen: U256) -> U256 {
+        balance.saturating_sub(frozen)
     }
 
     fn require_operational_role(&self, role: B256) -> Result<()> {

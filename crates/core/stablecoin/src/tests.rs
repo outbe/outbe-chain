@@ -8,7 +8,9 @@ use outbe_primitives::stablecoin_fork::{
 };
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{PrecompileStorageProvider, StorageHandle};
-use outbe_stablecoinpolicy::ALLOW_ALL_POLICY_ID;
+use outbe_stablecoinpolicy::{
+    PolicyType, StablecoinPolicyRegistryContract, ALLOW_ALL_POLICY_ID, DENY_ALL_POLICY_ID,
+};
 
 use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, StablecoinFactoryApi};
@@ -83,6 +85,26 @@ fn pending_admin_baseline(
             .unwrap();
         StablecoinContract::new(storage, init.token_address)
             .begin_admin_transfer(ISSUER, candidate)
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+    provider.clear_mutation_failure();
+    provider
+}
+
+fn forced_transfer_baseline(
+    init: &FactoryTokenInitialization,
+    from: Address,
+) -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(from, U256::from(100)).unwrap();
+        token
+            .set_frozen_tokens(ISSUER, from, U256::from(80))
             .unwrap();
     });
     provider.clear_events(init.token_address);
@@ -1002,4 +1024,387 @@ fn admin_acceptance_rolls_back_both_roles_and_slots_at_every_failure_point() {
         });
         assert!(provider.get_events(init.token_address).is_empty());
     }
+}
+
+#[test]
+fn policy_lanes_drive_public_erc7943_results_without_registry_errors() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0xf1);
+    let bob = Address::repeat_byte(0xf2);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut registry = StablecoinPolicyRegistryContract::new(storage.clone());
+        let send_whitelist = registry
+            .create_policy(ISSUER, PolicyType::Whitelist as u8, ISSUER)
+            .unwrap();
+        registry
+            .add_members(send_whitelist, ISSUER, &[alice])
+            .unwrap();
+        let directional = registry
+            .create_directional_policy(
+                ISSUER,
+                ISSUER,
+                send_whitelist,
+                ALLOW_ALL_POLICY_ID,
+                DENY_ALL_POLICY_ID,
+            )
+            .unwrap();
+
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(100)).unwrap();
+        token.set_policy_id(ISSUER, directional).unwrap();
+
+        assert!(token.can_send(alice).unwrap());
+        assert!(!token.can_send(bob).unwrap());
+        assert!(token.can_receive(bob).unwrap());
+        assert!(token.can_transfer(alice, bob, U256::from(1_000)).unwrap());
+        assert!(!token.can_transfer(bob, alice, U256::ZERO).unwrap());
+
+        token.transfer(alice, bob, U256::from(10)).unwrap();
+        assert_revert::<IStablecoin::ERC7943CannotSend>(
+            token.transfer(bob, alice, U256::ZERO).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::ERC7943CannotReceive>(
+            token.mint(ISSUER, bob, U256::from(1)).unwrap_err(),
+        );
+
+        let unknown = U256::from(999_999u64);
+        assert_revert::<IStablecoin::UnknownPolicy>(
+            token.set_policy_id(ISSUER, unknown).unwrap_err(),
+        );
+        assert_eq!(token.policy_id.read().unwrap(), directional);
+    });
+}
+
+#[test]
+fn frozen_amount_covers_all_balance_relations_and_only_allows_allowance_reduction() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0xe1);
+    let bob = Address::repeat_byte(0xe2);
+    let spender = Address::repeat_byte(0xe3);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(100)).unwrap();
+        token.approve(alice, spender, U256::from(50)).unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token
+            .set_frozen_tokens(ISSUER, alice, U256::from(60))
+            .unwrap();
+        token
+            .set_frozen_tokens(ISSUER, alice, U256::from(60))
+            .unwrap();
+    });
+    assert_eq!(
+        provider.get_events(init.token_address),
+        &vec![
+            IStablecoin::Frozen {
+                account: alice,
+                amount: U256::from(60),
+            }
+            .encode_log_data(),
+            IStablecoin::Frozen {
+                account: alice,
+                amount: U256::from(60),
+            }
+            .encode_log_data(),
+        ]
+    );
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        assert!(token.can_transfer(alice, bob, U256::from(40)).unwrap());
+        assert!(!token.can_transfer(alice, bob, U256::from(41)).unwrap());
+        assert_revert::<IStablecoin::FrozenAllowanceIncrease>(
+            token.approve(alice, spender, U256::from(51)).unwrap_err(),
+        );
+        token.approve(alice, spender, U256::from(40)).unwrap();
+        token.transfer(alice, bob, U256::from(40)).unwrap();
+
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(60));
+        assert!(token.can_transfer(alice, bob, U256::ZERO).unwrap());
+        assert!(!token.can_transfer(alice, bob, U256::from(1)).unwrap());
+        assert_revert::<IStablecoin::ERC7943InsufficientUnfrozenBalance>(
+            token.transfer(alice, bob, U256::from(1)).unwrap_err(),
+        );
+
+        token
+            .set_frozen_tokens(ISSUER, alice, U256::from(120))
+            .unwrap();
+        assert_eq!(token.frozen_tokens(alice).unwrap(), U256::from(120));
+        assert!(!token.can_transfer(alice, bob, U256::from(1)).unwrap());
+    });
+}
+
+#[test]
+fn forced_transfer_bypasses_source_checks_consumes_only_frozen_units_and_orders_events() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0xd1);
+    let bob = Address::repeat_byte(0xd2);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let directional = StablecoinPolicyRegistryContract::new(storage.clone())
+            .create_directional_policy(
+                ISSUER,
+                ISSUER,
+                DENY_ALL_POLICY_ID,
+                ALLOW_ALL_POLICY_ID,
+                ALLOW_ALL_POLICY_ID,
+            )
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(100)).unwrap();
+        token.set_policy_id(ISSUER, directional).unwrap();
+        token
+            .set_frozen_tokens(ISSUER, alice, U256::from(80))
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        assert!(!token.can_send(alice).unwrap());
+        token
+            .forced_transfer(ISSUER, alice, bob, U256::from(30))
+            .unwrap();
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(70));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::from(30));
+        assert_eq!(token.frozen_tokens(alice).unwrap(), U256::from(70));
+        assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        assert_revert::<IStablecoin::ForcedSelfTransfer>(
+            token
+                .forced_transfer(ISSUER, alice, alice, U256::from(1))
+                .unwrap_err(),
+        );
+    });
+    assert_eq!(
+        provider.get_events(init.token_address),
+        &vec![
+            IStablecoin::Frozen {
+                account: alice,
+                amount: U256::from(70),
+            }
+            .encode_log_data(),
+            IStablecoin::Transfer {
+                from: alice,
+                to: bob,
+                value: U256::from(30),
+            }
+            .encode_log_data(),
+            IStablecoin::ForcedTransfer {
+                from: alice,
+                to: bob,
+                amount: U256::from(30),
+            }
+            .encode_log_data(),
+        ]
+    );
+}
+
+#[test]
+fn forced_transfer_requires_recipient_policy_and_rolls_back_every_write_and_log() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0xc1);
+    let bob = Address::repeat_byte(0xc2);
+    let mut denied = forced_transfer_baseline(&init, alice);
+    StorageHandle::enter(&mut denied, |storage| {
+        let directional = StablecoinPolicyRegistryContract::new(storage.clone())
+            .create_directional_policy(
+                ISSUER,
+                ISSUER,
+                ALLOW_ALL_POLICY_ID,
+                DENY_ALL_POLICY_ID,
+                ALLOW_ALL_POLICY_ID,
+            )
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.set_policy_id(ISSUER, directional).unwrap();
+    });
+    denied.clear_events(init.token_address);
+    StorageHandle::enter(&mut denied, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        assert_revert::<IStablecoin::ERC7943CannotReceive>(
+            token
+                .forced_transfer(ISSUER, alice, bob, U256::from(30))
+                .unwrap_err(),
+        );
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(100));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::ZERO);
+        assert_eq!(token.frozen_tokens(alice).unwrap(), U256::from(80));
+    });
+    assert!(denied.get_events(init.token_address).is_empty());
+
+    let mut measured = forced_transfer_baseline(&init, alice);
+    StorageHandle::enter(&mut measured, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .forced_transfer(ISSUER, alice, bob, U256::from(30))
+            .unwrap();
+    });
+    let operation_count = measured.clear_mutation_failure();
+    assert!(operation_count >= 6);
+
+    for failure_at in 0..operation_count {
+        let mut provider = forced_transfer_baseline(&init, alice);
+        provider.fail_after_mutation_at(failure_at);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(StablecoinContract::new(storage, init.token_address)
+                .forced_transfer(ISSUER, alice, bob, U256::from(30))
+                .is_err());
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.balance_of(alice).unwrap(), U256::from(100));
+            assert_eq!(token.balance_of(bob).unwrap(), U256::ZERO);
+            assert_eq!(token.frozen_tokens(alice).unwrap(), U256::from(80));
+            assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
+}
+
+#[test]
+fn issuer_burn_bypasses_send_policy_and_consumes_frozen_before_transfer_event() {
+    let init = initialization("USDX");
+    let holder = Address::repeat_byte(0xb1);
+    let spender = Address::repeat_byte(0xb2);
+    let attacker = Address::repeat_byte(0xb3);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let directional = StablecoinPolicyRegistryContract::new(storage.clone())
+            .create_directional_policy(
+                ISSUER,
+                ISSUER,
+                DENY_ALL_POLICY_ID,
+                ALLOW_ALL_POLICY_ID,
+                ALLOW_ALL_POLICY_ID,
+            )
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(ISSUER, U256::from(100)).unwrap();
+        token.mint_core(holder, U256::from(100)).unwrap();
+        token.approve(holder, spender, U256::from(50)).unwrap();
+        token.set_policy_id(ISSUER, directional).unwrap();
+        token
+            .set_frozen_tokens(ISSUER, ISSUER, U256::from(80))
+            .unwrap();
+        token
+            .set_frozen_tokens(ISSUER, holder, U256::from(80))
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        assert_revert::<IStablecoin::Unauthorized>(
+            token.burn(attacker, U256::from(1)).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::ERC7943CannotSend>(
+            token
+                .burn_from(spender, holder, U256::from(30))
+                .unwrap_err(),
+        );
+        assert_eq!(token.allowance_of(holder, spender).unwrap(), U256::from(50));
+
+        token.burn(ISSUER, U256::from(30)).unwrap();
+        assert_eq!(token.balance_of(ISSUER).unwrap(), U256::from(70));
+        assert_eq!(token.frozen_tokens(ISSUER).unwrap(), U256::from(70));
+        assert_eq!(token.total_supply().unwrap(), U256::from(170));
+    });
+    assert_eq!(
+        provider.get_events(init.token_address),
+        &vec![
+            IStablecoin::Frozen {
+                account: ISSUER,
+                amount: U256::from(70),
+            }
+            .encode_log_data(),
+            IStablecoin::Transfer {
+                from: ISSUER,
+                to: Address::ZERO,
+                value: U256::from(30),
+            }
+            .encode_log_data(),
+        ]
+    );
+}
+
+#[test]
+fn erc7943_abi_reports_interface_and_roundtrips_views_and_mutations() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0xa1);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        StablecoinContract::new(storage, init.token_address)
+            .mint_core(alice, U256::from(10))
+            .unwrap();
+    });
+
+    for (interface_id, expected) in [
+        ([0x01, 0xff, 0xc9, 0xa7], true),
+        ([0x3e, 0xdb, 0xb4, 0xc4], true),
+        ([0xde, 0xad, 0xbe, 0xef], false),
+    ] {
+        let output = dispatch(
+            StorageHandle::new(&mut provider),
+            init.token_address,
+            &IStablecoin::supportsInterfaceCall {
+                interfaceId: interface_id.into(),
+            }
+            .abi_encode(),
+            alice,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IStablecoin::supportsInterfaceCall::abi_decode_returns(&output).unwrap(),
+            expected
+        );
+    }
+
+    let output = dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &IStablecoin::setFrozenTokensCall {
+            account: alice,
+            amount: U256::from(4),
+        }
+        .abi_encode(),
+        ISSUER,
+        U256::ZERO,
+    )
+    .unwrap();
+    assert!(IStablecoin::setFrozenTokensCall::abi_decode_returns(&output).unwrap());
+
+    let output = dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &IStablecoin::getFrozenTokensCall { account: alice }.abi_encode(),
+        alice,
+        U256::ZERO,
+    )
+    .unwrap();
+    assert_eq!(
+        IStablecoin::getFrozenTokensCall::abi_decode_returns(&output).unwrap(),
+        U256::from(4)
+    );
 }

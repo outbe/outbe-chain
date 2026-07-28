@@ -532,6 +532,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-043 — Integrate Policy and ERC-7943
 
+- **Status:** Done for the Policy/ERC-7943 non-memo surface; shared directional
+  Policy lanes, absolute freeze, allowance reduction, forced transfer, issuer
+  redemption burn and ERC-165 dispatch are wired through the dynamic token ABI.
+  Evidence: the focused token suite passes 29/29 and the shared Policy suite
+  passes 20/20, including `F<B`, `F=B`, `F>B`, exact Final ERC-7943 public errors,
+  conservation/event ordering and failure-after-every-write/log rollback.
+  Memo/non-memo parity remains the SCF-045 integration evidence because memo
+  selectors do not exist before that task.
 - **Goal:** Apply shared policy, freeze and enforcement semantics exactly.
 - **Depends on:** SCF-042, `SCF-G2`.
 - **Done when:** ordinary transfer/mint and allowance-backed `burnFrom` use the

@@ -8,6 +8,9 @@ pub use crate::abi::IStablecoin;
 use crate::errors::StablecoinStateError;
 use crate::schema::StablecoinContract;
 
+const ERC165_INTERFACE_ID: [u8; 4] = [0x01, 0xff, 0xc9, 0xa7];
+const ERC7943_FUNGIBLE_INTERFACE_ID: [u8; 4] = [0x3e, 0xdb, 0xb4, 0xc4];
+
 /// Dispatches the shared stablecoin ABI against the actual dynamic token address.
 pub fn dispatch(
     storage: StorageHandle,
@@ -86,6 +89,29 @@ pub fn dispatch(
                     token.validated_schema_version()?;
                     token.creation_protocol_version.read()
                 }),
+                supportsInterface(call) => view(call, |call| {
+                    let interface_id: [u8; 4] = call.interfaceId.into();
+                    Ok(matches!(
+                        interface_id,
+                        ERC165_INTERFACE_ID | ERC7943_FUNGIBLE_INTERFACE_ID
+                    ))
+                }),
+                canSend(call) => view(call, |call| token.can_send(call.account)),
+                canReceive(call) => view(call, |call| token.can_receive(call.account)),
+                canTransfer(call) => view(call, |call| {
+                    token.can_transfer(call.from, call.to, call.value)
+                }),
+                getFrozenTokens(call) => view(call, |call| token.frozen_tokens(call.account)),
+                forcedTransfer(call) => mutate(call, caller, |actor, call| {
+                    token
+                        .forced_transfer(actor, call.from, call.to, call.value)
+                        .map(|()| true)
+                }),
+                setFrozenTokens(call) => mutate(call, caller, |actor, call| {
+                    token
+                        .set_frozen_tokens(actor, call.account, call.amount)
+                        .map(|()| true)
+                }),
                 mint(call) => mutate(call, caller, |actor, call| {
                     token.mint(actor, call.to, call.amount).map(|()| true)
                 }),
@@ -105,6 +131,9 @@ pub fn dispatch(
                 }),
                 setSupplyCap(call) => mutate_void(call, caller, |actor, call| {
                     token.set_supply_cap(actor, call.newCap)
+                }),
+                setPolicyId(call) => mutate_void(call, caller, |actor, call| {
+                    token.set_policy_id(actor, call.newPolicyId)
                 }),
                 pause(call) => mutate_void(call, caller, |actor, _| token.pause(actor)),
                 unpause(call) => mutate_void(call, caller, |actor, _| token.unpause(actor)),
