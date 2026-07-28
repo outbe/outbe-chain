@@ -271,6 +271,11 @@ sol!(
     "../../contracts/precompiles/src/IVote.sol"
 );
 
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+);
+
 pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
 
 #[cfg(test)]
