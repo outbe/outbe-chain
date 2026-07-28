@@ -1912,6 +1912,9 @@ It does not regenerate DKG/validator identity or mutate final genesis.
 The cold runner first snapshots every executed binary into a new read-only
 artifact-set directory and all five scenarios bind those paths and hashes;
 later builds cannot invalidate an existing run by replacing `target/` files.
+Before any `gramine-direct` container starts, the harness resolves the local
+test image tag to its canonical Docker `sha256:` image ID, launches by that ID
+and binds it into every scenario plus the capacity artifact-set hash.
 Finality latency is the maximum positive validator observation from canonical
 q-forming block application to finalization acknowledgement. Any binary change
 requires a new artifact set and five new runs rather than mutation of old

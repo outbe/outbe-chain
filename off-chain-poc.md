@@ -384,7 +384,10 @@ binaries.
 Each five-run capacity set uses read-only snapshots of the exact executed
 binaries, not mutable `target/` paths. Rebuilding any binary creates a new
 artifact set and requires a new five-run measurement; existing evidence is
-never retargeted. The recorded finality latency is the maximum positive
+never retargeted. The harness also resolves the test Gramine Docker tag to its
+canonical `sha256:` image ID before launch, runs every enclave by that immutable
+ID and includes the same ID in scenario and capacity artifact-set evidence.
+The recorded finality latency is the maximum positive
 four-validator interval between canonical application of the q-forming block
 and finalization acknowledgement for that exact block.
 

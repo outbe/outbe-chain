@@ -30,11 +30,12 @@ impl Localnet {
         self.start_opts = opts.clone();
         let n = self.committee_size();
         if self.tee_enabled() {
-            proc::ensure_enclave_image(
+            let image_id = proc::ensure_enclave_image(
                 &self.cfg.repo,
                 self.cfg.sudo,
                 &self.cfg.dir.join("test-sgx-signing-key.pem"),
             )?;
+            self.retain_enclave_image_id(image_id)?;
         }
         let bootnodes = self.bootnodes();
         let chain_id_hex = if self.tee_enabled() {
@@ -390,6 +391,10 @@ impl Localnet {
             tee_port: port,
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+            image_id: self
+                .enclave_image_id
+                .clone()
+                .ok_or_else(|| eyre::eyre!("Gramine Docker image identity was not resolved"))?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
             dkg_seed,

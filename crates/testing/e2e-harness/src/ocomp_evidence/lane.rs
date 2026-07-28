@@ -143,12 +143,7 @@ fn verify_scenario_lane(
     );
     let scenarios = load_scenarios(evidence_dir)?;
     let identity = scenario_run_identity(&scenarios)?;
-    ensure!(
-        manifest.sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
-            && manifest.sections.get("genesis_fork_bundle_and_profiles")
-                == Some(&identity.launch_identity),
-        "scenario lane manifest identity differs from retained scenarios"
-    );
+    validate_scenario_manifest_identity(&manifest.sections, &identity)?;
 
     let mut assertions = read_lane_assertions(evidence_dir, manifest)?
         .into_iter()
@@ -542,10 +537,28 @@ fn assemble_iso_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
     )
 }
 
+fn validate_scenario_manifest_identity(
+    sections: &BTreeMap<String, Value>,
+    identity: &ScenarioRunIdentity,
+) -> Result<()> {
+    let manifest_image_id = sections
+        .get("exact_config_and_service_unit_hashes")
+        .and_then(Value::as_object)
+        .and_then(|section| section.get("gramine_image_id"));
+    ensure!(
+        sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
+            && sections.get("genesis_fork_bundle_and_profiles") == Some(&identity.launch_identity)
+            && manifest_image_id == Some(&identity.gramine_image_id),
+        "scenario lane manifest identity differs from retained scenarios"
+    );
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScenarioRunIdentity {
     exact_binaries: Value,
     launch_identity: Value,
+    gramine_image_id: Value,
     effective_systemd_unit_policies: Vec<Value>,
 }
 
@@ -554,6 +567,7 @@ fn scenario_run_identity(
 ) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
     let mut launch_identity = None;
+    let mut gramine_image_id = None;
     let mut effective_systemd_unit_policies = Vec::new();
     for (scenario_name, (_, scenario)) in scenarios {
         let binaries = path(scenario, &["ocomp", "exact_binaries"])?;
@@ -587,6 +601,21 @@ fn scenario_run_identity(
             None => launch_identity = Some(launch.clone()),
         }
 
+        let image_id = path(scenario, &["environment", "gramine_image_id"])?;
+        let image_id_text = image_id
+            .as_str()
+            .ok_or_else(|| eyre::eyre!("scenario {scenario_name} lacks Gramine Docker image ID"))?;
+        crate::internal::proc::DockerImageId::from_inspect_output(image_id_text).wrap_err_with(
+            || format!("scenario {scenario_name} has invalid Gramine Docker image ID"),
+        )?;
+        match &gramine_image_id {
+            Some(expected) => ensure!(
+                expected == image_id,
+                "scenario {scenario_name} used another Gramine Docker image"
+            ),
+            None => gramine_image_id = Some(image_id.clone()),
+        }
+
         if let Some(policies) = path(scenario, &["ocomp", "topology", "systemd_isolation"])?
             .as_object()
             .and_then(|isolation| isolation.get("unit_policies"))
@@ -600,6 +629,8 @@ fn scenario_run_identity(
             .ok_or_else(|| eyre::eyre!("scenario set has no exact binary identity"))?,
         launch_identity: launch_identity
             .ok_or_else(|| eyre::eyre!("scenario set has no exact launch identity"))?,
+        gramine_image_id: gramine_image_id
+            .ok_or_else(|| eyre::eyre!("scenario set has no Gramine Docker image identity"))?,
         effective_systemd_unit_policies,
     })
 }
@@ -626,6 +657,7 @@ fn scenario_sections(
                 "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
                     "launch_identity": &identity.launch_identity,
+                    "gramine_image_id": &identity.gramine_image_id,
                     "effective_systemd_unit_policies":
                         &identity.effective_systemd_unit_policies,
                 }),
@@ -634,6 +666,7 @@ fn scenario_sections(
                 "machine_and_service_topology" => json!({
                     "validated_scenarios": scenario_paths,
                     "systemd_isolation": isolation,
+                    "gramine_image_id": &identity.gramine_image_id,
                 }),
                 "skip_todo_quarantine_retry_and_timeout_records" => json!({
                     "automatic_retries": 0,
@@ -1212,7 +1245,8 @@ fn unix_millis() -> u64 {
 mod tests {
     use super::{
         scenario_run_identity, validate_applied_public_path, validate_expired_public_path,
-        validate_isolation_scenario, E2E_SCENARIOS, PUBLIC_SCENARIOS, REQUIRED_SCENARIO_BINARIES,
+        validate_isolation_scenario, validate_scenario_manifest_identity, E2E_SCENARIOS,
+        PUBLIC_SCENARIOS, REQUIRED_SCENARIO_BINARIES,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -1396,7 +1430,11 @@ mod tests {
         })
     }
 
-    fn run_identity_scenario(binary_digest: &str, genesis_hash: &str) -> Value {
+    fn run_identity_scenario(
+        binary_digest: &str,
+        genesis_hash: &str,
+        gramine_image_id: &str,
+    ) -> Value {
         let binaries = REQUIRED_SCENARIO_BINARIES
             .into_iter()
             .map(|name| {
@@ -1411,6 +1449,9 @@ mod tests {
             })
             .collect::<serde_json::Map<_, _>>();
         json!({
+            "environment": {
+                "gramine_image_id": gramine_image_id,
+            },
             "ocomp": {
                 "exact_binaries": binaries,
                 "topology": {
@@ -1509,8 +1550,9 @@ mod tests {
     }
 
     #[test]
-    fn scenario_set_requires_one_binary_and_chain_identity() {
-        let first = run_identity_scenario("aa", "0xgenesis");
+    fn scenario_set_requires_one_binary_chain_and_gramine_image_identity() {
+        let image_id = format!("sha256:{}", "ab".repeat(32));
+        let first = run_identity_scenario("aa", "0xgenesis", &image_id);
         let second = first.clone();
         let scenarios = BTreeMap::from([
             ("first".to_owned(), ("scenario-001.json".to_owned(), first)),
@@ -1519,16 +1561,49 @@ mod tests {
                 ("scenario-002.json".to_owned(), second),
             ),
         ]);
-        scenario_run_identity(&scenarios).expect("one exact scenario identity");
+        let identity = scenario_run_identity(&scenarios).expect("one exact scenario identity");
+        let mut sections = BTreeMap::from([
+            (
+                "exact_binary_hashes".to_owned(),
+                identity.exact_binaries.clone(),
+            ),
+            (
+                "genesis_fork_bundle_and_profiles".to_owned(),
+                identity.launch_identity.clone(),
+            ),
+            (
+                "exact_config_and_service_unit_hashes".to_owned(),
+                json!({"gramine_image_id": identity.gramine_image_id}),
+            ),
+        ]);
+        validate_scenario_manifest_identity(&sections, &identity)
+            .expect("lane manifest binds retained image identity");
+        sections
+            .get_mut("exact_config_and_service_unit_hashes")
+            .expect("config section")["gramine_image_id"] =
+            json!(format!("sha256:{}", "cd".repeat(32)));
+        assert!(validate_scenario_manifest_identity(&sections, &identity).is_err());
 
         let mut changed_binary = scenarios.clone();
         changed_binary.get_mut("second").expect("second").1["ocomp"]["exact_binaries"]
             ["outbe_chain"]["sha256"] = json!("bb");
         assert!(scenario_run_identity(&changed_binary).is_err());
 
-        let mut changed_chain = scenarios;
+        let mut changed_chain = scenarios.clone();
         changed_chain.get_mut("second").expect("second").1["ocomp"]["topology"]
             ["launch_identity"]["genesis_hash"] = json!("0xother");
         assert!(scenario_run_identity(&changed_chain).is_err());
+
+        let mut changed_image = scenarios.clone();
+        changed_image.get_mut("second").expect("second").1["environment"]["gramine_image_id"] =
+            json!(format!("sha256:{}", "cd".repeat(32)));
+        assert!(scenario_run_identity(&changed_image).is_err());
+
+        let mut missing_image = scenarios;
+        missing_image.get_mut("second").expect("second").1["environment"]
+            .as_object_mut()
+            .expect("environment object")
+            .remove("gramine_image_id");
+        assert!(scenario_run_identity(&missing_image).is_err());
     }
 }

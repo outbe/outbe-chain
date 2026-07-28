@@ -441,6 +441,12 @@ missing/non-PASS ID. Retired and deferred planning rows never become runtime
 assertions. CI job names, JSON status and Markdown reports carry the mode, so
 task progress cannot be mistaken for full success.
 
+For `gramine-direct`, the exact artifact set includes the canonical Docker
+`sha256:` image ID resolved before the run. Enclave and signing-key containers
+are launched by that immutable ID rather than the mutable local test tag;
+scenario aggregation rejects a missing or different ID, and capacity hashing
+binds the ID together with the exact Rust binaries.
+
 ### 6.5 Independent closure verifier
 
 A small test-only `outbe-e2e-evidence` binary in the existing harness package:

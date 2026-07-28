@@ -796,6 +796,7 @@ tests:
     real_components:
       - four_validator_nodes
       - four_production_enclaves_under_gramine_direct
+      - immutable_gramine_docker_image_id_bound_in_evidence
       - four_supervisors
       - four_exporters
       - four_cas_domains

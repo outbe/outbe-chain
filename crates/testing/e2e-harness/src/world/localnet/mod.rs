@@ -33,7 +33,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eyre::{bail, Result, WrapErr};
 
 use crate::internal::config::Config;
-use crate::internal::proc::{args, ChildGuard, EnclaveGuard};
+use crate::internal::proc::{args, ChildGuard, DockerImageId, EnclaveGuard};
 use crate::internal::shell::Sh;
 
 /// Per-node execution cache for the four validators co-located by the PoC
@@ -123,6 +123,8 @@ pub struct Localnet {
     followers: HashMap<String, ChildGuard>,
     /// Owned validator-indexed enclave containers (committee + joiner).
     enclaves: HashMap<usize, EnclaveGuard>,
+    /// Exact Gramine image used by every enclave in this scenario.
+    enclave_image_id: Option<DockerImageId>,
     /// Scenario-only chain-manifest overrides used to prove that a validator
     /// with a different immutable fork install cannot join the canonical
     /// consensus namespace. All ordinary validators use `genesis.json`.
@@ -138,9 +140,27 @@ impl Localnet {
             validators: HashMap::new(),
             followers: HashMap::new(),
             enclaves: HashMap::new(),
+            enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
             start_opts: StartOpts::default(),
         }
+    }
+
+    fn retain_enclave_image_id(&mut self, image_id: DockerImageId) -> Result<()> {
+        match &self.enclave_image_id {
+            Some(established) if established != &image_id => {
+                bail!("Gramine Docker image identity changed during the scenario")
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.enclave_image_id = Some(image_id);
+                Ok(())
+            }
+        }
+    }
+
+    pub(crate) fn enclave_image_id(&self) -> Option<&str> {
+        self.enclave_image_id.as_ref().map(DockerImageId::as_str)
     }
 
     fn sh(&self) -> Sh<'_> {

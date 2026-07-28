@@ -66,6 +66,7 @@ pub fn assemble_closure(
     let mut finished_at = 0_u64;
     let mut exact_binary_identity = None;
     let mut launch_identity = None;
+    let mut gramine_image_identity = None;
 
     for lane in required_lanes {
         let manifest_path = lane_manifest_in(evidence_root, &lane);
@@ -110,6 +111,7 @@ pub fn assemble_closure(
                 ),
                 None => launch_identity = Some(lane_launch.clone()),
             }
+            retain_scenario_image_identity(&mut gramine_image_identity, &lane, &manifest.sections)?;
         }
 
         let lane_assertions = decode_assertions(&manifest_path, &manifest)?;
@@ -194,12 +196,17 @@ pub fn assemble_closure(
         .ok_or_else(|| eyre::eyre!("closure has no exact binary artifact identity"))?;
     let launch_identity =
         launch_identity.ok_or_else(|| eyre::eyre!("closure has no exact launch identity"))?;
+    let gramine_image_identity = gramine_image_identity
+        .ok_or_else(|| eyre::eyre!("closure has no Gramine Docker image identity"))?;
     let sections = closure_sections(
         ledger,
         &source,
         &discovery,
-        &exact_binary_identity,
-        &launch_identity,
+        ClosureIdentity {
+            exact_binaries: &exact_binary_identity,
+            launch: &launch_identity,
+            gramine_image: &gramine_image_identity,
+        },
         &lane_index,
         &members,
     );
@@ -246,6 +253,7 @@ pub fn verify_closure_semantics(
     let mut all_test_ids = BTreeSet::new();
     let mut exact_binary_identity = None;
     let mut launch_identity = None;
+    let mut gramine_image_identity = None;
     let mut minimum_started_at = u64::MAX;
     let mut maximum_finished_at = 0_u64;
 
@@ -312,6 +320,7 @@ pub fn verify_closure_semantics(
                 ),
                 None => launch_identity = Some(lane_launch.clone()),
             }
+            retain_scenario_image_identity(&mut gramine_image_identity, &lane, &embedded.sections)?;
         }
 
         let relative_manifest = format!("lanes/{lane}/run-manifest.json");
@@ -350,12 +359,17 @@ pub fn verify_closure_semantics(
         .ok_or_else(|| eyre::eyre!("retained closure has no binary identity"))?;
     let launch_identity =
         launch_identity.ok_or_else(|| eyre::eyre!("retained closure has no launch identity"))?;
+    let gramine_image_identity = gramine_image_identity
+        .ok_or_else(|| eyre::eyre!("retained closure has no Gramine Docker image identity"))?;
     let expected_sections = closure_sections(
         ledger,
         &source,
         &manifest.discovery,
-        &exact_binary_identity,
-        &launch_identity,
+        ClosureIdentity {
+            exact_binaries: &exact_binary_identity,
+            launch: &launch_identity,
+            gramine_image: &gramine_image_identity,
+        },
         &lane_index,
         &manifest.members,
     );
@@ -471,12 +485,42 @@ fn rewrite_assertions(
         .collect()
 }
 
+fn retain_scenario_image_identity(
+    retained: &mut Option<Value>,
+    lane: &str,
+    sections: &BTreeMap<String, Value>,
+) -> Result<()> {
+    let identity = sections
+        .get("exact_config_and_service_unit_hashes")
+        .and_then(Value::as_object)
+        .and_then(|section| section.get("gramine_image_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre::eyre!("lane {lane} lacks Gramine Docker image identity"))?;
+    crate::internal::proc::DockerImageId::from_inspect_output(identity)
+        .wrap_err_with(|| format!("lane {lane} has invalid Gramine Docker image identity"))?;
+    let identity = Value::String(identity.to_owned());
+    match retained {
+        Some(expected) => ensure!(
+            expected == &identity,
+            "lane {lane} used another Gramine Docker image"
+        ),
+        None => *retained = Some(identity),
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ClosureIdentity<'a> {
+    exact_binaries: &'a Value,
+    launch: &'a Value,
+    gramine_image: &'a Value,
+}
+
 fn closure_sections(
     ledger: &PlanningLedger,
     source: &super::SourceIdentityV1,
     discovery: &super::TestDiscoveryV1,
-    exact_binary_identity: &Value,
-    launch_identity: &Value,
+    identity: ClosureIdentity<'_>,
     lane_index: &BTreeMap<String, Value>,
     members: &[MemberDigestV1],
 ) -> BTreeMap<String, Value> {
@@ -487,12 +531,13 @@ fn closure_sections(
         .map(|section| {
             let value = match section.as_str() {
                 "source_and_toolchain" => json!(source),
-                "exact_binary_hashes" => exact_binary_identity.clone(),
+                "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
-                    "launch_identity": launch_identity,
+                    "launch_identity": identity.launch,
+                    "gramine_image_id": identity.gramine_image,
                     "verified_lane_manifests": lane_index,
                 }),
-                "genesis_fork_bundle_and_profiles" => launch_identity.clone(),
+                "genesis_fork_bundle_and_profiles" => identity.launch.clone(),
                 "test_discovery" => json!(discovery),
                 "member_hash_index_and_retention" => json!({
                     "publish_last": true,
@@ -526,8 +571,10 @@ fn unix_millis() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{required_execution_lanes, rewrite_assertions};
+    use super::{required_execution_lanes, retain_scenario_image_identity, rewrite_assertions};
     use crate::ocomp_evidence::{AssertionRecordV1, AssertionStatus, PlanningLedger};
+    use serde_json::json;
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn ledger() -> PlanningLedger {
@@ -541,6 +588,30 @@ mod tests {
         assert_eq!(
             required_execution_lanes(&ledger()).expect("required lanes"),
             ["OCM-E2E", "OCM-FAST", "OCM-INT", "OCM-ISO", "OCM-PUBLIC",]
+        );
+    }
+
+    #[test]
+    fn closure_requires_one_immutable_gramine_image_across_scenario_lanes() {
+        let sections = |image_id: &str| {
+            BTreeMap::from([(
+                "exact_config_and_service_unit_hashes".to_owned(),
+                json!({"gramine_image_id": image_id}),
+            )])
+        };
+        let first = format!("sha256:{}", "ab".repeat(32));
+        let second = format!("sha256:{}", "cd".repeat(32));
+        let mut retained = None;
+
+        retain_scenario_image_identity(&mut retained, "OCM-PUBLIC", &sections(&first))
+            .expect("first scenario lane establishes image identity");
+        retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&first))
+            .expect("same image identity is accepted");
+        assert!(
+            retain_scenario_image_identity(&mut retained, "OCM-ISO", &sections(&second)).is_err()
+        );
+        assert!(
+            retain_scenario_image_identity(&mut retained, "OCM-ISO", &BTreeMap::new()).is_err()
         );
     }
 

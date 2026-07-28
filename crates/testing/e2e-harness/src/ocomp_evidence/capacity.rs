@@ -19,7 +19,7 @@ use crate::ocomp_capacity::OcompCapacityHostObservationV1;
 use super::hash_file;
 
 const SOURCE_REVISION_DOMAIN: &[u8] = b"OUTBE_OCOMP_SOURCE_REVISION_V1";
-const ARTIFACT_SET_DOMAIN: &[u8] = b"OUTBE_OCOMP_CAPACITY_ARTIFACT_SET_V1";
+const ARTIFACT_SET_DOMAIN: &[u8] = b"OUTBE_OCOMP_CAPACITY_ARTIFACT_SET_V2";
 const COLD_NAMESPACE_DOMAIN: &[u8] = b"OUTBE_OCOMP_COLD_NAMESPACE_V1";
 const REQUIRED_BINARIES: [&str; 6] = [
     "outbe_chain",
@@ -56,6 +56,7 @@ struct ScenarioEnvironmentV1 {
     validators: u64,
     tee: String,
     all: bool,
+    gramine_image_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,7 +198,10 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
                 .all(|component| !matches!(component, Component::ParentDir)),
         "capacity scenario namespace is not an absolute non-root path"
     );
-    let artifact_set_hash = artifact_set_hash(&scenario.ocomp.exact_binaries)?;
+    let artifact_set_hash = artifact_set_hash(
+        &scenario.ocomp.exact_binaries,
+        &scenario.environment.gramine_image_id,
+    )?;
     let public = scenario.ocomp.public_path.capacity_public_path;
     let historical_replay = scenario.ocomp.public_path.capacity_historical_replay;
     let resources = scenario.ocomp.public_path.capacity_resources;
@@ -430,7 +434,10 @@ pub fn assemble_capacity_evidence(
     Ok((evidence, verified))
 }
 
-fn artifact_set_hash(binaries: &BTreeMap<String, BinaryIdentityV1>) -> Result<B256> {
+fn artifact_set_hash(
+    binaries: &BTreeMap<String, BinaryIdentityV1>,
+    gramine_image_id: &str,
+) -> Result<B256> {
     ensure!(
         binaries.len() == REQUIRED_BINARIES.len()
             && REQUIRED_BINARIES
@@ -440,6 +447,14 @@ fn artifact_set_hash(binaries: &BTreeMap<String, BinaryIdentityV1>) -> Result<B2
     );
     let mut preimage = Vec::new();
     preimage.extend_from_slice(ARTIFACT_SET_DOMAIN);
+    crate::internal::proc::DockerImageId::from_inspect_output(gramine_image_id)
+        .wrap_err("capacity evidence has invalid Gramine Docker image ID")?;
+    preimage.extend_from_slice(
+        &u16::try_from(gramine_image_id.len())
+            .wrap_err("Gramine Docker image ID exceeds u16")?
+            .to_be_bytes(),
+    );
+    preimage.extend_from_slice(gramine_image_id.as_bytes());
     for name in REQUIRED_BINARIES {
         let identity = binaries
             .get(name)
@@ -512,7 +527,12 @@ mod tests {
                 "untracked_dirty": false,
             },
             "result": "passed",
-            "environment": {"validators": 4, "tee": "gramine-direct", "all": true},
+            "environment": {
+                "validators": 4,
+                "tee": "gramine-direct",
+                "all": true,
+                "gramine_image_id": format!("sha256:{}", "ab".repeat(32)),
+            },
             "scenario_data_dir": root.path().join("run-1"),
             "log_audit": {"clean": true},
             "ocomp": {
@@ -603,6 +623,13 @@ mod tests {
         let mut invented = run.clone();
         invented.binding.validator_block_processing[0].elapsed_micros += 1;
         assert!(verify_capacity_run_preimage(&invented, &path).is_err());
+
+        let mut another_image = scenario.clone();
+        another_image["environment"]["gramine_image_id"] =
+            json!(format!("sha256:{}", "cd".repeat(32)));
+        fs::write(&path, serde_json::to_vec_pretty(&another_image).unwrap()).unwrap();
+        let another_image_run = assemble_capacity_run(1, &path).unwrap();
+        assert_ne!(run.artifact_set_hash, another_image_run.artifact_set_hash);
 
         let mut dirty = scenario;
         dirty["source"]["dirty"] = json!(true);

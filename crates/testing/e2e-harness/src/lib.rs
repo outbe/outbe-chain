@@ -209,6 +209,7 @@ pub async fn run() {
                     scenario_dir: world.localnet.scenario_dir(),
                     elapsed: world.started_at.elapsed(),
                     audit: &audit,
+                    gramine_image_id: world.localnet.enclave_image_id(),
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
                 }) {
