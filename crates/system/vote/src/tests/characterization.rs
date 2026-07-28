@@ -10,7 +10,9 @@ use serde_json::Value;
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
-    handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry},
+    handlers::{
+        TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
+    },
     precompile::IVote,
     schema::{ProposalStatus, Vote},
 };
@@ -114,6 +116,52 @@ impl VoteTarget for RawContextTarget {
     fn handle_approved(
         &self,
         _ctx: &BlockRuntimeContext,
+        proposal_id: U256,
+        payload: &[u8],
+        context: VoteTargetContext,
+    ) -> Result<TargetExecutionOutcome> {
+        let expected_height = 10 + VOTING_WINDOW_BLOCKS + 1;
+        if proposal_id != U256::from(1u64)
+            || payload != RAW_PAYLOAD.as_bytes()
+            || context.proposer != PROPOSER
+            || context.attached_value != U256::ZERO
+            || context.block_number != expected_height
+            || context.chain_id != 1
+        {
+            return Err(PrecompileError::Fatal(
+                "execution payload or target context changed".into(),
+            ));
+        }
+        Ok(TargetExecutionOutcome::Applied)
+    }
+}
+
+static RAW_CONTEXT_TARGET: RawContextTarget = RawContextTarget;
+static RAW_CONTEXT_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET];
+static RAW_CONTEXT_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(RAW_CONTEXT_HANDLERS);
+static DUPLICATE_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET, &RAW_CONTEXT_TARGET];
+static DUPLICATE_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(DUPLICATE_HANDLERS);
+
+struct PublicBondedTarget;
+
+impl VoteTarget for PublicBondedTarget {
+    fn target_module(&self) -> Address {
+        UPDATE_ADDRESS
+    }
+
+    fn admission(&self) -> TargetAdmission {
+        TargetAdmission::PublicBonded {
+            amount: U256::from(123u64),
+        }
+    }
+
+    fn validate(&self, _payload: &[u8], _context: VoteTargetContext) -> Result<()> {
+        Ok(())
+    }
+
+    fn handle_approved(
+        &self,
+        _ctx: &BlockRuntimeContext,
         _proposal_id: U256,
         _payload: &[u8],
         _context: VoteTargetContext,
@@ -122,9 +170,9 @@ impl VoteTarget for RawContextTarget {
     }
 }
 
-static RAW_CONTEXT_TARGET: RawContextTarget = RawContextTarget;
-static RAW_CONTEXT_HANDLERS: &[&dyn VoteTarget] = &[&RAW_CONTEXT_TARGET];
-static RAW_CONTEXT_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(RAW_CONTEXT_HANDLERS);
+static PUBLIC_BONDED_TARGET: PublicBondedTarget = PublicBondedTarget;
+static PUBLIC_BONDED_HANDLERS: &[&dyn VoteTarget] = &[&PUBLIC_BONDED_TARGET];
+static PUBLIC_BONDED_REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(PUBLIC_BONDED_HANDLERS);
 
 fn block_context(storage: StorageHandle<'_>, block_number: u64) -> BlockRuntimeContext<'_> {
     BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
@@ -159,6 +207,81 @@ fn creation_preserves_original_payload_bytes_in_state_and_log() {
     let decoded = IVote::ProposalCreated::decode_log_data(created).unwrap();
     assert_eq!(decoded.proposalId, proposal_id);
     assert_eq!(decoded.payload, RAW_PAYLOAD);
+}
+
+#[test]
+fn execution_receives_original_payload_and_exact_context() {
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal(
+            PROPOSER,
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &RAW_CONTEXT_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
+        .unwrap();
+
+    let finalize_height = 10 + VOTING_WINDOW_BLOCKS + 1;
+    vote.process_begin_block(
+        &block_context(storage, finalize_height),
+        &RAW_CONTEXT_REGISTRY,
+    )
+    .unwrap();
+
+    assert_eq!(
+        vote.proposals
+            .get(proposal_id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Approved
+    );
+}
+
+#[test]
+fn registry_rejects_duplicate_target_modules() {
+    assert!(matches!(
+        DUPLICATE_REGISTRY.lookup(UPDATE_ADDRESS),
+        Err(PrecompileError::Revert(message)) if message.contains("duplicate")
+    ));
+}
+
+#[test]
+fn public_bonded_admission_keeps_its_exact_amount_but_is_inert_before_bond_accounting() {
+    assert_eq!(
+        PUBLIC_BONDED_REGISTRY
+            .lookup(UPDATE_ADDRESS)
+            .unwrap()
+            .admission(),
+        TargetAdmission::PublicBonded {
+            amount: U256::from(123u64)
+        }
+    );
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let storage = StorageHandle::new(&mut provider);
+    let mut vote = Vote::new(storage);
+    assert!(matches!(
+        vote.create_proposal(
+            Address::repeat_byte(0x99),
+            UPDATE_ADDRESS,
+            RAW_PAYLOAD,
+            10,
+            &PUBLIC_BONDED_REGISTRY,
+        ),
+        Err(PrecompileError::Unsupported)
+    ));
+    assert_eq!(vote.proposal_count.read().unwrap(), U256::ZERO);
+    assert!(vote.list_pending_proposal_ids().unwrap().is_empty());
 }
 
 #[test]

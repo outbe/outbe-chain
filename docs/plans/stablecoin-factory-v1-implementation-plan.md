@@ -136,7 +136,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-013 | Done | `8c0eea17` | Baseline ACTIVE/PENDING behavior and zero-value paths characterized before SCF-026 changed ballots to ACTIVE-only; raw payload state/log, validator-change quorum, handler failure, replay and outer rollback snapshots covered |
 | SCF-014 | Done | `67d6f2a2` | Behavioral H-1/H/H+1 snapshots: Update activates at begin-block H but history is exact-height sparse; canonical/build/validation stay chain-spec sourced; nested call currently accepts PUSH0 under London and Shanghai; RPC dispatch reflects caller-selected state; Update 56/56, EVM 244/244 (1 skipped), RPC 10/10; review APPROVE |
 | SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration and reader adapter; existing empty shared-buffer behavior remains characterized until an explicit activation boundary; consolidated review deferred to SCF-G1 |
-| SCF-026 | In progress | `4c6b0c41`, `8ca8702b` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission remains inactive until Vote bond accounting |
+| SCF-026 | Done | `4c6b0c41`, `8ca8702b` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, registry uniqueness, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission is deliberately inert until SCF-060/061 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -417,6 +417,11 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-026 — Introduce inert raw-byte Vote target APIs
 
+- **Status:** Done — the compile-time registry exposes validator-only and exact
+  `PublicBonded { amount }` admission classes, passes original payload bytes plus
+  proposer/value/height/chain context, and separates target `Applied`/`Error` from
+  outer infrastructure errors. PublicBonded creation remains deliberately
+  unsupported until SCF-060/061 add liability state and payable admission.
 - **Goal:** Give Factory admission/reservation/execution/cleanup a typed compile-time
   contract before changing Vote state.
 - **Scope/files:** Vote target registry plus adapters for existing Update/Governance.
