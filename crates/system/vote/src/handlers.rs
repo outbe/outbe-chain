@@ -11,6 +11,16 @@ use crate::schema::{ProposalRecord, ProposalStatus};
 /// Static handler table entry type.
 pub type VoteTargetHandlers = &'static [&'static dyn VoteTarget];
 
+/// Deterministic result of applying an approved proposal to its target module.
+///
+/// Infrastructure/provider failures remain the outer [`Result::Err`] and abort
+/// execution. Only a target-declared proposal execution failure uses [`Self::Error`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetExecutionOutcome {
+    Applied,
+    Error { reason: String },
+}
+
 /// Target-module handler for approved vote proposals.
 pub trait VoteTarget: Send + Sync {
     /// Precompile address this handler serves.
@@ -25,7 +35,7 @@ pub trait VoteTarget: Send + Sync {
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
         payload: &Value,
-    ) -> Result<()>;
+    ) -> Result<TargetExecutionOutcome>;
 
     /// Dispatches terminal proposal outcomes to the target module.
     /// Only result of tally is possible (Expired or Approved).
@@ -35,10 +45,13 @@ pub trait VoteTarget: Send + Sync {
         proposal_id: U256,
         payload: &Value,
         status: ProposalStatus,
-    ) -> Result<()> {
+    ) -> Result<TargetExecutionOutcome> {
         match status {
             ProposalStatus::Approved => self.handle_approved(ctx, proposal_id, payload),
-            ProposalStatus::Rejected | ProposalStatus::Expired | ProposalStatus::Pending => Ok(()),
+            ProposalStatus::Rejected
+            | ProposalStatus::Expired
+            | ProposalStatus::Pending
+            | ProposalStatus::Error => Ok(TargetExecutionOutcome::Applied),
         }
     }
 }
@@ -97,7 +110,7 @@ pub fn handle_target_tally(
     proposal_id: U256,
     proposal: &ProposalRecord,
     status: ProposalStatus,
-) -> Result<()> {
+) -> Result<TargetExecutionOutcome> {
     let target = registry.lookup(proposal.target_module)?;
     let json = parse_payload_json(proposal.payload.as_str())?;
     target.handle_tally(ctx, proposal_id, &json, status)

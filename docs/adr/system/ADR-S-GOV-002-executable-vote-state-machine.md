@@ -51,9 +51,9 @@ until a future governance transition resolves it.
 ## State machine and tally
 
 ```text
-Pending --after deadline, quorum absent--------------> Expired
-Pending --after deadline, quorum reached, target Ok--> Approved
-Pending --after deadline, quorum reached, target Err-> Error
+Pending --after deadline, quorum absent---------------------> Expired
+Pending --after deadline, quorum reached, target Applied----> Approved
+Pending --after deadline, quorum reached, target Error------> Error
 ```
 
 `Approved` and `Expired` settle the proposal in V1. `Error` records that approved
@@ -70,9 +70,12 @@ majority.
 
 Vote begin-block runs before Update activation under ADR-B-EVM-001 inside the atomic
 pre-execution hook batch. Approved target handling runs in a nested checkpoint.
-Successful target execution commits before Vote records `Approved`. A target
-execution error rolls back every target effect before Vote records `Error` and emits
-its finalization event; the containing block continues.
+Successful target execution commits before Vote records `Approved`. A target-declared
+`Error` outcome rolls back every target effect before Vote records `Error` and emits
+its finalization event; the containing block continues. An outer execution
+`Err`—including storage/provider failure, unsupported capability or fatal
+inconsistency—is not a proposal outcome: it propagates to the hook caller and the
+enclosing atomic block execution rolls back.
 
 Successful Approved execution refunds an exact bond liability from `VOTE_ADDRESS`
 to the proposer. Expired outcomes burn it with the standard native

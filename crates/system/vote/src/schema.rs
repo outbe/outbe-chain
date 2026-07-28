@@ -10,9 +10,11 @@ use outbe_primitives::storage::{Storable, StorableType};
 ///
 /// Flow:
 /// 1. `Pending` — created, voting open until `voting_deadline_height`.
-/// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Rejected` | `Expired`.
+/// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
 /// 3. For `Approved`, vote dispatches to the target-module handler; further
 ///    state (e.g. scheduled update, activation) lives in that module, not here.
+/// 4. `Error` means deterministic target execution failure. It remains unsettled
+///    and is not retried automatically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProposalStatus {
@@ -20,6 +22,7 @@ pub enum ProposalStatus {
     Approved = 1,
     Rejected = 2,
     Expired = 3,
+    Error = 4,
 }
 
 impl ProposalStatus {
@@ -29,6 +32,7 @@ impl ProposalStatus {
             1 => Ok(Self::Approved),
             2 => Ok(Self::Rejected),
             3 => Ok(Self::Expired),
+            4 => Ok(Self::Error),
             _ => Err(VoteError::InvalidProposalStatus),
         }
     }
@@ -131,7 +135,7 @@ pub struct Vote {
     #[attribute(order = 0)]
     pub proposal_count: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// Bounded list of proposal ids in the voting phase (`Pending` only).
+    /// Bounded list of unsettled proposal ids (`Pending` or `Error`).
     #[attribute(order = 1)]
     pub pending_proposal_ids: outbe_primitives::storage::dsl::List<U256>,
 

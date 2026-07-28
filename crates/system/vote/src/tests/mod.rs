@@ -11,7 +11,7 @@ use outbe_validatorset::logic::status;
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
 use crate::errors::VoteError;
-use crate::handlers::{VoteTarget, VoteTargetRegistry};
+use crate::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetRegistry};
 use crate::runtime::quorum_reached;
 use crate::schema::ProposalStatus;
 use crate::schema::Vote;
@@ -42,8 +42,8 @@ impl VoteTarget for TestUpdateVoteTarget {
         _ctx: &BlockRuntimeContext,
         _proposal_id: U256,
         _payload: &Value,
-    ) -> Result<()> {
-        Ok(())
+    ) -> Result<TargetExecutionOutcome> {
+        Ok(TargetExecutionOutcome::Applied)
     }
 }
 
@@ -162,13 +162,16 @@ impl VoteTestExt for Vote<'_> {
 fn proposal_status_storage_roundtrip() {
     assert_eq!(ProposalStatus::Pending.to_u8(), 0);
     assert_eq!(ProposalStatus::Expired.to_u8(), 3);
+    assert_eq!(ProposalStatus::Error.to_u8(), 4);
     assert_eq!(
         ProposalStatus::from_u8(ProposalStatus::Approved.to_u8()).unwrap(),
         ProposalStatus::Approved
     );
     assert!(ProposalStatus::Approved.is_terminal());
     assert!(!ProposalStatus::Pending.is_terminal());
-    assert!(ProposalStatus::from_u8(4).is_err());
+    assert!(!ProposalStatus::Error.is_terminal());
+    assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
+    assert!(ProposalStatus::from_u8(5).is_err());
 }
 
 #[test]

@@ -3,8 +3,8 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::Result;
-use outbe_vote::handlers::VoteTarget;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget};
 use serde_json::Value;
 
 use crate::payload::validate_schedule_update_json;
@@ -27,11 +27,17 @@ impl VoteTarget for UpdateVoteTarget {
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
         payload: &Value,
-    ) -> Result<()> {
-        Update::new(ctx.storage.clone()).schedule_update_from_propose(
+    ) -> Result<TargetExecutionOutcome> {
+        match Update::new(ctx.storage.clone()).schedule_update_from_propose(
             proposal_id,
             payload,
             ctx.block.block_number,
-        )
+        ) {
+            Ok(()) => Ok(TargetExecutionOutcome::Applied),
+            Err(PrecompileError::Revert(reason)) => {
+                Ok(TargetExecutionOutcome::Error { reason })
+            }
+            Err(err) => Err(err),
+        }
     }
 }

@@ -351,10 +351,12 @@ impl<'storage> Vote<'storage> {
         proposal.set_proposal_status(new_status);
         self.proposals.update(&proposal)?;
 
-        if old_status == ProposalStatus::Pending {
+        let old_unsettled = matches!(old_status, ProposalStatus::Pending | ProposalStatus::Error);
+        let new_unsettled = matches!(new_status, ProposalStatus::Pending | ProposalStatus::Error);
+        if old_unsettled && !new_unsettled {
             self.remove_pending_proposal_id(proposal_id)?;
         }
-        if new_status == ProposalStatus::Pending {
+        if !old_unsettled && new_unsettled {
             self.pending_proposal_ids.push(proposal_id)?;
         }
 

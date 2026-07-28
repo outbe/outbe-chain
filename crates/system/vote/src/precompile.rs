@@ -99,6 +99,7 @@ fn proposal_status_to_abi(status: ProposalStatus) -> IVote::ProposalStatus {
         ProposalStatus::Approved => IVote::ProposalStatus::Approved,
         ProposalStatus::Rejected => IVote::ProposalStatus::Rejected,
         ProposalStatus::Expired => IVote::ProposalStatus::Expired,
+        ProposalStatus::Error => IVote::ProposalStatus::Error,
     }
 }
 
@@ -108,6 +109,7 @@ fn proposal_status_from_abi(status: IVote::ProposalStatus) -> ProposalStatus {
         IVote::ProposalStatus::Approved => ProposalStatus::Approved,
         IVote::ProposalStatus::Rejected => ProposalStatus::Rejected,
         IVote::ProposalStatus::Expired => ProposalStatus::Expired,
+        IVote::ProposalStatus::Error => ProposalStatus::Error,
         _ => ProposalStatus::Pending,
     }
 }

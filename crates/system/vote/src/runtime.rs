@@ -10,7 +10,7 @@ use crate::constants::{
     QUORUM_NUMERATOR, VOTING_WINDOW_BLOCKS,
 };
 use crate::errors::VoteError;
-use crate::handlers::{self, VoteTargetRegistry};
+use crate::handlers::{self, TargetExecutionOutcome, VoteTargetRegistry};
 use crate::notify::ProposalFinalization;
 use crate::schema::Vote;
 use crate::state::{active_validator_addresses, calculate_vote_tally, ProposalStatus, VoteKind};
@@ -34,18 +34,6 @@ pub fn ensure_active_validator(storage: StorageHandle<'_>, caller: Address) -> R
     let vs = ValidatorSet::new(storage);
     if !matches!(vs.get_validator(caller)?, Some(record) if record.status == status::ACTIVE) {
         return Err(VoteError::NotValidator.into());
-    }
-    Ok(())
-}
-
-/// Returns `Ok(())` when `caller` is a registered validator with `status ∈ {PENDING, ACTIVE}`.
-pub fn ensure_voting_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
-    let vs = ValidatorSet::new(storage);
-    if !matches!(
-        vs.get_validator(caller)?,
-        Some(record) if record.status == status::ACTIVE || record.status == status::PENDING
-    ) {
-        return Err(VoteError::NotEligibleValidator.into());
     }
     Ok(())
 }
@@ -119,7 +107,7 @@ impl Vote<'_> {
         approve: bool,
         block_number: u64,
     ) -> Result<()> {
-        ensure_voting_validator(self.storage.clone(), voter)?;
+        ensure_active_validator(self.storage.clone(), voter)?;
 
         let proposal = self
             .proposals
@@ -147,8 +135,8 @@ impl Vote<'_> {
 
     /// Tally proposals whose voting windows have closed.
     ///
-    /// Transitions `Pending` -> `Approved` | `Rejected` | `Expired`. Dispatches the
-    /// terminal outcome to the registered target-module handler in the same pass.
+    /// Transitions `Pending` -> `Approved` | `Expired` | `Error`. Dispatches the
+    /// tally outcome to the registered target-module handler in the same pass.
     pub fn process_begin_block(
         &mut self,
         ctx: &BlockRuntimeContext,
@@ -195,24 +183,27 @@ impl Vote<'_> {
             ProposalStatus::Expired
         };
 
-        let outcome =
-            match handlers::handle_target_tally(registry, ctx, proposal_id, &proposal, status) {
-                Ok(()) => {
-                    self.set_proposal_status(proposal_id, status)?;
-                    match status {
-                        ProposalStatus::Approved => ProposalFinalization::Approved,
-                        ProposalStatus::Expired => ProposalFinalization::Expired,
-                        ProposalStatus::Pending | ProposalStatus::Rejected => unreachable!(),
+        let target_checkpoint = self.storage.checkpoint_guard();
+        let target_outcome =
+            handlers::handle_target_tally(registry, ctx, proposal_id, &proposal, status)?;
+        let outcome = match target_outcome {
+            TargetExecutionOutcome::Applied => {
+                target_checkpoint.commit();
+                self.set_proposal_status(proposal_id, status)?;
+                match status {
+                    ProposalStatus::Approved => ProposalFinalization::Approved,
+                    ProposalStatus::Expired => ProposalFinalization::Expired,
+                    ProposalStatus::Pending | ProposalStatus::Rejected | ProposalStatus::Error => {
+                        unreachable!()
                     }
                 }
-                Err(e) if status == ProposalStatus::Approved => {
-                    self.set_proposal_status(proposal_id, ProposalStatus::Rejected)?;
-                    ProposalFinalization::Rejected {
-                        reason: e.to_string(),
-                    }
-                }
-                Err(err) => return Err(err),
-            };
+            }
+            TargetExecutionOutcome::Error { reason } => {
+                drop(target_checkpoint);
+                self.set_proposal_status(proposal_id, ProposalStatus::Error)?;
+                ProposalFinalization::Error { reason }
+            }
+        };
 
         self.notify_proposal_finalized(block_number, &proposal, &tally, active_count, outcome)
     }

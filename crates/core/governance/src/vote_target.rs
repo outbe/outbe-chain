@@ -10,7 +10,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::GOVERNANCE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result as PrecompileResult;
-use outbe_vote::handlers::VoteTarget;
+use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget};
 use outbe_vote::schema::Vote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -90,7 +90,7 @@ impl VoteTarget for GovernanceVoteTarget {
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
         payload: &Value,
-    ) -> PrecompileResult<()> {
+    ) -> PrecompileResult<TargetExecutionOutcome> {
         let decoded = GovernanceVotePayload::from_value(payload)?;
         decoded.validate()?;
 
@@ -110,7 +110,7 @@ impl VoteTarget for GovernanceVoteTarget {
                 gov.create_approved_gip(author, &decoded.text)?;
             }
         }
-        Ok(())
+        Ok(TargetExecutionOutcome::Applied)
     }
 }
 

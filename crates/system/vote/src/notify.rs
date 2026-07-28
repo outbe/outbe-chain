@@ -13,8 +13,8 @@ use crate::state::VoteTally;
 /// Terminal outcome of a proposal after voting closes.
 pub(crate) enum ProposalFinalization {
     Approved,
-    Rejected { reason: String },
     Expired,
+    Error { reason: String },
 }
 
 fn proposal_ref(proposal_id: U256, proposer: Address, target_module: Address) -> ProposalRef {
@@ -120,19 +120,6 @@ impl Vote<'_> {
                     tally_ref,
                 ));
             }
-            ProposalFinalization::Rejected { reason } => {
-                self.emit(IVote::ProposalRejected {
-                    proposalId: proposal_id,
-                    state: vote_tally,
-                    conflictingproposalId: U256::ZERO,
-                })?;
-                journal_record(JournalRecord::proposal_rejected(
-                    block_number,
-                    proposal_ref,
-                    tally_ref,
-                    reason,
-                ));
-            }
             ProposalFinalization::Expired => {
                 self.emit(IVote::ProposalExpired {
                     proposalId: proposal_id,
@@ -142,6 +129,18 @@ impl Vote<'_> {
                     block_number,
                     proposal_ref,
                     tally_ref,
+                ));
+            }
+            ProposalFinalization::Error { reason } => {
+                self.emit(IVote::ProposalErrored {
+                    proposalId: proposal_id,
+                    state: vote_tally,
+                })?;
+                journal_record(JournalRecord::proposal_errored(
+                    block_number,
+                    proposal_ref,
+                    tally_ref,
+                    reason,
                 ));
             }
         }

@@ -74,13 +74,13 @@ fn cast_vote_rejects_non_validator() {
             .unwrap_err();
         assert!(matches!(
             err,
-            PrecompileError::Revert(msg) if msg.contains("not an eligible validator")
+            PrecompileError::Revert(msg) if msg.contains("not an active validator")
         ));
     });
 }
 
 #[test]
-fn pending_validator_can_cast_vote() {
+fn pending_validator_cannot_cast_vote() {
     with_vote(|storage| {
         register_pending_validator(storage.clone(), PENDING_VOTER, 4);
         let mut vote = Vote::new(storage.clone());
@@ -94,13 +94,14 @@ fn pending_validator_can_cast_vote() {
         )
         .unwrap();
 
-        vote.cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
-            .unwrap();
-
-        assert_eq!(
-            vote.read_proposal_voters(proposal_id).unwrap(),
-            vec![PENDING_VOTER]
-        );
+        let error = vote
+            .cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message) if message.contains("not an active validator")
+        ));
+        assert!(vote.read_proposal_voters(proposal_id).unwrap().is_empty());
     });
 }
 
@@ -126,7 +127,7 @@ fn pending_validator_cannot_create_proposal() {
 }
 
 #[test]
-fn pending_vote_is_stored_but_excluded_from_active_tally() {
+fn pending_validator_cannot_add_a_ballot_to_the_tally() {
     with_vote(|storage| {
         register_pending_validator(storage.clone(), PENDING_VOTER, 4);
         let mut vote = Vote::new(storage.clone());
@@ -140,8 +141,9 @@ fn pending_vote_is_stored_but_excluded_from_active_tally() {
         )
         .unwrap();
 
-        vote.cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
-            .unwrap();
+        assert!(vote
+            .cast_vote_approve(proposal_id, PENDING_VOTER, true, current + 1)
+            .is_err());
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 2)
             .unwrap();
 
@@ -152,7 +154,7 @@ fn pending_vote_is_stored_but_excluded_from_active_tally() {
 
         let info = get_proposal(storage, proposal_id).unwrap().unwrap();
         assert_eq!(info.state, VoteTally { yes: 1, no: 0 });
-        assert_eq!(info.voters_count, 2);
+        assert_eq!(info.voters_count, 1);
     });
 }
 

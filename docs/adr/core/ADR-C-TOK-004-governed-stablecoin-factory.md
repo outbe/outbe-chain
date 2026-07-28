@@ -130,10 +130,12 @@ on `Expired`. Vote allocates the proposal id and calls target-specific
 reserve/terminal hooks in the same transaction; target runtime registration is
 forbidden.
 
-Approved Factory execution runs under a nested checkpoint. On target execution
-error, all partial token code/storage/registry writes roll back before Vote records
-`Error`. The bond liability and all three reservations remain unchanged. Stablecoin
-Factory V1 defines no automatic retry or `Error` cleanup.
+Approved Factory execution runs under a nested checkpoint. On a typed target
+`Error` outcome, all partial token code/storage/registry writes roll back before Vote
+records `Error`. The bond liability and all three reservations remain unchanged.
+Storage/provider failures, unsupported capabilities and fatal inconsistencies remain
+outer execution errors and are not converted into proposal state. Stablecoin Factory
+V1 defines no automatic retry or `Error` cleanup.
 
 ### Deterministic identity and dynamic address class
 
