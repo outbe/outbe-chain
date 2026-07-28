@@ -18,10 +18,6 @@ use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
 
 use outbe_tee::protocol::Ledger;
-use outbe_tee::{
-    GRATIS_MODIFY_KEY_INFO, GRATIS_NONCE_INFO, GRATIS_STATE_HKDF_INFO, GRATIS_VIEW_KEY_INFO,
-    PROMIS_MODIFY_KEY_INFO, PROMIS_NONCE_INFO, PROMIS_STATE_HKDF_INFO, PROMIS_VIEW_KEY_INFO,
-};
 
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
 use crate::errors::{Result, TeeError};
@@ -51,19 +47,19 @@ pub struct Domain {
 
 /// Gratis domain separators — byte-identical to the historical inline labels.
 pub const GRATIS: Domain = Domain {
-    state_info: GRATIS_STATE_HKDF_INFO,
-    view_info: GRATIS_VIEW_KEY_INFO,
-    modify_info: GRATIS_MODIFY_KEY_INFO,
-    nonce_info: GRATIS_NONCE_INFO,
+    state_info: b"outbe/gratis/state-key/v1/",
+    view_info: b"outbe/gratis/view-key/v1",
+    modify_info: b"outbe/gratis/modify-key/v1",
+    nonce_info: b"outbe/gratis/nonce/v1",
     modify_tag: b"outbe/gratis/modify/v1",
 };
 
 /// Promis domain separators — keys are independent from Gratis's.
 pub const PROMIS: Domain = Domain {
-    state_info: PROMIS_STATE_HKDF_INFO,
-    view_info: PROMIS_VIEW_KEY_INFO,
-    modify_info: PROMIS_MODIFY_KEY_INFO,
-    nonce_info: PROMIS_NONCE_INFO,
+    state_info: b"outbe/promis/state-key/v1/",
+    view_info: b"outbe/promis/view-key/v1",
+    modify_info: b"outbe/promis/modify-key/v1",
+    nonce_info: b"outbe/promis/nonce/v1",
     modify_tag: b"outbe/promis/modify/v1",
 };
 

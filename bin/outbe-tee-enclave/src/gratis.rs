@@ -16,7 +16,6 @@ use alloy_primitives::{Address, B256, U256};
 use ring::hmac;
 
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
-use outbe_tee::GRATIS_PLEDGE_HANDLE_INFO;
 
 use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt, hkdf_sha256};
@@ -61,6 +60,11 @@ pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32
 pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
     GRATIS.derive_modify_key(state_key, account)
 }
+
+/// HKDF `info` for the deterministic per-pledge handle:
+/// `HKDF(salt = gratis_state_key, ikm = account ‖ amount ‖ op_nonce,
+/// info = GRATIS_PLEDGE_HANDLE_INFO)`.
+pub const GRATIS_PLEDGE_HANDLE_INFO: &[u8] = b"outbe/gratis/pledge-handle/v1";
 
 /// Deterministic pledge handle (public record id) that replaces the old ZK
 /// commitment. Unique per `(account, amount, op_nonce)`.
