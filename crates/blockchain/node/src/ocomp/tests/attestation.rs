@@ -165,7 +165,7 @@ fn preconditions() -> ActivationPreconditionsV1 {
     }
 }
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     OcompCommitteeSnapshotV1,
     ExportedAttestationAuthorityV1,
     LysisResultV1,
@@ -389,7 +389,7 @@ impl FinalizedInputProofSource for EmptyProofSource {
     }
 }
 
-fn attestation_gate(
+pub(super) fn attestation_gate(
     directory: &tempfile::TempDir,
     authority: Arc<dyn FinalizedAttestationAuthority>,
     height: Arc<AtomicHeightSource>,

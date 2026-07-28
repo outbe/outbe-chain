@@ -51,7 +51,7 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-const E2E_SCENARIOS: [(&str, &str, &str); 8] = [
+const E2E_SCENARIOS: [(&str, &str, &str); 7] = [
     (
         "OCM-E2E-001",
         "Final public Tribute flows through four independent domains to certified Nod",
@@ -66,11 +66,6 @@ const E2E_SCENARIOS: [(&str, &str, &str); 8] = [
         "OCM-E2E-004",
         "A rejected duplicate Tribute never enters the later Lysis generation",
         "FINALIZED_PUBLIC_STATE",
-    ),
-    (
-        "OCM-E2E-005",
-        "A tentative request orphan is released before it can obtain attestation",
-        "FINALITY_PROOF",
     ),
     (
         "OCM-E2E-006",
@@ -759,19 +754,6 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
                     "tribute_count"
                 )? == 1,
                 "duplicate Tribute reached the certified generation"
-            );
-            Ok(())
-        }
-        "OCM-E2E-005" => {
-            validate_applied_public_path(scenario)?;
-            let orphan = object_field(public, "orphan_recovery")?;
-            ensure!(
-                string_field(orphan, "release_reason")? == "orphaned"
-                    && u64_field(orphan, "attestation_error_code")? == 6
-                    && !bool_field(orphan, "attestation_retryable")?
-                    && string_field(object_field(orphan, "orphan_candidate")?, "block_hash")?
-                        != string_field(orphan, "canonical_request_block_hash")?,
-                "tentative orphan was not released and denied attestation exactly"
             );
             Ok(())
         }

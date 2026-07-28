@@ -64,27 +64,6 @@ pub struct OcompExecutionTraceObservationV1 {
     pub forbidden_calculation_entries: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompTentativeCandidateObservationV1 {
-    pub block_number: u64,
-    pub block_hash: alloy_primitives::B256,
-    pub state_root: alloy_primitives::B256,
-    pub intent_id: alloy_primitives::B256,
-    pub worldwide_day: u32,
-}
-
-/// Real partition/reorg evidence for one tentative request candidate.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompOrphanRecoveryObservationV1 {
-    pub orphan_candidate: OcompTentativeCandidateObservationV1,
-    pub canonical_request_block_hash: alloy_primitives::B256,
-    pub release_observed_height: u64,
-    pub release_reason: String,
-    pub orphan_job_id: alloy_primitives::B256,
-    pub attestation_error_code: u16,
-    pub attestation_retryable: bool,
-}
-
 /// Public-path observations retained after behavioral assertions complete.
 ///
 /// This is evidence, not a control surface: every field is populated from
@@ -114,7 +93,6 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub capacity_historical_replay: Option<OcompHistoricalReplayObservationV1>,
     pub owner_rollback: Option<OcompOwnerRollbackObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
-    pub orphan_recovery: Option<OcompOrphanRecoveryObservationV1>,
     pub empty_compatibility_verified: Option<bool>,
     pub duplicate_exclusion_verified: Option<bool>,
     pub restart_replay_verified: Option<bool>,
@@ -216,10 +194,6 @@ pub struct FixtureState {
     pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
     pub ocomp_owner_rollback_observation: Option<OcompOwnerRollbackObservationV1>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
-    /// Runtime-selected proposer isolated by the tentative-orphan scenario.
-    pub ocomp_isolated_validator_index: Option<usize>,
-    pub ocomp_tentative_candidate: Option<OcompTentativeCandidateObservationV1>,
-    pub ocomp_orphan_recovery_observation: Option<OcompOrphanRecoveryObservationV1>,
     pub ocomp_empty_compatibility_verified: Option<bool>,
     pub ocomp_duplicate_exclusion_verified: Option<bool>,
     pub ocomp_restart_replay_verified: Option<bool>,
@@ -314,9 +288,6 @@ impl Default for FixtureState {
             ocomp_historical_replay_observation: None,
             ocomp_owner_rollback_observation: None,
             ocomp_execution_trace_observation: None,
-            ocomp_isolated_validator_index: None,
-            ocomp_tentative_candidate: None,
-            ocomp_orphan_recovery_observation: None,
             ocomp_empty_compatibility_verified: None,
             ocomp_duplicate_exclusion_verified: None,
             ocomp_restart_replay_verified: None,
@@ -377,7 +348,6 @@ impl FixtureState {
             capacity_historical_replay: self.ocomp_historical_replay_observation.clone(),
             owner_rollback: self.ocomp_owner_rollback_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
-            orphan_recovery: self.ocomp_orphan_recovery_observation.clone(),
             empty_compatibility_verified: self.ocomp_empty_compatibility_verified,
             duplicate_exclusion_verified: self.ocomp_duplicate_exclusion_verified,
             restart_replay_verified: self.ocomp_restart_replay_verified,

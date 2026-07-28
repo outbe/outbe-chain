@@ -53,6 +53,10 @@ use crate::ocomp::retention::{
     PinRecordV1, PinReleaseReason, PinStateV1, RetentionError, RetentionStatus,
     RethFinalizedInputProofSource,
 };
+use crate::ocomp::{
+    attestation::{AtomicHeightSource, AttestationAuthorityError, AttestationError},
+    tests::attestation::{attestation_gate, fixture as attestation_fixture},
+};
 
 #[derive(Clone, Default)]
 struct DeterministicProofSource {
@@ -952,7 +956,7 @@ fn ocm_pin_001_orphan_releases_and_remains_non_signable_after_restart() {
         assert!(!coordinator.is_signable(job_id));
         drop(coordinator);
 
-        let restarted = OcompRetentionCoordinator::open(root.path(), source.clone());
+        let restarted = Arc::new(OcompRetentionCoordinator::open(root.path(), source.clone()));
         assert!(!restarted.is_signable(job_id));
         assert!(!restarted.is_exportable(job_id));
         assert_eq!(
@@ -960,6 +964,21 @@ fn ocm_pin_001_orphan_releases_and_remains_non_signable_after_restart() {
             VoteOutcome::Abstained,
             "the orphaned candidate must not become live after restart"
         );
+
+        let (committee, _, mut orphan_result) = attestation_fixture();
+        orphan_result.job_id = job_id;
+        let gate = attestation_gate(
+            root,
+            restarted,
+            Arc::new(AtomicHeightSource::new(105)),
+            committee,
+        );
+        assert!(matches!(
+            gate.attest(orphan_result),
+            Err(AttestationError::Authority(
+                AttestationAuthorityError::NotExported(rejected_job_id)
+            )) if rejected_job_id == job_id
+        ));
     }
 }
 

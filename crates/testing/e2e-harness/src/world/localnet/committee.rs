@@ -321,12 +321,6 @@ impl Localnet {
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        if opts.ocomp_protocol_bundle_hash.is_some() {
-            cmd.env(
-                "RUST_LOG",
-                "info,commonware_consensus::simplex::actors::voter::round=debug",
-            );
-        }
         if let Some(w) = opts.voting_window {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }

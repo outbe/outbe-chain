@@ -321,10 +321,10 @@ Parallelizable groups:
 | `OCM-21` | consume carry-over into the next unformed day limit | `05,08` | contributes `OCM-REQ-001`, `OCM-TIM-001` |
 | `OCM-22` | Promis certified `unused_lysis` credit | `05,17` | contributes `OCM-APL-002` |
 | `OCM-23` | q-forming atomic apply and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001` |
-| `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all public/E2E IDs |
+| `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all non-retired public/E2E IDs |
 | `OCM-25` | public fork/vote/quorum-apply measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-001/002/003/004` |
 | `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001` |
-| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/002/004..008`, `OCM-ISO-001`, `OCM-TRC-001` |
+| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/002/004/006..008`, `OCM-ISO-001`, `OCM-TRC-001` |
 
 ## 6. Detailed task cards
 
@@ -872,21 +872,26 @@ existing key permission patterns. Do not expose broad proof RPC, stream bodies,
 sign or schedule work.
 
 **Test first:** `OCM-FIN-001` adversarial proof vectors and `OCM-PIN-001`
-persistence/orphan/restart boundaries. The tracer regression is the observed
-production sequence: Job A finalizes at 151, becomes terminal at 219 and remains
-retained through 283; retry Job B is admitted/finalized at 221 and progresses
-without replacing A. Add independent Jobs, same-lease retry, changed-lease
-retry, last-reference GC and restart recovery.
+persistence/orphan/restart boundaries. `OCM-PIN-001` drives deterministic
+persisted finality through the production coordinator and journal, then uses
+the real node attestation gate to prove an orphan remains `NotExported` after
+restart without consuming sign-once state. The tracer regression is the
+observed production sequence: Job A finalizes at 151, becomes terminal at 219
+and remains retained through 283; retry Job B is admitted/finalized at 221 and
+progresses without replacing A. Add independent Jobs, same-lease retry,
+changed-lease retry, last-reference GC and restart recovery.
 
 **Evidence/CI:** `OCM-FAST`, `OCM-INT`; proof bytes, tentative/final/orphan
 journal bytes and withheld-vote/refusal result.
 
 **Observable acceptance:** four nodes derive the same JobId/finality height,
 remain non-signable for four blocks, then expose the same
-`VOTING_OPEN(open_height, deadline_height)`; an orphaned candidate never opens
-and cannot be signed after restart. A Supervisor first started or restarted
-after later CE finalization consumes the pre-armed exact request lease and
-cannot fall back to the then-current CE marker.
+`VOTING_OPEN(open_height, deadline_height)`. Separately, deterministic competing
+finality driving the real validator-local coordinator, journal and attestation
+gate proves that an orphaned candidate never opens and cannot be signed after
+restart. A Supervisor first started or restarted after later CE finalization
+consumes the pre-armed exact request lease and cannot fall back to the
+then-current CE marker.
 
 **Risks:** blocking consensus on local export health. Mitigation: only
 tentative-pin durability participates before vote; all later OCOMP failures
@@ -1790,7 +1795,8 @@ control authorization, manifest atomicity/hash, correlated fixture identity and
 trace coverage completeness, plus a harness-contract test proving the OCOMP
 feature is registered once and has no direct job/result/state injection hook.
 
-**Evidence/CI:** `OCM-INT`; contributes all `OCM-PUB/E2E/ISO/TRC` IDs.
+**Evidence/CI:** `OCM-INT`; contributes all non-retired
+`OCM-PUB/E2E/ISO/TRC` IDs.
 
 **Observable acceptance:** an unprivileged development run starts four nodes
 and four OCOMP domains with real UDS/Mongo/CE, records a healthy `4/4` vote
@@ -1988,7 +1994,7 @@ production release gate, TargetLarge or second program.
 
 **Test first/owned IDs:**
 
-- `OCM-E2E-001/002/004..008`;
+- `OCM-E2E-001/002/004/006..008`;
 - `OCM-ISO-001`;
 - `OCM-TRC-001`;
 - rerun every mandatory fast/integration/public ID on exact final artifacts.
@@ -2075,7 +2081,8 @@ revised ledger parser enforces:
 - all `OCM-00..27` tasks have one task-local command;
 - every required normative requirement reaches a test/task/command/oracle;
 - every task dependency exists and the graph is acyclic;
-- exactly `PFS-002-03`/`OCM-E2E-003` are retired and cannot be reused;
+- exactly `PFS-002-03`/`OCM-E2E-003` and the superseded
+  `OCM-E2E-005` stable ID are retired and cannot be reused;
 - exactly `PFS-002-07/-08` are deferred;
 - all referenced lanes, oracles, planned paths and substitution discharges are
   valid.

@@ -125,7 +125,8 @@ are:
 2. supervisor-only stop/restart, event-drop, CAS/Mongo corruption, worker
    schedule and bundle-mismatch controls;
 3. public OCOMP transaction/view/proof helpers and exact-block state snapshots;
-4. a finalized reorg/orphan fixture using the real consensus harness;
+4. a deterministic persisted-finality/orphan fixture driving the production
+   pin coordinator, durable journal, restart recovery and attestation gate;
 5. structured forbidden-call traces for request and quorum-forming vote blocks;
 6. evidence schema V1 for OCOMP assertions and one run-level manifest;
 7. an independent evidence verifier and exact test-discovery check;
@@ -173,7 +174,7 @@ crates/testing/e2e-harness/tests/ocomp_evidence_verifier.rs
 | Test ID | Real seam | Required evidence |
 |---|---|---|
 | `OCM-REQ-001` | payload builder -> begin/user/CE-seal/end executor -> Metadosis | split, exact GREEN Desis or RED carry-over, intent/index/event commit together; final CE root is bound; no Nod/contributor/Tribute-consume effect; retry does not repeat the early effect |
-| `OCM-PIN-001` | consensus proposal/finality -> node pin coordinator | tentative record durable before positive vote; finalize/export transition; orphan release; restart; orphan cannot sign |
+| `OCM-PIN-001` | deterministic consensus boundary -> production node pin coordinator/journal/attestation gate | tentative record durable before positive vote; finalize/export transition; exact competing finality releases the orphan; restart preserves refusal; the real gate returns typed `NotExported` without creating a sign-once record |
 | `OCM-DIS-001` | finalized cursor -> real UDS supervisor | dropped event still discovers one job; duplicate/restart remains exactly once |
 | `OCM-EXP-001` | retained CE MDBX + real Mongo + historical openings -> exporter | complete fold/root/count/nominal; parent-job retention and cursor GC across at least `S+1` Tribute; deterministic left-first opening-proof bisection preserves owner order/completeness under the control cap and a one-owner oversize abstains; body omission/change, opening mutation, source-ahead/behind and exporter restart yield exact export or abstention |
 | `OCM-CAS-001` | exporter/supervisor/worker filesystem CAS | atomic publish, same-descriptor verify, membership/order/length; truncate/change/reorder/TOCTOU/quota faults never reach signing |
@@ -208,7 +209,6 @@ IDs so a single happy-path receipt cannot imply all four claims.
 | `OCM-E2E-001` | exact thirteen-step populated-day story beginning with the existing public encrypted-Tribute projection/CE path, including heterogeneous input, one stopped supervisor, q=3, 1/2/4 workers, mutations, sign-once, delay comparison, q<3 expiry and public output |
 | `OCM-E2E-002` | empty Tribute compatibility branch with compute plane stopped |
 | `OCM-E2E-004` | duplicate owner/day public admission rejection and later manifest absence |
-| `OCM-E2E-005` | tentative request reorg/orphan on a finalizing four-node network |
 | `OCM-E2E-006` | public q-forming full-result vote with a named owner failpoint: third slot and all owner effects roll back on unexpected failure, followed by successful exact retry and complete four-node state equality |
 | `OCM-E2E-007` | one incompatible supervisor refuses OCOMP while its node continues finality |
 | `OCM-E2E-008` | completed nodes and compute processes restart/replay and select the same public active generation without CAS authority |
@@ -218,6 +218,12 @@ IDs so a single happy-path receipt cannot imply all four claims.
 `OCM-ISO-001` is the only privileged lane. The ordinary E2E still uses real
 sibling processes and sockets, but cannot claim UID/mount/cgroup isolation when
 run unprivileged.
+
+`OCM-E2E-003` and `OCM-E2E-005` are retired tombstones and cannot be reused.
+The former depended on an unreachable zero-limit premise; the latter attempted
+to prove a validator-local retention invariant by timing a live consensus
+proposal micro-window. `PFS-002-10` is instead closed by `OCM-PIN-001` in the
+required `OCM-INT` lane.
 
 ### 4.5 Existing Tribute harness reuse contract
 
@@ -505,6 +511,8 @@ ledger. In summary:
 - `PFS-002-02` covers the reachable empty compatibility branch;
 - `PFS-002-03` and its former `OCM-E2E-003` test ID are `RETIRED` tombstones:
   the zero-limit READY premise is not produced by the production lifecycle;
+- `OCM-E2E-005` is also a `RETIRED` tombstone; `PFS-002-10` is closed by the
+  deterministic production-boundary `OCM-PIN-001` integration test;
 - `PFS-002-04..06` cover source mutation, duplicate identity and certified
   owner rollback;
 - `PFS-002-07` and `PFS-002-08` remain explicitly `DEFERRED`;

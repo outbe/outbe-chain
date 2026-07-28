@@ -269,7 +269,10 @@ and MDBX finalized snapshots, but no OCOMP retention handoff, exporter, manifest
 or CAS capability exists. PoC evidence must corrupt Mongo bytes, omit a body,
 change/reorder/truncate a CAS chunk, orphan the request block and restart export.
 Every case must either reconstruct the exact input or produce no signed result
-vote.
+vote. The orphan safety contract is verified at the validator-local production
+boundary: deterministic persisted-finality input drives the real pin
+coordinator, durable journal, restart recovery and attestation gate. It does
+not require timing a live four-node proposal micro-window.
 
 ## Consequences
 

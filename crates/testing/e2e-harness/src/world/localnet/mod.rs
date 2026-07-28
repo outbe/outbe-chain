@@ -22,9 +22,7 @@ mod joiner;
 mod probes;
 
 pub(crate) use probes::LogAudit;
-pub use probes::{
-    CeStartupReplayObservationV1, ConsensusLeaderObservationV1, OcompRuntimeTraceMarkerV1,
-};
+pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 
 use std::collections::HashMap;
 use std::fs;

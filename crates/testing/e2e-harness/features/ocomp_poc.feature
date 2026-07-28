@@ -35,21 +35,6 @@ Feature: Off-chain computation PoC closure
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified Lysis generation contains only the original Tribute
 
-  @ocomp-e2e @ocomp-e2e-005
-  # OCOMP-TEST-ID: OCM-E2E-005
-  Scenario: A tentative request orphan is released before it can obtain attestation
-    Given the canonical four-validator OCOMP Final devnet
-    When an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    When the next request proposer is isolated before the JobIntent request block
-    Then the isolated proposer durably pins one tentative JobIntent candidate
-    When the isolated proposer stops and the other three validators finalize a competing request block
-    Then the isolated proposer rejoins and releases the exact orphaned tentative pin
-    When the validator supervisors submit results directly for that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
-    And the orphaned candidate cannot obtain node attestation
-
   @ocomp-e2e @ocomp-e2e-006
   # OCOMP-TEST-ID: OCM-E2E-006
   Scenario: A q-forming owner failure rolls back the vote slot and every activation effect

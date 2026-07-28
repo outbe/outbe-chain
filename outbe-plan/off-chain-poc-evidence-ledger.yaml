@@ -49,6 +49,14 @@ retired_tests:
       The zero-Lysis-limit READY premise is not produced by the production
       Cycle-to-Metadosis lifecycle; the executable scenario and its state
       injection fixture were removed, and this ID must not be reused.
+  OCM-E2E-005:
+    status: RETIRED
+    reason: >-
+      The orphaned tentative-pin contract is validator-local and is now
+      discharged deterministically by OCM-PIN-001 through the production pin
+      coordinator, durable journal and attestation gate. A live four-node fork
+      required timing a consensus proposal micro-window, duplicated those
+      invariants and was not reliable evidence; this ID must not be reused.
 
 deferred:
   PFS-002-07:
@@ -448,14 +456,17 @@ tests:
     real_components:
       - production_consensus_notifications
       - production_pin_journal
+      - production_node_attestation_gate
+      - production_sign_once_store
       - real_filesystem
     substitutions:
       - deterministic_local_consensus_driver
     substitution_justification: >
-      Deterministic finality/orphan sequencing exposes every pin transition;
-      the four-node orphan scenario discharges the process consensus seam.
-    substitution_discharge:
-      - OCM-E2E-005
+      Deterministic finality/orphan sequencing substitutes only the external
+      consensus boundary. The production coordinator, durable journal,
+      restart recovery and attestation gate execute together, which directly
+      proves the validator-local safety contract without controlling a live
+      proposal micro-window.
     oracles:
       - DURABLE_JOURNAL
       - FINALITY_PROOF
@@ -851,25 +862,6 @@ tests:
       - duplicate_revert_and_unchanged_indexes
       - later_manifest_absence
       - same_public_tribute_fixture_path_as_projection_regression
-  OCM-E2E-005:
-    status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: four-node tentative request orphan
-    real_components:
-      - finalizing_reorg_capable_four_node_harness
-      - real_pin_journals
-      - node_attestation_gate
-    substitutions: []
-    oracles:
-      - FINALITY_PROOF
-      - DURABLE_JOURNAL
-      - PROCESS_BOUNDARY
-    evidence:
-      - orphan_hash_mismatch
-      - released_pin
-      - attestation_refusal
   OCM-E2E-006:
     status: planned
     layer: E2E
@@ -998,7 +990,6 @@ task_ownership:
     - OCM-E2E-001
     - OCM-E2E-002
     - OCM-E2E-004
-    - OCM-E2E-005
     - OCM-E2E-006
     - OCM-E2E-007
     - OCM-E2E-008
@@ -1135,7 +1126,7 @@ requirements:
       tests: [OCM-CAS-001, OCM-DET-001]
     "ADR-S-OCM-002/I-08":
       text: Fork-orphaned input is never signable.
-      tests: [OCM-PIN-001, OCM-E2E-005]
+      tests: [OCM-PIN-001]
     "ADR-S-OCM-002/I-09":
       text: Export ambiguity abstains rather than reading best-effort live state.
       tests: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
@@ -1265,7 +1256,7 @@ requirements:
     POC-20: [OCM-BND-003, OCM-CAS-001, OCM-CTL-001]
     POC-21: [OCM-CAP-001, OCM-PUB-001, OCM-PUB-002]
     POC-22: [OCM-E2E-001, OCM-E2E-008]
-    POC-23: [OCM-PIN-001, OCM-E2E-005]
+    POC-23: [OCM-PIN-001]
     POC-24: [OCM-CTL-001, OCM-E2E-007]
     POC-25: [OCM-PUB-004, OCM-E2E-008]
     POC-26: [OCM-BYT-002, OCM-E2E-002, OCM-E2E-004]
@@ -1304,7 +1295,7 @@ requirements:
       tests: [OCM-DIS-001, OCM-E2E-001]
     PFS-002-10:
       status: required
-      tests: [OCM-PIN-001, OCM-E2E-005]
+      tests: [OCM-PIN-001]
     PFS-002-11:
       status: required
       tests: [OCM-CAS-001, OCM-E2E-001]

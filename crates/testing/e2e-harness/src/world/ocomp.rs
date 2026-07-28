@@ -40,8 +40,7 @@ use outbe_ocomp_protocol::{
     registry::{
         HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
     },
-    LocalErrorCode, LocalErrorV1, NodeMessageKind, PrepareVoteTransactionV1,
-    PreparedVoteTransactionV1, RequestAttestationV1,
+    NodeMessageKind, PrepareVoteTransactionV1, PreparedVoteTransactionV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
@@ -803,55 +802,6 @@ impl OcompTopology {
             );
         }
         PreparedVoteTransactionV1::decode_body(&response.body, &limits).map_err(Into::into)
-    }
-
-    /// Submit one complete canonical result to the real node-owned attestation
-    /// gate and require an objective non-retryable NotFound response. This
-    /// proves that an orphaned tentative candidate cannot regain signing
-    /// authority after competing finality.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn require_orphan_attestation_refusal(
-        &self,
-        validator_index: u8,
-        canonical_result: Vec<u8>,
-    ) -> Result<LocalErrorV1> {
-        let identity = self
-            .launch_identity
-            .ok_or_else(|| eyre::eyre!("OCOMP launch identity is unavailable"))?;
-        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        let stream = UnixStream::connect(self.node_supervisor_socket(validator_index)?)?;
-        let uid = effective_uid()?;
-        let endpoint_identity = EndpointIdentity {
-            chain_id: identity.chain_id,
-            genesis_hash: identity.genesis_hash,
-            boot_nonce: B256::repeat_byte(validator_index.saturating_add(0x41)),
-            protocol_bundle_hash: identity.protocol_bundle_hash,
-        };
-        let mut session = ControlClientSession::connect(
-            stream,
-            ClientPolicy::supervisor_to_node(uid, endpoint_identity, limits),
-        )?;
-        session.handshake()?;
-        let request = RequestAttestationV1 {
-            canonical_result: BoundedBytes(canonical_result),
-        };
-        session.send_request(
-            NodeMessageKind::RequestAttestation as u16,
-            request.encode_body(&limits)?,
-        )?;
-        let response = session.receive_response()?;
-        eyre::ensure!(
-            response.message_kind == NodeMessageKind::Error as u16,
-            "orphaned result unexpectedly received node attestation"
-        );
-        let error = LocalErrorV1::decode_body(&response.body, &limits)?;
-        eyre::ensure!(
-            error.rejected_kind == NodeMessageKind::RequestAttestation as u16
-                && error.error_code == LocalErrorCode::NotFound as u16
-                && !error.retryable,
-            "orphaned result received an unexpected attestation verdict: {error:?}"
-        );
-        Ok(error)
     }
 
     /// Generate and publish the complete immutable measurement fork before any
