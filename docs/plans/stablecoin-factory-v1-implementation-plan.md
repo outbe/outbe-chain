@@ -166,6 +166,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
 | SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
 | SCF-064 | Review | `2d759237` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; combined suites pass and independent G5 review remains |
+| SCF-072 | Review | `42521789` | Real pre-exec Vote→Factory lifecycle publishes one ordered StablecoinCreated through HookEvents; the log changes receipts root and bloom, cumulative gas and marker/state are asserted, and typed Error publishes no creation/settlement log while retaining bond and reservation; independent review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -911,6 +912,15 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T4 execute full block and assert exactly one ordered
   `StablecoinCreated`, receipts root/log bloom/cumulative gas, marker code/hash and no
   target log after an execution Error rollback.
+- **Implementation evidence (`42521789`):** the executor test now seeds a real bonded
+  Factory proposal, runs the production pre-execution lifecycle, publishes its
+  captured logs through the HookEvents receipt seam and verifies committed Factory,
+  Vote, balance, reservation and marker state. A second real proposal reaches typed
+  `Error`, leaves the outer hook batch successful and proves that the receipt contains
+  neither `StablecoinCreated` nor a bond-settlement log.
+- **Verification:** `cargo test -p outbe-evm --lib` (162/162),
+  `cargo clippy -p outbe-evm --lib --tests -- -D warnings`, formatting and diff checks
+  pass. Status remains Review until the independent gate review.
 
 ## SCF-073 — Proposer/validator full-block parity
 
