@@ -3650,6 +3650,7 @@ mod tests {
         stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
         stablecoin_fork::{STABLECOIN_CREATE_BOND, STABLECOIN_V1_PROTOCOL_VERSION_RAW},
     };
+    use outbe_stablecoin::StablecoinContract;
     use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
     use outbe_vote::{
@@ -6972,6 +6973,439 @@ mod tests {
         );
         assert_eq!(factory.token_count().unwrap(), U256::ZERO);
         assert!(factory.reservations.exists(U256::from(1u64)).unwrap());
+    }
+
+    #[test]
+    fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
+        use std::collections::BTreeMap;
+
+        use reth_primitives_traits::Account as TrieAccount;
+        use reth_trie::test_utils::state_root;
+
+        #[derive(Clone, Copy, Debug)]
+        enum Boundary {
+            Approved,
+            Expired,
+            Error,
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        struct Output {
+            state_root: B256,
+            receipts_root: B256,
+            logs_bloom: alloy_primitives::Bloom,
+            receipt_bytes: Vec<Vec<u8>>,
+            receipt_success: Vec<bool>,
+            cumulative_gas: Vec<u64>,
+            created_logs: usize,
+            refunded_logs: usize,
+            burned_logs: usize,
+            status: ProposalStatus,
+            settlement: BondSettlement,
+            factory_count: U256,
+            registered_token_id: Option<B256>,
+            token_by_id: Address,
+            token_by_ticker: Address,
+            token_code_hash: Option<B256>,
+            token_total_supply: U256,
+            issuer_token_balance: U256,
+            issuer_balance: U256,
+            vote_balance: U256,
+            liabilities: U256,
+            reservation_exists: bool,
+        }
+
+        fn full_state_root(state: &State<CacheDB<EmptyDBTyped<ProviderError>>>) -> B256 {
+            let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = state
+                .database
+                .cache
+                .accounts
+                .iter()
+                .filter_map(|(address, account)| {
+                    account.info().map(|info| {
+                        (
+                            *address,
+                            (
+                                info,
+                                account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
+                            ),
+                        )
+                    })
+                })
+                .collect();
+            for (address, cached) in &state.cache.accounts {
+                match &cached.account {
+                    Some(current) => {
+                        let entry = accounts
+                            .entry(*address)
+                            .or_insert_with(|| (current.info.clone(), BTreeMap::new()));
+                        entry.0 = current.info.clone();
+                        entry
+                            .1
+                            .extend(current.storage.iter().map(|(k, v)| (*k, *v)));
+                    }
+                    None => {
+                        accounts.remove(address);
+                    }
+                }
+            }
+            state_root(accounts.into_iter().map(|(address, (info, storage))| {
+                let bytecode_hash = (!info.code_hash.is_zero() && info.code_hash != keccak256([]))
+                    .then_some(info.code_hash);
+                let account = TrieAccount {
+                    nonce: info.nonce,
+                    balance: info.balance,
+                    bytecode_hash,
+                };
+                let storage = storage
+                    .into_iter()
+                    .filter(|(_, value)| !value.is_zero())
+                    .map(|(slot, value)| (B256::from(slot.to_be_bytes::<32>()), value));
+                (address, (account, storage))
+            }))
+        }
+
+        fn run(boundary: Boundary, validator_execution: bool) -> Output {
+            const CREATION_BLOCK: u64 = 7;
+            let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let issuer = Address::repeat_byte(0x31);
+            let validators = [
+                (proposer, dummy_pubkey(0xc1)),
+                (Address::repeat_byte(0xc2), dummy_pubkey(0xc2)),
+                (Address::repeat_byte(0xc3), dummy_pubkey(0xc3)),
+            ];
+            let payload = encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+                issuer,
+                name: "Parity Dollar".into(),
+                ticker: "PARUSD".into(),
+                iso4217: 840,
+                decimals: 6,
+                supply_cap: U256::from(1_000_000u64),
+                policy_id: U256::from(1u64),
+            })
+            .expect("canonical Factory payload");
+            let payload = core::str::from_utf8(&payload).expect("canonical payload is UTF-8");
+
+            let mut state =
+                state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
+            let seed_context = BlockContext::new(
+                CREATION_BLOCK,
+                1_700_000_000,
+                CHAIN_ID,
+                proposer,
+                validators.iter().map(|(address, _)| *address).collect(),
+            );
+            let (expected_token_id, expected_token) = {
+                let mut provider =
+                    super::DirectStorageProvider::new(&mut state, seed_context.clone());
+                let storage = StorageHandle::new(&mut provider);
+                storage
+                    .sstore(
+                        UPDATE_ADDRESS,
+                        U256::ZERO,
+                        U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+                    )
+                    .unwrap();
+                storage
+                    .set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND)
+                    .unwrap();
+                let predicted = StablecoinFactoryContract::new(storage.clone())
+                    .predict_token_address(issuer, "PARUSD")
+                    .unwrap();
+                let mut vote = Vote::new(storage.clone());
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        payload,
+                        CREATION_BLOCK,
+                        STABLECOIN_CREATE_BOND,
+                        crate::handlers::vote::registry(),
+                    )
+                    .unwrap();
+                match boundary {
+                    Boundary::Approved | Boundary::Error => {
+                        vote.cast_vote_approve(
+                            proposal_id,
+                            validators[0].0,
+                            true,
+                            CREATION_BLOCK + 1,
+                        )
+                        .unwrap();
+                        vote.cast_vote_approve(
+                            proposal_id,
+                            validators[1].0,
+                            true,
+                            CREATION_BLOCK + 1,
+                        )
+                        .unwrap();
+                    }
+                    Boundary::Expired => {}
+                }
+                if matches!(boundary, Boundary::Error) {
+                    let mut corrupted = vote.proposals.get(proposal_id).unwrap().unwrap();
+                    corrupted.payload = "{".into();
+                    vote.proposals.update(&corrupted).unwrap();
+                }
+                let progress_context = BlockRuntimeContext::new(seed_context, storage.clone());
+                outbe_accounting::record_phase1_progress(&progress_context, finalization_block - 2)
+                    .unwrap();
+                provider.flush().expect("seed direct storage");
+                predicted
+            };
+
+            let parent_hash = B256::repeat_byte(0x71);
+            let mut metadata = test_metadata();
+            metadata.finalized_block_number = finalization_block - 1;
+            metadata.finalized_block_hash = parent_hash;
+            metadata.ordered_committee = validators.iter().map(|(address, _)| *address).collect();
+            metadata.signer_bitmap = vec![1; validators.len()];
+
+            let bridge = ConsensusExecutionBridge::new();
+            bridge.record_execution_summary(
+                metadata.finalized_block_number,
+                parent_hash,
+                ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                1_700_000_000,
+            );
+            let config =
+                OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge).with_evm_signer(signer);
+            let system_txs = begin_system_txs_for_test(
+                &config,
+                finalization_block,
+                parent_hash,
+                &Bytes::new(),
+                Some(metadata.clone()),
+                proposer,
+            );
+            let evm = config.evm_with_env(
+                &mut state,
+                test_evm_env(finalization_block, REWARDS_ADDRESS),
+            );
+            let mut execution = execution_ctx(Some(0), Bytes::new());
+            execution.inner.parent_hash = parent_hash;
+            execution.parent_consensus_metadata = Some(metadata);
+            execution.proposer_evm_address = Some(proposer);
+            if validator_execution {
+                execution.expected_begin_system_txs = system_txs.clone();
+            }
+            let mut executor = config.create_executor(evm, execution);
+            super::with_phase1_verify_disabled(|| {
+                executor
+                    .apply_pre_execution_changes()
+                    .expect("stablecoin boundary pre-execution");
+            });
+            for transaction in system_txs {
+                executor
+                    .execute_transaction(transaction)
+                    .expect("mandatory begin-zone transaction");
+            }
+
+            let receipts = executor.receipts().to_vec();
+            let receipt_bytes = receipts
+                .iter()
+                .map(|receipt| receipt.with_bloom_ref().encoded_2718())
+                .collect();
+            let receipt_blooms: Vec<_> = receipts
+                .iter()
+                .map(|receipt| receipt.with_bloom_ref())
+                .collect();
+            let receipts_root = alloy_consensus::proofs::calculate_receipt_root(&receipt_blooms);
+            let block_bloom = logs_bloom(receipts.iter().flat_map(|receipt| receipt.logs.iter()));
+            let receipt_success = receipts.iter().map(|receipt| receipt.success).collect();
+            let cumulative_gas = receipts
+                .iter()
+                .map(|receipt| receipt.cumulative_gas_used)
+                .collect();
+            let created_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == STABLECOIN_FACTORY_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
+                })
+                .count();
+            let refunded_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == VOTE_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+                })
+                .count();
+            let burned_logs = receipts
+                .iter()
+                .flat_map(|receipt| &receipt.logs)
+                .filter(|log| {
+                    log.address == VOTE_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+                })
+                .count();
+            drop(executor);
+
+            let read_context = BlockContext::new(
+                finalization_block,
+                1_700_000_000,
+                CHAIN_ID,
+                proposer,
+                validators.iter().map(|(address, _)| *address).collect(),
+            );
+            let (
+                status,
+                settlement,
+                factory_count,
+                registered_token_id,
+                token_by_id,
+                token_by_ticker,
+                token_total_supply,
+                issuer_token_balance,
+                issuer_balance,
+                vote_balance,
+                liabilities,
+                reservation_exists,
+            ) = {
+                let mut provider = super::DirectStorageProvider::new(&mut state, read_context);
+                let storage = StorageHandle::new(&mut provider);
+                let vote = Vote::new(storage.clone());
+                let factory = StablecoinFactoryContract::new(storage.clone());
+                let factory_count = factory.token_count().unwrap();
+                let (token_total_supply, issuer_token_balance) = if factory_count == U256::ONE {
+                    let token = StablecoinContract::new(storage.clone(), expected_token);
+                    (
+                        token.total_supply().unwrap(),
+                        token.balance_of(issuer).unwrap(),
+                    )
+                } else {
+                    (U256::ZERO, U256::ZERO)
+                };
+                (
+                    vote.proposals
+                        .get(U256::from(1u64))
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
+                    factory_count,
+                    factory.registered_token_id(expected_token).unwrap(),
+                    factory.token_by_id(expected_token_id).unwrap(),
+                    factory.token_by_ticker("PARUSD").unwrap(),
+                    token_total_supply,
+                    issuer_token_balance,
+                    storage.balance(issuer).unwrap(),
+                    storage.balance(VOTE_ADDRESS).unwrap(),
+                    vote.bond_liabilities().unwrap(),
+                    factory.reservations.exists(U256::from(1u64)).unwrap(),
+                )
+            };
+            let token_code_hash = state
+                .basic(expected_token)
+                .expect("token account read")
+                .map(|account| account.code_hash);
+            let state_root = full_state_root(&state);
+
+            if matches!(boundary, Boundary::Approved) {
+                assert_eq!(registered_token_id, Some(expected_token_id));
+            }
+            Output {
+                state_root,
+                receipts_root,
+                logs_bloom: block_bloom,
+                receipt_bytes,
+                receipt_success,
+                cumulative_gas,
+                created_logs,
+                refunded_logs,
+                burned_logs,
+                status,
+                settlement,
+                factory_count,
+                registered_token_id,
+                token_by_id,
+                token_by_ticker,
+                token_code_hash,
+                token_total_supply,
+                issuer_token_balance,
+                issuer_balance,
+                vote_balance,
+                liabilities,
+                reservation_exists,
+            }
+        }
+
+        for boundary in [Boundary::Approved, Boundary::Expired, Boundary::Error] {
+            let proposer = run(boundary, false);
+            let validator = run(boundary, true);
+            assert_eq!(
+                proposer, validator,
+                "{boundary:?} must be byte/state equal across execution roles"
+            );
+            assert_eq!(proposer.receipt_success, vec![true; 5]);
+            assert_eq!(proposer.cumulative_gas.len(), 5);
+            match boundary {
+                Boundary::Approved => {
+                    assert_eq!(proposer.created_logs, 1);
+                    assert_eq!(proposer.refunded_logs, 1);
+                    assert_eq!(proposer.burned_logs, 0);
+                    assert_eq!(proposer.status, ProposalStatus::Approved);
+                    assert_eq!(proposer.settlement, BondSettlement::Refunded);
+                    assert_eq!(proposer.factory_count, U256::ONE);
+                    assert_ne!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_id, proposer.token_by_ticker);
+                    assert_eq!(
+                        proposer.token_code_hash,
+                        Some(keccak256(
+                            outbe_primitives::addresses::STABLECOIN_MARKER_CODE
+                        ))
+                    );
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                    assert_eq!(proposer.issuer_token_balance, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, STABLECOIN_CREATE_BOND);
+                    assert_eq!(proposer.vote_balance, U256::ZERO);
+                    assert_eq!(proposer.liabilities, U256::ZERO);
+                    assert!(!proposer.reservation_exists);
+                }
+                Boundary::Expired => {
+                    assert_eq!(proposer.created_logs, 0);
+                    assert_eq!(proposer.refunded_logs, 0);
+                    assert_eq!(proposer.burned_logs, 1);
+                    assert_eq!(proposer.status, ProposalStatus::Expired);
+                    assert_eq!(proposer.settlement, BondSettlement::Burned);
+                    assert_eq!(proposer.factory_count, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, U256::ZERO);
+                    assert_eq!(proposer.vote_balance, U256::ZERO);
+                    assert_eq!(proposer.liabilities, U256::ZERO);
+                    assert!(!proposer.reservation_exists);
+                    assert!(proposer.registered_token_id.is_none());
+                    assert_eq!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_ticker, Address::ZERO);
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                }
+                Boundary::Error => {
+                    assert_eq!(proposer.created_logs, 0);
+                    assert_eq!(proposer.refunded_logs, 0);
+                    assert_eq!(proposer.burned_logs, 0);
+                    assert_eq!(proposer.status, ProposalStatus::Error);
+                    assert_eq!(proposer.settlement, BondSettlement::Unsettled);
+                    assert_eq!(proposer.factory_count, U256::ZERO);
+                    assert_eq!(proposer.issuer_balance, U256::ZERO);
+                    assert_eq!(proposer.vote_balance, STABLECOIN_CREATE_BOND);
+                    assert_eq!(proposer.liabilities, STABLECOIN_CREATE_BOND);
+                    assert!(proposer.reservation_exists);
+                    assert!(proposer.registered_token_id.is_none());
+                    assert_eq!(proposer.token_by_id, Address::ZERO);
+                    assert_eq!(proposer.token_by_ticker, Address::ZERO);
+                    assert_eq!(proposer.token_total_supply, U256::ZERO);
+                }
+            }
+        }
     }
 
     #[test]
