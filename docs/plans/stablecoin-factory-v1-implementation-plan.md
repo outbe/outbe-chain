@@ -169,6 +169,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-070 | Review | `023a723d`, `d7b5532b`, `943ca8e2` | Production registry owns unique fixed Factory/Policy routes, authenticated actual-callee token-class routing and the compile-time Factory Vote target; focused route, namespace, nested-call and target suites pass; independent gate review remains |
 | SCF-072 | Review | `42521789` | Real pre-exec Vote→Factory lifecycle publishes one ordered StablecoinCreated through HookEvents; the log changes receipts root and bloom, cumulative gas and marker/state are asserted, and typed Error publishes no creation/settlement log while retaining bond and reservation; independent review remains |
 | SCF-073 | Review | `caa9fe69` | Independent proposer/validator executions are byte/state equal for Approved, Expired and Error across the mandatory system-tx prefix, receipt bytes/root/bloom/gas, full in-memory state root, Factory indexes, token marker/supply/balances and Vote bond deltas; independent review remains |
+| SCF-080 | Review | `fcdc6cb5` | CLI creates mutable policies, predicts the current global identity offline and submits signer-bound canonical proposals with serialized defaults, raw/human cap, exact bond and warning; behavioral golden/raw-transaction/no-RPC tests pass and full CLI suite is 213/213; closure waits on SCF-071 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -976,6 +977,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   exact `10^24` bond and prints the non-endorsement warning.
 - **Tests:** T1 parsing/boundaries; T2 CLI bytes equal goldens; mocked invalid input
   performs no RPC call; signed transaction value is exact.
+- **Verification:** `stablecoin policy-create`, offline `predict` and bonded `propose`
+  are wired in the production CLI. The proposal test starts from parsed CLI arguments,
+  proves the serialized `decimals=6` and `policyId=1` defaults against canonical
+  golden bytes, and matches the complete signed raw transaction with value `10^24`.
+  Invalid payload input records zero RPC calls; the current Factory/prefix prediction
+  matches an independently generated Keccak vector. Focused tests pass 7/7, the full
+  CLI suite passes 213/213, clippy with `-D warnings`, formatting, real help/predict
+  smoke and diff checks pass. Status remains Review until SCF-071 is closed.
 
 ## SCF-081 — Resolve and implement SDK scope
 
