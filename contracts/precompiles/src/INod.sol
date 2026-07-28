@@ -43,6 +43,25 @@ interface INod {
         uint64 issuedAt;
     }
 
+    /// Finalized on-chain commitment to one activated OCOMP Nod generation.
+    ///
+    /// Individual Nod bodies remain in content-addressed storage and are
+    /// accepted only with a Merkle proof against `nodRoot`.
+    struct CertifiedGenerationData {
+        bool exists;
+        uint32 worldwideDay;
+        uint64 generation;
+        bytes32 nodRoot;
+        bytes32 bucketRoot;
+        bytes32 outputManifestRoot;
+        uint32 tributeCount;
+        uint32 nodCount;
+        uint32 bucketCount;
+        uint256 nodAmountTotal;
+        uint256 nodGratisConsumed;
+        uint64 issuedAt;
+    }
+
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
@@ -62,4 +81,8 @@ interface INod {
 
     // outbe-specific
     function nodData(bytes calldata nodId) external view returns (NodData memory);
+    function certifiedGeneration(uint32 worldwideDay)
+        external
+        view
+        returns (CertifiedGenerationData memory);
 }

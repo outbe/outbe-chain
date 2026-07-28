@@ -2,17 +2,25 @@
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
 use std::fs;
+use std::os::unix::fs::MetadataExt as _;
+#[cfg(any(test, feature = "ocomp-integration"))]
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
 use eyre::{bail, Result};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use eyre::{ensure, WrapErr};
 
-use crate::env::TeeMode;
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
 
 use super::{Localnet, StartOpts};
+
+fn unix_time_offset_arg(offset: i64) -> String {
+    format!("--testnet.unix-time-offset-secs={offset}")
+}
 
 impl Localnet {
     /// Start the committee (and, when TEE is enabled, its enclaves). Idempotent:
@@ -68,6 +76,41 @@ impl Localnet {
     pub fn restart(&mut self) -> Result<()> {
         let opts = self.start_opts.clone();
         self.start(&opts)
+    }
+
+    /// Relaunch one exact stopped committee validator while leaving every other
+    /// stopped validator down. This is the bounded network-partition primitive
+    /// used by the real tentative-candidate orphan scenario.
+    pub fn restart_validator(&mut self, i: usize) -> Result<()> {
+        if i >= self.committee_size() {
+            bail!("validator index {i} is outside the committee");
+        }
+        if self
+            .validators
+            .get_mut(&i)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("validator-{i} is already running");
+        }
+        self.validators.remove(&i);
+        let opts = self.start_opts.clone();
+        let bootnodes = self.bootnodes();
+        if self.tee_enabled() && !self.enclaves.contains_key(&i) {
+            let chain_id_hex = self.chain_id_hex()?;
+            self.start_enclave(i, &chain_id_hex)?;
+        }
+        self.launch_validator(i, &opts, bootnodes.as_deref())?;
+        sleep(Duration::from_secs(2));
+        if self
+            .validators
+            .get_mut(&i)
+            .is_some_and(|guard| guard.exited())
+        {
+            let tail = self.tail_log(i, 20);
+            self.validators.remove(&i);
+            bail!("validator-{i} exited during isolated restart:\n{tail}");
+        }
+        Ok(())
     }
 
     /// Stop and relaunch the entire committee, including every enclave, while
@@ -179,6 +222,26 @@ impl Localnet {
         self.restart()
     }
 
+    /// Relaunch one validator against an alternate immutable chain manifest.
+    ///
+    /// The manifest must describe the same genesis header; this hook exists only
+    /// for fork-install isolation evidence and does not inject state or alter the
+    /// manifests used by the rest of the committee.
+    pub fn restart_validator_with_chain_manifest(
+        &mut self,
+        i: usize,
+        chain_manifest: PathBuf,
+    ) -> Result<()> {
+        if !chain_manifest.is_file() {
+            bail!(
+                "validator-{i} chain manifest does not exist: {}",
+                chain_manifest.display()
+            );
+        }
+        self.validator_chain_manifests.insert(i, chain_manifest);
+        self.restart_validator_and_enclave(i)
+    }
+
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
@@ -187,6 +250,29 @@ impl Localnet {
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
         Ok(())
+    }
+
+    /// Rebuild one validator's derived CE database from its preserved canonical
+    /// Reth history. Only the scenario-owned CE directory is removed, after the
+    /// owned node has stopped; chain DB, keys, consensus state and OCOMP state
+    /// remain untouched.
+    #[cfg(feature = "ocomp-integration")]
+    pub(super) fn restart_validator_after_ce_reset(&mut self, i: usize) -> Result<()> {
+        verified_compressed_entities_reconstruction_path(&self.cfg.dir, self.committee_size(), i)?;
+        self.kill_validator(i)?;
+        let ce_dir = verified_compressed_entities_reconstruction_path(
+            &self.cfg.dir,
+            self.committee_size(),
+            i,
+        )?;
+        fs::remove_dir_all(&ce_dir)
+            .wrap_err_with(|| format!("remove test-owned CE database {}", ce_dir.display()))?;
+        ensure!(
+            !ce_dir.exists(),
+            "test-owned CE database remains after removal: {}",
+            ce_dir.display()
+        );
+        self.restart()
     }
 
     /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
@@ -238,7 +324,36 @@ impl Localnet {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
         if let Some(offset) = opts.unix_time_offset_secs {
-            a.extend(args!["--testnet.unix-time-offset-secs", offset.to_string()]);
+            a.push(unix_time_offset_arg(offset));
+        }
+        if let Some(protocol_bundle_hash) = opts.ocomp_protocol_bundle_hash.as_deref() {
+            let domain = vd.join("ocomp").join("domain-v1");
+            fs::create_dir_all(&domain)?;
+            fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
+            let effective_uid = fs::metadata("/proc/self")?.uid();
+            let supervisor_uid = opts.ocomp_supervisor_uid.unwrap_or(effective_uid);
+            let snapshot_exporter_uid = opts.ocomp_snapshot_exporter_uid.unwrap_or(effective_uid);
+            let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
+            a.extend(args![
+                "--ocomp.supervisor-socket",
+                self.cfg.ocomp_supervisor_socket(i).display(),
+                "--ocomp.snapshot-exporter-socket",
+                self.cfg.ocomp_snapshot_exporter_socket(i).display(),
+                "--ocomp.supervisor-uid",
+                supervisor_uid,
+                "--ocomp.snapshot-exporter-uid",
+                snapshot_exporter_uid,
+                "--ocomp.protocol-bundle-hash",
+                protocol_bundle_hash,
+                "--ocomp.boot-nonce",
+                boot_nonce,
+                "--ocomp.session-generation",
+                1_u64,
+                "--ocomp.key",
+                domain.join("ocomp-key-v1.hex").display(),
+                "--ocomp.validator-index",
+                i,
+            ]);
         }
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
@@ -253,8 +368,7 @@ impl Localnet {
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
         let port = self.cfg.tee_port(i);
-        let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
-        let enclave_bin = if mock {
+        let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
             self.cfg.bin_mock.clone()
         } else {
             self.real_enclave_bin()?
@@ -265,7 +379,11 @@ impl Localnet {
             tee_dir: vd.join("tee"),
             chain_id_hex: chain_id_hex.to_string(),
         });
-        let dkg_seed = mock.then(|| format!("{:064x}", i + 1));
+        let dkg_seed = self
+            .cfg
+            .tee_mode
+            .uses_deterministic_dkg_seed()
+            .then(|| format!("{:064x}", i + 1));
 
         let guard = proc::spawn_enclave(proc::EnclaveSpec {
             name: self.cfg.tee_container(i),
@@ -273,7 +391,7 @@ impl Localnet {
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             sudo: self.cfg.sudo,
-            mock,
+            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
             dkg_seed,
             seal,
             log_path: vd.join("enclave.log"),
@@ -301,17 +419,12 @@ impl Localnet {
 
     /// Resolve the real (non-mock) enclave binary from the build tree.
     pub(super) fn real_enclave_bin(&self) -> Result<PathBuf> {
-        for rel in [
-            "target/debug/outbe-tee-enclave",
-            "target/release/outbe-tee-enclave",
-        ] {
-            let p = self.cfg.repo.join(rel);
-            if p.exists() {
-                return Ok(p);
-            }
+        if self.cfg.bin_enclave.exists() {
+            return Ok(self.cfg.bin_enclave.clone());
         }
         Err(eyre::eyre!(
-            "real enclave binary `outbe-tee-enclave` not found under target/{{debug,release}}"
+            "production enclave binary `outbe-tee-enclave` not found at {}",
+            self.cfg.bin_enclave.display()
         ))
     }
 
@@ -354,9 +467,97 @@ fn cargo_package_version(protocol_version: &str) -> Result<String> {
     Ok(format!("{major}.{minor}.0"))
 }
 
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn compressed_entities_reconstruction_path(
+    scenario_dir: &Path,
+    committee_size: usize,
+    validator_index: usize,
+) -> Result<PathBuf> {
+    if !scenario_dir.is_absolute()
+        || scenario_dir == Path::new("/")
+        || validator_index >= committee_size
+    {
+        bail!(
+            "refuse compressed-entity reconstruction outside one exact committee validator: \
+             scenario={}, validator={validator_index}, committee={committee_size}",
+            scenario_dir.display()
+        );
+    }
+    let path = scenario_dir
+        .join(format!("validator-{validator_index}"))
+        .join("data")
+        .join("compressed_entities");
+    if !path.starts_with(scenario_dir)
+        || path.file_name().and_then(|name| name.to_str()) != Some("compressed_entities")
+    {
+        bail!("compressed-entity reconstruction path escaped its scenario owner");
+    }
+    Ok(path)
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn verified_compressed_entities_reconstruction_path(
+    scenario_dir: &Path,
+    committee_size: usize,
+    validator_index: usize,
+) -> Result<PathBuf> {
+    let path =
+        compressed_entities_reconstruction_path(scenario_dir, committee_size, validator_index)?;
+    let validator_dir = scenario_dir.join(format!("validator-{validator_index}"));
+    let data_dir = validator_dir.join("data");
+    for component in [
+        scenario_dir,
+        validator_dir.as_path(),
+        data_dir.as_path(),
+        path.as_path(),
+    ] {
+        let metadata = fs::symlink_metadata(component)
+            .wrap_err_with(|| format!("inspect CE reconstruction owner {}", component.display()))?;
+        ensure!(
+            metadata.file_type().is_dir() && !metadata.file_type().is_symlink(),
+            "CE reconstruction owner is not one real directory: {}",
+            component.display()
+        );
+    }
+    let canonical_scenario = fs::canonicalize(scenario_dir)
+        .wrap_err_with(|| format!("canonicalize scenario owner {}", scenario_dir.display()))?;
+    let canonical_target = fs::canonicalize(&path)
+        .wrap_err_with(|| format!("canonicalize CE reconstruction target {}", path.display()))?;
+    let expected = canonical_scenario
+        .join(format!("validator-{validator_index}"))
+        .join("data")
+        .join("compressed_entities");
+    ensure!(
+        canonical_target == expected && canonical_target.starts_with(&canonical_scenario),
+        "CE reconstruction target escaped its canonical scenario owner: target={}, owner={}",
+        canonical_target.display(),
+        canonical_scenario.display()
+    );
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{cargo_package_version, rewrite_workspace_version};
+    use super::{
+        cargo_package_version, compressed_entities_reconstruction_path, rewrite_workspace_version,
+        unix_time_offset_arg, verified_compressed_entities_reconstruction_path,
+    };
+    use clap::Parser;
+
+    #[derive(Debug, Parser)]
+    struct ClockOffsetArgs {
+        #[arg(long = "testnet.unix-time-offset-secs")]
+        unix_time_offset_secs: Option<i64>,
+    }
+
+    #[test]
+    fn negative_clock_offset_is_one_clap_parseable_argument() {
+        let offset_arg = unix_time_offset_arg(-3);
+        let parsed = ClockOffsetArgs::try_parse_from(["outbe-chain", offset_arg.as_str()])
+            .expect("negative clock offset must remain the option value");
+
+        assert_eq!(parsed.unix_time_offset_secs, Some(-3));
+    }
 
     #[test]
     fn expands_protocol_version_to_cargo_semver() {
@@ -381,5 +582,38 @@ example = { version = "9.9.9" }
         let rewritten = rewrite_workspace_version(manifest, "3.0.0").unwrap();
         assert!(rewritten.contains("[workspace.package]\nversion = \"3.0.0\""));
         assert!(rewritten.contains("example = { version = \"9.9.9\" }"));
+    }
+
+    #[test]
+    fn ce_reconstruction_path_is_exact_and_committee_bounded() {
+        let scenario = std::path::Path::new("/tmp/outbe-e2e/scenario-1");
+        assert_eq!(
+            compressed_entities_reconstruction_path(scenario, 4, 2).unwrap(),
+            scenario.join("validator-2/data/compressed_entities")
+        );
+        assert!(compressed_entities_reconstruction_path(scenario, 4, 4).is_err());
+        assert!(compressed_entities_reconstruction_path(std::path::Path::new("/"), 4, 0).is_err());
+    }
+
+    #[test]
+    fn ce_reconstruction_target_rejects_an_intermediate_symlink() {
+        let root = tempfile::tempdir().unwrap();
+        let scenario = root.path().join("scenario-1");
+        let outside = root.path().join("outside-validator");
+        std::fs::create_dir_all(outside.join("data/compressed_entities")).unwrap();
+        std::fs::create_dir_all(&scenario).unwrap();
+        std::os::unix::fs::symlink(&outside, scenario.join("validator-0")).unwrap();
+
+        assert!(
+            verified_compressed_entities_reconstruction_path(&scenario, 4, 0).is_err(),
+            "an intermediate symlink must never authorize recursive CE deletion"
+        );
+
+        std::fs::remove_file(scenario.join("validator-0")).unwrap();
+        std::fs::create_dir_all(scenario.join("validator-0/data/compressed_entities")).unwrap();
+        assert_eq!(
+            verified_compressed_entities_reconstruction_path(&scenario, 4, 0).unwrap(),
+            scenario.join("validator-0/data/compressed_entities")
+        );
     }
 }

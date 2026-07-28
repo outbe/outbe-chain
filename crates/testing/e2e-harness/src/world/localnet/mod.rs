@@ -22,6 +22,7 @@ mod joiner;
 mod probes;
 
 pub(crate) use probes::LogAudit;
+pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 
 use std::collections::HashMap;
 use std::fs;
@@ -35,6 +36,12 @@ use crate::internal::config::Config;
 use crate::internal::proc::{args, ChildGuard, EnclaveGuard};
 use crate::internal::shell::Sh;
 
+/// Per-node execution cache for the four validators co-located by the PoC
+/// devnet harness. The upstream 4 GiB default is a single-node deployment
+/// default; applying it four times would consume the declared 12 GiB process
+/// budget before OCOMP begins.
+const CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB: u64 = 512;
+
 /// Test-provided knobs for a localnet start. The **enclave mode** is NOT here —
 /// it's an environment decision read from [`Config::tee_mode`]. Only per-scenario
 /// parameters live on this struct.
@@ -45,6 +52,16 @@ pub struct StartOpts {
     pub voting_window: Option<u64>,
     /// Signed wall-clock offset used only by debug-node day-boundary E2E.
     pub unix_time_offset_secs: Option<i64>,
+    /// The scenario already shifted `genesis.json` before deriving another
+    /// immutable manifest binding from it. Nodes still receive the clock
+    /// offset, but the common start path must not shift genesis a second time.
+    pub genesis_timestamp_pre_shifted: bool,
+    /// Bundle identity already pinned by the measurement chain manifest; used
+    /// only for the node-local OCOMP UDS handshake.
+    pub ocomp_protocol_bundle_hash: Option<String>,
+    /// Optional real service-account UIDs for the systemd isolation lane.
+    pub ocomp_supervisor_uid: Option<u32>,
+    pub ocomp_snapshot_exporter_uid: Option<u32>,
 }
 
 impl StartOpts {
@@ -53,17 +70,45 @@ impl StartOpts {
         Self {
             voting_window: Some(window),
             unix_time_offset_secs: None,
+            genesis_timestamp_pre_shifted: false,
+            ocomp_protocol_bundle_hash: None,
+            ocomp_supervisor_uid: None,
+            ocomp_snapshot_exporter_uid: None,
         }
     }
 
     pub fn near_next_utc_day(window: u64, now_secs: u64) -> Self {
-        const SECONDS_PER_DAY: u64 = 86_400;
         const BOUNDARY_LEAD_SECS: u64 = 120;
+        Self::near_next_utc_day_with_lead(window, now_secs, BOUNDARY_LEAD_SECS)
+    }
+
+    /// Position the debug-node clock an exact number of seconds before the next
+    /// UTC day boundary. Capacity scenarios need a wider lead than the ordinary
+    /// one-item lifecycle because every input must first be finalized through
+    /// the public transaction path.
+    pub fn near_next_utc_day_with_lead(
+        window: u64,
+        now_secs: u64,
+        boundary_lead_secs: u64,
+    ) -> Self {
+        const SECONDS_PER_DAY: u64 = 86_400;
         let next_day = now_secs - (now_secs % SECONDS_PER_DAY) + SECONDS_PER_DAY;
-        let target = next_day.saturating_sub(BOUNDARY_LEAD_SECS);
+        let target = next_day.saturating_sub(boundary_lead_secs);
         Self {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
+            genesis_timestamp_pre_shifted: false,
+            ocomp_protocol_bundle_hash: None,
+            ocomp_supervisor_uid: None,
+            ocomp_snapshot_exporter_uid: None,
+        }
+    }
+
+    /// Enable node-local OCOMP UDS for an already-armed measurement manifest.
+    pub fn with_ocomp_measurement_bundle(protocol_bundle_hash: String) -> Self {
+        Self {
+            ocomp_protocol_bundle_hash: Some(protocol_bundle_hash),
+            ..Self::default()
         }
     }
 }
@@ -78,6 +123,10 @@ pub struct Localnet {
     followers: HashMap<String, ChildGuard>,
     /// Owned validator-indexed enclave containers (committee + joiner).
     enclaves: HashMap<usize, EnclaveGuard>,
+    /// Scenario-only chain-manifest overrides used to prove that a validator
+    /// with a different immutable fork install cannot join the canonical
+    /// consensus namespace. All ordinary validators use `genesis.json`.
+    validator_chain_manifests: HashMap<usize, PathBuf>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
 }
@@ -89,6 +138,7 @@ impl Localnet {
             validators: HashMap::new(),
             followers: HashMap::new(),
             enclaves: HashMap::new(),
+            validator_chain_manifests: HashMap::new(),
             start_opts: StartOpts::default(),
         }
     }
@@ -99,11 +149,6 @@ impl Localnet {
 
     fn dir(&self) -> String {
         self.cfg.dir.display().to_string()
-    }
-
-    /// Absolute path of a file directly under the data dir.
-    fn data_path(&self, name: &str) -> String {
-        self.cfg.dir.join(name).display().to_string()
     }
 
     /// Committee size (`--validators`). Not derivable from the port map: the
@@ -129,6 +174,15 @@ impl Localnet {
         }
     }
 
+    /// OS pid of one owned committee validator. Used only for runtime process
+    /// boundary evidence; callers cannot mutate the process through this API.
+    pub fn validator_pid(&self, validator_index: usize) -> Result<u32> {
+        self.validators
+            .get(&validator_index)
+            .map(ChildGuard::pid)
+            .ok_or_else(|| eyre::eyre!("validator-{validator_index} is not running"))
+    }
+
     /// Co-located hardware enclaves have an E2E-only startup allowance. The
     /// node's production/testnet default remains unchanged and must be chosen
     /// for the deployment topology by its operator.
@@ -143,10 +197,15 @@ impl Localnet {
     /// `node_dir`. Callers `.extend(args![…])` with their role-specific tail.
     fn reth_base_args(&self, node_dir: &Path, i: usize) -> Vec<String> {
         let data = node_dir.join("data");
+        let chain_manifest = self
+            .validator_chain_manifests
+            .get(&i)
+            .cloned()
+            .unwrap_or_else(|| self.cfg.dir.join("genesis.json"));
         args![
             "node",
             "--chain",
-            self.data_path("genesis.json"),
+            chain_manifest.display(),
             "--datadir",
             data.display(),
             "--http",
@@ -155,7 +214,7 @@ impl Localnet {
             "--http.port",
             self.cfg.http_port(i),
             "--http.api",
-            "eth,net,web3,outbe",
+            "eth,net,web3,outbe,debug",
             "--port",
             self.cfg.p2p_port(i),
             "--discovery.port",
@@ -170,6 +229,8 @@ impl Localnet {
             data.join("reth.ipc").display(),
             "--engine.persistence-threshold",
             0,
+            "--engine.cross-block-cache-size",
+            CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
         ]
@@ -376,6 +437,7 @@ fn ymd_utc(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::Environment;
     use std::ffi::OsStr;
 
     fn configured_timeout(mode: crate::env::TeeMode) -> Option<String> {
@@ -394,6 +456,22 @@ mod tests {
         assert_eq!(configured_timeout(TeeMode::Real).as_deref(), Some("120"));
         assert_eq!(configured_timeout(TeeMode::Mock), None);
         assert_eq!(configured_timeout(TeeMode::None), None);
+    }
+
+    #[test]
+    fn co_located_devnet_bounds_each_nodes_cross_block_cache() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+        let cache_size = args
+            .windows(2)
+            .find(|pair| pair[0] == "--engine.cross-block-cache-size")
+            .map(|pair| pair[1].as_str());
+
+        assert_eq!(cache_size, Some("512"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.
@@ -426,5 +504,22 @@ mod tests {
         let wd = worldwide_day();
         assert_eq!(wd.len(), 8);
         assert!(wd.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn custom_day_boundary_lead_is_reflected_exactly_in_the_node_clock_offset() {
+        const NOW: u64 = 1_700_000_000;
+        const LEAD: u64 = 240;
+        const SECONDS_PER_DAY: u64 = 86_400;
+
+        let opts = StartOpts::near_next_utc_day_with_lead(6, NOW, LEAD);
+        let next_day = NOW - (NOW % SECONDS_PER_DAY) + SECONDS_PER_DAY;
+
+        assert_eq!(opts.voting_window, Some(6));
+        assert_eq!(
+            opts.unix_time_offset_secs,
+            Some((next_day - LEAD) as i64 - NOW as i64)
+        );
+        assert!(!opts.genesis_timestamp_pre_shifted);
     }
 }

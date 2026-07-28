@@ -209,11 +209,12 @@ where
                 .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
         }
         if let Some(bridge) = &self.bridge {
-            bridge.record_execution_summary(
+            bridge.record_execution_summary_with_state_root(
                 block.header().inner.number,
                 block.hash(),
                 execution_summary,
                 block.header().inner.timestamp,
+                block.header().inner.state_root,
             );
         }
 

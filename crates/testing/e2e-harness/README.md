@@ -28,6 +28,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
+| `PFS-002-01` through `-24` | Gap: the off-chain request/export/q/activation scenarios are specified; `-07`/`-08` are deferred and no OCOMP scenario is implemented |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
@@ -58,7 +59,8 @@ The entrypoint is the `outbe-e2e` binary. **All configuration is via CLI flags �
 the harness reads no configuration from the environment.** Flags:
 
 - `--validators <N>` — committee size to bootstrap (default 4).
-- `--tee <real|mock|none>` — enclave mode (default `none` = tee-less).
+- `--tee <real|gramine-direct|mock|none>` — enclave mode (default `none` =
+  tee-less); `gramine-direct` uses the production enclave binary without SGX.
 - `--no-sudo` — run scripts/docker without `sudo`.
 - `--all` — treat an unsatisfiable scenario as a failure instead of skipping it.
 - `--debug` — stream localnet setup output (bootstrap / run-testnet / docker) live;
@@ -67,7 +69,8 @@ the harness reads no configuration from the environment.** Flags:
   cluster. When omitted, the harness starts and owns a temporary `mongo:7.0`
   single-node replica set. Either way each node gets a distinct logical database.
 - path overrides (optional, default relative to `--repo`): `--repo`, `--data-dir`,
-  `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--mock-bin`, `--seed`.
+  `--chain-bin`, `--cli-bin`, `--keygen-bin`, `--enclave-bin`, `--mock-bin`,
+  `--seed`.
 - `--evidence-dir <PATH>` — persistent per-scenario JSON evidence. By default it
   is written under `<data-dir>/evidence/<run-id>` and is not removed when a
   successful run cleans its node data.
@@ -84,6 +87,7 @@ Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramin
 ```sh
 cargo build -p outbe-chain --bin outbe-chain
 cargo build --bin outbe-cli
+cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 ```
 
@@ -168,7 +172,7 @@ Run the complete Tribute compressed-entity feature (happy path and edge cases):
 
 ```sh
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock \
+  --tee gramine-direct \
   --validators 4 \
   --input 'crates/testing/e2e-harness/features/tribute_projection.feature'
 ```
@@ -177,14 +181,15 @@ Run only the creation happy path:
 
 ```sh
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
-  --tee mock \
+  --tee gramine-direct \
   --validators 4 \
   --name "A successful tribute is persisted by every validator"
 ```
 
 The scenario performs the complete product flow:
 
-1. Starts an isolated four-validator localnet and mock TEE enclaves.
+1. Starts an isolated four-validator localnet and the production enclave binary
+   under `gramine-direct`.
 2. Starts a temporary `mongo:7.0` single-node replica set. Pass
    `--projection-mongodb-uri <URI>` to use an existing transaction-capable
    deployment instead.

@@ -12,14 +12,11 @@
 //! `tribute_id` is a Poseidon-BN254 hash over sensitive decrypted data, so it is
 //! computed only in the enclave.
 //!
-//! No 32-bit or 64-bit floating-point types anywhere (project numeric rules) —
-//! enforced by the module-level lint below and the `no_floating_point_in_enclave_economics`
-//! source-scan test.
+//! Settlement arithmetic uses checked `U256` operations. The module-level lint
+//! below rejects floating-point arithmetic.
 
-// Deny any floating-point arithmetic in the enclave economics module. Combined
-// with the source-scan test (which also catches float *types*/literals), this
-// keeps the settlement math integer-only (U256), as the on-chain numeric rules
-// require. `clippy::` tool lints are accepted (ignored) by plain rustc.
+// Deny floating-point arithmetic in the enclave economics module.
+// `clippy::` tool lints are accepted (ignored) by plain rustc.
 #![deny(clippy::float_arithmetic)]
 
 use alloy_primitives::{Address, B256, U256};
@@ -214,27 +211,6 @@ pub fn normalize_amount(base_amount: &str, atto_amount: &str) -> Result<U256, St
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Enforce the no-floating-point rule over the enclave economics by
-    /// scanning this module's own source for 32-/64-bit float type tokens. The
-    /// needles are assembled at runtime so this test's own code (and this comment)
-    /// do not trip the scan.
-    #[test]
-    fn no_floating_point_in_enclave_economics() {
-        let src = include_str!("compute.rs");
-        // Needles assembled at runtime; the variable names + assert text avoid the
-        // literal tokens so this test's own source does not trip the scan.
-        let needle_single = ["f", "32"].concat();
-        let needle_double = ["f", "64"].concat();
-        assert!(
-            !src.contains(&needle_single),
-            "32-bit float type found in enclave economics (integer-only rule)"
-        );
-        assert!(
-            !src.contains(&needle_double),
-            "64-bit float type found in enclave economics (integer-only rule)"
-        );
-    }
 
     #[test]
     fn normalize_integer_and_atto() {

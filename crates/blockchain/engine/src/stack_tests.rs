@@ -1999,6 +1999,7 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
         projection_mongodb_database: Some("outbe_projection".to_owned()),
         projection_start_block: 1,
+        ocomp: crate::args::OcompArgs::default(),
     };
 
     let address = validate_validator_evm_signer(
@@ -2975,6 +2976,7 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
         projection_mongodb_database: Some("outbe_projection".to_owned()),
         projection_start_block: 1,
+        ocomp: crate::args::OcompArgs::default(),
     };
 
     let address = super::validate_validator_evm_signer(
@@ -3407,6 +3409,7 @@ mod restart_recovery {
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
             projection_mongodb_database: Some("outbe_projection".to_owned()),
             projection_start_block: 1,
+            ocomp: crate::args::OcompArgs::default(),
         };
         let signer_address = validate_validator_evm_signer(
             &args,
@@ -3486,4 +3489,26 @@ fn validate_timing_rejects_invalid_combinations() {
 #[test]
 fn validate_timing_accepts_defaults() {
     assert!(validate_timing(2000, 4000, 8000).is_ok());
+}
+
+#[test]
+fn ocomp_control_bind_failure_is_contained_from_consensus_lifecycle() {
+    let runtime = contain_ocomp_control_start(Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "path must be shorter than SUN_LEN",
+    )));
+
+    assert!(runtime.is_none());
+}
+
+#[test]
+fn ocomp_manifest_hash_separates_p2p_before_consensus_participation() {
+    let legacy = ocomp_p2p_namespace(None);
+    let first = ocomp_p2p_namespace(Some(B256::repeat_byte(0x11)));
+    let replay = ocomp_p2p_namespace(Some(B256::repeat_byte(0x11)));
+    let different = ocomp_p2p_namespace(Some(B256::repeat_byte(0x12)));
+
+    assert_eq!(first, replay);
+    assert_ne!(first, legacy);
+    assert_ne!(first, different);
 }

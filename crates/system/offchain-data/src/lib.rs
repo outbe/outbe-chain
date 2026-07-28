@@ -16,6 +16,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::{Display, LowerHex},
     str::FromStr,
+    sync::Arc,
 };
 
 use alloy_primitives::{Address, LogData, B256};
@@ -37,14 +38,18 @@ use outbe_offchain_storage::{
 };
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use outbe_tribute::{
-    precompile::ITribute, projection::TRIBUTE_PROJECTION_NAMESPACES, TributeData,
-    TributeRepositoryError, TributeRepositoryReader,
+    precompile::ITribute, projection::TRIBUTE_PROJECTION_NAMESPACES, RetainedTributePin,
+    RetainedTributeReader, TributeData, TributeRepositoryError, TributeRepositoryReader,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Local representation version owned by this projector.
-pub const STORAGE_SCHEMA_VERSION: u32 = 1;
+///
+/// Version 2 adds the job-scoped retained Tribute body and day-index
+/// namespaces. Version 1 nodes must fail closed instead of silently ignoring
+/// those records during OCOMP retention and release.
+pub const STORAGE_SCHEMA_VERSION: u32 = 2;
 /// Namespace containing the singleton projector state.
 pub const PROJECTION_STATE_NAMESPACE: &str = "projection_state";
 /// Singleton projector-state key.
@@ -66,6 +71,17 @@ pub struct ProjectionConfig {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub start_block: u64,
+}
+
+/// Node-owned, read-only selector for the one active PoC retention pin.
+///
+/// The projector supplies the partition day discovered from the finalized
+/// Tribute event. Callers cannot pass a pin through [`FinalizedBlock`].
+pub trait TributeRetentionSelector: Send + Sync {
+    fn active_pin_for(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<RetainedTributePin>, String>;
 }
 
 /// Portable projector identity and progress persisted beside domain data.
@@ -262,6 +278,31 @@ pub struct OffchainDataProjection {
     reader: StorageReaderHandle,
     writer: StorageWriterHandle,
     state: ProjectionState,
+    tribute_retention_selector: Option<Arc<dyn TributeRetentionSelector>>,
+}
+
+/// Reads and validates the managed projection state without acquiring a writer.
+///
+/// Snapshot exporters use this narrow surface only as an availability signal.
+/// The checkpoint is never input authority; exported bodies still have to close
+/// against the exact finalized compressed-entity snapshot.
+pub fn read_projection_state(
+    config: ProjectionConfig,
+    reader: StorageReaderHandle,
+) -> Result<Option<ProjectionState>, ProjectionError> {
+    let namespace = state_namespace()?;
+    let key = state_key()?;
+    let Some(record) = reader.get_record(namespace, &key)? else {
+        return Ok(None);
+    };
+    if record.metadata.is_some() {
+        return Err(ProjectionError::CorruptProjectionState(
+            "projection state must not carry metadata".to_owned(),
+        ));
+    }
+    let state = decode_state(record.value.as_bytes())?;
+    validate_state(&state, config)?;
+    Ok(Some(state))
 }
 
 impl OffchainDataProjection {
@@ -271,19 +312,8 @@ impl OffchainDataProjection {
         reader: StorageReaderHandle,
         writer: StorageWriterHandle,
     ) -> Result<Self, ProjectionError> {
-        let namespace = state_namespace()?;
-        let key = state_key()?;
-        let state = match reader.get_record(namespace, &key)? {
-            Some(record) => {
-                if record.metadata.is_some() {
-                    return Err(ProjectionError::CorruptProjectionState(
-                        "projection state must not carry metadata".to_owned(),
-                    ));
-                }
-                let state = decode_state(record.value.as_bytes())?;
-                validate_state(&state, config)?;
-                state
-            }
+        let state = match read_projection_state(config, reader.clone())? {
+            Some(state) => state,
             None => {
                 if contains_unmanaged_data(&reader)? {
                     return Err(ProjectionError::UnmanagedProjectionData);
@@ -303,7 +333,20 @@ impl OffchainDataProjection {
             reader,
             writer,
             state,
+            tribute_retention_selector: None,
         })
+    }
+
+    /// Opens the projector with the node-owned active-pin selector.
+    pub fn open_with_retention_selector(
+        config: ProjectionConfig,
+        reader: StorageReaderHandle,
+        writer: StorageWriterHandle,
+        selector: Arc<dyn TributeRetentionSelector>,
+    ) -> Result<Self, ProjectionError> {
+        let mut projection = Self::open(config, reader, writer)?;
+        projection.tribute_retention_selector = Some(selector);
+        Ok(projection)
     }
 
     #[must_use]
@@ -349,6 +392,7 @@ impl OffchainDataProjection {
         }
 
         let tribute_reader = TributeRepositoryReader::new(self.reader.clone());
+        let retained_tribute_reader = RetainedTributeReader::new(self.reader.clone());
         let nod_reader = NodRepositoryReader::new(self.reader.clone());
         let mut tribute_ids = BTreeSet::new();
         let mut nod_ids = BTreeSet::new();
@@ -446,12 +490,37 @@ impl OffchainDataProjection {
                         batch.extend(planned.operations().iter().cloned());
                     }
                     ProjectionEvent::TributePartitionRetired { worldwide_day } => {
+                        let retention_pin = self
+                            .tribute_retention_selector
+                            .as_ref()
+                            .map(|selector| selector.active_pin_for(worldwide_day))
+                            .transpose()
+                            .map_err(|reason| ProjectionError::RetentionSelector {
+                                worldwide_day,
+                                reason,
+                            })?
+                            .flatten();
+                        if let Some(pin) = retention_pin {
+                            if pin.worldwide_day != worldwide_day {
+                                return Err(ProjectionError::RetentionPinDayMismatch {
+                                    requested: worldwide_day,
+                                    selected: pin.worldwide_day,
+                                });
+                            }
+                        }
                         for tribute_id in &tribute_ids {
                             let belongs_to_partition = tributes
                                 .current(*tribute_id)?
                                 .is_some_and(|tribute| tribute.worldwide_day == worldwide_day);
                             if belongs_to_partition {
-                                let planned = tributes.delete(*tribute_id)?;
+                                let planned = match retention_pin {
+                                    Some(pin) => tributes.retain_then_delete(
+                                        &retained_tribute_reader,
+                                        pin,
+                                        *tribute_id,
+                                    )?,
+                                    None => tributes.delete(*tribute_id)?,
+                                };
                                 batch.extend(planned.operations().iter().cloned());
                             }
                         }
@@ -1195,6 +1264,18 @@ pub enum ProjectionError {
     MalformedProjectionMetadata(String),
     #[error("managed {entity} primary record has no projection metadata")]
     MissingProjectionMetadata { entity: &'static str },
+    #[error("OCOMP retention selector failed for day {worldwide_day}: {reason}")]
+    RetentionSelector {
+        worldwide_day: WorldwideDay,
+        reason: String,
+    },
+    #[error(
+        "OCOMP retention selector returned day {selected} for requested partition {requested}"
+    )]
+    RetentionPinDayMismatch {
+        requested: WorldwideDay,
+        selected: WorldwideDay,
+    },
     #[error("corrupt projected body: {0}")]
     CorruptProjectedBody(String),
     #[error(

@@ -15,11 +15,15 @@ outbe-tribute.workspace = true
 outbe-fidelity.workspace = true
 outbe-oracle.workspace = true
 outbe-intex.workspace = true
+outbe-ocomp-protocol.workspace = true
 alloy-primitives.workspace = true
 
 [dev-dependencies]
 outbe-offchain-storage.workspace = true
 alloy-sol-types.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

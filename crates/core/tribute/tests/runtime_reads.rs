@@ -5,8 +5,8 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
     CeMdbx, CeWorkConfig, CompressedTreeService, EntityId36, EnvironmentIdentity,
-    ExactParentIdentity, ExecutionScope, FinalizedMarker, StoredBody, ACTIVE_COMMITMENT_SCHEME,
-    LOCAL_STORAGE_SCHEMA_VERSION,
+    ExactParentIdentity, ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody,
+    ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
     Key, MemoryStorage, Namespace, ScanPage, ScanRequest, StorageError, StorageReader,
@@ -139,16 +139,25 @@ impl TreeHarness {
         scope
     }
 
-    fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
-        let output = StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap());
+    fn seal(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) -> SealOutput {
+        StorageHandle::enter(provider, |storage| end_block(storage, scope).unwrap())
+    }
+
+    fn publish(&self, output: SealOutput) {
         let block_number = output.staged_tree_batch.block_number();
         let block_hash = keccak256(block_number.to_be_bytes());
+        let new_root = output.new_root;
         self.service
             .publish_candidate(block_hash, output.staged_tree_batch)
             .unwrap();
         self.service
-            .apply_finalized(block_number, block_hash, output.new_root)
+            .apply_finalized(block_number, block_hash, new_root)
             .unwrap();
+    }
+
+    fn finish(&self, provider: &mut HashMapStorageProvider, scope: &ExecutionScope) {
+        let output = self.seal(provider, scope);
+        self.publish(output);
     }
 }
 
@@ -173,6 +182,43 @@ fn seed_parent_commitments(
         }
     });
     finish(provider, &scope, tree);
+}
+
+#[test]
+fn completed_identity_seal_authenticates_an_unchanged_tribute_collection_root() {
+    let owner = Address::repeat_byte(0x19);
+    let body = tribute(owner, 20_260_723);
+    let mut provider = HashMapStorageProvider::new(1);
+    let tree = TreeHarness::new();
+    seed_parent_commitments(&mut provider, &tree, &[&body]);
+
+    let scope = activate(&mut provider, &tree);
+    let output = tree.seal(&mut provider, &scope);
+    assert_eq!(
+        output.parent_root, output.new_root,
+        "a block without compressed-entity mutations must preserve the parent root"
+    );
+
+    let partition = PartitionRef::TributeWwd(body.worldwide_day);
+    let sealed = scope.sealed_collection_root(&output, partition).unwrap();
+    assert_eq!(sealed.partition(), partition);
+    assert_ne!(sealed.root(), B256::ZERO);
+
+    let sibling_scope = activate(&mut provider, &tree);
+    let sibling = tribute(Address::repeat_byte(0x20), body.worldwide_day.value());
+    StorageHandle::enter(&mut provider, |storage| {
+        let canonical = outbe_tribute::canonical_body(&sibling);
+        mint(storage, &sibling_scope, BodyInput::Tribute(&canonical)).unwrap();
+    });
+    let sibling_output = tree.seal(&mut provider, &sibling_scope);
+    assert!(
+        scope
+            .sealed_collection_root(&sibling_output, partition)
+            .is_err(),
+        "an internally valid sibling candidate must not authorize this execution scope"
+    );
+
+    tree.publish(sibling_output);
 }
 
 #[test]
@@ -222,6 +268,10 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
     finish(&mut provider, &scope, &tree);
 }
 
+// Stable historical ID retained after moving duplicate admission out of the
+// OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
+// completeness from retained accepted inputs.
+// OCOMP-TEST-ID: OCM-E2E-004
 #[test]
 fn issue_is_visible_and_rejects_duplicates_before_projection() {
     let (reader, _) = repository();
@@ -242,11 +292,63 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
         assert_eq!(visible.tribute_id, body.tribute_id);
         assert_eq!(visible.owner, body.owner);
         assert_eq!(visible.nominal_amount_minor, body.nominal_amount_minor);
-        let error = contract.issue(&scope, &reader, &body).unwrap_err();
+        let supply_before = contract.total_supply().unwrap();
+        let totals_before = contract.get_day_totals(body.worldwide_day).unwrap();
+        let projection_before = contract
+            .pre_admission_projection(body.worldwide_day)
+            .unwrap();
+        let owner_index_before = contract
+            .get_tribute_ids_by_owner(&scope, &reader, body.owner)
+            .unwrap();
+        let day_index_before = contract
+            .get_tribute_ids_by_day(&scope, &reader, body.worldwide_day)
+            .unwrap();
+
+        let mut changed_duplicate = copy_tribute(&body);
+        changed_duplicate.nominal_amount_minor += U256::from(7);
+        changed_duplicate.issuance_amount_minor += U256::from(11);
+        let error = contract
+            .issue(&scope, &reader, &changed_duplicate)
+            .unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message == "tribute already exists")
         );
-        assert_eq!(contract.total_supply().unwrap(), 1);
+        assert_eq!(contract.total_supply().unwrap(), supply_before);
+        let totals_after = contract.get_day_totals(body.worldwide_day).unwrap();
+        assert_eq!(totals_after.initialized, totals_before.initialized);
+        assert_eq!(totals_after.tribute_count, totals_before.tribute_count);
+        assert_eq!(
+            totals_after.tribute_nominal_amount,
+            totals_before.tribute_nominal_amount
+        );
+        assert_eq!(totals_after.is_sealed, totals_before.is_sealed);
+        assert_eq!(
+            contract
+                .pre_admission_projection(body.worldwide_day)
+                .unwrap(),
+            projection_before
+        );
+        assert_eq!(
+            contract
+                .get_tribute_ids_by_owner(&scope, &reader, body.owner)
+                .unwrap(),
+            owner_index_before
+        );
+        assert_eq!(
+            contract
+                .get_tribute_ids_by_day(&scope, &reader, body.worldwide_day)
+                .unwrap(),
+            day_index_before
+        );
+        let retained = contract
+            .get_tribute(&scope, &reader, body.tribute_id)
+            .unwrap()
+            .expect("original Tribute remains after duplicate rejection");
+        assert_eq!(retained.tribute_id, body.tribute_id);
+        assert_eq!(retained.owner, body.owner);
+        assert_eq!(retained.worldwide_day, body.worldwide_day);
+        assert_eq!(retained.issuance_amount_minor, body.issuance_amount_minor);
+        assert_eq!(retained.nominal_amount_minor, body.nominal_amount_minor);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
     finish(&mut provider, &scope, &tree);

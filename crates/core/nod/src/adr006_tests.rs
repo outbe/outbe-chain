@@ -28,7 +28,9 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-use crate::{api, NodContract, NodItemState, NodRepositoryReader};
+use crate::{
+    api, NodCertifiedGenerationProjection, NodContract, NodItemState, NodRepositoryReader,
+};
 
 fn item(owner: Address) -> NodItemState {
     let worldwide_day = WorldwideDay::new(20_260_715);
@@ -93,5 +95,113 @@ fn nod_identity_and_abi_boundary_preserve_exact_36_bytes() {
             error,
             PrecompileError::Revert(ref reason) if reason == "invalid bytes length: expected 36"
         ));
+    });
+}
+
+#[test]
+fn certified_generation_is_available_through_the_public_nod_abi() {
+    let worldwide_day = WorldwideDay::new(20_260_726);
+    let generation = NodCertifiedGenerationProjection {
+        worldwide_day,
+        generation: 9,
+        nod_root: B256::repeat_byte(0x11),
+        bucket_root: B256::repeat_byte(0x22),
+        output_manifest_root: B256::repeat_byte(0x33),
+        tribute_count: 257,
+        nod_count: 257,
+        bucket_count: 13,
+        nod_amount_total: U256::from(50_000),
+        nod_gratis_consumed: U256::from(7_000),
+        issued_at: 1_753_488_000,
+    };
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage.clone());
+        nod.ocomp_target_generation
+            .write(&worldwide_day, generation.generation)
+            .unwrap();
+        nod.ocomp_namespace_root
+            .write(&worldwide_day, generation.nod_root)
+            .unwrap();
+        nod.ocomp_bucket_root
+            .write(&worldwide_day, generation.bucket_root)
+            .unwrap();
+        nod.ocomp_output_manifest_root
+            .write(&worldwide_day, generation.output_manifest_root)
+            .unwrap();
+        nod.ocomp_generation_metadata
+            .write(&worldwide_day, generation.metadata_word())
+            .unwrap();
+        nod.ocomp_nod_amount_total
+            .write(&worldwide_day, generation.nod_amount_total)
+            .unwrap();
+        nod.ocomp_nod_gratis_consumed
+            .write(&worldwide_day, generation.nod_gratis_consumed)
+            .unwrap();
+
+        let call = crate::precompile::INod::certifiedGenerationCall {
+            worldwideDay: worldwide_day.into(),
+        }
+        .abi_encode();
+        let output = crate::precompile::dispatch(
+            storage.clone(),
+            &scope,
+            &parent,
+            &call,
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        let actual =
+            crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
+
+        assert!(actual.exists);
+        assert_eq!(actual.worldwideDay, worldwide_day.value());
+        assert_eq!(actual.generation, generation.generation);
+        assert_eq!(actual.nodRoot, generation.nod_root);
+        assert_eq!(actual.bucketRoot, generation.bucket_root);
+        assert_eq!(actual.outputManifestRoot, generation.output_manifest_root);
+        assert_eq!(actual.tributeCount, generation.tribute_count);
+        assert_eq!(actual.nodCount, generation.nod_count);
+        assert_eq!(actual.bucketCount, generation.bucket_count);
+        assert_eq!(actual.nodAmountTotal, generation.nod_amount_total);
+        assert_eq!(actual.nodGratisConsumed, generation.nod_gratis_consumed);
+        assert_eq!(actual.issuedAt, generation.issued_at);
+    });
+}
+
+#[test]
+fn absent_certified_generation_has_an_explicit_public_abi_result() {
+    let worldwide_day = WorldwideDay::new(20_260_727);
+    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
+    let scope = ExecutionScope::new();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let call = crate::precompile::INod::certifiedGenerationCall {
+            worldwideDay: worldwide_day.into(),
+        }
+        .abi_encode();
+        let output =
+            crate::precompile::dispatch(storage, &scope, &parent, &call, Address::ZERO, U256::ZERO)
+                .unwrap();
+        let actual =
+            crate::precompile::INod::certifiedGenerationCall::abi_decode_returns(&output).unwrap();
+
+        assert!(!actual.exists);
+        assert_eq!(actual.worldwideDay, worldwide_day.value());
+        assert_eq!(actual.generation, 0);
+        assert_eq!(actual.nodRoot, B256::ZERO);
+        assert_eq!(actual.bucketRoot, B256::ZERO);
+        assert_eq!(actual.outputManifestRoot, B256::ZERO);
+        assert_eq!(actual.tributeCount, 0);
+        assert_eq!(actual.nodCount, 0);
+        assert_eq!(actual.bucketCount, 0);
+        assert_eq!(actual.nodAmountTotal, U256::ZERO);
+        assert_eq!(actual.nodGratisConsumed, U256::ZERO);
+        assert_eq!(actual.issuedAt, 0);
     });
 }

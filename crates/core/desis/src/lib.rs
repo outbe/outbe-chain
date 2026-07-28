@@ -8,6 +8,7 @@ pub mod api;
 pub mod constants;
 pub mod errors;
 pub mod hooks;
+pub mod ocomp_budget;
 pub mod precompile;
 pub(crate) mod runtime;
 pub mod schema;

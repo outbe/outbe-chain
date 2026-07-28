@@ -358,6 +358,27 @@ contract CCAFlow is BaseAATest {
         assertEq(bundlePlugin.balanceOf(smartAccount, address(token)), 2000e6, "SA bundle balance must be unchanged");
     }
 
+    // OIP-00074: dispatchDecreaseBalance is the cross-account write; without a caller gate any address
+    // routes it through the plugin's executor registration to zero any account's reserve. Guard binds
+    // it to BundleWithdrawHook, so a direct call (attacker or the account owner) must revert.
+    function test_R01_DirectDispatchDecrease_Reverts() external {
+        address smartAccount = _deployAccount();
+        vm.deal(smartAccount, 0.1 ether);
+        _topUp(smartAccount, 1000e6); // reserve = 2000e6
+
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker);
+        vm.expectRevert(abi.encodeWithSelector(BundleModulePlugin.UnauthorizedHook.selector));
+        bundlePlugin.dispatchDecreaseBalance(smartAccount, address(token), 2000e6);
+
+        // Owner self-unlock uses the same entry point and must also revert.
+        vm.prank(smartAccount);
+        vm.expectRevert(abi.encodeWithSelector(BundleModulePlugin.UnauthorizedHook.selector));
+        bundlePlugin.dispatchDecreaseBalance(smartAccount, address(token), 2000e6);
+
+        assertEq(bundlePlugin.balanceOf(smartAccount, address(token)), 2000e6, "reserve must be unchanged");
+    }
+
     function test_Security_UnregisteredExecutor_CannotCallDispatchDecreaseBalance() external {
         address smartAccount = _deployAccount();
         vm.deal(smartAccount, 0.1 ether);
