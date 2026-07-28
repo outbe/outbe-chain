@@ -474,14 +474,14 @@ fn evaluate_ocomp_projection_containment(
                 checkpoint.block_number,
                 checkpoint.block_hash,
                 hash
-            )
+            );
         }
         None => {
             bail!(
                 "OCOMP Mongo checkpoint {} ({}) is unavailable in local canonical history",
                 checkpoint.block_number,
                 checkpoint.block_hash
-            )
+            );
         }
     }
     match required_canonical_hash {
@@ -492,14 +492,14 @@ fn evaluate_ocomp_projection_containment(
                 required.block_number,
                 required.block_hash,
                 hash
-            )
+            );
         }
         None => {
             bail!(
                 "OCOMP finalized job {} ({}) is unavailable in local canonical history",
                 required.block_number,
                 required.block_hash
-            )
+            );
         }
     }
     if checkpoint.block_number < required.block_number {
