@@ -35,6 +35,7 @@ pub mod world;
 
 mod evidence;
 mod internal;
+mod validator_evidence;
 
 use cucumber::cli;
 use cucumber::writer::Stats;
@@ -288,4 +289,65 @@ fn failure_summary(writer: &impl Stats<World>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod validator_lifecycle_suite_contract {
+    use std::collections::BTreeSet;
+
+    use cucumber::gherkin::{Feature, GherkinEnv, Scenario};
+
+    const LIFECYCLE_FEATURE: &str =
+        include_str!("../features/validator_lifecycle_consistency.feature");
+
+    fn expanded_examples(scenario: &Scenario) -> usize {
+        if scenario.examples.is_empty() {
+            return 1;
+        }
+        scenario
+            .examples
+            .iter()
+            .map(|examples| {
+                examples
+                    .table
+                    .as_ref()
+                    .map(|table| table.rows.len().saturating_sub(1))
+                    .unwrap_or_default()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn lifecycle_feature_has_exact_public_path_coverage_contract() {
+        let feature =
+            Feature::parse(LIFECYCLE_FEATURE, GherkinEnv::default()).expect("parse lifecycle FSM");
+        let risk_ids = feature
+            .scenarios
+            .iter()
+            .flat_map(|scenario| scenario.tags.iter())
+            .filter(|tag| tag.starts_with("risk-"))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            risk_ids.len(),
+            16,
+            "one scenario group per live checklist ID"
+        );
+        assert!(!LIFECYCLE_FEATURE.contains("@todo"));
+    }
+
+    #[test]
+    fn expected_failure_filter_expands_to_ten_real_examples() {
+        let feature =
+            Feature::parse(LIFECYCLE_FEATURE, GherkinEnv::default()).expect("parse lifecycle FSM");
+        let selected = feature
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.tags.iter().any(|tag| tag == "expected-to-fail"))
+            .map(expanded_examples)
+            .sum::<usize>();
+
+        assert_eq!(selected, 10);
+    }
 }

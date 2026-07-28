@@ -26,3 +26,9 @@ pub mod stablecoin;
 pub mod stale_join;
 pub mod tribute_projection;
 pub mod zerofee;
+
+pub mod validator_adversarial_consensus;
+pub mod validator_consistency_accounting;
+pub mod validator_consistency_dkg;
+pub mod validator_consistency_evidence;
+pub mod validator_registration_consistency;

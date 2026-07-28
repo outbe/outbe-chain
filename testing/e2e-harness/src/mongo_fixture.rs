@@ -44,22 +44,8 @@ impl ManagedMongoReplicaSet {
         // reach the host loopback on Docker Desktop (Linux VM), so the fixture must
         // work whether the daemon is native Linux or a VM. `--bind_ip_all` lets the
         // docker port proxy reach mongod on the container interface.
-        let publish = format!("127.0.0.1:{port}:{port}");
         let output = base_cmd("docker", sudo)
-            .args([
-                "run",
-                "-d",
-                "--name",
-                name,
-                "-p",
-                &publish,
-                MANAGED_MONGO_IMAGE,
-                "--replSet",
-                "rs0",
-                "--bind_ip_all",
-                "--port",
-                &port.to_string(),
-            ])
+            .args(managed_mongo_run_args(name, port))
             .output()
             .wrap_err("start managed MongoDB container")?;
         if !output.status.success() {
@@ -178,7 +164,41 @@ impl ManagedMongoReplicaSet {
     }
 }
 
+fn managed_mongo_run_args(name: &str, port: u16) -> Vec<String> {
+    vec![
+        "run".to_owned(),
+        "-d".to_owned(),
+        "--name".to_owned(),
+        name.to_owned(),
+        "--publish".to_owned(),
+        format!("127.0.0.1:{port}:{port}"),
+        MANAGED_MONGO_IMAGE.to_owned(),
+        "--replSet".to_owned(),
+        "rs0".to_owned(),
+        "--bind_ip_all".to_owned(),
+        "--port".to_owned(),
+        port.to_string(),
+    ]
+}
+
 fn free_tcp_port() -> Result<u16> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).wrap_err("reserve MongoDB port")?;
     Ok(listener.local_addr()?.port())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::managed_mongo_run_args;
+
+    #[test]
+    fn managed_mongo_uses_loopback_port_publishing() {
+        let args = managed_mongo_run_args("scenario-mongo", 27123);
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--publish", "127.0.0.1:27123:27123"]));
+        assert!(args.iter().any(|arg| arg == "--bind_ip_all"));
+        assert!(!args.iter().any(|arg| arg == "--network"));
+        assert!(!args.iter().any(|arg| arg == "host"));
+    }
 }
