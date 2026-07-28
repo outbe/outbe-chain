@@ -333,6 +333,16 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-022 — Add authenticated actual-callee class routing
 
+- **Status:** Done; exact routes resolve first and the production top-level/subcall
+  hook claims the full reserved class. Runtime dispatch receives the actual callee
+  and requires active exact protocol state, Factory reverse registration, full-id
+  address derivation, exact marker code, V1 token schema and matching stored token
+  identity before entering the shared token ABI. Unknown or forged calldata calls
+  revert/fatal without bytecode fallback; empty-calldata native value transfers
+  remain valid without invoking either token ABI or account bytecode. Focused tests
+  cover inactive/unknown/marker/schema/id failures, top-level two-instance isolation,
+  nested static calls and installed-bytecode fallback denial; the full `outbe-evm`
+  suite and clippy pass.
 - **Goal:** Route many token addresses to one Rust handler without shadowing ordinary
   EVM accounts.
 - **Scope/files:** add a thin exact/class resolver over `precompile_routes`, dispatch,
@@ -374,8 +384,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 - **Status:** In progress — `07b7ae4d` adds the canonical-width exact-state
   resolver and uses it for the fixed Policy route in top-level and nested calls.
-  Explicit propagation into the dynamic class resolver and historical RPC
-  construction remains owned by SCF-022/025.
+  The dynamic class resolver now uses the same exact-state path in SCF-022;
+  historical RPC construction remains owned by SCF-025.
 - **Goal:** Remove `SpecId`/latest-state/token-schema ambiguity.
 - **Scope/files:** primitives/Update re-export, EVM config/dispatch/subcalls and RPC
   exact-state construction; do not alter Update FSM.

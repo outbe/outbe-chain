@@ -42,6 +42,52 @@ pub(crate) struct ExactRoute {
     base_gas: BaseGasFn,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum Route {
+    Exact(ExactRoute),
+    StablecoinClass,
+}
+
+pub(crate) struct RouteCall<'input> {
+    pub(crate) callee: Address,
+    pub(crate) data: &'input [u8],
+    pub(crate) caller: Address,
+    pub(crate) value: U256,
+}
+
+impl Route {
+    pub(crate) fn base_gas(self, input: &[u8]) -> u64 {
+        match self {
+            Self::Exact(route) => route.base_gas(input),
+            Self::StablecoinClass => {
+                outbe_primitives::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base
+            }
+        }
+    }
+
+    pub(crate) fn dispatch(
+        self,
+        storage: StorageHandle,
+        execution_scope: &ExecutionScope,
+        readers: Option<&RuntimeBodyReaders>,
+        call: RouteCall<'_>,
+    ) -> Result<Bytes> {
+        match self {
+            Self::Exact(route) => route.dispatch(
+                storage,
+                execution_scope,
+                readers,
+                call.data,
+                call.caller,
+                call.value,
+            ),
+            Self::StablecoinClass => {
+                stablecoin_class_dispatch(storage, call.callee, call.data, call.caller, call.value)
+            }
+        }
+    }
+}
+
 impl ExactRoute {
     pub(crate) fn base_gas(self, input: &[u8]) -> u64 {
         (self.base_gas)(input)
@@ -103,6 +149,80 @@ fn stablecoin_policy_dispatch(
         ));
     }
     outbe_stablecoinpolicy::precompile::dispatch(storage, data, caller, value)
+}
+
+fn stablecoin_class_dispatch(
+    storage: StorageHandle,
+    token: Address,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    // Reserving the address class must not make native value unspendable. An
+    // empty-calldata transfer uses only revm's ordinary CALL balance semantics;
+    // it neither invokes the token ABI nor falls through to account bytecode.
+    if data.is_empty() && !value.is_zero() {
+        return Ok(Bytes::new());
+    }
+
+    let active = crate::protocol_version::resolve(&storage)?;
+    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
+        return Err(PrecompileError::Revert(
+            "Stablecoin V1 is not active".into(),
+        ));
+    }
+
+    let Some(factory_token_id) =
+        outbe_stablecoinfactory::StablecoinFactoryApi::token_id_of(storage.clone(), token)?
+    else {
+        return Err(PrecompileError::Revert(
+            "unregistered stablecoin address".into(),
+        ));
+    };
+
+    let expected_address = outbe_primitives::stablecoin::stablecoin_address(
+        factory_token_id,
+        STABLECOIN_ADDRESS_PREFIX,
+    );
+    if expected_address != token {
+        return Err(PrecompileError::Fatal(format!(
+            "stablecoin Factory reverse id does not derive callee {token}"
+        )));
+    }
+
+    storage.with_account_info(token, |info| {
+        let marker = info
+            .code
+            .as_ref()
+            .map(revm::state::Bytecode::original_bytes)
+            .unwrap_or_default();
+        if marker.as_ref() != STABLECOIN_MARKER_CODE {
+            return Err(PrecompileError::Fatal(format!(
+                "stablecoin {token} marker code mismatch"
+            )));
+        }
+        Ok(())
+    })?;
+
+    if let Err(error) = outbe_stablecoin::api::schema_version(storage.clone(), token) {
+        return match error {
+            PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => {
+                Err(PrecompileError::Fatal(format!(
+                    "stablecoin {token} schema is not initialized for V1"
+                )))
+            }
+            other => Err(other),
+        };
+    }
+
+    let identity = outbe_stablecoin::api::identity(storage.clone(), token)?;
+    if identity.token_id != factory_token_id {
+        return Err(PrecompileError::Fatal(format!(
+            "stablecoin {token} identity does not match Factory registration"
+        )));
+    }
+
+    outbe_stablecoin::precompile::dispatch(storage, token, data, caller, value)
 }
 
 fn vote_dispatch(
@@ -184,6 +304,12 @@ define_exact_routes! {
     UPDATE_ADDRESS => (DispatchAdapter::Basic(outbe_update::precompile::dispatch), default_base_gas),
 }
 
+pub(crate) fn resolve(address: &Address) -> Option<Route> {
+    lookup(address)
+        .map(Route::Exact)
+        .or_else(|| is_stablecoin_address(*address).then_some(Route::StablecoinClass))
+}
+
 const fn addresses_equal(left: Address, right: Address) -> bool {
     let mut index = 0;
     while index < 20 {
@@ -211,6 +337,9 @@ const fn assert_valid_production_routes(addresses: &[Address]) {
     while index < addresses.len() {
         if is_ethereum_precompile(addresses[index]) {
             panic!("Outbe exact route overlaps an Ethereum precompile");
+        }
+        if is_stablecoin_address(addresses[index]) {
+            panic!("Outbe exact route overlaps the Stablecoin address class");
         }
         let mut other = index + 1;
         while other < addresses.len() {
@@ -249,7 +378,11 @@ fn validate_exact_addresses(addresses: &[Address]) -> std::result::Result<(), Va
 mod tests {
     use super::*;
     use alloy_sol_types::SolCall;
+    use outbe_primitives::stablecoin::StablecoinCreatePayload;
+    use outbe_stablecoin::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi};
+    use outbe_stablecoinfactory::{FactoryReservation, StablecoinFactoryApi as RegistryApi};
     use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
+    use revm::state::Bytecode;
 
     #[test]
     fn production_exact_routes_validate() {
@@ -352,5 +485,196 @@ mod tests {
             )
             .unwrap();
         assert!(IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&output).unwrap());
+    }
+
+    fn class_address(last: u8) -> Address {
+        let mut bytes = [0u8; 20];
+        bytes[..2].copy_from_slice(&STABLECOIN_ADDRESS_PREFIX);
+        bytes[19] = last;
+        Address::from(bytes)
+    }
+
+    fn class_call(callee: Address, data: &[u8]) -> RouteCall<'_> {
+        RouteCall {
+            callee,
+            data,
+            caller: Address::ZERO,
+            value: U256::ZERO,
+        }
+    }
+
+    fn activate(storage: &StorageHandle<'_>) {
+        storage
+            .sstore(
+                UPDATE_ADDRESS,
+                U256::ZERO,
+                U256::from(outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW),
+            )
+            .unwrap();
+    }
+
+    fn install_token(storage: StorageHandle<'_>, marker: bool, initialize: bool) -> Address {
+        let issuer = Address::repeat_byte(0x44);
+        let payload = StablecoinCreatePayload {
+            issuer,
+            name: "Example Dollar".into(),
+            ticker: "EXUSD".into(),
+            iso4217: 840,
+            decimals: 6,
+            supply_cap: U256::from(1_000_000u64),
+            policy_id: U256::from(1u64),
+        };
+        let (token_id, token) = outbe_primitives::stablecoin::predict_stablecoin(
+            storage.chain_id().unwrap(),
+            STABLECOIN_FACTORY_ADDRESS,
+            issuer,
+            &payload.ticker,
+            STABLECOIN_ADDRESS_PREFIX,
+        )
+        .unwrap();
+        let reservation = FactoryReservation {
+            proposal_id: U256::from(1u64),
+            token_id,
+            ticker: payload.ticker.clone(),
+            token,
+        };
+        RegistryApi::reserve(storage.clone(), &reservation).unwrap();
+        RegistryApi::consume(storage.clone(), reservation.proposal_id).unwrap();
+        if marker {
+            storage
+                .set_code(
+                    token,
+                    Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE)),
+                )
+                .unwrap();
+        }
+        if initialize {
+            TokenFactoryApi::new(storage.clone())
+                .initialize(&FactoryTokenInitialization {
+                    token_address: token,
+                    token_id,
+                    creation_protocol_version: u64::from(
+                        outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW,
+                    ),
+                    payload,
+                })
+                .unwrap();
+        }
+        token
+    }
+
+    #[test]
+    fn stablecoin_class_is_claimed_before_activation_and_unknown_members_fail_closed() {
+        let token = class_address(0x11);
+        assert!(matches!(resolve(&token), Some(Route::StablecoinClass)));
+
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let route = resolve(&token).unwrap();
+        assert_eq!(
+            route
+                .dispatch(
+                    storage.clone(),
+                    &ExecutionScope::new(),
+                    None,
+                    RouteCall {
+                        value: U256::from(1u64),
+                        ..class_call(token, &[])
+                    },
+                )
+                .unwrap(),
+            Bytes::new()
+        );
+        assert!(matches!(
+            route.dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &[]),
+            ),
+            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
+        ));
+
+        activate(&storage);
+        assert!(matches!(
+            route.dispatch(
+                storage,
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &[]),
+            ),
+            Err(PrecompileError::Revert(message)) if message == "unregistered stablecoin address"
+        ));
+    }
+
+    #[test]
+    fn class_authentication_requires_registration_marker_schema_and_matching_full_id() {
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        activate(&storage);
+        let token = install_token(storage.clone(), false, false);
+        let route = resolve(&token).unwrap();
+
+        assert!(matches!(
+            route.dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &[]),
+            ),
+            Err(PrecompileError::Fatal(message)) if message.contains("marker code mismatch")
+        ));
+
+        storage
+            .set_code(
+                token,
+                Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE)),
+            )
+            .unwrap();
+        assert!(matches!(
+            route.dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &[]),
+            ),
+            Err(PrecompileError::Fatal(_))
+        ));
+    }
+
+    #[test]
+    fn authenticated_class_dispatch_uses_the_actual_callee() {
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        activate(&storage);
+        let token = install_token(storage.clone(), true, true);
+        let call = outbe_stablecoin::precompile::IStablecoin::symbolCall {};
+        let output = resolve(&token)
+            .unwrap()
+            .dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &call.abi_encode()),
+            )
+            .unwrap();
+        assert_eq!(
+            outbe_stablecoin::precompile::IStablecoin::symbolCall::abi_decode_returns(&output)
+                .unwrap(),
+            "EXUSD"
+        );
+
+        storage
+            .sstore(token, U256::from(2u64), U256::from(0x99u64))
+            .unwrap();
+        assert!(matches!(
+            resolve(&token).unwrap().dispatch(
+                storage,
+                &ExecutionScope::new(),
+                None,
+                class_call(token, &call.abi_encode()),
+            ),
+            Err(PrecompileError::Fatal(message)) if message.contains("identity does not match")
+        ));
     }
 }

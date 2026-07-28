@@ -235,8 +235,9 @@ pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
 pub const STABLECOIN_MARKER_CODE: [u8; 1] = [0xef];
 
 /// Returns whether an address belongs to the reserved dynamic stablecoin class.
-pub fn is_stablecoin_address(address: Address) -> bool {
-    address.as_slice().starts_with(&STABLECOIN_ADDRESS_PREFIX)
+pub const fn is_stablecoin_address(address: Address) -> bool {
+    address.0 .0[0] == STABLECOIN_ADDRESS_PREFIX[0]
+        && address.0 .0[1] == STABLECOIN_ADDRESS_PREFIX[1]
 }
 
 /// System address used for system-only calls (block hooks).

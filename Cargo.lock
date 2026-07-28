@@ -7619,6 +7619,8 @@ dependencies = [
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-slashindicator",
+ "outbe-stablecoin",
+ "outbe-stablecoinfactory",
  "outbe-stablecoinpolicy",
  "outbe-staking",
  "outbe-tee",

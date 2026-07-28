@@ -119,7 +119,7 @@ pub fn extend_outbe_precompiles<DB>(
 {
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
-        |addr: &Address| precompile_routes::lookup(addr).is_some(),
+        |addr: &Address| precompile_routes::resolve(addr).is_some(),
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
@@ -155,7 +155,7 @@ where
     DB::Error: Debug,
 {
     let address = inputs.bytecode_address;
-    let Some(route) = precompile_routes::lookup(&address) else {
+    let Some(route) = precompile_routes::resolve(&address) else {
         return Ok(None);
     };
 
@@ -232,9 +232,12 @@ where
         storage,
         execution_scope.as_ref(),
         runtime_body_readers,
-        data.as_ref(),
-        caller,
-        value,
+        precompile_routes::RouteCall {
+            callee: address,
+            data: data.as_ref(),
+            caller,
+            value,
+        },
     );
 
     if let Some(readers) = runtime_body_readers {
