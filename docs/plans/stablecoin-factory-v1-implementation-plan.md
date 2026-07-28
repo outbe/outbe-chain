@@ -499,6 +499,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-041 — Implement ERC-20 accounting and cap core
 
+- **Status:** Done; metadata and ERC-20 core selectors dispatch against the actual
+  token address, while shared mint/burn internals preserve checked supply/cap
+  invariants for the role layer. Evidence: 17 focused tests covering exact
+  errors/events, finite and infinite allowance, zero-value and max-balance
+  self-transfer edges, a 512-step reference model and failure-after-every-mutation
+  rollback of allowance, balances and logs.
 - **Goal:** Supply-conserving checked token accounting.
 - **Depends on:** SCF-040.
 - **Done when:** metadata, totalSupply, balance, allowance, approve, transfer,

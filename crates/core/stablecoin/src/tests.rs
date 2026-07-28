@@ -1,5 +1,5 @@
 use alloy_primitives::{address, keccak256, Address, B256, U256};
-use alloy_sol_types::SolError;
+use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_primitives::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
@@ -12,6 +12,7 @@ use outbe_stablecoinpolicy::ALLOW_ALL_POLICY_ID;
 
 use crate::abi::IStablecoin;
 use crate::api::{FactoryTokenInitialization, StablecoinFactoryApi};
+use crate::precompile::dispatch;
 use crate::schema::{
     role_key, StablecoinContract, ADMIN_ROLE, CAP_MANAGER_ROLE, COMPLIANCE_ROLE, ENFORCER_ROLE,
     GUARDIAN_ROLE, ISSUER_ROLE, OPERATIONAL_ROLES,
@@ -19,6 +20,13 @@ use crate::schema::{
 
 const CHAIN_ID: u64 = 7;
 const ISSUER: Address = address!("1000000000000000000000000000000000000001");
+
+fn assert_revert<E: SolError>(error: PrecompileError) {
+    match error {
+        PrecompileError::RevertBytes(bytes) => assert_eq!(&bytes[..4], E::SELECTOR),
+        other => panic!("expected typed revert, got {other:?}"),
+    }
+}
 
 fn initialization(ticker: &str) -> FactoryTokenInitialization {
     let (token_id, token_address) = predict_stablecoin(
@@ -43,6 +51,25 @@ fn initialization(ticker: &str) -> FactoryTokenInitialization {
             policy_id: ALLOW_ALL_POLICY_ID,
         },
     }
+}
+
+fn transfer_from_baseline(
+    init: &FactoryTokenInitialization,
+    owner: Address,
+    spender: Address,
+) -> HashMapStorageProvider {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(owner, U256::from(100)).unwrap();
+        token.approve(owner, spender, U256::from(60)).unwrap();
+    });
+    provider.clear_events(init.token_address);
+    provider.clear_mutation_failure();
+    provider
 }
 
 #[test]
@@ -239,5 +266,439 @@ fn every_injected_initialization_failure_rolls_back_all_token_state() {
                 assert!(!token.roles.read(&role_key(role, ISSUER)).unwrap());
             }
         });
+    }
+}
+
+#[test]
+fn erc20_core_handles_transfer_approval_and_infinite_allowance() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x21);
+    let bob = Address::repeat_byte(0x22);
+    let spender = Address::repeat_byte(0x23);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(100)).unwrap();
+        token.transfer(alice, bob, U256::from(25)).unwrap();
+        token.approve(alice, spender, U256::from(40)).unwrap();
+        token
+            .transfer_from(spender, alice, bob, U256::from(10))
+            .unwrap();
+
+        assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(65));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::from(35));
+        assert_eq!(token.allowance_of(alice, spender).unwrap(), U256::from(30));
+
+        token.approve(alice, spender, U256::MAX).unwrap();
+        token
+            .transfer_from(spender, alice, bob, U256::from(5))
+            .unwrap();
+        assert_eq!(token.allowance_of(alice, spender).unwrap(), U256::MAX);
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(60));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::from(40));
+    });
+}
+
+#[test]
+fn self_transfer_preserves_max_balance_and_still_emits() {
+    let mut init = initialization("USDX");
+    init.payload.supply_cap = U256::MAX;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(ISSUER, U256::MAX).unwrap();
+        token.transfer(ISSUER, ISSUER, U256::MAX).unwrap();
+        token.approve(ISSUER, ISSUER, U256::MAX).unwrap();
+        token
+            .transfer_from(ISSUER, ISSUER, ISSUER, U256::MAX)
+            .unwrap();
+        assert_eq!(token.balance_of(ISSUER).unwrap(), U256::MAX);
+        assert_eq!(token.total_supply().unwrap(), U256::MAX);
+        assert_eq!(token.allowance_of(ISSUER, ISSUER).unwrap(), U256::MAX);
+    });
+}
+
+#[test]
+fn erc20_core_mint_burn_cap_and_zero_amount_edges_are_atomic() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x31);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        assert!(matches!(
+            token.mint_core(alice, U256::ZERO),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+        assert!(matches!(
+            token.burn_core(alice, U256::ZERO),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+        token.mint_core(alice, init.payload.supply_cap).unwrap();
+        assert!(matches!(
+            token.mint_core(alice, U256::from(1)),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+        assert_eq!(token.total_supply().unwrap(), init.payload.supply_cap);
+        assert_eq!(token.balance_of(alice).unwrap(), init.payload.supply_cap);
+
+        token.burn_core(alice, U256::from(17)).unwrap();
+        assert_eq!(
+            token.total_supply().unwrap(),
+            init.payload.supply_cap - U256::from(17)
+        );
+        assert_eq!(
+            token.balance_of(alice).unwrap(),
+            init.payload.supply_cap - U256::from(17)
+        );
+        assert!(matches!(
+            token.burn_core(alice, init.payload.supply_cap),
+            Err(PrecompileError::RevertBytes(_))
+        ));
+    });
+}
+
+#[test]
+fn erc20_core_uses_the_exact_public_error_selectors() {
+    let mut init = initialization("USDX");
+    init.payload.supply_cap = U256::from(10);
+    let alice = Address::repeat_byte(0x35);
+    let bob = Address::repeat_byte(0x36);
+    let spender = Address::repeat_byte(0x37);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        assert_revert::<IStablecoin::InvalidAddress>(
+            token
+                .transfer(alice, Address::ZERO, U256::ZERO)
+                .unwrap_err(),
+        );
+        assert_revert::<IStablecoin::InvalidAmount>(
+            token.mint_core(alice, U256::ZERO).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::InsufficientBalance>(
+            token.transfer(alice, bob, U256::from(1)).unwrap_err(),
+        );
+        assert_revert::<IStablecoin::InsufficientAllowance>(
+            token
+                .transfer_from(spender, alice, bob, U256::from(1))
+                .unwrap_err(),
+        );
+        token.mint_core(alice, U256::from(10)).unwrap();
+        assert_revert::<IStablecoin::SupplyCapExceeded>(
+            token.mint_core(alice, U256::from(1)).unwrap_err(),
+        );
+    });
+}
+
+#[test]
+fn erc20_zero_value_transfer_is_valid_and_invalid_addresses_fail_before_writes() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x41);
+    let bob = Address::repeat_byte(0x42);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.transfer(alice, bob, U256::ZERO).unwrap();
+        assert_eq!(token.balance_of(alice).unwrap(), U256::ZERO);
+        assert_eq!(token.balance_of(bob).unwrap(), U256::ZERO);
+
+        for result in [
+            token.transfer(alice, Address::ZERO, U256::ZERO),
+            token.approve(alice, Address::ZERO, U256::from(1)),
+            token.mint_core(Address::ZERO, U256::from(1)),
+            token.burn_core(Address::ZERO, U256::from(1)),
+        ] {
+            assert!(matches!(result, Err(PrecompileError::RevertBytes(_))));
+        }
+        assert_eq!(token.total_supply().unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
+fn erc20_events_use_the_exact_canonical_log_shapes() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x51);
+    let bob = Address::repeat_byte(0x52);
+    let spender = Address::repeat_byte(0x53);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(10)).unwrap();
+        token.approve(alice, spender, U256::from(7)).unwrap();
+        token.transfer(alice, bob, U256::from(3)).unwrap();
+        token.burn_core(bob, U256::from(1)).unwrap();
+    });
+
+    let events = provider.get_events(init.token_address);
+    assert_eq!(events.len(), 4);
+    assert_eq!(
+        events[0],
+        IStablecoin::Transfer {
+            from: Address::ZERO,
+            to: alice,
+            value: U256::from(10),
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        events[1],
+        IStablecoin::Approval {
+            owner: alice,
+            spender,
+            value: U256::from(7),
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        events[2],
+        IStablecoin::Transfer {
+            from: alice,
+            to: bob,
+            value: U256::from(3),
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        events[3],
+        IStablecoin::Transfer {
+            from: bob,
+            to: Address::ZERO,
+            value: U256::from(1),
+        }
+        .encode_log_data()
+    );
+}
+
+#[test]
+fn erc20_abi_core_roundtrips_and_rejects_value_before_schema_reads() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x61);
+    let bob = Address::repeat_byte(0x62);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        StablecoinContract::new(storage, init.token_address)
+            .mint_core(alice, U256::from(20))
+            .unwrap();
+    });
+
+    let name = dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &IStablecoin::nameCall {}.abi_encode(),
+        alice,
+        U256::ZERO,
+    )
+    .unwrap();
+    assert_eq!(
+        IStablecoin::nameCall::abi_decode_returns(&name).unwrap(),
+        "USDX Stablecoin"
+    );
+    let transferred = dispatch(
+        StorageHandle::new(&mut provider),
+        init.token_address,
+        &IStablecoin::transferCall {
+            to: bob,
+            value: U256::from(4),
+        }
+        .abi_encode(),
+        alice,
+        U256::ZERO,
+    )
+    .unwrap();
+    assert!(IStablecoin::transferCall::abi_decode_returns(&transferred).unwrap());
+
+    let dirty = initialization("EURX").token_address;
+    let error = dispatch(
+        StorageHandle::new(&mut provider),
+        dirty,
+        &IStablecoin::totalSupplyCall {}.abi_encode(),
+        alice,
+        U256::from(1),
+    )
+    .unwrap_err();
+    assert_revert::<IStablecoin::UnexpectedValue>(error);
+    assert_eq!(
+        provider.sload(dirty, U256::ZERO).unwrap(),
+        U256::ZERO,
+        "unexpected value must be rejected before token state access"
+    );
+}
+
+#[test]
+fn deterministic_erc20_sequences_match_a_reference_model() {
+    let init = initialization("USDX");
+    let accounts = [
+        Address::repeat_byte(0x71),
+        Address::repeat_byte(0x72),
+        Address::repeat_byte(0x73),
+    ];
+    let mut balances = [0u64; 3];
+    let mut allowances = [[U256::ZERO; 3]; 3];
+    let mut supply = 0u64;
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+
+        for step in 0..512 {
+            seed ^= seed << 7;
+            seed ^= seed >> 9;
+            seed ^= seed << 8;
+            let operation = (seed % 5) as usize;
+            let first = ((seed >> 8) % 3) as usize;
+            let second = ((seed >> 16) % 3) as usize;
+            let third = ((seed >> 24) % 3) as usize;
+            let amount = (seed >> 32) % 31;
+
+            match operation {
+                0 => {
+                    let expected = amount != 0
+                        && supply
+                            .checked_add(amount)
+                            .is_some_and(|next| U256::from(next) <= init.payload.supply_cap);
+                    let result = token.mint_core(accounts[first], U256::from(amount));
+                    assert_eq!(result.is_ok(), expected, "mint step {step}");
+                    if expected {
+                        balances[first] += amount;
+                        supply += amount;
+                    }
+                }
+                1 => {
+                    let expected = amount != 0 && balances[first] >= amount;
+                    let result = token.burn_core(accounts[first], U256::from(amount));
+                    assert_eq!(result.is_ok(), expected, "burn step {step}");
+                    if expected {
+                        balances[first] -= amount;
+                        supply -= amount;
+                    }
+                }
+                2 => {
+                    let expected = balances[first] >= amount;
+                    let result =
+                        token.transfer(accounts[first], accounts[second], U256::from(amount));
+                    assert_eq!(result.is_ok(), expected, "transfer step {step}");
+                    if expected && first != second {
+                        balances[first] -= amount;
+                        balances[second] += amount;
+                    }
+                }
+                3 => {
+                    let value = if step % 37 == 0 {
+                        U256::MAX
+                    } else {
+                        U256::from(amount)
+                    };
+                    token
+                        .approve(accounts[first], accounts[second], value)
+                        .unwrap();
+                    allowances[first][second] = value;
+                }
+                4 => {
+                    let allowance = allowances[first][second];
+                    let expected = allowance >= U256::from(amount) && balances[first] >= amount;
+                    let result = token.transfer_from(
+                        accounts[second],
+                        accounts[first],
+                        accounts[third],
+                        U256::from(amount),
+                    );
+                    assert_eq!(result.is_ok(), expected, "transferFrom step {step}");
+                    if expected {
+                        if allowance != U256::MAX {
+                            allowances[first][second] -= U256::from(amount);
+                        }
+                        if first != third {
+                            balances[first] -= amount;
+                            balances[third] += amount;
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            }
+
+            assert_eq!(token.total_supply().unwrap(), U256::from(supply));
+            assert_eq!(balances.iter().sum::<u64>(), supply);
+            for owner in 0..3 {
+                assert_eq!(
+                    token.balance_of(accounts[owner]).unwrap(),
+                    U256::from(balances[owner]),
+                    "balance mismatch at step {step}"
+                );
+                for spender in 0..3 {
+                    assert_eq!(
+                        token
+                            .allowance_of(accounts[owner], accounts[spender])
+                            .unwrap(),
+                        allowances[owner][spender],
+                        "allowance mismatch at step {step}"
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn transfer_from_rolls_back_allowance_balances_and_log_at_every_failure_point() {
+    let init = initialization("USDX");
+    let owner = Address::repeat_byte(0x81);
+    let spender = Address::repeat_byte(0x82);
+    let recipient = Address::repeat_byte(0x83);
+
+    let mut measured = transfer_from_baseline(&init, owner, spender);
+    StorageHandle::enter(&mut measured, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .transfer_from(spender, owner, recipient, U256::from(25))
+            .unwrap();
+    });
+    let operation_count = measured.clear_mutation_failure();
+    assert!(operation_count >= 4);
+
+    for failure_at in 0..operation_count {
+        let mut provider = transfer_from_baseline(&init, owner, spender);
+        provider.fail_after_mutation_at(failure_at);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(StablecoinContract::new(storage, init.token_address)
+                .transfer_from(spender, owner, recipient, U256::from(25))
+                .is_err());
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.balance_of(owner).unwrap(), U256::from(100));
+            assert_eq!(token.balance_of(recipient).unwrap(), U256::ZERO);
+            assert_eq!(token.allowance_of(owner, spender).unwrap(), U256::from(60));
+            assert_eq!(token.total_supply().unwrap(), U256::from(100));
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
     }
 }
