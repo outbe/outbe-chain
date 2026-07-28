@@ -2185,6 +2185,7 @@ async fn validate_header_consensus_artifacts_for_activation(
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 async fn validate_header_consensus_artifacts(
     block: &ConsensusBlock,
     parent_block: Option<&ConsensusBlock>,
