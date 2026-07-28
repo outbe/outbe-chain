@@ -3,10 +3,26 @@ use std::{
     process::{Command, ExitStatus},
 };
 
-use eyre::{bail, Context, Result};
+use eyre::{bail, ensure, Context, Result};
 use outbe_e2e_harness::ocomp_evidence::run_command_lane;
 
 use super::registry;
+
+const PUBLIC_SCENARIO_TAGS: [&str; 4] = [
+    "@ocomp-public-apply",
+    "@ocomp-public-replay",
+    "@ocomp-public-expiry",
+    "@ocomp-public-mutation",
+];
+
+const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 6] = [
+    "@ocomp-public-apply",
+    "@ocomp-public-replay",
+    "@ocomp-public-expiry",
+    "@ocomp-public-mutation",
+    "@ocomp-fork-restart",
+    "@ocomp-fork-mismatch",
+];
 
 pub fn run(repository_root: &Path, task: &str) -> Result<()> {
     match task {
@@ -1858,55 +1874,24 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 ],
             )?;
             build_ocomp_e2e_binaries(repository_root)?;
-            let evidence_dir = std::env::temp_dir().join(format!(
-                "outbe-ocomp-public-evidence-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .wrap_err("system clock precedes Unix epoch")?
-                    .as_millis()
-            ));
-            let evidence_dir = evidence_dir.to_string_lossy().into_owned();
-            cargo(
+            let run_root = fresh_task_output_dir("ocm25")?;
+            let artifact_set = snapshot_ocomp_artifact_set(repository_root, &run_root)?;
+            let evidence_dir = run_root.join("lanes").join("OCM-PUBLIC");
+            run_exact_scenario_set(
                 repository_root,
-                &[
-                    "run",
-                    "--locked",
-                    "-p",
-                    "outbe-e2e-harness",
-                    "--features",
-                    "ocomp-integration",
-                    "--bin",
-                    "outbe-e2e",
-                    "--",
-                    "--tags",
-                    "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
-                     @ocomp-public-mutation or @ocomp-fork-restart or @ocomp-fork-mismatch",
-                    "--concurrency",
-                    "1",
-                    "--no-resolve-ports",
-                    "--no-sudo",
-                    "--tee",
-                    "mock",
-                    "--all",
-                    "--evidence-dir",
-                    &evidence_dir,
-                ],
+                &artifact_set,
+                &evidence_dir,
+                &OCM25_PUBLIC_SCENARIO_TAGS,
+                true,
             )?;
-            cargo(
+            run_evidence_binary(
                 repository_root,
+                &artifact_set,
                 &[
-                    "run",
-                    "--locked",
-                    "-p",
-                    "outbe-e2e-harness",
-                    "--bin",
-                    "outbe-e2e-evidence",
-                    "--",
                     "lane",
                     "OCM-PUBLIC",
                     "--evidence-dir",
-                    &evidence_dir,
+                    path_str(&evidence_dir)?,
                 ],
             )?;
             task_progress(
@@ -2145,13 +2130,26 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
         )?;
     }
 
-    for (lane, tag, no_sudo) in [
-        (
+    let public_evidence_dir = run_root.join("lanes").join("OCM-PUBLIC");
+    run_exact_scenario_set(
+        repository_root,
+        &artifact_set,
+        &public_evidence_dir,
+        &PUBLIC_SCENARIO_TAGS,
+        true,
+    )?;
+    run_evidence_binary(
+        repository_root,
+        &artifact_set,
+        &[
+            "lane",
             "OCM-PUBLIC",
-            "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
-             @ocomp-public-mutation",
-            true,
-        ),
+            "--evidence-dir",
+            path_str(&public_evidence_dir)?,
+        ],
+    )?;
+
+    for (lane, tag, no_sudo) in [
         ("OCM-E2E", "@ocomp-e2e", true),
         ("OCM-ISO", "@ocomp-isolation", false),
     ] {
@@ -2198,12 +2196,11 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
         "OCM-FAST" | "OCM-INT" => {
             run_command_lane(repository_root, &ledger, lane, &artifact_set, &evidence_dir)?;
         }
-        "OCM-PUBLIC" => run_exact_scenario(
+        "OCM-PUBLIC" => run_exact_scenario_set(
             repository_root,
             &artifact_set,
             &evidence_dir,
-            "@ocomp-public-apply or @ocomp-public-replay or @ocomp-public-expiry or \
-             @ocomp-public-mutation",
+            &PUBLIC_SCENARIO_TAGS,
             true,
         )?,
         "OCM-E2E" => run_exact_scenario(
@@ -2411,6 +2408,103 @@ fn run_exact_final_scenario(
     run_exact_scenario(repository_root, &artifact_set, &evidence_dir, tag, true)
 }
 
+fn run_exact_scenario_set(
+    repository_root: &Path,
+    artifact_set: &Path,
+    evidence_dir: &Path,
+    tags: &[&str],
+    no_sudo: bool,
+) -> Result<()> {
+    ensure!(!tags.is_empty(), "exact scenario set must not be empty");
+    if evidence_dir.exists() {
+        bail!(
+            "exact scenario-set evidence directory already exists: {}",
+            evidence_dir.display()
+        );
+    }
+    std::fs::create_dir_all(evidence_dir).wrap_err_with(|| {
+        format!(
+            "create exact scenario-set evidence directory {}",
+            evidence_dir.display()
+        )
+    })?;
+
+    for (index, tag) in tags.iter().enumerate() {
+        let ordinal = index + 1;
+        let isolated_evidence_dir = evidence_dir.join(format!(".scenario-run-{ordinal:03}"));
+        run_exact_scenario(
+            repository_root,
+            artifact_set,
+            &isolated_evidence_dir,
+            tag,
+            no_sudo,
+        )?;
+        promote_exact_scenario_evidence(&isolated_evidence_dir, evidence_dir, ordinal)?;
+    }
+    Ok(())
+}
+
+fn promote_exact_scenario_evidence(
+    isolated_evidence_dir: &Path,
+    lane_evidence_dir: &Path,
+    ordinal: usize,
+) -> Result<()> {
+    let entries = std::fs::read_dir(isolated_evidence_dir)
+        .wrap_err_with(|| {
+            format!(
+                "read isolated scenario evidence {}",
+                isolated_evidence_dir.display()
+            )
+        })?
+        .collect::<std::io::Result<Vec<_>>>()
+        .wrap_err_with(|| {
+            format!(
+                "enumerate isolated scenario evidence {}",
+                isolated_evidence_dir.display()
+            )
+        })?;
+    ensure!(
+        entries.len() == 1,
+        "isolated scenario run must publish exactly one record, found {} in {}",
+        entries.len(),
+        isolated_evidence_dir.display()
+    );
+    let entry = &entries[0];
+    let file_type = entry
+        .file_type()
+        .wrap_err_with(|| format!("inspect scenario evidence {}", entry.path().display()))?;
+    let name = entry
+        .file_name()
+        .into_string()
+        .map_err(|_| eyre::eyre!("scenario evidence file name is not UTF-8"))?;
+    ensure!(
+        file_type.is_file() && name.starts_with("scenario-") && name.ends_with(".json"),
+        "isolated scenario run published unexpected member {}",
+        entry.path().display()
+    );
+
+    let destination = lane_evidence_dir.join(format!("scenario-{ordinal:03}.json"));
+    ensure!(
+        !destination.exists(),
+        "refusing to overwrite promoted scenario evidence {}",
+        destination.display()
+    );
+    std::fs::rename(entry.path(), &destination).wrap_err_with(|| {
+        format!(
+            "promote scenario evidence {} to {}",
+            entry.path().display(),
+            destination.display()
+        )
+    })?;
+    std::fs::remove_dir(isolated_evidence_dir).wrap_err_with(|| {
+        format!(
+            "remove empty isolated scenario evidence directory {}",
+            isolated_evidence_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
 fn run_exact_scenario(
     repository_root: &Path,
     artifact_set: &Path,
@@ -2549,5 +2643,51 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
                 .code()
                 .map_or_else(|| "signal".to_owned(), |code| code.to_string())
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{promote_exact_scenario_evidence, PUBLIC_SCENARIO_TAGS};
+
+    #[test]
+    fn public_lane_is_four_closed_single_scenario_runs() {
+        assert_eq!(
+            PUBLIC_SCENARIO_TAGS,
+            [
+                "@ocomp-public-apply",
+                "@ocomp-public-replay",
+                "@ocomp-public-expiry",
+                "@ocomp-public-mutation",
+            ]
+        );
+    }
+
+    #[test]
+    fn exact_scenario_evidence_is_promoted_without_overwriting_another_run() {
+        let root = tempfile::tempdir().expect("temporary evidence root");
+        let lane = root.path().join("OCM-PUBLIC");
+        let isolated = root.path().join("scenario-run-002");
+        std::fs::create_dir_all(&lane).expect("lane directory");
+        std::fs::create_dir_all(&isolated).expect("isolated scenario directory");
+        std::fs::write(lane.join("scenario-001.json"), b"{\"run\":1}\n")
+            .expect("previous scenario evidence");
+        std::fs::write(
+            isolated.join("scenario-001.json"),
+            b"{\"result\":\"passed\"}\n",
+        )
+        .expect("scenario evidence");
+
+        promote_exact_scenario_evidence(&isolated, &lane, 2).expect("promote evidence");
+
+        assert_eq!(
+            std::fs::read(lane.join("scenario-001.json")).expect("previous scenario"),
+            b"{\"run\":1}\n"
+        );
+        assert_eq!(
+            std::fs::read(lane.join("scenario-002.json")).expect("promoted scenario"),
+            b"{\"result\":\"passed\"}\n"
+        );
+        assert!(!isolated.exists());
     }
 }
