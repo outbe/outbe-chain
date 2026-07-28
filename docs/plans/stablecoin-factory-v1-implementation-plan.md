@@ -163,7 +163,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
 | SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
 | SCF-063 | Done | `0563b233`, `43e5c7d7` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; accounting review accepted |
-| SCF-064 | Done | `2d759237`, `43e5c7d7` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; SCF-G5 review accepted |
+| SCF-064 | Done | `2d759237`, `43e5c7d7`; PFS-010-05…08 tests | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn and retry admission, typed Error retention, fatal outer-checkpoint rollback and pre-allocation global ticker collision; ledger/factory fault tests pin exact state and event restoration; SCF-G5 review accepted |
 | SCF-070 | Done | `023a723d`, `d7b5532b`, `943ca8e2`, `43e5c7d7` | Production registry owns unique fixed Factory/Policy routes, authenticated actual-callee token-class routing and the compile-time Factory Vote target; route, namespace, nested-call and target suites pass |
 | SCF-071 | Done | `43e5c7d7` | Generated fresh genesis reserves Factory, Policy and token namespaces from block 0; the four-validator product E2E creates and reads the first token without an activation transition |
 | SCF-072 | Done | `42521789`, `43e5c7d7` | Real pre-exec Vote→Factory lifecycle publishes one StablecoinCreated through HookEvents; receipt root/bloom/gas and marker/state are asserted, while typed Error publishes no creation/settlement log and retains bond and reservation |
@@ -986,6 +986,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   on four validators.
 - **Goal:** Exercise the product flow, not merely node height.
 - **Depends on:** SCF-064, SCF-072, SCF-080.
+- **Flow contract:** [PFS-010](../flows/010-stablecoin-factory-lifecycle.md).
 - **Scope/files:** `outbe-e2e-harness` feature and native Alloy steps.
 - **Scenario:** create shared policy, submit exact bonded proposal, vote/tally, inspect
   HookEvents receipt, assert refund, mint, transfer, permit, memo, pause/recovery,

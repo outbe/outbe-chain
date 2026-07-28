@@ -6,6 +6,7 @@
   administration, membership and directional authorization views
 - **Depends on:** ADR-B-EVM-003, ADR-B-EVM-004, ADR-B-EVM-005
 - **Used by:** ADR-C-TOK-003, ADR-C-TOK-004
+- **Related flow:** PFS-010
 
 ## Context
 
@@ -184,5 +185,10 @@ ceiling is `750,000`, under the shared native schedule and benchmark reopen rule
 
 - Keep add/remove `MembershipUnchanged` behavior and the exact event/error ABI aligned
   with the checked-in golden vectors.
+- PFS-010 live evidence creates the shared whitelist policy through the production
+  ABI, adds every successful-path account and binds the approved token permanently
+  to that policy id.
+- PFS-010-07 injects a recipient-policy denial and every forced-transfer mutation
+  failure, asserting restoration of balances, frozen amount, supply and logs.
 - Policy content does not prove KYC, sanctions screening or legal validity; those are
   issuer/admin responsibilities and must not be implied by Factory or README wording.
