@@ -51,6 +51,6 @@ interface IIntexFactory {
     event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
 
     /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
-    ///         swept to the reserve vault instead of being distributed.
-    event ProceedsSweptToReserve(uint32 indexed seriesId, uint256 amount);
+    ///         burned instead of being distributed.
+    event ProceedsBurned(uint32 indexed seriesId, uint256 amount);
 }

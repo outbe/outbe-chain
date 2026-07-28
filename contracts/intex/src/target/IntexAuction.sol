@@ -29,10 +29,10 @@ contract IntexAuction is
     /// @notice Role identifier for bridge operations (stage ops driven by the relayer).
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
-    /// @notice No-reveal penalty window on the commit bond, anchored at `revealEnd`. A committed
-    ///         bidder who never reveals on a green day gets the bond back via `claimCommitBond`
-    ///         only after this period; reveal/cancel/red-day return it immediately.
-    uint32 public constant COMMIT_BOND_LOCK_PERIOD = 21 days;
+    /// @notice Lock on the commit bond of a bidder who never revealed, anchored at `revealEnd`.
+    ///         On a green day the bond stays locked until `revealEnd + UNREVEALED_BOND_LOCK_PERIOD`
+    ///         and is then reclaimable via `claimCommitBond`; reveal/cancel/red-day return it immediately.
+    uint32 public constant UNREVEALED_BOND_LOCK_PERIOD = 24 hours;
 
     /// @dev EIP-712 type hash for `RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)`.
     bytes32 private constant REVEAL_BID_TYPEHASH =
@@ -416,7 +416,7 @@ contract IntexAuction is
         // is a no-reveal on a live auction: the bond waits out the penalty window anchored
         // at the (possibly snapped-forward) `revealEnd`.
         if (_getAuctionStage(worldwideDay) != IIntexAuction.AuctionStage.Cancelled) {
-            uint32 claimableAt = a.schedule.revealEnd + COMMIT_BOND_LOCK_PERIOD;
+            uint32 claimableAt = a.schedule.revealEnd + UNREVEALED_BOND_LOCK_PERIOD;
             if (uint32(block.timestamp) < claimableAt) {
                 revert CommitBondNotYetClaimable(claimableAt, uint32(block.timestamp));
             }

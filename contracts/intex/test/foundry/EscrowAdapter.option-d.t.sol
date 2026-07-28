@@ -17,7 +17,6 @@ contract EscrowAdapterOptionDTest is Test {
     address admin = address(1);
     address bridger = address(2);
     address auction = address(3);
-    address vault = address(4);
     address bidder1 = address(5);
 
     uint32 worldwideDay1 = 1;
@@ -29,7 +28,7 @@ contract EscrowAdapterOptionDTest is Test {
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
 
         compact.setResetPeriodSeconds(0);
 
@@ -50,7 +49,7 @@ contract EscrowAdapterOptionDTest is Test {
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
     }
 
     /// @dev Fresh adapter (lockId == 0) must short-circuit the ERC6909 balance read in the
@@ -63,7 +62,7 @@ contract EscrowAdapterOptionDTest is Test {
 
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
 
         assertEq(address(escrow.paymentToken()), address(usdt), "rotation must succeed despite poisoned balance");
     }
@@ -77,6 +76,6 @@ contract EscrowAdapterOptionDTest is Test {
         MockTheCompact compact2 = new MockTheCompact();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact2), vault, address(paymentToken));
+        escrow.wire(auction, address(compact2), address(paymentToken));
     }
 }

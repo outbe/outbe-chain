@@ -28,6 +28,10 @@ required-features = ["mock"]
 
 [dependencies]
 outbe-tee.workspace = true
+# Already in the enclave build graph transitively via `outbe-tee` (so no MRENCLAVE
+# change vs. today); declared directly only to name `tee_bootstrap::recover_signer`,
+# reused so the enclave and host recover EIP-191 signers with one identical impl.
+outbe-primitives.workspace = true
 alloy-primitives.workspace = true
 ring.workspace = true
 x25519-dalek.workspace = true
@@ -64,6 +68,8 @@ alloy-primitives.workspace = true
 tokio = { workspace = true }
 commonware-runtime.workspace = true
 criterion.workspace = true
+# Test-only: sign EIP-191 owner proofs for the DeriveAccountKeys ownership gate.
+k256.workspace = true
 
 # Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).
 # The CPU ceiling the network can sustain inside the enclave during block

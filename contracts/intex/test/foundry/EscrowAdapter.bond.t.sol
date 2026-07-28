@@ -6,11 +6,8 @@ import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Commit-bond custody: lock/release under AUCTION_ROLE, the escrow-local
 ///      abandoned-bond safety valve, and the shared-lockId accounting with bid escrow.
@@ -18,8 +15,6 @@ contract EscrowAdapterBondTest is Test {
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockSettlementVault mockVault;
-    MockVaultRouter router;
 
     address admin = address(1);
     address bridger = address(2);
@@ -40,13 +35,9 @@ contract EscrowAdapterBondTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
-        mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault WCOEN", "mvWCOEN", 18);
-        router = new MockVaultRouter();
-        router.addVault(mockVault);
-        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(router), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         paymentToken.mint(bidder1, 1000e18);
@@ -184,7 +175,7 @@ contract EscrowAdapterBondTest is Test {
         // Rotate the auction wiring (same compact/token, so no LiveLocksOutstanding guard).
         address newAuction = address(0xA0C71012);
         vm.prank(admin);
-        escrow.wire(newAuction, address(compact), address(router), address(paymentToken));
+        escrow.wire(newAuction, address(compact), address(paymentToken));
 
         // The old auction lost AUCTION_ROLE; the new one has no knowledge of the bond.
         vm.prank(auction);
@@ -223,7 +214,7 @@ contract EscrowAdapterBondTest is Test {
         address otherToken = address(new MockERC20("X", "X", 18));
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, BOND_AMOUNT));
-        escrow.wire(auction, address(compact), address(router), otherToken);
+        escrow.wire(auction, address(compact), otherToken);
 
         vm.prank(auction);
         escrow.releaseCommitBond(worldwideDay1, bidder1);

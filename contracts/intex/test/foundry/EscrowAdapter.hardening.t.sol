@@ -6,11 +6,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev ERC20 that skims a fee on every move: the sender is crosschainBurned the full amount but the
 ///      recipient is crosschainMinted amount minus fee. Breaks the "exactly `amount` lands" assumption.
@@ -69,29 +66,10 @@ contract FeeOnTransferToken is IERC20 {
     }
 }
 
-/// @dev Re-enters EscrowAdapter.claimRefund from deposit to probe the nonReentrant guard.
-contract HostileReentrantVaultRouter {
-    EscrowAdapter public escrow;
-    uint32 public worldwideDay;
-    address public bidder;
-
-    function arm(EscrowAdapter _escrow, uint32 _worldwideDay, address _bidder) external {
-        escrow = _escrow;
-        worldwideDay = _worldwideDay;
-        bidder = _bidder;
-    }
-
-    function deposit(address, uint256) external returns (uint256) {
-        escrow.claimRefund(worldwideDay, bidder);
-        return 1;
-    }
-}
-
 contract EscrowAdapterHardeningTest is Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockERC20 internal paymentToken;
-    MockVaultRouter internal router;
 
     address internal admin = address(1);
     address internal bridger = address(2);
@@ -105,13 +83,9 @@ contract EscrowAdapterHardeningTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
-        MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        router = new MockVaultRouter();
-        router.addVault(vault);
-        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(router), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
     }
 
@@ -155,10 +129,9 @@ contract EscrowAdapterHardeningTest is Test {
         EscrowAdapter feeEscrow = DeployProxy.escrowAdapter(admin, bridger);
         MockTheCompact feeCompact = new MockTheCompact();
         FeeOnTransferToken feeToken = new FeeOnTransferToken(100);
-        MockVaultRouter feeRouter = new MockVaultRouter();
 
         vm.prank(admin);
-        feeEscrow.wire(auction, address(feeCompact), address(feeRouter), address(feeToken));
+        feeEscrow.wire(auction, address(feeCompact), address(feeToken));
         feeCompact.setResetPeriodSeconds(0);
 
         feeToken.mint(bidderA, 1_000e6);
@@ -171,52 +144,5 @@ contract EscrowAdapterHardeningTest is Test {
 
         (,, uint128 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
         assertEq(totalLocked, 0, "no state written on a fee-token lock");
-    }
-
-    function test_HostileReentrantVault_RetryFinalizeBlocksReentry_ConservationHolds() public {
-        EscrowAdapter hEscrow = DeployProxy.escrowAdapter(admin, bridger);
-        MockTheCompact hCompact = new MockTheCompact();
-        MockERC20 hToken = new MockERC20("USD Coin", "USDC", 6);
-        HostileReentrantVaultRouter hostile = new HostileReentrantVaultRouter();
-
-        vm.prank(admin);
-        hEscrow.wire(auction, address(hCompact), address(hostile), address(hToken));
-        hCompact.setResetPeriodSeconds(0);
-
-        uint128 amount = 500e6;
-        hToken.mint(bidderA, amount);
-        vm.prank(bidderA);
-        hToken.approve(address(hEscrow), type(uint256).max);
-
-        vm.prank(auction);
-        hEscrow.lockFunds(SERIES, bidderA, amount);
-
-        // Strand the winner at finalize so its proceeds settle via retryFinalize — the path that
-        // now touches the (hostile) vault, since finalize itself no longer calls it.
-        hCompact.setForcedWithdrawalShouldFail(true);
-        IEscrowAdapter.FinalizationInstruction memory inst =
-            IEscrowAdapter.FinalizationInstruction({bidder: bidderA, refundedAmount: 0, paidAmount: amount});
-        IEscrowAdapter.FinalizationInstruction[] memory ins = new IEscrowAdapter.FinalizationInstruction[](1);
-        ins[0] = inst;
-        vm.prank(bridger);
-        hEscrow.finalizeAuction(SERIES, bytes32(uint256(0x1)), ins);
-        assertEq(uint8(hEscrow.getBidLock(SERIES, bidderA).status), uint8(IEscrowAdapter.LockStatus.Locked));
-
-        // retryFinalize deposits the stranded proceeds to the vault, whose hostile deposit
-        // re-enters claimRefund — the nonReentrant guard must block it and revert the whole call.
-        hCompact.setForcedWithdrawalShouldFail(false);
-        hostile.arm(hEscrow, SERIES, bidderA);
-        vm.prank(bridger);
-        vm.expectRevert(abi.encodeWithSignature("ReentrancyGuardReentrantCall()"));
-        hEscrow.retryFinalize(SERIES, bytes32(uint256(0x2)), inst);
-
-        assertEq(
-            uint8(hEscrow.getBidLock(SERIES, bidderA).status),
-            uint8(IEscrowAdapter.LockStatus.Locked),
-            "lock must stay Locked after the re-entry was blocked"
-        );
-        (,, uint128 totalLocked) = hEscrow.getAuctionStatus(SERIES);
-        assertEq(totalLocked, amount, "totalLocked unchanged");
-        assertEq(hCompact.balanceOf(address(hEscrow), hEscrow.lockId()), amount, "pooled balance unchanged");
     }
 }
