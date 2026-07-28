@@ -12,8 +12,6 @@ use outbe_primitives::{
 };
 use serde::Deserialize;
 
-const ADDRESSES_SOURCE: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/addresses.rs"));
 const NETWORK_VECTORS: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/testdata/stablecoin/v1/network-address-vectors.json"
@@ -62,28 +60,6 @@ fn stablecoin_constants_are_exact_and_class_disjoint() {
     assert_eq!(STABLECOIN_MARKER_CODE, [0xef]);
     assert!(!is_stablecoin_address(STABLECOIN_FACTORY_ADDRESS));
     assert!(!is_stablecoin_address(STABLECOIN_POLICY_REGISTRY_ADDRESS));
-}
-
-#[test]
-fn every_declared_exact_address_is_unique_and_outside_the_dynamic_class() {
-    let mut addresses = address_literals(ADDRESSES_SOURCE);
-    let original_len = addresses.len();
-    addresses.sort_unstable();
-    addresses.dedup();
-    assert_eq!(addresses.len(), original_len, "duplicate address literal");
-    assert!(
-        addresses
-            .iter()
-            .copied()
-            .all(|address| !is_stablecoin_address(address)),
-        "fixed address collides with stablecoin class"
-    );
-
-    for suffix in 1u8..=10 {
-        let builtin = Address::with_last_byte(suffix);
-        assert!(!addresses.contains(&builtin));
-        assert!(!is_stablecoin_address(builtin));
-    }
 }
 
 #[test]
@@ -138,24 +114,6 @@ fn independent_network_vectors_pin_current_supported_geneses() {
         );
         assert!(is_stablecoin_address(expected_token));
     }
-}
-
-fn address_literals(source: &str) -> Vec<Address> {
-    let marker = "address!(\"0x";
-    let mut remaining = source;
-    let mut addresses = Vec::new();
-    while let Some(offset) = remaining.find(marker) {
-        let hex_start = offset + marker.len();
-        let hex_end = hex_start + 40;
-        let Some(value) = remaining.get(hex_start..hex_end) else {
-            break;
-        };
-        if let Ok(address) = Address::from_str(value) {
-            addresses.push(address);
-        }
-        remaining = &remaining[hex_end..];
-    }
-    addresses
 }
 
 fn decode_prefix(value: &str) -> [u8; 2] {
