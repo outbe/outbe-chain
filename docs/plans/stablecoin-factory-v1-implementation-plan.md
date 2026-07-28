@@ -162,6 +162,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-054 | Done | `943ca8e2` | Factory exposes only activation-gated views; compile-time Vote adapter owns validate/reserve/execute/release, reservation joins proposal creation checkpoint, and Factory/Vote/Update/Governance/EVM pass 431/431 |
 | SCF-055 | Review | `4d3e1ab1` | Factory 22/22 covers deterministic mixed histories, every reservation/index inverse, pending and permanent collision injection, maximum accepted payload, and failure after every mutation; independent G4 review remains |
 | SCF-060 | Review | `c04fe05f` | Bond amount/state maps append after unchanged V0 slots, zero-filled legacy proposals read as NoBond and tally, liabilities use checked atomic arithmetic, counter exhaustion is typed, and combined regression passes 436/436; storage-layout review remains |
+| SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -801,6 +802,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-061 — Implement payable target admission and caps
 
+- **Status:** Done in `b2f2c1e8`; non-create Vote calls remain nonpayable and
+  validator-only targets require zero value, while the Factory compile-time target
+  accepts exactly `10^24`. Public admission enforces the 16-proposal sub-cap and one
+  retained Pending/Error proposal per issuer. Allocation, Factory reservation, bond
+  liability, coverage check and typed events share one checkpoint; reservation
+  failure leaves no proposal, liability or log, and forced surplus is preserved.
 - **Goal:** Admit only Factory outsiders with exactly `10^24` value.
 - **Depends on:** SCF-052, SCF-060.
 - **Done when:** every non-Factory target/call rejects value before state; Factory
