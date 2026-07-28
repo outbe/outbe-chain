@@ -4,6 +4,7 @@
 //! patch are native Rust.
 
 use std::fs;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,9 +29,6 @@ const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
-/// A lifecycle E2E may opt into a short delay; testnet seed defaults remain
-/// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
-const STAKING_SUFFIX: &str = "ee02";
 const OCOMP_FINAL_FIXTURE_ROOT: &str = "testing/e2e-harness/fixtures/ocomp-final-v1";
 const OCOMP_FINAL_VALIDATORS: usize = 4;
 const OCOMP_FINAL_ROOT_FILES: &[(&str, u32)] = &[
@@ -45,6 +43,222 @@ const OCOMP_FINAL_VALIDATOR_FILES: &[&str] = &[
     "signing-key.hex",
     "signing-share.hex",
 ];
+const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 120;
+const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
+const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
+
+/// Valid, scenario-local genesis choices used by lifecycle E2E tests.
+///
+/// The fields are deliberately private: callers use the checked builders, and
+/// [`Localnet::bootstrap_with_profile`] validates the values again against the
+/// actual committee size before generating any files. ValidatorSet and Staking
+/// overrides are written to a scenario-local seed copy consumed by the normal
+/// genesis seeder; they are never installed through raw storage writes.
+#[derive(Debug, Clone)]
+pub struct BootstrapProfile {
+    chain_id: Option<NonZeroU64>,
+    validator_set_owner_index: Option<usize>,
+    max_validators: Option<u32>,
+    reregistration_cooldown_blocks: Option<u32>,
+    epoch_length_blocks: NonZeroU64,
+    dkg_prepare_window_blocks: NonZeroU64,
+    dkg_activation_grace_blocks: NonZeroU64,
+    dev_felony_threshold: u64,
+    unbonding_period_secs: Option<NonZeroU64>,
+    slashed_withdrawal_delay_secs: Option<NonZeroU64>,
+    validator_balance_coen: Option<u64>,
+}
+
+impl Default for BootstrapProfile {
+    fn default() -> Self {
+        Self {
+            chain_id: None,
+            validator_set_owner_index: None,
+            max_validators: None,
+            reregistration_cooldown_blocks: None,
+            epoch_length_blocks: NonZeroU64::new(DEFAULT_EPOCH_LENGTH_BLOCKS)
+                .expect("non-zero default epoch"),
+            dkg_prepare_window_blocks: NonZeroU64::new(DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
+                .expect("non-zero default prepare window"),
+            dkg_activation_grace_blocks: NonZeroU64::new(DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
+                .expect("non-zero default activation grace"),
+            dev_felony_threshold: DEV_FELONY_THRESHOLD,
+            unbonding_period_secs: None,
+            slashed_withdrawal_delay_secs: None,
+            validator_balance_coen: None,
+        }
+    }
+}
+
+impl BootstrapProfile {
+    /// Override the EIP-155 chain identity. Zero is rejected.
+    pub fn with_chain_id(mut self, chain_id: u64) -> Result<Self> {
+        self.chain_id =
+            Some(NonZeroU64::new(chain_id).ok_or_else(|| eyre!("chain id must be > 0"))?);
+        Ok(self)
+    }
+
+    /// Make an existing genesis validator the ValidatorSet owner.
+    ///
+    /// The index is checked against the requested committee size at bootstrap.
+    pub fn with_validator_set_owner(mut self, validator_index: usize) -> Self {
+        self.validator_set_owner_index = Some(validator_index);
+        self
+    }
+
+    /// Override the registry capacity. It must cover the genesis committee.
+    pub fn with_max_validators(mut self, max_validators: u32) -> Result<Self> {
+        if max_validators == 0 {
+            bail!("max validators must be > 0");
+        }
+        self.max_validators = Some(max_validators);
+        Ok(self)
+    }
+
+    /// Override the re-registration cooldown. Zero intentionally means no
+    /// cooldown and is a valid acceleration setting.
+    pub fn with_reregistration_cooldown_blocks(mut self, blocks: u32) -> Self {
+        self.reregistration_cooldown_blocks = Some(blocks);
+        self
+    }
+
+    /// Set the positive periodic epoch/DKG schedule.
+    pub fn with_dkg_timing(
+        mut self,
+        epoch_length_blocks: u64,
+        prepare_window_blocks: u64,
+        activation_grace_blocks: u64,
+    ) -> Result<Self> {
+        self.epoch_length_blocks = positive(epoch_length_blocks, "epoch length")?;
+        self.dkg_prepare_window_blocks = positive(prepare_window_blocks, "DKG prepare window")?;
+        self.dkg_activation_grace_blocks =
+            positive(activation_grace_blocks, "DKG activation grace")?;
+        if prepare_window_blocks > epoch_length_blocks {
+            bail!(
+                "DKG prepare window {prepare_window_blocks} exceeds epoch length \
+                 {epoch_length_blocks}"
+            );
+        }
+        Ok(self)
+    }
+
+    /// Set the localnet felony threshold. It may be zero, but must remain below
+    /// the epoch length so the per-epoch reset cannot hide a test offense.
+    pub fn with_dev_felony_threshold(mut self, blocks: u64) -> Result<Self> {
+        if blocks >= self.epoch_length_blocks.get() {
+            bail!(
+                "dev felony threshold {blocks} must be < epoch length {}",
+                self.epoch_length_blocks
+            );
+        }
+        self.dev_felony_threshold = blocks;
+        Ok(self)
+    }
+
+    /// Set positive Staking delays through the public genesis seed schema.
+    pub fn with_staking_timing(
+        mut self,
+        unbonding_period_secs: Option<u64>,
+        slashed_withdrawal_delay_secs: Option<u64>,
+    ) -> Result<Self> {
+        self.unbonding_period_secs = unbonding_period_secs
+            .map(|value| positive(value, "unbonding period"))
+            .transpose()?;
+        self.slashed_withdrawal_delay_secs = slashed_withdrawal_delay_secs
+            .map(|value| positive(value, "slashed withdrawal delay"))
+            .transpose()?;
+        Ok(self)
+    }
+
+    /// Parse the legacy `TESTNET_*` slice used by existing feature steps.
+    ///
+    /// Parsing is strict: malformed or unsupported knobs fail before bootstrap
+    /// instead of silently falling back to a different genesis.
+    fn from_tuning(tuning: &[(&str, String)]) -> Result<Self> {
+        let mut profile = Self::default();
+        for (key, value) in tuning {
+            let parsed = || {
+                value
+                    .parse::<u64>()
+                    .wrap_err_with(|| format!("{key} must be an unsigned integer"))
+            };
+            match *key {
+                "TESTNET_EPOCH_LENGTH_BLOCKS" => {
+                    profile.epoch_length_blocks = positive(parsed()?, "epoch length")?;
+                }
+                "TESTNET_DKG_PREPARE_WINDOW_BLOCKS" => {
+                    profile.dkg_prepare_window_blocks = positive(parsed()?, "DKG prepare window")?;
+                }
+                "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS" => {
+                    profile.dkg_activation_grace_blocks =
+                        positive(parsed()?, "DKG activation grace")?;
+                }
+                "TESTNET_DEV_FELONY_THRESHOLD" => {
+                    profile.dev_felony_threshold = parsed()?;
+                }
+                "TESTNET_UNBONDING_PERIOD_SECS" => {
+                    profile.unbonding_period_secs = Some(positive(parsed()?, "unbonding period")?);
+                }
+                "TESTNET_SLASHED_WITHDRAWAL_DELAY_SECS" => {
+                    profile.slashed_withdrawal_delay_secs =
+                        Some(positive(parsed()?, "slashed withdrawal delay")?);
+                }
+                "TESTNET_VALIDATOR_BALANCE_COEN" => {
+                    profile.validator_balance_coen = Some(parsed()?);
+                }
+                other => bail!("unsupported localnet tuning key {other}"),
+            }
+        }
+        profile.validate_timing()?;
+        Ok(profile)
+    }
+
+    fn validate_timing(&self) -> Result<()> {
+        if self.dkg_prepare_window_blocks > self.epoch_length_blocks {
+            bail!(
+                "DKG prepare window {} exceeds epoch length {}",
+                self.dkg_prepare_window_blocks,
+                self.epoch_length_blocks
+            );
+        }
+        if self.epoch_length_blocks.get() > u64::from(u32::MAX) {
+            bail!("epoch length exceeds the on-chain u32 range");
+        }
+        if self.dev_felony_threshold >= self.epoch_length_blocks.get() {
+            bail!(
+                "dev felony threshold {} must be < epoch length {}",
+                self.dev_felony_threshold,
+                self.epoch_length_blocks
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_for_committee(&self, n: usize) -> Result<()> {
+        self.validate_timing()?;
+        if n == 0 {
+            bail!("bootstrap committee must contain at least one validator");
+        }
+        if n > u32::MAX as usize {
+            bail!("bootstrap committee size exceeds u32 range");
+        }
+        if let Some(index) = self.validator_set_owner_index {
+            if index >= n {
+                bail!("ValidatorSet owner index {index} is outside committee size {n}");
+            }
+        }
+        if let Some(max) = self.max_validators {
+            if max < n as u32 {
+                bail!("max validators {max} is smaller than genesis committee size {n}");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn positive(value: u64, label: &str) -> Result<NonZeroU64> {
+    NonZeroU64::new(value).ok_or_else(|| eyre!("{label} must be > 0"))
+}
 
 impl Localnet {
     /// Add the canonical block-1 TEE manifest after every scenario has finished
@@ -332,9 +546,17 @@ impl Localnet {
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
     /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
     /// subprocesses; the genesis skeleton, port rewrite, and felony patch are
-    /// native. `tuning` forwards `TESTNET_*` knobs (epoch length, DKG grace) some
-    /// flows override; pass `&[]` for the defaults.
+    /// native. `tuning` strictly maps the legacy `TESTNET_*` knobs used by
+    /// existing flows into a [`BootstrapProfile`]; pass `&[]` for defaults.
     pub fn bootstrap(&self, n: usize, tuning: &[(&str, String)]) -> Result<()> {
+        let profile = BootstrapProfile::from_tuning(tuning)?;
+        self.bootstrap_with_profile(n, &profile)
+    }
+
+    /// Bootstrap using a checked, typed genesis profile.
+    pub fn bootstrap_with_profile(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        profile.validate_for_committee(n)?;
+        self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
         // Step 1: DKG bootstrap — keys, polynomial, dkg-output, validators.json,
@@ -348,9 +570,6 @@ impl Localnet {
             "--validators",
             &n.to_string(),
         ]);
-        for (k, v) in tuning {
-            cmd.env(k, v);
-        }
         self.run_setup(&mut cmd, "outbe-chain dkg bootstrap")?;
 
         // Step 1b: point the baked consensus/reth p2p endpoints at the resolved
@@ -358,16 +577,27 @@ impl Localnet {
         self.rewrite_ports()?;
 
         // Step 2: genesis skeleton (chain config + validator balances).
-        self.write_genesis(tuning)?;
+        self.write_genesis(profile)?;
 
         // Step 2b: seed precompile storage (validator set/staking/etc.).
-        self.seed_genesis(&worldwide_day())?;
+        self.seed_genesis(&worldwide_day(), profile)?;
 
         // Step 2c: dev felony thresholds for observable localnet slashing.
-        self.patch_felony(tuning)?;
-        // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
-        self.patch_staking_timing(tuning)?;
+        self.patch_felony(profile)?;
         Ok(())
+    }
+
+    /// Stop and rebuild this scenario directory with a new valid genesis.
+    ///
+    /// [`crate::world::validators::RegistrationIdentity`] values are owned by
+    /// the caller and remain reusable after this method wipes on-disk chain
+    /// state. This is the intended way to exercise proof replay across two
+    /// otherwise-valid chain IDs.
+    pub fn rebootstrap_with_profile(&mut self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        profile.validate_for_committee(n)?;
+        self.stop()?;
+        self.wipe()?;
+        self.bootstrap_with_profile(n, profile)
     }
 
     /// Rewrite `validators.json` `p2p_address` to the resolved consensus port and
@@ -410,15 +640,11 @@ impl Localnet {
         Ok(())
     }
 
-    /// Write the devnet genesis skeleton: static chain config (chain id 424242, epoch /
-    /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
-    /// address (`bootstrap-testnet.sh:133-203`).
-    fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
-        let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
-        let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
-        let validator_balance = validator_balance_hex(tuning);
-
+    /// Write the genesis skeleton: profiled chain id / epoch / DKG parameters
+    /// plus a pre-funded `alloc` of each validator address
+    /// (`bootstrap-testnet.sh:133-203`).
+    fn write_genesis(&self, profile: &BootstrapProfile) -> Result<()> {
+        let validator_balance = validator_balance_hex(profile);
         let vjson: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
         let arr = vjson
@@ -445,7 +671,9 @@ impl Localnet {
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
 
-        let chain_id = localnet_chain_id(self.cfg.tee_mode);
+        let chain_id = profile
+            .chain_id
+            .map_or_else(|| localnet_chain_id(self.cfg.tee_mode), NonZeroU64::get);
         let mut genesis = json!({
             "config": {
                 "chainId": chain_id,
@@ -465,9 +693,9 @@ impl Localnet {
                 "shanghaiTime": 0,
                 "cancunTime": 0,
                 "pragueTime": 0,
-                "epochLengthBlocks": epoch,
-                "dkgPrepareWindowBlocks": dkg_prepare,
-                "dkgActivationGraceBlocks": dkg_grace,
+                "epochLengthBlocks": profile.epoch_length_blocks.get(),
+                "dkgPrepareWindowBlocks": profile.dkg_prepare_window_blocks.get(),
+                "dkgActivationGraceBlocks": profile.dkg_activation_grace_blocks.get(),
                 "genesisTime": genesis_time,
             },
             "nonce": "0x0",
@@ -495,14 +723,21 @@ impl Localnet {
 
     /// Seed precompile storage into genesis (`bootstrap-testnet.sh:209-226`) via
     /// the kept `scripts/seed_genesis.py`.
-    fn seed_genesis(&self, worldwide_day: &str) -> Result<()> {
+    fn seed_genesis(&self, worldwide_day: &str, profile: &BootstrapProfile) -> Result<()> {
         let genesis = self.cfg.dir.join("genesis.json");
+        let seed = self.prepare_scenario_seed(profile)?;
         let mut cmd = Command::new("python3");
         cmd.arg(self.cfg.repo.join("scripts/seed_genesis.py"))
             .arg("--genesis")
             .arg(&genesis)
             .arg("--seed")
-            .arg(&self.cfg.seed)
+            .arg(seed)
+            // The typed profile is written to a scenario-local seed copy. Keep
+            // external contract artifacts anchored to the repository seed
+            // directory instead of letting seed_genesis.py infer a nonexistent
+            // `<scenario>/contracts` sibling.
+            .arg("--contracts-dir")
+            .arg(self.cfg.repo.join("scripts/contracts"))
             .arg("--validators")
             .arg(self.cfg.dir.join("validators.json"))
             .arg("--worldwide-day")
@@ -514,12 +749,8 @@ impl Localnet {
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
-    fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 120);
-        let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
-        if felony_threshold >= epoch {
-            bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
-        }
+    fn patch_felony(&self, profile: &BootstrapProfile) -> Result<()> {
+        let felony_threshold = profile.dev_felony_threshold;
         let path = self.cfg.dir.join("genesis.json");
         let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
         let alloc = g
@@ -550,20 +781,71 @@ impl Localnet {
         Ok(())
     }
 
-    /// Apply opt-in staking lifecycle timings to the already-seeded genesis.
-    /// No slot is changed unless its corresponding `TESTNET_*` knob is present.
-    fn patch_staking_timing(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let unbonding = tuned_optional(tuning, "TESTNET_UNBONDING_PERIOD_SECS");
-        let slashed = tuned_optional(tuning, "TESTNET_SLASHED_WITHDRAWAL_DELAY_SECS");
-        if unbonding.is_none() && slashed.is_none() {
-            return Ok(());
+    fn validate_effective_seed_capacity(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&self.cfg.seed)?)?;
+        let configured = profile.max_validators.or_else(|| {
+            seed.pointer("/validator_set/max_validators")
+                .and_then(json_u32)
+        });
+        if let Some(max) = configured {
+            if max == 0 || max < n as u32 {
+                bail!("effective max validators {max} cannot hold genesis committee size {n}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Create the seed consumed by `seed_genesis.py` without changing the
+    /// caller-supplied seed file.
+    fn prepare_scenario_seed(&self, profile: &BootstrapProfile) -> Result<std::path::PathBuf> {
+        let mut seed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&self.cfg.seed)?)?;
+        let root = seed
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed root is not an object"))?;
+        let validator_set = root
+            .entry("validator_set")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed validator_set is not an object"))?;
+
+        if let Some(index) = profile.validator_set_owner_index {
+            let validators: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
+            let owner = validators
+                .as_array()
+                .and_then(|entries| entries.get(index))
+                .and_then(|entry| entry.get("address"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} has no address in validators.json"))?;
+            validator_set.insert("owner".into(), json!(owner));
+        }
+        if let Some(max) = profile.max_validators {
+            validator_set.insert("max_validators".into(), json!(max));
+        }
+        if let Some(cooldown) = profile.reregistration_cooldown_blocks {
+            validator_set.insert("reregistration_cooldown_blocks".into(), json!(cooldown));
         }
 
-        let path = self.cfg.dir.join("genesis.json");
-        let mut genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
-        patch_staking_storage(&mut genesis, unbonding, slashed)?;
-        fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
-        Ok(())
+        if profile.unbonding_period_secs.is_some()
+            || profile.slashed_withdrawal_delay_secs.is_some()
+        {
+            let staking = root
+                .entry("staking")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| eyre!("genesis seed staking is not an object"))?;
+            if let Some(value) = profile.unbonding_period_secs {
+                staking.insert("unbonding_period".into(), json!(value.get()));
+            }
+            if let Some(value) = profile.slashed_withdrawal_delay_secs {
+                staking.insert("slashed_withdrawal_delay".into(), json!(value.get()));
+            }
+        }
+
+        let path = self.cfg.dir.join("scenario-seed.json");
+        fs::write(&path, serde_json::to_string_pretty(&seed)? + "\n")?;
+        Ok(path)
     }
 }
 
@@ -626,59 +908,18 @@ fn patch_felony_storage(
     storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
 
-/// A `TESTNET_*` tuning override parsed as `u64`, or `default`.
-fn tuned(tuning: &[(&str, String)], key: &str, default: u64) -> u64 {
-    tuning
-        .iter()
-        .find(|(k, _)| *k == key)
-        .and_then(|(_, v)| v.parse().ok())
-        .unwrap_or(default)
-}
-
-fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
-    tuning
-        .iter()
-        .find(|(candidate, _)| *candidate == key)
-        .and_then(|(_, value)| value.parse().ok())
-}
-
-fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
-    tuned_optional(tuning, "TESTNET_VALIDATOR_BALANCE_COEN").map_or_else(
+fn validator_balance_hex(profile: &BootstrapProfile) -> String {
+    profile.validator_balance_coen.map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
         |coen| format!("0x{:x}", u128::from(coen) * 10u128.pow(18)),
     )
 }
 
-fn patch_staking_storage(
-    genesis: &mut serde_json::Value,
-    unbonding: Option<u64>,
-    slashed: Option<u64>,
-) -> Result<()> {
-    let alloc = genesis
-        .get_mut("alloc")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre!("genesis has no alloc object"))?;
-    let key = alloc
-        .keys()
-        .find(|key| address_has_suffix(key, STAKING_SUFFIX))
-        .cloned()
-        .ok_or_else(|| eyre!("seeded genesis has no Staking alloc entry"))?;
-    let storage = alloc
-        .get_mut(&key)
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|entry| entry.get_mut("storage"))
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre!("Staking alloc entry has no storage object"))?;
-    if let Some(value) = unbonding {
-        storage.insert(format!("0x{:064x}", 1u64), json!(format!("0x{value:064x}")));
-    }
-    if let Some(value) = slashed {
-        storage.insert(
-            format!("0x{:064x}", 11u64),
-            json!(format!("0x{value:064x}")),
-        );
-    }
-    Ok(())
+fn json_u32(value: &serde_json::Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|raw| u32::try_from(raw).ok())
+        .or_else(|| value.as_str().and_then(|raw| raw.parse::<u32>().ok()))
 }
 
 /// Whether an alloc key normalizes (lowercase, `0x`-stripped, left-padded to 40)
@@ -696,42 +937,6 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn seeded_genesis() -> serde_json::Value {
-        json!({
-            "alloc": {
-                "000000000000000000000000000000000000ee02": {
-                    "storage": {
-                        format!("0x{:064x}", 1u64): format!("0x{:064x}", 1_814_400u64),
-                        format!("0x{:064x}", 11u64): format!("0x{:064x}", 3_628_800u64)
-                    }
-                }
-            }
-        })
-    }
-
-    #[test]
-    fn lifecycle_timing_patch_updates_only_requested_staking_slots() {
-        let mut genesis = seeded_genesis();
-        patch_staking_storage(&mut genesis, Some(8), None).unwrap();
-        let storage = genesis["alloc"]["000000000000000000000000000000000000ee02"]["storage"]
-            .as_object()
-            .unwrap();
-        assert_eq!(
-            storage[&format!("0x{:064x}", 1u64)],
-            json!(format!("0x{:064x}", 8u64))
-        );
-        assert_eq!(
-            storage[&format!("0x{:064x}", 11u64)],
-            json!(format!("0x{:064x}", 3_628_800u64))
-        );
-    }
-
-    #[test]
-    fn lifecycle_timing_patch_rejects_unseeded_staking_entry() {
-        let mut genesis = json!({ "alloc": {} });
-        assert!(patch_staking_storage(&mut genesis, Some(8), None).is_err());
-    }
 
     #[test]
     fn felony_patch_uses_current_slashindicator_config_slots() {
@@ -785,13 +990,73 @@ mod tests {
 
     #[test]
     fn validator_liquid_balance_can_be_tuned_per_scenario() {
-        assert_eq!(validator_balance_hex(&[]), VALIDATOR_BALANCE_HEX);
+        assert_eq!(
+            validator_balance_hex(&BootstrapProfile::default()),
+            VALIDATOR_BALANCE_HEX
+        );
 
-        let tuned =
-            validator_balance_hex(&[("TESTNET_VALIDATOR_BALANCE_COEN", "2100000".to_owned())]);
+        let tuned_profile = BootstrapProfile::from_tuning(&[(
+            "TESTNET_VALIDATOR_BALANCE_COEN",
+            "2100000".to_owned(),
+        )])
+        .unwrap();
+        let tuned = validator_balance_hex(&tuned_profile);
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
             2_100_000u128 * 10u128.pow(18)
         );
+    }
+
+    #[test]
+    fn profile_rejects_invalid_values_before_bootstrap() {
+        assert!(BootstrapProfile::default().with_chain_id(0).is_err());
+        assert!(BootstrapProfile::default()
+            .with_dkg_timing(60, 0, 30)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_dkg_timing(60, 61, 30)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_staking_timing(Some(0), None)
+            .is_err());
+        assert!(BootstrapProfile::default().with_max_validators(0).is_err());
+    }
+
+    #[test]
+    fn profile_checks_committee_dependent_bounds() {
+        let owner_outside = BootstrapProfile::default().with_validator_set_owner(4);
+        assert!(owner_outside.validate_for_committee(4).is_err());
+
+        let too_small = BootstrapProfile::default().with_max_validators(3).unwrap();
+        assert!(too_small.validate_for_committee(4).is_err());
+
+        let valid = BootstrapProfile::default()
+            .with_validator_set_owner(0)
+            .with_max_validators(5)
+            .unwrap()
+            .with_reregistration_cooldown_blocks(0);
+        valid.validate_for_committee(4).unwrap();
+    }
+
+    #[test]
+    fn legacy_tuning_is_strict_and_maps_to_typed_profile() {
+        let profile = BootstrapProfile::from_tuning(&[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "60".to_owned()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "15".to_owned()),
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "20".to_owned()),
+            ("TESTNET_DEV_FELONY_THRESHOLD", "59".to_owned()),
+            ("TESTNET_UNBONDING_PERIOD_SECS", "8".to_owned()),
+        ])
+        .unwrap();
+        assert_eq!(profile.epoch_length_blocks.get(), 60);
+        assert_eq!(profile.dkg_prepare_window_blocks.get(), 15);
+        assert_eq!(profile.unbonding_period_secs.unwrap().get(), 8);
+
+        assert!(BootstrapProfile::from_tuning(&[(
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            "not-a-number".to_owned(),
+        )])
+        .is_err());
+        assert!(BootstrapProfile::from_tuning(&[("TESTNET_UNKNOWN", "1".to_owned(),)]).is_err());
     }
 }

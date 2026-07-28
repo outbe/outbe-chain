@@ -20,6 +20,7 @@ use crate::internal::{
     },
     shell::Sh,
 };
+use crate::world::validators::RegistrationIdentity;
 
 use super::Localnet;
 
@@ -32,31 +33,145 @@ fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 impl Localnet {
+    /// Generate a reusable EOA + individual MinPk BLS identity and its exact
+    /// address-bound registration PoP.
+    ///
+    /// Generation happens in an ephemeral staging directory. The returned
+    /// value owns the key/proof bytes, so it remains usable after
+    /// [`Localnet::rebootstrap_with_profile`] removes the first chain's files.
+    pub fn prepare_registration_identity(
+        &self,
+        suggested_index: usize,
+    ) -> Result<RegistrationIdentity> {
+        self.prepare_registration_identity_parts(suggested_index, None, None)
+    }
+
+    /// Generate a fresh BLS key and PoP while retaining an existing identity's
+    /// EOA. Re-registration tests use this for "same validator, new BLS key".
+    pub fn rotate_registration_bls(
+        &self,
+        suggested_index: usize,
+        eoa_source: &RegistrationIdentity,
+    ) -> Result<RegistrationIdentity> {
+        self.prepare_registration_identity_parts(suggested_index, Some(eoa_source), None)
+    }
+
+    /// Bind an existing BLS private key to another prepared EOA and generate
+    /// the corresponding address-bound PoP. Duplicate-key and old-key reuse
+    /// tests use this without exposing the BLS secret through the public API.
+    pub fn rebind_registration_bls(
+        &self,
+        suggested_index: usize,
+        eoa_source: &RegistrationIdentity,
+        bls_source: &RegistrationIdentity,
+    ) -> Result<RegistrationIdentity> {
+        self.prepare_registration_identity_parts(
+            suggested_index,
+            Some(eoa_source),
+            Some(bls_source),
+        )
+    }
+
+    fn prepare_registration_identity_parts(
+        &self,
+        suggested_index: usize,
+        eoa_source: Option<&RegistrationIdentity>,
+        bls_source: Option<&RegistrationIdentity>,
+    ) -> Result<RegistrationIdentity> {
+        fs::create_dir_all(&self.cfg.dir)?;
+        let nonce = random_hex_32()?;
+        let staging = self.cfg.dir.join(format!(
+            ".identity-stage-{suggested_index}-{}",
+            &nonce[..16]
+        ));
+        if staging.exists() {
+            return Err(eyre!(
+                "identity staging directory already exists: {}",
+                staging.display()
+            ));
+        }
+
+        let result = (|| -> Result<RegistrationIdentity> {
+            match (eoa_source, bls_source) {
+                (None, None) => {
+                    self.keygen(&["hybrid", "--output-dir", &staging.display().to_string()])?;
+                }
+                (_, None) => {
+                    self.keygen(&["generate", "--output-dir", &staging.display().to_string()])?;
+                }
+                (_, Some(source)) => {
+                    source.install_at(&staging)?;
+                }
+            }
+            let signing_key = staging.join("signing-key.hex");
+            let signing_key_arg = signing_key.display().to_string();
+            let bls = first_hex(
+                &self.keygen(&["show-pubkey", "--key", &signing_key_arg])?,
+                96,
+            )
+            .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
+            let evm_key = match eoa_source {
+                Some(source) => source.evm_key().to_owned(),
+                None => read_evm_key(&staging)?,
+            };
+            let address =
+                eth::address_of(&evm_key).ok_or_else(|| eyre!("bad generated EVM key"))?;
+            let signature = first_hex(
+                &self.keygen(&[
+                    "sign-registration",
+                    "--key",
+                    &signing_key_arg,
+                    "--validator-address",
+                    &format!("{address:#x}"),
+                ])?,
+                120,
+            )
+            .ok_or_else(|| eyre!("no registration signature from keygen"))?;
+            let bls_private_key = read_trimmed(&signing_key)?;
+
+            Ok(RegistrationIdentity::new(
+                address,
+                evm_key,
+                bls_private_key,
+                Bytes::from(hex::decode(bls)?),
+                Bytes::from(hex::decode(signature)?),
+                random_hex_32()?,
+            ))
+        })();
+        let _ = fs::remove_dir_all(&staging);
+        result
+    }
+
+    /// Materialize a prepared identity for a joiner node. Existing key files
+    /// are never overwritten.
+    pub fn install_registration_identity(
+        &self,
+        index: usize,
+        identity: &RegistrationIdentity,
+    ) -> Result<()> {
+        identity.install_at(&self.cfg.validator_dir(index))
+    }
+
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
-        let vd = self.cfg.validator_dir(index);
-        fs::create_dir_all(&vd)?;
-        let signing_key = vd.join("signing-key.hex").display().to_string();
+        let identity = self.prepare_registration_identity(index)?;
+        self.provision_joiner_with_identity(index, &identity)
+    }
 
-        // Fresh hybrid key material for the joiner.
-        self.keygen(&["hybrid", "--output-dir", &vd.display().to_string()])?;
-        let bls = first_hex(&self.keygen(&["show-pubkey", "--key", &signing_key])?, 96)
-            .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
-        let key = read_evm_key(&vd)?;
-        let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
-        let sig = first_hex(
-            &self.keygen(&[
-                "sign-registration",
-                "--key",
-                &signing_key,
-                "--validator-address",
-                &format!("{addr:#x}"),
-            ])?,
-            120,
-        )
-        .ok_or_else(|| eyre!("no registration signature from keygen"))?;
-        fs::write(vd.join("reth-p2p-secret.hex"), random_hex_32()?)?;
+    /// Provision a joiner from caller-retained identity material.
+    ///
+    /// Lifecycle consistency tests retain the identity so they can later prove
+    /// old-key release, same-EOA key rotation, and duplicate-key rejection
+    /// through public transactions.
+    pub fn provision_joiner_with_identity(
+        &mut self,
+        index: usize,
+        identity: &RegistrationIdentity,
+    ) -> Result<()> {
+        self.install_registration_identity(index, &identity)?;
+        let key = identity.evm_key().to_owned();
+        let addr = identity.address();
 
         // Fund from validator-0, prove that an unrelated EOA cannot register
         // this validator identity, then self-register and publish the P2P
@@ -66,8 +181,8 @@ impl Localnet {
         eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
         let registration = IValidatorSet::registerValidatorCall {
             v: addr,
-            pubkey: Bytes::from(hex::decode(&bls)?),
-            sig: Bytes::from(hex::decode(&sig)?),
+            pubkey: identity.bls_public_key().clone(),
+            sig: identity.registration_signature().clone(),
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
         let unauthorized = eth::send_call(
@@ -121,6 +236,8 @@ impl Localnet {
         self.start_node_enclave(index)?;
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
+        let bls = hex::encode(identity.bls_public_key());
+        let vd = self.cfg.validator_dir(index);
         let binding_id = random_hex_32()?;
         let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
             .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?

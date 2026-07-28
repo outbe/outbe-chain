@@ -1,0 +1,127 @@
+diff --git a/crates/blockchain/consensus/src/dkg_manager.rs b/crates/blockchain/consensus/src/dkg_manager.rs
+index f5ab392..734139c 100644
+--- a/crates/blockchain/consensus/src/dkg_manager.rs
++++ b/crates/blockchain/consensus/src/dkg_manager.rs
+@@ -5,6 +5,9 @@ use std::{
+     num::NonZeroU32,
+     pin::Pin,
+-    sync::{Arc, Mutex},
++    sync::{
++        atomic::{AtomicBool, Ordering},
++        Arc, Mutex,
++    },
+     time::Duration,
+ };
+ 
+@@ -485,6 +488,7 @@ impl Mailbox {
+                 .pending_boundary
+                 .clone()
+                 .filter(|artifact| artifact.epoch == epoch.get())
++                .map(e2e_adversarial_boundary)
+         })
+     }
+ 
+@@ -530,8 +534,8 @@ impl Mailbox {
+         artifact: &DkgBoundaryArtifact,
+     ) -> Result<()> {
+-        let expected = self
++        let expected = e2e_adversarial_boundary(self
+             .with_state(|state| state.pending_boundary.clone())
+-            .ok_or_else(|| eyre::eyre!("no pending DKG boundary artifact"))?;
++            .ok_or_else(|| eyre::eyre!("no pending DKG boundary artifact"))?);
+         ensure!(
+             epoch.get() == artifact.epoch,
+             "boundary artifact epoch {} does not match verify epoch {}",
+@@ -876,6 +880,92 @@ fn hash_active_set(addresses: &[Address]) -> B256 {
+     alloy_primitives::keccak256(bytes)
+ }
+ 
++/// Explicit E2E-only boundary variant used to prove that honest nodes compare
++/// a proposal with their own locally reconstructed artifact. The normal binary
++/// has no caller for this path; the harness-built binary must also receive the
++/// exact opt-in environment variable.
++fn e2e_adversarial_boundary(mut artifact: DkgBoundaryArtifact) -> DkgBoundaryArtifact {
++    let Ok(raw_address) = std::env::var("OUTBE_E2E_ADVERSARY_OMIT_ACTIVE") else {
++        return artifact;
++    };
++    let Ok(omitted) = raw_address.parse::<Address>() else {
++        warn!(
++            target: "outbe::consensus",
++            value = %raw_address,
++            "invalid E2E adversarial omitted-validator address"
++        );
++        return artifact;
++    };
++    let Some(position) = artifact
++        .reshare
++        .new_active_set
++        .iter()
++        .position(|address| *address == omitted)
++    else {
++        return artifact;
++    };
++    let Some(output) = decode_boundary_outcome(artifact.outcome.as_ref()) else {
++        warn!(
++            target: "outbe::consensus",
++            "E2E adversarial boundary has no decodable full DKG output"
++        );
++        return artifact;
++    };
++    if output.players().len() != artifact.reshare.new_active_set.len() {
++        warn!(
++            target: "outbe::consensus",
++            players = output.players().len(),
++            addresses = artifact.reshare.new_active_set.len(),
++            "E2E adversarial boundary player/address alignment is unavailable"
++        );
++        return artifact;
++    }
++
++    let mut encoded_pubkeys = output
++        .players()
++        .iter()
++        .map(|public_key| commonware_codec::Encode::encode(public_key).to_vec())
++        .collect::<Vec<_>>();
++    encoded_pubkeys.remove(position);
++    artifact.reshare.new_active_set.remove(position);
++    artifact.reshare.active_set_hash = hash_active_set(&artifact.reshare.new_active_set);
++    artifact.target_set_hash = hash_target_set(
++        &artifact.reshare.new_active_set,
++        artifact.freeze_height,
++        artifact.planned_activation_height,
++    );
++    let snapshot = match crate::proof::build_committee_snapshot(
++        &artifact.reshare.new_active_set,
++        &encoded_pubkeys,
++        artifact.vrf_material_version,
++        artifact.vrf_group_public_key_bytes.to_vec(),
++        public_polynomial_hash(output.public()),
++    ) {
++        Ok(snapshot) => snapshot,
++        Err(error) => {
++            warn!(target: "outbe::consensus", %error, "E2E adversarial snapshot build failed");
++            return artifact;
++        }
++    };
++    artifact.committee_set_hash = crate::proof::committee_set_hash_v2(artifact.epoch, &snapshot);
++    artifact.is_validator_set_change = true;
++    artifact
++        .tee_recipient_pubkeys
++        .retain(|(validator, _)| *validator != omitted);
++    artifact.tee_reshare_registrations.clear();
++    artifact.endorsement_signature = Bytes::new();
++
++    static INJECTION_RECORDED: AtomicBool = AtomicBool::new(false);
++    if !INJECTION_RECORDED.swap(true, Ordering::SeqCst) {
++        warn!(
++            target: "outbe::consensus",
++            omitted = %omitted,
++            "E2E_ADVERSARY emitted one self-consistent omit-active boundary"
++        );
++    }
++    artifact
++}
++
+ fn hash_target_set(
+     addresses: &[Address],
+     freeze_height: u64,
