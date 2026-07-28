@@ -314,6 +314,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-021 — Enforce genesis-active CREATE/CREATE2 reservation
 
+- **Status:** Done; the production EVM installs one focused instruction-table guard
+  for nested `CREATE`/`CREATE2` and one matching first-frame guard for top-level create
+  transactions, including inspected execution. Reserved destinations are derived and
+  warmed before revm's normal `CreateCollision` path performs nonce, gas and journal
+  handling. Evidence: focused production-factory tests cover top-level/inspected,
+  nested CREATE/CREATE2, adjacent successful creation, canonical collision gas parity
+  and native value transfer; the full `outbe-evm` suite and clippy pass.
 - **Goal:** Prevent any contract from occupying the selected two-byte class.
 - **Scope/files:** focused EVM creation-guard module and the supported revm handler
   seam; dependency pin change only if unavoidable and separately reviewed.

@@ -25,13 +25,17 @@ use reth_ethereum::evm::{
         inspector::{Inspector, NoOpInspector},
         interpreter::{interpreter::EthInterpreter, InterpreterResult},
         primitives::hardfork::SpecId,
-        ExecuteEvm, InspectEvm, MainBuilder, MainContext, SystemCallEvm,
+        ExecuteEvm, MainBuilder, MainContext, SystemCallEvm,
     },
 };
 use revm::handler::{Handler, MainnetHandler};
+use revm::inspector::InspectorHandler;
 use std::sync::Arc;
 
-use crate::precompiles::extend_outbe_precompiles;
+use crate::{
+    create_guard::{self, ReservedNamespaceHandler},
+    precompiles::extend_outbe_precompiles,
+};
 
 #[cfg(test)]
 use reth_ethereum::evm::revm::context_interface::result::{
@@ -218,11 +222,15 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        if self.inspect {
-            self.inner.inspect_tx(tx)
+        self.inner.ctx.set_tx(tx);
+        let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
+        let output = if self.inspect {
+            handler.inspect_run(&mut self.inner)
         } else {
-            self.inner.transact(tx)
-        }
+            handler.run(&mut self.inner)
+        };
+        let state = self.inner.finalize();
+        Ok(ResultAndState::new(output?, state))
     }
 
     fn transact_system_call(
@@ -421,12 +429,13 @@ impl EvmFactory for OutbeEvmFactory {
             execution_scope.clone(),
         );
 
-        let evm = Context::mainnet()
+        let mut evm = Context::mainnet()
             .with_db(db)
             .with_cfg(input.cfg_env)
             .with_block(input.block_env)
             .build_mainnet_with_inspector(NoOpInspector {})
             .with_precompiles(precompiles);
+        create_guard::install(&mut evm.instruction);
 
         OutbeEvm::new(evm, false, runtime_body_readers, execution_scope)
     }
