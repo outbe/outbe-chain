@@ -159,6 +159,7 @@ pub mod vote {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use alloy_sol_types::SolEvent;
         use outbe_primitives::addresses::{UPDATE_ADDRESS, VOTE_ADDRESS};
         use outbe_primitives::block::BlockContext;
         use outbe_primitives::stablecoin::{
@@ -167,13 +168,35 @@ pub mod vote {
         use outbe_primitives::stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW;
         use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
         use outbe_stablecoinfactory::StablecoinFactoryContract;
+        use outbe_validatorset::contract::ValidatorSet;
+        use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
+        use outbe_vote::precompile::IVote;
         use outbe_vote::schema::{BondSettlement, Vote};
+
+        const VALIDATOR_OWNER: Address = Address::repeat_byte(0xff);
+        const VALIDATOR_A: Address = Address::repeat_byte(0xa1);
+        const VALIDATOR_B: Address = Address::repeat_byte(0xa2);
+        const VALIDATOR_C: Address = Address::repeat_byte(0xa3);
+        const VALIDATOR_D: Address = Address::repeat_byte(0xa4);
 
         fn payload(issuer: Address) -> Vec<u8> {
             encode_canonical_stablecoin_create(&StablecoinCreatePayload {
                 issuer,
                 name: "Example Dollar".into(),
                 ticker: "EXUSD".into(),
+                iso4217: 840,
+                decimals: 6,
+                supply_cap: U256::from(1_000_000u64),
+                policy_id: U256::from(1u64),
+            })
+            .unwrap()
+        }
+
+        fn payload_with_ticker(issuer: Address, ticker: &str) -> Vec<u8> {
+            encode_canonical_stablecoin_create(&StablecoinCreatePayload {
+                issuer,
+                name: format!("{ticker} stablecoin"),
+                ticker: ticker.into(),
                 iso4217: 840,
                 decimals: 6,
                 supply_cap: U256::from(1_000_000u64),
@@ -199,6 +222,35 @@ pub mod vote {
                     U256::from(STABLECOIN_V1_PROTOCOL_VERSION_RAW),
                 )
                 .unwrap();
+        }
+
+        fn register_active_validator(storage: StorageHandle<'_>, validator: Address, seed: u8) {
+            let mut validator_set = ValidatorSet::new(storage);
+            validator_set.config_owner.write(VALIDATOR_OWNER).unwrap();
+            validator_set.config_max_validators.write(100).unwrap();
+            let mut public_key = [0u8; 48];
+            public_key[0] = seed;
+            validator_set
+                .register_validator(VALIDATOR_OWNER, validator, &public_key)
+                .unwrap();
+            validator_set.activate_validator(validator).unwrap();
+        }
+
+        fn setup_active_validators(storage: StorageHandle<'_>) {
+            register_active_validator(storage.clone(), VALIDATOR_A, 1);
+            register_active_validator(storage.clone(), VALIDATOR_B, 2);
+            register_active_validator(storage, VALIDATOR_C, 3);
+        }
+
+        fn finalize_context(
+            storage: StorageHandle<'_>,
+            block_number: u64,
+            issuer: Address,
+        ) -> BlockRuntimeContext<'_> {
+            BlockRuntimeContext::new(
+                BlockContext::new(block_number, 1_700_000_000, 1, issuer, vec![issuer]),
+                storage,
+            )
         }
 
         #[test]
@@ -287,6 +339,294 @@ pub mod vote {
             assert!(!StablecoinFactoryContract::new(mismatch_storage)
                 .reservations
                 .exists(U256::from(1u64))
+                .unwrap());
+        }
+
+        #[test]
+        fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus() {
+            let issuer = Address::repeat_byte(0x11);
+            let raw = payload(issuer);
+            let raw = core::str::from_utf8(&raw).unwrap();
+            let forced_surplus = U256::from(7u64);
+            let issuer_start = U256::from(11u64);
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus);
+            provider.set_balance(issuer, issuer_start);
+            let proposal_id;
+            {
+                let storage = StorageHandle::new(&mut provider);
+                activate(&storage);
+                setup_active_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                let factory = StablecoinFactoryContract::new(storage.clone());
+                let (expected_id, expected_token) =
+                    factory.predict_token_address(issuer, "EXUSD").unwrap();
+                proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        raw,
+                        7,
+                        STABLECOIN_CREATE_BOND,
+                        registry(),
+                    )
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+
+                let deadline = 7 + VOTING_WINDOW_BLOCKS;
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 1, issuer),
+                    registry(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Approved
+                );
+                assert_eq!(
+                    vote.proposal_bond(proposal_id).unwrap().settlement,
+                    BondSettlement::Refunded
+                );
+                assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+                assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+                assert_eq!(
+                    storage.balance(issuer).unwrap(),
+                    issuer_start + STABLECOIN_CREATE_BOND
+                );
+                assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
+                assert_eq!(
+                    factory.registered_token_id(expected_token).unwrap(),
+                    Some(expected_id)
+                );
+                assert!(!factory.reservations.exists(proposal_id).unwrap());
+
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 2, issuer),
+                    registry(),
+                )
+                .unwrap();
+                assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+                assert_eq!(
+                    storage.balance(issuer).unwrap(),
+                    issuer_start + STABLECOIN_CREATE_BOND
+                );
+                assert_eq!(factory.token_count().unwrap(), U256::from(1u64));
+            }
+
+            assert_eq!(
+                provider
+                    .get_events(VOTE_ADDRESS)
+                    .iter()
+                    .filter(|event| {
+                        event.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+                    })
+                    .count(),
+                1
+            );
+            assert_eq!(proposal_id, U256::from(1u64));
+        }
+
+        #[test]
+        fn real_factory_vote_expiry_after_set_change_releases_and_burns_once() {
+            let issuer = Address::repeat_byte(0x11);
+            let raw = payload(issuer);
+            let raw = core::str::from_utf8(&raw).unwrap();
+            let forced_surplus = U256::from(7u64);
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus);
+            let proposal_id;
+            {
+                let storage = StorageHandle::new(&mut provider);
+                activate(&storage);
+                setup_active_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        raw,
+                        7,
+                        STABLECOIN_CREATE_BOND,
+                        registry(),
+                    )
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+
+                let mut validator_set = ValidatorSet::new(storage.clone());
+                validator_set
+                    .deactivate_validator(VALIDATOR_OWNER, VALIDATOR_B)
+                    .unwrap();
+                register_active_validator(storage.clone(), VALIDATOR_D, 4);
+
+                let deadline = 7 + VOTING_WINDOW_BLOCKS;
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 1, issuer),
+                    registry(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Expired
+                );
+                assert_eq!(
+                    vote.proposal_bond(proposal_id).unwrap().settlement,
+                    BondSettlement::Burned
+                );
+                assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
+                assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+                assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
+                let factory = StablecoinFactoryContract::new(storage.clone());
+                assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+                assert!(!factory.reservations.exists(proposal_id).unwrap());
+
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 2, issuer),
+                    registry(),
+                )
+                .unwrap();
+                assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            }
+
+            assert_eq!(
+                provider
+                    .get_events(VOTE_ADDRESS)
+                    .iter()
+                    .filter(|event| {
+                        event.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+                    })
+                    .count(),
+                1
+            );
+        }
+
+        #[test]
+        fn real_factory_vote_execution_error_retains_reservation_and_bond() {
+            let issuer = Address::repeat_byte(0x11);
+            let raw = payload(issuer);
+            let raw = core::str::from_utf8(&raw).unwrap();
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                activate(&storage);
+                setup_active_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                let proposal_id = vote
+                    .create_proposal_with_value(
+                        issuer,
+                        STABLECOIN_FACTORY_ADDRESS,
+                        raw,
+                        7,
+                        STABLECOIN_CREATE_BOND,
+                        registry(),
+                    )
+                    .unwrap();
+                let mut corrupted_payload = vote.proposals.get(proposal_id).unwrap().unwrap();
+                corrupted_payload.payload = "{".into();
+                vote.proposals.update(&corrupted_payload).unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+
+                let deadline = 7 + VOTING_WINDOW_BLOCKS;
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 1, issuer),
+                    registry(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Error
+                );
+                assert_eq!(
+                    vote.proposal_bond(proposal_id).unwrap().settlement,
+                    BondSettlement::Unsettled
+                );
+                assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
+                assert_eq!(
+                    storage.balance(VOTE_ADDRESS).unwrap(),
+                    STABLECOIN_CREATE_BOND
+                );
+                assert_eq!(storage.balance(issuer).unwrap(), U256::ZERO);
+                let factory = StablecoinFactoryContract::new(storage);
+                assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+                assert!(factory.reservations.exists(proposal_id).unwrap());
+            }
+            assert_eq!(
+                provider
+                    .get_events(VOTE_ADDRESS)
+                    .iter()
+                    .filter(|event| {
+                        event.topics().first() == Some(&IVote::ProposalBondRefunded::SIGNATURE_HASH)
+                            || event.topics().first()
+                                == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
+                    })
+                    .count(),
+                0
+            );
+        }
+
+        #[test]
+        fn real_factory_vote_rejects_global_ticker_collision_before_allocation() {
+            let issuer_a = Address::repeat_byte(0x11);
+            let issuer_b = Address::repeat_byte(0x22);
+            let raw_a = payload_with_ticker(issuer_a, "GLB");
+            let raw_b = payload_with_ticker(issuer_b, "GLB");
+            let mut provider = HashMapStorageProvider::new(1);
+            provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND * U256::from(2u64));
+            let storage = StorageHandle::new(&mut provider);
+            activate(&storage);
+            let mut vote = Vote::new(storage.clone());
+            let first = vote
+                .create_proposal_with_value(
+                    issuer_a,
+                    STABLECOIN_FACTORY_ADDRESS,
+                    core::str::from_utf8(&raw_a).unwrap(),
+                    7,
+                    STABLECOIN_CREATE_BOND,
+                    registry(),
+                )
+                .unwrap();
+            assert!(vote
+                .create_proposal_with_value(
+                    issuer_b,
+                    STABLECOIN_FACTORY_ADDRESS,
+                    core::str::from_utf8(&raw_b).unwrap(),
+                    7,
+                    STABLECOIN_CREATE_BOND,
+                    registry(),
+                )
+                .is_err());
+            assert_eq!(vote.proposal_count.read().unwrap(), first);
+            assert_eq!(vote.bond_liabilities().unwrap(), STABLECOIN_CREATE_BOND);
+            assert!(!StablecoinFactoryContract::new(storage)
+                .reservations
+                .exists(first + U256::from(1u64))
                 .unwrap());
         }
 
