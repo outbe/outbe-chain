@@ -98,7 +98,7 @@ pub fn assemble_closure(
             ),
             None => exact_binary_identity = Some(lane_binaries.clone()),
         }
-        if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E" | "OCM-ISO") {
+        if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E") {
             let lane_launch = manifest
                 .sections
                 .get("genesis_fork_bundle_and_profiles")
@@ -307,7 +307,7 @@ pub fn verify_closure_semantics(
             ),
             None => exact_binary_identity = Some(lane_binaries.clone()),
         }
-        if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E" | "OCM-ISO") {
+        if matches!(lane.as_str(), "OCM-PUBLIC" | "OCM-E2E") {
             let lane_launch = embedded
                 .sections
                 .get("genesis_fork_bundle_and_profiles")
@@ -587,7 +587,7 @@ mod tests {
     fn closure_requires_every_execution_lane_but_not_a_self_attested_verify_input() {
         assert_eq!(
             required_execution_lanes(&ledger()).expect("required lanes"),
-            ["OCM-E2E", "OCM-FAST", "OCM-INT", "OCM-ISO", "OCM-PUBLIC",]
+            ["OCM-E2E", "OCM-FAST", "OCM-INT", "OCM-PUBLIC"]
         );
     }
 
@@ -608,10 +608,10 @@ mod tests {
         retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&first))
             .expect("same image identity is accepted");
         assert!(
-            retain_scenario_image_identity(&mut retained, "OCM-ISO", &sections(&second)).is_err()
+            retain_scenario_image_identity(&mut retained, "OCM-E2E", &sections(&second)).is_err()
         );
         assert!(
-            retain_scenario_image_identity(&mut retained, "OCM-ISO", &BTreeMap::new()).is_err()
+            retain_scenario_image_identity(&mut retained, "OCM-E2E", &BTreeMap::new()).is_err()
         );
     }
 

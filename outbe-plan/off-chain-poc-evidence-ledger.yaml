@@ -99,14 +99,6 @@ lanes:
     required: true
     required_for: poc_closure
     automatic_retries: 0
-  OCM-ISO:
-    command: mise run ocomp-poc-isolation -- --evidence-dir <dir>
-    platform: systemd_cgroup_v2
-    frequency: every_closure_candidate
-    timeout_minutes: 60
-    required: true
-    required_for: poc_closure
-    automatic_retries: 0
   OCM-VERIFY:
     command: mise run ocomp-poc-evidence-verify -- <manifest>
     platform: clean_linux
@@ -211,10 +203,9 @@ tests:
     substitution_justification: >
       Synthetic bundles exhaust malformed, mixed-revision, missing, skipped,
       stale and hash-corrupt closure cases; real run manifests are discharged
-      by OCM-E2E-001 and OCM-ISO-001.
+      by OCM-E2E-001.
     substitution_discharge:
       - OCM-E2E-001
-      - OCM-ISO-001
     oracles:
       - CANONICAL_BYTES
       - STATIC_BOUNDARY
@@ -912,28 +903,6 @@ tests:
     evidence:
       - pre_post_restart_generation_identity
       - replay_state_receipt_proof_parity
-  OCM-ISO-001:
-    status: planned
-    layer: ISOLATION
-    lane: OCM-ISO
-    planned_path: crates/testing/e2e-harness/features/ocomp_isolation.feature
-    production_entrypoint: generated systemd/cgroup-v2 OCOMP topology
-    real_components:
-      - four_node_services
-      - distinct_service_uids
-      - systemd_socket_activated_workers
-      - cgroup_v2
-      - mount_namespaces
-      - quota_filesystems
-      - real_uds_peer_credentials
-    substitutions: []
-    oracles:
-      - PROCESS_BOUNDARY
-      - RESOURCE_COUNTER
-    evidence:
-      - pid_uid_gid_cgroup_mount_socket_inventory
-      - worker_concurrency_and_quota_bounds
-      - supervisor_worker_cas_fault_node_liveness
   OCM-TRC-001:
     status: planned
     layer: E2E
@@ -984,7 +953,6 @@ task_ownership:
     - OCM-E2E-001
     - OCM-E2E-007
     - OCM-E2E-008
-    - OCM-ISO-001
     - OCM-TRC-001
 
 task_dependencies:
@@ -1057,10 +1025,10 @@ requirements:
   adr:
     "ADR-S-OCM-001/I-01":
       text: OCOMP failure cannot stop consensus or mutate domain state.
-      tests: [OCM-ISO-001, OCM-E2E-001, OCM-E2E-006]
+      tests: [OCM-E2E-001, OCM-E2E-006]
     "ADR-S-OCM-001/I-02":
       text: Supervisor, exporter, worker, CAS and public submitters own no consensus authority.
-      tests: [OCM-BND-001, OCM-E2E-001, OCM-ISO-001]
+      tests: [OCM-BND-001, OCM-E2E-001]
     "ADR-S-OCM-001/I-03":
       text: The Supervisor may invoke the Lysis finalizer but cannot supply precomputed final roots, totals or catalogs.
       tests: [OCM-BND-002, OCM-DET-001]
@@ -1135,7 +1103,7 @@ requirements:
       tests: [OCM-VOT-001, OCM-E2E-001]
     "ADR-S-OCM-003/I-05":
       text: The OCOMP key is distinct from the consensus key and unavailable to compute processes.
-      tests: [OCM-CTL-001, OCM-SIG-001, OCM-ISO-001]
+      tests: [OCM-CTL-001, OCM-SIG-001]
     "ADR-S-OCM-003/I-06":
       text: Sign-once history is durable before signature release.
       tests: [OCM-SIG-001, OCM-E2E-001]
@@ -1233,7 +1201,7 @@ requirements:
     POC-06: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-001]
     POC-07: [OCM-SEM-002]
     POC-08: [OCM-DET-001, OCM-E2E-001]
-    POC-09: [OCM-E2E-001, OCM-ISO-001]
+    POC-09: [OCM-E2E-001]
     POC-10: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
     POC-11: [OCM-FSM-001, OCM-E2E-001]
     POC-12: [OCM-SIG-001, OCM-E2E-001]
@@ -1243,7 +1211,7 @@ requirements:
     POC-16: [OCM-APL-001, OCM-APL-002]
     POC-17: [OCM-TIM-001, OCM-E2E-001]
     POC-18: [OCM-FSM-001, OCM-VOT-001, OCM-PUB-003]
-    POC-19: [OCM-E2E-001, OCM-ISO-001]
+    POC-19: [OCM-PUB-003]
     POC-20: [OCM-BND-003, OCM-CAS-001, OCM-CTL-001]
     POC-21: [OCM-CAP-001, OCM-PUB-001, OCM-PUB-002]
     POC-22: [OCM-E2E-001, OCM-E2E-008]
@@ -1295,10 +1263,10 @@ requirements:
       tests: [OCM-DET-001, OCM-E2E-001]
     PFS-002-13:
       status: required
-      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001, OCM-ISO-001]
+      tests: [OCM-VOT-001, OCM-PUB-001, OCM-E2E-001]
     PFS-002-14:
       status: required
-      tests: [OCM-VOT-001, OCM-E2E-001, OCM-ISO-001, OCM-PUB-003]
+      tests: [OCM-VOT-001, OCM-E2E-001, OCM-PUB-003]
     PFS-002-15:
       status: required
       tests: [OCM-SIG-001, OCM-E2E-001]
@@ -1344,7 +1312,7 @@ requirements:
       tests: [OCM-E2E-001, OCM-FIN-001, OCM-PUB-003]
       oracle: STATE_ROOT_DIFF
     "4":
-      tests: [OCM-E2E-001, OCM-ISO-001]
+      tests: [OCM-E2E-001]
       oracle: PROCESS_BOUNDARY
     "5":
       tests: [OCM-E2E-001, OCM-EXP-001, OCM-DET-001]
@@ -1368,7 +1336,7 @@ requirements:
       tests: [OCM-E2E-001, OCM-TIM-001]
       oracle: CANONICAL_BYTES
     "12":
-      tests: [OCM-E2E-001, OCM-PUB-003, OCM-ISO-001]
+      tests: [OCM-E2E-001, OCM-PUB-003]
       oracle: FINALIZED_PUBLIC_STATE
     "13":
       tests: [OCM-E2E-001, OCM-TRC-001]

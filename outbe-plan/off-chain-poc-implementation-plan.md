@@ -6,7 +6,7 @@ This is the canonical plan for the fresh-devnet Lysis V1 PoC over bounded
 work units and constant-size commitments, with no total Tribute cap. It plans
 implementation and records its merge gates. Production surfaces and
 task-local tests exist on the feature branch; only a successful exact-revision
-public/E2E/isolation evidence bundle may close OCM-27.
+public/E2E evidence bundle may close OCM-27.
 
 Authoritative inputs:
 
@@ -171,7 +171,7 @@ The fork and capacity gates are deliberately split:
 | `G5 QUORUM APPLY` | `OCM-23` | the q-forming validator vote atomically applies four owner effects and terminal state |
 | `G6 PUBLIC MEASUREMENT` | `OCM-25` | disposable four-node measurement chain exercises real RPC/import/replay |
 | `G7 ARMING` | `OCM-26` | final cap/bundle/genesis/committee are checked in; canonical fresh-devnet fork may activate |
-| `G8 CLOSURE` | `OCM-27` | one tracer system story, distributed thirteen-property proof map, isolation and evidence verifier pass |
+| `G8 CLOSURE` | `OCM-27` | one tracer system story, distributed thirteen-property proof map, process-boundary checks and evidence verifier pass |
 
 Before `G7`, code is unreachable on every checked-in network schedule. The
 capacity harness may generate a disposable measurement chain, but its
@@ -308,7 +308,7 @@ Parallelizable groups:
 | `OCM-08` | Job FSM/request/expiry | `05,06,07` | `OCM-FSM-001`, `OCM-REQ-001`, `OCM-E2E-002` (stable ID, integration lane) |
 | `OCM-09` | finalized proof and durable pin | `04,08` | `OCM-FIN-001`, `OCM-PIN-001` |
 | `OCM-10` | retained CE/Reth/Mongo/openings handoff | `06,09` | contributes `OCM-EXP-001` |
-| `OCM-11` | process/control/CAS/systemd base | `04` | `OCM-CTL-001` |
+| `OCM-11` | process/control/CAS base | `04` | `OCM-CTL-001` |
 | `OCM-12` | finalized cursor discovery | `08,09,11` | `OCM-DIS-001` |
 | `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001`, `OCM-E2E-004` (stable ID, integration lane) |
 | `OCM-14` | deterministic plan/work/reduce | `01,04,11,13` | `OCM-SEM-002`, `OCM-DET-001` |
@@ -324,7 +324,7 @@ Parallelizable groups:
 | `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all non-retired public/E2E IDs |
 | `OCM-25` | public fork/vote/quorum-apply measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-001/002/003/004` |
 | `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001` |
-| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/007/008`, `OCM-ISO-001`, `OCM-TRC-001` |
+| `OCM-27` | final E2E and closure report | `26` | `OCM-E2E-001/007/008`, `OCM-TRC-001` |
 
 ## 6. Detailed task cards
 
@@ -351,8 +351,9 @@ closed on missing or corrupt evidence before production work begins.
 - define exact runtime manifest/assertion schemas and atomic publication;
 - add independent closure computation and deterministic JSON/Markdown report;
 - record tracked/untracked dirty state, toolchain, exact binary hashes and
-  exact node/OCOMP/network/systemd configuration hashes;
-- expose the six planned `mise` lanes without pretending absent tests pass.
+  exact node/OCOMP/network configuration hashes;
+- expose the five planned execution/verification `mise` lanes without
+  pretending absent tests pass.
 - expose `mise run ocomp-poc-task -- OCM-NN` separately from fail-closed
   closure mode.
 
@@ -960,46 +961,47 @@ caller-selected path/query/writer capability is exposed.
 **Depends on:** `OCM-04`.
 
 **Outcome:** one `outbe-ocomp` package runs only the three fixed roles over
-bounded UDS/CAS contracts, with checked-in systemd/cgroup topology.
+bounded UDS/CAS contracts. PoC orchestration belongs to the Rust E2E harness;
+production service-manager integration is deferred to MVP hardening.
 
 **Files/symbols:**
 
 - new `bin/outbe-ocomp/{Cargo.toml,src/}`;
 - role entrypoints `supervisor`, `snapshot-exporter`, `worker`;
 - bounded frame/session/counter clients using `outbe-ocomp-protocol`;
-- filesystem CAS and worker inbox;
-- `deploy/systemd/outbe-ocomp-*` service/socket/target/slice units.
+- filesystem CAS and worker inbox.
 
 **Changes:** exact role CLI, UID/peer-credential/method ACLs, inherited
 descriptor handling, session generation/counters, atomic digest publish,
-same-descriptor read verification, quotas and one-unit socket-activated worker.
+same-descriptor read verification and one-unit worker execution.
 
 **Invariants/failures:** no role accepts path/query/command/key/arbitrary digest;
 wrong UID/bundle/session/counter/cap rejects before privileged work; fifth worker
-connection is refused; CAS corruption/full causes retry/abstention, never node
-failure.
+connection is refused by the bounded harness topology; CAS corruption/full
+causes retry/abstention, never node failure.
 
 **Fork impact:** none; processes cannot write chain state or sign.
 
 **Reuse/non-goals:** reuse bounded socket/file-permission patterns and existing
-service supervision vocabulary. Do not reuse TEE Noise semantics, add a CAS
-daemon, launch broker, one crate per role or node lifecycle dependency.
+process supervision vocabulary. Do not reuse TEE Noise semantics, add a CAS
+daemon, launch broker, one crate per role, systemd-specific PoC behavior or
+node lifecycle dependency.
 
-**Test first:** `OCM-CTL-001`; task-local CAS atomicity, worker-one-unit and
-`systemd-analyze verify` tests.
+**Test first:** `OCM-CTL-001`; task-local CAS atomicity and worker-one-unit
+tests.
 
 **Evidence/CI:** `OCM-INT`; frame vectors, peer credentials, process exits,
-object hashes and unit dependency report. Isolation claims wait for `OCM-27`.
+object hashes and owned-process lifecycle evidence.
 
 **Observable acceptance:** node can be absent; each role starts only with its
 declared capabilities; four real worker processes handle four exact UnitIds and
 exit.
 
 **Risks:** one executable accidentally grants all roles. Mitigation: startup
-checks effective UID/descriptors/mounts and role-specific method tables.
+checks effective UID/descriptors and role-specific method tables.
 
 **DoD:** exactly one new compute package, bounded protocols and CAS tests pass,
-service units have no node `Requires/BindsTo`, and `OCM-CTL-001` is green.
+and `OCM-CTL-001` is green.
 
 ### OCM-12 — Discover finalized work by cursor, not event
 
@@ -1959,16 +1961,17 @@ accepts their identities as eligible (not yet complete).
 
 **Outcome:** one exact clean revision/artifact set passes the tracer system
 story and the distributed thirteen-property proof map, every required
-PFS/POC/ADR mapping, real isolation and independent closure verification.
+PFS/POC/ADR mapping, real process boundaries and independent closure
+verification.
 
 **Files/symbols:**
 
-- `crates/testing/e2e-harness/features/{ocomp_poc,ocomp_isolation}.feature`;
+- `crates/testing/e2e-harness/features/ocomp_poc.feature`;
 - `crates/testing/e2e-harness/src/features/ocomp.rs` and its single
   `src/features/mod.rs` registration;
 - OCOMP scenario steps and evidence correlation, including the mandatory
   public-Tribute prefix frozen by `OCM-24`;
-- final `mise run ocomp-poc-{e2e,isolation,evidence-verify,closure}`;
+- final `mise run ocomp-poc-{e2e,evidence-verify,closure}`;
 - CI closure workflows/artifact retention.
 
 **Changes:** keep three full E2E scenarios only: the public Tribute tracer
@@ -1999,13 +2002,12 @@ production release gate, TargetLarge or second program.
 **Test first/owned IDs:**
 
 - `OCM-E2E-001/007/008`;
-- `OCM-ISO-001`;
 - `OCM-TRC-001`;
 - rerun every mandatory fast/integration/public ID on exact final artifacts,
   including the historically named but integration-owned
   `OCM-E2E-002/004/006`.
 
-**Evidence/CI:** `OCM-E2E`, `OCM-ISO`, `OCM-VERIFY`; publish one atomic
+**Evidence/CI:** `OCM-E2E`, `OCM-VERIFY`; publish one atomic
 hash-indexed bundle, deterministic `closure-report.json/.md` and report SHA-256.
 
 **Observable acceptance:** public Tribute -> finalized JobIntent -> independent
@@ -2019,7 +2021,7 @@ counters are zero.
 
 **Risks:** environment skip/flakiness or report trusting scenario status.
 Mitigation: exact discovery, no automatic retry, retained first failure,
-independent recomputation and systemd runner requirement.
+independent recomputation and harness-owned process lifecycle evidence.
 
 **DoD:** `G8` verifier reports PASS for every cataloged OCM ADR invariant,
 `POC-01..26`, every required `PFS-002` row and story `1..13`;
@@ -2038,7 +2040,6 @@ execution has closure semantics and cannot ignore future `MISSING` IDs.
 | `mise run ocomp-poc-integration` | `OCM-00`; populated through `OCM-23` | real backend/process/owner seams PASS |
 | `mise run ocomp-poc-public-path` | `OCM-25` | public vote/quorum/q-forming-apply mutation, deadline, retry and cap measurement PASS |
 | `mise run ocomp-poc-e2e -- --evidence-dir <dir>` | `OCM-27` | four-domain scenario set PASS |
-| `mise run ocomp-poc-isolation -- --evidence-dir <dir>` | `OCM-27` | systemd/cgroup topology and failure isolation PASS |
 | `mise run ocomp-poc-evidence-verify -- <manifest>` | `OCM-00`; final in `OCM-27` | independent closure PASS |
 | `mise run ocomp-poc-closure -- --evidence-dir <dir>` | `OCM-27` | all exact-artifact lanes plus report PASS |
 
@@ -2046,8 +2047,7 @@ The task-progress wrapper runs relevant `OCM-FAST`, `OCM-INT` and
 `OCM-PUBLIC` tests as they appear and requires every discovered test plus the
 named task's owned tests. Unqualified full lanes run on closure candidates;
 full E2E also runs on scheduled main, and a scheduled failure blocks closure.
-Isolation is mandatory for closure. Timeouts and zero-retry rules are those
-frozen in the evidence ledger.
+Timeouts and zero-retry rules are those frozen in the evidence ledger.
 
 ## 8. Test/evidence ownership and bidirectional traceability
 

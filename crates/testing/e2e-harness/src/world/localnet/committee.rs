@@ -2,24 +2,87 @@
 //! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
 
 use std::fs;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use eyre::{bail, Result};
 #[cfg(any(test, feature = "ocomp-integration"))]
-use eyre::{ensure, WrapErr};
+use eyre::ensure;
+use eyre::{bail, Result, WrapErr};
 
+use crate::internal::config::Config;
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
 
 use super::{Localnet, StartOpts};
 
 fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
+}
+
+fn reclaim_stale_ocomp_sockets(cfg: &Config, validator_index: usize) -> Result<()> {
+    for path in [
+        cfg.ocomp_supervisor_socket(validator_index),
+        cfg.ocomp_snapshot_exporter_socket(validator_index),
+    ] {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .wrap_err_with(|| format!("inspect stale OCOMP socket {}", path.display()))
+            }
+        };
+        if !metadata.file_type().is_socket() {
+            bail!(
+                "refusing to remove non-socket OCOMP runtime entry {}",
+                path.display()
+            );
+        }
+        fs::remove_file(&path)
+            .wrap_err_with(|| format!("remove stale OCOMP socket {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn wait_for_ocomp_runtime_sockets(
+    cfg: &Config,
+    validator_index: usize,
+    timeout: Duration,
+) -> Result<()> {
+    let paths = [
+        cfg.ocomp_supervisor_socket(validator_index),
+        cfg.ocomp_snapshot_exporter_socket(validator_index),
+    ];
+    let deadline = Instant::now() + timeout;
+    loop {
+        let mut ready = true;
+        for path in &paths {
+            match fs::symlink_metadata(path) {
+                Ok(metadata) if metadata.file_type().is_socket() => {}
+                Ok(_) => bail!(
+                    "OCOMP runtime path is not a Unix socket: {}",
+                    path.display()
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => ready = false,
+                Err(error) => {
+                    return Err(error).wrap_err_with(|| {
+                        format!("inspect OCOMP runtime socket {}", path.display())
+                    })
+                }
+            }
+        }
+        if ready {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!("timed out waiting for validator-{validator_index} OCOMP runtime sockets");
+        }
+        sleep(Duration::from_millis(50));
+    }
 }
 
 impl Localnet {
@@ -110,6 +173,18 @@ impl Localnet {
             let tail = self.tail_log(i, 20);
             self.validators.remove(&i);
             bail!("validator-{i} exited during isolated restart:\n{tail}");
+        }
+        Ok(())
+    }
+
+    /// Stop and relaunch one committee validator while preserving its running
+    /// enclave and persisted node data. When OCOMP is enabled, return only
+    /// after the relaunched node has rebound both node-facing runtime sockets.
+    pub fn restart_validator_preserving_enclave(&mut self, i: usize) -> Result<()> {
+        self.kill_validator(i)?;
+        self.restart_validator(i)?;
+        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
+            wait_for_ocomp_runtime_sockets(&self.cfg, i, Duration::from_secs(60))?;
         }
         Ok(())
     }
@@ -220,7 +295,11 @@ impl Localnet {
     pub fn restart_validator_and_enclave(&mut self, i: usize) -> Result<()> {
         self.kill_validator(i)?;
         self.enclaves.remove(&i);
-        self.restart()
+        self.restart()?;
+        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
+            wait_for_ocomp_runtime_sockets(&self.cfg, i, Duration::from_secs(60))?;
+        }
+        Ok(())
     }
 
     /// Relaunch one validator against an alternate immutable chain manifest.
@@ -246,10 +325,14 @@ impl Localnet {
     /// Kill committee validator `i` so it stays down, leaving its enclave up (a
     /// later [`restart`] reconnects to it). Port of `e2e_kill_validator`.
     pub fn kill_validator(&mut self, i: usize) -> Result<()> {
-        self.validators.remove(&i); // Drop → SIGKILL + reap
-                                    // Backstop in case the owned handle was ever lost.
+        // Dropping the owned guard sends SIGKILL and synchronously reaps the node.
+        self.validators.remove(&i);
+        // Backstop in case the owned handle was ever lost.
         let pat = format!("outbe-chain node.*validator-{i}/data");
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &pat]);
+        if self.start_opts.ocomp_protocol_bundle_hash.is_some() {
+            reclaim_stale_ocomp_sockets(&self.cfg, i)?;
+        }
         Ok(())
     }
 
@@ -332,8 +415,6 @@ impl Localnet {
             fs::create_dir_all(&domain)?;
             fs::create_dir_all(self.cfg.ocomp_socket_dir(i))?;
             let effective_uid = fs::metadata("/proc/self")?.uid();
-            let supervisor_uid = opts.ocomp_supervisor_uid.unwrap_or(effective_uid);
-            let snapshot_exporter_uid = opts.ocomp_snapshot_exporter_uid.unwrap_or(effective_uid);
             let boot_nonce = format!("0x{}", hex::encode([u8::try_from(i + 1)?; 32]));
             a.extend(args![
                 "--ocomp.supervisor-socket",
@@ -341,9 +422,9 @@ impl Localnet {
                 "--ocomp.snapshot-exporter-socket",
                 self.cfg.ocomp_snapshot_exporter_socket(i).display(),
                 "--ocomp.supervisor-uid",
-                supervisor_uid,
+                effective_uid,
                 "--ocomp.snapshot-exporter-uid",
-                snapshot_exporter_uid,
+                effective_uid,
                 "--ocomp.protocol-bundle-hash",
                 protocol_bundle_hash,
                 "--ocomp.boot-nonce",
@@ -620,5 +701,99 @@ example = { version = "9.9.9" }
             verified_compressed_entities_reconstruction_path(&scenario, 4, 0).unwrap(),
             scenario.join("validator-0/data/compressed_entities")
         );
+    }
+
+    #[test]
+    fn stopped_validator_reclaims_only_its_ocomp_socket_entries() {
+        use std::os::unix::net::UnixListener;
+
+        use crate::env::Environment;
+        use crate::internal::config::Config;
+
+        let root = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: root.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let cfg = Config::for_scenario(&env, 1);
+        let socket_dir = cfg.ocomp_socket_dir(0);
+        std::fs::create_dir_all(&socket_dir).unwrap();
+
+        let supervisor = cfg.ocomp_supervisor_socket(0);
+        let exporter = cfg.ocomp_snapshot_exporter_socket(0);
+        let unrelated = socket_dir.join("keep.txt");
+        drop(UnixListener::bind(&supervisor).unwrap());
+        drop(UnixListener::bind(&exporter).unwrap());
+        std::fs::write(&unrelated, b"scenario evidence").unwrap();
+
+        super::reclaim_stale_ocomp_sockets(&cfg, 0).unwrap();
+
+        assert!(!supervisor.exists());
+        assert!(!exporter.exists());
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"scenario evidence");
+        std::fs::remove_dir_all(socket_dir).unwrap();
+    }
+
+    #[test]
+    fn stopped_validator_never_reclaims_a_non_socket_runtime_entry() {
+        use crate::env::Environment;
+        use crate::internal::config::Config;
+
+        let root = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: root.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let cfg = Config::for_scenario(&env, 1);
+        let socket_dir = cfg.ocomp_socket_dir(0);
+        std::fs::create_dir_all(&socket_dir).unwrap();
+
+        let supervisor = cfg.ocomp_supervisor_socket(0);
+        std::fs::write(&supervisor, b"not a socket").unwrap();
+
+        assert!(super::reclaim_stale_ocomp_sockets(&cfg, 0).is_err());
+        assert_eq!(std::fs::read(&supervisor).unwrap(), b"not a socket");
+        std::fs::remove_dir_all(socket_dir).unwrap();
+    }
+
+    #[test]
+    fn restarted_validator_waits_for_both_node_owned_ocomp_sockets() {
+        use std::os::unix::net::UnixListener;
+        use std::time::Duration;
+
+        use crate::env::Environment;
+        use crate::internal::config::Config;
+
+        let root = tempfile::tempdir().unwrap();
+        let env = Environment {
+            data_dir: root.path().to_path_buf(),
+            ..Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let cfg = Config::for_scenario(&env, 1);
+        let socket_dir = cfg.ocomp_socket_dir(0);
+        let supervisor = cfg.ocomp_supervisor_socket(0);
+        let exporter = cfg.ocomp_snapshot_exporter_socket(0);
+
+        let creator = std::thread::spawn({
+            let socket_dir = socket_dir.clone();
+            let supervisor = supervisor.clone();
+            let exporter = exporter.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(25));
+                std::fs::create_dir_all(socket_dir).unwrap();
+                drop(UnixListener::bind(supervisor).unwrap());
+                std::thread::sleep(Duration::from_millis(25));
+                drop(UnixListener::bind(exporter).unwrap());
+            }
+        });
+
+        super::wait_for_ocomp_runtime_sockets(&cfg, 0, Duration::from_secs(1)).unwrap();
+        creator.join().unwrap();
+        assert!(supervisor.exists());
+        assert!(exporter.exists());
+        std::fs::remove_dir_all(socket_dir).unwrap();
     }
 }

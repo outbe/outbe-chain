@@ -59,9 +59,6 @@ pub struct StartOpts {
     /// Bundle identity already pinned by the measurement chain manifest; used
     /// only for the node-local OCOMP UDS handshake.
     pub ocomp_protocol_bundle_hash: Option<String>,
-    /// Optional real service-account UIDs for the systemd isolation lane.
-    pub ocomp_supervisor_uid: Option<u32>,
-    pub ocomp_snapshot_exporter_uid: Option<u32>,
 }
 
 impl StartOpts {
@@ -72,8 +69,6 @@ impl StartOpts {
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
             ocomp_protocol_bundle_hash: None,
-            ocomp_supervisor_uid: None,
-            ocomp_snapshot_exporter_uid: None,
         }
     }
 
@@ -99,8 +94,6 @@ impl StartOpts {
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
             ocomp_protocol_bundle_hash: None,
-            ocomp_supervisor_uid: None,
-            ocomp_snapshot_exporter_uid: None,
         }
     }
 

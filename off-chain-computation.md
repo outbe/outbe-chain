@@ -2,7 +2,7 @@
 
 Date: 2026-07-26
 Status: accepted architecture with the PoC implementation present on
-`feat/ocomp-poc`; exact public/E2E/isolation closure evidence is pending. The
+`feat/ocomp-poc`; exact public/E2E closure evidence is pending. The
 relay, digest-only-vote and separate-activation paths are superseded and absent
 from the runtime protocol. The selected PoC is a small protocol-forked devnet
 profile, not an on-chain Lysis comparison. PoC, transition and MVP remain

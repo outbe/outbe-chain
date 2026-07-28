@@ -25,9 +25,8 @@ use crate::internal::eth;
 use crate::world::localnet::StartOpts;
 use crate::world::ocomp::OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS;
 use crate::world::ocomp::{
-    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompIsolationRoleV1,
-    OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole, OcompTopology,
-    OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+    OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
+    OcompProcessFault, OcompProcessRole, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
 };
 use crate::world::state::OcompExecutionTraceObservationV1;
 use crate::world::World;
@@ -58,24 +57,18 @@ fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
 
 #[given("the canonical four-validator OCOMP Final devnet")]
 fn canonical_ocomp_final_devnet(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false, false);
+    start_canonical_ocomp_final_devnet(world, true, false);
 }
 
 #[given("the canonical four-validator OCOMP Final devnet before H")]
 fn canonical_ocomp_final_devnet_before_h(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, false, true, false);
-}
-
-#[given("four OCOMP domains are running through the production systemd profile")]
-fn four_ocomp_domains_run_through_systemd(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false, true);
+    start_canonical_ocomp_final_devnet(world, false, true);
 }
 
 fn start_canonical_ocomp_final_devnet(
     world: &mut World,
     wait_for_activation: bool,
     activate_workers: bool,
-    systemd_isolation: bool,
 ) {
     bootstrap_final_ocomp_localnet(world, 6);
     world.state.ocomp_capacity_tribute_private_keys = world
@@ -96,20 +89,12 @@ fn start_canonical_ocomp_final_devnet(
         ),
         genesis_timestamp_pre_shifted: true,
         ocomp_protocol_bundle_hash: None,
-        ocomp_supervisor_uid: None,
-        ocomp_snapshot_exporter_uid: None,
     };
     let prepared = world
         .ocomp
         .prepare_final_fork_install()
         .expect("load canonical OCOMP Final install");
-    launch_prepared_ocomp(
-        world,
-        &mut start_opts,
-        &prepared,
-        activate_workers,
-        systemd_isolation,
-    );
+    launch_prepared_ocomp(world, &mut start_opts, &prepared, activate_workers);
     if wait_for_activation {
         wait_for_finalized_ocomp_activation(world);
     }
@@ -167,7 +152,6 @@ fn start_ocomp_measurement_localnet(
         &mut start_opts,
         &measurement_fork,
         !shorten_public_day,
-        false,
     );
     if shorten_public_day {
         wait_for_finalized_ocomp_activation(world);
@@ -179,17 +163,10 @@ fn launch_prepared_ocomp(
     start_opts: &mut StartOpts,
     prepared: &OcompMeasurementForkV1,
     activate_workers: bool,
-    systemd_isolation: bool,
 ) {
     let expected_identity = prepared.launch_identity();
     start_opts.ocomp_protocol_bundle_hash =
         Some(format!("{:#x}", expected_identity.protocol_bundle_hash));
-    if systemd_isolation {
-        let (supervisor_uid, snapshot_exporter_uid) = OcompTopology::systemd_node_peer_uids()
-            .expect("resolve fixed OCOMP systemd node peers");
-        start_opts.ocomp_supervisor_uid = Some(supervisor_uid);
-        start_opts.ocomp_snapshot_exporter_uid = Some(snapshot_exporter_uid);
-    }
     start_bootstrapped_localnet(world, start_opts);
 
     let primary = world.validators.primary_port();
@@ -205,17 +182,10 @@ fn launch_prepared_ocomp(
     assert_eq!(chain_id, expected_identity.chain_id);
     assert_eq!(genesis_hash, expected_identity.genesis_hash);
     let identity = expected_identity;
-    if systemd_isolation {
-        world
-            .ocomp
-            .start_systemd_validator_roles(identity)
-            .expect("start all production OCOMP roles through systemd");
-    } else {
-        world
-            .ocomp
-            .start_validator_roles(identity)
-            .expect("start all production node-facing OCOMP roles");
-    }
+    world
+        .ocomp
+        .start_validator_roles(identity)
+        .expect("start all production node-facing OCOMP roles");
     if activate_workers {
         for validator_index in 0..4_u8 {
             world
@@ -962,32 +932,6 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
             world.state.ocomp_vote_accountability = Some(accountability);
             world.state.ocomp_validator_balances_after = balances_after;
             world.state.ocomp_atomic_quorum_apply_verified = true;
-            if world.ocomp.systemd_isolation_active() {
-                let node_pids = (0..4_u8)
-                    .map(|validator_index| {
-                        (
-                            validator_index,
-                            world
-                                .localnet
-                                .validator_pid(usize::from(validator_index))
-                                .unwrap_or_else(|error| {
-                                    panic!(
-                                        "read validator-{validator_index} pid for ISO evidence: \
-                                         {error:#}"
-                                    )
-                                }),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                world
-                    .ocomp
-                    .capture_systemd_isolation_inventory(
-                        &node_pids,
-                        u8::try_from(expected_vote_count)
-                            .expect("four-validator vote count fits u8"),
-                    )
-                    .expect("capture real systemd/cgroup/mount/quota/worker inventory");
-            }
             return;
         }
         world
@@ -2011,9 +1955,11 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     for validator_index in 0..4 {
         world
             .localnet
-            .restart_validator_and_enclave(validator_index)
+            .restart_validator_preserving_enclave(validator_index)
             .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} with its preserved datadir: {error:#}")
+                panic!(
+                    "restart validator-{validator_index} with its preserved datadir and enclave: {error:#}"
+                )
             });
         let port = world.validators.http_port(validator_index);
         assert!(
@@ -2285,140 +2231,4 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
         historical_q_vote_observed: true,
         forbidden_calculation_entries: 0,
     });
-}
-
-#[then("every domain has distinct node supervisor exporter and worker process boundaries")]
-fn systemd_process_boundaries_are_distinct(world: &mut World) {
-    let snapshot = world
-        .ocomp
-        .evidence_snapshot()
-        .expect("capture OCOMP systemd topology evidence");
-    let isolation = snapshot
-        .systemd_isolation
-        .as_ref()
-        .expect("systemd isolation inventory after public Lysis activation");
-    assert_eq!(isolation.processes.len(), 16);
-    let mut pids = isolation
-        .processes
-        .iter()
-        .map(|process| process.pid)
-        .collect::<Vec<_>>();
-    pids.sort_unstable();
-    pids.dedup();
-    assert_eq!(pids.len(), 16, "every ISO role must have a distinct pid");
-    for validator_index in 0..4_u8 {
-        let roles = isolation
-            .processes
-            .iter()
-            .filter(|process| process.validator_index == validator_index)
-            .map(|process| process.role)
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(
-            roles,
-            [
-                OcompIsolationRoleV1::Node,
-                OcompIsolationRoleV1::Supervisor,
-                OcompIsolationRoleV1::SnapshotExporter,
-                OcompIsolationRoleV1::Worker,
-            ]
-            .into_iter()
-            .collect(),
-            "validator-{validator_index} has an incomplete process boundary"
-        );
-    }
-}
-
-#[then(
-    "the runtime inventory proves role UIDs cgroup v2 mount isolation quotas and UDS credentials"
-)]
-fn systemd_runtime_inventory_is_complete(world: &mut World) {
-    let snapshot = world
-        .ocomp
-        .evidence_snapshot()
-        .expect("capture OCOMP systemd runtime inventory");
-    snapshot
-        .validate()
-        .expect("validate systemd UID/cgroup/mount/quota/UDS runtime evidence");
-    let isolation = snapshot
-        .systemd_isolation
-        .expect("systemd isolation evidence");
-    assert_eq!(isolation.cgroup_version, 2);
-    assert_eq!(isolation.node_control_handshakes, 8);
-    assert_eq!(isolation.worker_handshakes, 4);
-    assert_eq!(isolation.quota_mounts.len(), 16);
-    assert_eq!(isolation.unit_policies.len(), 12);
-}
-
-#[when("one supervisor CAS path and one socket-activated worker are failed")]
-fn fail_one_systemd_supervisor_and_worker(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
-    world
-        .ocomp
-        .apply_systemd_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
-        .expect("stop validator-0 systemd Supervisor/CAS path");
-    world
-        .ocomp
-        .apply_systemd_process_fault(OcompProcessFault::StopWorker {
-            validator_index: 1,
-            worker_ordinal: 0,
-        })
-        .expect("stop validator-1 systemd worker activation socket");
-}
-
-#[then("both faults stay inside their OCOMP domains and all four nodes continue finalizing")]
-fn systemd_faults_do_not_stop_consensus(world: &mut World) {
-    let before = world
-        .state
-        .ocomp_finality_before_fault
-        .expect("finality captured before systemd OCOMP faults");
-    let primary = world.validators.primary_port();
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
-        "consensus finality did not advance through systemd OCOMP faults"
-    );
-    let after = world
-        .rpc
-        .finalized(primary)
-        .expect("finalized height after faults");
-    for validator_index in 0..4 {
-        assert_ne!(
-            world
-                .localnet
-                .validator_pid(validator_index)
-                .unwrap_or_else(|error| panic!(
-                    "validator-{validator_index} stopped during OCOMP fault: {error:#}"
-                )),
-            0
-        );
-    }
-    world
-        .ocomp
-        .record_systemd_fault_finality(before, after)
-        .expect("record bounded OCOMP fault/finality evidence");
-}
-
-#[then("worker concurrency and aggregate resource limits remain within the PoC profile")]
-fn systemd_worker_and_slice_limits_hold(world: &mut World) {
-    let snapshot = world
-        .ocomp
-        .evidence_snapshot()
-        .expect("capture completed OCOMP ISO evidence");
-    snapshot
-        .validate()
-        .expect("validate completed OCOMP ISO evidence");
-    let isolation = snapshot
-        .systemd_isolation
-        .expect("completed systemd isolation evidence");
-    assert!(isolation.max_live_workers_total <= 16);
-    assert!(isolation
-        .max_live_workers_per_domain
-        .iter()
-        .all(|(_, observed)| (1..=4).contains(observed)));
-    assert!(isolation
-        .finality_after_faults
-        .zip(isolation.finality_before_faults)
-        .is_some_and(|(after, before)| after > before));
 }

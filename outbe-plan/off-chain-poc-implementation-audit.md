@@ -66,9 +66,9 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | 6 | finalized-intent proof/history source | [finalized export decision](off-chain-poc-finalized-input-export.md) | `OCM-09` |
 | 7 | Reth/CE checkpoint API | finalized export decision | `OCM-10` |
 | 8 | CAS layout/quota/cleanup | [process/CAS decision](off-chain-poc-process-and-artifact-topology.md) | `OCM-11`, `OCM-13` |
-| 9 | systemd topology/UIDs/UDS/cgroups | process/CAS decision | `OCM-11`, proved by `OCM-24/27` |
+| 9 | harness-owned process topology, UDS and bounded CAS | process/CAS decision | `OCM-11`, proved by `OCM-24/27` |
 | 10 | key format/sign-once durability | [deterministic/quorum decision](off-chain-poc-deterministic-execution-and-quorum.md) | `OCM-15` |
-| 11 | relay HTTP/public activation bytes | deterministic/quorum and activation decisions | `OCM-16`, `OCM-23` |
+| 11 | full-result vote/public transaction bytes and q-forming apply | deterministic/quorum and activation decisions | `OCM-16`, `OCM-23` |
 | 12 | logical retirement/GC boundary | activation decision | `OCM-20`, `OCM-23` |
 | 13 | independent reference technology | semantic baseline: isolated test-only Rust crate with arbitrary-precision arithmetic | `OCM-01` |
 | 14 | no-on-chain-calculation trace | [test/evidence decision](off-chain-poc-test-and-evidence.md) | `OCM-17`, `OCM-24`, `OCM-27` |
@@ -137,7 +137,7 @@ production operations and billion-record mechanisms remain outside it.
 |---|---|---|
 | capability placed in shared protocol crate | private construction across existing crates was not implementable without a public factory or dependency cycle | moved to the existing primitives storage-frame seam; protocol crate carries bytes only |
 | early full-ledger CI was ambiguous | sequential PRs could be permanently red or partial work could look fully green | explicit `task_progress` versus fail-closed `poc_closure` modes |
-| evidence identity omitted exact config/unit hashes | identical binaries with different service/network configuration were not the same run | manifest and verifier now require exact config/systemd/environment hashes |
+| evidence identity omitted exact config/launch hashes | identical binaries with different process/network configuration were not the same run | manifest and verifier now require exact config/launch/image/environment hashes |
 | minimum machine/headroom was not frozen | capacity task could choose its benchmark target after seeing results | exact machine class, five cold runs and 20% headroom frozen at `G1` |
 | private OCOMP key file format was only called an “envelope” | implementers could invent incompatible storage and publication rules | exact lowercase-hex file, path, permissions, no-clobber/fsync and load checks frozen |
 | six direct dependencies existed in cards but not Mermaid | graph visualization understated review/merge prerequisites | added `04 -> 09` and `05 -> 18..22`; graph now has 72 matching edges |

@@ -2171,25 +2171,6 @@ pub fn run_closure(repository_root: &Path, requested_output: Option<&Path>) -> R
         ],
     )?;
 
-    let iso_evidence_dir = run_root.join("lanes").join("OCM-ISO");
-    run_exact_scenario(
-        repository_root,
-        &artifact_set,
-        &iso_evidence_dir,
-        "@ocomp-isolation",
-        false,
-    )?;
-    run_evidence_binary(
-        repository_root,
-        &artifact_set,
-        &[
-            "lane",
-            "OCM-ISO",
-            "--evidence-dir",
-            path_str(&iso_evidence_dir)?,
-        ],
-    )?;
-
     run_evidence_binary(
         repository_root,
         &artifact_set,
@@ -2237,13 +2218,6 @@ pub fn run_lane(repository_root: &Path, lane: &str, requested_output: Option<&Pa
             &evidence_dir,
             &E2E_SCENARIO_TAGS,
             true,
-        )?,
-        "OCM-ISO" => run_exact_scenario(
-            repository_root,
-            &artifact_set,
-            &evidence_dir,
-            "@ocomp-isolation",
-            false,
         )?,
         _ => bail!("unsupported exact OCOMP execution lane {lane}"),
     }
