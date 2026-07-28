@@ -7944,7 +7944,7 @@ mod tests {
     }
 
     #[test]
-    fn begin_block_hook_batch_error_rolls_back_prior_hook_writes() {
+    fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
         let mut state = State::builder()
             .with_database(db)
@@ -7954,8 +7954,11 @@ mod tests {
         let address = address!("0x1111111111111111111111111111111111111111");
         let slot = U256::from(0x46u64);
         let value = U256::from(0x193u64);
+        let marker = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+        let marker_hash = marker.hash_slow();
 
         let err = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
+            hook_ctx.storage.set_code(address, marker.clone())?;
             hook_ctx.storage.sstore(address, slot, value)?;
             assert_eq!(hook_ctx.storage.sload(address, slot)?, value);
             Err(outbe_primitives::error::PrecompileError::Fatal(
@@ -7966,9 +7969,17 @@ mod tests {
 
         assert!(err.to_string().contains("oracle hook failed"));
         assert_eq!(state.storage(address, slot).unwrap(), U256::ZERO);
+        assert!(
+            state
+                .basic(address)
+                .unwrap()
+                .is_none_or(|info| info.is_empty_code_hash()),
+            "failed hook batch must not persist code"
+        );
 
         let ctx = BlockContext::new(8, 96, CHAIN_ID, OWNER, Vec::new());
         let (changes, events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
+            hook_ctx.storage.set_code(address, marker.clone())?;
             hook_ctx.storage.sstore(address, slot, value)?;
             Ok(())
         })
@@ -7977,6 +7988,8 @@ mod tests {
         let account = changes
             .get(&address)
             .expect("successful batch must report changed account");
+        assert_eq!(account.info.code_hash, marker_hash);
+        assert_eq!(account.info.code, Some(marker));
         let changed_slot = account
             .storage
             .get(&slot)

@@ -359,6 +359,14 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-023 — Journal code mutation and checked balance credit
 
+- **Status:** Done; `DirectStorageProvider::set_code` journals bytecode and its hash
+  through the existing pending-account checkpoint, flush and accumulated change-set
+  path. Nested/outer rollback now covers code together with storage, balances and
+  events. Native balance credit uses checked `U256` addition for both transfer
+  destinations and direct increases, returning fatal before either account mutates
+  on overflow. Focused provider tests and the executor hook-batch test prove commit,
+  rollback and state-root notification payloads; full primitives/EVM suites,
+  trybuild, fmt and clippy pass.
 - **Goal:** Allow Factory execution inside the atomic pre-execution hook batch.
 - **Scope/files:** `outbe-primitives` direct provider and focused executor tests.
 - **Depends on:** SCF-022; this continues the single `outbe-evm` writer lane after

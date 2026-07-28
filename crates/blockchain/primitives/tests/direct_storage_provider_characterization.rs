@@ -29,32 +29,44 @@ fn account(balance: U256, nonce: u64, code: Bytecode) -> AccountInfo {
 }
 
 #[test]
-fn set_code_is_unsupported_and_produces_no_change_set() {
+fn set_code_flushes_code_hash_and_exposes_the_account_change() {
     let mut db = CacheDB::new(EmptyDB::default());
     let mut provider = DirectStorageProvider::new(&mut db, block_context());
-    let code = Bytecode::new_raw(Bytes::from_static(&[0x00]));
+    let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    let expected_hash = code.hash_slow();
 
-    let error = provider.set_code(TO, code).unwrap_err();
-    assert!(matches!(error, PrecompileError::Unsupported));
+    provider.set_code(TO, code.clone()).unwrap();
+    assert_eq!(provider.account_info(TO).unwrap().code, Some(code.clone()));
     provider.flush().unwrap();
-    assert!(provider.take_committed_changes().is_empty());
+    let changes = provider.take_committed_changes();
+    let changed = changes.get(&TO).expect("code account change");
+    assert_eq!(changed.info.code_hash, expected_hash);
+    assert_eq!(changed.info.code, Some(code));
+    drop(provider);
+
+    let persisted = db.basic(TO).unwrap().expect("persisted code account");
+    assert_eq!(persisted.code_hash, expected_hash);
+    assert_eq!(
+        db.code_by_hash(expected_hash)
+            .unwrap()
+            .original_bytes()
+            .as_ref(),
+        &[0xef]
+    );
 }
 
 #[test]
-fn nested_checkpoint_revert_restores_storage_balance_and_events() {
+fn nested_checkpoint_revert_restores_code_storage_balance_and_events() {
+    let original_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00]));
+    let outer_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x01]));
+    let inner_code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x02]));
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(
-        FROM,
-        account(
-            U256::from(100),
-            3,
-            Bytecode::new_raw(Bytes::from_static(&[0x60, 0x00])),
-        ),
-    );
+    db.insert_account_info(FROM, account(U256::from(100), 3, original_code.clone()));
     db.insert_account_info(TO, AccountInfo::default());
     let mut provider = DirectStorageProvider::new(&mut db, block_context());
 
     let outer = provider.checkpoint();
+    provider.set_code(FROM, outer_code.clone()).unwrap();
     provider.sstore(FROM, SLOT, U256::from(10)).unwrap();
     provider
         .emit_event(
@@ -65,6 +77,7 @@ fn nested_checkpoint_revert_restores_storage_balance_and_events() {
     provider.transfer_balance(FROM, TO, U256::from(20)).unwrap();
 
     let inner = provider.checkpoint();
+    provider.set_code(FROM, inner_code).unwrap();
     provider.sstore(FROM, SLOT, U256::from(99)).unwrap();
     provider
         .emit_event(
@@ -77,6 +90,7 @@ fn nested_checkpoint_revert_restores_storage_balance_and_events() {
 
     assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::from(10));
     assert_eq!(provider.account_info(FROM).unwrap().balance, U256::from(80));
+    assert_eq!(provider.account_info(FROM).unwrap().code, Some(outer_code));
     assert_eq!(provider.account_info(TO).unwrap().balance, U256::from(20));
     let events = provider.take_events();
     assert_eq!(events.len(), 1);
@@ -88,6 +102,10 @@ fn nested_checkpoint_revert_restores_storage_balance_and_events() {
     assert_eq!(
         provider.account_info(FROM).unwrap().balance,
         U256::from(100)
+    );
+    assert_eq!(
+        provider.account_info(FROM).unwrap().code,
+        Some(original_code)
     );
     assert_eq!(provider.account_info(TO).unwrap().balance, U256::ZERO);
     assert!(provider.take_events().is_empty());
@@ -124,7 +142,7 @@ fn flush_preserves_account_code_nonce_and_exposes_complete_change_set() {
 }
 
 #[test]
-fn transfer_underflow_is_fatal_and_destination_overflow_wraps_today() {
+fn transfer_underflow_and_destination_overflow_are_fatal_without_partial_mutation() {
     let mut underflow_db = CacheDB::new(EmptyDB::default());
     underflow_db.insert_account_info(FROM, account(U256::from(5), 0, Bytecode::default()));
     underflow_db.insert_account_info(TO, AccountInfo::default());
@@ -140,11 +158,21 @@ fn transfer_underflow_is_fatal_and_destination_overflow_wraps_today() {
     overflow_db.insert_account_info(FROM, account(U256::ONE, 0, Bytecode::default()));
     overflow_db.insert_account_info(TO, account(U256::MAX, 0, Bytecode::default()));
     let mut overflow = DirectStorageProvider::new(&mut overflow_db, block_context());
-    overflow.transfer_balance(FROM, TO, U256::ONE).unwrap();
-    assert_eq!(overflow.account_info(FROM).unwrap().balance, U256::ZERO);
-    assert_eq!(
-        overflow.account_info(TO).unwrap().balance,
-        U256::ZERO,
-        "current unchecked destination addition wraps U256::MAX + 1 to zero"
-    );
+    let error = overflow.transfer_balance(FROM, TO, U256::ONE).unwrap_err();
+    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert_eq!(overflow.account_info(FROM).unwrap().balance, U256::ONE);
+    assert_eq!(overflow.account_info(TO).unwrap().balance, U256::MAX);
+}
+
+#[test]
+fn increase_balance_overflow_is_fatal_without_partial_mutation() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(FROM, account(U256::MAX, 0, Bytecode::default()));
+    let mut provider = DirectStorageProvider::new(&mut db, block_context());
+
+    let error = provider.increase_balance(FROM, U256::ONE).unwrap_err();
+    assert!(matches!(error, PrecompileError::Fatal(_)));
+    assert_eq!(provider.account_info(FROM).unwrap().balance, U256::MAX);
+    provider.flush().unwrap();
+    assert!(provider.take_committed_changes().is_empty());
 }
