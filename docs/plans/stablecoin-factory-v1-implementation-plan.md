@@ -1,6 +1,6 @@
 # Stablecoin Factory V1 implementation plan
 
-- **Status:** Pre-implementation protocol lock reopened by design grilling
+- **Status:** In implementation
 - **Date:** 2026-07-28
 - **Primary ADRs:** ADR-C-TOK-003, ADR-C-TOK-004, ADR-C-TOK-005
 - **Imported seams:** ADR-B-EVM-001 through ADR-B-EVM-005,
@@ -16,9 +16,10 @@ A prospective issuer submits a canonical bonded Vote proposal. Successful valida
 quorum atomically initializes one zero-supply token, installs its marker code, commits
 permanent Factory indexes, emits a receipt-visible event and refunds the bond. Expired
 proposals release reservations and burn the bond. If approved target execution
-returns an error, its partial effects roll back and Vote records `Error`; the bond
-and reservation triple remain unchanged for a future validator-approved governance
-decision outside Stablecoin Factory V1.
+returns a typed `Error` outcome, its partial effects roll back and Vote records
+`Error`; the bond and reservation triple remain unchanged for a future
+validator-approved governance decision outside Stablecoin Factory V1. Outer
+storage/provider/unsupported/fatal errors propagate and are not proposal outcomes.
 
 Factory approval means protocol admission only. It is not evidence of backing,
 redeemability, price stability, issuer solvency, fee-asset eligibility or payment-lane
@@ -123,18 +124,19 @@ reviewing the task's scoped diff and verification evidence.
 
 | Task | Status | Branch/commit | Evidence / blocker |
 | --- | --- | --- | --- |
-| SCF-001 | Pending | prior baseline `5614296` | Reopened: add Vote `Error`, Factory/Policy count+list ABI, Final ERC-7943 errors and updated vectors |
+| SCF-001 | Done | `c9c69720`, `d837e7f2` | Vote `Error`, Factory/Policy count+list ABI, typed enumeration error, page boundaries and Final ERC-7943 errors frozen; Forge 11/11, Alloy ABI vectors 4/4 and ABI export check pass |
 | SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
 | SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
-| SCF-004 | Pending | prior baseline `50ebcb2` | Reopened: add page cap 100 and remove Factory creation gas ceiling/gate |
+| SCF-004 | Done | `c9c69720`, `d837e7f2` | Shared list page cap 100 and offset/final-page semantics frozen; Factory creation ceiling/gate removed; fork vectors 7/7 pass |
 | SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
-| SCF-G0 | Pending | prior baseline `325de189` | Reopens until revised SCF-001/004 artifacts and vectors pass independent review |
+| SCF-G0 | Done | `c9c69720`, `d837e7f2`, `4c6b0c41`, `8ca8702b` | Four review blockers corrected; Forge 11/11, primitives 24/24, Vote+Update+Governance 138/138, CLI 206/206, EVM 247/247, clippy and ABI export check pass; repeat independent review READY |
 | SCF-010 | Done | read-only | Exact AGENTS.md 8.1 surveys; trybuild 1/1; no long-lived runtime owner; storage review APPROVE |
 | SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 | SCF-012 | Done | `a81c22e1` | Actual unsupported set_code, nested checkpoint/storage/balance/event rollback, account/change-set preservation, transfer underflow and current overflow wrap; primitives 279/279; clippy/LSP clean |
-| SCF-013 | Done | `8c0eea17` | ACTIVE/PENDING guards and zero-value legacy tests retained; raw payload state/log, validator-change quorum, handler rejection, terminal replay and outer rollback snapshots; Vote 36/36; clippy/LSP clean |
+| SCF-013 | Done | `8c0eea17` | Baseline ACTIVE/PENDING behavior and zero-value paths characterized before SCF-026 changed ballots to ACTIVE-only; raw payload state/log, validator-change quorum, handler failure, replay and outer rollback snapshots covered |
 | SCF-014 | Done | `67d6f2a2` | Behavioral H-1/H/H+1 snapshots: Update activates at begin-block H but history is exact-height sparse; canonical/build/validation stay chain-spec sourced; nested call currently accepts PUSH0 under London and Shanghai; RPC dispatch reflects caller-selected state; Update 56/56, EVM 244/244 (1 skipped), RPC 10/10; review APPROVE |
-| SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration, gas and reader adapter; broad manifest rejected; no class/activation/warm/persistence change; all-target check green; consolidated Phase 1 tests/review deferred to SCF-G1 |
+| SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration and reader adapter; existing empty shared-buffer behavior remains characterized until an explicit activation boundary; consolidated review deferred to SCF-G1 |
+| SCF-026 | In progress | `4c6b0c41`, `8ca8702b` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission remains inactive until Vote bond accounting |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -383,7 +385,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-013, SCF-001.
 - **Done when:** target receives original bytes, proposer/value/height/chain context;
   admission distinguishes validator-only and exact public bond; executable target
-  outcome distinguishes Applied from Error.
+  outcome distinguishes Applied from Error; outer infrastructure/provider errors
+  remain `Err` and abort the enclosing execution.
 - **Tests:** T1 registry uniqueness/raw bytes/outcome classification; T3 existing
   targets remain behaviorally identical.
 
@@ -641,9 +644,10 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Goal:** Record target execution failure without committing partial target state.
 - **Depends on:** SCF-053, SCF-061.
 - **Done when:** approved target work runs in a nested checkpoint; success commits
-  target state and records Approved; target execution error rolls target work back
-  then records Error while retaining the reservation triple and liability; Expired
-  releases the reservation triple.
+  target state and records Approved; a typed target Error outcome rolls target work
+  back then records Error while retaining the reservation triple and liability;
+  outer infrastructure/provider errors propagate; Expired releases the reservation
+  triple.
 - **Tests:** T1 transition table and validator-set changes; T2 injected failure before/
   after each Factory/status/index step. Only ACTIVE validators may cast; tally uses
   ballots from the current ACTIVE set and that set's count as its denominator.
