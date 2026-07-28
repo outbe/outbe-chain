@@ -2,17 +2,47 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::{
     addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS},
     error::{PrecompileError, Result},
-    stablecoin::{predict_stablecoin, validate_ticker},
+    stablecoin::{decode_canonical_stablecoin_create, predict_stablecoin, validate_ticker},
     stablecoin_fork::STABLECOIN_LIST_PAGE_CAP,
 };
 
 use crate::{
-    api::FactoryReservation,
+    api::{FactoryReservation, ValidatedStablecoinCreate},
     errors::StablecoinFactoryError,
     schema::{ReservationRecord, StablecoinFactoryContract, FACTORY_SCHEMA_VERSION},
 };
 
 impl StablecoinFactoryContract<'_> {
+    pub(crate) fn validate_create(
+        &self,
+        proposer: Address,
+        raw_payload: &[u8],
+    ) -> Result<ValidatedStablecoinCreate> {
+        self.ensure_compatible_schema()?;
+        let payload = decode_canonical_stablecoin_create(raw_payload)
+            .map_err(|_| StablecoinFactoryError::NonCanonicalPayload)?;
+        if proposer != payload.issuer {
+            return Err(StablecoinFactoryError::InvalidIssuer {
+                issuer: payload.issuer,
+            }
+            .into());
+        }
+        if !outbe_stablecoinpolicy::api::policy_exists(self.storage.clone(), payload.policy_id)? {
+            return Err(StablecoinFactoryError::UnknownPolicy {
+                policy_id: payload.policy_id,
+            }
+            .into());
+        }
+
+        let (token_id, token) = self.predict_token_address(payload.issuer, &payload.ticker)?;
+        self.ensure_identity_available(token_id, &payload.ticker, token)?;
+        Ok(ValidatedStablecoinCreate {
+            payload,
+            token_id,
+            token,
+        })
+    }
+
     pub fn token_count(&self) -> Result<U256> {
         self.ensure_compatible_schema()?;
         Ok(U256::from(self.tokens.len()?))
@@ -109,58 +139,11 @@ impl StablecoinFactoryContract<'_> {
             .into());
         }
         let ticker_hash = ticker_hash(&reservation.ticker)?;
-
-        let registered_by_id = self.token_by_id_index.read(&reservation.token_id)?;
-        if !registered_by_id.is_zero() {
-            return Err(StablecoinFactoryError::TokenIdAlreadyRegistered {
-                token_id: reservation.token_id,
-                token: registered_by_id,
-            }
-            .into());
-        }
-        let registered_by_ticker = self.token_by_ticker_index.read(&ticker_hash)?;
-        if !registered_by_ticker.is_zero() {
-            return Err(StablecoinFactoryError::TickerAlreadyRegistered {
-                ticker: reservation.ticker.clone(),
-                token: registered_by_ticker,
-            }
-            .into());
-        }
-        if let Some(existing_token_id) = self.registered_token_id(reservation.token)? {
-            return Err(StablecoinFactoryError::TokenAddressCollision {
-                token: reservation.token,
-                existing_token_id,
-                requested_token_id: reservation.token_id,
-            }
-            .into());
-        }
-
-        let token_id_owner = self.pending_token_id.read(&reservation.token_id)?;
-        if !token_id_owner.is_zero() {
-            return Err(StablecoinFactoryError::TokenIdReserved {
-                token_id: reservation.token_id,
-                proposal_id: token_id_owner,
-            }
-            .into());
-        }
-        let ticker_owner = self.pending_ticker.read(&ticker_hash)?;
-        if !ticker_owner.is_zero() {
-            return Err(StablecoinFactoryError::TickerReserved {
-                ticker: reservation.ticker.clone(),
-                proposal_id: ticker_owner,
-            }
-            .into());
-        }
-        let address_owner = self.pending_address.read(&reservation.token)?;
-        if !address_owner.is_zero() {
-            let existing = self.required_reservation(address_owner)?;
-            return Err(StablecoinFactoryError::TokenAddressCollision {
-                token: reservation.token,
-                existing_token_id: existing.token_id,
-                requested_token_id: reservation.token_id,
-            }
-            .into());
-        }
+        self.ensure_identity_available(
+            reservation.token_id,
+            &reservation.ticker,
+            reservation.token,
+        )?;
         if self.reservations.exists(reservation.proposal_id)? {
             return Err(StablecoinFactoryError::Invariant {
                 reason: format!(
@@ -185,6 +168,67 @@ impl StablecoinFactoryContract<'_> {
             ticker_hash,
             token: reservation.token,
         })
+    }
+
+    fn ensure_identity_available(
+        &self,
+        token_id: B256,
+        ticker: &str,
+        token: Address,
+    ) -> Result<()> {
+        let ticker_hash = ticker_hash(ticker)?;
+        let registered_by_id = self.token_by_id_index.read(&token_id)?;
+        if !registered_by_id.is_zero() {
+            return Err(StablecoinFactoryError::TokenIdAlreadyRegistered {
+                token_id,
+                token: registered_by_id,
+            }
+            .into());
+        }
+        let registered_by_ticker = self.token_by_ticker_index.read(&ticker_hash)?;
+        if !registered_by_ticker.is_zero() {
+            return Err(StablecoinFactoryError::TickerAlreadyRegistered {
+                ticker: ticker.to_owned(),
+                token: registered_by_ticker,
+            }
+            .into());
+        }
+        if let Some(existing_token_id) = self.registered_token_id(token)? {
+            return Err(StablecoinFactoryError::TokenAddressCollision {
+                token,
+                existing_token_id,
+                requested_token_id: token_id,
+            }
+            .into());
+        }
+
+        let token_id_owner = self.pending_token_id.read(&token_id)?;
+        if !token_id_owner.is_zero() {
+            return Err(StablecoinFactoryError::TokenIdReserved {
+                token_id,
+                proposal_id: token_id_owner,
+            }
+            .into());
+        }
+        let ticker_owner = self.pending_ticker.read(&ticker_hash)?;
+        if !ticker_owner.is_zero() {
+            return Err(StablecoinFactoryError::TickerReserved {
+                ticker: ticker.to_owned(),
+                proposal_id: ticker_owner,
+            }
+            .into());
+        }
+        let address_owner = self.pending_address.read(&token)?;
+        if !address_owner.is_zero() {
+            let existing = self.required_reservation(address_owner)?;
+            return Err(StablecoinFactoryError::TokenAddressCollision {
+                token,
+                existing_token_id: existing.token_id,
+                requested_token_id: token_id,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     pub(crate) fn release(&mut self, proposal_id: U256) -> Result<ReservationRecord> {

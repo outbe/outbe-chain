@@ -1,14 +1,17 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::{
     addresses::STABLECOIN_FACTORY_ADDRESS,
     error::PrecompileError,
+    stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload},
     stablecoin_fork::{STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_SCHEMA_VERSION},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
 use crate::{
-    abi::IStablecoinFactory as I, api::FactoryReservation, schema::StablecoinFactoryContract,
+    abi::IStablecoinFactory as I,
+    api::{FactoryReservation, StablecoinFactoryApi},
+    schema::StablecoinFactoryContract,
 };
 
 fn with_factory(test: impl FnOnce(StorageHandle<'_>, StablecoinFactoryContract<'_>)) {
@@ -38,6 +41,119 @@ fn assert_revert<E: SolError>(error: PrecompileError) {
         PrecompileError::RevertBytes(bytes) => assert_eq!(&bytes[..4], E::SELECTOR),
         other => panic!("expected revert, got {other:?}"),
     }
+}
+
+fn create_payload(issuer: Address, policy_id: U256) -> StablecoinCreatePayload {
+    StablecoinCreatePayload {
+        issuer,
+        name: "Example Dollar".into(),
+        ticker: "EXUSD".into(),
+        iso4217: 840,
+        decimals: 6,
+        supply_cap: U256::from(1_000_000_000_000u64),
+        policy_id,
+    }
+}
+
+#[test]
+fn canonical_admission_returns_pinned_identity_and_ignores_native_balance() {
+    let issuer = Address::repeat_byte(0x11);
+    let expected_token_id =
+        b256!("2cf34bcaf12fe89ab2f3f6f34667f667dc28c8716bdac45fd1696b34000f2863");
+    let expected_token = address!("53c0f667dc28c8716bdac45fd1696b34000f2863");
+    let native_balance = U256::from(123_456u64);
+    let raw = encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64)))
+        .expect("valid test payload");
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_balance(expected_token, native_balance);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let validated = StablecoinFactoryApi::validate_create(storage, issuer, &raw).unwrap();
+        assert_eq!(validated.payload, create_payload(issuer, U256::from(1u64)));
+        assert_eq!(validated.token_id, expected_token_id);
+        assert_eq!(validated.token, expected_token);
+    });
+
+    assert!(
+        provider.storage.is_empty(),
+        "validation must not write Factory or Policy state"
+    );
+    assert_eq!(provider.get_balance(expected_token), native_balance);
+}
+
+#[test]
+fn malformed_or_noncanonical_payloads_revert_without_writes() {
+    let issuer = Address::repeat_byte(0x11);
+    let canonical =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+    let mut trailing = canonical.clone();
+    trailing.push(b'\n');
+    let invalid_metadata = br#"{"version":1,"kind":"StablecoinCreate","issuer":"0x1111111111111111111111111111111111111111","name":"Example Dollar","ticker":"EXUSD","iso4217":840,"decimals":19,"supplyCap":"1000000000000","policyId":"1"}"#;
+    let cases: [&[u8]; 4] = [b"{", b"\xff", &trailing, invalid_metadata];
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        for raw in cases {
+            assert_revert::<I::NonCanonicalPayload>(
+                StablecoinFactoryApi::validate_create(storage.clone(), issuer, raw)
+                    .expect_err("invalid payload"),
+            );
+        }
+    });
+
+    assert!(provider.storage.is_empty());
+}
+
+#[test]
+fn proposer_and_policy_validation_fail_before_any_write() {
+    let issuer = Address::repeat_byte(0x11);
+    let wrong_proposer = Address::repeat_byte(0x22);
+    let valid =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+    let missing_policy =
+        encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(99u64))).unwrap();
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_revert::<I::InvalidIssuer>(
+            StablecoinFactoryApi::validate_create(storage.clone(), wrong_proposer, &valid)
+                .expect_err("proposer must be issuer"),
+        );
+        assert_revert::<I::UnknownPolicy>(
+            StablecoinFactoryApi::validate_create(storage, issuer, &missing_policy)
+                .expect_err("policy must exist"),
+        );
+    });
+
+    assert!(provider.storage.is_empty());
+}
+
+#[test]
+fn admission_checks_the_same_pending_and_permanent_indexes_as_reservation() {
+    with_factory(|storage, mut factory| {
+        let issuer = Address::repeat_byte(0x11);
+        let raw =
+            encode_canonical_stablecoin_create(&create_payload(issuer, U256::from(1u64))).unwrap();
+        let validated =
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw).unwrap();
+        let item = FactoryReservation {
+            proposal_id: U256::from(1u64),
+            token_id: validated.token_id,
+            ticker: validated.payload.ticker,
+            token: validated.token,
+        };
+        factory.reserve(&item).unwrap();
+        assert_revert::<I::TokenIdReserved>(
+            StablecoinFactoryApi::validate_create(storage.clone(), issuer, &raw)
+                .expect_err("pending identity"),
+        );
+
+        factory.consume_and_register(item.proposal_id).unwrap();
+        assert_revert::<I::TokenIdAlreadyRegistered>(
+            StablecoinFactoryApi::validate_create(storage, issuer, &raw)
+                .expect_err("permanent identity"),
+        );
+    });
 }
 
 #[test]

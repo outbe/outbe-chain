@@ -7,7 +7,7 @@ pub mod schema;
 mod abi;
 mod state;
 
-pub use api::{FactoryReservation, StablecoinFactoryApi};
+pub use api::{FactoryReservation, StablecoinFactoryApi, ValidatedStablecoinCreate};
 pub use schema::{ReservationRecord, StablecoinFactoryContract};
 
 #[cfg(test)]

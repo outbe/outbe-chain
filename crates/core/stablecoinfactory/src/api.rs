@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::stablecoin::StablecoinCreatePayload;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::schema::{ReservationRecord, StablecoinFactoryContract};
@@ -14,9 +15,24 @@ pub struct FactoryReservation {
     pub token: Address,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedStablecoinCreate {
+    pub payload: StablecoinCreatePayload,
+    pub token_id: B256,
+    pub token: Address,
+}
+
 pub struct StablecoinFactoryApi;
 
 impl StablecoinFactoryApi {
+    pub fn validate_create(
+        storage: StorageHandle<'_>,
+        proposer: Address,
+        raw_payload: &[u8],
+    ) -> Result<ValidatedStablecoinCreate> {
+        StablecoinFactoryContract::new(storage).validate_create(proposer, raw_payload)
+    }
+
     pub fn reserve(storage: StorageHandle<'_>, reservation: &FactoryReservation) -> Result<()> {
         StablecoinFactoryContract::new(storage).reserve(reservation)
     }

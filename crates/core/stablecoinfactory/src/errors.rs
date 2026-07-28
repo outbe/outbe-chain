@@ -14,6 +14,12 @@ pub enum StablecoinFactoryError {
     #[error("invalid ticker {ticker}")]
     InvalidTicker { ticker: String },
 
+    #[error("non-canonical stablecoin proposal payload")]
+    NonCanonicalPayload,
+
+    #[error("unknown stablecoin policy {policy_id}")]
+    UnknownPolicy { policy_id: U256 },
+
     #[error("token id {token_id} is reserved by proposal {proposal_id}")]
     TokenIdReserved { token_id: B256, proposal_id: U256 },
 
@@ -56,6 +62,11 @@ impl From<StablecoinFactoryError> for PrecompileError {
             StablecoinFactoryError::InvalidTicker { ticker } => {
                 I::InvalidTicker { ticker }.abi_encode()
             }
+            StablecoinFactoryError::NonCanonicalPayload => I::NonCanonicalPayload {}.abi_encode(),
+            StablecoinFactoryError::UnknownPolicy { policy_id } => I::UnknownPolicy {
+                policyId: policy_id,
+            }
+            .abi_encode(),
             StablecoinFactoryError::TokenIdReserved {
                 token_id,
                 proposal_id,
