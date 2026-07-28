@@ -165,6 +165,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-061 | Done | `b2f2c1e8` | Only PublicBonded Factory creation accepts exact value; issuer validation, 16-global/one-per-issuer caps, reservation, liability and events share one checkpoint, forced surplus remains non-liability, and combined regression passes 440/440 |
 | SCF-062 | Done | `d10519be` | Finalization reconstructs the exact bonded target context; typed target Error rolls back only execution writes while retaining reservation, Pending/Error index and liability, and infrastructure errors still propagate |
 | SCF-063 | Review | `0563b233` | Approved refunds and Expired burns one exact recorded liability; Error retains it, forced surplus remains, terminal replay is inert, and failure after every Approved mutation rolls target/status/index/accounting/events/value back; independent accounting review remains |
+| SCF-064 | Review | `2d759237` | Real Vote→Factory tests prove create/refund/replay, active-set-change expiry/release/burn, typed Error retention and pre-allocation global ticker collision; combined suites pass and independent G5 review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -862,6 +863,17 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-064 — Vote/Factory adversarial integration gate
 
+- **Status:** Review in `2d759237`; real compile-time registry tests now drive
+  `Vote::create_proposal_with_value`, ACTIVE validator ballots and begin-block tally
+  through the Factory adapter. They prove Approved creates exactly one registered
+  token and refunds once without sweeping surplus; a current-validator-set change
+  turns two historical yes ballots into one eligible ballot, then Expired releases
+  the reservation and burns once; an injected target execution Error leaves token
+  count zero and retains the reservation and unsettled bond; and a second issuer
+  cannot reserve an already-pending global ticker or allocate a new proposal.
+  Existing cap, predicted-address collision, terminal replay and failure-after-every
+  initializer/finalization mutation tests pass in the same combined suites. The
+  independent G5 review remains before Done.
 - **Goal:** Prove token-or-no-token and one-settlement behavior through real APIs.
 - **Depends on:** SCF-054, SCF-063.
 - **Tests:** T3 approve/refund, expire/burn, execution Error with retained
