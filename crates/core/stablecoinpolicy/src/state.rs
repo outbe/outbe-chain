@@ -6,6 +6,7 @@ use outbe_primitives::stablecoin_fork::{
     STABLECOIN_LIST_PAGE_CAP, STABLECOIN_POLICY_MEMBER_BATCH_CAP,
 };
 
+use crate::abi::IStablecoinPolicyRegistry;
 use crate::errors::PolicyRegistryError;
 use crate::schema::{
     PolicyDescriptor, PolicyLane, PolicyType, StablecoinPolicyRegistryContract,
@@ -129,7 +130,12 @@ impl StablecoinPolicyRegistryContract<'_> {
         }
     }
 
-    pub fn create_policy(&mut self, policy_type: u8, admin: Address) -> Result<U256> {
+    pub fn create_policy(
+        &mut self,
+        actor: Address,
+        policy_type: u8,
+        admin: Address,
+    ) -> Result<U256> {
         let policy_type = PolicyType::try_from(policy_type)?;
         if !policy_type.is_simple() {
             return Err(PolicyRegistryError::InvalidPolicyType {
@@ -138,11 +144,12 @@ impl StablecoinPolicyRegistryContract<'_> {
             .into());
         }
         self.validate_admin(admin)?;
-        self.create_descriptor(policy_type, admin, [U256::ZERO; 3])
+        self.create_descriptor(actor, policy_type, admin, [U256::ZERO; 3])
     }
 
     pub fn create_directional_policy(
         &mut self,
+        actor: Address,
         admin: Address,
         send_policy_id: U256,
         receive_policy_id: U256,
@@ -162,6 +169,7 @@ impl StablecoinPolicyRegistryContract<'_> {
             }
         }
         self.create_descriptor(
+            actor,
             PolicyType::Directional,
             admin,
             [send_policy_id, receive_policy_id, mint_policy_id],
@@ -196,8 +204,17 @@ impl StablecoinPolicyRegistryContract<'_> {
         if candidate == Address::ZERO || candidate == descriptor.admin {
             return Err(PolicyRegistryError::InvalidPendingPolicyAdmin { candidate }.into());
         }
+        let current_admin = descriptor.admin;
         descriptor.pending_admin = candidate;
-        self.policies.update(&descriptor)
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.policies.update(&descriptor)?;
+            self.emit(IStablecoinPolicyRegistry::PolicyAdminTransferStarted {
+                policyId: policy_id,
+                currentAdmin: current_admin,
+                pendingAdmin: candidate,
+            })
+        })
     }
 
     pub fn cancel_policy_admin_transfer(&mut self, policy_id: U256, caller: Address) -> Result<()> {
@@ -208,8 +225,17 @@ impl StablecoinPolicyRegistryContract<'_> {
             }
             .into());
         }
+        let cancelled_pending_admin = descriptor.pending_admin;
         descriptor.pending_admin = Address::ZERO;
-        self.policies.update(&descriptor)
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.policies.update(&descriptor)?;
+            self.emit(IStablecoinPolicyRegistry::PolicyAdminTransferCancelled {
+                policyId: policy_id,
+                admin: caller,
+                cancelledPendingAdmin: cancelled_pending_admin,
+            })
+        })
     }
 
     pub fn accept_policy_admin_transfer(&mut self, policy_id: U256, caller: Address) -> Result<()> {
@@ -217,9 +243,18 @@ impl StablecoinPolicyRegistryContract<'_> {
         if descriptor.pending_admin != caller {
             return Err(PolicyRegistryError::NotPendingPolicyAdmin { policy_id, caller }.into());
         }
+        let previous_admin = descriptor.admin;
         descriptor.admin = caller;
         descriptor.pending_admin = Address::ZERO;
-        self.policies.update(&descriptor)
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.policies.update(&descriptor)?;
+            self.emit(IStablecoinPolicyRegistry::PolicyAdminTransferred {
+                policyId: policy_id,
+                previousAdmin: previous_admin,
+                newAdmin: caller,
+            })
+        })
     }
 
     fn optional_descriptor(&self, policy_id: U256) -> Result<Option<PolicyDescriptor>> {
@@ -292,6 +327,7 @@ impl StablecoinPolicyRegistryContract<'_> {
 
     fn create_descriptor(
         &mut self,
+        actor: Address,
         policy_type: PolicyType,
         admin: Address,
         children: [U256; 3],
@@ -318,7 +354,16 @@ impl StablecoinPolicyRegistryContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.policies.create(&descriptor)?;
-            self.next_policy_id.write(next)
+            self.next_policy_id.write(next)?;
+            self.emit(IStablecoinPolicyRegistry::PolicyCreated {
+                policyId: policy_id,
+                actor,
+                admin,
+                policyType: policy_type as u8,
+                sendPolicyId: children[0],
+                receivePolicyId: children[1],
+                mintPolicyId: children[2],
+            })
         })?;
         Ok(policy_id)
     }
@@ -403,6 +448,19 @@ impl StablecoinPolicyRegistryContract<'_> {
                     return Err(PrecompileError::Fatal(
                         "validated policy membership changed during mutation".into(),
                     ));
+                }
+                if add {
+                    self.emit(IStablecoinPolicyRegistry::PolicyMemberAdded {
+                        policyId: policy_id,
+                        account: *account,
+                        actor: caller,
+                    })?;
+                } else {
+                    self.emit(IStablecoinPolicyRegistry::PolicyMemberRemoved {
+                        policyId: policy_id,
+                        account: *account,
+                        actor: caller,
+                    })?;
                 }
             }
             Ok(())

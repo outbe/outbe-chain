@@ -90,6 +90,21 @@ fn default_base_gas(_input: &[u8]) -> u64 {
     PRECOMPILE_BASE_GAS
 }
 
+fn stablecoin_policy_dispatch(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    let active = crate::protocol_version::resolve(&storage)?;
+    if !outbe_primitives::stablecoin_fork::stablecoin_v1_is_active(active.raw()) {
+        return Err(PrecompileError::Revert(
+            "Stablecoin V1 is not active".into(),
+        ));
+    }
+    outbe_stablecoinpolicy::precompile::dispatch(storage, data, caller, value)
+}
+
 fn vote_dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -163,6 +178,7 @@ define_exact_routes! {
     ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_groth16), outbe_zkproof::groth16_base_gas),
     TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::precompile::dispatch), default_base_gas),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas),
+    STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas),
     GOVERNANCE_ADDRESS => (DispatchAdapter::Basic(outbe_governance::precompile::dispatch), default_base_gas),
     VOTE_ADDRESS => (DispatchAdapter::Basic(vote_dispatch), default_base_gas),
     UPDATE_ADDRESS => (DispatchAdapter::Basic(outbe_update::precompile::dispatch), default_base_gas),
@@ -232,6 +248,8 @@ fn validate_exact_addresses(addresses: &[Address]) -> std::result::Result<(), Va
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_sol_types::SolCall;
+    use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
 
     #[test]
     fn production_exact_routes_validate() {
@@ -296,5 +314,43 @@ mod tests {
             lookup(&VOTE_ADDRESS).unwrap().reader_mode(),
             ReaderMode::None
         );
+    }
+
+    #[test]
+    fn policy_route_uses_current_exact_protocol_version_state() {
+        let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let route = lookup(&STABLECOIN_POLICY_REGISTRY_ADDRESS).unwrap();
+        let data = IStablecoinPolicyRegistry::policyExistsCall {
+            policyId: U256::from(1u64),
+        }
+        .abi_encode();
+
+        assert!(matches!(
+            route.dispatch(
+                storage.clone(),
+                &ExecutionScope::new(),
+                None,
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            ),
+            Err(PrecompileError::Revert(message)) if message == "Stablecoin V1 is not active"
+        ));
+
+        storage
+            .sstore(UPDATE_ADDRESS, U256::ZERO, U256::from(2u64))
+            .unwrap();
+        let output = route
+            .dispatch(
+                storage,
+                &ExecutionScope::new(),
+                None,
+                &data,
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .unwrap();
+        assert!(IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&output).unwrap());
     }
 }

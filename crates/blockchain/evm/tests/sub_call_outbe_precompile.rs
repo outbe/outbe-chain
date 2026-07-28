@@ -27,12 +27,14 @@ use outbe_nod::{precompile::INod, NodBucketState, NodItemState, NodRepositoryWri
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{
-    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS,
+    ZKPROOF_POSEIDON_ADDRESS,
 };
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
 };
+use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
 use revm::{
     database::{CacheDB, EmptyDB},
     handler::MainContext as _,
@@ -139,6 +141,41 @@ fn subcall_reaches_outbe_poseidon_precompile() {
         result.gas_used > 0 && result.gas_used < 1_000_000,
         "gas_used must be within the requested budget, got {}",
         result.gas_used,
+    );
+}
+
+#[test]
+fn subcall_reaches_stablecoin_policy_registry_with_canonical_view_output() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_storage(UPDATE_ADDRESS, U256::ZERO, U256::from(2u64))
+        .unwrap();
+    let mut ctx = Context::mainnet().with_db(db);
+    let calldata = IStablecoinPolicyRegistry::policyExistsCall {
+        policyId: U256::from(1u64),
+    }
+    .abi_encode();
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        None,
+        Arc::new(ExecutionScope::new()),
+        SubCallInput {
+            target: STABLECOIN_POLICY_REGISTRY_ADDRESS,
+            value: U256::ZERO,
+            calldata: calldata.into(),
+            gas_limit: 100_000,
+            is_static: true,
+        },
+    )
+    .expect("policy registry sub-call");
+
+    assert!(matches!(result.status, SubCallStatus::Success));
+    assert!(
+        IStablecoinPolicyRegistry::policyExistsCall::abi_decode_returns(&result.returndata)
+            .unwrap()
     );
 }
 

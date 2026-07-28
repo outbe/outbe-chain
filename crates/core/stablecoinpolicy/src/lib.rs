@@ -6,8 +6,10 @@
 
 pub mod api;
 pub mod errors;
+pub mod precompile;
 pub mod schema;
 
+mod abi;
 mod state;
 
 pub use schema::{
