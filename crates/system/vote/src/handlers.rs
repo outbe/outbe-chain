@@ -150,12 +150,13 @@ pub fn handle_target_tally(
     ctx: &BlockRuntimeContext,
     proposal_id: U256,
     proposal: &ProposalRecord,
+    attached_value: U256,
     status: ProposalStatus,
 ) -> Result<TargetExecutionOutcome> {
     let target = registry.lookup(proposal.target_module)?;
     let context = VoteTargetContext {
         proposer: proposal.proposer,
-        attached_value: U256::ZERO,
+        attached_value,
         block_number: ctx.block.block_number,
         chain_id: ctx.storage.chain_id()?,
     };

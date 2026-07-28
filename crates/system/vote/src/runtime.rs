@@ -294,10 +294,17 @@ impl Vote<'_> {
         } else {
             ProposalStatus::Expired
         };
+        let bond = self.proposal_bond(proposal_id)?;
 
         let target_checkpoint = self.storage.checkpoint_guard();
-        let target_outcome =
-            handlers::handle_target_tally(registry, ctx, proposal_id, &proposal, status)?;
+        let target_outcome = handlers::handle_target_tally(
+            registry,
+            ctx,
+            proposal_id,
+            &proposal,
+            bond.amount,
+            status,
+        )?;
         let outcome = match target_outcome {
             TargetExecutionOutcome::Applied => {
                 target_checkpoint.commit();

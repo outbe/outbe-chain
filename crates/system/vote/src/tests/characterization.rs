@@ -168,7 +168,7 @@ impl VoteTarget for PublicBondedTarget {
     fn reserve(
         &self,
         storage: StorageHandle<'_>,
-        _proposal_id: U256,
+        proposal_id: U256,
         payload: &[u8],
         _context: VoteTargetContext,
     ) -> Result<()> {
@@ -178,16 +178,31 @@ impl VoteTarget for PublicBondedTarget {
                 "characterized public reservation failure".into(),
             ));
         }
+        if payload == b"execution-error" {
+            storage.sstore(UPDATE_ADDRESS, U256::from(997u64), proposal_id)?;
+        }
         Ok(())
     }
 
     fn handle_approved(
         &self,
-        _ctx: &BlockRuntimeContext,
+        ctx: &BlockRuntimeContext,
         _proposal_id: U256,
-        _payload: &[u8],
-        _context: VoteTargetContext,
+        payload: &[u8],
+        context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
+        if context.attached_value != U256::from(123u64) {
+            return Err(PrecompileError::Fatal(
+                "public bonded target lost its attached value at execution".into(),
+            ));
+        }
+        if payload == b"execution-error" {
+            ctx.storage
+                .sstore(UPDATE_ADDRESS, U256::from(996u64), U256::from(1u64))?;
+            return Ok(TargetExecutionOutcome::Error {
+                reason: "characterized public target execution error".into(),
+            });
+        }
         Ok(TargetExecutionOutcome::Applied)
     }
 }
@@ -506,6 +521,62 @@ fn public_reservation_failure_rolls_back_proposal_liability_and_logs() {
     }
     assert!(provider.storage.is_empty());
     assert!(provider.get_events(VOTE_ADDRESS).is_empty());
+}
+
+#[test]
+fn public_bonded_execution_error_rolls_back_target_only_and_retains_bond_and_reservation() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_balance(VOTE_ADDRESS, U256::from(123u64));
+    let storage = StorageHandle::new(&mut provider);
+    setup_default_validators(storage.clone());
+    let mut vote = Vote::new(storage.clone());
+    let proposal_id = vote
+        .create_proposal_with_value(
+            Address::repeat_byte(0x99),
+            UPDATE_ADDRESS,
+            "execution-error",
+            10,
+            U256::from(123u64),
+            &PUBLIC_BONDED_REGISTRY,
+        )
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, PROPOSER, true, 11)
+        .unwrap();
+    vote.cast_vote_approve(proposal_id, VOTER_A, true, 11)
+        .unwrap();
+
+    let deadline = 10 + VOTING_WINDOW_BLOCKS;
+    vote.process_begin_block(
+        &block_context(storage.clone(), deadline + 1),
+        &PUBLIC_BONDED_REGISTRY,
+    )
+    .unwrap();
+
+    assert_eq!(
+        vote.proposals
+            .get(proposal_id)
+            .unwrap()
+            .unwrap()
+            .proposal_status()
+            .unwrap(),
+        ProposalStatus::Error
+    );
+    assert_eq!(vote.list_pending_proposal_ids().unwrap(), vec![proposal_id]);
+    assert_eq!(
+        vote.proposal_bond(proposal_id).unwrap().settlement,
+        BondSettlement::Unsettled
+    );
+    assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
+    assert_eq!(
+        storage.sload(UPDATE_ADDRESS, U256::from(997u64)).unwrap(),
+        proposal_id,
+        "admission reservation must survive target execution rollback"
+    );
+    assert_eq!(
+        storage.sload(UPDATE_ADDRESS, U256::from(996u64)).unwrap(),
+        U256::ZERO,
+        "partial target execution must roll back"
+    );
 }
 
 #[test]
