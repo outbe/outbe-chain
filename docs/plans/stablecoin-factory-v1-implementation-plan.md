@@ -136,7 +136,27 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-013 | Done | `8c0eea17` | Baseline ACTIVE/PENDING behavior and zero-value paths characterized before SCF-026 changed ballots to ACTIVE-only; raw payload state/log, validator-change quorum, handler failure, replay and outer rollback snapshots covered |
 | SCF-014 | Done | `67d6f2a2` | Behavioral H-1/H/H+1 snapshots: Update activates at begin-block H but history is exact-height sparse; canonical/build/validation stay chain-spec sourced; nested call currently accepts PUSH0 under London and Shanghai; RPC dispatch reflects caller-selected state; Update 56/56, EVM 244/244 (1 skipped), RPC 10/10; review APPROVE |
 | SCF-020 | Review | `023a723d` | Compact 35-route declaration drives exact lookup/enumeration and reader adapter; existing empty shared-buffer behavior remains characterized until an explicit activation boundary; consolidated review deferred to SCF-G1 |
-| SCF-026 | Done | `4c6b0c41`, `8ca8702b` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, registry uniqueness, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission is deliberately inert until SCF-060/061 |
+| SCF-021 | Done | `189b022d` | CREATE/CREATE2 reject the reserved dynamic stablecoin class before account mutation |
+| SCF-022 | Done | `d7b5532b` | Actual-callee class routing authenticates nested and top-level stablecoin calls |
+| SCF-023 | Done | `b90658cc` | Hook code deployment and balance credit participate in the EVM journal |
+| SCF-024 | Done | `11db1f54` | Factory hook events use the canonical receipt-visible log path |
+| SCF-025 | Done | `f41ad110` | Protocol version resolves from exact selected state with H-1/H/H+1 coverage |
+| SCF-026 | Done | `4c6b0c41`, `8ca8702b`, `e9b4097f` | Typed Applied/Error outcome, raw bytes and proposer/value/height/chain context, registry uniqueness, target-owned domain classification, outer technical Err propagation, nested rollback and ACTIVE-only ballots pass focused suites; exact PublicBonded admission is deliberately inert until SCF-060/061 |
+| SCF-027 | Done | `5bf27e57` | Vote notifications are canonical logs and roll back with outer state |
+| SCF-030 | Done | `6ebed4f2` | Policy schema, state and typed API |
+| SCF-031 | Done | `6ebed4f2` | Bounded O(1) authorization evaluation |
+| SCF-032 | Done | `6ebed4f2`, `07b7ae4d` | Policy creation, bounded membership and two-step admin |
+| SCF-033 | Done | `07b7ae4d` | Canonical fixed-address Policy precompile |
+| SCF-034 | Done | `07b7ae4d`, `d1db2262` | Policy property and bounded-work gate evidence |
+| SCF-040 | Done | `02e15a5f` | Callee-scoped token schema and Factory-only initialization API |
+| SCF-041 | Done | `551ac85a` | ERC-20 accounting and supply-cap core |
+| SCF-042 | Done | `5ada5374` | Roles, pause and two-step token admin |
+| SCF-043 | Done | `3d901d0a` | Shared Policy authorization and ERC-7943 |
+| SCF-044 | Done | `c8bf24ae` | EIP-2612 permit with pinned domain semantics |
+| SCF-045 | Done | `e286a509` | Fixed bytes32 memo variants |
+| SCF-047 | Done | `f5d3ac1e` | Token model, crypto, malformed/static/nested/OOG and rollback evidence pass |
+| SCF-050 | Done | `990314f2` | Factory registry, count/list views and reservation triple state pass 8 focused tests |
+| SCF-051 | Done | `6f8ad6a4` | Canonical typed admission, proposer/policy checks, shared collision validation and fixed prediction vector pass 12 focused tests; native token-address balance is ignored and preserved |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -674,6 +694,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-051 — Implement canonical parsing and prediction
 
+- **Status:** Done in `6f8ad6a4`; Factory admission decodes the original canonical
+  bytes, requires `proposer == issuer`, checks the shared Policy authority and reuses
+  the exact permanent/pending collision checks used by reservation. The fixed
+  chain/factory/prefix vector, malformed/non-canonical corpus, missing policy with
+  zero writes and forced native token-address balance are covered by the 12-test
+  Factory suite; clippy and formatting pass.
 - **Goal:** Validate original bytes and deterministic identity before any write.
 - **Depends on:** SCF-050, `SCF-G2`.
 - **Done when:** typed decode + byte-identical re-encode validates proposer==issuer,
