@@ -216,6 +216,8 @@ pub struct FixtureState {
     pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
     pub ocomp_owner_rollback_observation: Option<OcompOwnerRollbackObservationV1>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
+    /// Runtime-selected proposer isolated by the tentative-orphan scenario.
+    pub ocomp_isolated_validator_index: Option<usize>,
     pub ocomp_tentative_candidate: Option<OcompTentativeCandidateObservationV1>,
     pub ocomp_orphan_recovery_observation: Option<OcompOrphanRecoveryObservationV1>,
     pub ocomp_empty_compatibility_verified: Option<bool>,
@@ -312,6 +314,7 @@ impl Default for FixtureState {
             ocomp_historical_replay_observation: None,
             ocomp_owner_rollback_observation: None,
             ocomp_execution_trace_observation: None,
+            ocomp_isolated_validator_index: None,
             ocomp_tentative_candidate: None,
             ocomp_orphan_recovery_observation: None,
             ocomp_empty_compatibility_verified: None,

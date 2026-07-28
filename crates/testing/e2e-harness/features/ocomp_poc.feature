@@ -42,10 +42,10 @@ Feature: Off-chain computation PoC closure
     When an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
     And every validator projects the same tribute and indexes
-    When validator 0 is isolated before the JobIntent request block
-    Then validator 0 durably pins one tentative JobIntent candidate
-    When validator 0 stops and the other three validators finalize a competing request block
-    Then validator 0 rejoins and releases the exact orphaned tentative pin
+    When the next request proposer is isolated before the JobIntent request block
+    Then the isolated proposer durably pins one tentative JobIntent candidate
+    When the isolated proposer stops and the other three validators finalize a competing request block
+    Then the isolated proposer rejoins and releases the exact orphaned tentative pin
     When the validator supervisors submit results directly for that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the orphaned candidate cannot obtain node attestation

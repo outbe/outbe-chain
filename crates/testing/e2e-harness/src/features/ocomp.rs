@@ -1925,9 +1925,30 @@ fn certified_generation_contains_only_original_tribute(world: &mut World) {
     world.state.ocomp_duplicate_exclusion_verified = Some(true);
 }
 
-#[when("validator 0 is isolated before the JobIntent request block")]
-fn isolate_validator_zero_before_request(world: &mut World) {
-    for validator_index in [1, 2, 3] {
+#[when("the next request proposer is isolated before the JobIntent request block")]
+fn isolate_next_request_proposer_before_request(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let isolated_validator_index = loop {
+        let head_before = world.rpc.head(primary);
+        let leader = world.localnet.latest_consensus_leader(0);
+        let head_after = world.rpc.head(primary);
+        if let (Some(head_before), Ok(leader), Some(head_after)) = (head_before, leader, head_after)
+        {
+            if head_before == head_after && leader.view > head_before {
+                break leader.validator_index;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "could not observe a stable next-view proposer before isolation"
+        );
+        sleep(Duration::from_millis(100));
+    };
+    world.state.ocomp_isolated_validator_index = Some(isolated_validator_index);
+    for validator_index in
+        (0..world.validators.joiner_index()).filter(|index| *index != isolated_validator_index)
+    {
         world
             .localnet
             .kill_validator(validator_index)
@@ -1936,13 +1957,17 @@ fn isolate_validator_zero_before_request(world: &mut World) {
             });
     }
     assert!(
-        !world.localnet.validator_exited(0),
-        "isolated validator-0 stopped unexpectedly"
+        !world.localnet.validator_exited(isolated_validator_index),
+        "isolated validator-{isolated_validator_index} stopped unexpectedly"
     );
 }
 
-#[then("validator 0 durably pins one tentative JobIntent candidate")]
-fn isolated_validator_pins_tentative_candidate(world: &mut World) {
+#[then("the isolated proposer durably pins one tentative JobIntent candidate")]
+fn isolated_proposer_pins_tentative_candidate(world: &mut World) {
+    let isolated_validator_index = world
+        .state
+        .ocomp_isolated_validator_index
+        .expect("runtime-selected isolated proposer");
     let expected_wwd = world
         .state
         .wwd
@@ -1952,7 +1977,10 @@ fn isolated_validator_pins_tentative_candidate(world: &mut World) {
         .expect("numeric tentative candidate WorldwideDay");
     let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
     loop {
-        if let Ok(snapshot) = world.localnet.ocomp_retention_journal(0) {
+        if let Ok(snapshot) = world
+            .localnet
+            .ocomp_retention_journal(isolated_validator_index)
+        {
             let tentative = snapshot
                 .records
                 .iter()
@@ -1979,19 +2007,27 @@ fn isolated_validator_pins_tentative_candidate(world: &mut World) {
             }
         }
         assert!(
-            !world.localnet.validator_exited(0),
-            "isolated validator-0 exited before persisting a tentative pin"
+            !world
+                .localnet
+                .validator_exited(isolated_validator_index),
+            "isolated validator-{isolated_validator_index} exited before persisting a tentative pin"
         );
         assert!(
             Instant::now() < deadline,
-            "isolated validator-0 did not persist the request candidate before the bounded deadline"
+            "isolated validator-{isolated_validator_index} did not persist the request candidate before the bounded deadline"
         );
         sleep(Duration::from_millis(250));
     }
 }
 
-#[when("validator 0 stops and the other three validators finalize a competing request block")]
+#[when(
+    "the isolated proposer stops and the other three validators finalize a competing request block"
+)]
 fn competing_committee_finalizes_request(world: &mut World) {
+    let isolated_validator_index = world
+        .state
+        .ocomp_isolated_validator_index
+        .expect("runtime-selected isolated proposer");
     let orphan = world
         .state
         .ocomp_tentative_candidate
@@ -2000,9 +2036,14 @@ fn competing_committee_finalizes_request(world: &mut World) {
         .clone();
     world
         .localnet
-        .kill_validator(0)
-        .expect("stop isolated validator-0");
-    for validator_index in [1, 2, 3] {
+        .kill_validator(isolated_validator_index)
+        .unwrap_or_else(|error| {
+            panic!("stop isolated validator-{isolated_validator_index}: {error:#}")
+        });
+    let competing_validator_indexes = (0..world.validators.joiner_index())
+        .filter(|index| *index != isolated_validator_index)
+        .collect::<Vec<_>>();
+    for validator_index in competing_validator_indexes.iter().copied() {
         world
             .localnet
             .restart_validator(validator_index)
@@ -2011,7 +2052,10 @@ fn competing_committee_finalizes_request(world: &mut World) {
             });
     }
 
-    let ports = [1, 2, 3].map(|index| world.validators.http_port(index));
+    let ports = competing_validator_indexes
+        .iter()
+        .map(|index| world.validators.http_port(*index))
+        .collect::<Vec<_>>();
     let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
     let request = loop {
         let observed = ports
@@ -2046,8 +2090,12 @@ fn competing_committee_finalizes_request(world: &mut World) {
     world.state.ocomp_job_request = Some(request);
 }
 
-#[then("validator 0 rejoins and releases the exact orphaned tentative pin")]
-fn validator_zero_releases_orphaned_pin(world: &mut World) {
+#[then("the isolated proposer rejoins and releases the exact orphaned tentative pin")]
+fn isolated_proposer_releases_orphaned_pin(world: &mut World) {
+    let isolated_validator_index = world
+        .state
+        .ocomp_isolated_validator_index
+        .expect("runtime-selected isolated proposer");
     let orphan = world
         .state
         .ocomp_tentative_candidate
@@ -2062,22 +2110,30 @@ fn validator_zero_releases_orphaned_pin(world: &mut World) {
         .clone();
     world
         .localnet
-        .restart_validator(0)
-        .expect("restart validator-0 against competing finality");
-    let port = world.validators.http_port(0);
+        .restart_validator(isolated_validator_index)
+        .unwrap_or_else(|error| {
+            panic!(
+                "restart validator-{isolated_validator_index} against competing finality: {error:#}"
+            )
+        });
+    let port = world.validators.http_port(isolated_validator_index);
     assert!(
         world
             .rpc
             .wait_finalized_at_least(port, request.finality_recorded_height, 120),
-        "validator-0 did not catch up to competing finality"
+        "validator-{isolated_validator_index} did not catch up to competing finality"
     );
 
     let deadline = Instant::now() + Duration::from_secs(60);
     let release_height = loop {
         let snapshot = world
             .localnet
-            .ocomp_retention_journal(0)
-            .expect("decode validator-0 retention journal after rejoin");
+            .ocomp_retention_journal(isolated_validator_index)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "decode validator-{isolated_validator_index} retention journal after rejoin: {error:#}"
+                )
+            });
         let released = snapshot.records.iter().find_map(|(key, record)| {
             if *key != orphan.block_hash {
                 return None;
@@ -2099,7 +2155,7 @@ fn validator_zero_releases_orphaned_pin(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "validator-0 did not release the exact orphan after competing finality"
+            "validator-{isolated_validator_index} did not release the exact orphan after competing finality"
         );
         sleep(Duration::from_millis(250));
     };
@@ -2120,6 +2176,10 @@ fn validator_zero_releases_orphaned_pin(world: &mut World) {
 
 #[then("the orphaned candidate cannot obtain node attestation")]
 fn orphan_candidate_cannot_obtain_attestation(world: &mut World) {
+    let isolated_validator_index = world
+        .state
+        .ocomp_isolated_validator_index
+        .expect("runtime-selected isolated proposer");
     let activation = world
         .state
         .ocomp_activation
@@ -2142,7 +2202,8 @@ fn orphan_candidate_cannot_obtain_attestation(world: &mut World) {
     let error = world
         .ocomp
         .require_orphan_attestation_refusal(
-            0,
+            u8::try_from(isolated_validator_index)
+                .expect("runtime-selected validator index fits the OCOMP control API"),
             orphan_result
                 .encode_canonical(&poc_schema_limits())
                 .expect("canonical orphan-bound LysisResultV1"),

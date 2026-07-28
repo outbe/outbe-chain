@@ -50,6 +50,16 @@ pub struct OcompRuntimeTraceMarkerV1 {
     pub block_number: u64,
 }
 
+/// Current proposer selected by the production consensus runtime for one view.
+///
+/// OCOMP fork evidence uses this only to choose which real validator to
+/// isolate; it does not inject or influence consensus state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct ConsensusLeaderObservationV1 {
+    pub view: u64,
+    pub validator_index: usize,
+}
+
 #[cfg(any(test, feature = "ocomp-integration"))]
 struct TrackedRethLog {
     file: File,
@@ -474,6 +484,23 @@ impl Localnet {
         fs::read_to_string(path).unwrap_or_default()
     }
 
+    /// Observe the latest proposer selected by the production consensus
+    /// runtime of one exact validator.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn latest_consensus_leader(
+        &self,
+        validator_index: usize,
+    ) -> Result<ConsensusLeaderObservationV1> {
+        ensure!(
+            validator_index < self.committee_size(),
+            "consensus leader observer is outside the committee"
+        );
+        let log = self.node_log(&format!("validator-{validator_index}"));
+        latest_consensus_leader_from_log(&log, self.committee_size()).wrap_err_with(|| {
+            format!("observe latest consensus leader from validator-{validator_index}")
+        })
+    }
+
     /// Parse bounded OCOMP runtime markers for one exact owned node.
     pub fn ocomp_runtime_trace_markers(
         &self,
@@ -895,6 +922,69 @@ fn parse_finalized_block_observed_at_micros(
 }
 
 #[cfg(any(test, feature = "ocomp-integration"))]
+fn parse_consensus_leader(line: &str) -> Result<Option<ConsensusLeaderObservationV1>> {
+    let line = strip_ansi_control_sequences(line);
+    if !line.contains("commonware_consensus::simplex::actors::voter::round")
+        || !line.contains("leader elected round=Round")
+    {
+        return Ok(None);
+    }
+    let view = line
+        .split_once("view: View(")
+        .and_then(|(_, tail)| tail.split_once(')'))
+        .map(|(value, _)| value)
+        .ok_or_else(|| eyre::eyre!("consensus leader record has no typed view"))?
+        .parse::<u64>()
+        .wrap_err("consensus leader view is not u64")?;
+    let validator_index =
+        usize::try_from(required_log_u64_field(&line, "leader", "consensus leader")?)
+            .wrap_err("consensus leader index exceeds usize")?;
+    Ok(Some(ConsensusLeaderObservationV1 {
+        view,
+        validator_index,
+    }))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn strip_ansi_control_sequences(line: &str) -> String {
+    let mut normalized = String::with_capacity(line.len());
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\u{1b}' && characters.next_if_eq(&'[').is_some() {
+            for control in characters.by_ref() {
+                if ('@'..='~').contains(&control) {
+                    break;
+                }
+            }
+            continue;
+        }
+        normalized.push(character);
+    }
+    normalized
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
+fn latest_consensus_leader_from_log(
+    log: &str,
+    committee_size: usize,
+) -> Result<ConsensusLeaderObservationV1> {
+    ensure!(committee_size > 0, "consensus committee is empty");
+    let mut latest = None;
+    for line in log.lines() {
+        let Some(observation) = parse_consensus_leader(line)? else {
+            continue;
+        };
+        ensure!(
+            observation.validator_index < committee_size,
+            "consensus leader {} is outside committee size {committee_size}",
+            observation.validator_index
+        );
+        latest = Some(observation);
+    }
+    latest.ok_or_else(|| eyre::eyre!("consensus log has no leader-election record"))
+}
+
+#[cfg(any(test, feature = "ocomp-integration"))]
 fn required_log_u64_field(line: &str, name: &str, record: &str) -> Result<u64> {
     structured_field(line, name)
         .ok_or_else(|| eyre::eyre!("{record} record has no {name}"))?
@@ -1032,10 +1122,10 @@ mod tests {
 
     use super::{
         accept_expected_dkg_reveal, accept_expected_update_fatal, exact_expected_dkg_reveal,
-        exact_expected_update_fatal, is_runtime_log, parse_canonical_block_observed_at_micros,
-        parse_canonical_block_processing_micros, parse_ce_startup_replay,
-        parse_finalized_block_observed_at_micros, unexpected_log_line,
-        CeStartupReplayObservationV1, LogCounts, RethLogTail,
+        exact_expected_update_fatal, is_runtime_log, latest_consensus_leader_from_log,
+        parse_canonical_block_observed_at_micros, parse_canonical_block_processing_micros,
+        parse_ce_startup_replay, parse_finalized_block_observed_at_micros, unexpected_log_line,
+        CeStartupReplayObservationV1, ConsensusLeaderObservationV1, LogCounts, RethLogTail,
     };
 
     #[test]
@@ -1203,6 +1293,37 @@ mod tests {
             parse_finalized_block_observed_at_micros(finalized, 163, block_hash).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn consensus_leader_probe_returns_the_latest_typed_runtime_selection() {
+        let log = "\
+\u{1b}[2m2026-07-28T06:23:03.100Z\u{1b}[0m INFO \
+\u{1b}[2mcommonware_consensus::simplex::actors::voter::round\u{1b}[0m: \
+leader elected \u{1b}[3mround\u{1b}[0m\u{1b}[2m=\u{1b}[0mRound { epoch: Epoch(0), view: View(34) } \
+\u{1b}[3mleader\u{1b}[0m\u{1b}[2m=\u{1b}[0m1\n\
+\u{1b}[2m2026-07-28T06:23:04.165Z\u{1b}[0m INFO \
+\u{1b}[2mcommonware_consensus::simplex::actors::voter::round\u{1b}[0m: \
+leader elected \u{1b}[3mround\u{1b}[0m\u{1b}[2m=\u{1b}[0mRound { epoch: Epoch(0), view: View(35) } \
+\u{1b}[3mleader\u{1b}[0m\u{1b}[2m=\u{1b}[0m2";
+
+        assert_eq!(
+            latest_consensus_leader_from_log(log, 4).unwrap(),
+            ConsensusLeaderObservationV1 {
+                view: 35,
+                validator_index: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn consensus_leader_probe_rejects_an_index_outside_the_committee() {
+        let log = "\
+2026-07-28T06:23:04.165Z INFO commonware_consensus::simplex::actors::voter::round: \
+leader elected round=Round { epoch: Epoch(0), view: View(35) } leader=4";
+
+        let error = latest_consensus_leader_from_log(log, 4).unwrap_err();
+        assert!(error.to_string().contains("outside committee size 4"));
     }
 
     #[test]
