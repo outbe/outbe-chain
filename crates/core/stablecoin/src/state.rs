@@ -653,6 +653,74 @@ impl StablecoinContract<'_> {
         Ok(())
     }
 
+    pub fn transfer_with_memo(
+        &mut self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        self.with_memo(from, to, amount, memo, |token| {
+            token.transfer(from, to, amount)
+        })
+    }
+
+    pub fn transfer_from_with_memo(
+        &mut self,
+        spender: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        self.with_memo(from, to, amount, memo, |token| {
+            token.transfer_from(spender, from, to, amount)
+        })
+    }
+
+    pub fn mint_with_memo(
+        &mut self,
+        actor: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        self.with_memo(Address::ZERO, to, amount, memo, |token| {
+            token.mint(actor, to, amount)
+        })
+    }
+
+    pub fn burn_with_memo(&mut self, actor: Address, amount: U256, memo: B256) -> Result<()> {
+        self.with_memo(actor, Address::ZERO, amount, memo, |token| {
+            token.burn(actor, amount)
+        })
+    }
+
+    pub fn burn_from_with_memo(
+        &mut self,
+        spender: Address,
+        from: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        self.with_memo(from, Address::ZERO, amount, memo, |token| {
+            token.burn_from(spender, from, amount)
+        })
+    }
+
+    pub fn forced_transfer_with_memo(
+        &mut self,
+        actor: Address,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+    ) -> Result<()> {
+        self.with_memo(from, to, amount, memo, |token| {
+            token.forced_transfer(actor, from, to, amount)
+        })
+    }
+
     pub(crate) fn mint_core(&mut self, to: Address, amount: U256) -> Result<()> {
         self.validated_schema_version()?;
         self.require_nonzero(to)?;
@@ -778,6 +846,26 @@ impl StablecoinContract<'_> {
             owner,
             spender,
             value,
+        })
+    }
+
+    fn with_memo(
+        &mut self,
+        from: Address,
+        to: Address,
+        amount: U256,
+        memo: B256,
+        operation: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            operation(self)?;
+            self.emit(IStablecoin::TransferWithMemo {
+                from,
+                to,
+                amount,
+                memo,
+            })
         })
     }
 

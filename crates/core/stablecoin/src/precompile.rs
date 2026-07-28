@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 pub use crate::abi::IStablecoin;
@@ -135,6 +135,48 @@ pub fn dispatch(
                         .burn_from(spender, call.from, call.amount)
                         .map(|()| true)
                 }),
+                transferWithMemo(call) => mutate(call, caller, |from, call| {
+                    token
+                        .transfer_with_memo(from, call.to, call.amount, call.memo)
+                        .map(|()| true)
+                }),
+                transferFromWithMemo(call) => mutate(call, caller, |spender, call| {
+                    token
+                        .transfer_from_with_memo(
+                            spender,
+                            call.from,
+                            call.to,
+                            call.amount,
+                            call.memo,
+                        )
+                        .map(|()| true)
+                }),
+                mintWithMemo(call) => mutate(call, caller, |actor, call| {
+                    token
+                        .mint_with_memo(actor, call.to, call.amount, call.memo)
+                        .map(|()| true)
+                }),
+                burnWithMemo(call) => mutate(call, caller, |actor, call| {
+                    token
+                        .burn_with_memo(actor, call.amount, call.memo)
+                        .map(|()| true)
+                }),
+                burnFromWithMemo(call) => mutate(call, caller, |spender, call| {
+                    token
+                        .burn_from_with_memo(spender, call.from, call.amount, call.memo)
+                        .map(|()| true)
+                }),
+                forcedTransferWithMemo(call) => mutate(call, caller, |actor, call| {
+                    token
+                        .forced_transfer_with_memo(
+                            actor,
+                            call.from,
+                            call.to,
+                            call.amount,
+                            call.memo,
+                        )
+                        .map(|()| true)
+                }),
                 grantRole(call) => mutate_void(call, caller, |actor, call| {
                     token.grant_role(actor, call.role, call.account)
                 }),
@@ -158,9 +200,6 @@ pub fn dispatch(
                 acceptAdminTransfer(call) => {
                     mutate_void(call, caller, |actor, _| token.accept_admin_transfer(actor))
                 }
-                _ => Err(PrecompileError::Revert(
-                    "stablecoin selector is not implemented in the current build phase".into(),
-                )),
             }
         },
     )

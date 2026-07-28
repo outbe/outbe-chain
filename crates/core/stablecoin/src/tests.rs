@@ -1732,3 +1732,264 @@ fn permit_rolls_back_nonce_allowance_and_approval_log_after_every_failure() {
         assert!(provider.get_events(init.token_address).is_empty());
     }
 }
+
+#[test]
+fn all_six_memo_selectors_reuse_base_operations_and_emit_memo_last() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x71);
+    let bob = Address::repeat_byte(0x72);
+    let spender = Address::repeat_byte(0x73);
+    let zero_memo = B256::ZERO;
+    let mixed_memo = b256!("00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100");
+    let ones_memo = B256::repeat_byte(0xff);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.mint_core(alice, U256::from(100)).unwrap();
+        token.mint_core(ISSUER, U256::from(50)).unwrap();
+        token.approve(alice, spender, U256::from(50)).unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    let calls = [
+        IStablecoin::transferWithMemoCall {
+            to: bob,
+            amount: U256::from(10),
+            memo: zero_memo,
+        }
+        .abi_encode(),
+        IStablecoin::transferFromWithMemoCall {
+            from: alice,
+            to: bob,
+            amount: U256::from(5),
+            memo: mixed_memo,
+        }
+        .abi_encode(),
+        IStablecoin::mintWithMemoCall {
+            to: bob,
+            amount: U256::from(7),
+            memo: ones_memo,
+        }
+        .abi_encode(),
+        IStablecoin::burnWithMemoCall {
+            amount: U256::from(3),
+            memo: zero_memo,
+        }
+        .abi_encode(),
+        IStablecoin::burnFromWithMemoCall {
+            from: alice,
+            amount: U256::from(4),
+            memo: mixed_memo,
+        }
+        .abi_encode(),
+        IStablecoin::forcedTransferWithMemoCall {
+            from: alice,
+            to: bob,
+            amount: U256::from(6),
+            memo: ones_memo,
+        }
+        .abi_encode(),
+    ];
+    for (index, call) in calls.iter().enumerate() {
+        let caller = match index {
+            0 => alice,
+            1 | 4 => spender,
+            _ => ISSUER,
+        };
+        dispatch(
+            StorageHandle::new(&mut provider),
+            init.token_address,
+            call,
+            caller,
+            U256::ZERO,
+        )
+        .unwrap();
+    }
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(75));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::from(28));
+        assert_eq!(token.balance_of(ISSUER).unwrap(), U256::from(47));
+        assert_eq!(token.total_supply().unwrap(), U256::from(150));
+        assert_eq!(token.allowance_of(alice, spender).unwrap(), U256::from(41));
+    });
+
+    let events = provider.get_events(init.token_address);
+    assert_eq!(events.len(), 13);
+    let expected_memos = [
+        (1, alice, bob, U256::from(10), zero_memo),
+        (3, alice, bob, U256::from(5), mixed_memo),
+        (5, Address::ZERO, bob, U256::from(7), ones_memo),
+        (7, ISSUER, Address::ZERO, U256::from(3), zero_memo),
+        (9, alice, Address::ZERO, U256::from(4), mixed_memo),
+        (12, alice, bob, U256::from(6), ones_memo),
+    ];
+    for (index, from, to, amount, memo) in expected_memos {
+        assert_eq!(
+            events[index],
+            IStablecoin::TransferWithMemo {
+                from,
+                to,
+                amount,
+                memo,
+            }
+            .encode_log_data()
+        );
+    }
+    assert_eq!(
+        events[10],
+        IStablecoin::Transfer {
+            from: alice,
+            to: bob,
+            value: U256::from(6),
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        events[11],
+        IStablecoin::ForcedTransfer {
+            from: alice,
+            to: bob,
+            amount: U256::from(6),
+        }
+        .encode_log_data()
+    );
+}
+
+#[test]
+fn arbitrary_memo_never_changes_state_and_failed_base_operation_emits_nothing() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x61);
+    let bob = Address::repeat_byte(0x62);
+    let memo = b256!("7c89ab01ff23dd45aa67ee890123456789abcdef0123456789abcdef01234567");
+    let mut plain = HashMapStorageProvider::new(CHAIN_ID);
+    let mut with_memo = HashMapStorageProvider::new(CHAIN_ID);
+    for provider in [&mut plain, &mut with_memo] {
+        StorageHandle::enter(provider, |storage| {
+            StablecoinFactoryApi::new(storage.clone())
+                .initialize(&init)
+                .unwrap();
+            StablecoinContract::new(storage, init.token_address)
+                .mint_core(alice, U256::from(100))
+                .unwrap();
+        });
+        provider.clear_events(init.token_address);
+    }
+
+    StorageHandle::enter(&mut plain, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .transfer(alice, bob, U256::from(37))
+            .unwrap();
+    });
+    StorageHandle::enter(&mut with_memo, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .transfer_with_memo(alice, bob, U256::from(37), memo)
+            .unwrap();
+    });
+    assert_eq!(plain.storage, with_memo.storage);
+    assert_eq!(
+        plain.get_events(init.token_address),
+        &with_memo.get_events(init.token_address)[..1]
+    );
+
+    with_memo.clear_events(init.token_address);
+    let before = with_memo.storage.clone();
+    StorageHandle::enter(&mut with_memo, |storage| {
+        assert_revert::<IStablecoin::InsufficientBalance>(
+            StablecoinContract::new(storage, init.token_address)
+                .transfer_with_memo(alice, bob, U256::from(1_000), memo)
+                .unwrap_err(),
+        );
+    });
+    assert_eq!(with_memo.storage, before);
+    assert!(with_memo.get_events(init.token_address).is_empty());
+}
+
+#[test]
+fn memo_event_failure_rolls_back_base_state_and_forced_memo_keeps_frozen_event_order() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x51);
+    let bob = Address::repeat_byte(0x52);
+    let memo = B256::repeat_byte(0xa5);
+
+    let baseline = || {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            StablecoinFactoryApi::new(storage.clone())
+                .initialize(&init)
+                .unwrap();
+            StablecoinContract::new(storage, init.token_address)
+                .mint_core(alice, U256::from(100))
+                .unwrap();
+        });
+        provider.clear_events(init.token_address);
+        provider.clear_mutation_failure();
+        provider
+    };
+
+    let mut measured = baseline();
+    StorageHandle::enter(&mut measured, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .transfer_with_memo(alice, bob, U256::from(10), memo)
+            .unwrap();
+    });
+    let operation_count = measured.clear_mutation_failure();
+    assert_eq!(operation_count, 4);
+
+    for failure_at in 0..operation_count {
+        let mut provider = baseline();
+        provider.fail_after_mutation_at(failure_at);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(StablecoinContract::new(storage, init.token_address)
+                .transfer_with_memo(alice, bob, U256::from(10), memo)
+                .is_err());
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let token = StablecoinContract::new(storage, init.token_address);
+            assert_eq!(token.balance_of(alice).unwrap(), U256::from(100));
+            assert_eq!(token.balance_of(bob).unwrap(), U256::ZERO);
+        });
+        assert!(provider.get_events(init.token_address).is_empty());
+    }
+
+    let mut forced = forced_transfer_baseline(&init, alice);
+    StorageHandle::enter(&mut forced, |storage| {
+        StablecoinContract::new(storage, init.token_address)
+            .forced_transfer_with_memo(ISSUER, alice, bob, U256::from(30), memo)
+            .unwrap();
+    });
+    assert_eq!(
+        forced.get_events(init.token_address),
+        &vec![
+            IStablecoin::Frozen {
+                account: alice,
+                amount: U256::from(70),
+            }
+            .encode_log_data(),
+            IStablecoin::Transfer {
+                from: alice,
+                to: bob,
+                value: U256::from(30),
+            }
+            .encode_log_data(),
+            IStablecoin::ForcedTransfer {
+                from: alice,
+                to: bob,
+                amount: U256::from(30),
+            }
+            .encode_log_data(),
+            IStablecoin::TransferWithMemo {
+                from: alice,
+                to: bob,
+                amount: U256::from(30),
+                memo,
+            }
+            .encode_log_data(),
+        ]
+    );
+}

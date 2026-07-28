@@ -538,8 +538,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   Evidence: the focused token suite passes 29/29 and the shared Policy suite
   passes 20/20, including `F<B`, `F=B`, `F>B`, exact Final ERC-7943 public errors,
   conservation/event ordering and failure-after-every-write/log rollback.
-  Memo/non-memo parity remains the SCF-045 integration evidence because memo
-  selectors do not exist before that task.
+  Memo/non-memo parity is closed by the SCF-045 integration evidence.
 - **Goal:** Apply shared policy, freeze and enforcement semantics exactly.
 - **Depends on:** SCF-042, `SCF-G2`.
 - **Done when:** ordinary transfer/mint and allowance-backed `burnFrom` use the
@@ -575,6 +574,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-045 — Implement fixed `bytes32` memo variants
 
+- **Status:** Done; all six memo selectors wrap the corresponding verified base
+  operation under one outer checkpoint and append exactly one
+  `TransferWithMemo` event without storing or interpreting the memo. Evidence:
+  focused token suite 37/37, zero/mixed/all-ones vectors, arbitrary-memo state
+  parity, frozen forced-transfer event order and failure-after-every-write/log
+  rollback including failure of the final memo event.
 - **Goal:** Add event-only payment references without parallel accounting logic.
 - **Depends on:** SCF-042, SCF-043 for enforcement variant.
 - **Done when:** all six approved memo methods call the same underlying operations;
