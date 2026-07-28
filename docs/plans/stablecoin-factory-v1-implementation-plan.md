@@ -157,6 +157,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-047 | Done | `f5d3ac1e` | Token model, crypto, malformed/static/nested/OOG and rollback evidence pass |
 | SCF-050 | Done | `990314f2` | Factory registry, count/list views and reservation triple state pass 8 focused tests |
 | SCF-051 | Done | `6f8ad6a4` | Canonical typed admission, proposer/policy checks, shared collision validation and fixed prediction vector pass 12 focused tests; native token-address balance is ignored and preserved |
+| SCF-052 | Done | `5bb9b9c9` | Failure after every reserve/release/consume mutation rolls back completely; release permits corrected resubmission and typed target Error retains the reservation triple |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -710,6 +711,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-052 — Implement atomic reservation lifecycle
 
+- **Status:** Done in `5bb9b9c9`; the existing typed lifecycle is covered by failure
+  injection after every internal reserve, release and consume mutation under the Vote
+  checkpoint boundary. Expiry release permits a corrected proposal to reserve the
+  same identity again, success consumes all three pending indexes, and typed target
+  `Error` leaves the complete reservation triple unchanged. The focused Factory
+  suite passes 15/15 with clippy and formatting clean.
 - **Goal:** Reserve global ticker, token id and predicted address exactly once.
 - **Depends on:** SCF-051, SCF-026.
 - **Done when:** reserve writes all three indexes + proposal owner atomically;
