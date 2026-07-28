@@ -23,7 +23,14 @@ fn planning_ledger_path() -> PathBuf {
 #[test]
 fn checked_in_ledger_has_exact_owned_references() {
     let ledger = PlanningLedger::parse(&planning_ledger_path()).expect("checked-in ledger");
-    assert_eq!(ledger.tests.len(), 37);
+    assert_eq!(ledger.tests.len(), 36);
+    let retired = ledger
+        .retired_tests
+        .get("OCM-E2E-003")
+        .expect("retired OCM-E2E-003 tombstone");
+    assert_eq!(ledger.retired_tests.len(), 1);
+    assert_eq!(retired.status, "RETIRED");
+    assert!(!retired.reason.trim().is_empty());
     assert_eq!(ledger.task_ownership.len(), 28);
     assert_eq!(ledger.task_dependencies.len(), 28);
     assert_eq!(ledger.task_commands.len(), 28);
