@@ -6701,10 +6701,7 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(
-            receipt_logs[1].data.data,
-            Bytes::from_static(b"committed")
-        );
+        assert_eq!(receipt_logs[1].data.data, Bytes::from_static(b"committed"));
 
         let config = OutbeEvmConfig::new(test_chain_spec());
         let evm = config.evm_with_env(&mut state, test_evm_env(7, REWARDS_ADDRESS));

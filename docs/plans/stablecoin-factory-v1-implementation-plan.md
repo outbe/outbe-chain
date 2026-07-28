@@ -397,10 +397,11 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-025 — Add one exact-state Outbe protocol-version resolver
 
-- **Status:** In progress — `07b7ae4d` adds the canonical-width exact-state
-  resolver and uses it for the fixed Policy route in top-level and nested calls.
-  The dynamic class resolver now uses the same exact-state path in SCF-022;
-  historical RPC construction remains owned by SCF-025.
+- **Status:** Done — `outbe-update` owns one canonical-width exact-state resolver;
+  fixed Policy and dynamic-token routes use it in top-level and nested calls.
+  Focused EVM tests cover H-1/H/H+1 snapshots, same-block Update visibility and
+  independence from Ethereum `SpecId`; the standard EVM factory consumes the
+  exact database snapshot selected by proposer, validator or historical RPC.
 - **Goal:** Remove `SpecId`/latest-state/token-schema ambiguity.
 - **Scope/files:** primitives/Update re-export, EVM config/dispatch/subcalls and RPC
   exact-state construction; do not alter Update FSM.
@@ -409,7 +410,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Done when:** proposer, validator, nested call and historical RPC resolve the same
   version from exact state and pass it explicitly into class routing; static exact
   route metadata and Ethereum `SpecId` are not activation authorities;
-  missing/corrupt authority is fatal.
+  storage/provider failure or a non-canonical version word is fatal. Version `0`
+  is the valid baseline state and is therefore not treated as a missing authority.
 - **Tests:** T1 codec/failure; T3 H-1/H/H+1 and same-block Update visibility.
 - **Exit:** Update/EVM/RPC owners approve the authority contract.
 

@@ -1,7 +1,9 @@
 use alloy_primitives::U256;
 use serde_json::Value;
 
-use crate::api::{get_active_version, is_version_active_eq, version_at_height};
+use crate::api::{
+    get_active_version, is_version_active_eq, resolve_active_version, version_at_height,
+};
 use crate::payload::encode_schedule_update_json;
 use crate::schema::Update;
 use crate::ProtocolVersion;
@@ -15,6 +17,11 @@ fn get_active_version_returns_zero_on_fresh_chain() {
             get_active_version(storage.clone()).unwrap(),
             ProtocolVersion::ZERO,
             "fresh chain baseline is protocol version 0"
+        );
+        assert_eq!(
+            resolve_active_version(storage).unwrap(),
+            ProtocolVersion::ZERO,
+            "the exact-state resolver preserves the valid baseline version"
         );
     });
 }
@@ -62,7 +69,27 @@ fn set_active_version_makes_helpers_return_version() {
         let mut update = Update::new(storage.clone());
         update.set_active_version(V1_2, 500).unwrap();
         assert_eq!(get_active_version(storage.clone()).unwrap(), V1_2);
+        assert_eq!(resolve_active_version(storage.clone()).unwrap(), V1_2);
         assert_eq!(version_at_height(storage.clone(), 500).unwrap(), V1_2);
         assert!(is_version_active_eq(storage, V1_2).unwrap());
+    });
+}
+
+#[test]
+fn exact_state_resolver_rejects_noncanonical_width() {
+    with_update(|storage| {
+        storage
+            .sstore(
+                outbe_primitives::addresses::UPDATE_ADDRESS,
+                U256::ZERO,
+                U256::from(u32::MAX) + U256::from(1u64),
+            )
+            .unwrap();
+
+        assert!(matches!(
+            resolve_active_version(storage),
+            Err(outbe_primitives::error::PrecompileError::Fatal(message))
+                if message.contains("canonical u32 codec")
+        ));
     });
 }
