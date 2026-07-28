@@ -435,15 +435,21 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-027 — Make Vote operator notifications rollback-safe
 
+- **Status:** Done — Vote no longer writes process-local JSONL from speculative
+  state-transition paths. Proposal, ballot and terminal notifications are canonical
+  EVM logs only; transaction logs and whitelisted hook logs share the existing
+  checkpoint/receipt commit boundary, so rollback or replay cannot leave a phantom
+  Approved/Expired/Error record.
 - **Goal:** Prevent process-local JSONL/operator records from claiming a terminal
   result that canonical hook state later rolls back.
 - **Scope/files:** Vote notification/lifecycle seam only; canonical HookEvents remain
   the authoritative receipt evidence.
 - **Depends on:** SCF-013, SCF-026.
-- **Done when:** notification publication is post-commit or idempotently reconciled by
-  proposal/status identity; replay cannot leave a phantom Approved/Error/Bond event.
-- **Tests:** T1 notification idempotency; T3 injected failure after notification
-  preparation and restart/replay reconciliation.
+- **Done when:** Vote publishes no process-local notification before commit;
+  canonical receipt logs are the sole notification authority and replay cannot leave
+  a phantom Approved/Error/Bond event.
+- **Tests:** T1 terminal event replay emits once; T3 injected outer failure rolls
+  back proposal status, indexes and logs together.
 - **Exit gate G1:** SCF-010..027 focused suites pass; generic infrastructure contains
   no Factory/Policy/token business state.
 

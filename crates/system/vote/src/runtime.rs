@@ -103,7 +103,6 @@ impl Vote<'_> {
             ProposalStatus::Pending,
         )?;
         self.notify_proposal_created(
-            current_height,
             proposal_id,
             proposer,
             target_module,
@@ -143,7 +142,7 @@ impl Vote<'_> {
             VoteKind::from_approve(approve),
             block_number,
         )?;
-        self.notify_vote_cast(block_number, proposal_id, voter, approve)?;
+        self.notify_vote_cast(proposal_id, voter, approve)?;
         Ok(())
     }
 
@@ -189,8 +188,6 @@ impl Vote<'_> {
         let tally = calculate_vote_tally(self, &proposal, &active)?;
         let vs = ValidatorSet::new(self.storage.clone());
         let active_count = vs.active_validator_count()?;
-        let block_number = ctx.block.block_number;
-
         let status = if quorum_reached(tally.yes, active_count) {
             ProposalStatus::Approved
         } else {
@@ -212,13 +209,13 @@ impl Vote<'_> {
                     }
                 }
             }
-            TargetExecutionOutcome::Error { reason } => {
+            TargetExecutionOutcome::Error { reason: _ } => {
                 drop(target_checkpoint);
                 self.set_proposal_status(proposal_id, ProposalStatus::Error)?;
-                ProposalFinalization::Error { reason }
+                ProposalFinalization::Error
             }
         };
 
-        self.notify_proposal_finalized(block_number, &proposal, &tally, active_count, outcome)
+        self.notify_proposal_finalized(&proposal, &tally, outcome)
     }
 }
