@@ -637,6 +637,58 @@ fn erc20_abi_core_roundtrips_and_rejects_value_before_schema_reads() {
 }
 
 #[test]
+fn malformed_or_noncanonical_abi_never_mutates_token_state() {
+    let init = initialization("USDX");
+    let alice = Address::repeat_byte(0x63);
+    let bob = Address::repeat_byte(0x64);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        StablecoinContract::new(storage, init.token_address)
+            .mint_core(alice, U256::from(20))
+            .unwrap();
+    });
+    provider.clear_events(init.token_address);
+
+    let canonical = IStablecoin::transferCall {
+        to: bob,
+        value: U256::from(4),
+    }
+    .abi_encode();
+    let mut trailing = canonical.clone();
+    trailing.push(0);
+    let malformed = [
+        Vec::new(),
+        vec![0xde, 0xad, 0xbe, 0xef],
+        canonical[..canonical.len() - 1].to_vec(),
+        trailing,
+    ];
+
+    for calldata in malformed {
+        assert!(matches!(
+            dispatch(
+                StorageHandle::new(&mut provider),
+                init.token_address,
+                &calldata,
+                alice,
+                U256::ZERO,
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+    }
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let token = StablecoinContract::new(storage, init.token_address);
+        assert_eq!(token.balance_of(alice).unwrap(), U256::from(20));
+        assert_eq!(token.balance_of(bob).unwrap(), U256::ZERO);
+        assert_eq!(token.total_supply().unwrap(), U256::from(20));
+    });
+    assert!(provider.get_events(init.token_address).is_empty());
+}
+
+#[test]
 fn deterministic_erc20_sequences_match_a_reference_model() {
     let init = initialization("USDX");
     let accounts = [

@@ -635,6 +635,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-047 — Token property and gas gate
 
+- **Status:** Done — the focused token suite combines a 512-step accounting model,
+  exhaustive role/policy/freeze matrices, independent permit vectors, arbitrary memo
+  parity and failure-after-every-mutation rollback. EVM boundary tests cover
+  top-level/nested dispatch, STATIC mutation rejection and nested OOG; malformed and
+  non-canonical ABI calldata is rejected without state or logs. No benchmark-derived
+  execution ceiling is introduced.
 - **Goal:** Close ledger invariants and freeze gas schedule.
 - **Depends on:** SCF-043 through SCF-045.
 - **Evidence:** combined random operation model, malformed ABI corpus, static/nested/

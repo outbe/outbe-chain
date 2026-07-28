@@ -12,7 +12,9 @@ use outbe_primitives::{
     block::BlockContext,
     stablecoin::{predict_stablecoin, StablecoinCreatePayload},
     stablecoin_fork::STABLECOIN_V1_PROTOCOL_VERSION_RAW,
-    storage::{direct::DirectStorageProvider, StorageHandle, SubCallInput, SubCallStatus},
+    storage::{
+        direct::DirectStorageProvider, StorageHandle, SubCallError, SubCallInput, SubCallStatus,
+    },
 };
 use outbe_stablecoin::{
     api::{FactoryTokenInitialization, StablecoinFactoryApi as TokenFactoryApi},
@@ -201,6 +203,94 @@ fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
         IStablecoin::symbolCall::abi_decode_returns(&result.returndata).unwrap(),
         "EXUSD"
     );
+}
+
+#[test]
+fn nested_static_mutation_halts_without_committing_an_event() {
+    let (db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
+    let token = tokens[0];
+    let mut ctx = Context::mainnet().with_db(db);
+    let spender = Address::repeat_byte(0x77);
+    let calldata = IStablecoin::approveCall {
+        spender,
+        value: U256::from(1u64),
+    }
+    .abi_encode();
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        None,
+        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        SubCallInput {
+            target: token,
+            value: U256::ZERO,
+            calldata: calldata.into(),
+            gas_limit: GAS_LIMIT,
+            is_static: true,
+        },
+    )
+    .unwrap();
+
+    assert!(matches!(result.status, SubCallStatus::Halt(_)));
+
+    let allowance = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        None,
+        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        SubCallInput {
+            target: token,
+            value: U256::ZERO,
+            calldata: IStablecoin::allowanceCall {
+                owner: CALLER,
+                spender,
+            }
+            .abi_encode()
+            .into(),
+            gas_limit: GAS_LIMIT,
+            is_static: true,
+        },
+    )
+    .unwrap();
+    assert!(matches!(allowance.status, SubCallStatus::Success));
+    assert_eq!(
+        IStablecoin::allowanceCall::abi_decode_returns(&allowance.returndata).unwrap(),
+        U256::ZERO
+    );
+}
+
+#[test]
+fn nested_call_with_insufficient_gas_halts_out_of_gas() {
+    let (db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
+    let token = tokens[0];
+    let mut ctx = Context::mainnet().with_db(db);
+
+    let result = sub_call::run(
+        &mut ctx,
+        CALLER,
+        false,
+        SpecId::PRAGUE,
+        None,
+        Arc::new(outbe_compressed_entities::ExecutionScope::new()),
+        SubCallInput {
+            target: token,
+            value: U256::ZERO,
+            calldata: symbol_calldata(),
+            gas_limit: 1,
+            is_static: true,
+        },
+    )
+    .unwrap();
+
+    assert!(matches!(
+        result.status,
+        SubCallStatus::Halt(SubCallError::OutOfGas)
+    ));
 }
 
 #[test]
