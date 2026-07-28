@@ -134,7 +134,7 @@ pub struct ObservedMachineFactsV1 {
     pub pid1_is_systemd: bool,
     pub unified_cgroup_v2: bool,
     pub writable_resource_cgroup: bool,
-    pub mock_gramine: bool,
+    pub production_enclave_gramine_direct: bool,
 }
 
 impl ObservedMachineFactsV1 {
@@ -175,7 +175,10 @@ impl ObservedMachineFactsV1 {
         require_machine(self.pid1_is_systemd, "systemd PID 1")?;
         require_machine(self.unified_cgroup_v2, "unified cgroup v2")?;
         require_machine(self.writable_resource_cgroup, "writable resource cgroup")?;
-        require_machine(self.mock_gramine, "mock Gramine")?;
+        require_machine(
+            self.production_enclave_gramine_direct,
+            "production enclave under gramine-direct",
+        )?;
         Ok(())
     }
 }

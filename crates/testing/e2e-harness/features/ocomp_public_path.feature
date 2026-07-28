@@ -1,4 +1,4 @@
-@ocomp @tee @min-validators-4
+@ocomp @tee @gramine-direct @min-validators-4
 Feature: Off-chain computation public path
   @ocomp-public-prefix
   Scenario: A public encrypted Tribute becomes one finalized JobIntent

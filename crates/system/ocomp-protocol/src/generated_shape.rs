@@ -13,11 +13,11 @@ pub const OCOMP_CAPACITY_PROFILE_ID_HEX: &str =
 pub const OCOMP_SHAPE_GENERATOR_SOURCE_SHA256: &str =
     "4d9bfc207a487b5a06393d44279181a4868d69c9246cd4e48f41861eb32c7715";
 pub const OCOMP_SHAPE_INPUT_SET_SHA256: &str =
-    "008184e1d10ed8613fd0da2643e64662ae691d22d8d1f85922012060524841ac";
+    "2895b49f6cd6da1898b194679618740b2de8be7fad64fc4bbaa5be97fbbb154d";
 pub const OCOMP_CANDIDATE_LIMITS_SHA256: &str =
     "a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150";
 pub const OCOMP_MINIMUM_MACHINE_SHA256: &str =
-    "fa49b102f8eb71555d525476e7b1d9626ccdfe1cc52090fdea2b7c32cbc2a7bd";
+    "a54ca8d53824f9dcf439267cbd93a939d3f09823703d1678540acb9a588720b7";
 pub const OCOMP_HEADROOM_POLICY_SHA256: &str =
     "3a44462d5a5a61bb9065dce7549f727b160757ec50ac574ebe69121feeaa0aaf";
 
@@ -121,7 +121,7 @@ pub const OCOMP_POC_DEVNET_MACHINE_V1: OcompPocDevnetMachineV1 = OcompPocDevnetM
     architecture: "x86_64",
     operating_system: "Ubuntu 24.04",
     init_and_resource_manager: "systemd + unified cgroup v2",
-    enclave_mode: "mock Gramine; no SGX claim",
+    enclave_mode: "production enclave under gramine-direct; no SGX claim",
     logical_cpu_count: 4,
     nominal_memory_bytes: 17179869184,
     minimum_process_memory_bytes: 12884901888,

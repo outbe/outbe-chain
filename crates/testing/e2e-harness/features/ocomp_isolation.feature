@@ -1,4 +1,4 @@
-@ocomp @ocomp-isolation @sudo @min-validators-4
+@ocomp @ocomp-isolation @tee @gramine-direct @sudo @min-validators-4
 Feature: OCOMP service-manager isolation
   # OCOMP-TEST-ID: OCM-ISO-001
   Scenario: Four validator domains retain node liveness under bounded compute faults

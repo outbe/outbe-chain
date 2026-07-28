@@ -25,7 +25,7 @@ const REQUIRED_SCENARIO_BINARIES: [&str; 6] = [
     "outbe_e2e",
     "outbe_keygen",
     "outbe_ocomp",
-    "outbe_tee_enclave_mock",
+    "outbe_tee_enclave",
 ];
 
 const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [

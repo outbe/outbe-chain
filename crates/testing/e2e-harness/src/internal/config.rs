@@ -31,6 +31,8 @@ pub(crate) struct Config {
     pub bin_cli: PathBuf,
     /// `outbe-keygen` binary (`--keygen-bin`). Used by the joiner flow.
     pub bin_keygen: PathBuf,
+    /// Production enclave binary (`--enclave-bin`).
+    pub bin_enclave: PathBuf,
     /// Mock enclave binary (`--mock-bin`).
     pub bin_mock: PathBuf,
     /// Genesis seed file (`--seed`).
@@ -80,6 +82,7 @@ impl Config {
             bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
+            bin_enclave: env.enclave_bin.clone(),
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),
             projection_mongodb_uri: env.projection_mongodb_uri.clone(),

@@ -1,4 +1,7 @@
 use std::{
+    fs::{File, OpenOptions},
+    io,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
@@ -1828,7 +1831,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                     "@ocomp",
                     "--no-sudo",
                     "--tee",
-                    "mock",
+                    "gramine-direct",
                 ],
             )?;
             task_progress(
@@ -2346,10 +2349,8 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "--release",
             "-p",
             "outbe-tee-enclave",
-            "--features",
-            "mock",
             "--bin",
-            "outbe-tee-enclave-mock",
+            "outbe-tee-enclave",
         ],
     )
 }
@@ -2365,24 +2366,39 @@ fn snapshot_ocomp_artifact_set(repository_root: &Path, run_root: &Path) -> Resul
         ("target/debug/outbe-e2e-evidence", "outbe-e2e-evidence"),
         ("target/debug/outbe-keygen", "outbe-keygen"),
         ("target/debug/outbe-ocomp", "outbe-ocomp"),
-        (
-            "target/release/outbe-tee-enclave-mock",
-            "outbe-tee-enclave-mock",
-        ),
+        ("target/release/outbe-tee-enclave", "outbe-tee-enclave"),
     ] {
         let source = repository_root.join(source);
         let destination = artifact_set.join(name);
-        if std::fs::hard_link(&source, &destination).is_err() {
-            std::fs::copy(&source, &destination).wrap_err_with(|| {
-                format!(
-                    "snapshot exact artifact {} -> {}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-        }
+        copy_immutable_artifact(&source, &destination)?;
     }
+    std::fs::set_permissions(&artifact_set, std::fs::Permissions::from_mode(0o555))
+        .wrap_err_with(|| format!("seal exact artifact set {}", artifact_set.display()))?;
     Ok(artifact_set)
+}
+
+fn copy_immutable_artifact(source: &Path, destination: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(source)
+        .wrap_err_with(|| format!("inspect exact artifact {}", source.display()))?;
+    ensure!(
+        metadata.file_type().is_file() && !metadata.file_type().is_symlink(),
+        "exact artifact is not a real file: {}",
+        source.display()
+    );
+    let mut input =
+        File::open(source).wrap_err_with(|| format!("open exact artifact {}", source.display()))?;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(destination)
+        .wrap_err_with(|| format!("create exact artifact {}", destination.display()))?;
+    io::copy(&mut input, &mut output)
+        .wrap_err_with(|| format!("copy exact artifact {}", source.display()))?;
+    output
+        .sync_all()
+        .wrap_err_with(|| format!("sync exact artifact {}", destination.display()))?;
+    std::fs::set_permissions(destination, std::fs::Permissions::from_mode(0o555))
+        .wrap_err_with(|| format!("seal exact artifact {}", destination.display()))
 }
 
 fn fresh_task_output_dir(task: &str) -> Result<std::path::PathBuf> {
@@ -2544,38 +2560,8 @@ fn run_exact_scenario(
             evidence_dir.display()
         );
     }
-    let chain_binary = artifact_set.join("outbe-chain");
-    let ocomp_binary = artifact_set.join("outbe-ocomp");
-    let cli_binary = artifact_set.join("outbe-cli");
-    let keygen_binary = artifact_set.join("outbe-keygen");
-    let mock_binary = artifact_set.join("outbe-tee-enclave-mock");
-    let mut arguments = vec![
-        "--tags",
-        tag,
-        "--concurrency",
-        "1",
-        "--no-resolve-ports",
-        "--tee",
-        "mock",
-        "--all",
-        "--repo",
-        path_str(repository_root)?,
-        "--evidence-dir",
-        path_str(evidence_dir)?,
-        "--chain-bin",
-        path_str(&chain_binary)?,
-        "--ocomp-bin",
-        path_str(&ocomp_binary)?,
-        "--cli-bin",
-        path_str(&cli_binary)?,
-        "--keygen-bin",
-        path_str(&keygen_binary)?,
-        "--mock-bin",
-        path_str(&mock_binary)?,
-    ];
-    if no_sudo {
-        arguments.push("--no-sudo");
-    }
+    let arguments =
+        exact_scenario_arguments(repository_root, artifact_set, evidence_dir, tag, no_sudo)?;
     eprintln!(
         "+ {} {}",
         artifact_set.join("outbe-e2e").display(),
@@ -2596,6 +2582,43 @@ fn run_exact_scenario(
         );
     }
     Ok(())
+}
+
+fn exact_scenario_arguments(
+    repository_root: &Path,
+    artifact_set: &Path,
+    evidence_dir: &Path,
+    tag: &str,
+    no_sudo: bool,
+) -> Result<Vec<String>> {
+    let mut arguments = vec![
+        "--tags".to_owned(),
+        tag.to_owned(),
+        "--concurrency".to_owned(),
+        "1".to_owned(),
+        "--no-resolve-ports".to_owned(),
+        "--tee".to_owned(),
+        "gramine-direct".to_owned(),
+        "--all".to_owned(),
+        "--repo".to_owned(),
+        path_str(repository_root)?.to_owned(),
+        "--evidence-dir".to_owned(),
+        path_str(evidence_dir)?.to_owned(),
+    ];
+    for (flag, binary) in [
+        ("--chain-bin", "outbe-chain"),
+        ("--ocomp-bin", "outbe-ocomp"),
+        ("--cli-bin", "outbe-cli"),
+        ("--keygen-bin", "outbe-keygen"),
+        ("--enclave-bin", "outbe-tee-enclave"),
+    ] {
+        arguments.push(flag.to_owned());
+        arguments.push(path_str(&artifact_set.join(binary))?.to_owned());
+    }
+    if no_sudo {
+        arguments.push("--no-sudo".to_owned());
+    }
+    Ok(arguments)
 }
 
 fn run_evidence_binary(
@@ -2674,7 +2697,59 @@ fn require_success(status: ExitStatus, arguments: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS};
+    use super::{
+        copy_immutable_artifact, exact_scenario_arguments, promote_exact_scenario_evidence,
+        E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS,
+    };
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    #[test]
+    fn exact_lane_artifact_snapshot_is_an_independent_read_only_copy() {
+        let root = tempfile::tempdir().expect("temporary artifact root");
+        let source = root.path().join("source");
+        let destination = root.path().join("artifact-set").join("binary");
+        fs::create_dir(destination.parent().expect("artifact-set parent"))
+            .expect("artifact-set directory");
+        fs::write(&source, b"first").expect("source binary");
+
+        copy_immutable_artifact(&source, &destination).expect("immutable artifact copy");
+        fs::write(&source, b"changed").expect("mutate source");
+
+        assert_eq!(
+            fs::read(&destination).expect("snapshotted binary"),
+            b"first"
+        );
+        assert_eq!(
+            fs::metadata(&destination)
+                .expect("snapshot metadata")
+                .permissions()
+                .mode()
+                & 0o222,
+            0
+        );
+    }
+
+    #[test]
+    fn exact_ocomp_scenario_uses_production_enclave_under_gramine_direct() {
+        let arguments = exact_scenario_arguments(
+            Path::new("/repo"),
+            Path::new("/artifact-set"),
+            Path::new("/evidence"),
+            "@ocomp-e2e-001",
+            true,
+        )
+        .expect("exact scenario arguments");
+
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--tee", "gramine-direct"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
+        assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+    }
 
     #[test]
     fn public_lane_is_three_closed_single_scenario_runs() {

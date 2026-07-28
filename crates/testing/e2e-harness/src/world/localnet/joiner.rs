@@ -9,7 +9,6 @@ use std::process::Command;
 use alloy_primitives::{hex, Bytes};
 use eyre::{eyre, Result};
 
-use crate::env::TeeMode;
 use crate::internal::{
     addresses,
     eth::{self, IValidatorSet},
@@ -151,8 +150,7 @@ impl Localnet {
             self.cfg.sudo,
             &self.cfg.dir.join("test-sgx-signing-key.pem"),
         )?;
-        let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
-        let enclave_bin = if mock {
+        let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
             self.cfg.bin_mock.clone()
         } else {
             self.real_enclave_bin()?
@@ -163,8 +161,12 @@ impl Localnet {
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             sudo: self.cfg.sudo,
-            mock,
-            dkg_seed: mock.then(|| format!("{:064x}", index + 1)),
+            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
+            dkg_seed: self
+                .cfg
+                .tee_mode
+                .uses_deterministic_dkg_seed()
+                .then(|| format!("{:064x}", index + 1)),
             seal: Some(SealSpec {
                 tee_dir: vd.join("tee"),
                 chain_id_hex: self.chain_id_hex()?,

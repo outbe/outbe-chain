@@ -302,22 +302,17 @@ fn build_capacity_binaries(repository_root: &Path) -> Result<()> {
     ]);
     run_checked(&mut debug, "build exact debug OCOMP capacity binaries")?;
 
-    let mut mock_enclave = Command::new("cargo");
-    mock_enclave.current_dir(repository_root).args([
+    let mut enclave = Command::new("cargo");
+    enclave.current_dir(repository_root).args([
         "build",
         "--locked",
         "--release",
         "-p",
         "outbe-tee-enclave",
-        "--features",
-        "mock",
         "--bin",
-        "outbe-tee-enclave-mock",
+        "outbe-tee-enclave",
     ]);
-    run_checked(
-        &mut mock_enclave,
-        "build exact release OCOMP capacity enclave",
-    )
+    run_checked(&mut enclave, "build exact release OCOMP capacity enclave")
 }
 
 fn frozen_capacity_budget() -> Result<CapacityBudgetV1> {
@@ -370,7 +365,7 @@ struct CapacityBinariesV1 {
     keygen: PathBuf,
     e2e: PathBuf,
     evidence: PathBuf,
-    mock_enclave: PathBuf,
+    enclave: PathBuf,
 }
 
 impl CapacityBinariesV1 {
@@ -382,7 +377,7 @@ impl CapacityBinariesV1 {
             keygen: repository_root.join("target/debug/outbe-keygen"),
             e2e: repository_root.join("target/debug/outbe-e2e"),
             evidence: repository_root.join("target/debug/outbe-e2e-evidence"),
-            mock_enclave: repository_root.join("target/release/outbe-tee-enclave-mock"),
+            enclave: repository_root.join("target/release/outbe-tee-enclave"),
         })
     }
 
@@ -394,7 +389,7 @@ impl CapacityBinariesV1 {
             ("outbe-keygen", &self.keygen),
             ("outbe-e2e", &self.e2e),
             ("outbe-e2e-evidence", &self.evidence),
-            ("outbe-tee-enclave-mock", &self.mock_enclave),
+            ("outbe-tee-enclave", &self.enclave),
         ] {
             let metadata = std::fs::symlink_metadata(path)
                 .wrap_err_with(|| format!("inspect exact capacity binary {name}"))?;
@@ -421,7 +416,7 @@ impl CapacityBinariesV1 {
             keygen: root.join("outbe-keygen"),
             e2e: root.join("outbe-e2e"),
             evidence: root.join("outbe-e2e-evidence"),
-            mock_enclave: root.join("outbe-tee-enclave-mock"),
+            enclave: root.join("outbe-tee-enclave"),
         };
         for (source, destination) in [
             (&self.chain, &snapshot.chain),
@@ -430,7 +425,7 @@ impl CapacityBinariesV1 {
             (&self.keygen, &snapshot.keygen),
             (&self.e2e, &snapshot.e2e),
             (&self.evidence, &snapshot.evidence),
-            (&self.mock_enclave, &snapshot.mock_enclave),
+            (&self.enclave, &snapshot.enclave),
         ] {
             copy_immutable_binary(source, destination)?;
         }
@@ -503,7 +498,7 @@ fn capacity_systemd_command(
         .arg("--no-resolve-ports")
         .arg("--no-sudo")
         .arg("--tee")
-        .arg("mock")
+        .arg("gramine-direct")
         .arg("--all")
         .arg("--no-cleanup")
         .arg("--repo")
@@ -520,8 +515,8 @@ fn capacity_systemd_command(
         .arg(&binaries.cli)
         .arg("--keygen-bin")
         .arg(&binaries.keygen)
-        .arg("--mock-bin")
-        .arg(&binaries.mock_enclave);
+        .arg("--enclave-bin")
+        .arg(&binaries.enclave);
     command
 }
 
@@ -792,7 +787,7 @@ mod tests {
             keygen: source_root.join("outbe-keygen"),
             e2e: source_root.join("outbe-e2e"),
             evidence: source_root.join("outbe-e2e-evidence"),
-            mock_enclave: source_root.join("outbe-tee-enclave-mock"),
+            enclave: source_root.join("outbe-tee-enclave"),
         };
         for (ordinal, path) in [
             &source.chain,
@@ -801,7 +796,7 @@ mod tests {
             &source.keygen,
             &source.e2e,
             &source.evidence,
-            &source.mock_enclave,
+            &source.enclave,
         ]
         .into_iter()
         .enumerate()
@@ -872,7 +867,7 @@ mod tests {
             keygen: root.join("target/debug/outbe-keygen"),
             e2e: root.join("target/debug/outbe-e2e"),
             evidence: root.join("target/debug/outbe-e2e-evidence"),
-            mock_enclave: root.join("target/release/outbe-tee-enclave-mock"),
+            enclave: root.join("target/release/outbe-tee-enclave"),
         };
         let command = capacity_systemd_command(
             "outbe-ocomp-capacity-deadbeef0000-01",
@@ -906,6 +901,13 @@ mod tests {
         assert!(arguments
             .windows(2)
             .any(|pair| pair == ["--keygen-bin", "/repo/target/debug/outbe-keygen"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--tee", "gramine-direct"]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| { pair == ["--enclave-bin", "/repo/target/release/outbe-tee-enclave",] }));
+        assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
         assert_eq!(
             arguments
                 .iter()
@@ -1057,7 +1059,7 @@ mod tests {
                 pid1_is_systemd: true,
                 unified_cgroup_v2: true,
                 writable_resource_cgroup: true,
-                mock_gramine: true,
+                production_enclave_gramine_direct: true,
             },
             budget,
             runs,

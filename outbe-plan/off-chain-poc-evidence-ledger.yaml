@@ -93,7 +93,7 @@ lanes:
     automatic_retries: 0
   OCM-E2E:
     command: mise run ocomp-poc-e2e -- --evidence-dir <dir>
-    platform: privileged_linux_four_validator_mock_gramine
+    platform: privileged_linux_four_validator_production_enclave_gramine_direct
     frequency: closure_candidate_and_scheduled_main
     timeout_minutes: 120
     required: true
@@ -795,7 +795,7 @@ tests:
       harness path, four compute domains and q=3 to certified Nod
     real_components:
       - four_validator_nodes
-      - four_mock_gramine_enclaves
+      - four_production_enclaves_under_gramine_direct
       - four_supervisors
       - four_exporters
       - four_cas_domains
@@ -806,7 +806,7 @@ tests:
       - public_rpc_p2p_finality
       - public_result_vote_transactions
     substitutions:
-      - mock_gramine_substitutes_only_sgx_hardware_not_validator_or_ocomp_domain
+      - gramine_direct_substitutes_only_sgx_hardware_not_validator_or_ocomp_domain
     substitution_justification: >
       The current encrypted public Tribute path requires the Gramine protocol.
       SGX hardware and attestation are outside PoC; all nodes and OCOMP domains

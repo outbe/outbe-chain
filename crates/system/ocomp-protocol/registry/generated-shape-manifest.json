@@ -5,7 +5,7 @@
   "generator": {
     "invocation": "cargo xtask ocomp shape",
     "source_sha256": "4d9bfc207a487b5a06393d44279181a4868d69c9246cd4e48f41861eb32c7715",
-    "input_set_sha256": "008184e1d10ed8613fd0da2643e64662ae691d22d8d1f85922012060524841ac"
+    "input_set_sha256": "2895b49f6cd6da1898b194679618740b2de8be7fad64fc4bbaa5be97fbbb154d"
   },
   "registries": {
     "object_domain_list_sha256": "f6c42b0b95308ce175f26a715e252e7dec762a5e9da2bb8de0bc7cc9aa9dd319",
@@ -21,7 +21,7 @@
   "profiles": {
     "correctness_profile_sha256": "e400f91e97aea2367adfacd0e7f684cce9d00615be57a5d82e5fbcddbca754b2",
     "candidate_compile_ceiling_sha256": "a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150",
-    "minimum_devnet_hardware_profile_sha256": "fa49b102f8eb71555d525476e7b1d9626ccdfe1cc52090fdea2b7c32cbc2a7bd",
+    "minimum_devnet_hardware_profile_sha256": "a54ca8d53824f9dcf439267cbd93a939d3f09823703d1678540acb9a588720b7",
     "headroom_policy_sha256": "3a44462d5a5a61bb9065dce7549f727b160757ec50ac574ebe69121feeaa0aaf",
     "bundle_template_sha256": "0e051aca4e6c9763dfaf1c9ed86dbf5cefebdf7250b3378feb99c463c7fd7f1c"
   },

@@ -9,11 +9,11 @@
 //! Every requirement is a **tag** (matched on merged feature + scenario tags,
 //! `@`-less), so the Given text stays purely descriptive:
 //!   - `min-validators-N` → requires `--validators >= N` (N parsed from the tag).
-//!   - `tee`              → requires `--tee` is `real` or `mock`.
+//!   - `tee`              → requires an enabled enclave mode.
 //!   - `sudo`             → requires `sudo` (no `--no-sudo`).
 //!   - `todo`             → always skipped (unimplemented stub), regardless of `--all`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
@@ -26,7 +26,9 @@ use crate::internal::ports::Ports;
 pub enum TeeMode {
     /// Real SGX under `gramine-sgx` (needs SGX hardware).
     Real,
-    /// Mock enclave under `gramine-direct` (no SGX).
+    /// Production enclave binary under `gramine-direct` (no SGX).
+    GramineDirect,
+    /// Test-only mock enclave binary under `gramine-direct` (no SGX).
     Mock,
     /// No enclave at all — the chain runs tee-less.
     #[default]
@@ -34,9 +36,40 @@ pub enum TeeMode {
 }
 
 impl TeeMode {
-    /// Whether an enclave is launched (mock or real).
+    /// Whether an enclave is launched.
     pub fn enabled(self) -> bool {
         !matches!(self, TeeMode::None)
+    }
+
+    /// Whether the test-only mock enclave binary is selected.
+    pub const fn uses_mock_binary(self) -> bool {
+        matches!(self, TeeMode::Mock)
+    }
+
+    /// Whether SGX device nodes are passed to the Gramine container.
+    pub const fn passes_sgx_devices(self) -> bool {
+        matches!(self, TeeMode::Real)
+    }
+
+    /// Whether the harness supplies a deterministic per-validator DKG seed.
+    pub const fn uses_deterministic_dkg_seed(self) -> bool {
+        matches!(self, TeeMode::GramineDirect | TeeMode::Mock)
+    }
+
+    /// Stable CLI/evidence spelling for the selected mode.
+    pub const fn evidence_name(self) -> &'static str {
+        match self {
+            Self::Real => "real",
+            Self::GramineDirect => "gramine-direct",
+            Self::Mock => "mock",
+            Self::None => "none",
+        }
+    }
+
+    /// Whether this mode satisfies a scenario's explicit `@gramine-direct`
+    /// execution requirement.
+    pub const fn satisfies_gramine_direct_requirement(self) -> bool {
+        matches!(self, Self::GramineDirect)
     }
 }
 
@@ -123,6 +156,11 @@ pub struct EnvCli {
     #[arg(long)]
     pub keygen_bin: Option<PathBuf>,
 
+    /// Production enclave binary used by `real` and `gramine-direct`. Defaults
+    /// to `<repo>/target/release/outbe-tee-enclave`.
+    #[arg(long)]
+    pub enclave_bin: Option<PathBuf>,
+
     /// Mock enclave binary. Defaults to
     /// `<repo>/target/release/outbe-tee-enclave-mock`.
     #[arg(long)]
@@ -164,6 +202,7 @@ pub struct Environment {
     pub upgraded_chain_bin: Option<PathBuf>,
     pub cli_bin: PathBuf,
     pub keygen_bin: PathBuf,
+    pub enclave_bin: PathBuf,
     pub mock_bin: PathBuf,
     pub seed: PathBuf,
     pub projection_mongodb_uri: String,
@@ -203,6 +242,10 @@ impl Environment {
                 .keygen_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/debug/outbe-keygen")),
+            enclave_bin: cli
+                .enclave_bin
+                .clone()
+                .unwrap_or_else(|| repo.join("target/release/outbe-tee-enclave")),
             mock_bin: cli
                 .mock_bin
                 .clone()
@@ -213,6 +256,15 @@ impl Environment {
                 .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
             projection_mongodb_uri: cli.projection_mongodb_uri.clone(),
             repo,
+        }
+    }
+
+    /// Exact enclave binary selected by the configured execution mode.
+    pub fn selected_enclave_bin(&self) -> &Path {
+        if self.tee_mode.uses_mock_binary() {
+            &self.mock_bin
+        } else {
+            &self.enclave_bin
         }
     }
 }
@@ -238,6 +290,7 @@ impl Default for Environment {
             upgraded_chain_bin: None,
             cli_bin: None,
             keygen_bin: None,
+            enclave_bin: None,
             mock_bin: None,
             seed: None,
             projection_mongodb_uri: "auto".to_owned(),
@@ -294,6 +347,14 @@ pub fn unmet(feature: &Feature, scenario: &Scenario, env: &Environment) -> Optio
     }
     if requires_tee(feature, scenario) && !env.tee_mode.enabled() {
         return Some("needs a TEE enclave (@tee), but --tee none".to_string());
+    }
+    if has_tag(feature, scenario, "gramine-direct")
+        && !env.tee_mode.satisfies_gramine_direct_requirement()
+    {
+        return Some(format!(
+            "needs the production enclave under gramine-direct (@gramine-direct), but --tee {}",
+            env.tee_mode.evidence_name()
+        ));
     }
     if has_tag(feature, scenario, "sudo") && !env.sudo {
         return Some("needs sudo (@sudo), but --no-sudo".to_string());
@@ -360,6 +421,34 @@ fn has_tag(feature: &Feature, scenario: &Scenario, tag: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn gramine_direct_uses_the_production_enclave_without_sgx_passthrough() {
+        let mode = TeeMode::GramineDirect;
+        assert!(mode.enabled());
+        assert!(!mode.uses_mock_binary());
+        assert!(!mode.passes_sgx_devices());
+        assert!(mode.uses_deterministic_dkg_seed());
+        assert_eq!(mode.evidence_name(), "gramine-direct");
+        assert!(mode.satisfies_gramine_direct_requirement());
+        assert!(!TeeMode::Mock.satisfies_gramine_direct_requirement());
+        assert!(!TeeMode::Real.satisfies_gramine_direct_requirement());
+    }
+
+    #[test]
+    fn gramine_direct_selects_the_exact_production_enclave_binary() {
+        let env = Environment {
+            tee_mode: TeeMode::GramineDirect,
+            enclave_bin: PathBuf::from("/artifact-set/outbe-tee-enclave"),
+            mock_bin: PathBuf::from("/artifact-set/outbe-tee-enclave-mock"),
+            ..Environment::default()
+        };
+        assert_eq!(
+            env.selected_enclave_bin(),
+            Path::new("/artifact-set/outbe-tee-enclave")
+        );
+    }
 
     #[test]
     fn parses_min_validators_tag() {

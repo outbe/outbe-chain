@@ -39,20 +39,34 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
     let (sha, tracked_dirty, untracked_dirty) = git_identity(&input.env.repo);
     let exact_ocomp_binaries = if input.ocomp.launch_identity.is_some() {
         let current_exe = std::env::current_exe().wrap_err("resolve exact outbe-e2e binary")?;
-        Some(json!({
-            "outbe_chain": hash_file(&input.env.chain_bin)
-                .wrap_err("hash exact outbe-chain binary")?,
-            "outbe_ocomp": hash_file(&input.env.ocomp_bin)
-                .wrap_err("hash exact outbe-ocomp binary")?,
-            "outbe_cli": hash_file(&input.env.cli_bin)
-                .wrap_err("hash exact outbe-cli binary")?,
-            "outbe_keygen": hash_file(&input.env.keygen_bin)
-                .wrap_err("hash exact outbe-keygen binary")?,
-            "outbe_tee_enclave_mock": hash_file(&input.env.mock_bin)
-                .wrap_err("hash exact outbe-tee-enclave-mock binary")?,
-            "outbe_e2e": hash_file(&current_exe)
-                .wrap_err("hash exact outbe-e2e binary")?,
-        }))
+        let mut binaries = serde_json::Map::new();
+        for (name, path) in [
+            ("outbe_chain", input.env.chain_bin.as_path()),
+            ("outbe_ocomp", input.env.ocomp_bin.as_path()),
+            ("outbe_cli", input.env.cli_bin.as_path()),
+            ("outbe_keygen", input.env.keygen_bin.as_path()),
+            ("outbe_e2e", current_exe.as_path()),
+        ] {
+            binaries.insert(
+                name.to_owned(),
+                serde_json::to_value(
+                    hash_file(path).wrap_err_with(|| format!("hash exact {name} binary"))?,
+                )?,
+            );
+        }
+        let enclave_name = if input.env.tee_mode.uses_mock_binary() {
+            "outbe_tee_enclave_mock"
+        } else {
+            "outbe_tee_enclave"
+        };
+        binaries.insert(
+            enclave_name.to_owned(),
+            serde_json::to_value(
+                hash_file(input.env.selected_enclave_bin())
+                    .wrap_err_with(|| format!("hash exact {enclave_name} binary"))?,
+            )?,
+        );
+        Some(serde_json::Value::Object(binaries))
     } else {
         None
     };
@@ -73,7 +87,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         "duration_ms": input.elapsed.as_millis(),
         "environment": {
             "validators": input.env.validators,
-            "tee": format!("{:?}", input.env.tee_mode).to_ascii_lowercase(),
+            "tee": input.env.tee_mode.evidence_name(),
             "all": input.env.all,
         },
         "scenario_data_dir": input.scenario_dir,

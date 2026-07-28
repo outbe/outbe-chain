@@ -85,7 +85,7 @@
     "minimum_block_iops": 8000,
     "minimum_block_throughput_bytes_per_second": 250000000,
     "init_and_resource_manager": "systemd + unified cgroup v2",
-    "enclave_mode": "mock Gramine; no SGX claim"
+    "enclave_mode": "production enclave under gramine-direct; no SGX claim"
   },
   "headroom_policy": {
     "benchmark_cold_runs": 5,

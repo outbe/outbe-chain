@@ -2252,7 +2252,7 @@ OcompPocDevnetMachineV1
   minimum_block_iops            8000
   minimum_block_throughput      250000000 bytes/s
   init_and_resource_manager     systemd + unified cgroup v2
-  enclave_mode                  mock Gramine; no SGX claim
+  enclave_mode                  production enclave under gramine-direct; no SGX claim
 ```
 
 This matches the repository's already-used

@@ -27,7 +27,7 @@ const REQUIRED_BINARIES: [&str; 6] = [
     "outbe_e2e",
     "outbe_keygen",
     "outbe_ocomp",
-    "outbe_tee_enclave_mock",
+    "outbe_tee_enclave",
 ];
 
 #[derive(Debug, Deserialize)]
@@ -179,9 +179,9 @@ pub fn assemble_capacity_run(ordinal: u8, scenario_path: &Path) -> Result<Capaci
     );
     ensure!(
         scenario.environment.validators == 4
-            && scenario.environment.tee == "mock"
+            && scenario.environment.tee == "gramine-direct"
             && scenario.environment.all,
-        "capacity scenario did not use four validators, mock Gramine and --all"
+        "capacity scenario did not use four validators, the production enclave under gramine-direct and --all"
     );
     let revision = hex::decode(&scenario.source.sha).wrap_err("decode source revision")?;
     ensure!(
@@ -356,7 +356,7 @@ pub fn assemble_capacity_evidence(
         "capacity assembly requires exactly five scenario records"
     );
     let mut process_memory_limit_bytes = None;
-    let mut mock_gramine = true;
+    let mut production_enclave_gramine_direct = true;
     let mut writable_resource_cgroup = true;
     for path in scenario_paths {
         let bytes = std::fs::read(path.as_ref()).wrap_err_with(|| {
@@ -388,7 +388,7 @@ pub fn assemble_capacity_evidence(
                 Some(expected)
             }
         };
-        mock_gramine &= scenario.environment.tee == "mock";
+        production_enclave_gramine_direct &= scenario.environment.tee == "gramine-direct";
         writable_resource_cgroup &= scenario
             .ocomp
             .public_path
@@ -409,7 +409,7 @@ pub fn assemble_capacity_evidence(
         pid1_is_systemd: host.pid1_is_systemd,
         unified_cgroup_v2: host.unified_cgroup_v2,
         writable_resource_cgroup,
-        mock_gramine,
+        production_enclave_gramine_direct,
     };
     let runs = scenario_paths
         .iter()
@@ -512,7 +512,7 @@ mod tests {
                 "untracked_dirty": false,
             },
             "result": "passed",
-            "environment": {"validators": 4, "tee": "mock", "all": true},
+            "environment": {"validators": 4, "tee": "gramine-direct", "all": true},
             "scenario_data_dir": root.path().join("run-1"),
             "log_audit": {"clean": true},
             "ocomp": {

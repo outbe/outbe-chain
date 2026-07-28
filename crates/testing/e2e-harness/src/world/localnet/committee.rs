@@ -14,7 +14,6 @@ use eyre::{bail, Result};
 #[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::{ensure, WrapErr};
 
-use crate::env::TeeMode;
 use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
 
 use super::{Localnet, StartOpts};
@@ -369,8 +368,7 @@ impl Localnet {
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
         let port = self.cfg.tee_port(i);
-        let mock = matches!(self.cfg.tee_mode, TeeMode::Mock);
-        let enclave_bin = if mock {
+        let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
             self.cfg.bin_mock.clone()
         } else {
             self.real_enclave_bin()?
@@ -381,7 +379,11 @@ impl Localnet {
             tee_dir: vd.join("tee"),
             chain_id_hex: chain_id_hex.to_string(),
         });
-        let dkg_seed = mock.then(|| format!("{:064x}", i + 1));
+        let dkg_seed = self
+            .cfg
+            .tee_mode
+            .uses_deterministic_dkg_seed()
+            .then(|| format!("{:064x}", i + 1));
 
         let guard = proc::spawn_enclave(proc::EnclaveSpec {
             name: self.cfg.tee_container(i),
@@ -389,7 +391,7 @@ impl Localnet {
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
             sudo: self.cfg.sudo,
-            mock,
+            pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
             dkg_seed,
             seal,
             log_path: vd.join("enclave.log"),
@@ -417,17 +419,12 @@ impl Localnet {
 
     /// Resolve the real (non-mock) enclave binary from the build tree.
     pub(super) fn real_enclave_bin(&self) -> Result<PathBuf> {
-        for rel in [
-            "target/debug/outbe-tee-enclave",
-            "target/release/outbe-tee-enclave",
-        ] {
-            let p = self.cfg.repo.join(rel);
-            if p.exists() {
-                return Ok(p);
-            }
+        if self.cfg.bin_enclave.exists() {
+            return Ok(self.cfg.bin_enclave.clone());
         }
         Err(eyre::eyre!(
-            "real enclave binary `outbe-tee-enclave` not found under target/{{debug,release}}"
+            "production enclave binary `outbe-tee-enclave` not found at {}",
+            self.cfg.bin_enclave.display()
         ))
     }
 

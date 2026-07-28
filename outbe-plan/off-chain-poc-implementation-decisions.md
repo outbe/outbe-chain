@@ -383,8 +383,8 @@ independent verifier in the same test package recomputes artifact/coverage
 closure and fails on missing, skipped, todo, quarantined or retried-away claims.
 
 The final story uses four real node/OCOMP domains, real UDS/Mongo/CE/checkpoints,
-mock Gramine only for the existing encrypted Tribute interface, an untrusted
-relay and normal RPC/txpool/P2P/proposal/import/replay. A separate systemd/
+the production enclave binary under `gramine-direct` only for the existing
+encrypted Tribute interface, and normal RPC/txpool/P2P/proposal/import/replay. A separate systemd/
 cgroup-v2 lane proves UID, mount, socket, quota and failure isolation. Mongo,
 CAS, supervisor state, direct handlers, a central calculator and on-chain Lysis
 are forbidden outcome oracles.
