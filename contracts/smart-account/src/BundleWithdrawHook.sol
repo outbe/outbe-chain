@@ -26,6 +26,7 @@ contract BundleWithdrawHook is IHook {
     error InvalidCallType();
     error InvalidSelector();
     error TokenNotInBundle(address token);
+    error NonCanonicalOffset(uint256 offset);
 
     constructor(address bundlePlugin) {
         BUNDLE_PLUGIN = BundleModulePlugin(bundlePlugin);
@@ -62,6 +63,11 @@ contract BundleWithdrawHook is IHook {
         // callData[4] = first byte of ExecMode = CallType
         if (callData.length < 100) revert InvalidCallType();
         if (CallType.wrap(callData[4]) != CALLTYPE_SINGLE) revert InvalidCallType();
+
+        // Kernel.execute follows this offset when decoding, so reject a non-canonical value to keep
+        // this validation in sync with execution.
+        uint256 offset = uint256(bytes32(callData[36:68]));
+        if (offset != 64) revert NonCanonicalOffset(offset);
 
         uint256 execLen = uint256(bytes32(callData[68:100]));
         if (callData.length < 100 + execLen) revert InvalidCallType();

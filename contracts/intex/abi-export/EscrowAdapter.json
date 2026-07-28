@@ -8,19 +8,6 @@
     },
     {
       "type": "function",
-      "name": "ABANDON_DELAY",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "AUCTION_ROLE",
       "inputs": [],
       "outputs": [
@@ -28,6 +15,19 @@
           "name": "",
           "type": "bytes32",
           "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "BURN_ADDRESS",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address",
+          "internalType": "address"
         }
       ],
       "stateMutability": "view"
@@ -60,7 +60,7 @@
     },
     {
       "type": "function",
-      "name": "POST_FINALIZE_REFUND_DELAY",
+      "name": "NO_SPLIT_REFUND_DELAY",
       "inputs": [],
       "outputs": [
         {
@@ -73,7 +73,7 @@
     },
     {
       "type": "function",
-      "name": "REFUND_DELAY",
+      "name": "POST_FINALIZE_REFUND_DELAY",
       "inputs": [],
       "outputs": [
         {
@@ -93,6 +93,19 @@
           "name": "",
           "type": "bytes32",
           "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "UNFINALIZED_REFUND_DELAY",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"
@@ -909,42 +922,6 @@
     },
     {
       "type": "function",
-      "name": "settleVaultOwed",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "settleVaultOwedSelf",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "supportsInterface",
       "inputs": [
         {
@@ -982,19 +959,6 @@
     },
     {
       "type": "function",
-      "name": "vaultRouter",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "contract IVaultRouter"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "wire",
       "inputs": [
         {
@@ -1004,11 +968,6 @@
         },
         {
           "name": "_compact",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "_vaultRouter",
           "type": "address",
           "internalType": "address"
         },
@@ -1197,37 +1156,6 @@
     },
     {
       "type": "event",
-      "name": "FundsClaimed",
-      "inputs": [
-        {
-          "name": "receiveId",
-          "type": "bytes32",
-          "indexed": true,
-          "internalType": "bytes32"
-        },
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "amount",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "FundsLocked",
       "inputs": [
         {
@@ -1291,6 +1219,31 @@
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProceedsBurned",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "amount",
+          "type": "uint128",
+          "indexed": false,
+          "internalType": "uint128"
         }
       ],
       "anonymous": false
@@ -1398,56 +1351,6 @@
     },
     {
       "type": "event",
-      "name": "VaultOwedSettled",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "vaultOwed",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "VaultOwedUnsettled",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "vaultOwed",
-          "type": "uint128",
-          "indexed": false,
-          "internalType": "uint128"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "Wired",
       "inputs": [
         {
@@ -1470,18 +1373,6 @@
         },
         {
           "name": "compactNew",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "vaultRouterOld",
-          "type": "address",
-          "indexed": false,
-          "internalType": "address"
-        },
-        {
-          "name": "vaultRouterNew",
           "type": "address",
           "indexed": false,
           "internalType": "address"
@@ -1641,22 +1532,6 @@
       "type": "error",
       "name": "NoDeposits",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "NoPendingVaultOwed",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ]
     },
     {
       "type": "error",

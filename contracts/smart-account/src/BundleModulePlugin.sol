@@ -12,7 +12,20 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     // --- State (keyed by Kernel account address = msg.sender during lifecycle calls) ---
     mapping(address => bool) private installed;
     mapping(address account => address[]) private bundleTokens;
+    /// @dev token-minor units. Stores 2× the deposited amount (purchase leg + COEN-buy leg); topUp
+    ///      credits `received * 2` and decreaseBundleBalance burns `amount * 2`. BundleSpendProtectorHook
+    ///      reads it as the reserve in `freeBalance = totalBalance − bundleBalance`.
     mapping(address account => mapping(address token => uint256)) private bundleBalance;
+
+    /// @notice The sole authorized caller of `dispatchDecreaseBalance` — the BundleWithdrawHook.
+    /// @dev Wired once post-deploy via `setWithdrawHook`: the hook takes this plugin's address as a
+    ///      constructor immutable and so is deployed after this plugin, forbidding a constructor
+    ///      immutable here. While unset, `dispatchDecreaseBalance` reverts for everyone (fail-closed).
+    address public withdrawHook;
+    /// @dev Authorized to call `setWithdrawHook`. Passed as a constructor arg (not captured from
+    ///      `msg.sender`) because CREATE2-factory deploys run the constructor with `msg.sender` = the
+    ///      deployment proxy (0x4e59…), not the operator.
+    address private immutable _OWNER;
 
     error HasBundleBalance(address token);
     error BundleNotInstalled();
@@ -20,8 +33,21 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     error UnauthorizedHook();
 
     event BundleTransfer(address indexed from, address indexed to, address indexed token, uint256 value);
+    /// @notice Emitted when a Credis spend decrements the bundle reserve, so off-chain monitoring can
+    ///         observe reserve movement on the fund-holding account.
+    event BundleBalanceDecreased(address indexed account, address indexed token, uint256 burned, uint256 newBalance);
 
-    constructor() {}
+    constructor(address owner_) {
+        _OWNER = owner_;
+    }
+
+    /// @notice Authorize the sole `dispatchDecreaseBalance` caller (the BundleWithdrawHook).
+    /// @dev Owner-gated. Call once after the hook is deployed and before the account factory goes
+    ///      live; the hook cannot be a constructor immutable due to the circular construction order.
+    function setWithdrawHook(address hook) external {
+        require(msg.sender == _OWNER, UnauthorizedHook());
+        withdrawHook = hook;
+    }
 
     /// @dev Called by Kernel during module installation.
     ///      When installed as an executor with empty data, this is a no-op.
@@ -63,18 +89,23 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         // NB: enforce check to verify that the user made a topUp with owns funds to enable credis
         require(IERC20(token).balanceOf(thisAccount) >= amount, "Insufficient funds for Credis");
 
-        // update bundle
-        // NB: double the amount of the bundle meaning that 50% will be used for purchases and 50% for Coen buys
-        bundleBalance[thisAccount][token] += amount * 2;
-        emit BundleTransfer(sender, thisAccount, token, amount);
-
         // Have the smart account (msg.sender) execute transferFrom in its own context so that
         // the ERC20 sees the smart account as the spender, not this singleton plugin.
         bytes32 execMode =
             LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory transferCall = abi.encodeCall(IERC20.transferFrom, (sender, thisAccount, amount));
+
+        // Credit the bundle from the measured balance delta, after the transfer. The transfer runs
+        // through the account's executor (msg.sender must be the account, so SafeERC20 can't wrap it), and
+        // a no-return / false-return or fee-on-transfer token would let a over-state the reserve.
+        uint256 balBefore = IERC20(token).balanceOf(thisAccount);
         // ERC-7579 single execution encoding: target(20) ‖ value(32) ‖ callData.
         IERC7579Account(thisAccount).executeFromExecutor(execMode, abi.encodePacked(token, uint256(0), transferCall));
+        uint256 received = IERC20(token).balanceOf(thisAccount) - balBefore;
+
+        // NB: double the received amount — 50% funds purchases, 50% funds Coen buys.
+        bundleBalance[thisAccount][token] += received * 2;
+        emit BundleTransfer(sender, thisAccount, token, received);
     }
 
     function balanceOf(address owner, address token) external view override returns (uint256) {
@@ -107,7 +138,9 @@ contract BundleModulePlugin is IModule, ITokenBundle {
         uint256 bal = bundleBalance[thisAccount][token];
         // NB: decrease twice more balance from bundle
         uint256 bandleAmount = amount * 2;
-        bundleBalance[thisAccount][token] = bal > bandleAmount ? bal - bandleAmount : 0;
+        uint256 newBalance = bal > bandleAmount ? bal - bandleAmount : 0;
+        bundleBalance[thisAccount][token] = newBalance;
+        emit BundleBalanceDecreased(thisAccount, token, bal - newBalance, newBalance);
         // TODO: implement spending bundle for buying COENs
     }
 
@@ -116,6 +149,7 @@ contract BundleModulePlugin is IModule, ITokenBundle {
     ///      Uses this plugin's executor registration to call executeFromExecutor, ensuring
     ///      that decreaseBundleBalance is invoked with msg.sender = smartAccount.
     function dispatchDecreaseBalance(address smartAccount, address token, uint256 amount) external {
+        require(msg.sender == withdrawHook, UnauthorizedHook());
         bytes32 execMode =
             LibERC7579.encodeMode(LibERC7579.CALLTYPE_SINGLE, LibERC7579.EXECTYPE_DEFAULT, bytes4(0), bytes22(0));
         bytes memory decreaseCall = abi.encodeCall(BundleModulePlugin.decreaseBundleBalance, (token, amount));

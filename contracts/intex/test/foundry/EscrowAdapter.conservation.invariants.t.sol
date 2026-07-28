@@ -6,11 +6,8 @@ import {StdInvariant} from "forge-std/StdInvariant.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultRouter} from "@precompiles/IVaultRouter.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultRouter} from "@test-mocks/MockVaultRouter.sol";
 
 /// @dev Randomized actions against EscrowAdapter across several concurrent series.
 contract EscrowConservationHandler is Test {
@@ -77,10 +74,6 @@ contract EscrowConservationHandler is Test {
         try escrow.claimRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
-    function settleOwed(uint256 seriesSeed, uint256 bidderSeed) external {
-        try escrow.settleVaultOwed(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
-    }
-
     function lockBond(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
         uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
         vm.prank(auction);
@@ -103,12 +96,11 @@ contract EscrowConservationHandler is Test {
 
 /// @dev The sum of every live series' `totalLocked` plus every live commit bond equals the single
 ///      pooled ERC6909 balance the adapter holds in The Compact, across randomized
-///      lock/finalize/claim/settle/bond actions.
+///      lock/finalize/claim/bond actions.
 contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockERC20 internal paymentToken;
-    MockVaultRouter internal router;
     EscrowConservationHandler internal handler;
 
     address internal admin = address(1);
@@ -122,13 +114,11 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("USD Coin", "USDC", 6);
-        MockSettlementVault vault = new MockSettlementVault(address(paymentToken), "Mock Vault USDC", "mvUSDC", 6);
-        router = new MockVaultRouter();
-        router.addVault(vault);
-        router.addLiquiditySource(address(escrow), IVaultRouter.StablesSource.IntexCostAmount);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(router), address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
+        vm.prank(admin);
+        escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
 
         bidders.push(address(0xB1));
@@ -146,16 +136,15 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
         handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, worldwideDays);
 
-        bytes4[] memory selectors = new bytes4[](9);
+        bytes4[] memory selectors = new bytes4[](8);
         selectors[0] = EscrowConservationHandler.lock.selector;
         selectors[1] = EscrowConservationHandler.finalize.selector;
         selectors[2] = EscrowConservationHandler.retry.selector;
         selectors[3] = EscrowConservationHandler.claim.selector;
-        selectors[4] = EscrowConservationHandler.settleOwed.selector;
-        selectors[5] = EscrowConservationHandler.warp.selector;
-        selectors[6] = EscrowConservationHandler.lockBond.selector;
-        selectors[7] = EscrowConservationHandler.releaseBond.selector;
-        selectors[8] = EscrowConservationHandler.claimAbandonedBond.selector;
+        selectors[4] = EscrowConservationHandler.warp.selector;
+        selectors[5] = EscrowConservationHandler.lockBond.selector;
+        selectors[6] = EscrowConservationHandler.releaseBond.selector;
+        selectors[7] = EscrowConservationHandler.claimAbandonedBond.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }

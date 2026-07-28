@@ -248,8 +248,8 @@ pub(crate) fn try_settle_proceeds(
 
     let total = outbe_intex::api::contributor_total(storage, series_id)?;
     if total.is_zero() {
-        // Ownerless proceeds: sweep to the reserve vault instead of stranding them.
-        sweep_to_reserve(storage, series_id, pot)?;
+        // Ownerless proceeds: burn instead of stranding them.
+        burn_ownerless_proceeds(storage, series_id, pot)?;
         if complete {
             outbe_intex::api::finalize_proceeds(storage, series_id)?;
         }
@@ -280,13 +280,17 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     Ok(())
 }
 
-/// Sweep ownerless proceeds to the reserve vault (native transfer to the vault
-/// provider), so a series with no recorded contributors is not stranded.
-fn sweep_to_reserve(storage: &StorageHandle<'_>, series_id: u32, amount: U256) -> Result<()> {
-    storage.transfer_balance(INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS, amount)?;
+/// Burn the ownerless proceeds of a series with no recorded contributors:
+/// destroy the native COEN held by the factory, reducing total supply.
+fn burn_ownerless_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    amount: U256,
+) -> Result<()> {
+    storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
     emit_event(
         storage,
-        crate::precompile::IIntexFactory::ProceedsSweptToReserve {
+        crate::precompile::IIntexFactory::ProceedsBurned {
             seriesId: series_id,
             amount,
         },
@@ -345,7 +349,7 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, series_id: u32, limit: u32)
             // A straggler (or a chain sending its proceeds in parts) can top the
             // pot up while this final round drains. finalize clears the map, so
             // pay any such top-up over it first and finalize only once the pot is
-            // empty — otherwise the top-up is later swept to the reserve.
+            // empty — otherwise the top-up is later burned as ownerless.
             let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
             if pot.is_zero() {
                 outbe_intex::api::finalize_proceeds(storage, series_id)?;

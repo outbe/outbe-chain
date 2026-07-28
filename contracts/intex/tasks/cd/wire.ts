@@ -53,7 +53,6 @@ interface EscrowWireArgs {
   escrowContract: string;
   intexAuctionContract: string;
   compactContract: string;
-  vaultRouter: string;
   paymentToken: string;
 }
 
@@ -138,7 +137,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
   console.log(`  Escrow: ${args.escrowContract}`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
   console.log(`  Compact: ${args.compactContract}`);
-  console.log(`  VaultRouter: ${args.vaultRouter}`);
   console.log(`  PaymentToken: ${args.paymentToken}`);
 
   const escrow = (await viem.getContractAt(
@@ -148,25 +146,22 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     read: {
       intexAuctionContract: () => Promise<`0x${string}`>;
       compact: () => Promise<`0x${string}`>;
-      vaultRouter: () => Promise<`0x${string}`>;
       paymentToken: () => Promise<`0x${string}`>;
     };
     write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const [currentAuction, currentCompact, currentVaultRouter, currentStable] = await Promise.all([
+  const [currentAuction, currentCompact, currentStable] = await Promise.all([
     escrow.read.intexAuctionContract(),
     escrow.read.compact(),
-    escrow.read.vaultRouter(),
     escrow.read.paymentToken(),
   ]);
 
   const allMatch =
     currentAuction.toLowerCase() === args.intexAuctionContract.toLowerCase() &&
     currentCompact.toLowerCase() === args.compactContract.toLowerCase() &&
-    currentVaultRouter.toLowerCase() === args.vaultRouter.toLowerCase() &&
     currentStable.toLowerCase() === args.paymentToken.toLowerCase();
 
   if (allMatch) {
@@ -178,7 +173,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     const changed = [
       currentAuction.toLowerCase() !== args.intexAuctionContract.toLowerCase() && "auction",
       currentCompact.toLowerCase() !== args.compactContract.toLowerCase() && "compact",
-      currentVaultRouter.toLowerCase() !== args.vaultRouter.toLowerCase() && "vaultRouter",
       currentStable.toLowerCase() !== args.paymentToken.toLowerCase() && "paymentToken",
     ].filter(Boolean);
     console.log(`🔄 Rewiring EscrowAdapter (changed: ${changed.join(", ")})`);
@@ -188,7 +182,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     escrow.write.wire([
       args.intexAuctionContract as `0x${string}`,
       args.compactContract as `0x${string}`,
-      args.vaultRouter as `0x${string}`,
       args.paymentToken as `0x${string}`,
     ]),
   );
@@ -209,11 +202,6 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
   .addOption({
     name: "compactContract",
     description: "TheCompact contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "vaultRouter",
-    description: "Outbe IVaultRouter address (router that EscrowAdapter calls deposit on)",
     defaultValue: "",
   })
   .addOption({
