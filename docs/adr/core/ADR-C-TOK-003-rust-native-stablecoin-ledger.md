@@ -40,13 +40,11 @@ protocol-version resolver is propagated through canonical execution, payload bui
 validation, nested calls and exact-block RPC; token-local state never selects the
 runtime version.
 
-Static/view access decodes every still-supported historical schema without writing.
-The first mutating access after a relevant hard fork may run an atomic, bounded O(1)
-migration before its business transition. A view that cannot be decoded safely fails
-with a specified migration-required error rather than attempting a write. An upgrade
-that cannot be made bounded per token requires a separately designed pre-activation
-cursor; activation-block scans of the Factory registry are forbidden. Retired
-selectors revert explicitly rather than succeeding as no-ops.
+Stablecoin V1 reads and writes schema version 1 only. Any other schema version fails
+closed without mutation. When a real V2 schema exists, its ADR must define the exact
+V1-to-V2 compatibility and migration behavior; V1 contains no test-only second schema
+or speculative migration framework. Retired selectors revert explicitly rather than
+succeeding as no-ops.
 
 ### Immutable identity and mutable supply ceiling
 
@@ -98,6 +96,10 @@ admin. Issuers are expected to use a multisig or recoverable smart account.
 forced transfer, including memo variants. It does not block allowance reduction,
 role/admin recovery, cap changes, policy rebinding, or freeze management.
 
+Repeating `grantRole(role, account)` when the account already has the operational
+role, or `revokeRole(role, account)` when it does not, succeeds as an idempotent
+no-op. It changes no state and emits no role event.
+
 ### Ledger, compliance and allowance behavior
 
 The ledger implements ERC-20, EIP-2612 and ERC-165. EIP-2612 binds chain id, token
@@ -128,9 +130,16 @@ uses Send, recipient checks use Receive and mint uses Mint.
 
 ### ERC-7943 enforcement
 
-The token implements the current `IERC7943Fungible` surface and reports its ERC-165
-interface id (`0x3edbb4c4`): `canSend`, `canReceive`, `canTransfer`,
+The token implements the
+[Final ERC-7943](https://eips.ethereum.org/EIPS/eip-7943)
+`IERC7943Fungible` surface and reports its ERC-165 interface id (`0x3edbb4c4`):
+`canSend`, `canReceive`, `canTransfer`,
 `getFrozenTokens`, `setFrozenTokens` and `forcedTransfer`.
+
+The public Token ABI uses the ERC-7943 errors
+`ERC7943CannotSend`, `ERC7943CannotReceive`, `ERC7943CannotTransfer` and
+`ERC7943InsufficientUnfrozenBalance`. Internal Policy Registry denial is mapped to
+the corresponding ERC-7943 error at the token boundary.
 
 `setFrozenTokens` overwrites an absolute frozen amount and may set a value above the
 current balance. `canSend`, `canReceive` and `canTransfer` never revert and never
@@ -220,9 +229,8 @@ is known to succeed. Permit replay is rejected by nonce/deadline/signature check
 Admin acceptance is restricted to the current pending candidate. Creation replay is
 owned by ADR-C-TOK-004.
 
-Domain failures are typed ABI reverts. Storage/provider corruption, impossible
-schema versions and migration invariant failures are fatal execution errors, not
-plausible user reverts.
+Domain failures are typed ABI reverts. Unknown or impossible schema versions fail
+closed.
 
 ## Consequences
 
@@ -230,7 +238,9 @@ Applications receive a separate, standard address per stablecoin while validator
 execute one deterministic implementation. The authority surface is explicit and
 compliance is shared without duplicating mutable policy state in every token.
 Global hard-fork semantics simplify runtime selection but require disciplined
-compatibility vectors and bounded lazy migrations for every upgrade.
+compatibility vectors. Stablecoin V1 implements schema version 1 only. A future
+schema upgrade defines its concrete migration in a separate ADR rather than adding
+speculative V1 migration code.
 
 ## Rejected alternatives
 
@@ -259,9 +269,9 @@ CALL/account access remains revm-owned. Identical fixed/class work has identical
 Outbe-native charge on first and repeated calls; the dynamic class is never enumerated
 as warm. `outbe_primitives::stablecoin_fork` is the canonical source for these values;
 `fork-manifest.json` is a machine-readable mirror whose full gas/budget parity is
-tested. The margin rule is `ceil_to_10_000(ceil(measured * 125 / 100))`. SCF-034,
-SCF-047 or SCF-055 reopens this protocol lock if its measured path cannot fit the
-corresponding ceiling.
+tested. The margin rule is `ceil_to_10_000(ceil(measured * 125 / 100))`. SCF-047
+reopens this protocol lock if a measured token path cannot fit its corresponding
+ceiling.
 
 - `xtask stablecoin abi-check` compares every compiled function, error and event entry
   with all four checked-in ABI exports; selected role, ERC-165 and EIP-712 semantic
@@ -271,5 +281,5 @@ corresponding ceiling.
   forced self-transfer.
 - ERC-3009, ERC-7802, reserve proofs, fee eligibility and payment-lane classification
   are explicitly outside V1 and require separate ADRs.
-- The current ERC-7943 draft must be pinned by content hash/interface vectors at
-  implementation time so a later draft edit cannot silently change consensus ABI.
+- ERC-7943 compatibility vectors pin the Final standard's functions, errors, events
+  and ERC-165 interface id.

@@ -87,6 +87,9 @@ function policyType(uint256 policyId) external view returns (uint8);
 function policyAdmin(uint256 policyId) external view returns (address);
 function pendingPolicyAdmin(uint256 policyId) external view returns (address);
 function isMember(uint256 policyId, address account) external view returns (bool);
+function policyMemberCount(uint256 policyId) external view returns (uint256);
+function listPolicyMembers(uint256 policyId, uint256 offset, uint256 limit)
+    external view returns (address[] memory);
 function canSend(uint256 policyId, address account) external view returns (bool);
 function canReceive(uint256 policyId, address account) external view returns (bool);
 function canMint(uint256 policyId, address account) external view returns (bool);
@@ -99,6 +102,12 @@ unknown id; authorization views return false. Authorization views never mutate o
 revert for ordinary unknown/account input. Typed internal Rust query APIs expose the
 same semantics to ADR-C-TOK-003 without ABI sub-calls.
 
+`policyMemberCount` and `listPolicyMembers` are valid only for existing Whitelist and
+Blacklist policies; other ids revert with the typed incompatible-policy error.
+`listPolicyMembers` accepts `1 <= limit <= 100`. It returns the current member list
+without sorting or ordering guarantees and has no cursor/filter semantics.
+`policyMemberCount` supplies the current count required for paging.
+
 The canonical mutation surface lives in
 `contracts/precompiles/src/IStablecoinPolicyRegistry.sol` and contains policy
 creation, bounded member add/remove and two-step admin transfer. Token binding is not
@@ -107,7 +116,8 @@ a Registry command; it is owned by each token's `COMPLIANCE` authority.
 ## State and invariants
 
 Registry state contains the next id, immutable policy descriptors, per-policy admin
-and pending admin, and membership mappings for simple policies.
+and pending admin, membership mappings for simple policies, and a dense member index
+kept atomically consistent with those mappings.
 
 - ids 0 and 1 always exist with their fixed meanings;
 - every id from 2 to `nextPolicyId - 1` names exactly one descriptor, and checked
@@ -115,12 +125,9 @@ and pending admin, and membership mappings for simple policies.
 - every mutable policy has one nonzero admin;
 - a Directional policy references three existing non-Directional policies;
 - membership mutation is authorized only by that policy's current admin; and
-- no query performs recursion or collection materialization.
-
-V1 exposes no member pagination and stores no enumerable member index. Runtime
-authorization uses direct membership lookup and never an unbounded scan. A future
-bounded discovery surface requires a separate ABI decision and one source that updates
-mapping and index atomically.
+- every member mapping entry agrees with the dense index and its reverse position;
+- authorization uses direct membership lookup and never scans the member index; and
+- list materialization is bounded by the caller-selected page limit of at most 100.
 
 ## Atomicity, replay and failure
 
@@ -164,11 +171,12 @@ eventing are protocol requirements rather than UI conveniences.
 
 The Registry shares Stablecoin V1 activation at protocol version `0.2` (raw `2`); its
 fixed `0xEE10` marker remains genesis-active independently. One add/remove call accepts
-at most 64 accounts and validates the entire batch before the first write. V1 exposes
-only O(1) `isMember` and no member enumeration/page selector, so there is no member
-page cap. The initial policy-authorization ceiling is `10,000` gas and the 64-member
-mutation ceiling is `750,000`, under the shared native schedule and benchmark reopen
-rule in `fork-manifest.json`.
+at most 64 accounts and validates the entire batch before the first write.
+`listPolicyMembers` has a caller-selected maximum page size of 100 and no sorting or
+ordering contract. View pagination has no separate gas-budget or benchmark gate. The
+initial policy-authorization ceiling is `10,000` gas and the 64-member mutation
+ceiling is `750,000`, under the shared native schedule and benchmark reopen rule in
+`fork-manifest.json`.
 
 - Keep add/remove `MembershipUnchanged` behavior and the exact event/error ABI aligned
   with the checked-in golden vectors.

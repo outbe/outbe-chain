@@ -96,21 +96,27 @@ Settlement is atomic with terminal outcome:
 
 - successful Approved execution uses
   `transfer_balance(VOTE_ADDRESS, proposer, bond)`;
-- Expired, quorum-failed and deterministic recoverable target rejection use the
-  standard native `decrease_balance(VOTE_ADDRESS, bond)` burn primitive; and
+- Expired/quorum-failed proposals use the standard native
+  `decrease_balance(VOTE_ADDRESS, bond)` burn primitive;
+- target execution failure records proposal status `Error` without settling the
+  bond; and
 - each settlement emits one typed refund or burn event and becomes replay-final.
 
-A typed target outcome distinguishes recoverable domain rejection from execution
-failure. OOG, unsupported storage capability, provider/storage corruption, impossible
-schema or invariant failure propagate as fatal, roll finalization back to Pending and
-do not burn the issuer's bond. Metadosis is not involved. A missing escrow liability
-or failed refund/burn is likewise fatal rather than a partially settled proposal.
+Retrying, cancelling or settling an `Error` proposal requires a separate
+validator-approved governance transition and is outside Stablecoin Factory V1.
+Metadosis is not involved.
 
 ### Reservation and terminal hooks
 
-At proposal creation, Factory atomically records both
-`pendingTokenId[tokenId] = proposalId` and `pendingTicker[ticker] = proposalId` after
-validating that:
+At proposal creation, Factory atomically records:
+
+```text
+pendingTokenId[tokenId] = proposalId
+pendingTicker[ticker] = proposalId
+pendingAddress[predictedAddress] = proposalId
+```
+
+The reservation commits only after validating that:
 
 - no permanent token exists for the full id;
 - no permanent token created by any issuer already owns the ticker;
@@ -118,17 +124,16 @@ validating that:
 - the predicted address is not assigned to another full token id; and
 - the referenced policy exists.
 
-Only one pending proposal globally may reserve a ticker. The reservation is
-consumed by successful creation and released on every Expired or Rejected outcome.
-Vote allocates the proposal id and calls target-specific reserve/terminal hooks in
-the same transaction; target runtime registration is forbidden.
+Only one pending proposal globally may reserve a ticker, token id or predicted
+address. All three reservations are consumed by successful creation and released
+on `Expired`. Vote allocates the proposal id and calls target-specific
+reserve/terminal hooks in the same transaction; target runtime registration is
+forbidden.
 
-Approved Factory execution runs under a nested checkpoint. On typed recoverable
-rejection, all partial token code/storage/registry writes roll back before Vote
-records Rejected, releases the reservation and burns the bond. Fatal execution
-failure rolls back the containing pre-execution hook batch, retaining Pending,
-reservation and bond liability for deterministic retry. Cleanup or settlement
-failure is also fatal.
+Approved Factory execution runs under a nested checkpoint. On target execution
+error, all partial token code/storage/registry writes roll back before Vote records
+`Error`. The bond liability and all three reservations remain unchanged. Stablecoin
+Factory V1 defines no automatic retry or `Error` cleanup.
 
 ### Deterministic identity and dynamic address class
 
@@ -185,11 +190,11 @@ rolls marker/storage/index changes back together.
 
 Factory is the sole writer of:
 
-- monotonic `tokenCount` and `tokenAt(index)`;
+- monotonic token-address list and count used by `listTokens`;
 - `tokenById(tokenId)`;
 - global `tokenByTicker(ticker)`;
 - reverse `tokenIdOf(token)`; and
-- pending token-id and global-ticker proposal reservations.
+- pending token-id, global-ticker and predicted-address proposal reservations.
 
 Registration cannot be deleted or replaced. Operational shutdown uses token pause
 and/or `DENY_ALL`; balances and history remain queryable. Runtime code never calls
@@ -206,7 +211,8 @@ The canonical ABI lives in
 
 ```solidity
 function tokenCount() external view returns (uint256);
-function tokenAt(uint256 index) external view returns (address);
+function listTokens(uint256 offset, uint256 limit)
+    external view returns (address[] memory);
 function tokenById(bytes32 tokenId) external view returns (address);
 function tokenByTicker(string calldata ticker) external view returns (address);
 function tokenIdOf(address token) external view returns (bytes32);
@@ -214,6 +220,9 @@ function isStablecoin(address token) external view returns (bool);
 function predictTokenAddress(address issuer, string calldata ticker)
     external view returns (bytes32 tokenId, address token);
 ```
+
+`listTokens` accepts `1 <= limit <= 100`. It exposes the current registry list with
+no sorting or ordering guarantee and no cursor/filter semantics.
 
 Successful creation emits one non-anonymous `StablecoinCreated` with indexed
 `tokenId`, token and issuer, plus non-indexed proposal id, immutable metadata, cap and
@@ -232,12 +241,12 @@ adapter. They are not EVM selectors.
 - A token id, dynamic address and canonical ticker each resolve to at most one
   permanent token globally.
 - Every permanent forward index agrees with every reverse index and marker/schema.
-- Every pending id names exactly one Pending Vote proposal and is absent from the
-  permanent indexes.
+- Every pending token id, ticker and predicted address names exactly one Pending or
+  Error Vote proposal and is absent from the permanent indexes.
 - `VOTE_ADDRESS` native balance is at least the sum of unsettled bond liabilities;
   surplus is never refundable as a proposal bond.
-- Successful creation consumes exactly one reservation; every non-success terminal
-  outcome releases it.
+- Successful creation consumes exactly one matching reservation triple; Expired
+  releases it; Error retains it.
 - A token is never visible as registered before complete initialization commits.
 - Factory approval does not grant fee or payment-lane eligibility.
 
@@ -286,18 +295,19 @@ Stablecoin Factory V1 activates at protocol version `0.2` (raw `2`). Namespace
 reservation remains genesis-active independently of that runtime predicate. The
 public bonded sub-cap is 16 of Vote's 64 total pending slots, with one pending public
 bonded proposal per proposer. The bond is exactly
-`1,000,000,000,000,000,000,000,000` base units (`10^24`). Rejected admission commits
-no reservation, liability or log; fatal retry remains Pending and continues consuming
-both caps.
+`1,000,000,000,000,000,000,000,000` base units (`10^24`). Invalid admission commits
+no reservation, liability or log. An `Error` proposal retains its bond liability,
+reservation triple and pending-cap occupancy until a future validator-approved
+governance transition resolves it.
 
-Factory V1 exposes O(1) `tokenAt(index)` rather than a page selector, so it has no
-Factory page-size constant. Its initial creation gas ceiling is `500,000`, measured
-under the shared native schedule and 125%-rounded margin rule in
-`fork-manifest.json`; SCF-055 reopens G0 if bounded creation cannot fit it.
+Factory V1 exposes `tokenCount()` and `listTokens(offset, limit)` with caller-selected
+`1 <= limit <= 100`. The list has no sorting or ordering guarantee. Factory creation
+runs in Vote's bounded begin-block path; V1 defines no separate Factory creation gas
+ceiling or gas-benchmark activation gate.
 
 - ADR-S-GOV-002 must add raw-payload compile-time target
-  admission/reservation/terminal hooks, typed recoverable-versus-fatal outcomes,
-  nested handler rollback and bond state before this design can activate.
+  admission/reservation/terminal hooks, nested handler rollback, `Error` status and
+  bond state before this design can activate.
 - ADR-B-EVM-002 first consolidates the 35 current exact routes behind one compact
   declaration containing only dispatch adapter and base gas. The class-owning step
   then adds exact-first resolution, passes the actual callee into class dispatch and

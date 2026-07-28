@@ -29,8 +29,8 @@ The default admission class is `ActiveValidatorOnly` with zero attached native
 value. A target may instead declare a compile-time exact `PublicBonded { amount }`
 class; ADR-C-TOK-004 is the only V1 use. A public bonded proposal requires proposer
 to equal the target payload identity and exact `msg.value`; it does not weaken ballot
-or quorum authority. `ACTIVE` and `PENDING` validators may cast one yes/no ballot per
-proposal through its inclusive deadline.
+or quorum authority. Only validators that are `ACTIVE` when the ballot is cast may
+cast one yes/no ballot per proposal through its inclusive deadline.
 
 Creation is bounded globally, per proposer and by target admission policy. Unknown
 or duplicate target handlers, unexpected value and malformed/target-invalid payloads
@@ -44,39 +44,41 @@ ballot's one-based position. Native balance held by `VOTE_ADDRESS` must be at le
 the sum of unsettled proposal-bond liabilities; forced or historical surplus is
 tracked as non-liability and cannot be refunded as a bond. Every map entry must
 resolve to the same voter in the dense list; every pending id must name exactly one
-`Pending` proposal.
+`Pending` or retained `Error` proposal. Begin-block tally processes only `Pending`;
+`Error` remains indexed solely so its caps, bond and target reservations stay owned
+until a future governance transition resolves it.
 
-## State machine and tally snapshot
+## State machine and tally
 
 ```text
-Pending --after deadline, yes >= 2/3 of active set--> Approved
-Pending --after deadline, quorum absent------------> Expired
-Pending --approved target returns domain rejection-> Rejected
-Pending --approved target execution fails----------> Pending (block retry)
+Pending --after deadline, quorum absent--------------> Expired
+Pending --after deadline, quorum reached, target Ok--> Approved
+Pending --after deadline, quorum reached, target Err-> Error
 ```
 
-All terminal states are final. Tally occurs only when
+`Approved` and `Expired` settle the proposal in V1. `Error` records that approved
+target execution failed; automatic retry, cancellation and settlement of an
+`Error` proposal are outside V1 and require a new validator-approved governance
+transition. Tally occurs only when
 `block_number > voting_deadline_height`. It re-reads the current active validator
 set, ignores stored ballots from validators no longer active, and uses that same
-active count as the denominator. `No` votes are recorded but the decision is a
-yes-vote quorum, not a yes-versus-no majority.
+active count as the denominator. There is no proposal-creation validator snapshot.
+`No` votes are recorded but the decision is a yes-vote quorum, not a yes-versus-no
+majority.
 
 ## Ordering, atomicity and replay
 
 Vote begin-block runs before Update activation under ADR-B-EVM-001 inside the atomic
-pre-execution hook batch. Approved target handling runs in a nested checkpoint so a
-typed recoverable domain rejection can roll back every target effect before Vote
-records `Rejected`. Target terminal cleanup, Vote status/index mutation, bond
-settlement and finalization logs then commit in that hook-batch checkpoint and are
-published through the mandatory `HookEvents` system-transaction receipt.
+pre-execution hook batch. Approved target handling runs in a nested checkpoint.
+Successful target execution commits before Vote records `Approved`. A target
+execution error rolls back every target effect before Vote records `Error` and emits
+its finalization event; the containing block continues.
 
 Successful Approved execution refunds an exact bond liability from `VOTE_ADDRESS`
-to the proposer. Expired and Rejected outcomes burn it with the standard native
-`decrease_balance` primitive. OOG, unsupported provider capability, storage/provider
-corruption, impossible schema/invariant state, cleanup failure, refund failure or
-burn failure is fatal: the outer hook batch rolls back, the proposal remains Pending
-and its liability remains unsettled for deterministic retry. Terminal replay cannot
-settle value twice. A second ballot is rejected by the composite index.
+to the proposer. Expired outcomes burn it with the standard native
+`decrease_balance` primitive. `Error` leaves the recorded bond liability and all
+target reservations unchanged for the future governance decision. Terminal replay
+cannot settle value twice. A second ballot is rejected by the composite index.
 
 Pending-list removal uses swap-remove, so enumeration order is explicitly unstable.
 Proposal ids and ballot order remain stable. The proposal counter uses unchecked
@@ -114,12 +116,12 @@ bypass.
 
 ## Open questions and technical debt
 
-- Decide whether eligibility and quorum should be snapshotted at proposal creation;
-  current membership changes can add, remove or invalidate voting weight mid-window.
-- Clarify why `PENDING` validators may vote but their ballot is ignored until they
-  are active at tally time, and prove this is resistant to boundary manipulation.
-- `Rejected` is reserved for a typed recoverable target-domain rejection after
-  quorum. Fatal execution/provider/invariant failure retains Pending and retries.
+- Eligibility is resolved without a proposal-creation snapshot: only `ACTIVE`
+  validators may cast, and the current `ACTIVE` set at tally time defines both
+  eligible ballots and the denominator.
+- Define a future validator-approved transition for retrying or closing an `Error`
+  proposal and settling its retained reservations and bond. It is outside
+  Stablecoin Factory V1.
 - Define counter exhaustion and bound total historical ballots/payload storage.
 - Pass original payload bytes to target validation and make canonical
   JSON/schema/version rules explicit; semantic payload changes must not depend on a
@@ -133,6 +135,5 @@ bypass.
 - Add proposal bond schema, `VOTE_ADDRESS balance >= liabilities` accounting,
   forced-surplus handling, checked balance credit, typed refund/burn events and
   injected rollback tests at every target/cleanup/settlement step.
-- Add the nested target checkpoint before any handler capable of returning a
-  recoverable Rejected outcome; outer-handler rollback alone cannot both erase
-  partial target effects and retain Rejected state.
+- Add the nested target checkpoint before executable target dispatch; it must erase
+  partial target effects while allowing Vote to retain the `Error` status.

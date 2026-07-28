@@ -1,7 +1,7 @@
 # Stablecoin Factory V1 implementation plan
 
-- **Status:** Active implementation; tasks execute under the coordinator ledger below
-- **Date:** 2026-07-27
+- **Status:** Pre-implementation protocol lock reopened by design grilling
+- **Date:** 2026-07-28
 - **Primary ADRs:** ADR-C-TOK-003, ADR-C-TOK-004, ADR-C-TOK-005
 - **Imported seams:** ADR-B-EVM-001 through ADR-B-EVM-005,
   ADR-S-GOV-002, ADR-S-GOV-003
@@ -15,8 +15,10 @@ Policy Registry precompile.
 A prospective issuer submits a canonical bonded Vote proposal. Successful validator
 quorum atomically initializes one zero-supply token, installs its marker code, commits
 permanent Factory indexes, emits a receipt-visible event and refunds the bond. Expired
-or recoverably rejected proposals release reservations and burn the bond. Fatal
-execution failures roll back and leave the proposal Pending with its bond liability.
+proposals release reservations and burn the bond. If approved target execution
+returns an error, its partial effects roll back and Vote records `Error`; the bond
+and reservation triple remain unchanged for a future validator-approved governance
+decision outside Stablecoin Factory V1.
 
 Factory approval means protocol admission only. It is not evidence of backing,
 redeemability, price stability, issuer solvency, fee-asset eligibility or payment-lane
@@ -36,7 +38,7 @@ eligibility.
 | Initial cap | Explicit nonzero `U256`; no zero-as-unlimited sentinel |
 | Bond | `1,000,000 COEN = 10^24 = 1000000000000000000000000` base units |
 | Token standards | ERC-20, EIP-2612, ERC-165, ERC-7943, fixed `bytes32` event-only memo variants |
-| Upgrades | One global hard-fork runtime; static old-schema reads and O(1) mutating lazy migration |
+| Upgrades | One global hard-fork runtime; V1 implements schema 1 only, and a future schema upgrade owns its concrete migration |
 | Fee/bridge scope | Fee assets, payment lanes, reserve proofs, ERC-3009 and ERC-7802 are outside V1 |
 
 ## Frozen protocol values
@@ -50,9 +52,10 @@ the owning ADR and its vectors:
    fresh-genesis devnet/testnet applicability and unsupported mainnet activation;
 3. EIP-712 domain version `"1"` (role ids are frozen by SCF-001);
 4. public bonded caps 16 globally and one per proposer inside Vote's 64 total slots;
-5. policy membership batch cap 64; V1 has no member or Factory page ABI;
-6. the gas/warm-cold contract and benchmark ceilings in
-   `outbe_primitives::stablecoin_fork`, mirrored by `fork-manifest.json`; and
+5. policy membership batch cap 64; Factory and Policy list page cap 100 with no
+   sorting or ordering guarantee;
+6. the token/Policy gas contract in `outbe_primitives::stablecoin_fork`, mirrored by
+   `fork-manifest.json`; Factory creation has no separate gas ceiling; and
 7. planned CLI-only tooling ownership under `bin/outbe-cli`, with no maintained SDK
    promise.
 
@@ -60,7 +63,7 @@ SCF-001 froze policy add/remove as typed `MembershipUnchanged`, the complete ABI
 error/event/indexing surface and all six role ids. SCF-002 froze the token-id widths as
 `u64` big-endian chain id plus `u8` ticker length and pinned the SIX ISO 4217 List One
 snapshot published 2026-01-01. SCF-003 froze the namespace/reset contract; SCF-004
-froze version, bounds, gas, EIP-712 and tooling ownership.
+froze version, bounds, token/Policy gas, EIP-712 and tooling ownership.
 
 ## Task execution contract
 
@@ -120,12 +123,12 @@ reviewing the task's scoped diff and verification evidence.
 
 | Task | Status | Branch/commit | Evidence / blocker |
 | --- | --- | --- | --- |
-| SCF-001 | Done | `5614296` | Forge 7/7; Alloy/golden 4/4; Vote 32/32; `cargo check` vote+CLI; independent ABI review READY |
+| SCF-001 | Pending | prior baseline `5614296` | Reopened: add Vote `Error`, Factory/Policy count+list ABI, Final ERC-7943 errors and updated vectors |
 | SCF-002 | Done | `c3106e5` | Primitives focused 10/10 and full 265/265; clippy/doc/fmt; independent codec review READY |
 | SCF-003 | Done | `6e948d2`, `8e60aeb` | Rust 3/3; xtask 13/13; generated-genesis integration; clippy/release build; review READY |
-| SCF-004 | Done | `50ebcb2` | Primitives 275/275; Vote 33/33; Forge 8/8; clippy/fmt/LSP; independent review READY |
+| SCF-004 | Pending | prior baseline `50ebcb2` | Reopened: add page cap 100 and remove Factory creation gas ceiling/gate |
 | SCF-081 | Done | `50ebcb2` | V1 ownership frozen as planned CLI-only; README/ADR disclaim maintained SDK support |
-| SCF-G0 | Done | `325de189` | Forge 8/8; primitives lock suites 24/24; Vote 33/33; xtask 5/5; complete ABI+namespace checks; independent gate PASS |
+| SCF-G0 | Pending | prior baseline `325de189` | Reopens until revised SCF-001/004 artifacts and vectors pass independent review |
 | SCF-010 | Done | read-only | Exact AGENTS.md 8.1 surveys; trybuild 1/1; no long-lived runtime owner; storage review APPROVE |
 | SCF-011 | Done | `713fdc15` | Exact 35-route/32-list drift, warm/contains, fallback, caller/callee and input-order baselines; EVM 240/240 pass (1 pre-existing skip); clippy/LSP clean |
 | SCF-012 | Done | `a81c22e1` | Actual unsupported set_code, nested checkpoint/storage/balance/event rollback, account/change-set preservation, transfer underflow and current overflow wrap; primitives 279/279; clippy/LSP clean |
@@ -164,12 +167,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Goal:** Make public ABI bytes immutable before Rust implementation.
 - **Scope/files:** create `contracts/precompiles/src/IStablecoin.sol`,
   `IStablecoinFactory.sol`, `IStablecoinPolicyRegistry.sol`, generated ABI exports and
-  Solidity/Alloy vectors; update `IVote.sol` for approved payable proposal/bond views
-  and events, plus the minimal Vote dispatch compatibility needed to keep those future
-  views explicitly inactive before bond-accounting activation.
+  Solidity/Alloy vectors; update `IVote.sol` for Approved/Expired/Error proposal and
+  bond views/events, plus the minimal Vote dispatch compatibility needed to keep those
+  future views explicitly inactive before bond-accounting activation.
 - **Depends on:** none.
 - **Done when:** every function, custom error, event order/indexing, role id,
-  ERC-165/7943 id, EIP-2612 type hash and memo event has a checked-in vector.
+  Factory/Policy count+list selector, Final ERC-7943 error/id, EIP-2612 type hash and
+  memo event has a checked-in vector.
 - **Tests:** T1 Solidity compile; T2 Forge selector/topic/error/EIP-712 vectors and an
   independent Alloy encoder.
 - **Verification:** scoped `forge fmt --check` for SCF-001 Solidity files; `forge
@@ -216,12 +220,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Scope/files:** fork manifest/testdata and ADR/plan constants only.
 - **Depends on:** SCF-001 through SCF-003.
 - **Done when:** activation version, public pending cap, policy member-batch cap,
-  warm/cold class semantics, initial gas schedule, benchmark acceptance budgets,
+  Factory/Policy list page cap, warm/cold class semantics, token/Policy gas schedule,
   EIP-712 version and SDK owner are recorded; the SCF-002 ISO snapshot is verified,
   not replaced. Bond vector is exactly `10^24`.
 - **Tests:** T2 constant/boundary vectors and manifest placeholder scan. SCF-034 and
-  SCF-047 must validate the frozen caps/gas; a failed benchmark reopens G0 instead of
-  silently changing implementation constants.
+  SCF-047 validate the frozen Policy/token caps and gas; Factory creation has no
+  separate gas ceiling or benchmark reopen rule.
 - **Exit gate G0:** SCF-001..004 approved; implementation may not silently change a
   frozen artifact without reopening ADR and vectors.
 
@@ -378,8 +382,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Scope/files:** Vote target registry plus adapters for existing Update/Governance.
 - **Depends on:** SCF-013, SCF-001.
 - **Done when:** target receives original bytes, proposer/value/height/chain context;
-  admission distinguishes validator-only and exact public bond; outcome distinguishes
-  Applied, RecoverableRejected and fatal `Err`.
+  admission distinguishes validator-only and exact public bond; executable target
+  outcome distinguishes Applied from Error.
 - **Tests:** T1 registry uniqueness/raw bytes/outcome classification; T3 existing
   targets remain behaviorally identical.
 
@@ -391,8 +395,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   the authoritative receipt evidence.
 - **Depends on:** SCF-013, SCF-026.
 - **Done when:** notification publication is post-commit or idempotently reconciled by
-  proposal/status identity; a fatal late hook/block failure cannot leave an
-  uncorrectable phantom Approved/Rejected/Bond event.
+  proposal/status identity; replay cannot leave a phantom Approved/Error/Bond event.
 - **Tests:** T1 notification idempotency; T3 injected failure after notification
   preparation and restart/replay reconciliation.
 - **Exit gate G1:** SCF-010..027 focused suites pass; generic infrastructure contains
@@ -410,9 +413,10 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** `SCF-G0`. Fixed-address EVM integration is owned later by SCF-033;
   the Policy schema task has no conditional provider dependency.
 - **Done when:** descriptors 0..4, built-in ids 0/1, checked next id, immutable type/
-  children, current/pending admin and direct membership are schema-stable.
+  children, current/pending admin, direct membership and dense member indexes are
+  schema-stable.
 - **Tests:** T1 raw slot/layout, missing/unknown ids, checked exhaustion; T2 random
-  record/member invariants; no production `read_all`.
+  mapping/index/count invariants; no unbounded production `read_all`.
 
 ## SCF-031 — Implement bounded authorization evaluation
 
@@ -431,7 +435,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-031, SCF-004 caps.
 - **Done when:** permissionless policy creation requires nonzero admin; batches reject
   duplicates/zero/oversize before writes; policy id/type/children are permanent;
-  admin nominate/cancel/accept is two-step.
+  admin nominate/cancel/accept is two-step; membership mapping and dense index update
+  atomically.
 - **Tests:** T1 authorization and state machine; T2 cap-1/cap/cap+1, random sequence,
   rollback, stale nominee and count parity.
 
@@ -447,12 +452,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T1 every selector; T2 arbitrary calldata no-panic/no-mutation; T3
   registration, marker, top-level/nested parity.
 
-## SCF-034 — Policy benchmark and gate
+## SCF-034 — Policy property and bounded-work gate
 
-- **Goal:** Freeze realistic membership/page/gas constants.
+- **Goal:** Prove Policy state/index consistency and bounded mutation/authorization.
 - **Depends on:** SCF-033.
-- **Tests/evidence:** worst-case batch, directional evaluation and page benchmark;
-  declared gas covers measured work with reviewed margin.
+- **Tests/evidence:** worst-case 64-member batch, directional evaluation, random
+  mapping/index histories and `listPolicyMembers` boundaries at limit 1 and 100.
+  View pagination has no gas-budget or benchmark gate.
 - **Exit gate G2:** Policy crate, ABI, properties and EVM integration pass; typed
   `api.rs` is frozen for token use.
 
@@ -487,7 +493,8 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-041.
 - **Done when:** ADMIN/ISSUER/CAP_MANAGER/GUARDIAN/COMPLIANCE/ENFORCER behavior,
   initial grants, admin nominate/cancel/accept, guardian pause/admin unpause and paused
-  recovery matrix match ADR.
+  recovery matrix match ADR; repeated operational `grantRole`/`revokeRole` calls are
+  successful no-ops with no state or event change.
 - **Tests:** T1 every role/function positive/negative path; T2 random unauthorized
   sequences never mutate state; adminless state is unreachable.
 
@@ -501,7 +508,9 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
   with event order `Frozen` (when `C>0`) → `Transfer` → `ForcedTransfer`.
   Privileged `ISSUER.burn()` of the issuer/redemption account bypasses sender policy
   and frozen spendability, remains blocked by global pause, and when it consumes
-  frozen units applies the same formula with `Frozen` before the burn `Transfer`.
+  frozen units applies the same formula with `Frozen` before the burn `Transfer`;
+  public denial paths use the Final ERC-7943 standard errors rather than exposing
+  the Policy Registry's internal error.
 - **Tests:** T1 all descriptor/directional paths and `F<B`, `F=B`, `F>B`; authorized
   issuer self-burn versus unauthorized caller and allowance-backed `burnFrom`;
   T2 formula, conservation, frozen allowance reduction, issuer-burn event ordering,
@@ -527,25 +536,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T1 zero/mixed/all-ones memo log vectors; T2 arbitrary `B256` leaves state
   identical to non-memo operation and failed base operation emits no memo log.
 
-## SCF-046 — Implement static compatibility and O(1) lazy migration
-
-- **Goal:** Apply one global runtime without scanning token mappings.
-- **Scope/files:** introduce `migration.rs` only here together with a real test-only
-  second schema and its compatibility vectors; SCF-040 owns only V1 layout.
-- **Depends on:** SCF-025, SCF-040 through SCF-045.
-- **Done when:** static old-schema views perform zero writes; first mutating call
-  migrates a fixed scalar slot set and operation atomically; failed operation rolls
-  migration back; retired selectors revert.
-- **Tests:** T1 test-only next schema; T2 write-count independent of holder/
-  allowance/nonce/frozen population; T3 pre/at/post-fork execution parity.
-
 ## SCF-047 — Token property and gas gate
 
 - **Goal:** Close ledger invariants and freeze gas schedule.
-- **Depends on:** SCF-043 through SCF-046.
+- **Depends on:** SCF-043 through SCF-045.
 - **Evidence:** combined random operation model, malformed ABI corpus, static/nested/
   OOG rollback, worst policy/permit/mutation benchmarks.
-- **Exit gate G3:** token ABI, properties, crypto, migration and gas review pass.
+- **Exit gate G3:** token ABI, properties, crypto, Final ERC-7943 and gas review pass.
 
 ---
 
@@ -557,11 +554,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Scope/files:** new complex `crates/core/stablecoinfactory` with README,
   schema/state/api/errors/tests.
 - **Depends on:** SCF-002.
-- **Done when:** tokenCount/tokenAt, tokenById, global tokenByTicker, tokenIdOf,
-  address/full-id collision protection, pendingTokenId, pendingTicker and
-  proposal→reservation have explicit invariants and no delete path.
+- **Done when:** tokenCount/listTokens, tokenById, global tokenByTicker, tokenIdOf,
+  address/full-id collision protection, pendingTokenId, pendingTicker,
+  pendingAddress and proposal→reservation have explicit invariants and no permanent
+  delete path; `listTokens` accepts `1 <= limit <= 100` without ordering semantics.
 - **Tests:** T1 raw layout and every inverse; T2 random reserve/release/consume and
-  global cross-issuer ticker uniqueness; no runtime materialization.
+  global cross-issuer ticker uniqueness; list boundary tests at limit 1 and 100.
 
 ## SCF-051 — Implement canonical parsing and prediction
 
@@ -575,10 +573,10 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-052 — Implement atomic reservation lifecycle
 
-- **Goal:** Reserve global ticker and token id exactly once.
+- **Goal:** Reserve global ticker, token id and predicted address exactly once.
 - **Depends on:** SCF-051, SCF-026.
-- **Done when:** reserve writes both indexes + proposal owner atomically; Expired/
-  Rejected release both; success consumes both; ownership mismatch is fatal.
+- **Done when:** reserve writes all three indexes + proposal owner atomically;
+  Expired releases all three; success consumes all three; Error retains all three.
 - **Tests:** T1 same/different issuer duplicates and replay; T2 injected failure at
   each index and corrected resubmission after release.
 
@@ -588,7 +586,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-023, `SCF-G3`, SCF-052.
 - **Done when:** Factory revalidates reservation/policy/address, initializes ledger,
   installs exact marker, commits all permanent indexes and emits
-  `StablecoinCreated`; recoverable conflicts and fatal provider failures remain typed.
+  `StablecoinCreated`; any target execution error is returned to Vote.
 - **Tests:** T1 every validation/failure class; T2 failure after every mutation proves
   no partial code/storage/index/log; T3 real hook provider changes state root and
   preserves forced token-address COEN.
@@ -602,12 +600,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Tests:** T1 views and malformed/value rejection; T3 adapter contract and nested
   checkpoint behavior.
 
-## SCF-055 — Factory property/gas gate
+## SCF-055 — Factory property and atomicity gate
 
-- **Goal:** Prove index consistency and bounded creation work.
+- **Goal:** Prove index consistency, reservation lifecycle and atomic creation.
 - **Depends on:** SCF-054.
 - **Evidence:** random pending/permanent histories, collision injection, max input,
-  page and creation benchmark.
+  reservation triple and failure after every initializer mutation.
 - **Exit gate G4:** Factory registry/initializer/adapter evidence passes independent
   storage and atomicity review.
 
@@ -640,34 +638,34 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-062 — Implement typed nested finalization
 
-- **Goal:** Separate recoverable rejection from fatal retry.
+- **Goal:** Record target execution failure without committing partial target state.
 - **Depends on:** SCF-053, SCF-061.
-- **Done when:** Approved target work runs in nested checkpoint; Applied commits;
-  RecoverableRejected rolls target work back then records Rejected; fatal error rolls
-  outer hook batch back to Pending with reservation/liability intact; Expired releases.
+- **Done when:** approved target work runs in a nested checkpoint; success commits
+  target state and records Approved; target execution error rolls target work back
+  then records Error while retaining the reservation triple and liability; Expired
+  releases the reservation triple.
 - **Tests:** T1 transition table and validator-set changes; T2 injected failure before/
-  after each Factory/cleanup/status/index step. Tally materialization is accepted only
-  with a written protocol validator/voter bound; otherwise bounded iteration becomes
-  a prerequisite task rather than hidden Factory work.
+  after each Factory/status/index step. Only ACTIVE validators may cast; tally uses
+  ballots from the current ACTIVE set and that set's count as its denominator.
 
 ## SCF-063 — Implement refund/burn settlement
 
 - **Goal:** Settle one recorded liability exactly once.
 - **Depends on:** SCF-062, SCF-023.
-- **Done when:** Approved refunds exactly `10^24`; Expired/Rejected burns exactly
-  `10^24` with `decrease_balance`; liabilities and settlement state update atomically;
-  Metadosis and surplus sweep are absent.
+- **Done when:** Approved refunds exactly `10^24`; Expired burns exactly `10^24`
+  with `decrease_balance`; Error performs no settlement; liabilities and settlement
+  state update atomically; Metadosis and surplus sweep are absent.
 - **Tests:** T1 arithmetic/events/replay/insufficiency; T2 forced surplus remains,
-  double finalization cannot move value, settlement failure restores Pending.
+  double finalization cannot move value, and Error retains its unsettled liability.
 - **Exit:** independent accounting review.
 
 ## SCF-064 — Vote/Factory adversarial integration gate
 
 - **Goal:** Prove token-or-no-token and one-settlement behavior through real APIs.
 - **Depends on:** SCF-054, SCF-063.
-- **Tests:** T3 approve/refund, expire/burn, recoverable reject/burn, fatal retry,
-  spam caps, validator-set change, global ticker collision, terminal replay and every
-  initializer mutation boundary.
+- **Tests:** T3 approve/refund, expire/burn, execution Error with retained
+  bond/reservations, spam caps, validator-set change, global ticker/address
+  collisions, terminal replay and every initializer mutation boundary.
 - **Exit gate G5:** Vote, Factory, provider and accounting suites pass together; no
   critical test is ignored.
 
@@ -699,7 +697,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Depends on:** SCF-024, SCF-064, SCF-070.
 - **Tests:** T4 execute full block and assert exactly one ordered
   `StablecoinCreated`, receipts root/log bloom/cumulative gas, marker code/hash and no
-  log after fatal rollback.
+  target log after an execution Error rollback.
 
 ## SCF-073 — Proposer/validator full-block parity
 
@@ -710,16 +708,15 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Output equality:** state root, receipts root, receipt status/log order/bloom,
   gas/refunds/cumulative gas, Factory indexes, token marker/code hash, token balances/
   supply and Vote/native bond deltas.
-- **Tests:** T4 successful and every fatal/recoverable boundary; no scaffold/ignored
+- **Tests:** T4 Approved, Expired and Error boundaries; no scaffold/ignored
   parity test is accepted.
 
 ## SCF-074 — Fork-boundary, RPC and deterministic replay
 
 - **Goal:** Verify H-1/H/H+1 behavior across restart and exact-block reads.
-- **Depends on:** SCF-025, SCF-046, SCF-073.
+- **Depends on:** SCF-025, SCF-073.
 - **Tests:** T4 repeated proposer/validator replay from identical snapshot; historical
-  static views, first mutating migration, nested calls, OOG, restart and RPC at each
-  boundary.
+  static views, nested calls, restart and RPC at each boundary.
 - **Exit gate G6:** SCF-070..074 pass on required consensus CI architectures; no
   activation constant remains provisional.
 
@@ -771,7 +768,7 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 - **Scope:** root README, CLI help, module READMEs, ABI exports, ADR-S-GOV-002,
   ADR-B-EVM-002, TOK ADR statuses/index/coverage and relevant `audit_*.md` entries.
 - **Done when:** addresses, prefix, marker, bond, caps, flow, roles, policy,
-  non-endorsement, reset and old/new migration behavior are exact and evidence-linked.
+  non-endorsement, reset and schema-1 behavior are exact and evidence-linked.
 
 ## SCF-085 — Release verification and GO/NO-GO
 
@@ -798,8 +795,8 @@ aliases. When Taskplane packets are generated, use these exact gate dependencies
 | --- | --- | --- |
 | `SCF-G0` | SCF-001, SCF-002, SCF-003, SCF-004 | protocol artifacts approved; no implementation-chosen constant |
 | `SCF-G1` | SCF-022, SCF-024, SCF-025, SCF-027 | EVM/provider/version/Vote infrastructure and old-behavior regressions pass |
-| `SCF-G2` | SCF-034 | Policy ABI/state/properties/benchmarks pass |
-| `SCF-G3` | SCF-047 | token ABI/model/crypto/ERC-7943/migration/gas pass |
+| `SCF-G2` | SCF-034 | Policy ABI/state/index/properties pass |
+| `SCF-G3` | SCF-047 | token ABI/model/crypto/Final ERC-7943/gas pass |
 | `SCF-G4` | SCF-055 | Factory index/initializer/adapter evidence passes |
 | `SCF-G5` | SCF-064 | Vote/Factory accounting and failure matrix passes |
 | `SCF-G6` | SCF-074 | full-block/fork/RPC parity passes |
@@ -843,7 +840,7 @@ its focused test filter and records exact output.
 | `SCF-G0` | `cd contracts/precompiles && forge fmt --check src/IStablecoin.sol src/IStablecoinFactory.sol src/IStablecoinPolicyRegistry.sol src/IVote.sol test/StablecoinInterfaces.t.sol && forge test --match-contract StablecoinInterfacesTest`; `cargo nextest run -p outbe-primitives --test stablecoin_abi_vectors --test stablecoin_vectors --test stablecoin_namespace --test stablecoin_fork_vectors`; `cargo nextest run -p outbe-vote`; `cargo nextest run -p xtask --test stablecoin_namespace`; `cargo run -p xtask -- stablecoin abi-check`; `cargo run -p xtask -- stablecoin namespace-check` |
 | `SCF-G1` | prescribed StorageHandle `rg` survey; `cargo nextest run -p outbe-primitives --test trybuild`; `cargo nextest run -p outbe-evm`; `cargo nextest run -p outbe-vote -p outbe-update -p outbe-governance` |
 | `SCF-G2` | `cargo nextest run -p outbe-stablecoinpolicy`; focused `cargo nextest run -p outbe-evm` registration/subcall tests |
-| `SCF-G3` | `cargo nextest run -p outbe-stablecoin`; EIP-2612/ERC-7943/property/migration filters; focused dynamic-route EVM tests |
+| `SCF-G3` | `cargo nextest run -p outbe-stablecoin`; EIP-2612/Final ERC-7943/property filters; focused dynamic-route EVM tests |
 | `SCF-G4` | `cargo nextest run -p outbe-stablecoinfactory`; focused provider/hook rollback and state-root tests |
 | `SCF-G5` | `cargo nextest run -p outbe-vote -p outbe-stablecoinfactory -p outbe-primitives -p outbe-evm` |
 | `SCF-G6` | affected Update/RPC/node/EVM suites plus dedicated full-block parity and fork-boundary targets |
@@ -855,8 +852,8 @@ its focused test filter and records exact output.
 2. **PR-B:** SCF-010..014 — characterization only.
 3. **PR-C1:** SCF-020..024 — EVM/provider infrastructure.
 4. **PR-C2:** SCF-025..027 — version, inert Vote target and rollback-safe notification infrastructure.
-5. **PR-D:** SCF-030..034 — Policy Registry, split by state/runtime/ABI/benchmark commits.
-6. **PR-E:** SCF-040..047 — token slices, each behavior with its tests.
+5. **PR-D:** SCF-030..034 — Policy Registry, split by state/runtime/ABI/property commits.
+6. **PR-E:** SCF-040..045 and SCF-047 — token slices, each behavior with its tests.
 7. **PR-F:** SCF-050..055 — Factory.
 8. **PR-G:** SCF-060..064 — Vote bond and Factory finalization.
 9. **PR-H:** SCF-070..074 — activation and consensus evidence.
@@ -866,17 +863,19 @@ its focused test filter and records exact output.
 
 Stablecoin Factory V1 is complete only when:
 
-- each proposal has one token-or-no-token result and one terminal bond settlement,
-  except fatal outcomes that remain Pending/unsettled for retry;
+- each proposal becomes Approved, Expired or Error; Approved refunds, Expired burns,
+  and Error retains its bond liability and reservation triple for a future
+  validator-approved governance transition outside V1;
 - every token is authenticated by Factory full id/schema/marker and uses isolated
   callee-scoped storage through one Rust precompile implementation;
 - global ticker uniqueness holds across pending and permanent state;
 - Policy evaluation is single-source, non-recursive and bounded;
 - ERC-20, EIP-2612 and ERC-7943 ABI/property/adversarial suites pass;
-- static historical reads and O(1) mutating migration are proven at the fork boundary;
+- schema version 1 is pinned and unknown schemas fail closed; speculative migration
+  infrastructure is absent from V1;
 - HookEvents receipt and proposer/validator outputs are byte/state equivalent;
 - the stablecoin-specific four-validator E2E passes before and after restart;
 - README states that admission is not backing, stability, redeemability or fee
   eligibility;
-- no unresolved address, prefix, marker, version, cap or gas placeholder remains;
+- no unresolved address, prefix, marker, version or cap placeholder remains;
 - bond vectors pin exactly `1,000,000 COEN = 10^24` base units.
