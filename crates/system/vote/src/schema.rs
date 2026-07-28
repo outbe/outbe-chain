@@ -25,6 +25,35 @@ pub enum ProposalStatus {
     Error = 4,
 }
 
+/// Settlement state of a proposal's native bond liability.
+///
+/// Zero is deliberately `NoBond` so proposal records written before bond
+/// accounting remain valid when the appended fields read as zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum BondSettlement {
+    NoBond = 0,
+    Unsettled = 1,
+    Refunded = 2,
+    Burned = 3,
+}
+
+impl BondSettlement {
+    pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
+        match value {
+            0 => Ok(Self::NoBond),
+            1 => Ok(Self::Unsettled),
+            2 => Ok(Self::Refunded),
+            3 => Ok(Self::Burned),
+            _ => Err(VoteError::InvalidBondSettlement),
+        }
+    }
+
+    pub const fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
 impl ProposalStatus {
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
         match value {
@@ -125,9 +154,12 @@ impl Storable for VoteRecord {
 /// Storage slots:
 ///   0:  proposal_count
 ///   1:  pending_proposal_ids
-///   2:  proposals: mapping(proposal_id => ProposalRecord) (`ProposalRecord`, 6 slots)
-///   3:  votes_map: mapping(voteKey => 1-based proposal_voters index)
-///   4:  proposal_voters: mapping(proposalId => VoteRecord[])
+///   2..=7: proposals: mapping(proposal_id => ProposalRecord) (`ProposalRecord`, 6 slots)
+///   8:  votes_map: mapping(voteKey => 1-based proposal_voters index)
+///   9:  proposal_voters: mapping(proposalId => VoteRecord[])
+///   10: proposal_bond_amount: mapping(proposalId => amount)
+///   11: proposal_bond_settlement: mapping(proposalId => BondSettlement)
+///   12: unsettled_bond_liabilities
 #[storage_schema]
 #[contract(addr = VOTE_ADDRESS)]
 pub struct Vote {
@@ -151,4 +183,16 @@ pub struct Vote {
     #[attribute(order = 4)]
     pub proposal_voters:
         outbe_primitives::storage::dsl::Map<U256, outbe_primitives::storage::dsl::List<VoteRecord>>,
+
+    /// Appended native bond amount keyed by proposal id.
+    #[attribute(order = 5)]
+    pub proposal_bond_amount: outbe_primitives::storage::dsl::Map<U256, U256>,
+
+    /// Appended `BondSettlement` byte keyed by proposal id.
+    #[attribute(order = 6)]
+    pub proposal_bond_settlement: outbe_primitives::storage::dsl::Map<U256, u8>,
+
+    /// Aggregate amount of all proposal bonds whose settlement is `Unsettled`.
+    #[attribute(order = 7)]
+    pub unsettled_bond_liabilities: outbe_primitives::storage::dsl::Value<U256>,
 }

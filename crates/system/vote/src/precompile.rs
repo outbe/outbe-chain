@@ -4,13 +4,16 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
+use crate::api::{
+    get_proposal, get_proposal_bond, get_proposal_voters, list_proposals, list_proposals_by_status,
+    unsettled_bond_liabilities,
+};
 use crate::errors::VoteError;
 use crate::handlers::VoteTargetRegistry;
-use crate::schema::Vote;
+use crate::schema::{BondSettlement, Vote};
 use crate::state::{ProposalInfo, ProposalStatus, VoteTally};
 
 sol!(
@@ -66,9 +69,14 @@ fn dispatch_vote_call(
                 c.count,
             )
         }),
-        getProposalBond(_) | unsettledBondLiabilities(_) => Err(PrecompileError::Revert(
-            "proposal bond accounting is not active".to_owned(),
-        )),
+        getProposalBond(c) => view(c, |c| {
+            let bond = get_proposal_bond(storage.clone(), c.proposalId)?;
+            Ok(IVote::getProposalBondReturn {
+                amount: bond.amount,
+                settlement: bond_settlement_to_abi(bond.settlement),
+            })
+        }),
+        unsettledBondLiabilities(c) => view(c, |_| unsettled_bond_liabilities(storage.clone())),
     }
 }
 
@@ -111,5 +119,14 @@ fn proposal_status_from_abi(status: IVote::ProposalStatus) -> ProposalStatus {
         IVote::ProposalStatus::Expired => ProposalStatus::Expired,
         IVote::ProposalStatus::Error => ProposalStatus::Error,
         _ => ProposalStatus::Pending,
+    }
+}
+
+fn bond_settlement_to_abi(settlement: BondSettlement) -> IVote::BondSettlement {
+    match settlement {
+        BondSettlement::NoBond => IVote::BondSettlement::NoBond,
+        BondSettlement::Unsettled => IVote::BondSettlement::Unsettled,
+        BondSettlement::Refunded => IVote::BondSettlement::Refunded,
+        BondSettlement::Burned => IVote::BondSettlement::Burned,
     }
 }

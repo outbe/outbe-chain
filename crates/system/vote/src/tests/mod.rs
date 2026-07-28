@@ -78,6 +78,7 @@ pub(super) const VOTER_B: Address = address!("0x33333333333333333333333333333333
 pub(super) const PENDING_VOTER: Address = address!("0x4444444444444444444444444444444444444444");
 pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
+mod bond;
 mod characterization;
 mod guards;
 mod precompile;

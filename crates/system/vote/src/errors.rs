@@ -21,6 +21,20 @@ pub enum VoteError {
     InvalidProposalStatus,
     #[error("invalid vote kind")]
     InvalidVoteKind,
+    #[error("invalid proposal bond settlement")]
+    InvalidBondSettlement,
+    #[error("proposal counter is exhausted")]
+    ProposalCounterExhausted,
+    #[error("proposal bond amount must be nonzero")]
+    InvalidBondAmount,
+    #[error("proposal bond is already recorded")]
+    ProposalBondAlreadyRecorded,
+    #[error("proposal bond is not unsettled")]
+    ProposalBondNotUnsettled,
+    #[error("proposal bond liability overflow")]
+    BondLiabilityOverflow,
+    #[error("proposal bond liability underflow")]
+    BondLiabilityUnderflow,
     #[error("invalid proposal payload")]
     InvalidPayload,
     #[error("unknown vote target module")]
@@ -31,6 +45,11 @@ pub enum VoteError {
 
 impl From<VoteError> for PrecompileError {
     fn from(err: VoteError) -> Self {
-        PrecompileError::Revert(err.to_string())
+        match err {
+            VoteError::InvalidBondSettlement
+            | VoteError::BondLiabilityOverflow
+            | VoteError::BondLiabilityUnderflow => PrecompileError::Fatal(err.to_string()),
+            _ => PrecompileError::Revert(err.to_string()),
+        }
     }
 }

@@ -99,24 +99,48 @@ fn dispatch_rejects_non_zero_value() {
 }
 
 #[test]
-fn future_bond_views_revert_before_accounting_activation() {
+fn bond_views_return_legacy_no_bond_and_recorded_liability() {
     with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let proposal_id = create_proposal_test(
+            &mut vote,
+            PROPOSER,
+            UPDATE_ADDRESS,
+            &empty_update_payload(100),
+            100,
+        )
+        .unwrap();
         let bond_data = IVote::getProposalBondCall {
-            proposalId: U256::from(1),
+            proposalId: proposal_id,
         }
         .abi_encode();
-        let bond_err = dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap_err();
-        assert!(matches!(
-            bond_err,
-            PrecompileError::Revert(msg) if msg == "proposal bond accounting is not active"
-        ));
+        let bond = IVote::getProposalBondCall::abi_decode_returns(
+            &dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bond.amount, U256::ZERO);
+        assert_eq!(bond.settlement, IVote::BondSettlement::NoBond);
 
         let liability_data = IVote::unsettledBondLiabilitiesCall {}.abi_encode();
-        let liability_err = dispatch(storage, &liability_data, PROPOSER, U256::ZERO).unwrap_err();
-        assert!(matches!(
-            liability_err,
-            PrecompileError::Revert(msg) if msg == "proposal bond accounting is not active"
-        ));
+        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
+            &dispatch(storage.clone(), &liability_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(liabilities, U256::ZERO);
+
+        vote.record_proposal_bond(proposal_id, U256::from(123u64))
+            .unwrap();
+        let bond = IVote::getProposalBondCall::abi_decode_returns(
+            &dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(bond.amount, U256::from(123u64));
+        assert_eq!(bond.settlement, IVote::BondSettlement::Unsettled);
+        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
+            &dispatch(storage, &liability_data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(liabilities, U256::from(123u64));
     });
 }
 
