@@ -161,6 +161,7 @@ reviewing the task's scoped diff and verification evidence.
 | SCF-053 | Done | `184b2ddf` | Approved execution revalidates the reservation, initializes zero-supply token state, installs marker, commits registry and emits one event atomically; Factory 19/19 and EVM 264/264 pass |
 | SCF-054 | Done | `943ca8e2` | Factory exposes only activation-gated views; compile-time Vote adapter owns validate/reserve/execute/release, reservation joins proposal creation checkpoint, and Factory/Vote/Update/Governance/EVM pass 431/431 |
 | SCF-055 | Review | `4d3e1ab1` | Factory 22/22 covers deterministic mixed histories, every reservation/index inverse, pending and permanent collision injection, maximum accepted payload, and failure after every mutation; independent G4 review remains |
+| SCF-060 | Review | `c04fe05f` | Bond amount/state maps append after unchanged V0 slots, zero-filled legacy proposals read as NoBond and tally, liabilities use checked atomic arithmetic, counter exhaustion is typed, and combined regression passes 436/436; storage-layout review remains |
 
 Allowed statuses are `Pending`, `In progress`, `Blocked`, `Review` and `Done`. `Done`
 requires the task's exit evidence and commit id; a gate becomes `Done` only after its
@@ -781,6 +782,12 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-060 — Append Vote bond/liability schema compatibly
 
+- **Status:** Review in `c04fe05f`; legacy Vote slots `0..=9` and the six-slot
+  `ProposalRecord` remain unchanged. Bond amount/state maps append at `10/11`,
+  aggregate unsettled liabilities append at `12`, and the frozen bond views are
+  live. Raw V0 read/tally, invalid enum, overflow, underflow, exact-once accounting
+  and typed counter exhaustion pass; the required independent storage-layout review
+  remains before Done.
 - **Goal:** Represent exactly-once bond settlement without reinterpreting legacy state.
 - **Scope/files:** Vote schema/state/errors/API/ABI; append-only migration because
   existing Vote slot 0 already owns `proposal_count`.
