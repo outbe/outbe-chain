@@ -102,7 +102,7 @@ fn complete_synthetic_bundle_passes_manifest_coverage_layer() {
     let report = fixture.verify().expect("complete fixture verifies");
     assert!(report.passed(), "{report:#?}");
     assert_eq!(report.passed_test_ids.len(), fixture.ledger.tests.len());
-    assert!(report.missing_test_ids.is_empty());
+    assert!(report.missing_test_ids.is_empty(), "{report:#?}");
     assert!(report.requirement_gaps.is_empty());
 }
 

@@ -45,7 +45,7 @@ and
 | proposed ADR-S-OCM-001..004, PFS-002 | owner decisions and test flow formalize existing PoC requirements | links plus unchanged sections 13–15 | traceability only; all remain Proposed/Draft |
 | 1.1–1.4 | real vertical slice through bounded work; no on-chain Lysis; q=3/4; one typed root apply | 1–3, 9–10 | exact |
 | 1.5 | frozen per-interface envelope and full-result-vote cap-1/cap/cap+1 public path; no total Tribute cap | 4, POC-07, POC-20..21 | exact |
-| 1.6 | thirteen-step system demonstration | 13 | exact |
+| 1.6 | tracer system story plus distributed thirteen-property proof map | 13 | exact |
 | 1.7 | PoC/MVP operational boundary; crypto/finality/atomicity/process split are not deferred | 2, 11, 19 | exact |
 | 1.8 | six implementation slices | 16 | exact |
 | 2.1 | terminal request phase, authenticated pre-admission, split/early-effect/intent/expiry atomicity | 5.1 | exact |
@@ -131,8 +131,8 @@ MVP chaos stories.
 ## 5. Corrections made during this audit
 
 1. Added explicit parent-child inheritance rules.
-2. Reclassified the evidence matrix so the thirteen-step story remains the PoC
-   closure and supporting tests cannot be read as product scope.
+2. Reclassified the evidence matrix so the thirteen-property proof map remains
+   the PoC closure and supporting tests cannot be read as product scope.
 3. Removed an over-specific requirement for a new public finalized-proof RPC.
    The parent requires `FinalizedIntentProofV1`, not a new endpoint. Planning
    must first determine whether existing finalized public data is sufficient or
@@ -191,7 +191,7 @@ audit until the traceability review is rerun.
 
 The correction preserves that chain. It changes the vote transport and
 accountability evidence, not the Lysis program semantics, Tribute population
-scope, activation effects or thirteen-step outcome. Superseded
+scope, activation effects or thirteen-property outcome. Superseded
 relay/certificate artifacts cannot count as evidence for the direct-vote path.
 
 ## 7. Readiness decision
@@ -225,7 +225,7 @@ implementation.
 
 PoC completion remains:
 
-1. the parent/child thirteen-step system demonstration passes;
+1. the parent/child tracer story and distributed thirteen-property map pass;
 2. the source-defined supporting PoC contract/fork checks pass;
 3. no mocked validator domain, direct executor injection or on-chain Lysis is
    used.

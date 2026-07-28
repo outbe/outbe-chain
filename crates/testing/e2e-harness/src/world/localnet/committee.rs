@@ -324,9 +324,6 @@ impl Localnet {
         if let Some(w) = opts.voting_window {
             cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
         }
-        if let Some(failpoint) = opts.ocomp_owner_failpoint.as_deref() {
-            cmd.env("OUTBE_E2E_OCOMP_OWNER_FAILPOINT", failpoint);
-        }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }

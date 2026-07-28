@@ -1882,7 +1882,7 @@ consensus blocks and public APIs.
 ### 17.4 Evidence
 
 - [ ] every POC-01..POC-26 matrix row passes;
-- [ ] exact 13-step acceptance story passes;
+- [ ] one tracer system story and the distributed 13-property acceptance map pass;
 - [ ] cap generator fixes the actual fork constants;
 - [ ] negative trace proves no on-chain Lysis/Fidelity/Oracle calculation;
 - [ ] report records software revision, bundle hash, genesis, validator

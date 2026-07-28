@@ -171,7 +171,7 @@ The fork and capacity gates are deliberately split:
 | `G5 QUORUM APPLY` | `OCM-23` | the q-forming validator vote atomically applies four owner effects and terminal state |
 | `G6 PUBLIC MEASUREMENT` | `OCM-25` | disposable four-node measurement chain exercises real RPC/import/replay |
 | `G7 ARMING` | `OCM-26` | final cap/bundle/genesis/committee are checked in; canonical fresh-devnet fork may activate |
-| `G8 CLOSURE` | `OCM-27` | exact thirteen-step, isolation and evidence verifier pass |
+| `G8 CLOSURE` | `OCM-27` | one tracer system story, distributed thirteen-property proof map, isolation and evidence verifier pass |
 
 Before `G7`, code is unreachable on every checked-in network schedule. The
 capacity harness may generate a disposable measurement chain, but its
@@ -305,12 +305,12 @@ Parallelizable groups:
 | `OCM-05` | budget split, strict Desis and carry-over primitives | `04` | contributes `OCM-REQ-001`, `OCM-APL-002` |
 | `OCM-06` | maintained bounded pre-admission | `04` | contributes `OCM-REQ/EXP/TIM` |
 | `OCM-07` | begin/end SystemTx lifecycle | `04` | contributes `OCM-REQ/PUB` |
-| `OCM-08` | Job FSM/request/expiry | `05,06,07` | `OCM-FSM-001`, `OCM-REQ-001` |
+| `OCM-08` | Job FSM/request/expiry | `05,06,07` | `OCM-FSM-001`, `OCM-REQ-001`, `OCM-E2E-002` (stable ID, integration lane) |
 | `OCM-09` | finalized proof and durable pin | `04,08` | `OCM-FIN-001`, `OCM-PIN-001` |
 | `OCM-10` | retained CE/Reth/Mongo/openings handoff | `06,09` | contributes `OCM-EXP-001` |
 | `OCM-11` | process/control/CAS/systemd base | `04` | `OCM-CTL-001` |
 | `OCM-12` | finalized cursor discovery | `08,09,11` | `OCM-DIS-001` |
-| `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001` |
+| `OCM-13` | authenticated exporter and CAS closure | `10,11,12` | `OCM-EXP-001`, `OCM-CAS-001`, `OCM-E2E-004` (stable ID, integration lane) |
 | `OCM-14` | deterministic plan/work/reduce | `01,04,11,13` | `OCM-SEM-002`, `OCM-DET-001` |
 | `OCM-15` | node attestation and sign-once | `04,09,14` | `OCM-SIG-001` |
 | `OCM-16` | Supervisor zero-fee result votes, q=3 and accountability | `04,08,09,15` | `OCM-VOT-001` |
@@ -320,11 +320,11 @@ Parallelizable groups:
 | `OCM-20` | Tribute consume/retire | `05,17` | contributes `OCM-APL-002` |
 | `OCM-21` | consume carry-over into the next unformed day limit | `05,08` | contributes `OCM-REQ-001`, `OCM-TIM-001` |
 | `OCM-22` | Promis certified `unused_lysis` credit | `05,17` | contributes `OCM-APL-002` |
-| `OCM-23` | q-forming atomic apply and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001` |
+| `OCM-23` | q-forming atomic apply and views | `07,08,16..22` | `OCM-BND-001`, `OCM-APL-002`, `OCM-TIM-001`, `OCM-E2E-006` (stable ID, integration lane) |
 | `OCM-24` | OCOMP harness/topology/evidence/trace | `11..16,23` | enables all non-retired public/E2E IDs |
 | `OCM-25` | public fork/vote/quorum-apply measurement suite | `04,08,09,13..16,23,24` | `OCM-PUB-001/002/003/004` |
 | `OCM-26` | final capacity, bundle and fork arming | `25` | `OCM-CAP-001` |
-| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/002/004/006..008`, `OCM-ISO-001`, `OCM-TRC-001` |
+| `OCM-27` | final E2E, isolation and closure report | `26` | `OCM-E2E-001/007/008`, `OCM-ISO-001`, `OCM-TRC-001` |
 
 ## 6. Detailed task cards
 
@@ -1954,9 +1954,9 @@ accepts their identities as eligible (not yet complete).
 
 **Depends on:** `OCM-26`.
 
-**Outcome:** one exact clean revision/artifact set passes the thirteen-step
-story, every required PFS/POC/ADR mapping, real isolation and independent
-closure verification.
+**Outcome:** one exact clean revision/artifact set passes the tracer system
+story and the distributed thirteen-property proof map, every required
+PFS/POC/ADR mapping, real isolation and independent closure verification.
 
 **Files/symbols:**
 
@@ -1968,13 +1968,14 @@ closure verification.
 - final `mise run ocomp-poc-{e2e,isolation,evidence-verify,closure}`;
 - CI closure workflows/artifact retention.
 
-**Changes:** implement all stable Gherkin scenarios/tags, final mock-Gramine
-encrypted Tribute fixtures, one/two supervisor stops, Mongo/CAS mutations,
-`S+1` multi-shard 1/2/4-worker schedules, finality+4 window,
-Supervisor zero-fee submit/reorg, sign-once/restart, healthy `4/4`,
-one-down `3/4`, two-down q<3, late/conflicting/minority fourth votes, delayed
-q-forming apply at a different valid height, owner failure, bundle mismatch, generation
-replay, compatibility branches and forbidden-call trace.
+**Changes:** keep three full E2E scenarios only: the public Tribute tracer
+story (which also retains the exact forbidden-call replay trace), incompatible
+Supervisor isolation from consensus, and completed generation restart/replay.
+The public lane keeps three terminal-state scenarios; its positive apply
+scenario also proves completed vote replay. Empty-day compatibility, duplicate
+admission/export containment and q-forming owner rollback run in `OCM-INT`
+against their production Rust seams. Mongo/CAS mutation, worker schedule,
+logical-time and vote matrices remain in their focused mandatory lanes.
 
 **Invariants/failures:** real four node/OCOMP domains; real UDS/Mongo/CE/
 checkpoints/public path; no central calculator, direct state/handler injection,
@@ -1994,10 +1995,12 @@ production release gate, TargetLarge or second program.
 
 **Test first/owned IDs:**
 
-- `OCM-E2E-001/002/004/006..008`;
+- `OCM-E2E-001/007/008`;
 - `OCM-ISO-001`;
 - `OCM-TRC-001`;
-- rerun every mandatory fast/integration/public ID on exact final artifacts.
+- rerun every mandatory fast/integration/public ID on exact final artifacts,
+  including the historically named but integration-owned
+  `OCM-E2E-002/004/006`.
 
 **Evidence/CI:** `OCM-E2E`, `OCM-ISO`, `OCM-VERIFY`; publish one atomic
 hash-indexed bundle, deterministic `closure-report.json/.md` and report SHA-256.

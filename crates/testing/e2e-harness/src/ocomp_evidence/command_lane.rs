@@ -616,7 +616,37 @@ const INT_PLAN: &[CommandBatchV1] = &[
             "--test",
             "ocomp_logical_time",
         ],
-        test_ids: &["OCM-REQ-001", "OCM-VOT-001", "OCM-APL-002", "OCM-TIM-001"],
+        test_ids: &[
+            "OCM-REQ-001",
+            "OCM-VOT-001",
+            "OCM-APL-002",
+            "OCM-TIM-001",
+            "OCM-E2E-006",
+        ],
+    },
+    CommandBatchV1 {
+        command_id: "int-metadosis-empty-day",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-metadosis",
+            "active_ocomp_profile_preserves_the_empty_day_compatibility_branch",
+        ],
+        test_ids: &["OCM-E2E-002"],
+    },
+    CommandBatchV1 {
+        command_id: "int-tribute-duplicate",
+        arguments: &[
+            "test",
+            "--locked",
+            "-p",
+            "outbe-tribute",
+            "--test",
+            "runtime_reads",
+            "issue_is_visible_and_rejects_duplicates_before_projection",
+        ],
+        test_ids: &["OCM-E2E-004"],
     },
     CommandBatchV1 {
         command_id: "int-node",
@@ -760,6 +790,21 @@ mod tests {
             evidence.path(),
         )
         .expect("valid command receipt");
+    }
+
+    #[test]
+    fn exact_command_receipt_covers_every_integration_test_once() {
+        let (evidence, _artifacts, ledger, source, run) = valid_run("OCM-INT");
+        validate_command_run(
+            Path::new("."),
+            &ledger,
+            "OCM-INT",
+            &source,
+            &run,
+            command_plan("OCM-INT").expect("plan"),
+            evidence.path(),
+        )
+        .expect("valid integration command receipt");
     }
 
     #[test]

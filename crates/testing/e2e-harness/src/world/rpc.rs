@@ -74,19 +74,6 @@ pub struct OcompPublicJobRequestV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompCompatibilityOutcomeV1 {
-    pub worldwide_day: u32,
-    pub day_limit: U256,
-    pub direct_remainder: U256,
-    pub status: String,
-    pub day_state: String,
-    pub action: String,
-    pub block_number: u64,
-    pub block_hash: B256,
-    pub transaction_hash: B256,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicActivationV1 {
     pub intent_id: B256,
     pub job_id: B256,
@@ -132,16 +119,6 @@ pub struct OcompPublicVoteAccountabilityV1 {
     pub divergent_bitmap: Option<u8>,
     pub missing_bitmap: Option<u8>,
     pub equivocation_bitmap: Option<u8>,
-}
-
-/// Exact public `eth_getProof` account-storage commitment for one activation
-/// effect owner at one canonical block.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompOwnerStorageRootV1 {
-    pub owner: Address,
-    pub block_number: u64,
-    pub block_hash: B256,
-    pub storage_hash: B256,
 }
 
 /// Finalized, cross-owner authority for one proof-backed Nod generation.
@@ -257,30 +234,6 @@ impl Rpc {
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub fn ocomp_owner_storage_root_on(
-        &self,
-        port: u16,
-        owner: Address,
-        block_number: u64,
-    ) -> Option<OcompOwnerStorageRootV1> {
-        let rpc_url = self.url(port);
-        let block_hash = eth::block_hash(&rpc_url, block_number)?
-            .parse::<B256>()
-            .ok()?;
-        let proof = eth::raw_json_with_params(
-            &rpc_url,
-            "eth_getProof",
-            serde_json::json!([format!("{owner:#x}"), [], format!("0x{block_number:x}")]),
-        )?;
-        Some(OcompOwnerStorageRootV1 {
-            owner,
-            block_number,
-            block_hash,
-            storage_hash: proof.get("storageHash")?.as_str()?.parse::<B256>().ok()?,
-        })
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1152,81 +1105,6 @@ impl Rpc {
             activation_preconditions_hash,
             request_height,
             request_block_hash,
-            transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
-        })
-    }
-
-    /// Observe the finalized compatibility-path receipt for a day that did not
-    /// create an OCOMP JobIntent. The values come from the public
-    /// `MetadosisWorldwideDayProcessed` event, not from test-owned state.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn finalized_ocomp_compatibility_outcome_on(
-        &self,
-        port: u16,
-        worldwide_day: u32,
-        from_height: u64,
-    ) -> Option<OcompCompatibilityOutcomeV1> {
-        const EVENT_SIGNATURE: &str =
-            "MetadosisWorldwideDayProcessed(uint32,uint256,uint256,string,string,string)";
-        let rpc_url = self.url(port);
-        let finalized_height = eth::finalized_number(&rpc_url)?;
-        if finalized_height < from_height {
-            return None;
-        }
-        let topic0 = keccak256(EVENT_SIGNATURE.as_bytes());
-        let day_topic = B256::from(U256::from(worldwide_day));
-        let logs = eth::raw_json_with_params(
-            &rpc_url,
-            "eth_getLogs",
-            serde_json::json!([{
-                "address": format!("{:#x}", addresses::WWD_ADDR),
-                "fromBlock": format!("0x{from_height:x}"),
-                "toBlock": format!("0x{finalized_height:x}"),
-                "topics": [format!("{topic0:#x}"), format!("{day_topic:#x}")]
-            }]),
-        )?;
-        let log = logs.as_array()?.last()?;
-        let topics = log.get("topics")?.as_array()?;
-        if topics.len() != 2
-            || topics[0].as_str()? != format!("{topic0:#x}")
-            || topics[1].as_str()? != format!("{day_topic:#x}")
-        {
-            return None;
-        }
-        let data = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
-        if data.len() < 5 * 32 {
-            return None;
-        }
-        let day_limit = U256::from_be_slice(&data[0..32]);
-        let direct_remainder = U256::from_be_slice(&data[32..64]);
-        let status = decode_abi_string(&data, 2)?;
-        let day_state = decode_abi_string(&data, 3)?;
-        let action = decode_abi_string(&data, 4)?;
-        let block_number = u64::from_str_radix(
-            log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
-            16,
-        )
-        .ok()?;
-        if block_number < from_height || block_number > finalized_height {
-            return None;
-        }
-        let block_hash = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
-        if eth::block_hash(&rpc_url, block_number)?
-            .parse::<B256>()
-            .ok()?
-            != block_hash
-        {
-            return None;
-        }
-        Some(OcompCompatibilityOutcomeV1 {
-            worldwide_day,
-            day_limit,
-            direct_remainder,
-            status,
-            day_state,
-            action,
-            block_number,
-            block_hash,
             transaction_hash: log.get("transactionHash")?.as_str()?.parse::<B256>().ok()?,
         })
     }
@@ -2420,17 +2298,6 @@ fn parse_rpc_word(encoded: &str) -> Option<U256> {
     U256::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
 }
 
-#[cfg(feature = "ocomp-integration")]
-fn decode_abi_string(encoded: &[u8], head_word: usize) -> Option<String> {
-    let head_start = head_word.checked_mul(32)?;
-    let head_end = head_start.checked_add(32)?;
-    let offset = usize::try_from(U256::from_be_slice(encoded.get(head_start..head_end)?)).ok()?;
-    let length_end = offset.checked_add(32)?;
-    let length = usize::try_from(U256::from_be_slice(encoded.get(offset..length_end)?)).ok()?;
-    let value_end = length_end.checked_add(length)?;
-    String::from_utf8(encoded.get(length_end..value_end)?.to_vec()).ok()
-}
-
 fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {
     receipt["logs"].as_array().is_some_and(|logs| {
         logs.iter().any(|log| {
@@ -2485,18 +2352,6 @@ mod ocomp_tests {
                 extra_data: extra_data.to_vec(),
             },
         }
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    #[test]
-    fn abi_string_decoder_follows_the_dynamic_head_offset() {
-        let mut encoded = vec![0_u8; 96];
-        encoded[31] = 32;
-        encoded[63] = 2;
-        encoded[64..66].copy_from_slice(b"ok");
-
-        assert_eq!(decode_abi_string(&encoded, 0).as_deref(), Some("ok"));
-        assert_eq!(decode_abi_string(&encoded, 1), None);
     }
 
     #[test]

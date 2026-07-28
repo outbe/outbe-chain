@@ -66,7 +66,8 @@ budget, no repeated auction and no Nod. There is no synchronous fallback.
   request-phase Desis brief and carry-over credits; multiple bounded work shards
   when the Tribute population crosses a shard boundary; byte-identical results
   across independent domains and worker schedules.
-- **Response measures:** Exact 13-step demonstration passes; all
+- **Response measures:** One tracer system story and the distributed 13-property
+  proof map pass; all
   `POC-01..POC-26` requirements have evidence at their declared layer; no
   direct state/executor injection or on-chain Lysis trace occurs.
 - **Failure guarantee:** Invalid/unavailable local work produces no vote;
@@ -284,12 +285,12 @@ scenario identity but are not PoC acceptance requirements.
 
 | Id | Scenario | Given / When / Then | Minimum topology and external services | Oracle/evidence | PoC requirements |
 |---|---|---|---|---|---|
-| PFS-002-01 | complete populated-day PoC demonstration | Given the heterogeneous bounded WWD, when the exact thirteen-step acceptance choreography runs, then every success, mutation, isolation and expiry assertion closes with exact conserved outputs | four validator domains, Mongo/CE, OCOMP processes, public RPC/P2P | finalized public state/proofs, reference corpus and thirteen-step report | POC-01..POC-25 as decomposed below |
-| PFS-002-02 | empty Tribute compatibility branch | Given a READY sealed empty partition, when terminal Metadosis runs, then no OCOMP job/Nod exists and the exact direct empty-branch remainder/retirement commits | four nodes; compute plane may be stopped | finalized Metadosis/Promis/CE public reads | POC-26 |
+| PFS-002-01 | complete populated-day PoC demonstration | Given the heterogeneous bounded WWD, when the tracer system story and focused acceptance properties run, then every success, mutation, isolation and expiry assertion closes with exact conserved outputs | four validator domains for the tracer; focused production seams for matrices and faults | finalized public state/proofs, reference corpus and distributed thirteen-property report | POC-01..POC-25 as decomposed below |
+| PFS-002-02 | empty Tribute compatibility branch | Given a READY sealed empty partition, when terminal Metadosis runs, then no OCOMP job/Nod exists and the exact direct empty-branch remainder/retirement commits | focused production Metadosis/owner integration; compute plane absent | exact Metadosis/Desis/Promis/Tribute/Nod state diff | POC-26 |
 | PFS-002-03 | **RETIRED:** zero-limit compatibility branch | The former scenario required a zero-Lysis-limit READY day, but production Cycle forms the day limit before Metadosis and a WWD leaving FORMING resolves to GREEN or RED; no replacement scenario may manufacture this state | none; historical identity only | machine-readable `RETIRED` tombstone; no runtime evidence | none |
 | PFS-002-04 | authenticated totals/body mismatch | Given one omitted/changed Mongo body or opening, when exporter reconstructs the job input, then root/count/nominal verification fails and no signature exists | one validator domain plus real Mongo/CE checkpoint; repeat in four-domain story | exporter typed failure and absent sign-once record | POC-06 |
-| PFS-002-05 | duplicate owner/day identity | Given one canonical Tribute identity, when a duplicate is submitted before sealing, then admission rejects and no duplicate enters the later manifest/result | four nodes, public Tribute path and Mongo/CE proof | reverted receipt, unchanged indexes/bodies/proofs | POC-26; imported PFS-001 admission evidence |
-| PFS-002-06 | certified owner failure | Given a valid q-forming full-result vote, when one later Nod/effect owner fails, then the third slot/quorum/job/domain effects all roll back | four nodes and public vote path; focused production-seam failpoint | complete canonical pre/post state and receipt trace | POC-15 |
+| PFS-002-05 | duplicate owner/day identity | Given one canonical Tribute identity, when a duplicate is submitted before sealing, then admission rejects and no duplicate enters the later manifest/result | production Tribute runtime plus real finalized exporter; existing public projection regression remains independent | unchanged runtime indexes plus exact accepted-input export membership | POC-26; imported PFS-001 admission evidence |
+| PFS-002-06 | certified owner failure | Given a valid q-forming full-result vote, when one later Nod/effect owner fails, then the third slot/quorum/job/domain effects all roll back | production EVM vote dispatch, outer checkpoint and all owner APIs with focused failpoint | complete deterministic pre/post state and exact retry | POC-15 |
 | PFS-002-07 | CE persistence/replay recovery | Given quorum apply reaches CE persistence, when persistence/restart is faulted, then recovery exposes either the full certified roots/outcome or pre-state, never a partial generation | four nodes with real Reth/CE MDBX restart | **DEFERRED to BoundedMVP:** historical scenario ID; POC-25 requires normal finalized replay, not this crash matrix | none |
 | PFS-002-08 | long timestamp/backlog compatibility | Given multiple due days/slots across a timestamp jump, when block lifecycle catches up, then canonical ordering processes each eligible request once and preserves non-PoC branches | four nodes; bounded generated backlog | **DEFERRED:** historical scenario ID; backlog policy remains explicit debt | none |
 | PFS-002-09 | lost request event | Given a finalized request and dropped subscription event, when supervisor resumes its finalized cursor, then it discovers the exact job once | one real validator domain, repeated across four; UDS | cursor/journal plus canonical job read | POC-05 |
@@ -394,8 +395,10 @@ The harness may only orchestrate real production boundaries:
 
 An implementation-only hook is permitted for focused fault injection when the
 production entrypoint, transaction/checkpoint and assertions remain real and the
-substitution is declared. The final thirteen-step demonstration permits no
-mocked validator domain, direct state injection or undocumented manual step.
+substitution is declared. The tracer system story permits no mocked validator
+domain, direct state injection or undocumented manual step. Focused integration
+tests may control logical height or inject a named failure only at the declared
+production seam.
 
 ## Observable completion contract
 

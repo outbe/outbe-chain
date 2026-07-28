@@ -48,8 +48,8 @@ No product decision remains open and no grilling is required before `OCM-00`.
 | four OCOMP ADRs | 34 source-derived invariant IDs in the [ledger](off-chain-poc-evidence-ledger.yaml) | covered |
 | `POC-01..POC-26` | all 26 exact IDs map to non-empty planned test sets | covered |
 | `PFS-002-01..25` | 22 required rows map to tests; 03 is the exact `RETIRED` tombstone and only 07/08 are `DEFERRED` | covered |
-| exact thirteen-step story | steps `1..13` each map to tests and an allowed oracle; `OCM-E2E-001` owns the correlated full story | covered |
-| existing Tribute E2E integration | `OCM-24/27` reuse the current public transaction, four-validator Mongo projection and independently verified CE path before observing `JobIntent`; `OCM-E2E-001/004` retain the correlation evidence | covered |
+| distributed thirteen-property proof map | steps `1..13` each map to tests and an allowed oracle; `OCM-E2E-001` is the one correlated tracer story while matrices remain at focused seams | covered |
+| existing Tribute E2E integration | `OCM-24/27` reuse the current public transaction, four-validator Mongo projection and independently verified CE path before observing `JobIntent`; `OCM-E2E-001` retains the tracer correlation, while stable `OCM-E2E-004` is integration-owned duplicate/export containment | covered |
 | section 17 PoC deliverables | protocol/runtime/semantic/evidence owners listed below | covered |
 | section 22 planning decisions | all 15 resolved before their dependent work, including the split final-cap gate | covered |
 | PoC -> BoundedMVP evolution | section 9 of the canonical plan preserves the core and names replaceable operational shells | covered |

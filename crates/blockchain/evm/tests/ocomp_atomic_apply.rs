@@ -54,6 +54,9 @@ fn env() -> EvmEnv {
     }
 }
 
+// Stable historical ID retained after moving this checkpoint invariant out
+// of the four-node E2E lane.
+// OCOMP-TEST-ID: OCM-E2E-006
 #[test]
 fn q_forming_owner_failures_restore_slot_quorum_and_every_owner_effect() {
     for (owner, address) in [
@@ -82,6 +85,11 @@ fn q_forming_owner_failures_restore_slot_quorum_and_every_owner_effect() {
         fixture.provider.clear_mutation_failure();
         assert_eq!(fixture.rollback_snapshot(), before);
         fixture.assert_pending();
+        assert_eq!(
+            fixture.apply().expect("exact retry after owner fault"),
+            Bytes::new()
+        );
+        assert_eq!(fixture.terminal_outcome(), ActivationOutcome::Applied);
     }
 }
 

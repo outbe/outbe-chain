@@ -144,6 +144,7 @@ oracle_policy:
     - FINALIZED_PUBLIC_STATE
     - PUBLIC_TX_RECEIPT
     - STATE_ROOT_DIFF
+    - MODULE_STATE
     - PROCESS_BOUNDARY
     - DURABLE_JOURNAL
     - DIGESTED_ARTIFACT
@@ -660,10 +661,8 @@ tests:
     substitution_justification: >
       Failpoints force otherwise rare late failures without bypassing public
       dispatch, the capability, real owner APIs or the outer checkpoint.
-    substitution_discharge:
-      - OCM-E2E-006
     oracles:
-      - STATE_ROOT_DIFF
+      - MODULE_STATE
     evidence:
       - q_forming_slot_and_four_owner_failure_matrix
       - quorum_apply_receipt_and_request_split_mutation_matrix
@@ -728,7 +727,7 @@ tests:
     layer: EXECUTION
     lane: OCM-PUBLIC
     planned_path: crates/testing/e2e-harness/features/ocomp_public_path.feature
-    production_entrypoint: public submitLysisResult transaction mutation and q-forming rollback matrix
+    production_entrypoint: public submitLysisResult changed-binding rejection and exact non-quorum recovery
     real_components:
       - four_nodes
       - public_rpc
@@ -746,7 +745,6 @@ tests:
       - pre_post_public_proof_equality
       - q_forming_vote_proposer_import_replay_parity
       - q_forming_vote_finalized_receipt_and_state_proof
-      - unexpected_apply_failure_rolls_back_q_forming_slot
   OCM-PUB-003:
     status: planned
     layer: EXECUTION
@@ -793,8 +791,8 @@ tests:
     lane: OCM-E2E
     planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
     production_entrypoint: >
-      exact thirteen-step public encrypted Tribute through the existing
-      projection harness path to Nod
+      one tracer public encrypted Tribute through the existing projection
+      harness path, four compute domains and q=3 to certified Nod
     real_components:
       - four_validator_nodes
       - four_mock_gramine_enclaves
@@ -826,64 +824,59 @@ tests:
       - four_validator_primary_owner_day_projection_parity
       - independently_verified_ce_package_and_mongo_body_equality
       - fixture_to_snapshot_manifest_job_result_vote_quorum_apply_correlation
-      - thirteen_step_report
-      - correlated_delay_variants
       - public_output_and_conservation
+      - exact_request_and_quorum_replay_trace_shared_with_OCM_TRC_001
   OCM-E2E-002:
     status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: empty Tribute terminal compatibility branch
+    layer: MODULE
+    lane: OCM-INT
+    planned_path: crates/core/metadosis/src/tests/lifecycle.rs
+    production_entrypoint: production Metadosis begin-block empty Tribute terminal compatibility branch
     real_components:
-      - four_nodes
-      - public_rpc
       - production_metadosis
+      - production_desis_brief
+      - production_promis_limit_carry_over
+      - production_tribute_and_nod_state
     substitutions: []
     oracles:
-      - FINALIZED_PUBLIC_STATE
+      - MODULE_STATE
     evidence:
       - no_job_no_nod_and_direct_remainder
   OCM-E2E-004:
     status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: public duplicate Tribute admission
+    layer: MODULE
+    lane: OCM-INT
+    planned_path: crates/core/tribute/tests/runtime_reads.rs
+    production_entrypoint: production Tribute issue/read duplicate admission
     real_components:
-      - four_nodes
-      - public_tribute_transaction
-      - real_mongodb_and_ce
+      - production_tribute_runtime
+      - production_ce_body_and_indexes
     substitutions: []
     oracles:
-      - PUBLIC_TX_RECEIPT
-      - FINALIZED_PUBLIC_STATE
+      - MODULE_STATE
     evidence:
-      - duplicate_revert_and_unchanged_indexes
-      - later_manifest_absence
-      - same_public_tribute_fixture_path_as_projection_regression
+      - duplicate_revert_and_unchanged_runtime_indexes
   OCM-E2E-006:
     status: planned
-    layer: E2E
-    lane: OCM-E2E
-    planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: four-node public q-forming full-result vote with owner failpoint
+    layer: MODULE
+    lane: OCM-INT
+    planned_path: crates/blockchain/evm/tests/ocomp_atomic_apply.rs
+    production_entrypoint: production q-forming full-result vote dispatch and outer owner checkpoint
     real_components:
-      - four_nodes
-      - public_full_result_vote
+      - production_full_result_vote_dispatch
       - production_owner_apis_and_checkpoint
     substitutions:
-      - one_named_owner_failpoint
+      - named_test_only_owner_mutation_failpoint
     substitution_justification: >
-      The named fault forces a late owner error while the transaction,
-      consensus, checkpoint and all production owner APIs remain real.
-    substitution_discharge:
-      - OCM-APL-002
+      The failpoint injects an error only after the production q-forming
+      dispatch has entered the real outer checkpoint and production owner
+      sequence. The claim is limited to MODULE atomicity; it makes no public
+      transport, persistence or distributed assertion.
     oracles:
-      - STATE_ROOT_DIFF
-      - PUBLIC_TX_RECEIPT
+      - MODULE_STATE
     evidence:
-      - canonical_four_node_pre_post_equality
+      - q_forming_slot_quorum_and_all_owner_state_restore_for_each_owner_fault
+      - exact_retry_and_terminal_outcome
   OCM-E2E-007:
     status: planned
     layer: E2E
@@ -945,7 +938,7 @@ tests:
     layer: E2E
     lane: OCM-E2E
     planned_path: crates/testing/e2e-harness/features/ocomp_poc.feature
-    production_entrypoint: proposer, importer and historical replay block execution
+    production_entrypoint: proposer, importer and historical replay block execution inside the OCM-E2E-001 tracer story
     real_components:
       - production_boundary_markers
       - four_nodes
@@ -967,12 +960,12 @@ task_ownership:
   OCM-05: []
   OCM-06: []
   OCM-07: []
-  OCM-08: [OCM-FSM-001, OCM-REQ-001]
+  OCM-08: [OCM-FSM-001, OCM-REQ-001, OCM-E2E-002]
   OCM-09: [OCM-FIN-001, OCM-PIN-001]
   OCM-10: []
   OCM-11: [OCM-CTL-001]
   OCM-12: [OCM-DIS-001]
-  OCM-13: [OCM-EXP-001, OCM-CAS-001]
+  OCM-13: [OCM-EXP-001, OCM-CAS-001, OCM-E2E-004]
   OCM-14: [OCM-SEM-002, OCM-DET-001]
   OCM-15: [OCM-SIG-001]
   OCM-16: [OCM-VOT-001]
@@ -982,15 +975,12 @@ task_ownership:
   OCM-20: []
   OCM-21: []
   OCM-22: []
-  OCM-23: [OCM-BND-001, OCM-APL-002, OCM-TIM-001]
+  OCM-23: [OCM-BND-001, OCM-APL-002, OCM-TIM-001, OCM-E2E-006]
   OCM-24: []
   OCM-25: [OCM-PUB-001, OCM-PUB-002, OCM-PUB-003, OCM-PUB-004]
   OCM-26: [OCM-CAP-001]
   OCM-27:
     - OCM-E2E-001
-    - OCM-E2E-002
-    - OCM-E2E-004
-    - OCM-E2E-006
     - OCM-E2E-007
     - OCM-E2E-008
     - OCM-ISO-001
@@ -1259,7 +1249,7 @@ requirements:
     POC-23: [OCM-PIN-001]
     POC-24: [OCM-CTL-001, OCM-E2E-007]
     POC-25: [OCM-PUB-004, OCM-E2E-008]
-    POC-26: [OCM-BYT-002, OCM-E2E-002, OCM-E2E-004]
+    POC-26: [OCM-BYT-002, OCM-EXP-001, OCM-E2E-002, OCM-E2E-004]
 
   pfs:
     PFS-002-01:
@@ -1280,7 +1270,7 @@ requirements:
       tests: [OCM-EXP-001, OCM-E2E-001]
     PFS-002-05:
       status: required
-      tests: [OCM-E2E-004]
+      tests: [OCM-E2E-004, OCM-EXP-001]
     PFS-002-06:
       status: required
       tests: [OCM-APL-002, OCM-E2E-006]

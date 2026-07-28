@@ -17,9 +17,6 @@ use outbe_ocomp_protocol::{
     state::{OcompJobStatus, OcompTerminalOutcome},
     vote::ResultVoteV1,
 };
-use outbe_primitives::addresses::{
-    INTEX_ADDRESS, NOD_ADDRESS, PROMIS_LIMIT_ADDRESS, TRIBUTE_ADDRESS,
-};
 
 use crate::features::common::{
     bootstrap_final_ocomp_localnet, bootstrap_localnet, start_bootstrapped_localnet,
@@ -32,7 +29,7 @@ use crate::world::ocomp::{
     OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole, OcompTopology,
     OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
 };
-use crate::world::state::{OcompExecutionTraceObservationV1, OcompOwnerRollbackObservationV1};
+use crate::world::state::OcompExecutionTraceObservationV1;
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
@@ -61,29 +58,23 @@ fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
 
 #[given("the canonical four-validator OCOMP Final devnet")]
 fn canonical_ocomp_final_devnet(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false, None, false);
-}
-
-#[given("the canonical four-validator OCOMP Final devnet with the Nod owner failpoint")]
-fn canonical_ocomp_final_devnet_with_nod_owner_failpoint(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false, Some("nod_receipt_root"), false);
+    start_canonical_ocomp_final_devnet(world, true, false, false);
 }
 
 #[given("the canonical four-validator OCOMP Final devnet before H")]
 fn canonical_ocomp_final_devnet_before_h(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, false, true, None, false);
+    start_canonical_ocomp_final_devnet(world, false, true, false);
 }
 
 #[given("four OCOMP domains are running through the production systemd profile")]
 fn four_ocomp_domains_run_through_systemd(world: &mut World) {
-    start_canonical_ocomp_final_devnet(world, true, false, None, true);
+    start_canonical_ocomp_final_devnet(world, true, false, true);
 }
 
 fn start_canonical_ocomp_final_devnet(
     world: &mut World,
     wait_for_activation: bool,
     activate_workers: bool,
-    owner_failpoint: Option<&str>,
     systemd_isolation: bool,
 ) {
     bootstrap_final_ocomp_localnet(world, 6);
@@ -105,7 +96,6 @@ fn start_canonical_ocomp_final_devnet(
         ),
         genesis_timestamp_pre_shifted: true,
         ocomp_protocol_bundle_hash: None,
-        ocomp_owner_failpoint: owner_failpoint.map(str::to_owned),
         ocomp_supervisor_uid: None,
         ocomp_snapshot_exporter_uid: None,
     };
@@ -500,196 +490,6 @@ fn validator_supervisors_submit_results_directly(world: &mut World) {
         .ocomp
         .ensure_validator_roles_alive()
         .expect("validator supervisors remain alive for direct ResultVote submission");
-}
-
-#[then("the named Nod owner failure leaves two vote slots and no activation effect")]
-fn named_nod_owner_failure_rolls_back_activation(world: &mut World) {
-    let request = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("finalized public JobIntent");
-    let primary = world.validators.primary_port();
-    let timeout = Instant::now() + Duration::from_secs(180);
-    let transactions = loop {
-        let finalized = world.rpc.finalized(primary).unwrap_or_default();
-        let observed = world
-            .rpc
-            .finalized_ocomp_result_vote_transactions_on(primary, request.request_height, finalized)
-            .unwrap_or_default();
-        let distinct_signers = observed
-            .iter()
-            .map(|transaction| transaction.signer)
-            .collect::<std::collections::BTreeSet<_>>();
-        if distinct_signers.len() == 4 {
-            break observed;
-        }
-        world
-            .ocomp
-            .ensure_validator_roles_alive()
-            .expect("all four OCOMP domains stay live through the named owner failure");
-        assert!(
-            Instant::now() < timeout,
-            "four validators did not publish ResultVote transactions before the owner-failure timeout"
-        );
-        sleep(Duration::from_millis(250));
-    };
-
-    let mut first_by_signer = std::collections::BTreeMap::new();
-    for transaction in &transactions {
-        first_by_signer
-            .entry(transaction.signer)
-            .or_insert_with(|| transaction.clone());
-    }
-    let first_attempts = first_by_signer.into_values().collect::<Vec<_>>();
-    let successful = first_attempts
-        .iter()
-        .filter(|transaction| transaction.success)
-        .collect::<Vec<_>>();
-    let failed = first_attempts
-        .iter()
-        .filter(|transaction| !transaction.success)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        successful.len(),
-        2,
-        "exactly two first votes must commit before every later vote becomes q-forming"
-    );
-    assert_eq!(
-        failed.len(),
-        2,
-        "both remaining validators must exercise the same named q-forming owner failure"
-    );
-    let post_block = failed
-        .iter()
-        .map(|transaction| transaction.block_number)
-        .max()
-        .expect("two failed q-forming votes");
-    assert!(
-        world.rpc.wait_finalized_at_least(primary, post_block, 60),
-        "the q-forming failure blocks did not finalize"
-    );
-
-    let effect_owners = [
-        NOD_ADDRESS,
-        INTEX_ADDRESS,
-        TRIBUTE_ADDRESS,
-        PROMIS_LIMIT_ADDRESS,
-    ];
-    let ports = world.validators.committee_ports();
-    let mut canonical_before = Vec::with_capacity(effect_owners.len());
-    let mut canonical_after = Vec::with_capacity(effect_owners.len());
-    for owner in effect_owners {
-        let before = ports
-            .iter()
-            .copied()
-            .map(|port| {
-                world
-                    .rpc
-                    .ocomp_owner_storage_root_on(port, owner, request.request_height)
-            })
-            .collect::<Vec<_>>();
-        let after = ports
-            .iter()
-            .copied()
-            .map(|port| {
-                world
-                    .rpc
-                    .ocomp_owner_storage_root_on(port, owner, post_block)
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            before.iter().all(Option::is_some) && after.iter().all(Option::is_some),
-            "one validator could not prove owner {owner} storage before/after rollback"
-        );
-        let before_first = before[0].clone().expect("checked above");
-        let after_first = after[0].clone().expect("checked above");
-        assert!(
-            before
-                .iter()
-                .all(|observed| observed.as_ref() == Some(&before_first)),
-            "validators disagree on owner {owner} pre-failure storage commitment"
-        );
-        assert!(
-            after
-                .iter()
-                .all(|observed| observed.as_ref() == Some(&after_first)),
-            "validators disagree on owner {owner} post-failure storage commitment"
-        );
-        assert_eq!(
-            before_first.storage_hash, after_first.storage_hash,
-            "q-forming owner failure changed storage owned by {owner}"
-        );
-        canonical_before.push(before_first);
-        canonical_after.push(after_first);
-    }
-
-    let record = world
-        .rpc
-        .finalized_ocomp_job_record_on(primary, request.intent_id)
-        .expect("job record after q-forming owner failure");
-    assert!(
-        matches!(
-            record.status,
-            OcompJobStatus::VotingOpen | OcompJobStatus::Expired
-        ),
-        "owner failure produced an unexpected terminal job state: {:?}",
-        record.status
-    );
-    assert!(
-        record
-            .terminal
-            .as_ref()
-            .is_none_or(|terminal| terminal.outcome == OcompTerminalOutcome::Expired),
-        "owner failure installed a completed/conflicted terminal binding"
-    );
-    let finalized = record.finalized.expect("finalized job after owner failure");
-    assert!(
-        finalized.quorum.is_none(),
-        "a reverted q-forming vote left quorum evidence behind"
-    );
-    let accountability = world
-        .rpc
-        .finalized_ocomp_vote_accountability_on(primary, finalized.job_id)
-        .expect("vote accountability after owner failure");
-    assert_eq!(
-        accountability.slot_validator_indexes.len(),
-        2,
-        "a reverted q-forming vote slot remained committed"
-    );
-    assert!(
-        accountability.quorum_result_digest.is_none(),
-        "owner failure left a quorum digest"
-    );
-    for port in ports {
-        assert!(
-            world
-                .rpc
-                .finalized_ocomp_activation_on(port, request.request_height, request.intent_id)
-                .is_none(),
-            "owner failure emitted an activation on port {port}"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .nod_certified_generation_exists_on(port, request.worldwide_day, post_block,),
-            Some(false),
-            "owner failure created a Nod generation on port {port}"
-        );
-    }
-
-    world.state.ocomp_result_vote_transactions = first_attempts.clone();
-    world.state.ocomp_vote_accountability = Some(accountability.clone());
-    world.state.ocomp_owner_rollback_observation = Some(OcompOwnerRollbackObservationV1 {
-        failed_vote_transactions: failed
-            .iter()
-            .map(|transaction| transaction.transaction_hash)
-            .collect(),
-        successful_vote_count: u8::try_from(successful.len()).expect("two successful votes"),
-        retained_slot_validator_indexes: accountability.slot_validator_indexes,
-        before: canonical_before,
-        after: canonical_after,
-    });
 }
 
 #[when("validator 2 prepares one valid vote without broadcasting it")]
@@ -1798,125 +1598,6 @@ fn four_domains_retain_isolated_worker_artifacts(world: &mut World) {
         .ocomp
         .verify_completed_job_artifacts(activation.job_id)
         .expect("verify four independent completed production job footprints");
-}
-
-#[then(
-    "the empty Tribute day completes without a JobIntent or Nod and records its direct remainder"
-)]
-fn empty_tribute_day_uses_terminal_compatibility(world: &mut World) {
-    let worldwide_day = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("canonical Final WorldwideDay")
-        .parse::<u32>()
-        .expect("numeric canonical Final WorldwideDay");
-    let ports = world.validators.committee_ports();
-    let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
-    let outcome = loop {
-        let statuses = ports
-            .iter()
-            .copied()
-            .map(|port| world.rpc.wwd_status(port, &worldwide_day.to_string()))
-            .collect::<Vec<_>>();
-        let outcomes = ports
-            .iter()
-            .copied()
-            .map(|port| {
-                world.rpc.finalized_ocomp_compatibility_outcome_on(
-                    port,
-                    worldwide_day,
-                    OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
-                )
-            })
-            .collect::<Vec<_>>();
-        if statuses.iter().all(|status| status.as_deref() == Some("6"))
-            && outcomes.iter().all(Option::is_some)
-        {
-            let first = outcomes[0]
-                .clone()
-                .expect("all compatibility receipts are present");
-            assert!(
-                outcomes
-                    .iter()
-                    .all(|observed| observed.as_ref() == Some(&first)),
-                "validators expose different finalized empty-day receipts"
-            );
-            break first;
-        }
-        world
-            .ocomp
-            .ensure_validator_roles_alive()
-            .expect("OCOMP roles stay alive while the empty day reaches terminal state");
-        assert!(
-            Instant::now() < deadline,
-            "empty Tribute day did not complete before the bounded Final deadline; \
-             statuses={statuses:?}, outcomes={outcomes:?}"
-        );
-        sleep(Duration::from_millis(500));
-    };
-
-    assert_eq!(outcome.worldwide_day, worldwide_day);
-    assert_eq!(outcome.status, "COMPLETED");
-    assert_eq!(outcome.action, "no tributes");
-    assert!(
-        !outcome.day_limit.is_zero(),
-        "the empty-day fixture must exercise the non-zero direct-remainder branch"
-    );
-    assert!(
-        outcome.direct_remainder <= outcome.day_limit,
-        "the empty-day direct remainder exceeds its finalized day limit"
-    );
-
-    for port in ports {
-        assert!(
-            world
-                .rpc
-                .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
-                .is_none(),
-            "empty Tribute day created an OCOMP JobIntent on port {port}"
-        );
-        let finalized_height = world
-            .rpc
-            .finalized(port)
-            .expect("validator finalized height after empty-day completion");
-        assert_eq!(
-            world
-                .rpc
-                .nod_certified_generation_exists_on(port, worldwide_day, finalized_height),
-            Some(false),
-            "empty Tribute day created a Nod generation on port {port}"
-        );
-        assert_eq!(
-            world.rpc.supply(port).as_deref(),
-            Some("0"),
-            "empty Tribute day changed Tribute supply on port {port}"
-        );
-    }
-    world.state.ocomp_empty_compatibility_verified = Some(true);
-}
-
-#[then("the certified Lysis generation contains only the original Tribute")]
-fn certified_generation_contains_only_original_tribute(world: &mut World) {
-    let generation = world
-        .state
-        .ocomp_certified_generation
-        .as_ref()
-        .expect("certified Lysis generation");
-    assert_eq!(
-        generation.tribute_count, 1,
-        "the rejected duplicate entered the certified Lysis input"
-    );
-    assert_eq!(
-        generation.nod_count, 1,
-        "the rejected duplicate changed the certified Nod output count"
-    );
-    assert_eq!(
-        world.rpc.supply(world.validators.primary_port()).as_deref(),
-        Some("0"),
-        "certified Lysis activation did not retire the original Tribute generation"
-    );
-    world.state.ocomp_duplicate_exclusion_verified = Some(true);
 }
 
 #[when("validator 0 OCOMP supervisor is stopped through the typed fault control")]

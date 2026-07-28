@@ -83,6 +83,7 @@ Allowed oracle types are closed:
 | `FINALIZED_PUBLIC_STATE` | exact-block `eth_call`, `eth_getProof`, OCOMP views and CE proof package |
 | `PUBLIC_TX_RECEIPT` | canonical transaction, receipt, log and inclusion/finality references |
 | `STATE_ROOT_DIFF` | exact common-height pre/post state roots plus scoped public proofs |
+| `MODULE_STATE` | exact typed production storage fields, events and rollback snapshot before/after one focused module dispatch |
 | `PROCESS_BOUNDARY` | owned child/systemd state, PID/UID/cgroup/mount/socket and exit status |
 | `DURABLE_JOURNAL` | exact persisted pin/sign-once bytes verified after process restart |
 | `DIGESTED_ARTIFACT` | same-descriptor length/digest/manifest-membership verification |
@@ -101,8 +102,11 @@ The following may not close a claim:
 - an unverified log line, screenshot, manual step or source-text assertion;
 - a retry that hides the first failure.
 
-Focused module tests may use a declared failpoint or in-memory adapter only when
-the ledger names the substitution and a higher-layer test discharges it.
+Focused module tests may use a declared failpoint or in-memory adapter when the
+ledger names it and the assertion is limited to the production module
+entrypoint, owner sequence and checkpoint. A higher-layer test must discharge
+it only when the claim extends to persistence, process, public execution or
+distributed behavior.
 
 ## 3. Reuse the existing harness; close only its OCOMP gaps
 
@@ -194,26 +198,34 @@ success capability, result or receipt.
 | Test ID | Real path | Required evidence |
 |---|---|---|
 | `OCM-PUB-001` | RPC -> txpool -> P2P -> proposal -> import -> replay | cap-1 and cap accepted; cap+1 rejected consistently; same receipt/state/CE/header result on all nodes |
-| `OCM-PUB-002` | public `submitLysisResult(bytes)` mutation and q-forming rollback matrix | result byte, JobId, attempt, ordering, root/count and signer mutations reject with exact scoped pre/post equality; an unexpected owner failure also rolls back the q-forming slot and permits exact retry |
+| `OCM-PUB-002` | public `submitLysisResult(bytes)` changed-binding rejection and recovery | one representative changed binding rejects with exact scoped pre/post equality; restarting the stopped supervisors forms the valid quorum through RPC/txpool/P2P/import |
 | `OCM-PUB-003` | begin-zone expiry versus public full-result votes | height `< deadline` may fill a slot and q may apply; height `= deadline` first expires a non-quorum job and rejects a new slot; no proposer-order race; a terminal job still accepts the fourth timely accountability vote |
 | `OCM-PUB-004` | completed full-result vote replay | duplicate same-validator vote is idempotent with no new owner effects/events; changed binding or equivocation follows the frozen rejection/evidence rule and cannot change the terminal result |
 
 These tests use block production and import/replay APIs, not a direct executor
-injection. They may run in the same four-node feature suite but retain distinct
-IDs so a single happy-path receipt cannot imply all four claims.
+injection. The positive apply and completed replay assertions (`OCM-PUB-001`
+and `OCM-PUB-004`) intentionally share one completed-job scenario. Expiry and
+pre-quorum mutation remain separate because they require incompatible terminal
+states.
 
 ### 4.4 Four-domain and isolation gates
 
 | Test ID | Scenario |
 |---|---|
-| `OCM-E2E-001` | exact thirteen-step populated-day story beginning with the existing public encrypted-Tribute projection/CE path, including heterogeneous input, one stopped supervisor, q=3, 1/2/4 workers, mutations, sign-once, delay comparison, q<3 expiry and public output |
-| `OCM-E2E-002` | empty Tribute compatibility branch with compute plane stopped |
-| `OCM-E2E-004` | duplicate owner/day public admission rejection and later manifest absence |
-| `OCM-E2E-006` | public q-forming full-result vote with a named owner failpoint: third slot and all owner effects roll back on unexpected failure, followed by successful exact retry and complete four-node state equality |
+| `OCM-E2E-001` | one tracer public Tribute -> finalized JobIntent -> four independent compute domains -> q=3 -> certified Nod, with exact request/quorum replay trace |
 | `OCM-E2E-007` | one incompatible supervisor refuses OCOMP while its node continues finality |
 | `OCM-E2E-008` | completed nodes and compute processes restart/replay and select the same public active generation without CAS authority |
 | `OCM-ISO-001` | actual PIDs, UIDs, cgroups, mounts, CAS quotas, worker concurrency and `SO_PEERCRED` match the fixed topology; supervisor/worker/CAS faults do not stop nodes |
-| `OCM-TRC-001` | proposer/import/replay traces for exact request and q-forming vote blocks contain zero calls to mutating Lysis, Fidelity league and Oracle calculation boundaries |
+| `OCM-TRC-001` | second assertion over the retained `OCM-E2E-001` tracer scenario: proposer/import/replay traces for exact request and q-forming vote blocks contain zero calls to mutating Lysis, Fidelity league and Oracle calculation boundaries |
+
+Stable IDs whose names historically contain `E2E` remain valid but no longer
+start four nodes:
+
+| Test ID | New lane | Focused proof |
+|---|---|---|
+| `OCM-E2E-002` | `OCM-INT` | production Metadosis empty-day branch, Desis brief, carry-over and zero Job/Nod state |
+| `OCM-E2E-004` | `OCM-INT` | production Tribute changed-body duplicate rejection with unchanged supply, totals, pre-admission and owner/day indexes; `PFS-002-05` separately also requires `OCM-EXP-001` exact export completeness |
+| `OCM-E2E-006` | `OCM-INT` | production q-forming dispatch and outer checkpoint rollback for every owner failure, followed by exact retry on the same fixture |
 
 `OCM-ISO-001` is the only privileged lane. The ordinary E2E still uses real
 sibling processes and sockets, but cannot claim UID/mount/cgroup isolation when
@@ -256,10 +268,11 @@ result or consensus state. The existing Tribute projection feature stays
 independently runnable and does not depend on OCOMP. Shared behavior uses typed
 `World` handles rather than one Gherkin step invoking another.
 
-`OCM-E2E-004` repeats the same public fixture path for the duplicate owner/day
-negative case, proves the receipt reverted and all primary/secondary indexes
-are unchanged, then proves the rejected entity never appears in a later OCOMP
-manifest.
+Duplicate public admission remains independently covered by the existing
+Tribute projection feature. The OCOMP closure does not repeat a complete
+Lysis generation for that rejection: `OCM-E2E-004` now composes the focused
+production Tribute admission test with `OCM-EXP-001`, which proves exact export
+membership from retained accepted identities.
 
 ## 5. Exact four-validator demonstration
 
@@ -289,7 +302,13 @@ its own full-result vote. The transaction that records the third matching slot
 also applies the result under one outer checkpoint. Nodes remain running when
 supervisors, exporters, workers or CAS access are stopped.
 
-### 5.2 Thirteen-step evidence
+### 5.2 Thirteen-step proof map
+
+The thirteen entries are acceptance properties, not thirteen operations that
+must be repeated inside one expensive devnet scenario. `OCM-E2E-001` is the
+single tracer story; deterministic mutations, timing matrices and rare
+failures are proved at their narrowest production seam and correlated by the
+evidence ledger.
 
 | Story step | Test IDs | Required retained oracle |
 |---:|---|---|
@@ -307,17 +326,11 @@ supervisors, exporters, workers or CAS access are stopped.
 | 12 | `OCM-E2E-001`, `OCM-PUB-003`, `OCM-ISO-001` | two supervisors stopped, finality advancing, finalized expiry/release/requeue and zero Nod/fallback |
 | 13 | `OCM-E2E-001`, `OCM-TRC-001` | exact-block traces from proposer/import/replay plus static boundary result; forbidden counters all zero |
 
-For step 11, two fresh scenarios use the same genesis/profile, deterministic
-fixture seed and transaction sequence but different pre-quorum block delay.
-The closure verifier correlates their `fixture_digest`, removes only the fields
-declared as apply metadata and requires every remaining semantic byte to
-match. Different WWDs or a hand-normalized comparison are not accepted.
-
-The story also corrupts one designated validator's Mongo body/opening and one
-CAS member before its successful run. That domain must abstain or rebuild from
-retained authority; no corrupt candidate may reach its sign journal. This
-discharges the four-domain repetition required by PFS-002-04/-11 without making
-the corrupt domain a trusted oracle.
+For step 11, `OCM-TIM-001` uses the same production request and quorum-apply
+entrypoints at controlled heights and compares canonical normalized results.
+Mongo/opening/CAS mutation matrices remain in `OCM-EXP-001`, `OCM-CAS-001` and
+`OCM-SIG-001`; the tracer scenario proves that those already-tested components
+are wired together, not every internal fault permutation again.
 
 ### 5.3 No-on-chain-compute trace
 

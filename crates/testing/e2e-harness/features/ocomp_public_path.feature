@@ -11,6 +11,7 @@ Feature: Off-chain computation public path
 
   @ocomp-public-apply
   # OCOMP-TEST-ID: OCM-PUB-001
+  # OCOMP-TEST-ID: OCM-PUB-004
   Scenario: Four independent domains certify and atomically apply one public Lysis result
     Given the canonical four-validator OCOMP Final devnet
     When an operator submits one encrypted tribute offer
@@ -20,6 +21,8 @@ Feature: Off-chain computation public path
     When the validator supervisors submit results directly for that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And all four OCOMP domains run their node-facing production roles
+    When the completed full-result vote is retried and then mutated through public RPC
+    Then the completed job and Nod generation are unchanged by both transactions
 
   @ocomp-capacity
   Scenario: A shard-cap-plus-one public population is completely processed
@@ -44,19 +47,6 @@ Feature: Off-chain computation public path
     And the certified generation contains exactly 257 Tribute and Nod records
     And validator 0 reconstructs that certified generation from canonical history
     And all four OCOMP domains run their node-facing production roles
-
-  @ocomp-public-replay
-  # OCOMP-TEST-ID: OCM-PUB-004
-  Scenario: Completed result-vote replay is idempotent and changed binding is rejected
-    Given the canonical four-validator OCOMP Final devnet
-    When an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the validator supervisors submit results directly for that finalized JobIntent
-    Then three matching validator domains atomically apply Lysis and create the Nod
-    When the completed full-result vote is retried and then mutated through public RPC
-    Then the completed job and Nod generation are unchanged by both transactions
 
   @ocomp-public-expiry
   # OCOMP-TEST-ID: OCM-PUB-003

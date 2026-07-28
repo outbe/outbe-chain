@@ -65,7 +65,7 @@ This is an evolutionary seam without a premature framework claim:
 |---|---|---|
 | kernel/domain ownership and no-arbitrary-code rule | internal lifecycle/evidence kernel wired directly to Lysis V1 | consensus `ProgramSpec`/registry |
 | future programs use new typed object kinds and signature domains | Lysis-specific V1 bytes and `CertifiedLysisActivation` | generic intent/unit/result envelopes or dispatcher |
-| old bytes are never reinterpreted | unchanged thirteen-step Lysis acceptance | cross-program scheduling, preconditions and capacity |
+| old bytes are never reinterpreted | unchanged thirteen-property Lysis acceptance map | cross-program scheduling, preconditions and capacity |
 
 ## 1. The whole system in one story
 

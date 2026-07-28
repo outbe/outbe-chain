@@ -8,27 +8,16 @@ use outbe_e2e_harness::ocomp_evidence::run_command_lane;
 
 use super::registry;
 
-const PUBLIC_SCENARIO_TAGS: [&str; 4] = [
+const PUBLIC_SCENARIO_TAGS: [&str; 3] = [
     "@ocomp-public-apply",
-    "@ocomp-public-replay",
     "@ocomp-public-expiry",
     "@ocomp-public-mutation",
 ];
 
-const E2E_SCENARIO_TAGS: [&str; 8] = [
-    "@ocomp-e2e-001",
-    "@ocomp-e2e-002",
-    "@ocomp-e2e-004",
-    "@ocomp-e2e-005",
-    "@ocomp-e2e-006",
-    "@ocomp-e2e-007",
-    "@ocomp-e2e-008",
-    "@ocomp-trace",
-];
+const E2E_SCENARIO_TAGS: [&str; 3] = ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008"];
 
-const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 6] = [
+const OCM25_PUBLIC_SCENARIO_TAGS: [&str; 5] = [
     "@ocomp-public-apply",
-    "@ocomp-public-replay",
     "@ocomp-public-expiry",
     "@ocomp-public-mutation",
     "@ocomp-fork-restart",
@@ -2688,12 +2677,11 @@ mod tests {
     use super::{promote_exact_scenario_evidence, E2E_SCENARIO_TAGS, PUBLIC_SCENARIO_TAGS};
 
     #[test]
-    fn public_lane_is_four_closed_single_scenario_runs() {
+    fn public_lane_is_three_closed_single_scenario_runs() {
         assert_eq!(
             PUBLIC_SCENARIO_TAGS,
             [
                 "@ocomp-public-apply",
-                "@ocomp-public-replay",
                 "@ocomp-public-expiry",
                 "@ocomp-public-mutation",
             ]
@@ -2701,19 +2689,10 @@ mod tests {
     }
 
     #[test]
-    fn e2e_lane_is_eight_closed_single_scenario_runs() {
+    fn e2e_lane_is_three_closed_single_scenario_runs() {
         assert_eq!(
             E2E_SCENARIO_TAGS,
-            [
-                "@ocomp-e2e-001",
-                "@ocomp-e2e-002",
-                "@ocomp-e2e-004",
-                "@ocomp-e2e-005",
-                "@ocomp-e2e-006",
-                "@ocomp-e2e-007",
-                "@ocomp-e2e-008",
-                "@ocomp-trace",
-            ]
+            ["@ocomp-e2e-001", "@ocomp-e2e-007", "@ocomp-e2e-008",]
         );
     }
 

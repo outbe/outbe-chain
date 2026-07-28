@@ -1039,6 +1039,9 @@ fn active_ocomp_profile_discovers_later_ready_day_after_first_was_indexed() {
     });
 }
 
+// Stable historical ID retained after moving this invariant out of the
+// four-node E2E lane.
+// OCOMP-TEST-ID: OCM-E2E-002
 #[test]
 fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
     with_storage(|storage| {

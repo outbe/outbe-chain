@@ -37,17 +37,6 @@ pub struct OcompHistoricalReplayObservationV1 {
     pub recovered_generation: crate::world::rpc::OcompCertifiedGenerationV1,
 }
 
-/// Public proof that a late owner failure reverted both the q-forming vote slot
-/// and every activation effect outside Metadosis.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct OcompOwnerRollbackObservationV1 {
-    pub failed_vote_transactions: Vec<alloy_primitives::B256>,
-    pub successful_vote_count: u8,
-    pub retained_slot_validator_indexes: Vec<u8>,
-    pub before: Vec<crate::world::rpc::OcompOwnerStorageRootV1>,
-    pub after: Vec<crate::world::rpc::OcompOwnerStorageRootV1>,
-}
-
 /// Runtime proof that proposal, canonical import and late historical replay
 /// exercised the same OCOMP boundaries without entering legacy calculation
 /// precompiles.
@@ -91,10 +80,7 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub capacity_resources: Option<crate::ocomp_capacity::OcompCapacityResourceObservationV1>,
     pub capacity_public_path: Option<OcompPublicCapacityObservationV1>,
     pub capacity_historical_replay: Option<OcompHistoricalReplayObservationV1>,
-    pub owner_rollback: Option<OcompOwnerRollbackObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
-    pub empty_compatibility_verified: Option<bool>,
-    pub duplicate_exclusion_verified: Option<bool>,
     pub restart_replay_verified: Option<bool>,
 }
 
@@ -192,10 +178,7 @@ pub struct FixtureState {
     pub ocomp_late_vote_inclusion_height: Option<u64>,
     pub ocomp_capacity_observation: Option<OcompPublicCapacityObservationV1>,
     pub ocomp_historical_replay_observation: Option<OcompHistoricalReplayObservationV1>,
-    pub ocomp_owner_rollback_observation: Option<OcompOwnerRollbackObservationV1>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
-    pub ocomp_empty_compatibility_verified: Option<bool>,
-    pub ocomp_duplicate_exclusion_verified: Option<bool>,
     pub ocomp_restart_replay_verified: Option<bool>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
@@ -286,10 +269,7 @@ impl Default for FixtureState {
             ocomp_late_vote_inclusion_height: None,
             ocomp_capacity_observation: None,
             ocomp_historical_replay_observation: None,
-            ocomp_owner_rollback_observation: None,
             ocomp_execution_trace_observation: None,
-            ocomp_empty_compatibility_verified: None,
-            ocomp_duplicate_exclusion_verified: None,
             ocomp_restart_replay_verified: None,
             l2_bls_private_hex: None,
             l2_chain_id: None,
@@ -346,10 +326,7 @@ impl FixtureState {
             capacity_resources: None,
             capacity_public_path: self.ocomp_capacity_observation.clone(),
             capacity_historical_replay: self.ocomp_historical_replay_observation.clone(),
-            owner_rollback: self.ocomp_owner_rollback_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
-            empty_compatibility_verified: self.ocomp_empty_compatibility_verified,
-            duplicate_exclusion_verified: self.ocomp_duplicate_exclusion_verified,
             restart_replay_verified: self.ocomp_restart_replay_verified,
         }
     }

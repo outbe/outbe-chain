@@ -138,5 +138,5 @@ These are mechanism precedents, not wholesale designs for Outbe.
 
 The decision changes framing and required source-module ownership only. It does
 not change `JobIntentV1`, `UnitSpecV1`, `ActivationPayloadV1`,
-`ProtocolBundleV1`, hash domains, `POC-01..POC-26`, the thirteen-step
-demonstration or any PoC runtime acceptance condition.
+`ProtocolBundleV1`, hash domains, `POC-01..POC-26`, the tracer story,
+distributed thirteen-property proof map or any PoC runtime acceptance condition.

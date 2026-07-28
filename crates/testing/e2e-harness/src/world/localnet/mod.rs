@@ -59,10 +59,6 @@ pub struct StartOpts {
     /// Bundle identity already pinned by the measurement chain manifest; used
     /// only for the node-local OCOMP UDS handshake.
     pub ocomp_protocol_bundle_hash: Option<String>,
-    /// One named debug-only owner-receipt failpoint used by OCM-E2E-006.
-    /// Every validator receives the same value before it executes the public
-    /// q-forming transaction, so the fault cannot create a state-root split.
-    pub ocomp_owner_failpoint: Option<String>,
     /// Optional real service-account UIDs for the systemd isolation lane.
     pub ocomp_supervisor_uid: Option<u32>,
     pub ocomp_snapshot_exporter_uid: Option<u32>,
@@ -76,7 +72,6 @@ impl StartOpts {
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
             ocomp_protocol_bundle_hash: None,
-            ocomp_owner_failpoint: None,
             ocomp_supervisor_uid: None,
             ocomp_snapshot_exporter_uid: None,
         }
@@ -104,7 +99,6 @@ impl StartOpts {
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
             ocomp_protocol_bundle_hash: None,
-            ocomp_owner_failpoint: None,
             ocomp_supervisor_uid: None,
             ocomp_snapshot_exporter_uid: None,
         }

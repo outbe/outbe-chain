@@ -37,8 +37,8 @@ Resolved by the source documents and goal:
 
 - plan one fresh-devnet Lysis V1 vertical slice over bounded work units;
 - preserve the OCOMP-kernel/typed-program boundary and PoC-to-BoundedMVP core;
-- require `POC-01..POC-26`, required `PFS-002` scenarios and the exact
-  thirteen-step demonstration;
+- require `POC-01..POC-26`, required `PFS-002` scenarios, one tracer system
+  story and the exact distributed thirteen-property proof map;
 - make tests, reproducible commands and retained evidence part of every task's
   Definition of Done;
 - exclude implementation in this planning goal, a generic registry/adapter,
@@ -358,8 +358,8 @@ Type: Discuss
 ### Question
 
 What test IDs, commands, allowed oracles, retained artifacts and CI gates prove
-every ADR invariant, `POC-01..POC-26`, required `PFS-002` row and each step
-of the thirteen-step story?
+every ADR invariant, `POC-01..POC-26`, required `PFS-002` row and each property
+of the thirteen-property proof map?
 
 ### Answer
 
@@ -456,7 +456,7 @@ Resolved. See the
 [`implementation-plan audit`](off-chain-poc-implementation-audit.md).
 
 Reverse checks cover the 34 source-derived ADR invariants, all 26 POC rows, all
-25 PFS identities, the thirteen-step story, section 17 deliverables, all
+25 PFS identities, the thirteen-property proof map, section 17 deliverables, all
 section 22 decisions and the eleven planning-goal requirements. The
 machine-readable ledger has 36 active stable tests plus one retired tombstone;
 every active test is required somewhere and has exactly one closing task. All

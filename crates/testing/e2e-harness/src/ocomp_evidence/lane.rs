@@ -46,31 +46,21 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
     (
         "OCM-PUB-004",
-        "Completed result-vote replay is idempotent and changed binding is rejected",
+        "Four independent domains certify and atomically apply one public Lysis result",
         "FINALIZED_PUBLIC_STATE",
     ),
 ];
 
-const E2E_SCENARIOS: [(&str, &str, &str); 7] = [
+const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-E2E-001",
         "Final public Tribute flows through four independent domains to certified Nod",
         "FINALIZED_PUBLIC_STATE",
     ),
     (
-        "OCM-E2E-002",
-        "An empty Tribute day uses the terminal compatibility branch",
-        "FINALIZED_PUBLIC_STATE",
-    ),
-    (
-        "OCM-E2E-004",
-        "A rejected duplicate Tribute never enters the later Lysis generation",
-        "FINALIZED_PUBLIC_STATE",
-    ),
-    (
-        "OCM-E2E-006",
-        "A q-forming owner failure rolls back the vote slot and every activation effect",
-        "STATE_ROOT_DIFF",
+        "OCM-TRC-001",
+        "Final public Tribute flows through four independent domains to certified Nod",
+        "RUNTIME_BOUNDARY_TRACE",
     ),
     (
         "OCM-E2E-007",
@@ -81,11 +71,6 @@ const E2E_SCENARIOS: [(&str, &str, &str); 7] = [
         "OCM-E2E-008",
         "A completed generation survives node and compute-process restart and replay",
         "FINALIZED_PUBLIC_STATE",
-    ),
-    (
-        "OCM-TRC-001",
-        "Proposal import and historical replay execute only OCOMP boundaries",
-        "RUNTIME_BOUNDARY_TRACE",
     ),
 ];
 
@@ -156,7 +141,7 @@ fn verify_scenario_lane(
         manifest.source == source,
         "scenario lane belongs to another source/toolchain identity"
     );
-    let mut scenarios = load_scenarios(evidence_dir)?;
+    let scenarios = load_scenarios(evidence_dir)?;
     let identity = scenario_run_identity(&scenarios)?;
     ensure!(
         manifest.sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
@@ -173,18 +158,20 @@ fn verify_scenario_lane(
         assertions.len() == expected_scenarios.len(),
         "scenario lane has duplicate or unexpected assertion count"
     );
+    let mut used_scenarios = BTreeSet::new();
     for (test_id, scenario_name, oracle) in expected_scenarios {
         let (scenario_path, scenario) = scenarios
-            .remove(*scenario_name)
+            .get(*scenario_name)
             .ok_or_else(|| eyre::eyre!("missing retained scenario {scenario_name}"))?;
-        validate_common_scenario(&scenario, &source.sha)?;
+        used_scenarios.insert(*scenario_name);
+        validate_common_scenario(scenario, &source.sha)?;
         match *test_id {
             "OCM-ISO-001" => {
-                validate_applied_public_path(&scenario)?;
-                validate_isolation_scenario(&scenario)?;
+                validate_applied_public_path(scenario)?;
+                validate_isolation_scenario(scenario)?;
             }
-            id if id.starts_with("OCM-PUB-") => validate_public_scenario(id, &scenario)?,
-            id => validate_e2e_scenario(id, &scenario)?,
+            id if id.starts_with("OCM-PUB-") => validate_public_scenario(id, scenario)?,
+            id => validate_e2e_scenario(id, scenario)?,
         }
         let assertion = assertions
             .remove(*test_id)
@@ -193,8 +180,8 @@ fn verify_scenario_lane(
             assertion.status == AssertionStatus::Pass
                 && assertion.oracle == *oracle
                 && assertion.expected_artifact_refs == [format!("expected/{test_id}.json")]
-                && assertion.actual_artifact_refs == [scenario_path]
-                && assertion.observed_at == u64_field(&scenario, "recorded_at_unix_ms")?,
+                && assertion.actual_artifact_refs == [scenario_path.clone()]
+                && assertion.observed_at == u64_field(scenario, "recorded_at_unix_ms")?,
             "scenario assertion {test_id} is not bound to its exact retained observation"
         );
     }
@@ -204,14 +191,19 @@ fn verify_scenario_lane(
     );
     if isolation || expected_scenarios == E2E_SCENARIOS {
         ensure!(
-            scenarios.is_empty(),
+            used_scenarios.len() == scenarios.len(),
             "scenario lane contains unexpected retained scenarios"
         );
     } else {
         ensure!(
-            scenarios.values().all(
-                |(_, scenario)| scenario.get("result").and_then(Value::as_str) == Some("passed")
-            ),
+            scenarios
+                .iter()
+                .filter(|(name, _)| !used_scenarios.contains(name.as_str()))
+                .map(|(_, value)| value)
+                .all(
+                    |(_, scenario)| scenario.get("result").and_then(Value::as_str)
+                        == Some("passed")
+                ),
             "public lane contains a non-PASS auxiliary scenario"
         );
     }
@@ -250,19 +242,21 @@ fn assemble_public_lane(
         evidence_dir.display()
     );
     let source = capture_source_identity(repo)?;
-    let mut scenarios = load_scenarios(evidence_dir)?;
+    let scenarios = load_scenarios(evidence_dir)?;
     let scenario_identity = scenario_run_identity(&scenarios)?;
     let mut members = scenario_members(evidence_dir, &scenarios)?;
     let mut assertions = Vec::with_capacity(PUBLIC_SCENARIOS.len());
     let mut observed_times = Vec::with_capacity(PUBLIC_SCENARIOS.len());
 
     let run_id = format!("ocomp-public-{}", unix_millis());
+    let mut used_scenarios = BTreeSet::new();
     for (test_id, scenario_name, oracle) in PUBLIC_SCENARIOS {
         let (path, scenario) = scenarios
-            .remove(scenario_name)
+            .get(scenario_name)
             .ok_or_else(|| eyre::eyre!("missing required public scenario {scenario_name}"))?;
-        validate_common_scenario(&scenario, &source.sha)?;
-        validate_public_scenario(test_id, &scenario)?;
+        used_scenarios.insert(scenario_name);
+        validate_common_scenario(scenario, &source.sha)?;
+        validate_public_scenario(test_id, scenario)?;
 
         let expected_path = format!("expected/{test_id}.json");
         let expected = serde_json::to_vec_pretty(&json!({
@@ -273,7 +267,7 @@ fn assemble_public_lane(
             "required_result": "passed",
         }))?;
         members.push(publish_member(evidence_dir, &expected_path, &expected)?);
-        let observed_at = u64_field(&scenario, "recorded_at_unix_ms")?;
+        let observed_at = u64_field(scenario, "recorded_at_unix_ms")?;
         observed_times.push(observed_at);
         assertions.push(AssertionRecordV1 {
             assertion_id: format!("{run_id}-{test_id}"),
@@ -281,7 +275,7 @@ fn assemble_public_lane(
             status: AssertionStatus::Pass,
             oracle: oracle.to_owned(),
             expected_artifact_refs: vec![expected_path],
-            actual_artifact_refs: vec![path],
+            actual_artifact_refs: vec![path.clone()],
             observed_at,
             run_id: run_id.clone(),
             source_sha: source.sha.clone(),
@@ -290,7 +284,9 @@ fn assemble_public_lane(
     }
     ensure!(
         scenarios
-            .values()
+            .iter()
+            .filter(|(name, _)| !used_scenarios.contains(name.as_str()))
+            .map(|(_, value)| value)
             .all(|(_, scenario)| scenario.get("result").and_then(Value::as_str) == Some("passed")),
         "the public run contains a non-PASS auxiliary scenario"
     );
@@ -350,19 +346,21 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
         evidence_dir.display()
     );
     let source = capture_source_identity(repo)?;
-    let mut scenarios = load_scenarios(evidence_dir)?;
+    let scenarios = load_scenarios(evidence_dir)?;
     let scenario_identity = scenario_run_identity(&scenarios)?;
     let mut members = scenario_members(evidence_dir, &scenarios)?;
     let mut assertions = Vec::with_capacity(E2E_SCENARIOS.len());
     let mut observed_times = Vec::with_capacity(E2E_SCENARIOS.len());
     let run_id = format!("ocomp-e2e-{}", unix_millis());
 
+    let mut used_scenarios = BTreeSet::new();
     for (test_id, scenario_name, oracle) in E2E_SCENARIOS {
         let (path, scenario) = scenarios
-            .remove(scenario_name)
+            .get(scenario_name)
             .ok_or_else(|| eyre::eyre!("missing required E2E scenario {scenario_name}"))?;
-        validate_common_scenario(&scenario, &source.sha)?;
-        validate_e2e_scenario(test_id, &scenario)?;
+        used_scenarios.insert(scenario_name);
+        validate_common_scenario(scenario, &source.sha)?;
+        validate_e2e_scenario(test_id, scenario)?;
 
         let expected_path = format!("expected/{test_id}.json");
         let expected = serde_json::to_vec_pretty(&json!({
@@ -373,7 +371,7 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
             "required_result": "passed",
         }))?;
         members.push(publish_member(evidence_dir, &expected_path, &expected)?);
-        let observed_at = u64_field(&scenario, "recorded_at_unix_ms")?;
+        let observed_at = u64_field(scenario, "recorded_at_unix_ms")?;
         observed_times.push(observed_at);
         assertions.push(AssertionRecordV1 {
             assertion_id: format!("{run_id}-{test_id}"),
@@ -381,7 +379,7 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
             status: AssertionStatus::Pass,
             oracle: oracle.to_owned(),
             expected_artifact_refs: vec![expected_path],
-            actual_artifact_refs: vec![path],
+            actual_artifact_refs: vec![path.clone()],
             observed_at,
             run_id: run_id.clone(),
             source_sha: source.sha.clone(),
@@ -389,9 +387,12 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
         });
     }
     ensure!(
-        scenarios.is_empty(),
+        used_scenarios.len() == scenarios.len(),
         "the E2E evidence directory contains unexpected scenarios: {:?}",
-        scenarios.keys().collect::<Vec<_>>()
+        scenarios
+            .keys()
+            .filter(|name| !used_scenarios.contains(name.as_str()))
+            .collect::<Vec<_>>()
     );
 
     let assertions_path = "assertions.jsonl";
@@ -730,34 +731,6 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
     let public = public_path(scenario)?;
     match test_id {
         "OCM-E2E-001" => validate_applied_public_path(scenario),
-        "OCM-E2E-002" => {
-            ensure!(
-                bool_field(public, "empty_compatibility_verified")?
-                    && public.get("job_request").is_some_and(Value::is_null)
-                    && public.get("activation").is_some_and(Value::is_null)
-                    && public
-                        .get("certified_generation")
-                        .is_some_and(Value::is_null),
-                "empty-day scenario did not prove the direct compatibility branch"
-            );
-            Ok(())
-        }
-        "OCM-E2E-004" => {
-            validate_applied_public_path(scenario)?;
-            ensure!(
-                bool_field(public, "duplicate_exclusion_verified")?,
-                "duplicate Tribute exclusion was not retained"
-            );
-            ensure!(
-                u64_field(
-                    object_field(public, "certified_generation")?,
-                    "tribute_count"
-                )? == 1,
-                "duplicate Tribute reached the certified generation"
-            );
-            Ok(())
-        }
-        "OCM-E2E-006" => validate_owner_rollback(public),
         "OCM-E2E-007" => validate_applied_public_path_with_vote_count(scenario, 3),
         "OCM-E2E-008" => {
             validate_applied_public_path(scenario)?;
@@ -907,35 +880,6 @@ fn validate_applied_public_path_with_vote_count(
         u64_field(generation, "tribute_count")? > 0
             && u64_field(generation, "tribute_count")? == u64_field(generation, "nod_count")?,
         "certified generation count conservation failed"
-    );
-    Ok(())
-}
-
-fn validate_owner_rollback(public: &Value) -> Result<()> {
-    ensure!(
-        public.get("activation").is_some_and(Value::is_null)
-            && public
-                .get("certified_generation")
-                .is_some_and(Value::is_null),
-        "owner-failure scenario committed activation state"
-    );
-    let rollback = object_field(public, "owner_rollback")?;
-    ensure!(
-        u64_field(rollback, "successful_vote_count")? == 2,
-        "owner failure did not retain exactly two pre-quorum votes"
-    );
-    let indexes = array_field(rollback, "retained_slot_validator_indexes")?
-        .iter()
-        .map(Value::as_u64)
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| eyre::eyre!("owner rollback slot indexes are not integers"))?;
-    ensure!(
-        indexes.len() == 2,
-        "owner failure did not roll back the q-forming slot"
-    );
-    ensure!(
-        rollback.get("before") == rollback.get("after"),
-        "owner failure changed an owner storage root"
     );
     Ok(())
 }
@@ -1268,10 +1212,29 @@ fn unix_millis() -> u64 {
 mod tests {
     use super::{
         scenario_run_identity, validate_applied_public_path, validate_expired_public_path,
-        validate_isolation_scenario, REQUIRED_SCENARIO_BINARIES,
+        validate_isolation_scenario, E2E_SCENARIOS, PUBLIC_SCENARIOS, REQUIRED_SCENARIO_BINARIES,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn expensive_scenarios_share_only_compatible_terminal_observations() {
+        let public = PUBLIC_SCENARIOS
+            .iter()
+            .map(|(test_id, scenario, _)| (*test_id, *scenario))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(public["OCM-PUB-001"], public["OCM-PUB-004"]);
+        assert_ne!(public["OCM-PUB-001"], public["OCM-PUB-002"]);
+        assert_ne!(public["OCM-PUB-001"], public["OCM-PUB-003"]);
+
+        let e2e = E2E_SCENARIOS
+            .iter()
+            .map(|(test_id, scenario, _)| (*test_id, *scenario))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(e2e["OCM-E2E-001"], e2e["OCM-TRC-001"]);
+        assert_ne!(e2e["OCM-E2E-001"], e2e["OCM-E2E-007"]);
+        assert_ne!(e2e["OCM-E2E-001"], e2e["OCM-E2E-008"]);
+    }
 
     fn applied_scenario() -> Value {
         let transactions = (0_u64..4)

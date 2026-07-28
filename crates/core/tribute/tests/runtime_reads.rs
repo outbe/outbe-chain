@@ -268,6 +268,10 @@ fn body_and_index_reads_use_the_finalized_parent_repository() {
     finish(&mut provider, &scope, &tree);
 }
 
+// Stable historical ID retained after moving duplicate admission out of the
+// OCOMP four-node E2E lane. OCM-EXP-001 separately proves exact export
+// completeness from retained accepted inputs.
+// OCOMP-TEST-ID: OCM-E2E-004
 #[test]
 fn issue_is_visible_and_rejects_duplicates_before_projection() {
     let (reader, _) = repository();
@@ -288,11 +292,63 @@ fn issue_is_visible_and_rejects_duplicates_before_projection() {
         assert_eq!(visible.tribute_id, body.tribute_id);
         assert_eq!(visible.owner, body.owner);
         assert_eq!(visible.nominal_amount_minor, body.nominal_amount_minor);
-        let error = contract.issue(&scope, &reader, &body).unwrap_err();
+        let supply_before = contract.total_supply().unwrap();
+        let totals_before = contract.get_day_totals(body.worldwide_day).unwrap();
+        let projection_before = contract
+            .pre_admission_projection(body.worldwide_day)
+            .unwrap();
+        let owner_index_before = contract
+            .get_tribute_ids_by_owner(&scope, &reader, body.owner)
+            .unwrap();
+        let day_index_before = contract
+            .get_tribute_ids_by_day(&scope, &reader, body.worldwide_day)
+            .unwrap();
+
+        let mut changed_duplicate = copy_tribute(&body);
+        changed_duplicate.nominal_amount_minor += U256::from(7);
+        changed_duplicate.issuance_amount_minor += U256::from(11);
+        let error = contract
+            .issue(&scope, &reader, &changed_duplicate)
+            .unwrap_err();
         assert!(
             matches!(error, PrecompileError::Revert(message) if message == "tribute already exists")
         );
-        assert_eq!(contract.total_supply().unwrap(), 1);
+        assert_eq!(contract.total_supply().unwrap(), supply_before);
+        let totals_after = contract.get_day_totals(body.worldwide_day).unwrap();
+        assert_eq!(totals_after.initialized, totals_before.initialized);
+        assert_eq!(totals_after.tribute_count, totals_before.tribute_count);
+        assert_eq!(
+            totals_after.tribute_nominal_amount,
+            totals_before.tribute_nominal_amount
+        );
+        assert_eq!(totals_after.is_sealed, totals_before.is_sealed);
+        assert_eq!(
+            contract
+                .pre_admission_projection(body.worldwide_day)
+                .unwrap(),
+            projection_before
+        );
+        assert_eq!(
+            contract
+                .get_tribute_ids_by_owner(&scope, &reader, body.owner)
+                .unwrap(),
+            owner_index_before
+        );
+        assert_eq!(
+            contract
+                .get_tribute_ids_by_day(&scope, &reader, body.worldwide_day)
+                .unwrap(),
+            day_index_before
+        );
+        let retained = contract
+            .get_tribute(&scope, &reader, body.tribute_id)
+            .unwrap()
+            .expect("original Tribute remains after duplicate rejection");
+        assert_eq!(retained.tribute_id, body.tribute_id);
+        assert_eq!(retained.owner, body.owner);
+        assert_eq!(retained.worldwide_day, body.worldwide_day);
+        assert_eq!(retained.issuance_amount_minor, body.issuance_amount_minor);
+        assert_eq!(retained.nominal_amount_minor, body.nominal_amount_minor);
     });
     assert!(reader.get(body.tribute_id).unwrap().is_none());
     finish(&mut provider, &scope, &tree);
