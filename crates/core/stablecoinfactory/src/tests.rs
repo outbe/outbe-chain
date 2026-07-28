@@ -372,6 +372,169 @@ fn outer_checkpoint_rolls_back_the_complete_reservation_triple() {
 }
 
 #[test]
+fn injected_failure_after_every_reservation_mutation_leaves_no_partial_index() {
+    let mutation_count = {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut factory = StablecoinFactoryContract::new(storage);
+            let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+            factory.reserve(&item).unwrap();
+        });
+        provider.clear_mutation_failure()
+    };
+    assert!(
+        mutation_count >= 4,
+        "reservation must write the complete record"
+    );
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.fail_after_mutation_at(operation);
+        StorageHandle::enter(&mut provider, |storage| {
+            let factory = StablecoinFactoryContract::new(storage.clone());
+            let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+            let result = storage
+                .with_checkpoint(|| StablecoinFactoryContract::new(storage.clone()).reserve(&item));
+            assert!(
+                matches!(result, Err(PrecompileError::Storage(_))),
+                "operation {operation}: {result:?}"
+            );
+        });
+        provider.clear_mutation_failure();
+        assert!(
+            provider.storage.is_empty(),
+            "operation {operation} left partial Factory state"
+        );
+    }
+}
+
+#[test]
+fn injected_failure_after_every_release_or_consume_mutation_restores_pending_state() {
+    let mutation_counts = {
+        let mut release_provider = HashMapStorageProvider::new(1);
+        let release_item = StorageHandle::enter(&mut release_provider, |storage| {
+            let mut factory = StablecoinFactoryContract::new(storage);
+            let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+            factory.reserve(&item).unwrap();
+            item
+        });
+        release_provider.clear_mutation_failure();
+        StorageHandle::enter(&mut release_provider, |storage| {
+            StablecoinFactoryContract::new(storage)
+                .release(release_item.proposal_id)
+                .unwrap();
+        });
+        let release = release_provider.clear_mutation_failure();
+
+        let mut consume_provider = HashMapStorageProvider::new(1);
+        let consume_item = StorageHandle::enter(&mut consume_provider, |storage| {
+            let mut factory = StablecoinFactoryContract::new(storage);
+            let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+            factory.reserve(&item).unwrap();
+            item
+        });
+        consume_provider.clear_mutation_failure();
+        StorageHandle::enter(&mut consume_provider, |storage| {
+            StablecoinFactoryContract::new(storage)
+                .consume_and_register(consume_item.proposal_id)
+                .unwrap();
+        });
+        let consume = consume_provider.clear_mutation_failure();
+        (release, consume)
+    };
+
+    for (consume, mutation_count) in [(false, mutation_counts.0), (true, mutation_counts.1)] {
+        for operation in 0..mutation_count {
+            let mut provider = HashMapStorageProvider::new(1);
+            let item = StorageHandle::enter(&mut provider, |storage| {
+                let mut factory = StablecoinFactoryContract::new(storage);
+                let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+                factory.reserve(&item).unwrap();
+                item
+            });
+            provider.clear_mutation_failure();
+            provider.fail_after_mutation_at(operation);
+
+            StorageHandle::enter(&mut provider, |storage| {
+                let result = storage.with_checkpoint(|| {
+                    let mut factory = StablecoinFactoryContract::new(storage.clone());
+                    if consume {
+                        factory.consume_and_register(item.proposal_id)?;
+                    } else {
+                        factory.release(item.proposal_id)?;
+                    }
+                    Ok(())
+                });
+                assert!(
+                    matches!(result, Err(PrecompileError::Storage(_))),
+                    "consume={consume} operation={operation}: {result:?}"
+                );
+            });
+            provider.clear_mutation_failure();
+
+            StorageHandle::enter(&mut provider, |storage| {
+                let factory = StablecoinFactoryContract::new(storage);
+                assert_eq!(
+                    factory.pending_token_id.read(&item.token_id).unwrap(),
+                    item.proposal_id
+                );
+                assert_eq!(
+                    factory
+                        .pending_ticker
+                        .read(&keccak256(item.ticker.as_bytes()))
+                        .unwrap(),
+                    item.proposal_id
+                );
+                assert_eq!(
+                    factory.pending_address.read(&item.token).unwrap(),
+                    item.proposal_id
+                );
+                assert!(factory.reservations.exists(item.proposal_id).unwrap());
+                assert_eq!(factory.token_count().unwrap(), U256::ZERO);
+                assert!(factory.token_by_id(item.token_id).unwrap().is_zero());
+                assert!(factory.token_by_ticker(&item.ticker).unwrap().is_zero());
+            });
+        }
+    }
+}
+
+#[test]
+fn release_allows_corrected_resubmission_and_target_error_keeps_the_triple() {
+    with_factory(|storage, mut factory| {
+        let first = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
+        factory.reserve(&first).unwrap();
+        factory.release(first.proposal_id).unwrap();
+
+        let corrected = FactoryReservation {
+            proposal_id: U256::from(2u64),
+            ..first
+        };
+        factory.reserve(&corrected).unwrap();
+
+        let target_result: outbe_primitives::error::Result<()> =
+            storage.with_checkpoint(|| Err(PrecompileError::Revert("typed target error".into())));
+        assert!(matches!(target_result, Err(PrecompileError::Revert(_))));
+
+        assert_eq!(
+            factory.pending_token_id.read(&corrected.token_id).unwrap(),
+            corrected.proposal_id
+        );
+        assert_eq!(
+            factory
+                .pending_ticker
+                .read(&keccak256(corrected.ticker.as_bytes()))
+                .unwrap(),
+            corrected.proposal_id
+        );
+        assert_eq!(
+            factory.pending_address.read(&corrected.token).unwrap(),
+            corrected.proposal_id
+        );
+        assert!(factory.reservations.exists(corrected.proposal_id).unwrap());
+    });
+}
+
+#[test]
 fn corrupted_reservation_triple_is_fatal_and_not_partially_cleaned() {
     with_factory(|_storage, mut factory| {
         let item = reservation(&factory, 1, Address::repeat_byte(0x11), "USD1");
