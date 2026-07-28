@@ -6,13 +6,21 @@
 //! Supports key storage backends: plaintext, encrypted (AES-256-GCM),
 //! OS keychain (macOS Keychain / Linux Secret Service).
 
-use alloy_primitives::{keccak256, Address};
+use alloy_primitives::{keccak256, Address, B256};
 use clap::{Parser, Subcommand, ValueEnum};
 use commonware_codec::Encode;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_math::algebra::Random;
 use eyre::{Result, WrapErr};
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::bls::{self, KeyBackend};
+use outbe_ocomp_protocol::{
+    committee::{
+        OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1, POC_KEY_EPOCH,
+        RESULT_SIGNATURE_PURPOSE_BITMAP,
+    },
+    profile::poc_schema_limits,
+};
 
 #[cfg(not(test))]
 fn exit_process(code: i32) -> ! {
@@ -25,13 +33,18 @@ fn exit_process(code: i32) -> ! {
 }
 use rand_core::RngCore as _;
 use std::{
+    fs::{File, OpenOptions},
     io::Write as _,
+    os::unix::fs::OpenOptionsExt as _,
     path::{Path, PathBuf},
 };
+use zeroize::Zeroizing;
 
 /// BLS_SIG DST used for registration signatures.
 /// Must match `verify_bls_registration_sig` in validatorset/logic.rs.
 const REGISTER_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
+const OCOMP_KEY_FILENAME: &str = "ocomp-key-v1.hex";
+const OCOMP_REGISTRATION_FILENAME: &str = "ocomp-registration-v1.ocb1";
 
 /// Key storage backend for BLS key files.
 #[derive(Debug, Clone, ValueEnum)]
@@ -102,6 +115,29 @@ enum Commands {
         #[arg(long, default_value = ".")]
         output_dir: PathBuf,
     },
+
+    /// Generate a dedicated OCOMP result-signing key and PoP registration.
+    Ocomp {
+        /// Directory for the immutable secret and public registration artifacts.
+        #[arg(long, default_value = ".")]
+        output_dir: PathBuf,
+        #[arg(long)]
+        chain_id: u64,
+        #[arg(long)]
+        genesis_hash: B256,
+        #[arg(long)]
+        fork_id: B256,
+        #[arg(long)]
+        protocol_bundle_hash: B256,
+        #[arg(long)]
+        validator_index: u8,
+        #[arg(long)]
+        validator_identity_hash: B256,
+        #[arg(long)]
+        valid_from_height: u64,
+        #[arg(long)]
+        valid_until_height_exclusive: u64,
+    },
 }
 
 fn main() -> Result<()> {
@@ -117,7 +153,42 @@ fn main() -> Result<()> {
         } => cmd_sign_registration(key, validator_address, &backend),
         Commands::Verify { key } => cmd_verify(key, &backend),
         Commands::Hybrid { output_dir } => cmd_hybrid(output_dir, &backend),
+        Commands::Ocomp {
+            output_dir,
+            chain_id,
+            genesis_hash,
+            fork_id,
+            protocol_bundle_hash,
+            validator_index,
+            validator_identity_hash,
+            valid_from_height,
+            valid_until_height_exclusive,
+        } => cmd_ocomp(
+            output_dir,
+            OcompRegistrationArgs {
+                chain_id,
+                genesis_hash,
+                fork_id,
+                protocol_bundle_hash,
+                validator_index,
+                validator_identity_hash,
+                valid_from_height,
+                valid_until_height_exclusive,
+            },
+        ),
     }
+}
+
+#[derive(Clone, Copy)]
+struct OcompRegistrationArgs {
+    chain_id: u64,
+    genesis_hash: B256,
+    fork_id: B256,
+    protocol_bundle_hash: B256,
+    validator_index: u8,
+    validator_identity_hash: B256,
+    valid_from_height: u64,
+    valid_until_height_exclusive: u64,
 }
 
 /// Resolve the CLI args into a [`KeyBackend`].
@@ -268,6 +339,128 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     println!("  use this path with --validator.evm-key");
 
     Ok(())
+}
+
+fn cmd_ocomp(output_dir: PathBuf, args: OcompRegistrationArgs) -> Result<()> {
+    if args.valid_from_height >= args.valid_until_height_exclusive {
+        eyre::bail!("OCOMP key validity range is empty");
+    }
+    std::fs::create_dir_all(&output_dir)
+        .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
+    let directory_metadata = std::fs::symlink_metadata(&output_dir)
+        .wrap_err_with(|| format!("failed to inspect output dir: {}", output_dir.display()))?;
+    if !directory_metadata.file_type().is_dir() {
+        eyre::bail!(
+            "OCOMP output path is not a regular directory: {}",
+            output_dir.display()
+        );
+    }
+    let key_path = output_dir.join(OCOMP_KEY_FILENAME);
+    let registration_path = output_dir.join(OCOMP_REGISTRATION_FILENAME);
+    for path in [&key_path, &registration_path] {
+        match std::fs::symlink_metadata(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) => eyre::bail!("OCOMP artifact already exists: {}", path.display()),
+            Err(error) => {
+                return Err(error).wrap_err_with(|| {
+                    format!("failed to inspect OCOMP artifact path: {}", path.display())
+                });
+            }
+        }
+    }
+
+    let signing_key = SigningKey::random(&mut rand_core::OsRng);
+    let public_key = signing_key.verifying_key().to_encoded_point(true);
+    let public_key_sec1: [u8; 33] = public_key
+        .as_bytes()
+        .try_into()
+        .map_err(|_| eyre::eyre!("generated OCOMP public key is not compressed SEC1-33"))?;
+    let core = OcompKeyRegistrationCoreV1 {
+        chain_id: args.chain_id,
+        genesis_hash: args.genesis_hash,
+        fork_id: args.fork_id,
+        protocol_bundle_hash: args.protocol_bundle_hash,
+        validator_index: args.validator_index,
+        validator_identity_hash: args.validator_identity_hash,
+        ocomp_public_key_sec1: public_key_sec1,
+        key_epoch: POC_KEY_EPOCH,
+        allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+        valid_from_height: args.valid_from_height,
+        valid_until_height_exclusive: args.valid_until_height_exclusive,
+    };
+    let limits = poc_schema_limits();
+    let mut registration = OcompKeyRegistrationV1 {
+        core,
+        proof_of_possession: [0; 64],
+    };
+    let pop_digest = registration.proof_of_possession_digest(&limits)?;
+    let proof: Signature = signing_key
+        .sign_prehash(pop_digest.as_slice())
+        .map_err(|_| eyre::eyre!("failed to sign OCOMP proof of possession"))?;
+    let proof = proof.normalize_s().unwrap_or(proof);
+    registration.proof_of_possession = proof.to_bytes().into();
+    registration.validate_proof_of_possession(&limits)?;
+
+    let mut secret = Zeroizing::new(hex::encode(signing_key.to_bytes()));
+    secret.push('\n');
+    let registration_bytes = registration.encode_canonical(&limits)?;
+    write_immutable_file(&registration_path, &registration_bytes, 0o644).wrap_err_with(|| {
+        format!(
+            "failed to install OCOMP public registration: {}",
+            registration_path.display()
+        )
+    })?;
+    if let Err(error) = write_immutable_file(&key_path, secret.as_bytes(), 0o600) {
+        let cleanup = std::fs::remove_file(&registration_path)
+            .and_then(|()| File::open(&output_dir)?.sync_all());
+        if let Err(cleanup_error) = cleanup {
+            eyre::bail!(
+                "OCOMP secret installation failed at {}: {error}; \
+                 cleanup of the new public registration at {} also failed: {cleanup_error}",
+                key_path.display(),
+                registration_path.display()
+            );
+        }
+        return Err(error)
+            .wrap_err_with(|| format!("failed to install OCOMP key: {}", key_path.display()));
+    }
+
+    println!("OCOMP result-signing artifacts generated");
+    println!("  private key:  {}", key_path.display());
+    println!("  public key:   {}", hex::encode(public_key_sec1));
+    println!("  key epoch:    {POC_KEY_EPOCH}");
+    println!("  registration: {}", registration_path.display());
+    Ok(())
+}
+
+fn write_immutable_file(path: &Path, contents: &[u8], mode: u32) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre::eyre!("artifact path has no parent: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| eyre::eyre!("artifact path has no file name: {}", path.display()))?
+        .to_string_lossy();
+    let pending_path = parent.join(format!(".{file_name}.pending.{}", std::process::id()));
+
+    let result = (|| -> Result<()> {
+        let mut pending = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .open(&pending_path)?;
+        pending.write_all(contents)?;
+        pending.sync_all()?;
+        std::fs::hard_link(&pending_path, path)?;
+        File::open(parent)?.sync_all()?;
+        std::fs::remove_file(&pending_path)?;
+        File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&pending_path);
+    }
+    result
 }
 
 fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
@@ -510,6 +703,69 @@ mod tests {
         assert_eq!(ecdsa_hex.len(), 64); // 32 bytes = 64 hex chars
         let ecdsa_bytes = hex::decode(&ecdsa_hex).unwrap();
         assert!(!ecdsa_bytes.iter().all(|&b| b == 0)); // non-zero
+    }
+
+    #[test]
+    fn ocm_sig_001_ocomp_command_writes_immutable_key_and_valid_pop_registration() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        use alloy_primitives::B256;
+        use outbe_ocomp_protocol::committee::{
+            OcompKeyRegistrationV1, POC_KEY_EPOCH, RESULT_SIGNATURE_PURPOSE_BITMAP,
+        };
+        use outbe_ocomp_protocol::profile::poc_schema_limits;
+
+        let directory = tempfile::tempdir().unwrap();
+        let args = OcompRegistrationArgs {
+            chain_id: 42,
+            genesis_hash: B256::repeat_byte(0x11),
+            fork_id: B256::repeat_byte(0x22),
+            protocol_bundle_hash: B256::repeat_byte(0x33),
+            validator_index: 2,
+            validator_identity_hash: B256::repeat_byte(0x44),
+            valid_from_height: 100,
+            valid_until_height_exclusive: 1_000,
+        };
+
+        cmd_ocomp(directory.path().to_path_buf(), args).expect("generate OCOMP artifacts");
+        let key_path = directory.path().join(OCOMP_KEY_FILENAME);
+        let registration_path = directory.path().join(OCOMP_REGISTRATION_FILENAME);
+        let secret = std::fs::read(&key_path).expect("read OCOMP secret");
+        assert_eq!(secret.len(), 65);
+        assert_eq!(secret[64], b'\n');
+        assert!(secret[..64]
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)));
+        assert_eq!(
+            std::fs::metadata(&key_path)
+                .expect("OCOMP key metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+
+        let registration = OcompKeyRegistrationV1::decode_canonical(
+            &std::fs::read(&registration_path).expect("read registration"),
+            &poc_schema_limits(),
+        )
+        .expect("decode registration");
+        registration
+            .validate_proof_of_possession(&poc_schema_limits())
+            .expect("validate proof of possession");
+        assert_eq!(registration.core.key_epoch, POC_KEY_EPOCH);
+        assert_eq!(
+            registration.core.allowed_purpose_bitmap,
+            RESULT_SIGNATURE_PURPOSE_BITMAP
+        );
+        assert_eq!(registration.core.validator_index, 2);
+
+        let original_secret = secret;
+        assert!(cmd_ocomp(directory.path().to_path_buf(), args).is_err());
+        assert_eq!(
+            std::fs::read(&key_path).expect("read unchanged OCOMP secret"),
+            original_secret
+        );
     }
 
     // TC-008: encrypted save/load roundtrip

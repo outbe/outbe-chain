@@ -1,31 +1,36 @@
-//! Deterministic begin-block system-transaction primitives.
+//! Deterministic begin/end-block system-transaction primitives.
 //!
-//! represents runtime system transactions as ordinary signed Ethereum
+//! Outbe represents runtime system transactions as ordinary signed Ethereum
 //! legacy transaction artifacts so standard `eth_*` RPC methods can expose their
 //! receipts and logs. The artifacts are consensus inputs only: execution uses
 //! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller, while the
 //! signed transaction authenticates the proposer and fixes receipt/tx ordering.
 //!
-//! Current scope is begin-zone-only. All active system txs run before user
-//! transactions in this order:
+//! Begin-zone system transactions run before user transactions in this order:
 //!
 //! 1. [`SystemTxKind::CertifiedParentAccounting`] for block `>= 2`.
 //! 2. [`SystemTxKind::LateFinalizeCredits`] for block `>= 2` (mandatory
 //!    inclusion-window phase: records late finalize credits and settles the
 //!    matured `N+K` fee escrow).
-//! 3. [`SystemTxKind::CycleTick`] for block `>= 1`.
-//! 4. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
+//! 3. [`SystemTxKind::OcompLifecycleBegin`] once the OCOMP lifecycle is active.
+//! 4. [`SystemTxKind::CycleTick`] for block `>= 1`.
+//! 5. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
 //!    (mandatory at block `1` under V2 for the genesis bootstrap).
-//! 5. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
-//! 6. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
+//! 6. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
+//! 7. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
+//! 8. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
 //!    whitelisted pre-exec hook logs; no lifecycle re-execution).
+//!
+//! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
+//! transaction. It follows every user transaction and the compressed-entity
+//! seal.
 //!
 //! ## V2 codec
 //!
 //! This module ships the V2 wire codec exclusively. V1 system-tx input bytes
 //! (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`) are rejected
-//! at every height. Selectors are `OSA3`/`OSC2`/`OSB2`/`OSO2` and the version
-//! byte is `2`. Greenfield rollout.
+//! at every height. OCOMP adds the `OSE2` and `OSR2` selectors without changing
+//! the V2 version byte. Greenfield rollout.
 //!
 //! The split helper below is structural-only: it rejects reserved-address
 //! transactions outside the contiguous system zones and rejects wrong-zone or
@@ -51,6 +56,9 @@ use crate::{
 };
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+pub use outbe_ocomp_protocol::abi::{
+    OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
+};
 
 /// Version byte immediately after the 4-byte kind selector in system-tx input.
 ///
@@ -103,6 +111,33 @@ pub enum BodyZone {
     EndBlock,
 }
 
+/// Consensus activation of the PoC OCOMP system-transaction lifecycle.
+///
+/// The production default is disabled. OCM-26 is the only task that may arm
+/// the canonical devnet schedule; earlier tasks can exercise the exact fork
+/// boundary by passing an explicit activation to layout validation.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum OcompLifecycleActivation {
+    #[default]
+    Disabled,
+    AtBlock(u64),
+}
+
+impl OcompLifecycleActivation {
+    #[must_use]
+    pub const fn at_block(height: u64) -> Self {
+        Self::AtBlock(height)
+    }
+
+    #[must_use]
+    pub const fn is_active_at(self, block_number: u64) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::AtBlock(height) => block_number >= height,
+        }
+    }
+}
+
 /// begin_block system transaction kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SystemTxKind {
@@ -111,6 +146,9 @@ pub enum SystemTxKind {
     /// late-finalize credits within the `K`-block inclusion window and settles
     /// matured per-block fee escrows. Ordered immediately after Phase 1 (CPA).
     LateFinalizeCredits,
+    /// OCOMP begin-zone lifecycle slot. In the PoC this expires due jobs after
+    /// the reserved no-op barrier and before ordinary user transactions.
+    OcompLifecycleBegin,
     CycleTick,
     BoundaryOutcome,
     /// Phase 3b: one-time TEE registry bootstrap (present only in the bootstrap
@@ -119,6 +157,9 @@ pub enum SystemTxKind {
     OracleSlashWindow,
     /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, …).
     HookEvents,
+    /// Sole end-zone system transaction. The executor seals compressed
+    /// entities before dispatching this terminal request slot.
+    OcompTerminalRequest,
 }
 
 impl SystemTxKind {
@@ -126,17 +167,28 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
             Self::LateFinalizeCredits => LATE_FINALIZE_CREDITS_SELECTOR,
+            Self::OcompLifecycleBegin => OCOMP_LIFECYCLE_BEGIN_SELECTOR,
             Self::CycleTick => CYCLE_TICK_SELECTOR,
             Self::BoundaryOutcome => BOUNDARY_OUTCOME_SELECTOR,
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
             Self::HookEvents => HOOK_EVENTS_SELECTOR,
+            Self::OcompTerminalRequest => OCOMP_TERMINAL_REQUEST_SELECTOR,
         }
     }
 
     pub const fn body_zone(self) -> BodyZone {
-        // Current scope is begin-zone-only.
-        BodyZone::BeginBlock
+        match self {
+            Self::OcompTerminalRequest => BodyZone::EndBlock,
+            Self::CertifiedParentAccounting
+            | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::BoundaryOutcome
+            | Self::TeeBootstrap
+            | Self::OracleSlashWindow
+            | Self::HookEvents => BodyZone::BeginBlock,
+        }
     }
 
     /// Whether a non-success EVM result (`Revert` / `Halt`) executing this
@@ -163,8 +215,10 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
             | Self::CycleTick
-            | Self::BoundaryOutcome => true,
+            | Self::BoundaryOutcome
+            | Self::OcompTerminalRequest => true,
             Self::TeeBootstrap | Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
@@ -173,16 +227,28 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => Some(0),
             Self::LateFinalizeCredits => Some(1),
-            Self::CycleTick => Some(2),
-            Self::BoundaryOutcome => Some(3),
-            Self::TeeBootstrap => Some(4),
-            Self::OracleSlashWindow => Some(5),
-            Self::HookEvents => Some(6),
+            Self::OcompLifecycleBegin => Some(2),
+            Self::CycleTick => Some(3),
+            Self::BoundaryOutcome => Some(4),
+            Self::TeeBootstrap => Some(5),
+            Self::OracleSlashWindow => Some(6),
+            Self::HookEvents => Some(7),
+            Self::OcompTerminalRequest => None,
         }
     }
 
     pub const fn end_order(self) -> Option<u8> {
-        None
+        match self {
+            Self::OcompTerminalRequest => Some(0),
+            Self::CertifiedParentAccounting
+            | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::BoundaryOutcome
+            | Self::TeeBootstrap
+            | Self::OracleSlashWindow
+            | Self::HookEvents => None,
+        }
     }
 
     fn order_in(self, zone: BodyZone) -> Option<u8> {
@@ -210,6 +276,7 @@ pub enum SystemTxInputV2 {
     LateFinalizeCredits {
         artifact: LateFinalizeCreditsArtifact,
     },
+    OcompLifecycleBegin,
     CycleTick,
     BoundaryOutcome {
         artifact: DkgBoundaryArtifact,
@@ -219,6 +286,7 @@ pub enum SystemTxInputV2 {
     },
     OracleSlashWindow,
     HookEvents,
+    OcompTerminalRequest,
 }
 
 impl SystemTxInputV2 {
@@ -226,11 +294,13 @@ impl SystemTxInputV2 {
         match self {
             Self::CertifiedParentAccounting { .. } => SystemTxKind::CertifiedParentAccounting,
             Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
+            Self::OcompLifecycleBegin => SystemTxKind::OcompLifecycleBegin,
             Self::CycleTick => SystemTxKind::CycleTick,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
             Self::HookEvents => SystemTxKind::HookEvents,
+            Self::OcompTerminalRequest => SystemTxKind::OcompTerminalRequest,
         }
     }
 
@@ -248,7 +318,11 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::CycleTick | Self::OracleSlashWindow | Self::HookEvents => {}
+            Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::OracleSlashWindow
+            | Self::HookEvents
+            | Self::OcompTerminalRequest => {}
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes — the mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -300,6 +374,15 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?
                     .unwrap_or_default(),
             }),
+            SystemTxKind::OcompLifecycleBegin => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::OcompLifecycleBegin)
+            }
             SystemTxKind::CycleTick => {
                 if !body.is_empty() {
                     return Err(SystemTxError::UnexpectedBody {
@@ -326,6 +409,15 @@ impl SystemTxInputV2 {
                     });
                 }
                 Ok(Self::HookEvents)
+            }
+            SystemTxKind::OcompTerminalRequest => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::OcompTerminalRequest)
             }
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
@@ -372,6 +464,9 @@ pub enum SystemTxPhase {
     /// Next expected begin-zone tx is the mandatory (blocks `>= 2`)
     /// `LateFinalizeCredits` phase, ordered immediately after Phase 1.
     LateFinalizeCredits { body_index: u8 },
+    /// OCOMP expiry/reset phase, present only once the PoC lifecycle fork is
+    /// active and ordered before `CycleTick`.
+    OcompLifecycleBegin { body_index: u8 },
     /// Next expected begin-zone tx is Phase 2 (`CycleTick`).
     CycleTick { body_index: u8 },
     /// Next expected begin-zone tx is the optional Phase 3
@@ -385,7 +480,8 @@ pub enum SystemTxPhase {
     OracleSlashWindow { body_index: u8 },
     /// Next expected begin-zone tx is the mandatory `HookEvents` receipt carrier.
     HookEvents { body_index: u8 },
-    /// All begin-zone system txs consumed; only user transactions remain.
+    /// All begin-zone system txs consumed. User transactions may execute until
+    /// the optional end-zone transaction is consumed.
     UserTxs,
 }
 
@@ -398,6 +494,14 @@ impl SystemTxPhase {
     /// `tx_hash`; the executor overwrites the placeholder after the Phase 1
     /// preflight commits.
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
+        Self::initial_for_block_with_ocomp(block_number, genesis_bootstrap_block_number, false)
+    }
+
+    pub const fn initial_for_block_with_ocomp(
+        block_number: u64,
+        genesis_bootstrap_block_number: u64,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
         if block_number > genesis_bootstrap_block_number
             && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
         {
@@ -406,6 +510,8 @@ impl SystemTxPhase {
                 tx_hash: B256::ZERO,
                 receipt_index: 0,
             }
+        } else if block_number > 0 && ocomp_lifecycle_active {
+            Self::OcompLifecycleBegin { body_index: 0 }
         } else {
             Self::CycleTick { body_index: 0 }
         }
@@ -417,6 +523,7 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
             Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
+            Self::OcompLifecycleBegin { .. } => Some(SystemTxKind::OcompLifecycleBegin),
             Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
             Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
@@ -432,6 +539,7 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { body_index, .. }
             | Self::LateFinalizeCredits { body_index }
+            | Self::OcompLifecycleBegin { body_index }
             | Self::CycleTick { body_index }
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
@@ -463,11 +571,31 @@ impl SystemTxPhase {
         has_boundary_outcome: bool,
         has_tee_bootstrap: bool,
     ) -> Self {
+        self.advance_after_commit_with_ocomp(has_boundary_outcome, has_tee_bootstrap, false)
+    }
+
+    pub const fn advance_after_commit_with_ocomp(
+        self,
+        has_boundary_outcome: bool,
+        has_tee_bootstrap: bool,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
         match self {
             Self::Phase1Preexecuted { body_index, .. } => Self::LateFinalizeCredits {
                 body_index: body_index + 1,
             },
-            Self::LateFinalizeCredits { body_index } => Self::CycleTick {
+            Self::LateFinalizeCredits { body_index } => {
+                if ocomp_lifecycle_active {
+                    Self::OcompLifecycleBegin {
+                        body_index: body_index + 1,
+                    }
+                } else {
+                    Self::CycleTick {
+                        body_index: body_index + 1,
+                    }
+                }
+            }
+            Self::OcompLifecycleBegin { body_index } => Self::CycleTick {
                 body_index: body_index + 1,
             },
             Self::CycleTick { body_index } => {
@@ -608,10 +736,11 @@ pub enum SystemTxError {
     #[error("too many system txs in block: {actual} > {max}")]
     TooManySystemTxs { actual: usize, max: u8 },
     #[error(
-        "active system tx set mismatch: expected {expected:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
+        "active system tx set mismatch: expected begin {expected_begin:?}, expected end {expected_end:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
     )]
     ActiveSystemTxSetMismatch {
-        expected: Vec<SystemTxKind>,
+        expected_begin: Vec<SystemTxKind>,
+        expected_end: Vec<SystemTxKind>,
         actual_begin: Vec<SystemTxKind>,
         actual_end: Vec<SystemTxKind>,
     },
@@ -654,11 +783,13 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
     match selector {
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR => Ok(SystemTxKind::CertifiedParentAccounting),
         LATE_FINALIZE_CREDITS_SELECTOR => Ok(SystemTxKind::LateFinalizeCredits),
+        OCOMP_LIFECYCLE_BEGIN_SELECTOR => Ok(SystemTxKind::OcompLifecycleBegin),
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
         HOOK_EVENTS_SELECTOR => Ok(SystemTxKind::HookEvents),
+        OCOMP_TERMINAL_REQUEST_SELECTOR => Ok(SystemTxKind::OcompTerminalRequest),
         other => Err(SystemTxError::UnknownSelector(other)),
     }
 }
@@ -990,6 +1121,9 @@ pub fn split_system_layout<'a>(
 
     while prefix_end < txs.len() && is_reserved_system_tx(&txs[prefix_end]) {
         let kind = decode_system_tx_kind(&txs[prefix_end])?;
+        if kind.body_zone() == BodyZone::EndBlock {
+            break;
+        }
         ensure_system_tx_in_zone(kind, BodyZone::BeginBlock)?;
         ensure_monotonic(BodyZone::BeginBlock, previous_begin, kind)?;
         previous_begin = Some(kind);
@@ -1035,18 +1169,39 @@ pub fn expected_begin_block_kinds(
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
 ) -> Vec<SystemTxKind> {
+    expected_begin_block_kinds_for_activation(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        OcompLifecycleActivation::Disabled,
+    )
+}
+
+pub fn expected_begin_block_kinds_for_activation(
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
+) -> Vec<SystemTxKind> {
     let mut expected = match block_number {
         0 => Vec::new(),
-        1 => vec![SystemTxKind::CycleTick],
-        _ => vec![
-            SystemTxKind::CertifiedParentAccounting,
-            // mandatory inclusion-window phase, ordered after Phase 1
-            // and before CycleTick for every block >= 2 (empty when nothing to
-            // credit; its body still drives the matured-window settlement).
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-        ],
+        1 => Vec::new(),
+        _ => {
+            vec![
+                SystemTxKind::CertifiedParentAccounting,
+                // mandatory inclusion-window phase, ordered after Phase 1
+                // and before CycleTick for every block >= 2 (empty when nothing to
+                // credit; its body still drives the matured-window settlement).
+                SystemTxKind::LateFinalizeCredits,
+            ]
+        }
     };
+    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
+        expected.push(SystemTxKind::OcompLifecycleBegin);
+    }
+    if block_number > 0 {
+        expected.push(SystemTxKind::CycleTick);
+    }
     if block_number > 0 && has_boundary_outcome {
         expected.push(SystemTxKind::BoundaryOutcome);
     }
@@ -1060,11 +1215,38 @@ pub fn expected_begin_block_kinds(
     expected
 }
 
+pub fn expected_end_block_kinds(
+    block_number: u64,
+    ocomp_activation: OcompLifecycleActivation,
+) -> Vec<SystemTxKind> {
+    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
+        vec![SystemTxKind::OcompTerminalRequest]
+    } else {
+        Vec::new()
+    }
+}
+
 pub fn validate_active_system_tx_set(
     layout: &SystemTxLayout<'_>,
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
+) -> Result<(), SystemTxError> {
+    validate_system_tx_set_for_activation(
+        layout,
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        OcompLifecycleActivation::Disabled,
+    )
+}
+
+pub fn validate_system_tx_set_for_activation(
+    layout: &SystemTxLayout<'_>,
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
 ) -> Result<(), SystemTxError> {
     let actual = layout.system_tx_count();
     if actual > usize::from(MAX_SYSTEM_TXS_PER_BLOCK) {
@@ -1082,13 +1264,19 @@ pub fn validate_active_system_tx_set(
         return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
     }
 
-    let expected =
-        expected_begin_block_kinds(block_number, has_boundary_outcome, has_tee_bootstrap);
+    let expected_begin = expected_begin_block_kinds_for_activation(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        ocomp_activation,
+    );
+    let expected_end = expected_end_block_kinds(block_number, ocomp_activation);
     let actual_begin = layout.begin_block_kinds()?;
     let actual_end = layout.end_block_kinds()?;
-    if actual_begin != expected || !actual_end.is_empty() {
+    if actual_begin != expected_begin || actual_end != expected_end {
         return Err(SystemTxError::ActiveSystemTxSetMismatch {
-            expected,
+            expected_begin,
+            expected_end,
             actual_begin,
             actual_end,
         });
@@ -1235,6 +1423,7 @@ mod tests {
             SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
                 artifact: LateFinalizeCreditsArtifact::default(),
             },
+            SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
             SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
             SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
                 artifact: sample_boundary(),
@@ -1244,6 +1433,7 @@ mod tests {
             },
             SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
             SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+            SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
         }
     }
 

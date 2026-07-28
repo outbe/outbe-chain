@@ -47,6 +47,12 @@ pub(crate) fn boot_localnet_with_opts(
     tuning: &[(&str, String)],
     opts: StartOpts,
 ) {
+    bootstrap_localnet(world, window, tuning);
+    start_bootstrapped_localnet(world, &opts);
+}
+
+/// Prepare one fresh scenario network without starting its node processes.
+pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
     let committee_size = world.validators.size();
     world.state.voting_window = window;
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
@@ -56,13 +62,42 @@ pub(crate) fn boot_localnet_with_opts(
         .localnet
         .bootstrap(committee_size, tuning)
         .expect("bootstrap localnet");
-    if let Some(offset) = opts.unix_time_offset_secs {
+}
+
+/// Materialize the checked-in canonical four-validator OCOMP `Final` fixture
+/// without regenerating committee, DKG or genesis identities.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn bootstrap_final_ocomp_localnet(world: &mut World, window: u64) {
+    assert_eq!(
+        world.validators.size(),
+        4,
+        "canonical OCOMP fixture requires four validators"
+    );
+    world.state.voting_window = window;
+    world
+        .localnet
+        .bootstrap_ocomp_final()
+        .expect("materialize canonical OCOMP Final fixture");
+    world.state.wwd = Some(
+        world
+            .localnet
+            .ocomp_final_worldwide_day()
+            .expect("read canonical OCOMP fixture WorldwideDay"),
+    );
+}
+
+/// Start and prove reachable a network prepared by [`bootstrap_localnet`].
+pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
+    if let Some(offset) = opts
+        .unix_time_offset_secs
+        .filter(|_| !opts.genesis_timestamp_pre_shifted)
+    {
         world
             .localnet
             .shift_genesis_timestamp(offset)
             .expect("shift debug genesis timestamp with node clock");
     }
-    world.localnet.start(&opts).expect("start localnet");
+    world.localnet.start(opts).expect("start localnet");
 
     if world.localnet.tee_enabled() {
         let bootstrap_wait_attempts = world.localnet.tee_bootstrap_wait_attempts();

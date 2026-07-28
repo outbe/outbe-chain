@@ -8,6 +8,7 @@ mod api;
 mod collection;
 mod commitment;
 mod errors;
+mod export_view;
 mod identity;
 mod lifecycle;
 mod persistence;
@@ -31,8 +32,8 @@ pub use api::{
     AuthenticatedParentTree, AuthenticatedParentTreeFactory, BodyInput, CeWorkCheckpoint,
     CeWorkConfig, EntityRef, ExecutionScope, ExplicitGasCheckpoint, ExplicitGasWindow,
     FinalLeafMutation, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceRef, PartitionRef,
-    QueryRef, RetirementOutcome, VerifiedBody, VerifiedBodyPage, VerifiedPayload,
-    MAX_ID_PAGE_LIMIT,
+    QueryRef, RetirementOutcome, SealedCollectionRoot, VerifiedBody, VerifiedBodyPage,
+    VerifiedPayload, MAX_ID_PAGE_LIMIT,
 };
 
 pub use collection::{
@@ -46,12 +47,14 @@ pub use commitment::{
     TAG_LEAF, TAG_SEALED_ROOT, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO, TAG_TOP_NODE,
 };
 pub use errors::ParentBodySourceError;
+pub use export_view::{AuthenticatedExportView, AuthenticatedTributePartition, ExportViewError};
 pub use identity::{EntityId36, EntityIdError};
 pub use lifecycle::{CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext, SealOutput};
 pub use persistence::{
-    classify_restart, ApplyOutcome, CeMdbx, CeRetentionCursor, DurableFinalizedCheckpoint,
-    EnvironmentIdentity, ExactParentIdentity, FinalizationStage, FinalizedMarker, PersistenceError,
-    RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH, LOCAL_STORAGE_SCHEMA_VERSION,
+    classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
+    DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,
+    FinalizedMarker, PersistenceError, RestartClassification, TreeNamespace, CE_SMT_RELATIVE_PATH,
+    LOCAL_STORAGE_SCHEMA_VERSION,
 };
 pub use proof::{
     verify_point_read_v1, AbsentEvidenceV1, CkbCompiledProofV1, PointProofCommonV1,
@@ -70,11 +73,15 @@ pub use replay::{
 };
 pub use sharding::{empty_shard_top_root, ShardingError, K_CANDIDATES};
 pub use staging::{
-    CandidateCache, CandidateCacheLimits, CollectionBatch, CollectionOperation,
-    ProvisionalCatalogBatch, ProvisionalShardBatch, ProvisionalShardSetBatch, ProvisionalTreeBatch,
-    PublicationOutcome, RetirementBatch, StagedTreeBatch, StagingError, TreeChange,
+    AuthenticatedCatalogView, CandidateCache, CandidateCacheLimits, CollectionBatch,
+    CollectionOperation, ProvisionalCatalogBatch, ProvisionalShardBatch, ProvisionalShardSetBatch,
+    ProvisionalTreeBatch, PublicationOutcome, RetirementBatch, StagedTreeBatch, StagingError,
+    TreeChange,
 };
-pub use tree_manager::{CompressedTreeService, FinalizedCandidateOutcome, TreeServiceError};
+pub use tree_manager::{
+    CompressedTreeService, ExportLeaseOffer, ExportLeaseOpenAck, ExportLeaseStatus,
+    FinalizedCandidateOutcome, TreeServiceError, DEFAULT_EXPORT_LEASE_OPEN_TIMEOUT,
+};
 pub use tree_service::MdbxAuthenticatedTree;
 
 #[cfg(test)]

@@ -11,6 +11,7 @@ use outbe_primitives::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
+    system_tx::OcompLifecycleActivation,
     OutbePrimitives,
 };
 use outbe_zerofee::{ZeroFeeHookId, ZeroFeeTransaction};
@@ -21,7 +22,7 @@ use reth_node_builder::{
     node::{FullNodeTypes, NodeTypes},
     BuilderContext,
 };
-use reth_storage_api::{StateProvider, StateProviderFactory};
+use reth_storage_api::{BlockNumReader, StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
     blobstore::DiskFileBlobStore,
     error::{InvalidPoolTransactionError, PoolTransactionError},
@@ -60,6 +61,7 @@ where
 fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
     match hook {
         ZeroFeeHookId::OracleSubmitVote => Some(1),
+        ZeroFeeHookId::OcompSubmitResultVote => Some(1),
     }
 }
 
@@ -121,7 +123,20 @@ where
 
 /// Builds the transaction pool used by Outbe nodes.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct OutbePoolBuilder;
+pub struct OutbePoolBuilder {
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+}
+
+impl OutbePoolBuilder {
+    #[must_use]
+    pub const fn with_ocomp_lifecycle_activation(
+        mut self,
+        activation: OcompLifecycleActivation,
+    ) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+}
 
 impl<Types, Node, Evm> PoolBuilder<Node, Evm> for OutbePoolBuilder
 where
@@ -170,7 +185,9 @@ where
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .disable_balance_check()
                 .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(OutbeTransactionValidator::new);
+                .map(|inner| {
+                    OutbeTransactionValidator::new(inner, self.ocomp_lifecycle_activation)
+                });
 
         if validator.validator().inner().eip4844() {
             let kzg_settings = validator.validator().inner().kzg_settings().clone();
@@ -273,11 +290,18 @@ where
 /// Transaction validator that keeps reth's Ethereum checks and adds Outbe policy.
 pub struct OutbeTransactionValidator<Client, Tx, Evm> {
     inner: EthTransactionValidator<Client, Tx, Evm>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
 }
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm> {
-    fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
-        Self { inner }
+    fn new(
+        inner: EthTransactionValidator<Client, Tx, Evm>,
+        ocomp_lifecycle_activation: OcompLifecycleActivation,
+    ) -> Self {
+        Self {
+            inner,
+            ocomp_lifecycle_activation,
+        }
     }
 
     fn inner(&self) -> &EthTransactionValidator<Client, Tx, Evm> {
@@ -292,6 +316,10 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OutbeTransactionValidator")
             .field("inner", &self.inner)
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
+            )
             .finish()
     }
 }
@@ -299,7 +327,7 @@ where
 impl<Client, Tx, Evm> TransactionValidator for OutbeTransactionValidator<Client, Tx, Evm>
 where
     EthTransactionValidator<Client, Tx, Evm>: TransactionValidator<Transaction = Tx>,
-    Client: StateProviderFactory,
+    Client: StateProviderFactory + BlockNumReader,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
 {
     type Transaction = Tx;
@@ -321,7 +349,7 @@ where
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm>
 where
-    Client: StateProviderFactory,
+    Client: StateProviderFactory + BlockNumReader,
     Tx: EthPoolTransaction + alloy_consensus::Transaction,
 {
     fn apply_outbe_policy(
@@ -566,7 +594,7 @@ impl PoolTransactionError for OutbeZeroFeePoolError {
 mod tests {
     use super::*;
     use alloy_consensus::{SignableTransaction as _, TxEip1559};
-    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
     use alloy_primitives::{Bytes, Signature, TxKind};
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
@@ -595,11 +623,12 @@ mod tests {
         .into_signed(Signature::test_signature())
         .into();
 
+        let encoded_length = tx.encode_2718_len();
         let recovered = tx
             .try_into_recovered()
             .expect("test transaction signer should recover");
 
-        EthPooledTransaction::new(recovered, 0)
+        EthPooledTransaction::new(recovered, encoded_length)
     }
 
     fn oracle_submit_vote_input() -> Bytes {

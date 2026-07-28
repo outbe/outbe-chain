@@ -218,7 +218,7 @@ impl NodContract<'_> {
         self.total_supply.write(supply)?;
         delete(self.storage_handle(), scope, current_item)?;
         if bucket.total_nods == 0 {
-            self.bucket_worldwide_day.clear(&item.bucket_key)?;
+            self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
             delete(self.storage_handle(), scope, current_bucket)
         } else {
             let canonical = crate::repository::canonical_bucket(&bucket);

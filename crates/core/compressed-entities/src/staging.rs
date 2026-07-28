@@ -903,6 +903,7 @@ pub trait FinalizedTreeSnapshot: Send {
     fn tree_root(&self, namespace: TreeNamespace) -> Result<Option<B256>, PersistenceError>;
     fn collection_has_records(&self, collection: CollectionKey) -> Result<bool, PersistenceError>;
     fn collection_root_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError>;
+    fn collection_leaf_count(&self, collection: CollectionKey) -> Result<usize, PersistenceError>;
     fn read_branch(
         &self,
         namespace: TreeNamespace,
@@ -963,6 +964,11 @@ impl AuthenticatedCatalogView {
         self.catalog_root
     }
 
+    #[must_use]
+    pub const fn identity(&self) -> ExactParentIdentity {
+        self.identity
+    }
+
     pub fn tree_root(&self, namespace: TreeNamespace) -> Result<Option<B256>, StagingError> {
         self.snapshot
             .lock()
@@ -984,6 +990,17 @@ impl AuthenticatedCatalogView {
             .lock()
             .map_err(|_| StagingError::SnapshotLockPoisoned)?
             .collection_root_count(collection)
+            .map_err(Into::into)
+    }
+
+    /// Full-folds the persisted non-zero leaves for one collection inside this
+    /// exact immutable snapshot. The count is authoritative CE materialization,
+    /// never a Mongo/body-store count.
+    pub fn collection_leaf_count(&self, collection: CollectionKey) -> Result<usize, StagingError> {
+        self.snapshot
+            .lock()
+            .map_err(|_| StagingError::SnapshotLockPoisoned)?
+            .collection_leaf_count(collection)
             .map_err(Into::into)
     }
 
@@ -1379,6 +1396,13 @@ mod tests {
         }
 
         fn collection_root_count(
+            &self,
+            _collection: CollectionKey,
+        ) -> Result<usize, PersistenceError> {
+            Ok(0)
+        }
+
+        fn collection_leaf_count(
             &self,
             _collection: CollectionKey,
         ) -> Result<usize, PersistenceError> {

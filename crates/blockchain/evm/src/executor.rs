@@ -5,12 +5,15 @@
 
 use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
+use alloy_eips::eip7685::Requests;
 use alloy_evm::{
     block::{
+        state_changes::{balance_increment_state, post_block_balance_increments},
         BlockExecutionError, BlockExecutor, BlockValidationError, CommitChanges, ExecutableTx,
-        GasOutput, InternalBlockExecutionError, OnStateHook, StateDB,
+        GasOutput, InternalBlockExecutionError, OnStateHook, StateChangePostBlockSource,
+        StateChangeSource, StateDB,
     },
-    eth::{EthBlockExecutor, EthTxResult},
+    eth::{dao_fork, eip6110, EthBlockExecutor, EthTxResult},
     revm::context::Block as _,
     Database, RecoveredTx,
 };
@@ -48,11 +51,13 @@ use crate::{
     signer::SharedOutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-        expected_begin_block_kinds, is_reserved_system_tx, validate_phase1_witness_against,
-        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        expected_begin_block_kinds_for_activation, is_reserved_system_tx,
+        validate_phase1_witness_against, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
+        SystemTxVisibleGasPlan,
     },
 };
-use reth_ethereum::chainspec::ChainSpec;
+use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
+use revm::database::DatabaseCommitExt;
 
 type ExpectedSystemTransaction = (
     usize,
@@ -380,6 +385,11 @@ pub(crate) fn validate_finalized_metadata(
 pub struct AccountedParentArtifact {
     pub summary: ExecutionSummaryArtifact,
     pub timestamp: u64,
+    /// State root committed by the same exact parent header.
+    ///
+    /// Legacy/test bridge entries may omit it. An OCOMP finality transition
+    /// requires this value and fails closed when it is unavailable.
+    pub state_root: Option<B256>,
 }
 
 /// exact-hash-first lookup of an accounted-parent's
@@ -813,6 +823,10 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     validate_execution_summary: bool,
     /// Hash of the block being validated, when execution is for an existing block.
     block_hash: Option<B256>,
+    /// State root committed by the block being validated. It is cached with the
+    /// execution summary so the immediate child can bind OCOMP finality even
+    /// during the Reth in-memory-tree/provider visibility window.
+    block_state_root: Option<B256>,
     /// Hash of this block's parent header.
     parent_hash: B256,
     /// Priority/coinbase fees collected by user transactions in this block.
@@ -824,8 +838,13 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
     expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
-    #[allow(dead_code)]
     expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
+    ocomp_lifecycle_active: bool,
+    ocomp_terminal_request_consumed: bool,
+    /// Standard Ethereum post-execution output captured before CE seal and
+    /// OSR2. Active OCOMP blocks must not call the inner executor's `finish`
+    /// afterward because that would create semantic writes after OSR2.
+    ethereum_post_execution_requests: Option<Requests>,
     system_layout_error: Option<String>,
     parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
     proposer_evm_address: Option<Address>,
@@ -931,12 +950,16 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             accounted_parent_artifact_provider,
             validate_execution_summary,
             block_hash,
+            block_state_root: None,
             parent_hash,
             current_block_validator_fees: U256::ZERO,
             system_tx_execution_gas: 0,
             evm_signer,
             expected_begin_system_txs,
             expected_end_system_txs,
+            ocomp_lifecycle_active: false,
+            ocomp_terminal_request_consumed: false,
+            ethereum_post_execution_requests: None,
             system_layout_error,
             parent_consensus_metadata,
             proposer_evm_address,
@@ -966,6 +989,16 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
 
     pub(crate) fn with_compressed_entities_scope(mut self, scope: Arc<ExecutionScope>) -> Self {
         self.compressed_entities_scope = scope;
+        self
+    }
+
+    pub(crate) fn with_block_state_root(mut self, state_root: Option<B256>) -> Self {
+        self.block_state_root = state_root;
+        self
+    }
+
+    pub(crate) fn with_ocomp_lifecycle_active(mut self, active: bool) -> Self {
+        self.ocomp_lifecycle_active = active;
         self
     }
 
@@ -1400,6 +1433,232 @@ where
         Ok(())
     }
 
+    /// Runs the standard Ethereum post-execution phase before the OCOMP
+    /// terminal boundary.
+    ///
+    /// This intentionally mirrors [`EthBlockExecutor::finish`]'s semantic
+    /// writes. The active OCOMP lifecycle requires a stricter order than the
+    /// upstream executor exposes:
+    ///
+    /// `Ethereum post-execution -> CE seal -> OSR2 -> read-only finish`.
+    ///
+    /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
+    /// which assembles the result without invoking the upstream phase again.
+    fn apply_ethereum_post_execution_before_ocomp_terminal(
+        &mut self,
+    ) -> Result<(), BlockExecutionError> {
+        if self.ethereum_post_execution_requests.is_some() {
+            return Err(BlockExecutionError::msg(
+                "standard Ethereum post-execution changes already applied",
+            ));
+        }
+
+        let requests = if self
+            .inner
+            .spec
+            .is_prague_active_at_timestamp(self.inner.evm.block().timestamp().saturating_to())
+        {
+            let deposit_requests =
+                eip6110::parse_deposits_from_receipts(self.inner.spec, &self.inner.receipts)?;
+            let mut requests = Requests::default();
+            if !deposit_requests.is_empty() {
+                requests.push_request_with_type(eip6110::DEPOSIT_REQUEST_TYPE, deposit_requests);
+            }
+            self.inner
+                .system_caller
+                .append_post_execution_changes(&mut self.inner.evm, &mut requests)?;
+            requests
+        } else {
+            Requests::default()
+        };
+
+        let mut balance_increments = post_block_balance_increments(
+            self.inner.spec,
+            self.inner.evm.block(),
+            self.inner.ctx.ommers,
+            self.inner.ctx.withdrawals.as_deref(),
+        );
+
+        if self
+            .inner
+            .spec
+            .ethereum_fork_activation(EthereumHardfork::Dao)
+            .transitions_at_block(self.inner.evm.block().number().saturating_to())
+        {
+            let drained_balance: u128 = self
+                .inner
+                .evm
+                .db_mut()
+                .drain_balances(dao_fork::DAO_HARDFORK_ACCOUNTS)
+                .map_err(|_| BlockValidationError::IncrementBalanceFailed)?
+                .into_iter()
+                .sum();
+            *balance_increments
+                .entry(dao_fork::DAO_HARDFORK_BENEFICIARY)
+                .or_default() += drained_balance;
+        }
+
+        self.inner
+            .evm
+            .db_mut()
+            .increment_balances(balance_increments.clone())
+            .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
+
+        self.inner.system_caller.try_on_state_with(|| {
+            balance_increment_state(&balance_increments, self.inner.evm.db_mut()).map(|state| {
+                (
+                    StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
+                    std::borrow::Cow::Owned(state),
+                )
+            })
+        })?;
+
+        self.ethereum_post_execution_requests = Some(requests);
+        Ok(())
+    }
+
+    fn execute_ocomp_terminal_request<R>(
+        &mut self,
+        recovered: R,
+        commit: impl FnOnce(&EthTxResult<E::HaltReason, alloy_consensus::TxType>) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError>
+    where
+        R: RecoveredTx<TransactionSigned>,
+    {
+        if !self.ocomp_lifecycle_active {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request is not active for this block",
+            ));
+        }
+        if self.system_tx_phase_cursor != crate::system_tx::SystemTxPhase::UserTxs {
+            return Err(BlockExecutionError::msg(
+                "OCOMP terminal request arrived before the begin zone completed",
+            ));
+        }
+        if self.expected_end_system_txs.len() > 1 {
+            return Err(BlockExecutionError::msg(
+                "OCOMP lifecycle permits exactly one end-zone system transaction",
+            ));
+        }
+
+        let tx = recovered.tx();
+        if let Some(expected) = self.expected_end_system_txs.first() {
+            if expected.tx().tx_hash() != tx.tx_hash() {
+                return Err(BlockExecutionError::msg(
+                    "terminal system transaction differs from the validated block suffix",
+                ));
+            }
+        }
+        let input = SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| {
+            BlockExecutionError::msg(format!("decode terminal system tx input: {error}"))
+        })?;
+        if input != SystemTxInputV2::OcompTerminalRequest {
+            return Err(BlockExecutionError::msg(
+                "end-zone system transaction is not OcompTerminalRequest",
+            ));
+        }
+
+        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+        let begin_count = self
+            .begin_block_system_tx_inputs(block_number, &block_artifacts)?
+            .len();
+        let ordinal = begin_count.try_into().map_err(|_| {
+            BlockExecutionError::msg(format!(
+                "terminal system tx ordinal {begin_count} exceeds u8 range"
+            ))
+        })?;
+        let unsigned = build_unsigned_system_tx(
+            SystemTxKind::OcompTerminalRequest,
+            ordinal,
+            block_number,
+            self.inner.evm.chain_id(),
+            tx.input().clone(),
+        )
+        .map_err(|error| {
+            BlockExecutionError::msg(format!("build expected terminal system tx: {error}"))
+        })?;
+        if tx.signature_hash() != unsigned.signature_hash() {
+            return Err(BlockExecutionError::msg(
+                "terminal system tx signature hash mismatch",
+            ));
+        }
+        let proposer = self
+            .begin_zone_proposer(block_number)?
+            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+        let signer = *recovered.signer();
+        if signer != proposer {
+            return Err(BlockExecutionError::msg(format!(
+                "terminal system tx signer mismatch: expected proposer {proposer}, got {signer}"
+            )));
+        }
+
+        let tx_type = tx.tx_type();
+        let signed_gas_limit = tx.gas_limit();
+        let intrinsic_gas = crate::system_tx::system_tx_intrinsic_gas(tx.input().as_ref())
+            .map_err(|error| {
+                BlockExecutionError::msg(format!("terminal system tx intrinsic gas: {error}"))
+            })?;
+
+        // This is the ordering boundary: all ordinary transactions and
+        // standard Ethereum post-execution changes have finished, the final
+        // CE root is committed, and only then may the terminal request handler
+        // inspect sealed state. No semantic writer may follow OSR2.
+        self.apply_ethereum_post_execution_before_ocomp_terminal()?;
+        self.finalize_compressed_entities()?;
+
+        let phase_context = PreloadedSystemTxContext {
+            proposer,
+            finalized_summary: None,
+            allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
+            canonical_vrf_proof_hash: B256::ZERO,
+        };
+        let result = with_preloaded_system_tx_context(phase_context, || {
+            self.inner.evm.transact_system_call(
+                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                tx.input().clone(),
+            )
+        })
+        .map_err(|error| {
+            BlockExecutionError::msg(format!(
+                "terminal system tx execution failed at block {block_number}: {error}"
+            ))
+        })?;
+        if !result.result.is_success() {
+            return Err(BlockExecutionError::msg(format!(
+                "critical terminal system tx did not succeed at block {block_number}: {:?}",
+                result.result
+            )));
+        }
+
+        let output = EthTxResult {
+            result,
+            blob_gas_used: 0,
+            tx_type,
+        };
+        if !commit(&output).should_commit() {
+            return Err(BlockExecutionError::msg(
+                "terminal system transaction cannot execute without commit",
+            ));
+        }
+        let gas = self.commit_system_transaction(output, intrinsic_gas, 0, signed_gas_limit)?;
+        self.ocomp_terminal_request_consumed = true;
+        let execution_origin = if self.block_hash.is_some() {
+            "canonical"
+        } else {
+            "proposal"
+        };
+        tracing::info!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=terminal_request_committed origin={execution_origin} \
+             block={block_number} tx={:#x}",
+            tx.tx_hash()
+        );
+        Ok(Some(gas))
+    }
+
     /// Commits an Outbe begin-zone system transaction with separate internal
     /// and visible gas accounting.
     ///
@@ -1823,6 +2082,24 @@ where
             ordinal += 1;
         }
 
+        if self.ocomp_lifecycle_active {
+            let input = if verifier_mode {
+                self.expected_begin_input(ordinal)?
+            } else {
+                SystemTxInputV2::OcompLifecycleBegin
+            };
+            if !matches!(input, SystemTxInputV2::OcompLifecycleBegin) {
+                return Err(BlockExecutionError::Internal(
+                    InternalBlockExecutionError::Other(
+                        format!("expected OcompLifecycleBegin system tx at ordinal {ordinal}")
+                            .into(),
+                    ),
+                ));
+            }
+            system_txs.push((SystemTxKind::OcompLifecycleBegin, input, None));
+            ordinal += 1;
+        }
+
         if block_number >= 1 {
             let input = if verifier_mode {
                 self.expected_begin_input(ordinal)?
@@ -1955,7 +2232,7 @@ where
         BlockExecutionError,
     > {
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let gas_inputs = system_txs
+        let mut gas_inputs = system_txs
             .iter()
             .map(|(kind, input, _)| {
                 input
@@ -1968,6 +2245,17 @@ where
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        if self.ocomp_lifecycle_active {
+            let terminal = SystemTxInputV2::OcompTerminalRequest;
+            gas_inputs.push((
+                terminal.kind(),
+                terminal.encode().map_err(|error| {
+                    BlockExecutionError::Internal(InternalBlockExecutionError::Other(
+                        format!("encode terminal system tx for visible gas plan: {error}").into(),
+                    ))
+                })?,
+            ));
+        }
         let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
             .map_err(|error| {
                 BlockExecutionError::Internal(InternalBlockExecutionError::Other(
@@ -1995,10 +2283,16 @@ where
                 Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
             );
             let has_tee_bootstrap = self.block_has_tee_bootstrap();
-            let expected = expected_begin_block_kinds(
+            let ocomp_activation = if self.ocomp_lifecycle_active {
+                OcompLifecycleActivation::at_block(0)
+            } else {
+                OcompLifecycleActivation::Disabled
+            };
+            let expected = expected_begin_block_kinds_for_activation(
                 block_number,
                 has_boundary_outcome,
                 has_tee_bootstrap,
+                ocomp_activation,
             );
             BlockExecutionError::Internal(InternalBlockExecutionError::Other(
                 format!(
@@ -2598,9 +2892,10 @@ where
         // a zero placeholder tx_hash that the Phase 1 preflight (Batch 3)
         // overwrites once `verify_v2_proof` returns Ok and the system tx
         // is committed in pre-execution.
-        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
+        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block_with_ocomp(
             block_number,
             crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
+            self.ocomp_lifecycle_active,
         );
         if block_number > 0 && beneficiary != outbe_primitives::addresses::REWARDS_ADDRESS {
             return Err(BlockExecutionError::Internal(
@@ -2676,17 +2971,13 @@ where
             }
         }
 
-        // Local pending-block RPC construction is outside a sealed/proposed
-        // block lifecycle. Keep standard Ethereum pre-execution and marker
-        // preservation above, but do not open the compressed-entity overlay.
-        if !self.execute_outbe_block_hooks {
-            return Ok(());
-        }
-
-        // 3. Open the block-scoped compressed-body overlay before any system
-        // or user transaction can perform a body read or mutation. The scope
-        // is the exact Arc already captured by top-level and nested precompile
-        // dispatch, so end-block permanently closes every execution seam.
+        // 3. Open the block-scoped compressed-body overlay before any user or
+        // system transaction can perform a body read or mutation. This also
+        // applies to Reth's local pending-block construction: it executes
+        // txpool transactions against an isolated State and therefore needs a
+        // complete CE begin/end lifecycle even though consensus-only Outbe
+        // hooks remain disabled. The provisional tree batch is not published
+        // without a final block hash.
         {
             let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
             let chain_id = self.inner.evm.chain_id();
@@ -2723,7 +3014,15 @@ where
             self.compressed_entities_started = true;
         }
 
-        // 3. Extract block context before taking a mutable DB borrow.
+        // Pending-block RPC has no proposer certificate or consensus system
+        // transactions. Its isolated CE scope is active now, so user
+        // transactions can be simulated faithfully; skip only the
+        // consensus-specific hooks below.
+        if !self.execute_outbe_block_hooks {
+            return Ok(());
+        }
+
+        // 4. Extract block context before taking a mutable DB borrow.
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
@@ -2857,6 +3156,20 @@ where
         tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let (mut tx_env, recovered) = tx.into_parts();
+        if self.ocomp_terminal_request_consumed {
+            return Err(BlockExecutionError::msg(
+                "transaction follows the terminal OCOMP system transaction",
+            ));
+        }
+        let is_ocomp_terminal_request = is_reserved_system_tx(recovered.tx())
+            && matches!(
+                SystemTxInputV2::decode(recovered.tx().input().as_ref()),
+                Ok(SystemTxInputV2::OcompTerminalRequest)
+            );
+        if is_ocomp_terminal_request {
+            return self.execute_ocomp_terminal_request(recovered, f);
+        }
         let ce_scope = self.compressed_entities_scope.clone();
         let ce_checkpoint = ce_scope
             .ce_work_checkpoint()
@@ -2865,7 +3178,6 @@ where
             .begin_ce_work_transaction()
             .map_err(BlockExecutionError::other)?;
         let outcome = (|| {
-            let (mut tx_env, recovered) = tx.into_parts();
             let tx = recovered.tx();
             let signer = *recovered.signer();
 
@@ -2903,9 +3215,12 @@ where
                             Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
                         );
                         let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                        self.system_tx_phase_cursor = self
-                            .system_tx_phase_cursor
-                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                        self.system_tx_phase_cursor =
+                            self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                                has_boundary_outcome,
+                                has_tee_bootstrap,
+                                self.ocomp_lifecycle_active,
+                            );
                         // Ok(None) signals "no further commit" — pre-exec already
                         // pushed receipt[0] and committed state. The block builder
                         // still keeps this validated witness in body[0].
@@ -3011,9 +3326,12 @@ where
                         .push_hook_events_receipt(tx.tx_type(), logs, intrinsic_gas)
                         .map(Some);
                     if commit_outcome.is_ok() {
-                        self.system_tx_phase_cursor = self
-                            .system_tx_phase_cursor
-                            .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                        self.system_tx_phase_cursor =
+                            self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                                has_boundary_outcome,
+                                has_tee_bootstrap,
+                                self.ocomp_lifecycle_active,
+                            );
                     }
                     return commit_outcome;
                 }
@@ -3162,9 +3480,12 @@ where
                             signed_gas_limit: visible_gas_limit,
                             internal_gas_used: result.result.tx_gas_used(),
                         })?;
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    self.system_tx_phase_cursor =
+                        self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                            has_boundary_outcome,
+                            has_tee_bootstrap,
+                            self.ocomp_lifecycle_active,
+                        );
                     return Ok(Some(gas_output));
                 }
 
@@ -3187,9 +3508,12 @@ where
                     )
                     .map(Some);
                 if commit_outcome.is_ok() {
-                    self.system_tx_phase_cursor = self
-                        .system_tx_phase_cursor
-                        .advance_after_commit(has_boundary_outcome, has_tee_bootstrap);
+                    self.system_tx_phase_cursor =
+                        self.system_tx_phase_cursor.advance_after_commit_with_ocomp(
+                            has_boundary_outcome,
+                            has_tee_bootstrap,
+                            self.ocomp_lifecycle_active,
+                        );
                 }
                 return commit_outcome;
             }
@@ -3542,7 +3866,15 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
-        self.finalize_compressed_entities()?;
+        if self.ocomp_lifecycle_active {
+            if !self.ocomp_terminal_request_consumed {
+                return Err(BlockExecutionError::msg(
+                    "active OCOMP block is missing its terminal system transaction",
+                ));
+            }
+        } else {
+            self.finalize_compressed_entities()?;
+        }
         let current_summary = self.current_execution_summary();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let block_timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
@@ -3567,13 +3899,37 @@ where
             current_summary,
         )?;
 
-        // proposer recording, finalized-parent settlement,
-        // slashing, Cycle, and BoundaryOutcome now execute as receipt-visible
-        // begin-zone system transactions in the normal tx loop. `finish` only
-        // validates header artifacts, finalizes the wrapped Ethereum executor,
-        // and records the committed execution summary.
-
-        let (evm, result) = self.inner.finish()?;
+        // Proposer recording, finalized-parent settlement, slashing, Cycle,
+        // and BoundaryOutcome execute as receipt-visible begin-zone system
+        // transactions in the normal tx loop. In an active OCOMP block,
+        // standard Ethereum post-execution already ran before CE seal and
+        // OSR2, so `finish` must be read-only with respect to state. Calling
+        // `EthBlockExecutor::finish` here would repeat that phase after the
+        // terminal transaction and violate the last-writer invariant.
+        let (evm, result) = if self.ocomp_lifecycle_active {
+            let requests = self
+                .ethereum_post_execution_requests
+                .take()
+                .ok_or_else(|| {
+                    BlockExecutionError::msg(
+                        "active OCOMP block is missing standard Ethereum post-execution output",
+                    )
+                })?;
+            let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
+                self.inner.max_block_gas_used()
+            } else {
+                self.inner.cumulative_tx_gas_used
+            };
+            let result = BlockExecutionResult {
+                receipts: std::mem::take(&mut self.inner.receipts),
+                requests,
+                gas_used,
+                blob_gas_used: self.inner.blob_gas_used,
+            };
+            (self.inner.evm, result)
+        } else {
+            self.inner.finish()?
+        };
         // Validator/import execution ends before Reth validates receipt and
         // state roots, so it must not publish speculative CE state here. The
         // proposer publishes only after block assembly supplies the final hash;
@@ -3584,7 +3940,17 @@ where
             self.block_hash,
             block_artifacts.execution_summary,
         ) {
-            bridge.record_execution_summary(block_number, block_hash, summary, block_timestamp);
+            if let Some(state_root) = self.block_state_root {
+                bridge.record_execution_summary_with_state_root(
+                    block_number,
+                    block_hash,
+                    summary,
+                    block_timestamp,
+                    state_root,
+                );
+            } else {
+                bridge.record_execution_summary(block_number, block_hash, summary, block_timestamp);
+            }
         }
 
         Ok((evm, result))
@@ -3613,7 +3979,9 @@ mod tests {
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
     };
-    use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
+    use alloy_primitives::{
+        address, keccak256, Address, Bytes, Log, Signature, TxKind, B256, U256,
+    };
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
@@ -3644,9 +4012,9 @@ mod tests {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
     use outbe_primitives::OutbeHeader;
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
-    use reth_ethereum::chainspec::ChainSpec;
-    use reth_ethereum::chainspec::MAINNET;
+    use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_ethereum::evm::revm::db::State;
+    use reth_ethereum::{evm::RethReceiptBuilder, Receipt};
     use reth_evm::{block::BlockExecutor, execute::ProviderError, ConfigureEvm, EvmEnv};
     use reth_primitives_traits::SignedTransaction as _;
     use revm::{
@@ -3668,12 +4036,23 @@ mod tests {
         signer::OutbeEvmSigner,
         system_tx::{
             build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit,
-            system_tx_intrinsic_gas, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+            system_tx_intrinsic_gas, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind,
+            SystemTxVisibleGasPlan,
         },
     };
 
     const CHAIN_ID: u64 = 1;
     const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+    alloy_sol_types::sol! {
+        event DepositEvent(
+            bytes pubkey,
+            bytes withdrawal_credentials,
+            bytes amount,
+            bytes signature,
+            bytes index
+        );
+    }
 
     fn seed_compressed_entities_genesis(storage: StorageHandle<'_>) {
         let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
@@ -4114,6 +4493,7 @@ mod tests {
             },
             timestamp_millis_part: 0,
             block_hash: None,
+            block_state_root: None,
             expected_begin_system_txs: Vec::new(),
             expected_end_system_txs: Vec::new(),
             system_layout_error: None,
@@ -4561,11 +4941,12 @@ mod tests {
     }
 
     #[test]
-    fn pending_rpc_context_skips_outbe_hooks_without_proposer_or_parent_cert() {
-        let mut state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-            .with_bundle_update()
-            .build();
+    fn pending_rpc_context_opens_ce_scope_but_skips_consensus_hooks() {
+        let user_tx = test_regular_tx()
+            .try_into_recovered()
+            .expect("regular tx signer should recover");
+        let mut state =
+            state_with_active_proposer_and_funded_account(REWARDS_ADDRESS, user_tx.signer());
         let evm_env = test_evm_env(2, REWARDS_ADDRESS);
         let config = OutbeEvmConfig::new(test_chain_spec());
         let evm = config.evm_with_env(&mut state, evm_env);
@@ -4577,6 +4958,16 @@ mod tests {
             .apply_pre_execution_changes()
             .expect("pending RPC env should skip consensus-only Outbe hooks");
         assert!(executor.receipts().is_empty());
+        drop(
+            executor
+                .compressed_entities_scope
+                .begin_explicit_gas_window(0)
+                .expect("pending RPC env must open the CE lifecycle"),
+        );
+        executor
+            .execute_transaction(user_tx)
+            .expect("pending RPC env must execute txpool transactions inside a CE scope");
+        assert_eq!(executor.receipts().len(), 1);
     }
 
     #[test]
@@ -4804,6 +5195,470 @@ mod tests {
             visible_system_gas + user_gas.tx_gas_used(),
             "block header gas_used must include visible system envelope gas"
         );
+    }
+
+    #[test]
+    fn ethereum_post_execution_copy_matches_upstream_behavior_matrix() {
+        use alloy_eips::{
+            eip4895::Withdrawal,
+            eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
+        };
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        const DAO_BALANCE: u128 = 37;
+        const WITHDRAWAL_AMOUNT_GWEI: u64 = 2;
+        const CUMULATIVE_TX_GAS: u64 = 11;
+        const REGULAR_GAS: u64 = 17;
+        const STATE_GAS: u64 = 23;
+
+        struct Case {
+            name: &'static str,
+            chain_spec: Arc<ChainSpec<OutbeHeader>>,
+            spec_id: SpecId,
+            include_deposit: bool,
+            expected_gas_used: u64,
+        }
+
+        fn fixture_receipt(include_deposit: bool) -> Receipt {
+            let logs = if include_deposit {
+                let event = DepositEvent {
+                    pubkey: Bytes::from(vec![0x11; 48]),
+                    withdrawal_credentials: Bytes::from(vec![0x22; 32]),
+                    amount: Bytes::from(vec![0x33; 8]),
+                    signature: Bytes::from(vec![0x44; 96]),
+                    index: Bytes::from(vec![0x55; 8]),
+                };
+                vec![Log {
+                    address: MAINNET_DEPOSIT_CONTRACT_ADDRESS,
+                    data: event.encode_log_data(),
+                }]
+            } else {
+                Vec::new()
+            };
+            Receipt {
+                tx_type: reth_ethereum::TxType::Legacy,
+                success: true,
+                cumulative_gas_used: CUMULATIVE_TX_GAS,
+                logs,
+            }
+        }
+
+        fn fixture_state() -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+            let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            database.insert_account_info(
+                alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                AccountInfo {
+                    balance: U256::from(DAO_BALANCE),
+                    ..Default::default()
+                },
+            );
+            State::builder()
+                .with_database(database)
+                .with_bundle_update()
+                .build()
+        }
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        fn balance(
+            state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+            address: Address,
+        ) -> U256 {
+            state
+                .basic(address)
+                .expect("post-execution balance is readable")
+                .map_or(U256::ZERO, |account| account.balance)
+        }
+
+        let chain_spec = |activate: fn(ChainSpecBuilder) -> ChainSpecBuilder| {
+            Arc::new(
+                activate(ChainSpecBuilder::from(&*MAINNET))
+                    .build()
+                    .map_header(OutbeHeader::new),
+            )
+        };
+        let cases = [
+            Case {
+                name: "shanghai-withdrawals-and-dao",
+                chain_spec: chain_spec(ChainSpecBuilder::shanghai_activated),
+                spec_id: SpecId::SHANGHAI,
+                include_deposit: false,
+                expected_gas_used: CUMULATIVE_TX_GAS,
+            },
+            Case {
+                name: "prague-deposit-and-system-requests",
+                chain_spec: chain_spec(ChainSpecBuilder::prague_activated),
+                spec_id: SpecId::PRAGUE,
+                include_deposit: true,
+                expected_gas_used: CUMULATIVE_TX_GAS,
+            },
+            Case {
+                name: "amsterdam-state-gas",
+                chain_spec: chain_spec(ChainSpecBuilder::amsterdam_activated),
+                spec_id: SpecId::AMSTERDAM,
+                include_deposit: false,
+                expected_gas_used: STATE_GAS,
+            },
+        ];
+
+        for case in cases {
+            let run = |copy: bool| {
+                let mut state = fixture_state();
+                let config = OutbeEvmConfig::new(case.chain_spec.clone())
+                    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0));
+                let evm_env = EvmEnv {
+                    cfg_env: CfgEnv::new()
+                        .with_chain_id(case.chain_spec.chain().id())
+                        .with_spec_and_mainnet_gas_params(case.spec_id),
+                    block_env: BlockEnv {
+                        number: U256::ZERO,
+                        gas_limit: 30_000_000,
+                        beneficiary: REWARDS_ADDRESS,
+                        timestamp: U256::ZERO,
+                        ..Default::default()
+                    },
+                };
+                let evm = config.evm_with_env(&mut state, evm_env);
+                let mut ctx = execution_ctx(Some(1), Bytes::new());
+                ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Withdrawal {
+                    index: 0,
+                    validator_index: 0,
+                    address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                    amount: WITHDRAWAL_AMOUNT_GWEI,
+                }]));
+
+                let result = if copy {
+                    let mut executor = config.create_executor(evm, ctx);
+                    executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
+                    executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
+                    executor.inner.block_regular_gas_used = REGULAR_GAS;
+                    executor.inner.block_state_gas_used = STATE_GAS;
+                    executor.inner.blob_gas_used = 5;
+                    executor.ocomp_lifecycle_active = true;
+                    executor.ocomp_terminal_request_consumed = true;
+                    executor.validate_execution_summary = false;
+                    executor
+                        .apply_ethereum_post_execution_before_ocomp_terminal()
+                        .expect("copied post-execution phase succeeds");
+                    let (evm, result) = executor.finish().expect("copied result assembly succeeds");
+                    drop(evm);
+                    result
+                } else {
+                    let receipt_builder = RethReceiptBuilder::default();
+                    let mut executor =
+                        EthBlockExecutor::new(evm, ctx.inner, &case.chain_spec, &receipt_builder);
+                    executor.receipts = vec![fixture_receipt(case.include_deposit)];
+                    executor.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
+                    executor.block_regular_gas_used = REGULAR_GAS;
+                    executor.block_state_gas_used = STATE_GAS;
+                    executor.blob_gas_used = 5;
+                    let (evm, result) = executor.finish().expect("upstream finish succeeds");
+                    drop(evm);
+                    result
+                };
+
+                let root = post_state_root(&state.bundle_state);
+                let dao_source_balance = balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                );
+                let dao_beneficiary_balance = balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY,
+                );
+                let withdrawal_balance = balance(
+                    &mut state,
+                    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                );
+                (
+                    result,
+                    root,
+                    dao_source_balance,
+                    dao_beneficiary_balance,
+                    withdrawal_balance,
+                )
+            };
+
+            let copied = run(true);
+            let upstream = run(false);
+            assert_eq!(
+                copied, upstream,
+                "{}: copied phase must remain byte/state equivalent to EthBlockExecutor::finish",
+                case.name
+            );
+            assert_eq!(copied.0.gas_used, case.expected_gas_used, "{}", case.name);
+            assert_eq!(copied.2, U256::ZERO, "{}: DAO source drains", case.name);
+            assert_eq!(
+                copied.3,
+                U256::from(DAO_BALANCE),
+                "{}: DAO beneficiary receives the drained balance",
+                case.name
+            );
+            assert_eq!(
+                copied.4,
+                U256::from(WITHDRAWAL_AMOUNT_GWEI) * U256::from(1_000_000_000u64),
+                "{}: withdrawal balance increment executes",
+                case.name
+            );
+            assert_eq!(
+                copied
+                    .0
+                    .requests
+                    .iter()
+                    .any(|request| request.first() == Some(&DEPOSIT_REQUEST_TYPE)),
+                case.include_deposit,
+                "{}: Prague deposit request branch is observable",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn active_terminal_request_is_last_semantic_writer_and_rejects_later_transactions() {
+        use alloy_evm::block::{StateChangePostBlockSource, StateChangeSource};
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum ObservedWrite {
+            EthereumPostBlock,
+            CompressedEntitiesSeal,
+            Transaction(usize),
+        }
+
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_proposer(proposer);
+        let chain_spec = test_chain_spec();
+        let config = OutbeEvmConfig::new_with_runtime_body_readers(
+            chain_spec,
+            RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+        )
+        .with_evm_signer(signer)
+        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut ctx = execution_ctx(Some(5), Bytes::new());
+        ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![
+            alloy_eips::eip4895::Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                amount: 1,
+            },
+        ]));
+        let mut executor = config.create_executor(evm, ctx);
+
+        let observed_writes = Arc::new(Mutex::new(Vec::new()));
+        let hook_writes = observed_writes.clone();
+        executor.set_state_hook(Some(Box::new(
+            move |source, _changes: &revm::state::EvmState| {
+                let observed = match source {
+                    StateChangeSource::PostBlock(StateChangePostBlockSource::Other(
+                        "compressed_entities_end_block",
+                    )) => Some(ObservedWrite::CompressedEntitiesSeal),
+                    StateChangeSource::PostBlock(_) => Some(ObservedWrite::EthereumPostBlock),
+                    StateChangeSource::Transaction(index) => {
+                        Some(ObservedWrite::Transaction(index))
+                    }
+                    StateChangeSource::PreBlock(_) => None,
+                };
+                if let Some(observed) = observed {
+                    hook_writes.lock().unwrap().push(observed);
+                }
+            },
+        )));
+
+        executor
+            .apply_pre_execution_changes()
+            .expect("active block pre-execution succeeds");
+        let begin =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        assert_eq!(
+            begin
+                .iter()
+                .map(|tx| SystemTxInputV2::decode(tx.tx().input().as_ref())
+                    .unwrap()
+                    .kind())
+                .collect::<Vec<_>>(),
+            vec![
+                SystemTxKind::OcompLifecycleBegin,
+                SystemTxKind::CycleTick,
+                SystemTxKind::OracleSlashWindow,
+                SystemTxKind::HookEvents,
+            ]
+        );
+        for tx in begin.iter().cloned() {
+            executor
+                .execute_transaction(tx)
+                .expect("begin system tx executes");
+        }
+
+        let end = config
+            .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+            .expect("terminal system tx builds");
+        assert_eq!(end.len(), 1);
+        executor
+            .execute_transaction(end.into_iter().next().unwrap())
+            .expect("terminal system tx executes after CE seal");
+
+        let writes_after_terminal = observed_writes.lock().unwrap().clone();
+        let ethereum_post_block_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::EthereumPostBlock)
+            .expect("standard Ethereum post-block changes execute before OSR2");
+        let compressed_entities_seal_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::CompressedEntitiesSeal)
+            .expect("compressed entities seal executes before OSR2");
+        let terminal_transaction_index = writes_after_terminal
+            .iter()
+            .position(|write| *write == ObservedWrite::Transaction(begin.len()))
+            .expect("OSR2 commits as the terminal transaction");
+        assert!(
+            ethereum_post_block_index < compressed_entities_seal_index
+                && compressed_entities_seal_index < terminal_transaction_index,
+            "semantic write order must be Ethereum post-block -> CE seal -> OSR2; got \
+             {writes_after_terminal:?}"
+        );
+        assert!(executor.compressed_entities_seal_output().is_some());
+        let receipt_count = executor.receipts().len();
+        let later_user = test_regular_tx()
+            .try_into_recovered()
+            .expect("regular tx signer recovers");
+        assert!(executor.execute_transaction(later_user).is_err());
+        assert_eq!(executor.receipts().len(), receipt_count);
+        assert_eq!(
+            observed_writes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|write| **write == ObservedWrite::CompressedEntitiesSeal)
+                .count(),
+            1
+        );
+
+        executor
+            .prepare_final_header_artifacts(0)
+            .expect("sealed CE root enters final header");
+        let writes_before_finish = observed_writes.lock().unwrap().clone();
+        let (_evm, result) = executor.finish().expect("active executor finishes");
+        assert_eq!(result.receipts.len(), 5);
+        assert_eq!(
+            *observed_writes.lock().unwrap(),
+            writes_before_finish,
+            "finish must not perform any semantic write after OSR2"
+        );
+    }
+
+    #[test]
+    fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifacts() {
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        let run = |replay: bool| {
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let user = test_regular_tx()
+                .try_into_recovered()
+                .expect("regular tx signer recovers");
+            let user_sender = Address(*user.signer());
+            let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
+            let config = OutbeEvmConfig::new_with_runtime_body_readers(
+                test_chain_spec(),
+                RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
+            )
+            .with_evm_signer(signer)
+            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+            let begin =
+                begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+            let end = config
+                .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
+                .expect("terminal system tx builds");
+
+            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut ctx = execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
+            ctx.proposer_evm_address = Some(proposer);
+            if replay {
+                ctx.expected_begin_system_txs = begin.clone();
+                ctx.expected_end_system_txs = end.clone();
+            }
+            let mut executor = config.create_executor(evm, ctx);
+
+            executor
+                .apply_pre_execution_changes()
+                .expect("active pre-execution succeeds");
+            for tx in begin {
+                executor
+                    .execute_transaction(tx)
+                    .expect("begin system tx executes");
+            }
+            executor
+                .execute_transaction(user)
+                .expect("ordinary tx executes before CE sealing");
+            executor
+                .execute_transaction(end.into_iter().next().unwrap())
+                .expect("terminal request executes after ordinary txs");
+
+            let ce_root = executor
+                .compressed_entities_seal_output()
+                .expect("terminal request seals compressed entities")
+                .new_root;
+            executor
+                .prepare_final_header_artifacts(0)
+                .expect("final header artifacts encode");
+            let final_extra_data = executor.final_extra_data.clone();
+            let (evm, result) = executor.finish().expect("active block finishes");
+            drop(evm);
+            let state_root = post_state_root(&state.bundle_state);
+
+            (
+                result.receipts,
+                result.gas_used,
+                ce_root,
+                final_extra_data,
+                state_root,
+            )
+        };
+
+        let proposer = run(false);
+        let replay = run(true);
+        assert_eq!(proposer, replay);
+        assert_eq!(proposer.0.len(), 6);
     }
 
     #[test]
@@ -5119,6 +5974,7 @@ mod tests {
                     validator_fee_sum: U256::ZERO,
                 },
                 timestamp: 1,
+                state_root: None,
             }),
         );
         executor.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
@@ -6780,6 +7636,7 @@ mod tests {
                     validator_fee_sum: U256::ZERO,
                 },
                 timestamp: 0,
+                state_root: None,
             });
             execution.proposer_evm_address = Some(proposer);
             if expected_validator_body {
@@ -8868,6 +9725,7 @@ mod tests {
                 validator_fee_sum: U256::from(777u64),
             },
             timestamp: 1_700_900_000,
+            state_root: None,
         }
     }
 

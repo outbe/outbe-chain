@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
-use xtask::release::sgx;
+use xtask::{ocomp, release::sgx};
 
 #[derive(Debug, Parser)]
 #[command(about = "Outbe repository development and release automation")]
@@ -14,7 +14,101 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Build, verify and publish release artifacts.
-    Release(ReleaseArgs),
+    Release(Box<ReleaseArgs>),
+    /// Generate and verify Off-chain Computation PoC development artifacts.
+    Ocomp(OcompArgs),
+}
+
+#[derive(Debug, Args)]
+struct OcompArgs {
+    #[command(subcommand)]
+    command: OcompCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum OcompCommand {
+    /// Emit the frozen OCM-26 budget derived from Rust authorities.
+    CapacityBudget {
+        /// Destination for the deterministic typed budget JSON.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Execute five immutable systemd/cgroup cold runs and generate capacity.
+    CapacityMeasure {
+        /// New directory that will retain all five cold namespaces and evidence.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Exact generated-limits manifest bound into the capacity profile.
+        #[arg(long)]
+        limits_manifest: PathBuf,
+        /// Destination for the deterministic generated capacity manifest.
+        #[arg(long)]
+        generated_capacity: PathBuf,
+    },
+    /// Verify five cold OCOMP runs and emit one deterministic capacity profile.
+    Capacity {
+        /// Typed `CapacityEvidenceV1` JSON from the Rust E2E capacity runner.
+        #[arg(long)]
+        evidence: PathBuf,
+        /// Five immutable public scenario preimages, ordered by cold-run ordinal.
+        #[arg(long = "scenario", required = true, num_args = 5)]
+        scenarios: Vec<PathBuf>,
+        /// Exact generated-limits manifest bound into the capacity profile.
+        #[arg(long)]
+        limits_manifest: PathBuf,
+        /// Destination for the deterministic generated capacity manifest.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Generate or verify the final chain-bound OCM-26 artifact set.
+    FinalArtifacts {
+        /// Generated capacity manifest produced from the five cold runs.
+        #[arg(long)]
+        capacity: PathBuf,
+        /// Fresh base genesis without an OCOMP fork-install extension.
+        #[arg(long)]
+        base_genesis: PathBuf,
+        /// Exact four-validator public bootstrap manifest.
+        #[arg(long)]
+        validators: PathBuf,
+        /// Directory containing the complete generated final artifact set.
+        #[arg(long)]
+        output_dir: PathBuf,
+        /// Fail if the existing output differs from deterministic generation.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate or check the OCOMP V1 object/domain/list registry.
+    Registry {
+        /// Fail if checked-in generated files differ from the TSV authority.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Generate or verify the measurement-only P0 protocol shape freeze.
+    Shape {
+        /// Fail if checked-in generated shape artifacts differ from their authorities.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Run one OCM task merge gate without claiming full PoC closure.
+    Task {
+        /// Exact task identifier, for example OCM-02.
+        task: String,
+    },
+    /// Execute one exact OCOMP evidence lane without claiming full closure.
+    Lane {
+        /// Registered execution lane: OCM-FAST, OCM-INT, OCM-PUBLIC, OCM-E2E or OCM-ISO.
+        lane: String,
+        /// New root for the artifact set and immutable lane evidence.
+        #[arg(long, alias = "evidence-dir")]
+        output_dir: Option<PathBuf>,
+    },
+    /// Execute all exact OCM-27 lanes and publish one independently verified closure.
+    Closure {
+        /// New root retaining the artifact set, lane bundles and closure reports.
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -123,6 +217,62 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let repo_root = sgx::repository_root()?;
     match cli.command {
+        Command::Ocomp(ocomp_args) => match ocomp_args.command {
+            OcompCommand::CapacityBudget { output } => {
+                ocomp::capacity::publish_budget(&repo_root, &output)?;
+            }
+            OcompCommand::CapacityMeasure {
+                output_dir,
+                limits_manifest,
+                generated_capacity,
+            } => {
+                ocomp::capacity::measure(
+                    &repo_root,
+                    &output_dir,
+                    &limits_manifest,
+                    &generated_capacity,
+                )?;
+            }
+            OcompCommand::Capacity {
+                evidence,
+                scenarios,
+                limits_manifest,
+                output,
+            } => {
+                ocomp::capacity::run(&repo_root, &evidence, &scenarios, &limits_manifest, &output)?;
+            }
+            OcompCommand::FinalArtifacts {
+                capacity,
+                base_genesis,
+                validators,
+                output_dir,
+                check,
+            } => {
+                ocomp::finalize::run(
+                    &repo_root,
+                    &capacity,
+                    &base_genesis,
+                    &validators,
+                    &output_dir,
+                    check,
+                )?;
+            }
+            OcompCommand::Registry { check } => {
+                ocomp::registry::run(&repo_root, check)?;
+            }
+            OcompCommand::Shape { check } => {
+                ocomp::shape::run(&repo_root, check)?;
+            }
+            OcompCommand::Task { task } => {
+                ocomp::task::run(&repo_root, &task)?;
+            }
+            OcompCommand::Lane { lane, output_dir } => {
+                ocomp::task::run_lane(&repo_root, &lane, output_dir.as_deref())?;
+            }
+            OcompCommand::Closure { output_dir } => {
+                ocomp::task::run_closure(&repo_root, output_dir.as_deref())?;
+            }
+        },
         Command::Release(release) => match release.command {
             ReleaseCommand::Sgx(sgx_args) => match sgx_args.command {
                 SgxCommand::Prepare { elf_output, output } => {

@@ -28,6 +28,17 @@ interface ITribute {
 
     event TributePartitionRetired(uint32 indexed worldwideDay);
 
+    event CertifiedTributePartitionRetired(
+        bytes32 indexed activationCallId,
+        uint32 indexed worldwideDay,
+        uint64 sourceGeneration,
+        bytes32 sealedCollectionRoot,
+        uint32 consumedCount,
+        uint256 consumedNominalTotal,
+        uint64 retiredGeneration,
+        bytes32 stateEventDigest
+    );
+
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
     function totalSupply() external view returns (uint256);

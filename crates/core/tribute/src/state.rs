@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     derive_poseidon_entity_id, list, read, EntityId36, EntityRef, ExecutionScope, IdPageRequest,
@@ -7,9 +7,41 @@ use outbe_compressed_entities::{
 use outbe_primitives::error::Result;
 
 use crate::errors::TributeError;
-use crate::schema::{DayTotals, TributeContract, TributeData};
+use crate::schema::{DayPreAdmission, DayTotals, TributeContract, TributeData};
+
+/// Immutable read projection consumed by the OCOMP terminal request path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributePreAdmissionProjection {
+    pub worldwide_day: WorldwideDay,
+    pub source_generation: u64,
+    pub profile_ready: bool,
+    pub is_sealed: bool,
+    pub sealed_collection_root: B256,
+    pub tribute_count: u32,
+    pub tribute_nominal_amount: U256,
+    pub canonical_body_bytes: u64,
+    pub distinct_owner_count: u32,
+    pub distinct_reference_currency_count: u16,
+}
 
 impl TributeContract<'_> {
+    /// Initializes the OCOMP accumulator only on an empty fresh-devnet
+    /// Tribute state. The later fork handler owns the production call site.
+    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
+        let storage = self.storage_handle();
+        storage.with_checkpoint(|| {
+            if self.ocomp_profile_ready.read()? {
+                return Ok(());
+            }
+            if self.total_supply.read()? != 0 {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "Tribute OCOMP profile requires empty live state".into(),
+                ));
+            }
+            self.ocomp_profile_ready.write(true)
+        })
+    }
+
     pub fn total_supply(&self) -> Result<u64> {
         self.total_supply.read()
     }
@@ -92,6 +124,37 @@ impl TributeContract<'_> {
             .unwrap_or(false))
     }
 
+    pub fn pre_admission_projection(
+        &self,
+        day: WorldwideDay,
+    ) -> Result<TributePreAdmissionProjection> {
+        let totals = self.get_day_totals(day)?;
+        let admission = self
+            .day_pre_admission
+            .get(day)?
+            .unwrap_or_else(|| DayPreAdmission::with_key(day));
+        let (tribute_count, tribute_nominal_amount) = if admission.is_sealed {
+            (
+                admission.sealed_tribute_count,
+                admission.sealed_tribute_nominal_amount,
+            )
+        } else {
+            (totals.tribute_count, totals.tribute_nominal_amount)
+        };
+        Ok(TributePreAdmissionProjection {
+            worldwide_day: day,
+            source_generation: admission.source_generation,
+            profile_ready: self.ocomp_profile_ready.read()?,
+            is_sealed: admission.is_sealed,
+            sealed_collection_root: admission.sealed_collection_root,
+            tribute_count,
+            tribute_nominal_amount,
+            canonical_body_bytes: admission.canonical_body_bytes,
+            distinct_owner_count: admission.distinct_owner_count,
+            distinct_reference_currency_count: admission.distinct_reference_currency_count,
+        })
+    }
+
     pub fn get_tribute_ids_by_owner(
         &self,
         scope: &ExecutionScope,
@@ -150,6 +213,104 @@ impl TributeContract<'_> {
         } else {
             self.day_totals.create(totals)
         }
+    }
+
+    pub(crate) fn store_day_pre_admission(&mut self, admission: &DayPreAdmission) -> Result<()> {
+        if self.day_pre_admission.exists(admission.worldwide_day)? {
+            self.day_pre_admission.update(admission)
+        } else {
+            self.day_pre_admission.create(admission)
+        }
+    }
+
+    pub(crate) fn update_pre_admission_for_tribute(
+        &mut self,
+        tribute: &TributeData,
+        is_add: bool,
+    ) -> Result<()> {
+        if !self.ocomp_profile_ready.read()? {
+            return Ok(());
+        }
+        let day = tribute.worldwide_day;
+        let mut admission = self
+            .day_pre_admission
+            .get(day)?
+            .unwrap_or_else(|| DayPreAdmission::with_key(day));
+        if admission.is_sealed {
+            return Err(TributeError::PreAdmissionSealed.into());
+        }
+
+        let body_bytes = outbe_compressed_entities::encode_tribute_v1(
+            &crate::repository::canonical_body(tribute),
+        )
+        .map_err(|error| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(error.to_string())
+        })?
+        .len();
+        let body_bytes = u64::try_from(body_bytes).map_err(|_| {
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                "Tribute canonical body length exceeds u64".into(),
+            )
+        })?;
+        let currency_key = reference_currency_refcount_key(day, tribute.reference_currency);
+        let currency_refcount = self.day_reference_currency_refcount.read(&currency_key)?;
+
+        let next_currency_refcount = if is_add {
+            admission.canonical_body_bytes = admission
+                .canonical_body_bytes
+                .checked_add(body_bytes)
+                .ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "Tribute canonical body byte total overflow".into(),
+                    )
+                })?;
+            if currency_refcount == 0 {
+                admission.distinct_reference_currency_count = admission
+                    .distinct_reference_currency_count
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                            "Tribute distinct reference currency count overflow".into(),
+                        )
+                    })?;
+            }
+            currency_refcount.checked_add(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute reference currency membership refcount overflow".into(),
+                )
+            })?
+        } else {
+            admission.canonical_body_bytes = admission
+                .canonical_body_bytes
+                .checked_sub(body_bytes)
+                .ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                        "Tribute canonical body byte total underflow".into(),
+                    )
+                })?;
+            let next_currency = currency_refcount.checked_sub(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                    "Tribute reference currency membership refcount underflow".into(),
+                )
+            })?;
+            if next_currency == 0 {
+                admission.distinct_reference_currency_count = admission
+                    .distinct_reference_currency_count
+                    .checked_sub(1)
+                    .ok_or_else(|| {
+                        outbe_primitives::error::PrecompileError::BodyReadCorruption(
+                            "Tribute distinct reference currency count underflow".into(),
+                        )
+                    })?;
+            }
+            next_currency
+        };
+
+        admission.initialized = true;
+        admission.distinct_owner_count = self.get_day_totals(day)?.tribute_count;
+        self.day_reference_currency_refcount
+            .write(&currency_key, next_currency_refcount)?;
+        self.store_day_pre_admission(&admission)
     }
 
     pub(crate) fn bump_day_bucket(
@@ -249,6 +410,13 @@ impl TributeContract<'_> {
             after = Some(next);
         }
     }
+}
+
+fn reference_currency_refcount_key(day: WorldwideDay, currency: u16) -> B256 {
+    let mut preimage = [0_u8; 6];
+    preimage[..4].copy_from_slice(&day.value().to_be_bytes());
+    preimage[4..].copy_from_slice(&currency.to_be_bytes());
+    keccak256(preimage)
 }
 
 pub(crate) fn tribute_from_verified(body: &VerifiedBody) -> Result<TributeData> {

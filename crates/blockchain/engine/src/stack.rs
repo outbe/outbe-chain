@@ -92,11 +92,18 @@ use outbe_consensus::{
         election::{HybridElectorConfigProvider, HybridRandom},
         HybridScheme, HybridSchemeProvider, VrfMaterialProvider,
     },
+    ocomp_retention::OcompRetentionHook,
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
 
+use outbe_node::ocomp::control::{OcompControlServer, OcompNodeAttestationConfig};
+use outbe_node::ocomp::service::{OcompControlRuntime, OcompControlRuntimeConfig};
+use outbe_node::ocomp::snapshot_control::RethProjectionContainmentAuthority;
+use outbe_node::ocomp::ProviderHeightSource;
 use outbe_node::OutbeFullNode;
+use outbe_ocomp_protocol::local_control::EndpointIdentity;
+use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_primitives::{
     consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
     projection::ProjectionReadinessHandle,
@@ -104,12 +111,41 @@ use outbe_primitives::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,
         ConsensusHeaderArtifact,
     },
+    system_tx::OcompLifecycleActivation,
     OutbeHeader, OutbePayloadTypes,
 };
 use reth_ethereum::storage::{BlockNumReader, BlockReader, TransactionVariant};
 
 /// Type alias for the engine handle.
 type EngineHandle = ConsensusEngineHandle<OutbePayloadTypes>;
+
+/// Node-owned services consumed by one consensus stack runtime.
+///
+/// Keeping these lifecycle-coupled services together prevents the stack entry
+/// point from growing one positional argument for every execution-side
+/// subsystem.
+pub struct ConsensusStackServices {
+    projection_readiness: ProjectionReadinessHandle,
+    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
+}
+
+impl ConsensusStackServices {
+    pub fn new(
+        projection_readiness: ProjectionReadinessHandle,
+        finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
+        ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+        compressed_tree_service: Arc<outbe_compressed_entities::CompressedTreeService>,
+    ) -> Self {
+        Self {
+            projection_readiness,
+            finalized_ce_committer,
+            ce_startup_recovery,
+            compressed_tree_service,
+        }
+    }
+}
 
 /// Muxer mailbox size for sub-channel buffering.
 const MUXER_MAILBOX: usize = 1024;
@@ -2096,14 +2132,24 @@ fn validate_testnet_only_flags(
     Ok(())
 }
 
+fn ocomp_p2p_namespace(install_hash: Option<B256>) -> Vec<u8> {
+    let base = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
+    let Some(install_hash) = install_hash else {
+        return base;
+    };
+    let mut preimage = Vec::with_capacity(b"OUTBE_OCOMP_P2P_NAMESPACE_V1".len() + base.len() + 32);
+    preimage.extend_from_slice(b"OUTBE_OCOMP_P2P_NAMESPACE_V1");
+    preimage.extend_from_slice(&base);
+    preimage.extend_from_slice(install_hash.as_slice());
+    alloy_primitives::keccak256(preimage).to_vec()
+}
+
 pub async fn run_consensus_stack<E>(
     ctx: &E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
-    projection_readiness: ProjectionReadinessHandle,
-    finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
-    ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    services: ConsensusStackServices,
 ) -> Result<()>
 where
     E: BufferPooler
@@ -2118,10 +2164,28 @@ where
         + Sync
         + 'static,
 {
+    let ConsensusStackServices {
+        projection_readiness,
+        finalized_ce_committer,
+        ce_startup_recovery,
+        compressed_tree_service,
+    } = services;
+
     // Validate network-scoped flags before any mode-specific early return. A
     // follower must fail closed too, even when it does not currently consume
     // these options.
     let chain_id = node.chain_spec().chain().id();
+    let ocomp_fork_install =
+        outbe_node::ocomp::fork::load_ocomp_fork_install(node.chain_spec().as_ref())?;
+    let ocomp_lifecycle_activation = ocomp_fork_install
+        .as_deref()
+        .map_or(OcompLifecycleActivation::Disabled, |install| {
+            OcompLifecycleActivation::at_block(install.activation_height)
+        });
+    let ocomp_install_hash = ocomp_fork_install
+        .as_deref()
+        .map(|install| install.install_hash(&poc_schema_limits()))
+        .transpose()?;
     validate_testnet_only_flags(
         args.trust_el_head,
         args.force_dkg,
@@ -2173,7 +2237,7 @@ where
     );
 
     // ── 3. Set up P2P network ───────────────────────────────────────────
-    let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
+    let p2p_namespace = ocomp_p2p_namespace(ocomp_install_hash);
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
             signing_key.clone(),
@@ -3491,6 +3555,126 @@ where
         );
     }
 
+    let ocomp_storage_root = args
+        .storage_dir
+        .as_ref()
+        .expect("storage_dir was required above");
+    let ocomp_retention_dir = ocomp_storage_root.join("ocomp_retention");
+    let ocomp_result_deadline_blocks = ocomp_fork_install.as_deref().map_or(0, |install| {
+        install
+            .request_profile
+            .capacity_profile
+            .result_deadline_blocks
+    });
+    let pending_receipts_provider = node.provider.clone();
+    let ocomp_proof_source = Arc::new(
+        outbe_node::ocomp::retention::RethFinalizedInputProofSource::new(
+            node.provider.clone(),
+            finalized_parent_cert_store.clone(),
+            move || {
+                pending_receipts_provider
+                    .pending_block_and_receipts()
+                    .map(|pending| {
+                        pending.map(|(block, receipts)| (B256::new(*block.hash()), receipts))
+                    })
+                    .map_err(|error| error.to_string())
+            },
+            ocomp_result_deadline_blocks,
+        ),
+    );
+    let ocomp_retention_coordinator = Arc::new(
+        outbe_node::ocomp::retention::OcompRetentionCoordinator::open(
+            ocomp_retention_dir,
+            ocomp_proof_source,
+        ),
+    );
+    let mut ocomp_snapshot_armer = None;
+    let _ocomp_control_runtime = if let Some(config) = args.ocomp.node_control()? {
+        let install = ocomp_fork_install.as_deref().ok_or_else(|| {
+            eyre::eyre!("OCOMP node control requires an armed chain-manifest fork install")
+        })?;
+        if config.protocol_bundle_hash != install.request_profile.protocol_bundle_hash {
+            return Err(eyre::eyre!(
+                "OCOMP node-control bundle {} differs from chain manifest {}",
+                config.protocol_bundle_hash,
+                install.request_profile.protocol_bundle_hash
+            ));
+        }
+        let vote_evm_key_path = args.effective_validator_evm_key()?.ok_or_else(|| {
+            eyre::eyre!("OCOMP node control requires the validated validator EVM key")
+        })?;
+        let vote_evm_signer = Arc::new(
+            outbe_primitives::signer::OutbeEvmSigner::from_file(&vote_evm_key_path).wrap_err_with(
+                || {
+                    format!(
+                        "failed to load OCOMP result-vote EVM signer from {}",
+                        vote_evm_key_path.display()
+                    )
+                },
+            )?,
+        );
+        let identity = EndpointIdentity {
+            chain_id,
+            genesis_hash,
+            boot_nonce: config.boot_nonce,
+            protocol_bundle_hash: config.protocol_bundle_hash,
+        };
+        let projection_containment = Arc::new(RethProjectionContainmentAuthority::new(
+            node.provider.clone(),
+        ));
+        let snapshot_export_authority = Arc::new(
+            outbe_node::ocomp::snapshot_control::SnapshotExportAuthority::new(
+                ocomp_retention_coordinator.clone(),
+                compressed_tree_service,
+                projection_containment,
+                config.boot_nonce,
+                poc_schema_limits(),
+            ),
+        );
+        let server = OcompControlServer::new(
+            ocomp_retention_coordinator.clone(),
+            config.supervisor_uid,
+            identity,
+            config.session_generation,
+            poc_schema_limits(),
+        )?
+        .with_node_attestation_height_source(
+            OcompNodeAttestationConfig {
+                key_path: config.key_path,
+                sign_once_root: ocomp_storage_root.join("ocomp_sign_once"),
+                expected_owner_uid: outbe_ocomp_protocol::local_control::effective_uid()?,
+                validator_index: config.validator_index,
+                committee: install.result_committee.clone(),
+                initial_height: recovery_anchor_height,
+            },
+            Arc::new(ProviderHeightSource::new(node.provider.clone())),
+        )?
+        .with_vote_transaction_signer(vote_evm_signer)
+        .with_snapshot_export_authority(
+            snapshot_export_authority.clone(),
+            config.snapshot_exporter_uid,
+        );
+        ocomp_snapshot_armer = Some(
+            snapshot_export_authority
+                as Arc<dyn outbe_node::ocomp::retention::FinalizedSnapshotArmer>,
+        );
+        contain_ocomp_control_start(OcompControlRuntime::start(
+            Arc::new(server),
+            OcompControlRuntimeConfig {
+                supervisor_socket: config.supervisor_socket,
+                snapshot_exporter_socket: config.snapshot_exporter_socket,
+            },
+        ))
+    } else {
+        None
+    };
+    let (ocomp_retention_service, ocomp_retention_handle) =
+        outbe_node::ocomp::retention::OcompRetentionService::new_with_snapshot_armer(
+            ocomp_retention_coordinator,
+            ocomp_snapshot_armer,
+        );
+    let ocomp_retention: Arc<dyn OcompRetentionHook> = Arc::new(ocomp_retention_handle);
+
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
     // no CLI override) once, before the handler ctor and the epoch loop.
     let bt = block_timing_from_genesis(&node)?;
@@ -3519,6 +3703,7 @@ where
         genesis_hash,
         validators: validator_set.clone(),
         chain_id: node.chain_spec().chain().id(),
+        ocomp_lifecycle_activation,
         marshal_mailbox: marshal_mailbox.clone(),
         certificate_scheme_provider: certificate_scheme_provider.clone(),
         elector_config_provider: elector_config_provider.clone(),
@@ -3538,6 +3723,7 @@ where
         proposer_evm_address,
         trust_el_head: args.trust_el_head,
         late_sig_store: late_sig_store.clone(),
+        ocomp_retention: ocomp_retention.clone(),
     });
 
     info!(
@@ -3547,6 +3733,13 @@ where
     );
 
     // ── 13. Spawn persistent actors (survive engine restarts) ───────────
+
+    // Finality reconciliation may open historical state, build MPT proofs and
+    // fsync the pin journal. Keep all of that in a node-owned worker; consensus
+    // only appends finalized-block notifications to its bounded ordered queue.
+    let _ocomp_retention_worker = ctx
+        .child("ocomp_retention")
+        .spawn(move |_ctx| ocomp_retention_service.run());
 
     // Half B step 21: construct FinalizationActor + matching mailbox.
     // After step 21 the actor IS the production finalization path: the
@@ -3568,6 +3761,7 @@ where
             parent_cert_store: finalized_parent_cert_store.clone(),
             certificate_scheme_provider: certificate_scheme_provider.clone(),
             late_sig_store: late_sig_store.clone(),
+            ocomp_retention,
         });
     let mut finalization_handle = ctx
         .child("finalization")
@@ -5391,6 +5585,21 @@ where
     drop(bridge);
 
     Ok(())
+}
+
+fn contain_ocomp_control_start(
+    result: std::io::Result<OcompControlRuntime>,
+) -> Option<OcompControlRuntime> {
+    match result {
+        Ok(runtime) => Some(runtime),
+        Err(error) => {
+            tracing::error!(
+                %error,
+                "node OCOMP control runtime unavailable; consensus remains active"
+            );
+            None
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
