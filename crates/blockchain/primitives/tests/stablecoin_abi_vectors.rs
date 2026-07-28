@@ -43,11 +43,11 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(factory),
-        b256!("dfd85fac20bf8c8f46819895ead7457e597ff697e0ec7680bc4282d846bbb261")
+        b256!("c2eef29b3be6e35a38c704c3276d4c548a0745a80b146d28db7c5e920a8b02a7")
     );
     assert_eq!(
         canonical_abi_hash(policy),
-        b256!("3dd4455f37103cd40b3f3dae8e935db51926f033b135942a271f793fd39f1f31")
+        b256!("82b8e648b836c37d92851360826ee852ba37ad5afb84f9c5ab381a4c719b9940")
     );
     assert_eq!(
         canonical_abi_hash(vote),
@@ -144,6 +144,10 @@ fn alloy_event_and_error_selectors_match_solidity_vectors() {
     assert_eq!(
         IStablecoinPolicyRegistry::MembershipUnchanged::SELECTOR,
         [0x0c, 0xdf, 0x47, 0x3a]
+    );
+    assert_eq!(
+        IStablecoinPolicyRegistry::PolicyMemberEnumerationUnsupported::SELECTOR,
+        [0x1c, 0x87, 0x79, 0xff]
     );
     assert_eq!(
         IStablecoin::ERC7943CannotSend::SELECTOR,

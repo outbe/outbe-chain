@@ -143,10 +143,11 @@ fn subcall_reaches_outbe_poseidon_precompile() {
 }
 
 #[test]
-fn contract_originated_poseidon_call_charges_materialized_calldata() {
-    // The inner CALL forwards 2,500 gas for one 32-byte Poseidon input.
-    // SCF-020 preserves the contract-originated call path and its materialized
-    // calldata.
+fn contract_originated_poseidon_call_preserves_empty_shared_buffer_behavior() {
+    // The nested frame currently starts with an empty SharedMemory, so its input
+    // range cannot materialize the caller's 32-byte memory. Poseidon therefore
+    // rejects the empty calldata and CALL returns zero. SCF-020 characterizes this
+    // pre-activation behavior; changing it requires an explicit protocol boundary.
     let mut code = vec![
         0x60, 0x01, // PUSH1 1
         0x60, 0x00, // PUSH1 0
@@ -160,7 +161,7 @@ fn contract_originated_poseidon_call_charges_materialized_calldata() {
     ];
     code.extend_from_slice(ZKPROOF_POSEIDON_ADDRESS.as_slice());
     code.extend_from_slice(&[
-        0x61, 0x09, 0xc4, // PUSH2 2,500 gas
+        0x61, 0x07, 0x08, // PUSH2 1,800 gas
         0xf1, // CALL
         0x60, 0x40, // status output offset
         0x52, // MSTORE CALL status
@@ -200,7 +201,10 @@ fn contract_originated_poseidon_call_charges_materialized_calldata() {
 
     assert!(matches!(result.status, SubCallStatus::Success));
     assert_eq!(result.returndata.len(), 32);
-    assert_eq!(result.returndata[31], 1, "inner Poseidon CALL must succeed");
+    assert_eq!(
+        result.returndata[31], 0,
+        "inner Poseidon CALL must preserve pre-activation failure"
+    );
 }
 
 #[test]

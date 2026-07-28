@@ -85,6 +85,10 @@ contract StablecoinInterfacesTest {
         _assertEq(IStablecoin.ERC7943InsufficientUnfrozenBalance.selector, 0x00384e71);
     }
 
+    function testPolicyEnumerationErrorIsFrozen() public pure {
+        _assertEq(IStablecoinPolicyRegistry.PolicyMemberEnumerationUnsupported.selector, 0x1c8779ff);
+    }
+
     function testRoleIdsAreFrozen() public pure {
         _assertEq(keccak256("ADMIN"), 0xdf8b4c520ffe197c5343c6f5aec59570151ef9a492f2c624fd45ddde6135ec42);
         _assertEq(keccak256("ISSUER"), 0x76afa8a5929fef1b4c03674b2152ae5aaad1d974b8a4021c59477bcc846ccc1e);

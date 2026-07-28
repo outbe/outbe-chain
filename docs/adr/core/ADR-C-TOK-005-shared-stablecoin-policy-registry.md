@@ -103,10 +103,14 @@ revert for ordinary unknown/account input. Typed internal Rust query APIs expose
 same semantics to ADR-C-TOK-003 without ABI sub-calls.
 
 `policyMemberCount` and `listPolicyMembers` are valid only for existing Whitelist and
-Blacklist policies; other ids revert with the typed incompatible-policy error.
+Blacklist policies; built-in and Directional policies revert with
+`PolicyMemberEnumerationUnsupported(policyId, policyType)`, while unknown ids revert
+with `UnknownPolicy(policyId)`.
 `listPolicyMembers` accepts `1 <= limit <= 100`. It returns the current member list
 without sorting or ordering guarantees and has no cursor/filter semantics.
-`policyMemberCount` supplies the current count required for paging.
+`offset >= policyMemberCount(policyId)` returns an empty array; the final page is
+clamped to the current count. `policyMemberCount` supplies the current count required
+for paging.
 
 The canonical mutation surface lives in
 `contracts/precompiles/src/IStablecoinPolicyRegistry.sol` and contains policy

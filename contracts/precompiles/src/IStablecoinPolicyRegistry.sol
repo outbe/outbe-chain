@@ -42,6 +42,7 @@ interface IStablecoinPolicyRegistry {
     error NotPendingPolicyAdmin(uint256 policyId, address caller);
     error PolicyIdExhausted();
     error InvalidListLimit(uint256 limit, uint256 maximum);
+    error PolicyMemberEnumerationUnsupported(uint256 policyId, uint8 policyType);
 
     /// @notice Creates a Whitelist or Blacklist policy. Reverts for all other descriptors.
     function createPolicy(uint8 policyType, address admin) external returns (uint256 policyId);
@@ -78,7 +79,10 @@ interface IStablecoinPolicyRegistry {
     function policyMemberCount(uint256 policyId) external view returns (uint256);
 
     /// @notice Returns up to `limit` current members starting at `offset`.
-    /// @dev `limit` must be between 1 and 100. No ordering guarantee is provided.
+    /// @dev Valid only for Whitelist and Blacklist. `limit` must be between 1 and
+    ///      100. `offset >= policyMemberCount(policyId)` returns an empty array; the
+    ///      final page is clamped to the current count. No ordering guarantee is
+    ///      provided.
     function listPolicyMembers(uint256 policyId, uint256 offset, uint256 limit) external view returns (address[] memory);
 
     /// @notice Unknown policies return false rather than reverting.

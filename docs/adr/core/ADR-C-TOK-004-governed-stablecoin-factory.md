@@ -222,7 +222,8 @@ function predictTokenAddress(address issuer, string calldata ticker)
 ```
 
 `listTokens` accepts `1 <= limit <= 100`. It exposes the current registry list with
-no sorting or ordering guarantee and no cursor/filter semantics.
+no sorting or ordering guarantee and no cursor/filter semantics. `offset >=
+tokenCount()` returns an empty array; the final page is clamped to the current count.
 
 Successful creation emits one non-anonymous `StablecoinCreated` with indexed
 `tokenId`, token and issuer, plus non-indexed proposal id, immutable metadata, cap and

@@ -24,9 +24,7 @@ use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::Evm,
-    context_interface::{
-        journaled_state::account::JournaledAccountTr, ContextTr, JournalTr, LocalContextTr,
-    },
+    context_interface::{journaled_state::account::JournaledAccountTr, ContextTr, JournalTr},
     handler::{instructions::EthInstructions, EthFrame, EvmTr, FrameResult, ItemOrResult},
     interpreter::{
         interpreter::EthInterpreter,
@@ -96,11 +94,6 @@ where
         is_static: effective_is_static,
     };
 
-    // Mirror revm Handler::first_frame_input: contract-originated CALL input is
-    // represented as a range into this context-owned shared buffer.
-    let mut memory = SharedMemory::new_with_buffer(ctx.local().shared_memory_buffer().clone());
-    memory.set_memory_limit(ctx.cfg().memory_limit);
-
     // Construct fresh borrow-mode Evm wrapping &mut ctx.
     // CTX = &mut EthEvmContext<DB> impls ContextTr via #[auto_impl(&mut, Box)]
     // on the trait.
@@ -122,7 +115,7 @@ where
 
     let frame_input = FrameInit {
         depth: 0,
-        memory,
+        memory: SharedMemory::new(),
         frame_input: FrameInput::Call(Box::new(call_inputs)),
     };
 

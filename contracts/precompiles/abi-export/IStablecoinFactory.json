@@ -338,22 +338,6 @@
   },
   {
     "type": "error",
-    "name": "TokenIndexOutOfBounds",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "tokenCount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "UnexpectedValue",
     "inputs": [
       {

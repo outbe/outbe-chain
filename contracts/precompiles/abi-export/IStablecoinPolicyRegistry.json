@@ -700,6 +700,22 @@
   },
   {
     "type": "error",
+    "name": "PolicyMemberEnumerationUnsupported",
+    "inputs": [
+      {
+        "name": "policyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "policyType",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "UnauthorizedPolicyAdmin",
     "inputs": [
       {
