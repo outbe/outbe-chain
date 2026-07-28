@@ -380,6 +380,13 @@ Policy + ledger + provider ──> Factory ──> Vote bond/finalization
 
 ## SCF-024 — Publish Factory logs through HookEvents
 
+- **Status:** Done for the receipt transport seam; Factory is now an explicit
+  HookEvents whitelist member. A production executor test runs Factory-addressed
+  logs through the atomic hook checkpoint, partition and receipt builder: the
+  committed log appears exactly once in original hook order, a nested rolled-back
+  log disappears, and a non-whitelisted log remains tracing-only. The actual
+  `StablecoinCreated` emission is wired and tested with Factory execution in
+  SCF-052/055.
 - **Goal:** Make pre-exec creation observable in the mandatory receipt.
 - **Scope/files:** hook-event whitelist and executor receipt tests.
 - **Depends on:** SCF-003, SCF-023; this is the next `outbe-evm` writer after

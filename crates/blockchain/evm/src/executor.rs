@@ -3613,7 +3613,9 @@ mod tests {
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
     };
-    use alloy_primitives::{address, keccak256, Address, Bytes, Signature, TxKind, B256, U256};
+    use alloy_primitives::{
+        address, keccak256, Address, Bytes, LogData, Signature, TxKind, B256, U256,
+    };
     use alloy_sol_types::{SolCall, SolEvent};
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
@@ -3629,7 +3631,7 @@ mod tests {
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
     use outbe_primitives::addresses::{
         CYCLE_ADDRESS, NOD_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS,
-        SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
+        SLASH_INDICATOR_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS,
     };
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::consensus::{
@@ -6631,6 +6633,94 @@ mod tests {
                     && log.data.topics().first() == Some(&upgrade_activated)
             }),
             "HookEvents receipt must carry UpgradeActivated from pre-exec hook events"
+        );
+    }
+
+    #[test]
+    fn hook_events_receipt_publishes_one_committed_factory_log_in_hook_order() {
+        let mut state = State::builder()
+            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
+            .with_bundle_update()
+            .build();
+        let factory_topic = keccak256(
+            "StablecoinCreated(bytes32,address,address,uint256,string,string,uint16,uint8,uint256,uint256)",
+        );
+        let update_topic = B256::repeat_byte(0x11);
+        let tracing_topic = B256::repeat_byte(0x22);
+        let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
+
+        let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
+            hook_ctx.storage.emit_event(
+                UPDATE_ADDRESS,
+                LogData::new_unchecked(vec![update_topic], Bytes::new()),
+            )?;
+
+            let rolled_back: outbe_primitives::error::Result<()> =
+                hook_ctx.storage.with_checkpoint(|| {
+                    hook_ctx.storage.emit_event(
+                        STABLECOIN_FACTORY_ADDRESS,
+                        LogData::new_unchecked(
+                            vec![factory_topic],
+                            Bytes::from_static(b"rolled-back"),
+                        ),
+                    )?;
+                    Err(outbe_primitives::error::PrecompileError::Revert(
+                        "creation failed".into(),
+                    ))
+                });
+            assert!(rolled_back.is_err());
+
+            hook_ctx.storage.emit_event(
+                STABLECOIN_FACTORY_ADDRESS,
+                LogData::new_unchecked(vec![factory_topic], Bytes::from_static(b"committed")),
+            )?;
+            hook_ctx.storage.emit_event(
+                REWARDS_ADDRESS,
+                LogData::new_unchecked(vec![tracing_topic], Bytes::new()),
+            )
+        })
+        .expect("outer hook batch should commit");
+
+        let (receipt_logs, tracing_only) = partition_hook_events(&hook_events);
+        assert_eq!(
+            receipt_logs
+                .iter()
+                .map(|log| log.address)
+                .collect::<Vec<_>>(),
+            vec![UPDATE_ADDRESS, STABLECOIN_FACTORY_ADDRESS]
+        );
+        assert_eq!(tracing_only.len(), 1);
+        assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
+        assert_eq!(
+            receipt_logs
+                .iter()
+                .filter(|log| {
+                    log.address == STABLECOIN_FACTORY_ADDRESS
+                        && log.data.topics().first() == Some(&factory_topic)
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            receipt_logs[1].data.data,
+            Bytes::from_static(b"committed")
+        );
+
+        let config = OutbeEvmConfig::new(test_chain_spec());
+        let evm = config.evm_with_env(&mut state, test_evm_env(7, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+        executor
+            .push_hook_events_receipt(alloy_consensus::TxType::Legacy, receipt_logs, 21_000)
+            .expect("HookEvents receipt should publish committed Factory log");
+
+        let receipt = executor.receipts().last().expect("HookEvents receipt");
+        assert_eq!(
+            receipt
+                .logs
+                .iter()
+                .map(|log| log.address)
+                .collect::<Vec<_>>(),
+            vec![UPDATE_ADDRESS, STABLECOIN_FACTORY_ADDRESS]
         );
     }
 
