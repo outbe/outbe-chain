@@ -370,25 +370,6 @@ contract IntexNFT1155Test is Test {
         nft.readData(SERIES_ID_1);
     }
 
-    function test_SetCollectionMetadata() public {
-        string memory description = "Intex financial instrument NFT";
-
-        vm.prank(admin);
-        vm.expectEmit();
-        emit IIntexNFT1155.CollectionMetadataUpdated(description);
-        nft.setCollectionMetadata(description);
-
-        assertEq(nft.collectionDescription(), description);
-    }
-
-    function test_OnlyAdminCanSetCollectionMetadata() public {
-        string memory description = "Test description";
-
-        vm.prank(user);
-        vm.expectRevert();
-        nft.setCollectionMetadata(description);
-    }
-
     function test_TransferRestrictions() public {
         _createSeries(SERIES_ID_1, 0);
         vm.prank(bridger);

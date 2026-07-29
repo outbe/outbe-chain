@@ -7,6 +7,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IIntexNFT1155} from "./interfaces/IIntexNFT1155.sol";
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
+import {IntexMetadata} from "./libs/IntexMetadata.sol";
 
 /**
  * @title IntexNFT1155
@@ -37,18 +38,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      can only `crosschainBurn` while the series is `Qualified`.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
-    /// @notice Maximum byte length of `collectionDescription`. Bounds the cost of building every
-    ///         token's metadata document so an over-long description cannot inflate `tokenURI`
-    ///         view gas into a DoS. Internal (no public getter) to conserve EIP-170 runtime size.
-    uint256 internal constant MAX_COLLECTION_DESCRIPTION_BYTES = 512;
-
     /// @dev Domain prefix for `settledTokenId` derivation; isolates Settled ids from the
     ///      issued token-id space.
     bytes constant _SETTLED_DOMAIN = bytes("SETTLED");
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
-        /// @dev Collection-level description string.
+        /// @dev Unused; retained so later members keep their storage slots.
         string collectionDescription;
         /// @dev Series-level data, stored per token id. One entry per class: both carry the
         ///      immutable series identity; mutable lifecycle fields live on the Issued entry only.
@@ -105,12 +101,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @param newImplementation Address of the implementation the proxy switches to.
     // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
-
-    /// @notice Collection-level description string.
-    /// @return The description set via `setCollectionMetadata`.
-    function collectionDescription() external view returns (string memory) {
-        return _s().collectionDescription;
-    }
 
     /// @notice Series-level data, stored per token id. Flattened to match the original
     ///         public-mapping getter ABI, with the call-trigger returned as its struct (collapsing
@@ -534,15 +524,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function setCollectionMetadata(string calldata description) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (bytes(description).length > MAX_COLLECTION_DESCRIPTION_BYTES) {
-            revert CollectionDescriptionTooLong();
-        }
-        _s().collectionDescription = description;
-        emit CollectionMetadataUpdated(description);
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function issuedTokenId(uint32 seriesId) external pure returns (uint256) {
         return uint256(seriesId);
     }
@@ -644,17 +625,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function uri(uint256) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
-        return string.concat(
-            "data:application/json,{\"name\":\"Intex\",\"description\":\"", _s().collectionDescription, "\"}"
-        );
+    function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
+        return IntexMetadata.tokenURI(_s().seriesData[tokenId], block.timestamp);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function contractURI() external view returns (string memory) {
-        return string.concat(
-            "data:application/json,{\"name\":\"Intex\",\"description\":\"", _s().collectionDescription, "\"}"
-        );
+    function contractURI() external pure returns (string memory) {
+        return IntexMetadata.contractURI();
     }
 
     /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called

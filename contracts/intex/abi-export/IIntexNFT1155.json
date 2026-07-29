@@ -975,19 +975,6 @@
     },
     {
       "type": "function",
-      "name": "setCollectionMetadata",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "internalType": "string"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "settle",
       "inputs": [
         {
@@ -1205,19 +1192,6 @@
           "type": "bool",
           "indexed": false,
           "internalType": "bool"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "CollectionMetadataUpdated",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "indexed": false,
-          "internalType": "string"
         }
       ],
       "anonymous": false
@@ -1557,11 +1531,6 @@
           "internalType": "uint8"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "CollectionDescriptionTooLong",
-      "inputs": []
     },
     {
       "type": "error",

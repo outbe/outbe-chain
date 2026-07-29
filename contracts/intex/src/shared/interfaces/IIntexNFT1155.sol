@@ -122,10 +122,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when collection metadata is updated.
-    /// @param description New collection-level description string.
-    event CollectionMetadataUpdated(string description);
-
     /// @notice Emitted when a series passes its call deadline without full settlement.
     /// @dev Fires once, on the page that drains the final Issued holder. Mid-page progress
     ///      is reported separately via `SeriesExpiredProgress`.
@@ -199,8 +195,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Pagination was invoked with a zero page limit (`expireSeries`,
     ///         `getIssuedHoldersWithBalances`).
     error ZeroLimit();
-    /// @notice `collectionDescription` exceeds `MAX_COLLECTION_DESCRIPTION_BYTES`.
-    error CollectionDescriptionTooLong();
 
     // --- Writes ---
 
@@ -249,10 +243,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param limit Maximum number of holders to sweep in this call.
     function expireSeries(uint32 seriesId, uint256 limit) external;
-
-    /// @notice Set the collection metadata description.
-    /// @param description New collection-level description (bounded by `MAX_COLLECTION_DESCRIPTION_BYTES`).
-    function setCollectionMetadata(string calldata description) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.

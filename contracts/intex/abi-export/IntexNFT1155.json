@@ -194,19 +194,6 @@
     },
     {
       "type": "function",
-      "name": "collectionDescription",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "string",
-          "internalType": "string"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "contractURI",
       "inputs": [],
       "outputs": [
@@ -216,7 +203,7 @@
           "internalType": "string"
         }
       ],
-      "stateMutability": "view"
+      "stateMutability": "pure"
     },
     {
       "type": "function",
@@ -1327,19 +1314,6 @@
     },
     {
       "type": "function",
-      "name": "setCollectionMetadata",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "internalType": "string"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "settle",
       "inputs": [
         {
@@ -1521,7 +1495,7 @@
       "name": "uri",
       "inputs": [
         {
-          "name": "",
+          "name": "tokenId",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1575,19 +1549,6 @@
           "type": "bool",
           "indexed": false,
           "internalType": "bool"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "CollectionMetadataUpdated",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "indexed": false,
-          "internalType": "string"
         }
       ],
       "anonymous": false
@@ -2060,11 +2021,6 @@
           "internalType": "uint8"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "CollectionDescriptionTooLong",
-      "inputs": []
     },
     {
       "type": "error",
