@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexMetadata} from "@contracts/shared/libs/IntexMetadata.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
@@ -108,7 +109,9 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("CALLED"), "badge text");
         assertTrue(svg.contains("#f97316"), "badge color");
+        // calledAt == 1, deadline == 1 + 14 days == 1970-01-15 00:00:01 UTC.
         assertTrue(svg.contains("Call Deadline"), "deadline row");
+        assertTrue(svg.contains("15.01.1970 00:00 UTC"), "deadline date formatting");
     }
 
     function test_uri_Expired_DerivedFromClock() public {
@@ -148,8 +151,31 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("#a855f7"), "badge color");
     }
 
+    function test_uri_SettledToken_RendersBeforeAnySettle() public view {
+        bytes memory json = _json(sTok);
+        _assertContains(json, string.concat("\"name\":\"Intex Series ", DISPLAY_ID, " - Settled\","));
+        _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
+    }
+
     function test_uri_UnknownToken_FallsBackToCollection() public view {
         assertEq(token.uri(0xdead), token.contractURI());
+    }
+
+    function test_uri_LegacySettledRecord_FallsBackToCollection() public view {
+        // Pre-upgrade shape: status was written without the identity copy (issuedAt == 0).
+        IIntexNFT1155.SeriesData memory legacy;
+        legacy.status = IIntexNFT1155.IntexStatus.Settled;
+        assertEq(IntexMetadata.tokenURI(legacy, block.timestamp), token.contractURI());
+    }
+
+    function test_tokenURI_ZeroPadsCurrencies() public view {
+        IIntexNFT1155.SeriesData memory data;
+        data.worldwideDay = SERIES_ID;
+        data.issuanceCurrency = 8;
+        data.referenceCurrency = 84;
+        data.issuedAt = 1;
+        bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
+        _assertContains(json, "\"name\":\"Intex Series 20260622-008-084\",");
     }
 
     function test_contractURI_CollectionDocument() public view {
