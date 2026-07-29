@@ -50,8 +50,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     struct IntexNFT1155Storage {
         /// @dev Collection-level description string.
         string collectionDescription;
-        /// @dev Series-level data, stored per token id. One entry for the Issued token id
-        ///      (full series fields) and one for the Settled token id (`status` + `totalSupply`).
+        /// @dev Series-level data, stored per token id. One entry per class: both carry the
+        ///      immutable series identity; mutable lifecycle fields live on the Issued entry only.
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
         /// @dev Amount won at auction per address per token id (recorded at mint, never changes).
         mapping(uint256 tokenId => mapping(address account => uint16 count)) auctionWonCount;
@@ -181,7 +181,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // one can mint into," which never matches an auction-cleared result.
         if (params.issuedIntexCount == 0) revert ZeroIssuedIntexCount();
 
-        $.seriesData[iTok] = IIntexNFT1155.SeriesData({
+        IIntexNFT1155.SeriesData memory seed = IIntexNFT1155.SeriesData({
             issuanceCurrency: params.issuanceCurrency,
             referenceCurrency: params.referenceCurrency,
             issuedIntexCount: params.issuedIntexCount,
@@ -201,10 +201,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             state: IIntexNFT1155.IntexState.Issued,
             worldwideDay: params.worldwideDay
         });
+        $.seriesData[iTok] = seed;
 
-        // Register the Settled token id so reverse lookups and status checks work for either class.
+        // The Settled record shares the series's immutable identity so lookups and metadata work
+        // for either class; mutable lifecycle fields (state, calledAt) are never written on it.
         uint256 sTok = _settledTokenId(params.seriesId);
-        $.seriesData[sTok].status = IIntexNFT1155.IntexStatus.Settled;
+        seed.status = IIntexNFT1155.IntexStatus.Settled;
+        $.seriesData[sTok] = seed;
 
         // Series remain in allSeries permanently even after supply reaches 0 —
         // preserves the historical record and avoids O(n) removal. Only the Issued id is
@@ -429,8 +432,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Intermediate widened to uint256 so the cap revert surfaces as `SupplyCapExceeded`
         // even at the `issuedIntexCount == type(uint32).max` boundary.
         uint256 newTotal = uint256(data.totalSupply) + amount;
-        // The Issued entry carries the cap; for the Settled token id it is zero and the
-        // status guard above already rejected. Only the Issued path reaches here.
+        // Only the Issued path reaches here: the status guard above already rejected Settled ids.
         if (newTotal > data.issuedIntexCount) {
             // forge-lint: disable-next-line(unsafe-typecast) -- Issued tokenId == uint256(seriesId)
             revert SupplyCapExceeded(uint32(tokenId), newTotal, data.issuedIntexCount);
