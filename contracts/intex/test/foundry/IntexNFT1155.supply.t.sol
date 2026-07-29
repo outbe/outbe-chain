@@ -179,9 +179,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_R03_ExpireSeries_RequiresRelayerRole() public {
-        // Per docs/nft/lifecycle.md and the audit, expireSeries must be gated by RELAYER_ROLE.
-        // Pre-fix it is permissionless — any address can mass-burn balances for any series
-        // past its deadline.
+        // Ungated expireSeries would let any address mass-burn balances past the deadline.
         _seedHolders(50, 3, 5);
 
         address rando = address(0xBAD);
