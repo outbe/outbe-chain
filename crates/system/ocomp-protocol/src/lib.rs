@@ -16,6 +16,7 @@ pub mod generated_shape;
 pub mod hash;
 pub mod input;
 pub mod intent;
+pub mod league_snapshot;
 pub mod list;
 pub mod local_control;
 pub mod opening;

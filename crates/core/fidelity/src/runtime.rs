@@ -9,12 +9,14 @@ use outbe_primitives::error::{PrecompileError, Result};
 /// Fork-fixed PoC ceiling for one owner's complete Fidelity opening.
 pub const OCOMP_POC_MAX_COHORTS_PER_OWNER: u16 = 64;
 
-/// Bounded authenticated Fidelity values consumed by OCOMP pre-admission.
+/// Bounded readiness projection consumed by OCOMP pre-admission.
+///
+/// Fidelity no longer exposes any cohort counts to OCOMP: leagues are
+/// snapshotted per owner by Metadosis at prepare time, so the only thing
+/// pre-admission needs from Fidelity is that its OCOMP profile is armed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FidelityOcompProjection {
     pub profile_ready: bool,
-    pub max_cohorts_per_owner: u16,
-    pub max_cohorts_observed: u16,
 }
 
 impl FidelityContract<'_> {
@@ -24,16 +26,14 @@ impl FidelityContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             if self.ocomp_profile_ready.read()? {
-                let projection = self.ocomp_projection()?;
-                if projection.max_cohorts_per_owner != OCOMP_POC_MAX_COHORTS_PER_OWNER {
+                if self.ocomp_max_cohorts_per_owner.read()? != OCOMP_POC_MAX_COHORTS_PER_OWNER {
                     return Err(PrecompileError::Fatal(
                         "Fidelity OCOMP profile cap mismatch".into(),
                     ));
                 }
-                return Ok(projection);
+                return self.ocomp_projection();
             }
             if self.first_qualified_start.read()? != 0
-                || self.ocomp_max_cohorts_observed.read()? != 0
                 || self.ocomp_max_cohorts_per_owner.read()? != 0
             {
                 return Err(PrecompileError::Fatal(
@@ -42,7 +42,6 @@ impl FidelityContract<'_> {
             }
             self.ocomp_max_cohorts_per_owner
                 .write(OCOMP_POC_MAX_COHORTS_PER_OWNER)?;
-            self.ocomp_max_cohorts_observed.write(0)?;
             self.ocomp_profile_ready.write(true)?;
             self.ocomp_projection()
         })
@@ -51,8 +50,6 @@ impl FidelityContract<'_> {
     pub fn ocomp_projection(&self) -> Result<FidelityOcompProjection> {
         Ok(FidelityOcompProjection {
             profile_ready: self.ocomp_profile_ready.read()?,
-            max_cohorts_per_owner: self.ocomp_max_cohorts_per_owner.read()?,
-            max_cohorts_observed: self.ocomp_max_cohorts_observed.read()?,
         })
     }
 
@@ -200,7 +197,12 @@ impl FidelityContract<'_> {
         Ok(())
     }
 
-    fn observe_owner_cohorts(&mut self, account: Address) -> Result<()> {
+    /// Post-mutation corruption guard: an owner's total cohort count must never
+    /// exceed the armed profile cap. `ensure_owner_capacity` enforces this before
+    /// each add; this re-checks after the write as defence in depth. No longer
+    /// tracks a high-water mark — OCOMP consumes per-owner league snapshots, not
+    /// cohort counts.
+    fn observe_owner_cohorts(&self, account: Address) -> Result<()> {
         if !self.ocomp_profile_ready.read()? {
             return Ok(());
         }
@@ -213,9 +215,6 @@ impl FidelityContract<'_> {
             return Err(PrecompileError::BodyReadCorruption(
                 "Fidelity bounded cohort count exceeds profile cap".into(),
             ));
-        }
-        if count > self.ocomp_max_cohorts_observed.read()? {
-            self.ocomp_max_cohorts_observed.write(count)?;
         }
         Ok(())
     }

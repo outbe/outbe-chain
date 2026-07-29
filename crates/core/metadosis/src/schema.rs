@@ -219,4 +219,15 @@ pub struct MetadosisContract {
     /// until the exclusive deadline.
     #[attribute(order = 19)]
     pub ocomp_response_deadline_index: StorageBytes,
+
+    /// Per-owner Fidelity league snapshot for one WorldwideDay, written once by
+    /// the OCOMP prepare phase. Keyed by
+    /// `outbe_ocomp_protocol::league_snapshot::league_snapshot_key(wwd, owner)`,
+    /// it stores one league word per owner so the OCOMP openings MPT-prove a
+    /// single league slot per owner instead of the raw Fidelity cohort ledger.
+    /// Appended last (base slot 34) so pre-fork storage offsets and OCM finality
+    /// proof paths stay fixed; `league_snapshot::METADOSIS_LEAGUE_SNAPSHOT_BASE_SLOT`
+    /// is pinned to this layout by test.
+    #[attribute(order = 20)]
+    pub ocomp_fidelity_league_snapshot: Mapping<B256, u16>,
 }

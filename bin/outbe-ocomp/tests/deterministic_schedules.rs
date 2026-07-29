@@ -20,9 +20,6 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_consensus::block::ConsensusBlock;
 use outbe_e2e_harness::ocomp_finality_fixture::finalized_intent_proof_fixture;
-use outbe_fidelity::{
-    evaluate_fidelity_opening_v1, fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1,
-};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
@@ -72,6 +69,7 @@ use outbe_ocomp_protocol::{
         MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
         TributeInputBindingV1,
     },
+    league_snapshot::league_snapshot_slot,
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, OpeningSubjectsV1,
         RawContractOpeningProofV1, RawStorageSlotV1,
@@ -84,7 +82,7 @@ use outbe_ocomp_protocol::{
     UnitFinishedStatus, UnitFinishedV1, WorkerMessageKind,
 };
 use outbe_oracle::oracle_opening_slot_plan_v1;
-use outbe_primitives::addresses::{FIDELITY_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use tempfile::tempdir;
 
 const CHILD_MODE: &str = "OUTBE_OCOMP_DET_WORKER_CHILD";
@@ -550,11 +548,7 @@ fn run_schedule(worker_count: usize, seed: u64) -> ScheduleOutcome {
     for subjects in partition_lysis_opening_subjects(&owners, &settlement_isos, &limits)
         .expect("partition deterministic opening subjects")
     {
-        let fidelity = raw_fidelity_opening(
-            &subjects,
-            proof_fixture.state_root,
-            intent.logical_evaluation_time,
-        );
+        let fidelity = raw_fidelity_opening(&subjects, proof_fixture.state_root, intent.wwd);
         let authenticated = materialize_authenticated_openings(
             &LysisOpeningsProofV1 {
                 protocol_bundle_hash: bundle_hash,
@@ -998,47 +992,24 @@ fn tributes(day: WorldwideDay) -> Vec<TributeBodyV1> {
 fn raw_fidelity_opening(
     subjects: &OpeningSubjectsV1,
     finalized_state_root: B256,
-    logical_evaluation_time: u64,
+    wwd: u32,
 ) -> RawContractOpeningProofV1 {
-    let mut seen = std::collections::BTreeSet::new();
+    // One per-owner league word in Metadosis storage (owner order matches the
+    // node's canonical slot plan). Any value in [1, 4096] is a valid league.
     let ordered_slots = subjects
         .owners
         .iter()
         .enumerate()
-        .flat_map(|(owner_index, owner)| {
-            let counts = fidelity_count_slot_plan_v1(*owner);
-            fidelity_opening_slot_plan_v1(*owner, 0, 0)
-                .expect("zero-cohort Fidelity slot plan")
-                .slots
-                .into_iter()
-                .map(move |slot| {
-                    let value = if slot == counts.qualified_start {
-                        U256::from(
-                            logical_evaluation_time
-                                .saturating_sub(1 + u64::try_from(owner_index % 100).unwrap()),
-                        )
-                    } else if slot == counts.first_qualified_start {
-                        U256::from(logical_evaluation_time.saturating_sub(1_000))
-                    } else {
-                        U256::ZERO
-                    };
-                    (slot, value)
-                })
+        .map(|(owner_index, owner)| {
+            let league = u16::try_from((owner_index % 4096) + 1).unwrap_or(1);
+            RawStorageSlotV1 {
+                slot: league_snapshot_slot(wwd, *owner),
+                value: U256::from(league),
+            }
         })
-        .filter(|(slot, _)| seen.insert(*slot))
-        .map(|(slot, value)| RawStorageSlotV1 { slot, value })
         .collect::<Vec<_>>();
-    evaluate_fidelity_opening_v1(
-        &subjects.owners,
-        &ordered_slots
-            .iter()
-            .map(|slot| (slot.slot, slot.value))
-            .collect::<Vec<_>>(),
-        logical_evaluation_time,
-    )
-    .expect("evaluate deterministic Fidelity opening");
     RawContractOpeningProofV1 {
-        contract_address: FIDELITY_ADDRESS,
+        contract_address: METADOSIS_ADDRESS,
         state_root: finalized_state_root,
         ordered_slots,
         account_proof: ProofBytes(vec![0xa1]),

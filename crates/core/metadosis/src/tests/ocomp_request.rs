@@ -117,7 +117,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &scope).unwrap();
+        run_terminal_request(&ctx, &scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let fsm = metadosis
@@ -254,7 +254,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             storage.clone(),
         );
         run_lifecycle_begin(&expiry).unwrap();
-        run_terminal_request(&expiry, &scope).unwrap();
+        run_terminal_request(&expiry, &scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let after = metadosis
@@ -303,7 +303,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             storage.clone(),
         );
         run_lifecycle_begin(&retry).unwrap();
-        run_terminal_request(&retry, &scope).unwrap();
+        run_terminal_request(&retry, &scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let retried = metadosis
@@ -414,7 +414,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx, &fixture.scope, &TestParent::empty()).unwrap();
 
         let after = request_observables(storage, fixture.wwd);
         assert_eq!(after.fsm.phase, DayPhase::Ready);
@@ -450,7 +450,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&first_ctx, &fixture.scope).unwrap();
+        run_terminal_request(&first_ctx, &fixture.scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         let first = metadosis
@@ -490,7 +490,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&next_ctx, &fixture.scope).unwrap();
+        run_terminal_request(&next_ctx, &fixture.scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage);
         let later = metadosis
@@ -548,7 +548,7 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
                 BlockContext::empty_for_tests(block_number, block_time, chain::CHAIN_ID),
                 storage.clone(),
             );
-            run_terminal_request(&ctx, &fixture.scope).unwrap();
+            run_terminal_request(&ctx, &fixture.scope, &TestParent::empty()).unwrap();
         }
 
         let mut metadosis = MetadosisContract::new(storage);
@@ -721,7 +721,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
             ),
             storage.clone(),
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        run_terminal_request(&ctx, &fixture.scope, &TestParent::empty()).unwrap();
 
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
@@ -804,7 +804,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        run_terminal_request(&ctx, &calibration_fixture.scope).unwrap();
+        run_terminal_request(&ctx, &calibration_fixture.scope, &TestParent::empty()).unwrap();
     });
     let successful_mutations = calibration.clear_mutation_failure();
     assert!(
@@ -830,7 +830,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
             ),
             storage,
         );
-        run_terminal_request(&ctx, &fixture.scope).unwrap_err()
+        run_terminal_request(&ctx, &fixture.scope, &TestParent::empty()).unwrap_err()
     });
     assert!(matches!(
         error,

@@ -10,11 +10,13 @@ use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
 use outbe_common::WorldwideDay;
-use outbe_fidelity::{fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1};
 use outbe_metadosis::ocomp::schema::poc_schema_limits;
-use outbe_ocomp_protocol::opening::OpeningSubjectsV1;
+use outbe_ocomp_protocol::{
+    league_snapshot::{league_snapshot_slot, ordered_league_snapshot_slots},
+    opening::OpeningSubjectsV1,
+};
 use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
-use outbe_primitives::addresses::{FIDELITY_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_chainspec::ChainInfo;
 use reth_primitives_traits::{Account, Bytecode};
 use reth_storage_api::{
@@ -504,28 +506,19 @@ fn fidelity_and_oracle_openings_reject_mutated_values_shape_and_mpt_nodes() {
 }
 
 #[test]
-fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs() {
+fn lysis_opening_builder_returns_league_snapshot_and_oracle_proofs() {
     let limits = poc_schema_limits();
     let owner = Address::repeat_byte(0x41);
     let subjects = OpeningSubjectsV1 {
         owners: vec![owner],
         settlement_isos: vec![840],
     };
-
-    let fidelity_counts = fidelity_count_slot_plan_v1(owner);
-    let fidelity_plan =
-        fidelity_opening_slot_plan_v1(owner, 1, 1).expect("bounded Fidelity fixture");
-    let mut fidelity_values = fidelity_plan
-        .slots
-        .iter()
-        .enumerate()
-        .map(|(index, slot)| (*slot, U256::from(index + 1)))
-        .collect::<BTreeMap<_, _>>();
-    fidelity_values.insert(fidelity_counts.active_count, U256::from(1));
-    fidelity_values.insert(fidelity_counts.sold_count, U256::from(1));
-    let fidelity_slots = fidelity_values.into_iter().collect::<Vec<_>>();
-
     let day = WorldwideDay::new(20260724);
+
+    // The Fidelity opening is now a single per-owner league word in Metadosis
+    // storage; any value in [1, 4096] is a valid league.
+    let fidelity_slots = vec![(league_snapshot_slot(day.value(), owner), U256::from(7))];
+
     let pair_hash = B256::repeat_byte(0x52);
     let oracle_counts =
         oracle_count_slot_plan_v1(day, &subjects.settlement_isos).expect("Oracle count fixture");
@@ -545,7 +538,7 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
     let oracle_slots = oracle_values.into_iter().collect::<Vec<_>>();
 
     let (state, state_root) = opening_state(&[
-        (FIDELITY_ADDRESS, fidelity_slots),
+        (METADOSIS_ADDRESS, fidelity_slots),
         (ORACLE_ADDRESS, oracle_slots),
     ]);
     let candidate = CandidatePinV1 {
@@ -570,6 +563,7 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
     )
     .expect("exact historical Fidelity and Oracle openings");
 
+    let expected_fidelity_slots = ordered_league_snapshot_slots(day.value(), &subjects.owners);
     assert_eq!(openings.subjects, subjects);
     assert_eq!(openings.finalized_block_hash, candidate.block_hash);
     assert_eq!(openings.finalized_state_root, candidate.state_root);
@@ -581,7 +575,7 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
             .iter()
             .map(|raw| raw.slot)
             .collect::<Vec<_>>(),
-        fidelity_plan.slots
+        expected_fidelity_slots
     );
     assert_eq!(
         openings
@@ -594,12 +588,12 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
     );
     verify_raw_contract_opening(
         &openings.fidelity,
-        FIDELITY_ADDRESS,
+        METADOSIS_ADDRESS,
         state_root,
-        &fidelity_plan.slots,
+        &expected_fidelity_slots,
         &limits,
     )
-    .expect("Fidelity proof must verify against the finalized root");
+    .expect("Fidelity league proof must verify against the finalized root");
     verify_raw_contract_opening(
         &openings.oracle,
         ORACLE_ADDRESS,
@@ -608,50 +602,4 @@ fn lysis_opening_builder_reads_counts_then_returns_both_exact_historical_proofs(
         &limits,
     )
     .expect("Oracle proof must verify against the finalized root");
-}
-
-#[test]
-fn fidelity_total_slot_cap_stops_before_reading_later_owners_or_building_a_proof() {
-    let owners = (1_u8..=20).map(Address::repeat_byte).collect::<Vec<_>>();
-    let mut count_values = BTreeMap::new();
-    for owner in &owners {
-        let counts = fidelity_count_slot_plan_v1(*owner);
-        count_values.insert(counts.active_count, U256::from(64));
-        count_values.insert(counts.sold_count, U256::from(64));
-    }
-    let (state, state_root) = opening_state(&[(
-        FIDELITY_ADDRESS,
-        count_values.into_iter().collect::<Vec<_>>(),
-    )]);
-    let storage_reads = state.storage_reads.clone();
-    let candidate = CandidatePinV1 {
-        block_number: 100,
-        block_hash: B256::repeat_byte(0x71),
-        state_root,
-        intent_id: B256::repeat_byte(0x72),
-        wwd: 20260724,
-        ce_sealed_root: B256::repeat_byte(0x73),
-        protocol_bundle_hash: B256::repeat_byte(0x74),
-        input_lease_id: B256::repeat_byte(0x75),
-    };
-
-    assert!(build_lysis_openings(
-        &OpeningProvider {
-            state,
-            block_number: candidate.block_number,
-            block_hash: candidate.block_hash,
-        },
-        &poc_schema_limits(),
-        candidate,
-        OpeningSubjectsV1 {
-            owners,
-            settlement_isos: vec![840],
-        },
-    )
-    .is_err());
-    assert_eq!(
-        storage_reads.load(Ordering::Relaxed),
-        26,
-        "the thirteenth bounded owner crosses the global slot cap; later owners must not be read"
-    );
 }

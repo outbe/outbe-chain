@@ -517,7 +517,7 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         sealed_tribute_canonical_body_bytes: 0,
         distinct_owner_count: 0,
         distinct_reference_currency_count: 0,
-        max_fidelity_cohorts_observed: 0,
+        fidelity_league_snapshot_root: hash(41),
         oracle_wwd_pair_entries_observed: 0,
         active_scurve_entries_observed: 0,
         auction_entry_price: U256::ZERO,

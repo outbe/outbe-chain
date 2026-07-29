@@ -9,7 +9,6 @@ publish.workspace = true
 # Internal
 outbe-evm.workspace = true
 outbe-compressed-entities.workspace = true
-outbe-fidelity.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
 outbe-offchain-data.workspace = true

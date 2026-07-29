@@ -1,7 +1,7 @@
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
+    partition_collection_key, ExecutionScope, ParentBodySource, PartitionRef, SealedCollectionRoot,
 };
 use outbe_fidelity::schema::FidelityContract;
 use outbe_nod::NodContract;
@@ -11,6 +11,7 @@ use outbe_ocomp_protocol::{
         FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
         MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
     },
+    league_snapshot::{fidelity_league_snapshot_root, league_snapshot_key},
     receipts::RequestBudgetSplitReceiptV1,
 };
 use outbe_primitives::{
@@ -46,13 +47,18 @@ enum TerminalRequestOutcome {
 
 /// Executes the bounded end-zone request transition against the exact CE seal
 /// already completed by the block executor.
-pub fn run_terminal_request(ctx: &BlockRuntimeContext<'_>, scope: &ExecutionScope) -> Result<()> {
-    run_terminal_request_inner(ctx, scope).map(|_| ())
+pub fn run_terminal_request(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    run_terminal_request_inner(ctx, scope, parent).map(|_| ())
 }
 
 fn run_terminal_request_inner(
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
 ) -> Result<TerminalRequestOutcome> {
     let schema_limits = poc_schema_limits();
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
@@ -100,6 +106,7 @@ fn run_terminal_request_inner(
             &mut metadosis,
             ctx,
             scope,
+            parent,
             &profile,
             projection.worldwide_day,
             projection.pending_nonce,
@@ -112,6 +119,7 @@ fn build_and_commit_request(
     metadosis: &mut MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
     scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     profile: &OcompRequestProfile,
     wwd: WorldwideDay,
     pending_nonce: u64,
@@ -133,6 +141,13 @@ fn build_and_commit_request(
         current_vwap,
         ctx.block.timestamp,
     )?;
+    // Snapshot each sealed-day owner's Fidelity league at the exact evaluation
+    // time bound into the intent below. The commitment is identical before and
+    // after the Tribute seal (sealing changes no tribute and no cohort), so it is
+    // bound into both the candidate and sealed envelopes and only persisted once
+    // the day is admitted.
+    let league_entries = day_fidelity_league_snapshot(ctx, scope, parent, wwd)?;
+    let snapshot_root = fidelity_league_snapshot_root(wwd.value(), &league_entries);
     let pre_admission_context = PreAdmissionContext {
         chain_id: profile.chain_id,
         genesis_hash: profile.genesis_hash,
@@ -145,6 +160,7 @@ fn build_and_commit_request(
         &PreAdmissionInputs {
             tribute: candidate_tribute_projection,
             fidelity,
+            fidelity_league_snapshot_root: snapshot_root,
             oracle,
         },
     )?;
@@ -167,6 +183,7 @@ fn build_and_commit_request(
         &PreAdmissionInputs {
             tribute: sealed_tribute_projection,
             fidelity: FidelityContract::new(ctx.storage.clone()).ocomp_projection()?,
+            fidelity_league_snapshot_root: snapshot_root,
             oracle: outbe_oracle::api::ocomp_pre_admission_projection(
                 ctx.storage.clone(),
                 wwd,
@@ -194,6 +211,10 @@ fn build_and_commit_request(
     if envelope_projection.envelope_hash != envelope_hash {
         return Err(fatal("stored OCOMP pre-admission envelope hash mismatch"));
     }
+    // Persist the per-owner league snapshot now that the day is admitted. The
+    // sealed envelope's `fidelity_league_snapshot_root` binds this exact set, and
+    // the OCOMP openings MPT-prove these slots against the request-block state.
+    write_fidelity_league_snapshot(metadosis, wwd, &league_entries)?;
 
     let day_limit = metadosis
         .worldwide_days
@@ -314,6 +335,52 @@ fn build_and_commit_request(
     })?;
 
     Ok(TerminalRequestOutcome::IntentCreated(intent_id))
+}
+
+/// Enumerates the sealed day's Tribute owners and snapshots each owner's Fidelity
+/// league at the block evaluation time, returned strictly ordered by owner.
+///
+/// One canonical Tribute exists per owner per day, so the owner set is unique;
+/// the strict-order check both enforces that invariant and yields the canonical
+/// order the OCOMP opening/subject encoding expects.
+fn day_fidelity_league_snapshot(
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    wwd: WorldwideDay,
+) -> Result<Vec<(Address, u16)>> {
+    let tributes =
+        TributeContract::new(ctx.storage.clone()).get_all_day_tributes(scope, parent, wwd)?;
+    let fidelity = FidelityContract::new(ctx.storage.clone());
+    let mut entries: Vec<(Address, u16)> = Vec::with_capacity(tributes.len());
+    for tribute in &tributes {
+        let league = fidelity.league_at(tribute.owner, ctx.block.timestamp)?;
+        entries.push((tribute.owner, league));
+    }
+    entries.sort_by_key(|(owner, _)| *owner);
+    if entries.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        return Err(fatal(
+            "OCOMP day owner set is not strictly ordered and unique",
+        ));
+    }
+    Ok(entries)
+}
+
+/// Persists the per-owner league snapshot into Metadosis storage. Overwriting an
+/// existing entry with the identical league is a no-op, so re-execution within
+/// the same admission is deterministic.
+fn write_fidelity_league_snapshot(
+    metadosis: &mut MetadosisContract<'_>,
+    wwd: WorldwideDay,
+    entries: &[(Address, u16)],
+) -> Result<()> {
+    for (owner, league) in entries {
+        let key = league_snapshot_key(wwd.value(), *owner);
+        metadosis
+            .ocomp_fidelity_league_snapshot
+            .write(&key, *league)?;
+    }
+    Ok(())
 }
 
 fn build_and_commit_retry(

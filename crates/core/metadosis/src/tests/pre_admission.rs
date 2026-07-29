@@ -71,9 +71,8 @@ fn inputs() -> PreAdmissionInputs {
         },
         fidelity: FidelityOcompProjection {
             profile_ready: true,
-            max_cohorts_per_owner: 64,
-            max_cohorts_observed: 64,
         },
+        fidelity_league_snapshot_root: B256::repeat_byte(0x6a),
         oracle: OcompOraclePreAdmissionProjection {
             profile_ready: true,
             auction_entry_price: U256::from(12),
@@ -93,7 +92,10 @@ fn pre_admission_never_turns_the_work_shard_size_into_a_total_tribute_cap() {
         panic!("exact capacity boundary must be eligible");
     };
     assert_eq!(envelope.sealed_tribute_count, 256);
-    assert_eq!(envelope.max_fidelity_cohorts_observed, 64);
+    assert_eq!(
+        envelope.fidelity_league_snapshot_root,
+        B256::repeat_byte(0x6a)
+    );
     assert_eq!(envelope.oracle_wwd_pair_entries_observed, 256);
     assert_eq!(envelope.active_scurve_entries_observed, 256);
 
@@ -118,15 +120,6 @@ fn pre_admission_never_turns_the_work_shard_size_into_a_total_tribute_cap() {
     };
     assert_eq!(envelope.sealed_tribute_count, 10_000);
     assert_eq!(envelope.fidelity_opening_upper_bound, 10_000);
-
-    let mut over_fidelity = inputs();
-    over_fidelity.fidelity.max_cohorts_observed = 65;
-    assert!(matches!(
-        evaluate_pre_admission(&context(), &over_fidelity).unwrap(),
-        PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityCohortCapExceeded { .. }
-        )
-    ));
 
     let mut over_oracle_pairs = inputs();
     over_oracle_pairs.oracle.wwd_pair_entries = 257;

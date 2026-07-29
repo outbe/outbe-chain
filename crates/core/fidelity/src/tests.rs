@@ -79,8 +79,9 @@ fn fresh_ocomp_profile_enforces_the_fidelity_cohort_cap() {
         }
         let at_cap = contract.ocomp_projection().unwrap();
         assert!(at_cap.profile_ready);
-        assert_eq!(at_cap.max_cohorts_per_owner, 64);
-        assert_eq!(at_cap.max_cohorts_observed, 64);
+        // Cap is enforced from the stored `ocomp_max_cohorts_per_owner`; the cohort
+        // count itself is the direct signal now that no count is projected.
+        assert_eq!(contract.ocomp_max_cohorts_per_owner.read().unwrap(), 64);
         assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 64);
 
         assert!(contract.cohort_in(ALICE, U256::from(1), T0 + 64).is_err());
