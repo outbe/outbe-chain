@@ -22,6 +22,7 @@ pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
 pub mod restart;
+pub mod stablecoin;
 pub mod stale_join;
 pub mod tribute_projection;
 pub mod zerofee;

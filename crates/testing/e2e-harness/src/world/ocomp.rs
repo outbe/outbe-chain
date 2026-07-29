@@ -33,9 +33,7 @@ use outbe_ocomp_protocol::{
     },
     common::BoundedBytes,
     hash::hash_framed,
-    local_control::{
-        effective_uid, uid_for_user, ClientPolicy, ControlClientSession, EndpointIdentity,
-    },
+    local_control::{effective_uid, ClientPolicy, ControlClientSession, EndpointIdentity},
     profile::{CapacityProfileV1, ProtocolBundleV1},
     registry::{
         HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
@@ -67,12 +65,9 @@ use std::process::{Command, Stdio};
 #[cfg(feature = "ocomp-integration")]
 use std::str::FromStr as _;
 #[cfg(feature = "ocomp-integration")]
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 #[cfg(feature = "ocomp-integration")]
-use std::thread::{sleep, JoinHandle};
+use std::thread::sleep;
 #[cfg(feature = "ocomp-integration")]
 use std::time::{Duration, Instant};
 
@@ -84,6 +79,7 @@ use crate::ocomp_evidence::{
     OCOMP_VALIDATOR_DOMAINS,
 };
 
+#[cfg(feature = "ocomp-integration")]
 const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;
@@ -231,220 +227,6 @@ pub struct OcompMismatchedForkManifestV1 {
     pub mismatched_activation_height: u64,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OcompIsolationRoleV1 {
-    Node,
-    Supervisor,
-    SnapshotExporter,
-    Worker,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct OcompIsolatedProcessV1 {
-    pub validator_index: u8,
-    pub role: OcompIsolationRoleV1,
-    pub unit: Option<String>,
-    pub pid: u32,
-    pub uid: u32,
-    pub gid: u32,
-    pub cgroup: String,
-    pub mount_namespace: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct OcompSystemdUnitPolicyV1 {
-    pub validator_index: u8,
-    pub role: OcompIsolationRoleV1,
-    pub unit: String,
-    pub slice: String,
-    pub memory_max: u64,
-    pub tasks_max: u64,
-    pub cpu_accounting: bool,
-    pub memory_accounting: bool,
-    pub tasks_accounting: bool,
-    pub protect_system: String,
-    pub no_new_privileges: bool,
-    pub private_devices: bool,
-    pub restrict_suid_sgid: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct OcompQuotaMountV1 {
-    pub validator_index: u8,
-    pub mountpoint: String,
-    pub filesystem_type: String,
-    pub size_bytes: u64,
-    pub options: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct OcompSystemdIsolationEvidenceV1 {
-    pub systemd_version: String,
-    pub cgroup_version: u8,
-    pub slice: String,
-    pub node_uid: u32,
-    pub supervisor_uid: u32,
-    pub snapshot_exporter_uid: u32,
-    pub worker_uid: u32,
-    pub processes: Vec<OcompIsolatedProcessV1>,
-    pub unit_policies: Vec<OcompSystemdUnitPolicyV1>,
-    pub quota_mounts: Vec<OcompQuotaMountV1>,
-    pub max_live_workers_total: u32,
-    pub max_live_workers_per_domain: Vec<(u8, u32)>,
-    pub node_control_handshakes: u8,
-    pub worker_handshakes: u8,
-    pub finality_before_faults: Option<u64>,
-    pub finality_after_faults: Option<u64>,
-}
-
-impl OcompSystemdIsolationEvidenceV1 {
-    fn validate(&self) -> Result<()> {
-        const ROLE_MEMORY_MAX: u64 = 2 * 1024 * 1024 * 1024;
-        const ROLE_TASKS_MAX: u64 = 16;
-        const QUOTA_MAX_BYTES: u64 = 96 * 1024 * 1024;
-
-        eyre::ensure!(
-            !self.systemd_version.is_empty() && self.cgroup_version == 2 && !self.slice.is_empty(),
-            "OCOMP ISO evidence has no systemd/cgroup-v2 identity"
-        );
-        let role_uids = [
-            self.node_uid,
-            self.supervisor_uid,
-            self.snapshot_exporter_uid,
-            self.worker_uid,
-        ];
-        eyre::ensure!(
-            role_uids.iter().all(|uid| *uid != 0)
-                && role_uids
-                    .into_iter()
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len()
-                    == 4,
-            "OCOMP ISO roles require four distinct non-root UIDs"
-        );
-        eyre::ensure!(
-            self.processes.len() == usize::from(OCOMP_VALIDATOR_DOMAINS) * 4,
-            "OCOMP ISO process inventory must contain four roles per validator"
-        );
-        let mut process_keys = std::collections::BTreeSet::new();
-        let mut process_ids = std::collections::BTreeSet::new();
-        let mut node_mounts = BTreeMap::new();
-        for process in &self.processes {
-            eyre::ensure!(
-                process.validator_index < OCOMP_VALIDATOR_DOMAINS
-                    && process.pid != 0
-                    && process.uid
-                        == match process.role {
-                            OcompIsolationRoleV1::Node => self.node_uid,
-                            OcompIsolationRoleV1::Supervisor => self.supervisor_uid,
-                            OcompIsolationRoleV1::SnapshotExporter => {
-                                self.snapshot_exporter_uid
-                            }
-                            OcompIsolationRoleV1::Worker => self.worker_uid,
-                        }
-                    && process.cgroup.starts_with('/')
-                    && process.mount_namespace.starts_with("mnt:["),
-                "OCOMP ISO process identity is incomplete or inconsistent"
-            );
-            eyre::ensure!(
-                process_keys.insert((process.validator_index, process.role))
-                    && process_ids.insert(process.pid),
-                "OCOMP ISO process inventory contains a duplicate role or pid"
-            );
-            if process.role == OcompIsolationRoleV1::Node {
-                node_mounts.insert(process.validator_index, process.mount_namespace.clone());
-            }
-        }
-        for process in self
-            .processes
-            .iter()
-            .filter(|process| process.role != OcompIsolationRoleV1::Node)
-        {
-            eyre::ensure!(
-                process.cgroup.contains("outbe-ocomp-iso")
-                    && node_mounts
-                        .get(&process.validator_index)
-                        .is_some_and(|node_mount| node_mount != &process.mount_namespace),
-                "OCOMP compute role did not enter its own cgroup/mount namespace"
-            );
-        }
-
-        eyre::ensure!(
-            self.unit_policies.len() == usize::from(OCOMP_VALIDATOR_DOMAINS) * 3,
-            "OCOMP ISO unit policy inventory must contain every compute role"
-        );
-        let mut policy_keys = std::collections::BTreeSet::new();
-        for policy in &self.unit_policies {
-            eyre::ensure!(
-                policy.validator_index < OCOMP_VALIDATOR_DOMAINS
-                    && policy.role != OcompIsolationRoleV1::Node
-                    && policy_keys.insert((policy.validator_index, policy.role))
-                    && policy.slice == self.slice
-                    && policy.memory_max == ROLE_MEMORY_MAX
-                    && policy.tasks_max == ROLE_TASKS_MAX
-                    && policy.cpu_accounting
-                    && policy.memory_accounting
-                    && policy.tasks_accounting
-                    && policy.protect_system == "strict"
-                    && policy.no_new_privileges
-                    && policy.private_devices
-                    && policy.restrict_suid_sgid,
-                "OCOMP ISO unit policy is incomplete or outside the bounded slice"
-            );
-        }
-
-        eyre::ensure!(
-            self.quota_mounts.len() == usize::from(OCOMP_VALIDATOR_DOMAINS) * 4,
-            "OCOMP ISO evidence must contain four quota filesystems per validator"
-        );
-        let mut mountpoints = std::collections::BTreeSet::new();
-        for mount in &self.quota_mounts {
-            eyre::ensure!(
-                mount.validator_index < OCOMP_VALIDATOR_DOMAINS
-                    && mountpoints.insert(&mount.mountpoint)
-                    && mount.filesystem_type == "tmpfs"
-                    && mount.size_bytes != 0
-                    && mount.size_bytes <= QUOTA_MAX_BYTES
-                    && ["nodev", "nosuid", "noexec"]
-                        .into_iter()
-                        .all(|option| mount.options.split(',').any(|actual| actual == option)),
-                "OCOMP ISO quota filesystem is missing or unbounded"
-            );
-        }
-
-        eyre::ensure!(
-            self.max_live_workers_total >= 1
-                && self.max_live_workers_total
-                    <= u32::from(OCOMP_VALIDATOR_DOMAINS)
-                        * u32::try_from(OCOMP_MAX_WORKERS_PER_DOMAIN)
-                            .map_err(|_| eyre::eyre!("worker cap does not fit u32"))?
-                && self.max_live_workers_per_domain.len() == usize::from(OCOMP_VALIDATOR_DOMAINS)
-                && self.max_live_workers_per_domain.iter().enumerate().all(
-                    |(index, (validator, observed))| {
-                        usize::from(*validator) == index
-                            && *observed >= 1
-                            && usize::try_from(*observed)
-                                .is_ok_and(|value| value <= OCOMP_MAX_WORKERS_PER_DOMAIN)
-                    }
-                )
-                && self.node_control_handshakes == OCOMP_VALIDATOR_DOMAINS * 2
-                && self.worker_handshakes == OCOMP_VALIDATOR_DOMAINS,
-            "OCOMP ISO runtime did not prove bounded authenticated worker activation"
-        );
-        match (self.finality_before_faults, self.finality_after_faults) {
-            (None, None) => {}
-            (Some(before), Some(after)) if after > before => {}
-            _ => eyre::bail!("OCOMP ISO fault/finality evidence is incomplete"),
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OcompScenarioTopologyV1 {
@@ -456,7 +238,6 @@ pub struct OcompScenarioTopologyV1 {
     pub faults: Vec<OcompFaultRecordV1>,
     pub fork_restart: Option<OcompForkRestartEvidenceV1>,
     pub fork_mismatch: Option<OcompForkMismatchEvidenceV1>,
-    pub systemd_isolation: Option<OcompSystemdIsolationEvidenceV1>,
     pub correlated_tribute: Option<CorrelatedTributeFixtureV1>,
 }
 
@@ -467,9 +248,6 @@ impl OcompScenarioTopologyV1 {
         }
         if let Some(mismatch) = &self.fork_mismatch {
             mismatch.validate()?;
-        }
-        if let Some(isolation) = &self.systemd_isolation {
-            isolation.validate()?;
         }
         Ok(())
     }
@@ -534,55 +312,6 @@ struct OcompDomain {
     workers: BTreeMap<u32, OwnedProcess>,
 }
 
-#[cfg(feature = "ocomp-integration")]
-#[derive(Clone, Debug)]
-struct OcompSystemdIsolationProfile {
-    node_uid: u32,
-    supervisor_uid: u32,
-    snapshot_exporter_uid: u32,
-    worker_uid: u32,
-    slice: String,
-    unit_prefix: String,
-}
-
-#[cfg(feature = "ocomp-integration")]
-#[derive(Debug)]
-struct OcompSystemdWorkerObservationV1 {
-    processes: Vec<OcompIsolatedProcessV1>,
-    policies: Vec<OcompSystemdUnitPolicyV1>,
-    max_live_total: u32,
-    max_live_per_domain: Vec<(u8, u32)>,
-}
-
-#[cfg(feature = "ocomp-integration")]
-#[derive(Debug)]
-pub struct OcompSystemdWorkerMonitorV1 {
-    stop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<Result<OcompSystemdWorkerObservationV1>>>,
-}
-
-#[cfg(feature = "ocomp-integration")]
-impl OcompSystemdWorkerMonitorV1 {
-    fn finish(mut self) -> Result<OcompSystemdWorkerObservationV1> {
-        self.stop.store(true, Ordering::Release);
-        self.handle
-            .take()
-            .ok_or_else(|| eyre::eyre!("OCOMP worker monitor has no owned thread"))?
-            .join()
-            .map_err(|_| eyre::eyre!("OCOMP worker monitor panicked"))?
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-impl Drop for OcompSystemdWorkerMonitorV1 {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
 impl OcompDomain {
     fn new(root: PathBuf) -> Self {
         Self {
@@ -606,17 +335,6 @@ pub struct OcompTopology {
     fork_mismatch_evidence: Option<OcompForkMismatchEvidenceV1>,
     #[cfg(feature = "ocomp-integration")]
     launch_identity: Option<OcompLaunchIdentityV1>,
-    #[cfg(feature = "ocomp-integration")]
-    systemd_isolation: Option<OcompSystemdIsolationProfile>,
-    #[cfg(feature = "ocomp-integration")]
-    systemd_units: Vec<String>,
-    #[cfg(feature = "ocomp-integration")]
-    systemd_unit_files: Vec<PathBuf>,
-    #[cfg(feature = "ocomp-integration")]
-    systemd_quota_mounts: Vec<PathBuf>,
-    #[cfg(feature = "ocomp-integration")]
-    systemd_worker_monitor: Option<OcompSystemdWorkerMonitorV1>,
-    systemd_isolation_evidence: Option<OcompSystemdIsolationEvidenceV1>,
     tribute_correlation: TributeCorrelationBuilder,
     correlated_tribute: Option<CorrelatedTributeFixtureV1>,
 }
@@ -635,17 +353,6 @@ impl OcompTopology {
             fork_mismatch_evidence: None,
             #[cfg(feature = "ocomp-integration")]
             launch_identity: None,
-            #[cfg(feature = "ocomp-integration")]
-            systemd_isolation: None,
-            #[cfg(feature = "ocomp-integration")]
-            systemd_units: Vec::new(),
-            #[cfg(feature = "ocomp-integration")]
-            systemd_unit_files: Vec::new(),
-            #[cfg(feature = "ocomp-integration")]
-            systemd_quota_mounts: Vec::new(),
-            #[cfg(feature = "ocomp-integration")]
-            systemd_worker_monitor: None,
-            systemd_isolation_evidence: None,
             tribute_correlation: TributeCorrelationBuilder::default(),
             correlated_tribute: None,
         }
@@ -1125,375 +832,6 @@ impl OcompTopology {
         self.ensure_validator_roles_alive()
     }
 
-    /// Start the same production role binaries through transient systemd
-    /// services with the fixed deployment users and finite cgroup-v2 limits.
-    /// This path is used only by OCM-ISO-001 on a dedicated systemd host.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn systemd_node_peer_uids() -> Result<(u32, u32)> {
-        Ok((
-            uid_for_user("outbe-ocomp-supervisor")?,
-            uid_for_user("outbe-ocomp-export")?,
-        ))
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub fn start_systemd_validator_roles(&mut self, identity: OcompLaunchIdentityV1) -> Result<()> {
-        let pid1 = fs::read_to_string("/proc/1/comm")?;
-        eyre::ensure!(
-            pid1.trim() == "systemd",
-            "OCM-ISO-001 requires systemd as PID 1, observed {}",
-            pid1.trim()
-        );
-        eyre::ensure!(
-            Path::new("/sys/fs/cgroup/cgroup.controllers").is_file(),
-            "OCM-ISO-001 requires unified cgroup v2"
-        );
-        let node_uid = effective_uid()?;
-        let supervisor_uid = uid_for_user("outbe-ocomp-supervisor")?;
-        let snapshot_exporter_uid = uid_for_user("outbe-ocomp-export")?;
-        let worker_uid = uid_for_user("outbe-ocomp-worker")?;
-        let unique = [node_uid, supervisor_uid, snapshot_exporter_uid, worker_uid]
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>();
-        eyre::ensure!(
-            unique.len() == 4
-                && supervisor_uid != 0
-                && snapshot_exporter_uid != 0
-                && worker_uid != 0,
-            "node, Supervisor, SnapshotExporter and Worker require four distinct non-root identities"
-        );
-        let unit_prefix = format!(
-            "outbe-ocomp-iso-s{}-{}",
-            self.cfg.scenario,
-            std::process::id()
-        );
-        let slice = format!("{unit_prefix}.slice");
-        let status = Command::new("sudo")
-            .args([
-                "-n",
-                "systemctl",
-                "set-property",
-                "--runtime",
-                &slice,
-                "CPUQuota=300%",
-                "MemoryHigh=10G",
-                "MemoryMax=12G",
-                "TasksMax=128",
-                "IOWeight=100",
-            ])
-            .status()?;
-        eyre::ensure!(
-            status.success(),
-            "cannot create the finite OCOMP isolation slice {slice}"
-        );
-        self.systemd_isolation = Some(OcompSystemdIsolationProfile {
-            node_uid,
-            supervisor_uid,
-            snapshot_exporter_uid,
-            worker_uid,
-            slice,
-            unit_prefix,
-        });
-
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
-            self.mount_systemd_quota_filesystems(validator_index)?;
-            prepare_systemd_development_domain(self.domain_root(validator_index)?)?;
-            self.install_systemd_worker_activation(validator_index, identity)?;
-            for socket in [
-                self.node_supervisor_socket(validator_index)?,
-                self.node_snapshot_exporter_socket(validator_index)?,
-            ] {
-                wait_for_socket_entry(&socket, "systemd OCOMP node control")?;
-                fs::set_permissions(&socket, fs::Permissions::from_mode(0o666))?;
-            }
-        }
-        self.start_validator_roles(identity)?;
-        self.begin_systemd_worker_monitor()
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn begin_systemd_worker_monitor(&mut self) -> Result<()> {
-        eyre::ensure!(
-            self.systemd_worker_monitor.is_none(),
-            "OCOMP systemd worker monitor is already active"
-        );
-        let profile = self
-            .systemd_isolation
-            .clone()
-            .ok_or_else(|| eyre::eyre!("systemd isolation profile is not initialized"))?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_stop = Arc::clone(&stop);
-        let handle = std::thread::spawn(move || monitor_systemd_workers(&profile, &thread_stop));
-        self.systemd_worker_monitor = Some(OcompSystemdWorkerMonitorV1 {
-            stop,
-            handle: Some(handle),
-        });
-        Ok(())
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub fn systemd_isolation_active(&self) -> bool {
-        self.systemd_isolation.is_some()
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    pub fn capture_systemd_isolation_inventory(
-        &mut self,
-        node_pids: &[(u8, u32)],
-        worker_handshakes: u8,
-    ) -> Result<()> {
-        eyre::ensure!(
-            self.systemd_isolation_evidence.is_none(),
-            "OCOMP systemd isolation inventory was already captured"
-        );
-        let profile = self
-            .systemd_isolation
-            .clone()
-            .ok_or_else(|| eyre::eyre!("systemd isolation profile is not initialized"))?;
-        let monitor = self
-            .systemd_worker_monitor
-            .take()
-            .ok_or_else(|| eyre::eyre!("OCOMP systemd worker monitor is not active"))?;
-        let worker_observation = monitor.finish()?;
-
-        eyre::ensure!(
-            node_pids.len() == usize::from(OCOMP_VALIDATOR_DOMAINS),
-            "OCOMP ISO requires one live node pid per validator"
-        );
-        let mut processes = Vec::with_capacity(usize::from(OCOMP_VALIDATOR_DOMAINS) * 4);
-        let mut policies = Vec::with_capacity(usize::from(OCOMP_VALIDATOR_DOMAINS) * 3);
-        for &(validator_index, pid) in node_pids {
-            self.domain(validator_index)?;
-            processes.push(inspect_isolated_process(
-                validator_index,
-                OcompIsolationRoleV1::Node,
-                None,
-                pid,
-            )?);
-        }
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
-            for (role, suffix) in [
-                (OcompIsolationRoleV1::Supervisor, "supervisor"),
-                (OcompIsolationRoleV1::SnapshotExporter, "snapshot-exporter"),
-            ] {
-                let unit = format!(
-                    "{}-v{}-{suffix}.service",
-                    profile.unit_prefix, validator_index
-                );
-                let (process, policy) =
-                    inspect_systemd_process_and_policy(validator_index, role, &unit)?;
-                processes.push(process);
-                policies.push(policy);
-            }
-        }
-        processes.extend(worker_observation.processes);
-        policies.extend(worker_observation.policies);
-
-        let mut quota_mounts = Vec::with_capacity(usize::from(OCOMP_VALIDATOR_DOMAINS) * 4);
-        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
-            let root = self.domain_root(validator_index)?;
-            for relative in ["cas-v1", "exporter-v1", "supervisor-v1", "worker-inbox-v1"] {
-                quota_mounts.push(inspect_quota_mount(validator_index, &root.join(relative))?);
-            }
-        }
-        let evidence = OcompSystemdIsolationEvidenceV1 {
-            systemd_version: systemd_version()?,
-            cgroup_version: 2,
-            slice: profile.slice,
-            node_uid: profile.node_uid,
-            supervisor_uid: profile.supervisor_uid,
-            snapshot_exporter_uid: profile.snapshot_exporter_uid,
-            worker_uid: profile.worker_uid,
-            processes,
-            unit_policies: policies,
-            quota_mounts,
-            max_live_workers_total: worker_observation.max_live_total,
-            max_live_workers_per_domain: worker_observation.max_live_per_domain,
-            node_control_handshakes: OCOMP_VALIDATOR_DOMAINS * 2,
-            worker_handshakes,
-            finality_before_faults: None,
-            finality_after_faults: None,
-        };
-        evidence.validate()?;
-        self.systemd_isolation_evidence = Some(evidence);
-        Ok(())
-    }
-
-    pub fn record_systemd_fault_finality(&mut self, before: u64, after: u64) -> Result<()> {
-        let evidence = self
-            .systemd_isolation_evidence
-            .as_mut()
-            .ok_or_else(|| eyre::eyre!("OCOMP systemd isolation inventory is missing"))?;
-        eyre::ensure!(
-            evidence.finality_before_faults.is_none()
-                && evidence.finality_after_faults.is_none()
-                && after > before,
-            "OCOMP systemd fault finality may be recorded once and must advance"
-        );
-        evidence.finality_before_faults = Some(before);
-        evidence.finality_after_faults = Some(after);
-        evidence.validate()
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn mount_systemd_quota_filesystems(&mut self, validator_index: u8) -> Result<()> {
-        const QUOTA_SIZE: &str = "96M";
-        let root = self.domain_root(validator_index)?.to_path_buf();
-        for relative in ["cas-v1", "exporter-v1", "supervisor-v1", "worker-inbox-v1"] {
-            let mountpoint = root.join(relative);
-            fs::create_dir_all(&mountpoint)?;
-            let already_mounted = Command::new("mountpoint")
-                .args(["-q", "--"])
-                .arg(&mountpoint)
-                .status()?;
-            eyre::ensure!(
-                !already_mounted.success(),
-                "refuse to replace existing mount {}",
-                mountpoint.display()
-            );
-            let source = format!(
-                "outbe-ocomp-iso-v{validator_index}-{}-{}",
-                relative.replace('/', "-"),
-                std::process::id()
-            );
-            let status = Command::new("sudo")
-                .args(["-n", "mount", "-t", "tmpfs", "-o"])
-                .arg(format!("size={QUOTA_SIZE},mode=0777,nosuid,nodev,noexec"))
-                .arg(&source)
-                .arg(&mountpoint)
-                .status()?;
-            eyre::ensure!(
-                status.success(),
-                "cannot mount quota-limited OCOMP ISO filesystem {}",
-                mountpoint.display()
-            );
-            self.systemd_quota_mounts.push(mountpoint);
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "ocomp-integration")]
-    fn install_systemd_worker_activation(
-        &mut self,
-        validator_index: u8,
-        identity: OcompLaunchIdentityV1,
-    ) -> Result<()> {
-        let profile = self
-            .systemd_isolation
-            .clone()
-            .ok_or_else(|| eyre::eyre!("systemd isolation profile is not initialized"))?;
-        let domain_root = self.domain_root(validator_index)?.to_path_buf();
-        let unit_base = format!("{}-v{}-worker", profile.unit_prefix, validator_index);
-        let socket_unit = format!("{unit_base}.socket");
-        let service_template = format!("{unit_base}@.service");
-        let worker_socket = domain_root.join("worker.sock");
-        let boot_nonce = B256::repeat_byte(validator_index.saturating_add(1));
-        let generated_root = domain_root.join("systemd-v1");
-        fs::create_dir_all(&generated_root)?;
-        fs::set_permissions(&generated_root, fs::Permissions::from_mode(0o700))?;
-
-        let socket_source = generated_root.join(&socket_unit);
-        let service_source = generated_root.join(&service_template);
-        let socket_body = format!(
-            "[Unit]\n\
-             Description=Outbe OCOMP ISO worker activation socket v{validator_index}\n\
-             \n\
-             [Socket]\n\
-             ListenStream={}\n\
-             Accept=yes\n\
-             MaxConnections={OCOMP_MAX_WORKERS_PER_DOMAIN}\n\
-             MaxConnectionsPerSource={OCOMP_MAX_WORKERS_PER_DOMAIN}\n\
-             SocketUser=outbe-ocomp-supervisor\n\
-             SocketMode=0600\n\
-             RemoveOnStop=yes\n",
-            systemd_quote(&worker_socket)?
-        );
-        let service_body = format!(
-            "[Unit]\n\
-             Description=Outbe OCOMP ISO one-unit worker v{validator_index}\n\
-             \n\
-             [Service]\n\
-             Type=simple\n\
-             User=outbe-ocomp-worker\n\
-             UMask=0027\n\
-             WorkingDirectory={}\n\
-             ExecStart={} worker --development-root {} --development-supervisor-uid {} --chain-id {} --genesis-hash {:#x} --boot-nonce {:#x} --protocol-bundle-hash {:#x} --session-generation 1\n\
-             StandardInput=socket\n\
-             StandardOutput=journal\n\
-             StandardError=journal\n\
-             Restart=no\n\
-             Slice={}\n\
-             RuntimeMaxSec=600\n\
-             CPUAccounting=yes\n\
-             MemoryAccounting=yes\n\
-             TasksAccounting=yes\n\
-             MemoryHigh=1536M\n\
-             MemoryMax=2G\n\
-             TasksMax=16\n\
-             IOWeight=100\n\
-             NoNewPrivileges=yes\n\
-             ProtectSystem=strict\n\
-             ProtectHome=yes\n\
-             PrivateDevices=yes\n\
-             CapabilityBoundingSet=\n\
-             RestrictSUIDSGID=yes\n\
-             LockPersonality=yes\n\
-             RestrictAddressFamilies=AF_UNIX\n\
-             ReadOnlyPaths={}\n\
-             ReadWritePaths={}\n",
-            systemd_quote(&self.cfg.repo)?,
-            systemd_quote(&self.cfg.bin_ocomp)?,
-            systemd_quote(&domain_root)?,
-            profile.supervisor_uid,
-            identity.chain_id,
-            identity.genesis_hash,
-            boot_nonce,
-            identity.protocol_bundle_hash,
-            profile.slice,
-            systemd_quote(&domain_root.join("cas-v1/objects"))?,
-            systemd_quote(&domain_root.join("worker-inbox-v1"))?,
-        );
-        fs::write(&socket_source, socket_body)?;
-        fs::write(&service_source, service_body)?;
-        fs::set_permissions(&socket_source, fs::Permissions::from_mode(0o600))?;
-        fs::set_permissions(&service_source, fs::Permissions::from_mode(0o600))?;
-
-        for (source, unit) in [
-            (&socket_source, socket_unit.as_str()),
-            (&service_source, service_template.as_str()),
-        ] {
-            let destination = PathBuf::from("/run/systemd/system").join(unit);
-            let status = Command::new("sudo")
-                .args(["-n", "install", "-m", "0644"])
-                .arg(source)
-                .arg(&destination)
-                .status()?;
-            eyre::ensure!(
-                status.success(),
-                "cannot install generated OCOMP ISO unit {}",
-                destination.display()
-            );
-            self.systemd_unit_files.push(destination);
-        }
-        let reload = Command::new("sudo")
-            .args(["-n", "systemctl", "daemon-reload"])
-            .status()?;
-        eyre::ensure!(
-            reload.success(),
-            "cannot reload systemd after installing OCOMP ISO worker units"
-        );
-        let start = Command::new("sudo")
-            .args(["-n", "systemctl", "start", &socket_unit])
-            .status()?;
-        eyre::ensure!(
-            start.success(),
-            "cannot start OCOMP ISO worker socket {socket_unit}"
-        );
-        wait_for_socket_entry(&worker_socket, "systemd OCOMP Worker")?;
-        self.systemd_units.push(socket_unit);
-        Ok(())
-    }
-
     /// Activate one production worker through the same inherited-FD boundary
     /// used by the Supervisor. The authenticated control session remains
     /// private to the topology so Cucumber steps cannot inject work.
@@ -1635,15 +973,6 @@ impl OcompTopology {
                 "OCOMP_PROTOCOL_BUNDLE_HASH",
                 format!("{:#x}", identity.protocol_bundle_hash),
             );
-        if let Some(profile) = &self.systemd_isolation {
-            command
-                .arg("--development-node-uid")
-                .arg(profile.node_uid.to_string())
-                .arg("--development-supervisor-uid")
-                .arg(profile.supervisor_uid.to_string())
-                .arg("--development-worker-uid")
-                .arg(profile.worker_uid.to_string());
-        }
         match role {
             OcompProcessRole::Supervisor => {
                 let validator_index = usize::from(validator_index);
@@ -1664,9 +993,6 @@ impl OcompTopology {
                         format!("{validator_address:#x}"),
                     )
                     .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
-                if self.systemd_isolation.is_some() {
-                    command.arg("--development-external-worker");
-                }
             }
             OcompProcessRole::SnapshotExporter => {
                 command
@@ -1696,75 +1022,11 @@ impl OcompTopology {
                 self.cfg.bin_ocomp.display()
             );
         }
-        let systemd_unit = self.systemd_isolation.as_ref().map(|profile| {
-            format!(
-                "{}-v{}-{}.service",
-                profile.unit_prefix, validator_index, role_name
-            )
-        });
-        let mut command = if let (Some(profile), Some(unit)) =
-            (self.systemd_isolation.as_ref(), systemd_unit.as_ref())
-        {
-            let role_uid = match role {
-                OcompProcessRole::Supervisor => profile.supervisor_uid,
-                OcompProcessRole::SnapshotExporter => profile.snapshot_exporter_uid,
-                _ => unreachable!("fixed node-facing role validated above"),
-            };
-            let mut wrapped = Command::new("sudo");
-            wrapped
-                .args([
-                    "-n",
-                    "systemd-run",
-                    "--wait",
-                    "--pipe",
-                    "--quiet",
-                    "--unit",
-                    unit,
-                    "--uid",
-                ])
-                .arg(role_uid.to_string())
-                .arg("--slice")
-                .arg(&profile.slice)
-                .args([
-                    "--property=CPUAccounting=yes",
-                    "--property=MemoryAccounting=yes",
-                    "--property=TasksAccounting=yes",
-                    "--property=MemoryMax=2G",
-                    "--property=TasksMax=16",
-                    "--property=ProtectSystem=strict",
-                    "--property=ProtectHome=yes",
-                    "--property=PrivateDevices=yes",
-                    "--property=NoNewPrivileges=yes",
-                    "--property=RestrictSUIDSGID=yes",
-                    "--property=RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
-                ])
-                .arg(format!(
-                    "--property=ReadWritePaths={}",
-                    domain_root.display()
-                ));
-            for (name, value) in command.get_envs() {
-                if let Some(value) = value {
-                    wrapped.arg(format!(
-                        "--setenv={}={}",
-                        name.to_string_lossy(),
-                        value.to_string_lossy()
-                    ));
-                }
-            }
-            wrapped.arg(&self.cfg.bin_ocomp).args(command.get_args());
-            wrapped.current_dir(&self.cfg.repo);
-            wrapped
-        } else {
-            command
-        };
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
         let guard = ChildGuard::spawn(
             format!("validator-{validator_index} OCOMP {role_name}"),
             command,
         )?;
-        if let Some(unit) = systemd_unit {
-            self.systemd_units.push(unit);
-        }
         Ok(guard)
     }
 
@@ -2001,7 +1263,6 @@ impl OcompTopology {
             faults: self.faults.clone(),
             fork_restart: self.fork_restart_evidence.clone(),
             fork_mismatch: self.fork_mismatch_evidence.clone(),
-            systemd_isolation: self.systemd_isolation_evidence.clone(),
             correlated_tribute: self.correlated_tribute.clone(),
         })
     }
@@ -2133,56 +1394,6 @@ impl OcompTopology {
         Ok(())
     }
 
-    /// Stop one exact systemd-owned OCOMP role used by OCM-ISO-001. The
-    /// caller chooses only a typed role/index; no arbitrary unit or command is
-    /// accepted.
-    #[cfg(feature = "ocomp-integration")]
-    pub fn apply_systemd_process_fault(&mut self, fault: OcompProcessFault) -> Result<()> {
-        if self.faults.len() >= OCOMP_MAX_FAULT_RECORDS {
-            eyre::bail!("OCOMP scenario reached the bounded fault-record limit");
-        }
-        let profile = self
-            .systemd_isolation
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("systemd OCOMP isolation is not active"))?;
-        let unit = match fault {
-            OcompProcessFault::StopSupervisor { validator_index } => {
-                self.domain(validator_index)?;
-                format!(
-                    "{}-v{}-supervisor.service",
-                    profile.unit_prefix, validator_index
-                )
-            }
-            OcompProcessFault::StopSnapshotExporter { validator_index } => {
-                self.domain(validator_index)?;
-                format!(
-                    "{}-v{}-snapshot-exporter.service",
-                    profile.unit_prefix, validator_index
-                )
-            }
-            OcompProcessFault::StopWorker {
-                validator_index,
-                worker_ordinal,
-            } => {
-                self.domain(validator_index)?;
-                eyre::ensure!(
-                    worker_ordinal == 0,
-                    "systemd socket activation is addressed as worker ordinal zero"
-                );
-                format!("{}-v{}-worker.socket", profile.unit_prefix, validator_index)
-            }
-        };
-        let status = Command::new("sudo")
-            .args(["-n", "systemctl", "stop", &unit])
-            .status()?;
-        eyre::ensure!(status.success(), "cannot stop OCOMP ISO unit {unit}");
-        self.faults.push(OcompFaultRecordV1 {
-            fault,
-            applied_at_millis: unix_time_millis(),
-        });
-        Ok(())
-    }
-
     fn domain(&self, validator_index: u8) -> Result<&OcompDomain> {
         self.domains
             .get(usize::from(validator_index))
@@ -2288,7 +1499,6 @@ fn worker_boot_nonce(validator_index: u8, worker_ordinal: u32) -> B256 {
 #[cfg(feature = "ocomp-integration")]
 impl Drop for OcompTopology {
     fn drop(&mut self) {
-        self.systemd_worker_monitor.take();
         for domain in &mut self.domains {
             domain.workers.clear();
             domain.snapshot_exporter.take();
@@ -2296,36 +1506,6 @@ impl Drop for OcompTopology {
         }
         for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
             let _ = fs::remove_dir(self.cfg.ocomp_socket_dir(usize::from(validator_index)));
-        }
-        for unit in self.systemd_units.iter().rev() {
-            let _ = Command::new("sudo")
-                .args(["-n", "systemctl", "stop", unit])
-                .status();
-            let _ = Command::new("sudo")
-                .args(["-n", "systemctl", "reset-failed", unit])
-                .status();
-        }
-        if let Some(profile) = &self.systemd_isolation {
-            let _ = Command::new("sudo")
-                .args(["-n", "systemctl", "stop", &profile.slice])
-                .status();
-        }
-        for unit_file in self.systemd_unit_files.iter().rev() {
-            let _ = Command::new("sudo")
-                .args(["-n", "unlink"])
-                .arg(unit_file)
-                .status();
-        }
-        if !self.systemd_unit_files.is_empty() {
-            let _ = Command::new("sudo")
-                .args(["-n", "systemctl", "daemon-reload"])
-                .status();
-        }
-        for mountpoint in self.systemd_quota_mounts.iter().rev() {
-            let _ = Command::new("sudo")
-                .args(["-n", "umount", "--"])
-                .arg(mountpoint)
-                .status();
         }
     }
 }
@@ -2349,362 +1529,6 @@ fn wait_for_socket_entry(path: &Path, label: &str) -> Result<()> {
         }
         sleep(Duration::from_millis(50));
     }
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn prepare_systemd_development_domain(root: &Path) -> Result<()> {
-    eyre::ensure!(
-        root.is_absolute() && root.parent().is_some() && root != Path::new("/"),
-        "refuse unsafe systemd development root {}",
-        root.display()
-    );
-    for path in [
-        root.to_path_buf(),
-        root.join("cas-v1"),
-        root.join("cas-v1/objects"),
-        root.join("cas-v1/refs"),
-        root.join("cas-v1/staging"),
-        root.join("exporter-v1"),
-        root.join("supervisor-v1"),
-        root.join("worker-inbox-v1"),
-    ] {
-        fs::create_dir_all(&path)?;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o777))?;
-    }
-    let bundle = root.join("protocol-bundle-v1.ocb1");
-    eyre::ensure!(
-        bundle.is_file(),
-        "systemd development domain has no pinned protocol bundle"
-    );
-    fs::set_permissions(bundle, fs::Permissions::from_mode(0o644))?;
-    Ok(())
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn systemd_quote(path: &Path) -> Result<String> {
-    let value = path
-        .to_str()
-        .ok_or_else(|| eyre::eyre!("systemd path is not valid UTF-8: {}", path.display()))?;
-    eyre::ensure!(
-        !value.chars().any(|character| character.is_control()),
-        "systemd path contains a control character: {}",
-        path.display()
-    );
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    Ok(format!("\"{escaped}\""))
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn monitor_systemd_workers(
-    profile: &OcompSystemdIsolationProfile,
-    stop: &AtomicBool,
-) -> Result<OcompSystemdWorkerObservationV1> {
-    let pattern = format!("{}-v*-worker@*.service", profile.unit_prefix);
-    let mut processes = BTreeMap::<u8, OcompIsolatedProcessV1>::new();
-    let mut policies = BTreeMap::<u8, OcompSystemdUnitPolicyV1>::new();
-    let mut max_live_total = 0_u32;
-    let mut max_live_per_domain = [0_u32; OCOMP_VALIDATOR_DOMAINS as usize];
-    let mut last_inspection_error = None;
-
-    while !stop.load(Ordering::Acquire) {
-        let output = Command::new("sudo")
-            .args([
-                "-n",
-                "systemctl",
-                "list-units",
-                "--no-legend",
-                "--plain",
-                "--state=running",
-                &pattern,
-            ])
-            .output()?;
-        eyre::ensure!(
-            output.status.success(),
-            "cannot enumerate live systemd OCOMP workers: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-        eyre::ensure!(
-            output.stdout.len() <= 64 * 1024,
-            "systemd OCOMP worker inventory exceeded 64 KiB"
-        );
-        let stdout = String::from_utf8(output.stdout)?;
-        let mut live_per_domain = [0_u32; OCOMP_VALIDATOR_DOMAINS as usize];
-        let mut live_total = 0_u32;
-        for line in stdout.lines() {
-            let Some(unit) = line.split_ascii_whitespace().next() else {
-                continue;
-            };
-            let Some(validator_index) = parse_systemd_worker_validator(&profile.unit_prefix, unit)
-            else {
-                continue;
-            };
-            live_total = live_total.saturating_add(1);
-            live_per_domain[usize::from(validator_index)] =
-                live_per_domain[usize::from(validator_index)].saturating_add(1);
-            if processes.contains_key(&validator_index) {
-                continue;
-            }
-            match inspect_systemd_process_and_policy(
-                validator_index,
-                OcompIsolationRoleV1::Worker,
-                unit,
-            ) {
-                Ok((process, policy)) => {
-                    processes.insert(validator_index, process);
-                    policies.insert(validator_index, policy);
-                }
-                Err(error) => last_inspection_error = Some(format!("{error:#}")),
-            }
-        }
-        max_live_total = max_live_total.max(live_total);
-        for (maximum, live) in max_live_per_domain.iter_mut().zip(live_per_domain) {
-            *maximum = (*maximum).max(live);
-        }
-        sleep(Duration::from_millis(5));
-    }
-
-    eyre::ensure!(
-        processes.len() == usize::from(OCOMP_VALIDATOR_DOMAINS)
-            && policies.len() == usize::from(OCOMP_VALIDATOR_DOMAINS),
-        "did not observe one live socket-activated worker in every validator domain{}",
-        last_inspection_error
-            .as_deref()
-            .map(|error| format!("; last inspection error: {error}"))
-            .unwrap_or_default()
-    );
-    Ok(OcompSystemdWorkerObservationV1 {
-        processes: processes.into_values().collect(),
-        policies: policies.into_values().collect(),
-        max_live_total,
-        max_live_per_domain: max_live_per_domain
-            .into_iter()
-            .enumerate()
-            .map(|(validator, observed)| {
-                (
-                    u8::try_from(validator).expect("four-domain index fits u8"),
-                    observed,
-                )
-            })
-            .collect(),
-    })
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn parse_systemd_worker_validator(prefix: &str, unit: &str) -> Option<u8> {
-    let suffix = unit.strip_prefix(&format!("{prefix}-v"))?;
-    let (validator, instance) = suffix.split_once("-worker@")?;
-    if !instance.ends_with(".service") {
-        return None;
-    }
-    let validator = validator.parse::<u8>().ok()?;
-    (validator < OCOMP_VALIDATOR_DOMAINS).then_some(validator)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn inspect_systemd_process_and_policy(
-    validator_index: u8,
-    role: OcompIsolationRoleV1,
-    unit: &str,
-) -> Result<(OcompIsolatedProcessV1, OcompSystemdUnitPolicyV1)> {
-    let properties = systemd_unit_properties(
-        unit,
-        &[
-            "MainPID",
-            "Slice",
-            "MemoryMax",
-            "TasksMax",
-            "CPUAccounting",
-            "MemoryAccounting",
-            "TasksAccounting",
-            "ProtectSystem",
-            "NoNewPrivileges",
-            "PrivateDevices",
-            "RestrictSUIDSGID",
-        ],
-    )?;
-    let pid = parse_systemd_u32(&properties, "MainPID")?;
-    eyre::ensure!(pid != 0, "systemd unit {unit} has no live MainPID");
-    let process = inspect_isolated_process(validator_index, role, Some(unit.to_owned()), pid)?;
-    let policy = OcompSystemdUnitPolicyV1 {
-        validator_index,
-        role,
-        unit: unit.to_owned(),
-        slice: systemd_property(&properties, "Slice")?.to_owned(),
-        memory_max: parse_systemd_u64(&properties, "MemoryMax")?,
-        tasks_max: parse_systemd_u64(&properties, "TasksMax")?,
-        cpu_accounting: parse_systemd_bool(&properties, "CPUAccounting")?,
-        memory_accounting: parse_systemd_bool(&properties, "MemoryAccounting")?,
-        tasks_accounting: parse_systemd_bool(&properties, "TasksAccounting")?,
-        protect_system: systemd_property(&properties, "ProtectSystem")?.to_owned(),
-        no_new_privileges: parse_systemd_bool(&properties, "NoNewPrivileges")?,
-        private_devices: parse_systemd_bool(&properties, "PrivateDevices")?,
-        restrict_suid_sgid: parse_systemd_bool(&properties, "RestrictSUIDSGID")?,
-    };
-    Ok((process, policy))
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn inspect_isolated_process(
-    validator_index: u8,
-    role: OcompIsolationRoleV1,
-    unit: Option<String>,
-    pid: u32,
-) -> Result<OcompIsolatedProcessV1> {
-    let status = fs::read_to_string(format!("/proc/{pid}/status"))?;
-    let uid = parse_proc_effective_id(&status, "Uid:")?;
-    let gid = parse_proc_effective_id(&status, "Gid:")?;
-    let cgroup = fs::read_to_string(format!("/proc/{pid}/cgroup"))?
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))
-        .ok_or_else(|| eyre::eyre!("pid {pid} is not attached to unified cgroup v2"))?
-        .to_owned();
-    let mount_namespace = fs::read_link(format!("/proc/{pid}/ns/mnt"))?
-        .to_string_lossy()
-        .into_owned();
-    Ok(OcompIsolatedProcessV1 {
-        validator_index,
-        role,
-        unit,
-        pid,
-        uid,
-        gid,
-        cgroup,
-        mount_namespace,
-    })
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn parse_proc_effective_id(status: &str, label: &str) -> Result<u32> {
-    status
-        .lines()
-        .find(|line| line.starts_with(label))
-        .and_then(|line| line.split_ascii_whitespace().nth(2))
-        .ok_or_else(|| eyre::eyre!("process status has no effective {label}"))?
-        .parse()
-        .map_err(Into::into)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn systemd_unit_properties(unit: &str, names: &[&str]) -> Result<BTreeMap<String, String>> {
-    let mut command = Command::new("sudo");
-    command
-        .args(["-n", "systemctl", "show", "--no-pager"])
-        .arg(unit);
-    for name in names {
-        command.arg("--property").arg(name);
-    }
-    let output = command.output()?;
-    eyre::ensure!(
-        output.status.success(),
-        "cannot inspect systemd unit {unit}: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    eyre::ensure!(
-        output.stdout.len() <= 64 * 1024,
-        "systemd unit property response exceeded 64 KiB"
-    );
-    let stdout = String::from_utf8(output.stdout)?;
-    Ok(stdout
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .map(|(name, value)| (name.to_owned(), value.to_owned()))
-        .collect())
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn systemd_property<'a>(properties: &'a BTreeMap<String, String>, name: &str) -> Result<&'a str> {
-    properties
-        .get(name)
-        .map(String::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| eyre::eyre!("systemd response has no {name} property"))
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn parse_systemd_u64(properties: &BTreeMap<String, String>, name: &str) -> Result<u64> {
-    systemd_property(properties, name)?
-        .parse()
-        .map_err(Into::into)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn parse_systemd_u32(properties: &BTreeMap<String, String>, name: &str) -> Result<u32> {
-    systemd_property(properties, name)?
-        .parse()
-        .map_err(Into::into)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn parse_systemd_bool(properties: &BTreeMap<String, String>, name: &str) -> Result<bool> {
-    match systemd_property(properties, name)? {
-        "yes" => Ok(true),
-        "no" => Ok(false),
-        value => eyre::bail!("systemd property {name} has non-boolean value {value}"),
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn inspect_quota_mount(validator_index: u8, mountpoint: &Path) -> Result<OcompQuotaMountV1> {
-    let output = Command::new("findmnt")
-        .args([
-            "--bytes",
-            "--noheadings",
-            "--output",
-            "FSTYPE,SIZE,OPTIONS",
-            "--target",
-        ])
-        .arg(mountpoint)
-        .output()?;
-    eyre::ensure!(
-        output.status.success(),
-        "cannot inspect OCOMP quota mount {}: {}",
-        mountpoint.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    eyre::ensure!(
-        output.stdout.len() <= 4096,
-        "OCOMP quota mount inventory exceeded 4 KiB"
-    );
-    let stdout = String::from_utf8(output.stdout)?;
-    let mut fields = stdout.split_ascii_whitespace();
-    let filesystem_type = fields
-        .next()
-        .ok_or_else(|| eyre::eyre!("findmnt omitted filesystem type"))?
-        .to_owned();
-    let size_bytes = fields
-        .next()
-        .ok_or_else(|| eyre::eyre!("findmnt omitted filesystem size"))?
-        .parse()?;
-    let options = fields
-        .next()
-        .ok_or_else(|| eyre::eyre!("findmnt omitted filesystem options"))?
-        .to_owned();
-    eyre::ensure!(
-        fields.next().is_none(),
-        "findmnt returned unexpected quota mount fields"
-    );
-    Ok(OcompQuotaMountV1 {
-        validator_index,
-        mountpoint: mountpoint.to_string_lossy().into_owned(),
-        filesystem_type,
-        size_bytes,
-        options,
-    })
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn systemd_version() -> Result<String> {
-    let output = Command::new("systemctl").arg("--version").output()?;
-    eyre::ensure!(
-        output.status.success() && output.stdout.len() <= 4096,
-        "cannot read bounded systemd version"
-    );
-    String::from_utf8(output.stdout)?
-        .lines()
-        .next()
-        .map(str::to_owned)
-        .filter(|line| !line.is_empty())
-        .ok_or_else(|| eyre::eyre!("systemctl --version returned no version"))
 }
 
 #[cfg(feature = "ocomp-integration")]

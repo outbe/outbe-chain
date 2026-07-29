@@ -74,12 +74,6 @@ const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-const ISO_SCENARIO: (&str, &str, &str) = (
-    "OCM-ISO-001",
-    "Four validator domains retain node liveness under bounded compute faults",
-    "PROCESS_BOUNDARY",
-);
-
 /// Validate and publish one lane manifest from already completed scenario
 /// records. The caller is responsible for running the lane exactly once.
 pub fn assemble_lane(
@@ -92,7 +86,6 @@ pub fn assemble_lane(
         "OCM-FAST" | "OCM-INT" => assemble_command_lane(repo, ledger, lane, evidence_dir),
         "OCM-PUBLIC" => assemble_public_lane(repo, ledger, evidence_dir),
         "OCM-E2E" => assemble_e2e_lane(repo, ledger, evidence_dir),
-        "OCM-ISO" => assemble_iso_lane(repo, ledger, evidence_dir),
         _ => eyre::bail!("lane assembly is not implemented for {lane}"),
     }
 }
@@ -120,11 +113,8 @@ pub fn verify_lane_semantics(
         "OCM-FAST" | "OCM-INT" => {
             verify_command_lane_manifest_semantics(repo, ledger, lane, &manifest, evidence_dir)
         }
-        "OCM-PUBLIC" => {
-            verify_scenario_lane(repo, &manifest, evidence_dir, &PUBLIC_SCENARIOS, false)
-        }
-        "OCM-E2E" => verify_scenario_lane(repo, &manifest, evidence_dir, &E2E_SCENARIOS, false),
-        "OCM-ISO" => verify_scenario_lane(repo, &manifest, evidence_dir, &[ISO_SCENARIO], true),
+        "OCM-PUBLIC" => verify_scenario_lane(repo, &manifest, evidence_dir, &PUBLIC_SCENARIOS),
+        "OCM-E2E" => verify_scenario_lane(repo, &manifest, evidence_dir, &E2E_SCENARIOS),
         _ => eyre::bail!("semantic lane verification is not implemented for {lane}"),
     }
 }
@@ -134,7 +124,6 @@ fn verify_scenario_lane(
     manifest: &RunManifestV1,
     evidence_dir: &Path,
     expected_scenarios: &[(&str, &str, &str)],
-    isolation: bool,
 ) -> Result<()> {
     let source = capture_source_identity(repo)?;
     ensure!(
@@ -143,12 +132,7 @@ fn verify_scenario_lane(
     );
     let scenarios = load_scenarios(evidence_dir)?;
     let identity = scenario_run_identity(&scenarios)?;
-    ensure!(
-        manifest.sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
-            && manifest.sections.get("genesis_fork_bundle_and_profiles")
-                == Some(&identity.launch_identity),
-        "scenario lane manifest identity differs from retained scenarios"
-    );
+    validate_scenario_manifest_identity(&manifest.sections, &identity)?;
 
     let mut assertions = read_lane_assertions(evidence_dir, manifest)?
         .into_iter()
@@ -166,10 +150,6 @@ fn verify_scenario_lane(
         used_scenarios.insert(*scenario_name);
         validate_common_scenario(scenario, &source.sha)?;
         match *test_id {
-            "OCM-ISO-001" => {
-                validate_applied_public_path(scenario)?;
-                validate_isolation_scenario(scenario)?;
-            }
             id if id.starts_with("OCM-PUB-") => validate_public_scenario(id, scenario)?,
             id => validate_e2e_scenario(id, scenario)?,
         }
@@ -189,7 +169,7 @@ fn verify_scenario_lane(
         assertions.is_empty(),
         "scenario lane contains assertions outside its closed scenario table"
     );
-    if isolation || expected_scenarios == E2E_SCENARIOS {
+    if expected_scenarios == E2E_SCENARIOS {
         ensure!(
             used_scenarios.len() == scenarios.len(),
             "scenario lane contains unexpected retained scenarios"
@@ -319,7 +299,6 @@ fn assemble_public_lane(
         &scenario_paths,
         assertions.len(),
         &members,
-        false,
     );
     let manifest = RunManifestV1 {
         schema_version: RUNTIME_SCHEMA_VERSION,
@@ -423,7 +402,6 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
         &scenario_paths,
         assertions.len(),
         &members,
-        false,
     );
     publish_manifest(
         evidence_dir,
@@ -444,109 +422,28 @@ fn assemble_e2e_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) 
     )
 }
 
-fn assemble_iso_lane(repo: &Path, ledger: &PlanningLedger, evidence_dir: &Path) -> Result<PathBuf> {
-    let lane = "OCM-ISO";
+fn validate_scenario_manifest_identity(
+    sections: &BTreeMap<String, Value>,
+    identity: &ScenarioRunIdentity,
+) -> Result<()> {
+    let manifest_image_id = sections
+        .get("exact_config_and_service_unit_hashes")
+        .and_then(Value::as_object)
+        .and_then(|section| section.get("gramine_image_id"));
     ensure!(
-        !evidence_dir.join("run-manifest.json").exists(),
-        "lane manifest already exists in {}",
-        evidence_dir.display()
+        sections.get("exact_binary_hashes") == Some(&identity.exact_binaries)
+            && sections.get("genesis_fork_bundle_and_profiles") == Some(&identity.launch_identity)
+            && manifest_image_id == Some(&identity.gramine_image_id),
+        "scenario lane manifest identity differs from retained scenarios"
     );
-    let source = capture_source_identity(repo)?;
-    let mut scenarios = load_scenarios(evidence_dir)?;
-    let scenario_identity = scenario_run_identity(&scenarios)?;
-    let mut members = scenario_members(evidence_dir, &scenarios)?;
-    let (test_id, scenario_name, oracle) = ISO_SCENARIO;
-    let (scenario_path, scenario) = scenarios
-        .remove(scenario_name)
-        .ok_or_else(|| eyre::eyre!("missing required ISO scenario {scenario_name}"))?;
-    ensure!(
-        scenarios.is_empty(),
-        "the ISO evidence directory contains unexpected scenarios: {:?}",
-        scenarios.keys().collect::<Vec<_>>()
-    );
-    validate_common_scenario(&scenario, &source.sha)?;
-    validate_applied_public_path(&scenario)?;
-    validate_isolation_scenario(&scenario)?;
-
-    let run_id = format!("ocomp-iso-{}", unix_millis());
-    let expected_path = format!("expected/{test_id}.json");
-    let expected = serde_json::to_vec_pretty(&json!({
-        "schema_version": 1,
-        "test_id": test_id,
-        "scenario": scenario_name,
-        "oracle": oracle,
-        "required_result": "passed",
-        "required_runtime": {
-            "validator_domains": 4,
-            "roles_per_domain": 4,
-            "cgroup_version": 2,
-            "worker_cap_per_domain": 4,
-            "quota_filesystems_per_domain": 4,
-            "faults": ["stop_supervisor", "stop_worker"],
-            "finality_must_advance": true,
-        },
-    }))?;
-    members.push(publish_member(evidence_dir, &expected_path, &expected)?);
-    let observed_at = u64_field(&scenario, "recorded_at_unix_ms")?;
-    let assertions_path = "assertions.jsonl";
-    members.push(publish_assertions(
-        evidence_dir,
-        assertions_path,
-        &[AssertionRecordV1 {
-            assertion_id: format!("{run_id}-{test_id}"),
-            test_id: test_id.to_owned(),
-            status: AssertionStatus::Pass,
-            oracle: oracle.to_owned(),
-            expected_artifact_refs: vec![expected_path],
-            actual_artifact_refs: vec![scenario_path],
-            observed_at,
-            run_id: run_id.clone(),
-            source_sha: source.sha.clone(),
-            attempt: 1,
-        }],
-    )?);
-    members.sort_by(|left, right| left.path.cmp(&right.path));
-    let discovery = discover(repo, ledger)?;
-    let scenario_paths = members
-        .iter()
-        .filter(|member| member.path.starts_with("scenario-"))
-        .map(|member| member.path.clone())
-        .collect::<Vec<_>>();
-    let sections = scenario_sections(
-        ledger,
-        lane,
-        &source,
-        &discovery,
-        &scenario_identity,
-        &scenario_paths,
-        1,
-        &members,
-        true,
-    );
-    publish_manifest(
-        evidence_dir,
-        &RunManifestV1 {
-            schema_version: RUNTIME_SCHEMA_VERSION,
-            run_id,
-            mode: EvidenceMode::Lane {
-                lane: lane.to_owned(),
-            },
-            started_at: observed_at,
-            finished_at: unix_millis().max(observed_at),
-            source,
-            discovery,
-            assertions_path: assertions_path.to_owned(),
-            members,
-            sections,
-        },
-    )
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ScenarioRunIdentity {
     exact_binaries: Value,
     launch_identity: Value,
-    effective_systemd_unit_policies: Vec<Value>,
+    gramine_image_id: Value,
 }
 
 fn scenario_run_identity(
@@ -554,7 +451,7 @@ fn scenario_run_identity(
 ) -> Result<ScenarioRunIdentity> {
     let mut exact_binaries = None;
     let mut launch_identity = None;
-    let mut effective_systemd_unit_policies = Vec::new();
+    let mut gramine_image_id = None;
     for (scenario_name, (_, scenario)) in scenarios {
         let binaries = path(scenario, &["ocomp", "exact_binaries"])?;
         ensure!(
@@ -587,12 +484,19 @@ fn scenario_run_identity(
             None => launch_identity = Some(launch.clone()),
         }
 
-        if let Some(policies) = path(scenario, &["ocomp", "topology", "systemd_isolation"])?
-            .as_object()
-            .and_then(|isolation| isolation.get("unit_policies"))
-            .and_then(Value::as_array)
-        {
-            effective_systemd_unit_policies.extend(policies.iter().cloned());
+        let image_id = path(scenario, &["environment", "gramine_image_id"])?;
+        let image_id_text = image_id
+            .as_str()
+            .ok_or_else(|| eyre::eyre!("scenario {scenario_name} lacks Gramine Docker image ID"))?;
+        crate::internal::proc::DockerImageId::from_inspect_output(image_id_text).wrap_err_with(
+            || format!("scenario {scenario_name} has invalid Gramine Docker image ID"),
+        )?;
+        match &gramine_image_id {
+            Some(expected) => ensure!(
+                expected == image_id,
+                "scenario {scenario_name} used another Gramine Docker image"
+            ),
+            None => gramine_image_id = Some(image_id.clone()),
         }
     }
     Ok(ScenarioRunIdentity {
@@ -600,7 +504,8 @@ fn scenario_run_identity(
             .ok_or_else(|| eyre::eyre!("scenario set has no exact binary identity"))?,
         launch_identity: launch_identity
             .ok_or_else(|| eyre::eyre!("scenario set has no exact launch identity"))?,
-        effective_systemd_unit_policies,
+        gramine_image_id: gramine_image_id
+            .ok_or_else(|| eyre::eyre!("scenario set has no Gramine Docker image identity"))?,
     })
 }
 
@@ -614,7 +519,6 @@ fn scenario_sections(
     scenario_paths: &[String],
     assertion_count: usize,
     members: &[MemberDigestV1],
-    isolation: bool,
 ) -> BTreeMap<String, Value> {
     ledger
         .runtime_evidence
@@ -626,14 +530,14 @@ fn scenario_sections(
                 "exact_binary_hashes" => identity.exact_binaries.clone(),
                 "exact_config_and_service_unit_hashes" => json!({
                     "launch_identity": &identity.launch_identity,
-                    "effective_systemd_unit_policies":
-                        &identity.effective_systemd_unit_policies,
+                    "gramine_image_id": &identity.gramine_image_id,
                 }),
                 "genesis_fork_bundle_and_profiles" => identity.launch_identity.clone(),
                 "test_discovery" => json!(discovery),
                 "machine_and_service_topology" => json!({
                     "validated_scenarios": scenario_paths,
-                    "systemd_isolation": isolation,
+                    "process_orchestration": "rust_e2e_harness",
+                    "gramine_image_id": &identity.gramine_image_id,
                 }),
                 "skip_todo_quarantine_retry_and_timeout_records" => json!({
                     "automatic_retries": 0,
@@ -650,8 +554,7 @@ fn scenario_sections(
                     "lane": lane,
                     "validated_scenarios": scenario_paths,
                     "assertion_count": assertion_count,
-                    "process_boundary": isolation,
-                    "resource_counter": isolation,
+                    "process_boundary": "harness_owned_processes",
                 }),
             };
             (section.clone(), value)
@@ -955,200 +858,6 @@ fn validate_window(request: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_isolation_scenario(scenario: &Value) -> Result<()> {
-    const EXPECTED_MEMORY_MAX: u64 = 2 * 1024 * 1024 * 1024;
-    const EXPECTED_TASKS_MAX: u64 = 16;
-    const EXPECTED_QUOTA_MAX: u64 = 96 * 1024 * 1024;
-
-    let topology = path(scenario, &["ocomp", "topology"])?;
-    let isolation = object_field(topology, "systemd_isolation")?;
-    ensure!(
-        !string_field(isolation, "systemd_version")?.is_empty()
-            && u64_field(isolation, "cgroup_version")? == 2,
-        "ISO scenario did not run on systemd with unified cgroup v2"
-    );
-    let slice = string_field(isolation, "slice")?;
-    ensure!(
-        !slice.is_empty(),
-        "ISO scenario has no aggregate systemd slice"
-    );
-    let role_uids = [
-        ("node", u64_field(isolation, "node_uid")?),
-        ("supervisor", u64_field(isolation, "supervisor_uid")?),
-        (
-            "snapshot_exporter",
-            u64_field(isolation, "snapshot_exporter_uid")?,
-        ),
-        ("worker", u64_field(isolation, "worker_uid")?),
-    ];
-    ensure!(
-        role_uids.iter().all(|(_, uid)| *uid != 0)
-            && role_uids
-                .iter()
-                .map(|(_, uid)| *uid)
-                .collect::<BTreeSet<_>>()
-                .len()
-                == 4,
-        "ISO roles do not have four distinct non-root UIDs"
-    );
-
-    let processes = array_field(isolation, "processes")?;
-    ensure!(
-        processes.len() == 16,
-        "ISO process inventory does not contain four roles in four domains"
-    );
-    let mut process_keys = BTreeSet::new();
-    let mut process_ids = BTreeSet::new();
-    let mut node_mounts = BTreeMap::new();
-    for process in processes {
-        let validator = u64_field(process, "validator_index")?;
-        let role = string_field(process, "role")?;
-        let pid = u64_field(process, "pid")?;
-        let uid = u64_field(process, "uid")?;
-        let expected_uid = role_uids
-            .iter()
-            .find_map(|(expected_role, expected_uid)| {
-                (*expected_role == role).then_some(*expected_uid)
-            })
-            .ok_or_else(|| eyre::eyre!("unknown ISO role {role}"))?;
-        ensure!(
-            validator < 4
-                && pid != 0
-                && uid == expected_uid
-                && process_keys.insert((validator, role.to_owned()))
-                && process_ids.insert(pid)
-                && string_field(process, "cgroup")?.starts_with('/')
-                && string_field(process, "mount_namespace")?.starts_with("mnt:["),
-            "ISO process identity is duplicate, incomplete or uses the wrong UID"
-        );
-        if role == "node" {
-            node_mounts.insert(
-                validator,
-                string_field(process, "mount_namespace")?.to_owned(),
-            );
-        }
-    }
-    ensure!(
-        (0_u64..4).all(|validator| {
-            ["node", "supervisor", "snapshot_exporter", "worker"]
-                .into_iter()
-                .all(|role| process_keys.contains(&(validator, role.to_owned())))
-        }),
-        "ISO process inventory is missing a validator/role pair"
-    );
-    for process in processes {
-        if string_field(process, "role")? == "node" {
-            continue;
-        }
-        let validator = u64_field(process, "validator_index")?;
-        ensure!(
-            string_field(process, "cgroup")?.contains("outbe-ocomp-iso")
-                && node_mounts.get(&validator).map(String::as_str)
-                    != Some(string_field(process, "mount_namespace")?),
-            "compute process shares the node cgroup or mount namespace"
-        );
-    }
-
-    let policies = array_field(isolation, "unit_policies")?;
-    ensure!(
-        policies.len() == 12,
-        "ISO unit policy inventory does not contain every compute role"
-    );
-    let mut policy_keys = BTreeSet::new();
-    for policy in policies {
-        let validator = u64_field(policy, "validator_index")?;
-        let role = string_field(policy, "role")?;
-        ensure!(
-            validator < 4
-                && matches!(role, "supervisor" | "snapshot_exporter" | "worker")
-                && policy_keys.insert((validator, role.to_owned()))
-                && string_field(policy, "slice")? == slice
-                && u64_field(policy, "memory_max")? == EXPECTED_MEMORY_MAX
-                && u64_field(policy, "tasks_max")? == EXPECTED_TASKS_MAX
-                && bool_field(policy, "cpu_accounting")?
-                && bool_field(policy, "memory_accounting")?
-                && bool_field(policy, "tasks_accounting")?
-                && string_field(policy, "protect_system")? == "strict"
-                && bool_field(policy, "no_new_privileges")?
-                && bool_field(policy, "private_devices")?
-                && bool_field(policy, "restrict_suid_sgid")?,
-            "ISO systemd unit lacks the exact bounded security/resource policy"
-        );
-    }
-
-    let quota_mounts = array_field(isolation, "quota_mounts")?;
-    ensure!(
-        quota_mounts.len() == 16,
-        "ISO scenario did not retain four quota filesystems per domain"
-    );
-    let mut mountpoints = BTreeSet::new();
-    for mount in quota_mounts {
-        let options = string_field(mount, "options")?;
-        ensure!(
-            u64_field(mount, "validator_index")? < 4
-                && string_field(mount, "filesystem_type")? == "tmpfs"
-                && (1..=EXPECTED_QUOTA_MAX).contains(&u64_field(mount, "size_bytes")?)
-                && mountpoints.insert(string_field(mount, "mountpoint")?.to_owned())
-                && ["nodev", "nosuid", "noexec"]
-                    .into_iter()
-                    .all(|required| options.split(',').any(|actual| actual == required)),
-            "ISO quota filesystem is missing, shared or unbounded"
-        );
-    }
-
-    ensure!(
-        (1..=16).contains(&u64_field(isolation, "max_live_workers_total")?)
-            && u64_field(isolation, "node_control_handshakes")? == 8
-            && u64_field(isolation, "worker_handshakes")? == 4,
-        "ISO runtime lacks bounded worker or authenticated UDS evidence"
-    );
-    let per_domain = array_field(isolation, "max_live_workers_per_domain")?;
-    ensure!(
-        per_domain.len() == 4
-            && per_domain.iter().enumerate().all(|(validator, entry)| {
-                entry.as_array().is_some_and(|fields| {
-                    fields.len() == 2
-                        && fields[0].as_u64() == u64::try_from(validator).ok()
-                        && fields[1]
-                            .as_u64()
-                            .is_some_and(|observed| (1..=4).contains(&observed))
-                })
-            }),
-        "ISO per-domain worker concurrency evidence is incomplete or over cap"
-    );
-    let before = u64_field(isolation, "finality_before_faults")?;
-    let after = u64_field(isolation, "finality_after_faults")?;
-    ensure!(
-        after > before,
-        "ISO faults did not preserve advancing consensus finality"
-    );
-
-    let faults = array_field(topology, "faults")?;
-    ensure!(
-        faults.len() == 2,
-        "ISO scenario did not apply exactly two typed compute faults"
-    );
-    let observed_faults = faults
-        .iter()
-        .map(|record| {
-            let fault = object_field(record, "fault")?;
-            Ok((
-                string_field(fault, "kind")?.to_owned(),
-                u64_field(fault, "validator_index")?,
-            ))
-        })
-        .collect::<Result<BTreeSet<_>>>()?;
-    ensure!(
-        observed_faults
-            == BTreeSet::from([
-                ("stop_supervisor".to_owned(), 0),
-                ("stop_worker".to_owned(), 1),
-            ]),
-        "ISO scenario applied the wrong process faults"
-    );
-    Ok(())
-}
-
 fn public_path(scenario: &Value) -> Result<&Value> {
     let value = path(scenario, &["ocomp", "public_path"])?;
     ensure!(value.is_object(), "scenario lacks public OCOMP evidence");
@@ -1212,7 +921,8 @@ fn unix_millis() -> u64 {
 mod tests {
     use super::{
         scenario_run_identity, validate_applied_public_path, validate_expired_public_path,
-        validate_isolation_scenario, E2E_SCENARIOS, PUBLIC_SCENARIOS, REQUIRED_SCENARIO_BINARIES,
+        validate_scenario_manifest_identity, E2E_SCENARIOS, PUBLIC_SCENARIOS,
+        REQUIRED_SCENARIO_BINARIES,
     };
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
@@ -1306,97 +1016,11 @@ mod tests {
         })
     }
 
-    fn isolation_scenario() -> Value {
-        let role_uids = [
-            ("node", 1001_u64),
-            ("supervisor", 1002),
-            ("snapshot_exporter", 1003),
-            ("worker", 1004),
-        ];
-        let mut processes = Vec::new();
-        let mut unit_policies = Vec::new();
-        let mut quota_mounts = Vec::new();
-        for validator in 0_u64..4 {
-            for (role_index, (role, uid)) in role_uids.iter().enumerate() {
-                let pid = 10_000 + validator * 10 + u64::try_from(role_index).unwrap_or_default();
-                let mount_namespace = if *role == "node" {
-                    format!("mnt:[{}]", 20_000 + validator)
-                } else {
-                    format!("mnt:[{}]", 30_000 + pid)
-                };
-                processes.push(json!({
-                    "validator_index": validator,
-                    "role": role,
-                    "pid": pid,
-                    "uid": uid,
-                    "gid": uid,
-                    "cgroup": if *role == "node" {
-                        format!("/system.slice/outbe-node-{validator}.service")
-                    } else {
-                        format!("/outbe-ocomp-iso.slice/domain-{validator}/{role}")
-                    },
-                    "mount_namespace": mount_namespace,
-                    "unit": format!("outbe-{role}-{validator}.service"),
-                }));
-                if *role != "node" {
-                    unit_policies.push(json!({
-                        "validator_index": validator,
-                        "role": role,
-                        "unit": format!("outbe-{role}-{validator}.service"),
-                        "slice": "outbe-ocomp-iso.slice",
-                        "memory_max": 2_u64 * 1024 * 1024 * 1024,
-                        "tasks_max": 16,
-                        "cpu_accounting": true,
-                        "memory_accounting": true,
-                        "tasks_accounting": true,
-                        "protect_system": "strict",
-                        "no_new_privileges": true,
-                        "private_devices": true,
-                        "restrict_suid_sgid": true,
-                    }));
-                }
-            }
-            for store in ["cas", "exporter", "supervisor", "worker-inbox"] {
-                quota_mounts.push(json!({
-                    "validator_index": validator,
-                    "mountpoint": format!("/run/outbe-ocomp-iso/{validator}/{store}"),
-                    "filesystem_type": "tmpfs",
-                    "size_bytes": 96_u64 * 1024 * 1024,
-                    "options": "rw,nodev,nosuid,noexec",
-                }));
-            }
-        }
-        json!({
-            "ocomp": {
-                "topology": {
-                    "systemd_isolation": {
-                        "systemd_version": "systemd 255",
-                        "cgroup_version": 2,
-                        "slice": "outbe-ocomp-iso.slice",
-                        "node_uid": 1001,
-                        "supervisor_uid": 1002,
-                        "snapshot_exporter_uid": 1003,
-                        "worker_uid": 1004,
-                        "processes": processes,
-                        "unit_policies": unit_policies,
-                        "quota_mounts": quota_mounts,
-                        "max_live_workers_total": 4,
-                        "max_live_workers_per_domain": [[0, 1], [1, 1], [2, 1], [3, 1]],
-                        "node_control_handshakes": 8,
-                        "worker_handshakes": 4,
-                        "finality_before_faults": 40,
-                        "finality_after_faults": 42,
-                    },
-                    "faults": [
-                        {"fault": {"kind": "stop_supervisor", "validator_index": 0}},
-                        {"fault": {"kind": "stop_worker", "validator_index": 1}},
-                    ],
-                },
-            },
-        })
-    }
-
-    fn run_identity_scenario(binary_digest: &str, genesis_hash: &str) -> Value {
+    fn run_identity_scenario(
+        binary_digest: &str,
+        genesis_hash: &str,
+        gramine_image_id: &str,
+    ) -> Value {
         let binaries = REQUIRED_SCENARIO_BINARIES
             .into_iter()
             .map(|name| {
@@ -1411,6 +1035,9 @@ mod tests {
             })
             .collect::<serde_json::Map<_, _>>();
         json!({
+            "environment": {
+                "gramine_image_id": gramine_image_id,
+            },
             "ocomp": {
                 "exact_binaries": binaries,
                 "topology": {
@@ -1420,7 +1047,6 @@ mod tests {
                         "protocol_bundle_hash": "0xbundle",
                         "fork_install_hash": "0xfork",
                     },
-                    "systemd_isolation": null,
                 },
             },
         })
@@ -1461,56 +1087,9 @@ mod tests {
     }
 
     #[test]
-    fn isolation_evidence_requires_real_domain_separation_and_bounded_resources() {
-        let valid = isolation_scenario();
-        validate_isolation_scenario(&valid).expect("valid isolation evidence");
-
-        let mut shared_uid = valid.clone();
-        shared_uid["ocomp"]["topology"]["systemd_isolation"]["worker_uid"] = json!(1002);
-        assert!(validate_isolation_scenario(&shared_uid).is_err());
-
-        let mut shared_mount_namespace = valid.clone();
-        let node_mount = shared_mount_namespace["ocomp"]["topology"]["systemd_isolation"]
-            ["processes"][0]["mount_namespace"]
-            .clone();
-        shared_mount_namespace["ocomp"]["topology"]["systemd_isolation"]["processes"][3]
-            ["mount_namespace"] = node_mount;
-        assert!(validate_isolation_scenario(&shared_mount_namespace).is_err());
-
-        let mut unbounded_worker = valid.clone();
-        unbounded_worker["ocomp"]["topology"]["systemd_isolation"]["unit_policies"][2]
-            ["memory_max"] = json!(u64::MAX);
-        assert!(validate_isolation_scenario(&unbounded_worker).is_err());
-
-        let mut oversized_quota = valid.clone();
-        oversized_quota["ocomp"]["topology"]["systemd_isolation"]["quota_mounts"][0]
-            ["size_bytes"] = json!(97_u64 * 1024 * 1024);
-        assert!(validate_isolation_scenario(&oversized_quota).is_err());
-    }
-
-    #[test]
-    fn isolation_evidence_requires_typed_faults_and_advancing_finality() {
-        let valid = isolation_scenario();
-
-        let mut stalled_finality = valid.clone();
-        stalled_finality["ocomp"]["topology"]["systemd_isolation"]["finality_after_faults"] =
-            json!(40);
-        assert!(validate_isolation_scenario(&stalled_finality).is_err());
-
-        let mut wrong_fault = valid.clone();
-        wrong_fault["ocomp"]["topology"]["faults"][1]["fault"]["kind"] =
-            json!("stop_snapshot_exporter");
-        assert!(validate_isolation_scenario(&wrong_fault).is_err());
-
-        let mut aggregate_over_cap = valid;
-        aggregate_over_cap["ocomp"]["topology"]["systemd_isolation"]["max_live_workers_total"] =
-            json!(17);
-        assert!(validate_isolation_scenario(&aggregate_over_cap).is_err());
-    }
-
-    #[test]
-    fn scenario_set_requires_one_binary_and_chain_identity() {
-        let first = run_identity_scenario("aa", "0xgenesis");
+    fn scenario_set_requires_one_binary_chain_and_gramine_image_identity() {
+        let image_id = format!("sha256:{}", "ab".repeat(32));
+        let first = run_identity_scenario("aa", "0xgenesis", &image_id);
         let second = first.clone();
         let scenarios = BTreeMap::from([
             ("first".to_owned(), ("scenario-001.json".to_owned(), first)),
@@ -1519,16 +1098,49 @@ mod tests {
                 ("scenario-002.json".to_owned(), second),
             ),
         ]);
-        scenario_run_identity(&scenarios).expect("one exact scenario identity");
+        let identity = scenario_run_identity(&scenarios).expect("one exact scenario identity");
+        let mut sections = BTreeMap::from([
+            (
+                "exact_binary_hashes".to_owned(),
+                identity.exact_binaries.clone(),
+            ),
+            (
+                "genesis_fork_bundle_and_profiles".to_owned(),
+                identity.launch_identity.clone(),
+            ),
+            (
+                "exact_config_and_service_unit_hashes".to_owned(),
+                json!({"gramine_image_id": identity.gramine_image_id}),
+            ),
+        ]);
+        validate_scenario_manifest_identity(&sections, &identity)
+            .expect("lane manifest binds retained image identity");
+        sections
+            .get_mut("exact_config_and_service_unit_hashes")
+            .expect("config section")["gramine_image_id"] =
+            json!(format!("sha256:{}", "cd".repeat(32)));
+        assert!(validate_scenario_manifest_identity(&sections, &identity).is_err());
 
         let mut changed_binary = scenarios.clone();
         changed_binary.get_mut("second").expect("second").1["ocomp"]["exact_binaries"]
             ["outbe_chain"]["sha256"] = json!("bb");
         assert!(scenario_run_identity(&changed_binary).is_err());
 
-        let mut changed_chain = scenarios;
+        let mut changed_chain = scenarios.clone();
         changed_chain.get_mut("second").expect("second").1["ocomp"]["topology"]
             ["launch_identity"]["genesis_hash"] = json!("0xother");
         assert!(scenario_run_identity(&changed_chain).is_err());
+
+        let mut changed_image = scenarios.clone();
+        changed_image.get_mut("second").expect("second").1["environment"]["gramine_image_id"] =
+            json!(format!("sha256:{}", "cd".repeat(32)));
+        assert!(scenario_run_identity(&changed_image).is_err());
+
+        let mut missing_image = scenarios;
+        missing_image.get_mut("second").expect("second").1["environment"]
+            .as_object_mut()
+            .expect("environment object")
+            .remove("gramine_image_id");
+        assert!(scenario_run_identity(&missing_image).is_err());
     }
 }

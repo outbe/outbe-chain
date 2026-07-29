@@ -160,6 +160,7 @@ pub fn mine_gem_promis(
     caller: Address,
     gem_id: U256,
     nonce: U256,
+    auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.owner != caller {
@@ -173,7 +174,10 @@ pub fn mine_gem_promis(
 
     gem_api::burn(storage, gem_id)?;
 
-    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load)?;
+    // The Promis is confidential: the mint runs inside the enclave, authorized by
+    // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
+    // minted amount (`item.gem_load`), so the client precomputes it.
+    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load, auth)?;
 
     emit_event(
         storage,

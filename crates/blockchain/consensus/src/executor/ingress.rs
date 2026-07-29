@@ -88,7 +88,7 @@ impl Mailbox {
     }
 }
 
-/// Implement Reporter for marshal block delivery (tempo-style).
+/// Implement Reporter for marshal block delivery.
 ///
 /// Marshal calls `report(Update::Block(block, ack))` to deliver finalized blocks.
 /// The executor processes the block and acknowledges back to marshal, which

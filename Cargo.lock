@@ -7657,6 +7657,9 @@ dependencies = [
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-slashindicator",
+ "outbe-stablecoin",
+ "outbe-stablecoinfactory",
+ "outbe-stablecoinpolicy",
  "outbe-staking",
  "outbe-tee",
  "outbe-teeregistry",
@@ -7750,6 +7753,8 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
@@ -8209,6 +8214,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -8219,6 +8226,8 @@ dependencies = [
  "alloy-sol-types",
  "outbe-primitives",
  "outbe-promis",
+ "outbe-tee",
+ "outbe-tee-enclave",
 ]
 
 [[package]]
@@ -8337,6 +8346,44 @@ version = "0.6.1"
 [[package]]
 name = "outbe-sparse-merkle-tree-v061-pristine"
 version = "0.6.1"
+
+[[package]]
+name = "outbe-stablecoin"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "k256 0.13.4",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-stablecoinpolicy",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-stablecoinfactory"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-stablecoin",
+ "outbe-stablecoinpolicy",
+ "revm",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-stablecoinpolicy"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "outbe-staking"
@@ -8466,7 +8513,6 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
- "outbe-ocomp-protocol",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-zerofee",

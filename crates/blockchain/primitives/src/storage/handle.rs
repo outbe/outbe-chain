@@ -228,8 +228,7 @@ impl<'storage> StorageHandle<'storage> {
     ///
     /// Honors the STATICCALL static gate: returns
     /// [`PrecompileError::WriteProtection`] if the provider is in a
-    /// static context. Providers that do not support code deployment
-    /// (e.g. [`crate::storage::direct::DirectStorageProvider`]) return
+    /// static context. Providers that do not support code deployment return
     /// [`PrecompileError::Unsupported`].
     pub fn set_code(&self, address: Address, code: Bytecode) -> Result<()> {
         self.with_provider(|provider| {

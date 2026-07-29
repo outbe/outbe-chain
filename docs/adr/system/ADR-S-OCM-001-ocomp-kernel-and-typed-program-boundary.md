@@ -70,16 +70,24 @@ One validator domain contains:
 
 - `outbe-chain`, which owns consensus, finalized job state, OCOMP attestation
   authority and q-forming result verification/apply;
-- a separate unprivileged OCOMP supervisor, which discovers work, plans,
+- a separate OCOMP supervisor process, which discovers work, plans,
   schedules and journals, then hosts the closed program's pure finalizer after
   complete verified admission, but owns no chain writer or signing key;
 - a separate read-only snapshot exporter;
-- sandboxed retryable workers; and
+- retryable one-unit worker child processes launched by the Supervisor's fixed
+  PoC adapter; and
 - untrusted content-addressed artifact storage.
 
-The service manager starts node and compute services independently. The node
-never spawns workers or depends on supervisor lifetime for consensus progress.
-Many workers under one supervisor remain one Byzantine validator domain.
+The PoC proves these process and protocol boundaries, not protection from root
+or a compromised host. Distinct service identities, host sandboxing and
+service-manager policy are MVP deployment hardening.
+
+The Rust E2E harness starts node, Supervisor and SnapshotExporter independently
+and records their child processes. The Supervisor's bounded PoC launcher starts
+one production worker child per immutable unit; the harness may launch that
+same entrypoint directly only in a narrow process-boundary test. The node never
+spawns workers or depends on Supervisor lifetime for consensus progress. Many
+workers under one Supervisor remain one Byzantine validator domain.
 
 ### Logical job and worker-shard boundary
 

@@ -3399,7 +3399,7 @@ where
         marshal_channel,
     );
 
-    // Start marshal actor with a composite reporter (tempo-style).
+    // Start the marshal actor with a composite reporter.
     // Marshal delivers finalized blocks to executor via Reporter trait and
     // publishes finalized tips to provider-readiness/watchdog consumers.
     // Executor acknowledges after successful EL processing, which gates
@@ -3936,8 +3936,8 @@ where
             finalize_verify_mailbox.clone(),
         );
 
-        // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter
-        // (tempo-style). Both receive Activity events including Finalization:
+        // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter.
+        // Both receive Activity events including Finalization:
         // - OutbeReporter: bridge/VRF/missed-proposer processing AND
         // `Activity::Certification` → CertifiedParentProofStore.
         // - Marshal: finalized block delivery → executor → ack → recovery truth.

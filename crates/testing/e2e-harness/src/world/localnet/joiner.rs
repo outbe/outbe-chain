@@ -145,11 +145,12 @@ impl Localnet {
     fn start_joiner_enclave(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let port = self.cfg.tee_port(index);
-        proc::ensure_enclave_image(
+        let image_id = proc::ensure_enclave_image(
             &self.cfg.repo,
             self.cfg.sudo,
             &self.cfg.dir.join("test-sgx-signing-key.pem"),
         )?;
+        self.retain_enclave_image_id(image_id)?;
         let enclave_bin = if self.cfg.tee_mode.uses_mock_binary() {
             self.cfg.bin_mock.clone()
         } else {
@@ -160,6 +161,10 @@ impl Localnet {
             tee_port: port,
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
+            image_id: self
+                .enclave_image_id
+                .clone()
+                .ok_or_else(|| eyre!("Gramine Docker image identity was not resolved"))?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
             dkg_seed: self

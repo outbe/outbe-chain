@@ -2,10 +2,10 @@
 //!
 //! Tracks the canonical chain head and finalized block, sending FCU updates
 //! to Reth's beacon engine. Receives finalized blocks from marshal via the
-//! Reporter trait (tempo-style) and acknowledges after successful EL processing.
+//! Reporter trait and acknowledges after successful EL processing.
 //!
-//! Follows Tempo's commit-after-success pattern: internal forkchoice state is
-//! only updated after a successful FCU response from the engine.
+//! Internal forkchoice state is updated only after a successful FCU response
+//! from the engine.
 
 use std::{
     collections::BTreeMap,
@@ -52,7 +52,7 @@ pub trait FinalizedCeCommitter: Send + Sync {
     fn commit_finalized(&self, block: FinalizedCeBlock) -> BoxFuture<'static, eyre::Result<()>>;
 }
 
-/// Forkchoice tracking state (immutable value type, like Tempo).
+/// Immutable forkchoice tracking state.
 ///
 /// Methods return a new `LastCanonicalized` without mutating self.
 /// The caller commits by assigning the new value only after a successful FCU.
@@ -567,7 +567,7 @@ where
         self.reset_fcu_heartbeat_deadline();
     }
 
-    /// Unified canonicalize method (Tempo pattern).
+    /// Unified canonicalization method.
     ///
     /// Computes new forkchoice state, sends FCU to engine, and only commits
     /// the state update after a successful response.

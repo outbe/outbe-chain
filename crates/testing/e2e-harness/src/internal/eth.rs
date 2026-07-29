@@ -65,14 +65,6 @@ sol! {
         function getScheduledUpdate(uint256 id) external view returns (ScheduledUpdate memory);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IVote {
-        function listProposals(uint256 index, uint256 count) external view returns (uint256[] memory);
-        function getProposalVoters(uint256 proposalId, uint256 index, uint256 count)
-            external
-            view
-            returns (address[] memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IGovernance {
         struct Oip {
             uint256 id;
@@ -176,6 +168,26 @@ sol! {
     }
 }
 
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IVote.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoinFactory.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IStablecoin.sol"
+);
+
 /// A dedicated multi-thread runtime that drives every RPC future, independent of
 /// whatever thread/runtime the cucumber step is on.
 fn eth_runtime() -> &'static Runtime {
@@ -225,11 +237,7 @@ where
     })
 }
 
-/// Execute and decode one view call against an exact canonical block.
-///
-/// OCOMP uses this instead of `latest` so independently stored Metadosis and
-/// Nod projections are joined only from the same block state.
-#[cfg(feature = "ocomp-integration")]
+/// Execute a typed view against the exact canonical state at `height`.
 pub(crate) fn read_call_at<C: SolCall>(
     url: &str,
     to: Address,

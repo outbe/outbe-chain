@@ -22,6 +22,15 @@ fn fresh_localnet(world: &mut World, window: u64) {
     boot_localnet(world, window, &[]);
 }
 
+#[given(expr = "a fresh stablecoin localnet with a {int}-block voting window")]
+fn fresh_stablecoin_localnet(world: &mut World, window: u64) {
+    boot_localnet(
+        world,
+        window,
+        &[("TESTNET_VALIDATOR_BALANCE_COEN", "2100000".to_owned())],
+    );
+}
+
 /// Lifecycle accounting needs a claim to mature during the live scenario. This
 /// changes only the generated E2E genesis, never the production seed defaults.
 #[given(expr = "a fresh lifecycle localnet with a {int}-block voting window")]

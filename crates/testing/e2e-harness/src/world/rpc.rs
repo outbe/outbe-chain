@@ -184,7 +184,7 @@ impl Rpc {
         eth::send_raw_transaction(&self.url(port), raw_transaction)
     }
 
-    fn url(&self, port: u16) -> String {
+    pub(crate) fn url(&self, port: u16) -> String {
         format!("http://localhost:{port}")
     }
 
@@ -506,6 +506,76 @@ impl Rpc {
             target_module,
             "--payload",
             payload,
+        ])
+    }
+
+    /// Submit a Stablecoin Factory proposal through the production operator CLI.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stablecoin_propose(
+        &self,
+        key: &str,
+        name: &str,
+        ticker: &str,
+        iso4217: u16,
+        supply_cap: U256,
+        policy_id: U256,
+    ) -> Result<String> {
+        let iso4217 = iso4217.to_string();
+        let supply_cap = supply_cap.to_string();
+        let policy_id = policy_id.to_string();
+        let out = self.sh().cli([
+            "--private-key",
+            key,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "stablecoin",
+            "propose",
+            "--name",
+            name,
+            "--ticker",
+            ticker,
+            "--iso4217",
+            iso4217.as_str(),
+            "--supply-cap",
+            supply_cap.as_str(),
+            "--policy-id",
+            policy_id.as_str(),
+        ])?;
+        parse::extract_tx_hash(&out)
+            .ok_or_else(|| eyre!("no tx hash in stablecoin propose output:\n{out}"))
+    }
+
+    /// Submit a Stablecoin Factory proposal expected to fail during RPC preflight.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stablecoin_propose_rejection(
+        &self,
+        key: &str,
+        name: &str,
+        ticker: &str,
+        iso4217: u16,
+        supply_cap: U256,
+        policy_id: U256,
+    ) -> Result<String> {
+        let iso4217 = iso4217.to_string();
+        let supply_cap = supply_cap.to_string();
+        let policy_id = policy_id.to_string();
+        self.sh().cli_expected_failure([
+            "--private-key",
+            key,
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "stablecoin",
+            "propose",
+            "--name",
+            name,
+            "--ticker",
+            ticker,
+            "--iso4217",
+            iso4217.as_str(),
+            "--supply-cap",
+            supply_cap.as_str(),
+            "--policy-id",
+            policy_id.as_str(),
         ])
     }
 

@@ -73,6 +73,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - run: rustup component add clippy
       - run: mise run ocomp-poc-task -- OCM-05
 
   poc-closure:
@@ -93,6 +94,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - run: rustup component add clippy
       - name: Start transaction-capable MongoDB
         run: |
           docker run --detach --name outbe-ocomp-mongodb --publish 27017:27017 mongo:7 --replSet rs0 --bind_ip_all

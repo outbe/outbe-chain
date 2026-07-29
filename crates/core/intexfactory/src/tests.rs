@@ -316,17 +316,28 @@ fn validate_pow_rejects_nonce_over_u64() {
     .is_err());
 }
 
+/// A dummy authorization for mine_promis paths that reject before the (enclave)
+/// Promis mint (zero amount / missing series).
+fn no_auth() -> outbe_promisfactory::api::ModifyAuth {
+    outbe_promisfactory::api::ModifyAuth {
+        mac: [0u8; 32],
+        op_nonce: 0,
+    }
+}
+
 #[test]
 fn mine_promis_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, 7, holder(), U256::ZERO, U256::ZERO).is_err());
+        assert!(runtime::mine_promis(&s, 7, holder(), U256::ZERO, U256::ZERO, no_auth()).is_err());
     });
 }
 
 #[test]
 fn mine_promis_rejects_missing_series() {
     with_factory(|s| {
-        assert!(runtime::mine_promis(&s, 7, holder(), U256::from(1), U256::ZERO).is_err());
+        assert!(
+            runtime::mine_promis(&s, 7, holder(), U256::from(1), U256::ZERO, no_auth()).is_err()
+        );
     });
 }
 
@@ -457,6 +468,8 @@ fn dispatch_mine_promis_routes_to_runtime() {
             seriesId: 7,
             amount: U256::from(1),
             nonce: U256::ZERO,
+            mac: alloy_primitives::FixedBytes([0u8; 32]),
+            opNonce: 0,
         }
         .abi_encode();
         assert!(precompile::dispatch(s.clone(), &data, holder(), U256::ZERO).is_err());
@@ -1366,7 +1379,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
                                                                             // The money reached creators, never the vault or the burn path.
-        assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 }
@@ -1455,7 +1468,7 @@ fn distribute_no_contributors_burns() {
 
         // No distribution opened; the ownerless proceeds were destroyed, not vaulted.
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
-        assert_eq!(s.balance(VAULT_PROVIDER_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 

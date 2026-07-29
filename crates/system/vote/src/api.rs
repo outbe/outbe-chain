@@ -3,11 +3,21 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::schema::Vote;
-use crate::state::{ProposalInfo, ProposalStatus};
+use crate::state::{ProposalBond, ProposalInfo, ProposalStatus};
 
 /// `IVote.getProposal`.
 pub fn get_proposal(storage: StorageHandle<'_>, proposal_id: U256) -> Result<Option<ProposalInfo>> {
     Vote::new(storage).get_proposal(proposal_id)
+}
+
+/// `IVote.getProposalBond`.
+pub fn get_proposal_bond(storage: StorageHandle<'_>, proposal_id: U256) -> Result<ProposalBond> {
+    Vote::new(storage).proposal_bond(proposal_id)
+}
+
+/// `IVote.unsettledBondLiabilities`.
+pub fn unsettled_bond_liabilities(storage: StorageHandle<'_>) -> Result<U256> {
+    Vote::new(storage).bond_liabilities()
 }
 
 /// `IVote.getProposalVoters`.

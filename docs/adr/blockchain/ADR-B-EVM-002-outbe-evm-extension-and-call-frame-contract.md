@@ -1,4 +1,4 @@
-# ADR-B-EVM-002: Outbe EVM extensions use one versioned registry and preserve call-frame semantics
+# ADR-B-EVM-002: Outbe EVM extensions use compact exact routes and preserve call-frame semantics
 
 - **Status:** Proposed; current implementation profiled
 - **Date:** 2026-07-17
@@ -6,6 +6,7 @@
 - **Scope:** `crates/blockchain/evm` factory, precompile registry, dispatch and child-call driver
 - **Depends on:** ADR-B-CNS-003, ADR-S-FEE-001, ADR-B-WIR-001, ADR-B-OCD-007, ADR-B-EVM-001
 - **Related:** ADR-B-CNS-002, ADR-B-TXP-001, ADR-B-EVM-003, ADR-S-ZKP-001
+- **Used by:** ADR-C-TOK-004
 
 ## Context
 
@@ -22,23 +23,40 @@ state machines belong to their module ADRs.
 
 ## Decision
 
-### One protocol-versioned extension manifest
+### Compact exact routes, then an explicit class resolver
 
-Maintain one compile-time manifest whose entries contain:
+V1 consolidates current fixed-address execution facts behind one compile-time exact
+route declaration. Each exact route contains only what the dispatcher consumes:
 
-- canonical address and stable symbolic name;
-- activation/deactivation protocol version;
-- dispatch function and ABI/schema identity;
-- base/dynamic gas policy;
-- required capabilities, including body reads and compressed-entity execution;
-- stateful/stateless and reentrancy policy; and
-- implementation crate/owner ADR.
+- one canonical exact address;
+- its dispatch adapter (`Basic`, `BodyReadersRequired` or `BodyReadersOptional`); and
+- its base-gas function.
 
-The manifest generates address lookup, enumeration, warm-address handling,
-diagnostics and conformance tests. Duplicate addresses or names, overlap with
-Ethereum precompiles/reserved system addresses, missing capability declarations and
-unmapped entries are compile-time failures. An address cannot silently change
-meaning; registry changes require protocol activation under ADR-S-GOV-003 and ADR-B-WIR-001.
+That declaration generates exact lookup and complete exact enumeration. It does not
+claim ownership of protocol activation, warm/cold policy, persistence, sponsorship,
+ABI/schema identity, reentrancy policy, genesis seeding or module ownership. Those
+facts retain their existing authorities until a concrete consumer and validation
+contract justify moving them. In particular, body-reader selection is part of the
+dispatch adapter because execution consumes it directly; it must not remain a second
+address match.
+
+Reserved classes are a separate resolver layer added by the class-owning task. The
+resolver orders exact route, claimed reserved class, then ordinary EVM fallback.
+Exact routes always win. A class route receives the actual callee address and fails
+closed unless its owning registry, schema and exact marker code recognize that
+instance. Prefix membership never authenticates an instance.
+
+The complete stablecoin class is reserved from genesis: CREATE/CREATE2 into it is
+rejected and an unregistered matching address cannot fall through to ordinary
+bytecode. The class cannot be introduced late over potentially occupied code, nonce
+or storage. Stablecoin V1 routes are present from block 0 in the genesis binary;
+Ethereum `SpecId` and static route metadata are not activation authorities.
+
+Duplicate exact routes and overlap with Ethereum precompiles are compile-time or
+mandatory construction failures. Exact/class and class/class overlap become mandatory
+construction failures when class routing is introduced. An address or class cannot
+silently change meaning; route changes require protocol activation under
+ADR-S-GOV-003 and ADR-B-WIR-001.
 
 ### EVM construction is fail-closed
 
@@ -66,9 +84,10 @@ then, isolate it in one audited module with a documented provenance/lifetime pro
 compile-time concrete-context assertion, Miri/sanitizer coverage and no safe API that
 can supply an arbitrary pointer.
 
-Every top-level and nested dispatch uses the same registry, capability bundle,
-calldata materialization and result mapping. Special body-aware dispatch is selected
-by manifest capability, not a second address match.
+Every top-level and nested dispatch uses the same exact-route declaration, class
+resolver, capability bundle, calldata materialization and result mapping. Special
+body-aware dispatch is selected by the resolved route adapter, not a second address
+match.
 
 ### Gas and terminal result contract
 
@@ -110,28 +129,33 @@ Cross-address cycles, callbacks and read-only re-entry must have explicit behavi
 
 ### Conformance and production evidence
 
-A registry-generated suite runs every active entry through the production factory
-and context adapter. It proves address/name/ABI/gas/capability agreement, top-level
-versus nested equivalence, CALL/STATICCALL rollback, value transfer, reentrancy,
-depth, OOG, Ethereum fallback and exact receipt/log/state effects. Differential tests
-compare the custom frame driver and gas accounting with the pinned upstream revm
-handler for equivalent bytecode calls.
+Route conformance runs every active exact route and class outcome through the
+production factory and context adapter. It proves exact enumeration, dispatch/gas
+agreement, top-level versus nested equivalence, CALL/STATICCALL rollback, value
+transfer, reentrancy, depth, OOG, Ethereum fallback and exact receipt/log/state
+effects. Differential tests compare the custom frame driver and gas accounting with
+the pinned upstream revm handler for equivalent bytecode calls.
 
 ## Authoritative interfaces
 
 | Responsibility | Authority |
 |---|---|
-| Active Outbe address/dispatch/capability table | versioned EVM extension manifest |
+| Active exact-address execution facts | compact exact-route declaration |
+| Reserved class claim and exact-first resolution | class resolver introduced by the owning protocol task |
+| Stablecoin V1 availability | fresh-genesis binary and reserved class from block 0 |
 | Chain/spec/mode and capability assembly | `OutbeEvmConfig` / `OutbeEvmFactory` |
 | Context-to-provider adapter | EVM dispatch seam governed by ADR-B-EVM-002 |
-| Top-level and nested precompile resolution | one generated registry dispatcher |
+| Top-level and nested precompile resolution | one shared dispatcher over exact routes and claimed classes |
 | Child frame creation/return | revm-compatible child-call driver |
 | Module ABI and state transition | owning module ADR / generated ABI contract |
 
 ## Invariants
 
-- Every active Outbe address resolves to exactly one manifest entry at a protocol
-  version, and every manifest entry is registered and enumerable.
+- Every active Outbe exact address resolves to exactly one exact route; every claimed
+  reserved-class member resolves through one exact-first class resolver, with no
+  exact/class overlap.
+- Dynamic instance validity requires its owning registry, schema and exact marker;
+  prefix/class membership alone never authenticates an instance.
 - All validators derive identical factory configuration from canonical inputs.
 - A production EVM cannot execute with a missing mandatory capability.
 - Top-level and nested calls observe the same registry, block identity and protocol
@@ -170,21 +194,26 @@ Inspected `OutbeEvmConfig`, `OutbeEvmFactory`, `OutbeEvm`, precompile lookup and
 enumeration, raw context hook, `CtxStorageProvider`, error/gas translation,
 `OutbeSubCallPrecompiles`, manual frame loop and production builder wiring. Existing
 tests cover selected registration, reader propagation, system-call gas and CE-scope
-wiring, but do not yet prove the whole manifest/call-frame contract. Status remains
-Proposed.
+wiring, but do not yet prove the whole exact-route/class/call-frame contract. Status
+remains Proposed.
 
 ## Consequences
 
 The EVM crate becomes a narrow integration module: module implementations cannot
 alter global registration or frame semantics, and audits can distinguish a module
-bug from an adapter/gas/journal bug. Adding a precompile requires one manifest entry
-and generated evidence rather than several synchronized match arms and lists.
+bug from an adapter/gas/journal bug. Adding an exact precompile requires one compact
+route declaration and generated evidence rather than several synchronized match arms
+and lists. Adding a reserved class additionally requires its own claim, authentication
+and activation contract.
 
 ## Rejected alternatives
 
 - **One ADR for the entire block executor:** mixes system lifecycle, fee policy,
   module state and revm integration under no single authority.
 - **Hand-maintained lookup plus address list:** permits silent omissions and drift.
+- **One universal metadata manifest in V1:** conflates routing with activation,
+  persistence, warming, genesis, sponsorship and module policy before those facts have
+  one lifecycle or consumer; the V1 exact-route declaration stays deliberately small.
 - **Treat missing services as empty scopes/readers:** creates mode-dependent plausible
   results rather than failing construction.
 - **Thread-local same-address guard as reentrancy semantics:** does not describe
@@ -194,10 +223,9 @@ and generated evidence rather than several synchronized match arms and lists.
 
 ## Open questions and technical debt
 
-1. `outbe_dispatch_fn` and `outbe_precompile_addresses` duplicate the registry. The
-   latter already omits at least `VAULT_ROUTER_ADDRESS`, `GOVERNANCE_ADDRESS` and
-   `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` present in lookup; replace both with one
-   generated manifest and make current registration tests exhaustive.
+1. `define_exact_routes!` now centralizes exact-route dispatch and enumeration, but
+   its behavioral registration tests must remain exhaustive as route adapters and
+   capabilities evolve.
 2. `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` is registered in the normal table. Prove it is
    impossible on production networks or gate it by a non-consensus test build; a
    debug capability must not silently become protocol ABI.
@@ -220,12 +248,12 @@ and generated evidence rather than several synchronized match arms and lists.
 8. `compressed_tree_service` is an `RwLock<Option<_>>` mutable after factory cloning.
    Prove no EVM construction can race installation/replacement and observe a
    different authority generation; prefer immutable assembly.
-9. Runtime body readers are optional, then selected through a second hard-coded
-   address match. Move capability requirements into the manifest and reject missing
-   mandatory readers at EVM construction, not midway through dispatch.
-10. `OUTBE_SYSTEM_TX_ADDRESS` uses body-aware dispatch only when readers exist but
-    otherwise falls through to the generic function, unlike Tribute/Nod addresses.
-    Prove this asymmetry is intentional and cannot cause validator-mode divergence.
+9. Runtime body-reader requirements are selected through each exact route's dispatch
+   adapter. Whether missing readers can fail at EVM construction rather than dispatch
+   remains part of typed production-mode construction debt.
+10. `OUTBE_SYSTEM_TX_ADDRESS` uses an optional-reader adapter, unlike the
+    reader-required Tribute/Nod addresses. Prove this asymmetry is intentional and
+    cannot cause validator-mode divergence.
 11. Pre-decoding first maps `SharedBuffer` to empty bytes for base-gas calculation,
     then materializes real bytes for dispatch. Input-dependent gas can therefore be
     undercharged for contract-originated calls. Materialize once before pricing.
@@ -267,11 +295,11 @@ and generated evidence rather than several synchronized match arms and lists.
 23. Add rollback tests asserting storage, balance, code, transient state, logs,
     refunds, CE overlay and body-reader failure observations after nested revert,
     halt, OOG and panic/fatal paths.
-24. Add production-factory tests for every construction mode and every manifest
-    entry, including top-level/nested byte equality, Ethereum fallback, hardfork
-    transitions and absent capabilities.
-25. `set_spec` updates the nested Ethereum provider and local `spec`; prove already
-    captured manifest gas/capability behavior cannot retain a stale spec.
+24. Add production-factory tests for every construction mode and every exact route
+    and class outcome, including top-level/nested byte equality, Ethereum fallback,
+    hardfork transitions and absent capabilities.
+25. `set_spec` updates the nested Ethereum provider and local `spec`; prove captured
+    route gas/reader behavior cannot retain a stale spec or activation context.
 26. Handler registries for Vote and Update are additional compile-time tables wired
     from this crate. Their ownership remains ADR-S-GOV-002 and ADR-S-GOV-003, but EVM conformance must
     prove their exact active version is bound to the same protocol schedule.

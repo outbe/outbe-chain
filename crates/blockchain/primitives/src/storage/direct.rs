@@ -211,12 +211,12 @@ where
         Ok((!hash.is_zero()).then_some(hash))
     }
 
-    fn set_code(&mut self, _address: Address, _code: Bytecode) -> Result<()> {
-        // Code deployment is not supported in block-level hooks.
-        // previously silent `Ok(())` masked the no-op; surface
-        // an explicit error so callers fail closed rather than silently
-        // believing a write landed.
-        Err(PrecompileError::Unsupported)
+    fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        let mut info = self.effective_account_info(address)?;
+        info.code_hash = code.hash_slow();
+        info.code = Some(code);
+        self.pending_accounts.insert(address, info);
+        Ok(())
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
@@ -326,8 +326,14 @@ where
         }
 
         let mut to_info = self.effective_account_info(to)?;
+        let credited = to_info.balance.checked_add(amount).ok_or_else(|| {
+            PrecompileError::Fatal(format!(
+                "balance overflow: crediting {amount} to {to} with balance {}",
+                to_info.balance
+            ))
+        })?;
         from_info.balance -= amount;
-        to_info.balance += amount;
+        to_info.balance = credited;
         self.pending_accounts.insert(from, from_info);
         self.pending_accounts.insert(to, to_info);
         Ok(())
@@ -339,7 +345,12 @@ where
         }
 
         let mut info = self.effective_account_info(address)?;
-        info.balance += amount;
+        info.balance = info.balance.checked_add(amount).ok_or_else(|| {
+            PrecompileError::Fatal(format!(
+                "balance overflow: increasing {address} by {amount} from {}",
+                info.balance
+            ))
+        })?;
         self.pending_accounts.insert(address, info);
         Ok(())
     }

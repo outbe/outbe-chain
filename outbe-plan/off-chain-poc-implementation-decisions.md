@@ -199,7 +199,7 @@ Type: Discuss
 
 ### Question
 
-Which binaries or modes, UIDs, UDS messages, CAS layout, quotas, cgroups and
+Which binaries or modes, UDS messages, CAS layout, bounded controls and
 supervision hooks demonstrate separate validator-domain failure boundaries
 without creating unnecessary crates or deployment machinery?
 
@@ -209,18 +209,17 @@ Resolved. See the
 [`process and artifact topology`](off-chain-poc-process-and-artifact-topology.md).
 
 The minimal shape is one narrow shared protocol crate plus one `outbe-ocomp`
-package/executable with fixed supervisor, snapshot-exporter, worker and relay
-modes. Each validator uses sibling node/exporter/supervisor services, a separate
-quota-controlled filesystem CAS and systemd per-connection worker activation:
-`Accept=yes` creates one process for one immutable `UnitId`, while
-`MaxConnections=4` enforces the PoC parallelism without a launch broker.
+package/executable with fixed supervisor, snapshot-exporter and worker modes.
+Each validator uses independent node/exporter/supervisor processes and a
+separate bounded filesystem CAS. The Rust E2E harness starts the production
+worker entrypoint as a one-unit child process and enforces the PoC concurrency
+cap of four without introducing a production launch broker.
 
-Stable UIDs, `SO_PEERCRED` method ACLs, bounded versioned local frames,
-digest-only CAS paths, atomic publish/same-descriptor verification, read-only
-worker CAS mounts and generated cgroup/disk budgets fix the authority and fault
-boundaries. A required systemd/cgroup-v2 evidence lane proves real UID, mount,
-socket, quota and lifecycle separation; an unprivileged harness lane may test
-the same process entrypoints but cannot claim OS isolation.
+`SO_PEERCRED` session binding, bounded versioned local frames, digest-only CAS
+paths, atomic publish/same-descriptor verification and the method-capability
+matrix fix the protocol and fault boundaries that PoC claims. Distinct host
+identities, mounts, cgroups, namespaces and service-manager policy are MVP
+deployment hardening and are not PoC closure evidence.
 
 The review exposed one omitted byte formula in ticket #4:
 `TransportDigestV1 = keccak256(exact stored bytes)`. The protocol freeze now
@@ -249,7 +248,7 @@ Every domain now derives one constant-size producer-bound plan commitment before
 execution. Work units and reducer nodes are derived lazily by ordinal from
 fixed profile-bounded work-shard ranges; external sort, prefix, shuffle and
 reduction use bounded runs/cursors for arbitrary unit count. One, two or four
-socket-activated workers schedule immutable `UnitId`s; they never alter plan
+Supervisor-launched workers schedule immutable `UnitId`s; they never alter plan
 bytes or evidence weight. Phase verifiers recompute outputs and exact
 no-gap/no-overlap coverage before CAS adoption, and an independent corpus
 remains mandatory. The `S+1` fixture must place its last Tribute in shard 2; a
@@ -369,9 +368,9 @@ machine-readable
 [`planning ledger`](off-chain-poc-evidence-ledger.yaml).
 
 PoC proof is split into byte/pure/model, production-seam integration,
-public fork/execution, four-domain E2E and privileged isolation layers. The
-ledger defines 36 active stable planned test IDs plus the retired
-`OCM-E2E-003` tombstone, and maps all 34 invariants from ADR-S-OCM-001..004,
+public fork/execution and four-domain E2E layers. The
+ledger defines 34 active stable planned test IDs plus the retired
+`OCM-E2E-003` and `OCM-E2E-005` tombstones, and maps all 34 invariants from ADR-S-OCM-001..004,
 `POC-01..POC-26`, required `PFS-002` rows and story steps 1..13.
 `PFS-002-03` is RETIRED; only `PFS-002-07/-08` are DEFERRED.
 
@@ -384,13 +383,12 @@ closure and fails on missing, skipped, todo, quarantined or retried-away claims.
 
 The final story uses four real node/OCOMP domains, real UDS/Mongo/CE/checkpoints,
 the production enclave binary under `gramine-direct` only for the existing
-encrypted Tribute interface, and normal RPC/txpool/P2P/proposal/import/replay. A separate systemd/
-cgroup-v2 lane proves UID, mount, socket, quota and failure isolation. Mongo,
-CAS, supervisor state, direct handlers, a central calculator and on-chain Lysis
-are forbidden outcome oracles.
+encrypted Tribute interface, and normal RPC/txpool/P2P/proposal/import/replay.
+Mongo, CAS, supervisor state, direct handlers, a central calculator and
+on-chain Lysis are forbidden outcome oracles.
 
-Stable planned commands separate fast PR, integration, public-path, E2E,
-isolation and evidence-verification lanes. Automatic test retries are zero;
+Stable planned commands separate fast PR, integration, public-path, E2E and
+evidence-verification lanes. Automatic test retries are zero;
 full closure consumes one exact source/binary/genesis/fork/bundle/profile
 identity and a retained hash-indexed evidence bundle.
 
@@ -426,8 +424,8 @@ fork arming; final E2E runs only against those exact generated artifacts.
 
 The companion
 [`planning ledger`](off-chain-poc-evidence-ledger.yaml) now gives every one of
-the 36 active stable test IDs exactly one closing task owner and retains
-`OCM-E2E-003` as a non-executable tombstone. Contributing tasks keep task-local
+the 34 active stable test IDs exactly one closing task owner and retains
+`OCM-E2E-003` and `OCM-E2E-005` as non-executable tombstones. Contributing tasks keep task-local
 tests but cannot claim a system requirement closed. This makes requirement ->
 test -> evidence -> lane -> task and task -> acceptance/evidence traversable in
 both directions.
@@ -458,7 +456,7 @@ Resolved. See the
 Reverse checks cover the 34 source-derived ADR invariants, all 26 POC rows, all
 25 PFS identities, the thirteen-property proof map, section 17 deliverables, all
 section 22 decisions and the eleven planning-goal requirements. The
-machine-readable ledger has 36 active stable tests plus one retired tombstone;
+machine-readable ledger has 34 active stable tests plus two retired tombstones;
 every active test is required somewhere and has exactly one closing task. All
 28 tasks are represented, including tasks whose merge evidence is local and
 whose system evidence closes downstream.

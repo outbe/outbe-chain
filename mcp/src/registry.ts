@@ -91,13 +91,14 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   promis: {
     address: A("0x0000000000000000000000000000000000001337"),
-    note: "Promis token",
+    note: "Promis — confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
     abi: parseAbi([
       "function name() view returns (string)",
       "function symbol() view returns (string)",
       "function decimals() view returns (uint8)",
       "function totalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (uint256 balanceMinor)",
+      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
+      "function opNonceOf(address account) view returns (uint64)",
     ]),
   },
 

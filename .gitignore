@@ -4,6 +4,7 @@
 *.pyc
 __pycache__/
 .DS_Store
+piolium
 
 # Ruler-generated local tool output.
 .codex/

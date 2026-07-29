@@ -547,6 +547,7 @@ pub fn mine_promis(
     holder: Address,
     amount: U256,
     nonce: U256,
+    auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     if holder.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
@@ -585,7 +586,9 @@ pub fn mine_promis(
         .into(),
     )?;
 
-    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount)?;
+    // Promis is confidential: the mint runs inside the enclave, authorized by the
+    // holder's Promis modify key (the `mac`/`opNonce` must bind `promis_amount`).
+    outbe_promisfactory::api::mint(storage.clone(), holder, promis_amount, auth)?;
 
     emit_event(
         storage,

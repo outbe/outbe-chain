@@ -385,7 +385,35 @@ pub fn dispatch(
                 result: Box::new(result),
             }
         }
+        EnclaveRequest::ApplyPromisOp { request } => {
+            // Same resident-key derivation + attestation as ApplyGratisOp, over the
+            // independent Promis key domain (mint/burn on an encrypted balance).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyPromisOp: no resident group key (DKG not complete)".to_string(),
+                };
+            };
+            let state_key =
+                match crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        return EnclaveResponse::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+            let mut result = crate::promis::apply_op(&state_key, &request);
+            let preimage = outbe_tee::protocol::promis_op_attestation_preimage(
+                result.inputs_canonical_hash,
+                &result,
+            );
+            result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+            EnclaveResponse::PromisOpApplied {
+                result: Box::new(result),
+            }
+        }
         EnclaveRequest::DeriveAccountKeys {
+            ledger,
             account,
             requester_ephemeral_pubkey,
             owner_sig,
@@ -410,11 +438,13 @@ pub fn dispatch(
                     message: "DeriveAccountKeys: owner signature must be 65 bytes".to_string(),
                 };
             };
-            let prehash =
-                outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_gratis_keys_message(
+            let prehash = outbe_tee::protocol::eip191_hash(
+                &outbe_tee::protocol::derive_account_keys_message(
+                    ledger,
                     account,
                     alloy_primitives::B256::from(requester_ephemeral_pubkey),
-                ));
+                ),
+            );
             match outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65) {
                 Ok(signer) if signer == account => {}
                 _ => {
@@ -425,10 +455,10 @@ pub fn dispatch(
                 }
             }
             let sealed = (|| -> crate::errors::Result<crate::crypto::EncryptedShare> {
-                let state_key =
-                    crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0)?;
-                let view_key = crate::gratis::derive_view_key(&state_key, account)?;
-                let modify_key = crate::gratis::derive_modify_key(&state_key, account)?;
+                let domain = crate::confidential::domain_for(ledger);
+                let state_key = domain.derive_state_key(derived.group_sig(), chain_id, 0)?;
+                let view_key = domain.derive_view_key(&state_key, account)?;
+                let modify_key = domain.derive_modify_key(&state_key, account)?;
                 let mut plaintext = view_key.to_vec();
                 plaintext.extend_from_slice(&modify_key);
                 crate::crypto::encrypt_share(&requester_ephemeral_pubkey, &plaintext)
@@ -1374,6 +1404,7 @@ mod tests {
         // Correct owner signature -> keys sealed.
         let good = owner_sig(&owner, account, ephemeral);
         match enclave.call(EnclaveRequest::DeriveAccountKeys {
+            ledger: outbe_tee::protocol::Ledger::Gratis,
             account,
             requester_ephemeral_pubkey: ephemeral,
             owner_sig: good,
@@ -1390,6 +1421,7 @@ mod tests {
         assert!(
             matches!(
                 enclave.call(EnclaveRequest::DeriveAccountKeys {
+                    ledger: outbe_tee::protocol::Ledger::Gratis,
                     account,
                     requester_ephemeral_pubkey: ephemeral,
                     owner_sig: forged,
@@ -1413,6 +1445,7 @@ mod tests {
         assert!(
             matches!(
                 enclave.call(EnclaveRequest::DeriveAccountKeys {
+                    ledger: outbe_tee::protocol::Ledger::Gratis,
                     account,
                     requester_ephemeral_pubkey: e2,
                     owner_sig: sig_over_e1,

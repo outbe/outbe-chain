@@ -18,6 +18,8 @@ const MAPPING = {
   IGratisFactory: "precompiles/abi-export/IGratisFactory.json",
   IPromis: "precompiles/abi-export/IPromis.json",
   IPromisFactory: "precompiles/abi-export/IPromisFactory.json",
+  IGem: "precompiles/abi-export/IGem.json",
+  IGemFactory: "precompiles/abi-export/IGemFactory.json",
   ICredis: "precompiles/abi-export/ICredis.json",
   ICredisFactory: "precompiles/abi-export/ICredisFactory.json",
   IVaultRouter: "precompiles/abi-export/IVaultRouter.json",
