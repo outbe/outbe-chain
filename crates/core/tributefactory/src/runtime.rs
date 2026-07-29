@@ -7,8 +7,9 @@ use outbe_compressed_entities::{
 use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
 use outbe_oracle::{contract::OracleContract, scurve};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus};
+use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_tribute::{TributeContract, TributeData};
+use outbe_zkproof::FullProofPublicInputs;
 
 use crate::errors::TributeFactoryError;
 use crate::schema::TributeFactoryContract;
@@ -20,6 +21,7 @@ pub(crate) struct OfferTributeInput {
     pub ephemeral_pubkey: U256,
     pub reference_currency: u16,
     pub exclude_from_intex_issuance: bool,
+    pub zk_proof: Bytes,
     pub zk_merkle_root: Bytes,
     pub signature: Bytes,
 }
@@ -45,20 +47,39 @@ impl TributeFactoryContract<'_> {
             ephemeral_pubkey,
             reference_currency,
             exclude_from_intex_issuance,
+            zk_proof,
             zk_merkle_root,
             signature,
         } = input;
 
         // When the caller is a registered L2 operator with ZK verification
-        // enabled, the offer must carry a valid BLS MinPk signature over
+        // enabled, the offer must carry a valid BLS MinSig signature over
         // `zkMerkleRoot` from the network's registered key. Unregistered
         // callers and zk-disabled networks pass through unchanged.
-        outbe_l2registry::api::check_zk_merkle_root_signature(
+        let zk_check = outbe_l2registry::api::check_zk_merkle_root_signature(
             self.storage.clone(),
             caller,
             &zk_merkle_root,
             &signature,
         )?;
+        let zk_public_inputs = match zk_check {
+            outbe_l2registry::api::ZkOfferCheck::Verified { .. } => {
+                if zk_proof.is_empty() {
+                    return Err(TributeFactoryError::ZkProofRequired.into());
+                }
+                let public = outbe_zkproof::decode_full_proof_public_inputs(&zk_proof)
+                    .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+                if public.merkle_root.as_slice() != zk_merkle_root.as_ref() {
+                    return Err(TributeFactoryError::ZkPublicInputMismatch {
+                        field: "merkle_root",
+                    }
+                    .into());
+                }
+                Some(public)
+            }
+            outbe_l2registry::api::ZkOfferCheck::NotRegistered
+            | outbe_l2registry::api::ZkOfferCheck::Disabled { .. } => None,
+        };
 
         // Current rate at this block. There is a single active OFFERING
         // day, so its committed oracle price is the current rate (identical on
@@ -76,6 +97,13 @@ impl TributeFactoryContract<'_> {
             }
             .into());
         }
+        let zk_context = match zk_public_inputs {
+            Some(public) => Some(TributeZkContext {
+                derived_owner: B256::from(public.derived_owner),
+                chain_id: self.storage.chain_id()?,
+            }),
+            None => None,
+        };
 
         // Hand the encrypted offer + rate to the enclave. It decrypts, applies the
         // rate, computes economics (U256) + Poseidon token_id, and returns the
@@ -89,6 +117,7 @@ impl TributeFactoryContract<'_> {
             reference_currency,
             exclude_from_intex_issuance,
             tribute_price_minor: tribute_price,
+            zk_context,
         };
         let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
             .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
@@ -99,6 +128,9 @@ impl TributeFactoryContract<'_> {
 
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::DecryptionFailed(reason.clone()).into());
+        }
+        if let Some(public) = zk_public_inputs {
+            validate_zk_result(&zk_proof, public, result.zk_expected_hashes.as_ref())?;
         }
 
         // The offer's (decrypted) day must be OFFERING.
@@ -169,6 +201,31 @@ impl TributeFactoryContract<'_> {
 
         Ok(tribute_id)
     }
+}
+
+fn validate_zk_result(
+    zk_proof: &[u8],
+    public: FullProofPublicInputs,
+    expected: Option<&outbe_tee::protocol::TributeZkExpectedHashes>,
+) -> Result<()> {
+    let expected = expected.ok_or(TributeFactoryError::ZkPublicInputMismatch {
+        field: "tee_expected_hashes",
+    })?;
+    if public.nft_hash != expected.nft_hash.0 {
+        return Err(TributeFactoryError::ZkPublicInputMismatch { field: "nft_hash" }.into());
+    }
+    if public.binding_hash != expected.binding_hash.0 {
+        return Err(TributeFactoryError::ZkPublicInputMismatch {
+            field: "binding_hash",
+        }
+        .into());
+    }
+    let verified = outbe_zkproof::verify_full_proof(zk_proof)
+        .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+    if !verified {
+        return Err(TributeFactoryError::InvalidZkProof.into());
+    }
+    Ok(())
 }
 
 fn parse_su_hashes(su_hashes: &[String]) -> Result<Vec<B256>> {
@@ -258,3 +315,69 @@ pub(crate) fn validate_agent_reward_addresses(
 // Amount normalization now lives in the enclave (`compute::normalize_amount`),
 // which is the single producer of the canonical economics. The host no longer
 // recomputes amounts.
+
+#[cfg(test)]
+mod zk_result_tests {
+    use super::*;
+    use outbe_tee::protocol::TributeZkExpectedHashes;
+
+    fn public_inputs() -> FullProofPublicInputs {
+        FullProofPublicInputs {
+            derived_owner: [1; 32],
+            nft_hash: [2; 32],
+            binding_hash: [3; 32],
+            merkle_root: [4; 32],
+        }
+    }
+
+    fn dummy_proof(public: FullProofPublicInputs) -> Vec<u8> {
+        let mut proof = Vec::with_capacity(4 + 5 * 32);
+        proof.extend_from_slice(&4u32.to_be_bytes());
+        for word in [
+            public.derived_owner,
+            public.nft_hash,
+            public.binding_hash,
+            public.merkle_root,
+        ] {
+            proof.extend_from_slice(&word);
+        }
+        proof.extend_from_slice(&[0u8; 32]);
+        proof
+    }
+
+    #[test]
+    fn rejects_nft_hash_mismatch_before_proof_verification() {
+        let public = public_inputs();
+        let expected = TributeZkExpectedHashes {
+            nft_hash: B256::from([9; 32]),
+            binding_hash: B256::from(public.binding_hash),
+        };
+
+        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        assert!(error.to_string().contains("nft_hash"));
+    }
+
+    #[test]
+    fn rejects_binding_hash_mismatch_before_proof_verification() {
+        let public = public_inputs();
+        let expected = TributeZkExpectedHashes {
+            nft_hash: B256::from(public.nft_hash),
+            binding_hash: B256::from([9; 32]),
+        };
+
+        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        assert!(error.to_string().contains("binding_hash"));
+    }
+
+    #[test]
+    fn rejects_invalid_proof_after_public_inputs_match() {
+        let public = public_inputs();
+        let expected = TributeZkExpectedHashes {
+            nft_hash: B256::from(public.nft_hash),
+            binding_hash: B256::from(public.binding_hash),
+        };
+
+        let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
+        assert!(error.to_string().contains("ZK proof verification failed"));
+    }
+}

@@ -2,9 +2,10 @@
 //! `TributeFactory.offerTribute`.
 
 use alloy_primitives::Address;
-use bytes::Bytes as CodecBytes;
 use commonware_codec::DecodeExt;
-use commonware_cryptography::{bls12381, Verifier as _};
+use commonware_cryptography::bls12381::primitives::{
+    group::G1, ops::verify_message, variant::MinSig,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -14,10 +15,8 @@ use crate::schema::L2RegistryContract;
 
 /// Domain-separation namespace for L2 signatures over `zkMerkleRoot`.
 ///
-/// The L2 network signs `zkMerkleRoot` with its BLS MinPk key via
-/// `ops::sign_message::<MinPk>(key, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root)`
-/// (the same commonware signing recipe validators use for consensus votes).
-pub const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_OUTBE_L2_ZK_MERKLE_ROOT";
+/// Must match the L2 committee's root-certificate signing namespace.
+pub const ZK_MERKLE_ROOT_NAMESPACE: &[u8] = b"_PSO_CHAIN_COMMITMENT_ROOT";
 
 /// Outcome of the offer-time ZK signature check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,8 +34,8 @@ pub enum ZkOfferCheck {
 ///
 /// - Caller not registered as an L1 operator: [`ZkOfferCheck::NotRegistered`].
 /// - Registered with `zk_enabled == false`: [`ZkOfferCheck::Disabled`].
-/// - Registered with `zk_enabled == true`: `zk_merkle_root` must be non-empty
-///   and `signature` must be a valid BLS MinPk signature over it under
+/// - Registered with `zk_enabled == true`: `zk_merkle_root` must be 32 bytes
+///   and `signature` must be a valid BLS MinSig G1 signature over it under
 ///   [`ZK_MERKLE_ROOT_NAMESPACE`]; any failure reverts.
 pub fn check_zk_merkle_root_signature(
     storage: StorageHandle<'_>,
@@ -52,16 +51,13 @@ pub fn check_zk_merkle_root_signature(
     if !record.zk_enabled {
         return Ok(ZkOfferCheck::Disabled { chain_id });
     }
-    if zk_merkle_root.is_empty() {
+    if zk_merkle_root.len() != 32 {
         return Err(L2RegistryError::ZkMerkleRootRequired.into());
     }
 
     let pubkey = decode_public_key(&record.public_key_bytes())?;
-    let sig =
-        <bls12381::Signature as DecodeExt<()>>::decode(CodecBytes::copy_from_slice(signature))
-            .map_err(|_| L2RegistryError::InvalidZkSignature)?;
-    if !pubkey.verify(ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig) {
-        return Err(L2RegistryError::InvalidZkSignature.into());
-    }
+    let sig = G1::decode(signature).map_err(|_| L2RegistryError::InvalidZkSignature)?;
+    verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
+        .map_err(|_| L2RegistryError::InvalidZkSignature)?;
     Ok(ZkOfferCheck::Verified { chain_id })
 }

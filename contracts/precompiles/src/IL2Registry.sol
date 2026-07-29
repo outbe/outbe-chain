@@ -6,8 +6,8 @@ interface IL2Registry {
     event L2NetworkZkSet(uint64 indexed chainId, bool enabled);
     event L2NetworkRemoved(uint64 indexed chainId);
 
-    /// Registers an L2 network. `publicKey` is the network's BLS MinPk public
-    /// key (48 bytes, the same variant used for validator consensus keys).
+    /// Registers an L2 network. `publicKey` is the committee's compressed BLS
+    /// MinSig group public key in G2 (96 bytes).
     /// `l1Address` is the L1 account that submits on behalf of the network
     /// (e.g. calls `TributeFactory.offerTribute`); it must be unique across
     /// registered networks. Permissionless: any caller may register.

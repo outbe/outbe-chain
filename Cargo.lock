@@ -8247,6 +8247,7 @@ name = "outbe-protocol"
 version = "0.11.0"
 source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.11.0#bda6a14edd92b22a54922bf82dacaa7fcacfde80"
 dependencies = [
+ "alloy-primitives",
  "ark-bn254 0.6.0",
  "ark-ec 0.6.0",
  "ark-ff 0.6.0",
@@ -8258,6 +8259,16 @@ dependencies = [
  "outbe-poseidon",
  "thiserror 2.0.18",
  "zeroize",
+]
+
+[[package]]
+name = "outbe-protocol-derive"
+version = "0.11.0"
+source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.11.0#bda6a14edd92b22a54922bf82dacaa7fcacfde80"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -8434,6 +8445,8 @@ dependencies = [
  "k256 0.13.4",
  "outbe-poseidon",
  "outbe-primitives",
+ "outbe-protocol",
+ "outbe-protocol-derive",
  "outbe-tee",
  "rand_core 0.6.4",
  "ring",
@@ -8499,6 +8512,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tribute",
+ "outbe-zkproof",
  "rand_core 0.6.4",
  "thiserror 2.0.18",
  "tracing",

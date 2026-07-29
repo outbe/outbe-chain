@@ -21,4 +21,6 @@ mod tests;
 
 pub use errors::ZkProofError;
 pub use precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
-pub use verify::init_crs;
+pub use verify::{
+    decode_full_proof_public_inputs, init_crs, verify_full_proof, FullProofPublicInputs,
+};

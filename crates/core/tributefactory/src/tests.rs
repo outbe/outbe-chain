@@ -58,9 +58,21 @@ mod l2_zk_gate {
             ephemeral_pubkey: U256::ZERO,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
+            zk_proof: Bytes::new(),
             zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
             signature: Bytes::copy_from_slice(signature),
         }
+    }
+
+    fn dummy_full_proof(root: [u8; 32]) -> Bytes {
+        let mut proof = Vec::with_capacity(4 + 5 * 32);
+        proof.extend_from_slice(&4u32.to_be_bytes());
+        proof.extend_from_slice(&[0x01; 32]);
+        proof.extend_from_slice(&[0x02; 32]);
+        proof.extend_from_slice(&[0x03; 32]);
+        proof.extend_from_slice(&root);
+        proof.extend_from_slice(&[0u8; 32]);
+        proof.into()
     }
 
     fn revert_message(err: PrecompileError) -> String {
@@ -73,12 +85,14 @@ mod l2_zk_gate {
     #[test]
     fn offer_rejects_invalid_l2_signature_when_zk_enabled() {
         use commonware_codec::Encode;
-        use commonware_cryptography::{bls12381, Signer as _};
-        use commonware_math::algebra::Random;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self, sign_message},
+            variant::MinSig,
+        };
 
-        let private = bls12381::PrivateKey::random(rand_core::OsRng);
-        let public = private.public_key().encode().to_vec();
-        let root = b"l2-zk-merkle-root".to_vec();
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
+        let root = [0x04; 32];
 
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {
@@ -100,26 +114,77 @@ mod l2_zk_gate {
 
             // Enabled + valid signature: the gate passes and the offer
             // proceeds to the next stage (no OFFERING day in this fixture).
-            let good_sig = private
-                .sign(outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE, &root)
-                .encode()
-                .to_vec();
+            let good_sig = sign_message::<MinSig>(
+                &private,
+                outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+                &root,
+            )
+            .encode()
+            .to_vec();
+            let mut valid_gate = offer(&root, &good_sig);
+            valid_gate.zk_proof = dummy_full_proof(root);
             let mut factory = TributeFactoryContract::new(storage.clone());
             let err = factory
-                .offer_tribute(&scope, &NoParentBodies, offer(&root, &good_sig))
+                .offer_tribute(&scope, &NoParentBodies, valid_gate)
                 .unwrap_err();
             assert!(revert_message(err).contains("no worldwide day is OFFERING"));
         });
     }
 
     #[test]
+    fn enabled_network_requires_proof_and_matching_public_root() {
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self, sign_message},
+            variant::MinSig,
+        };
+
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
+        let root = [0x04; 32];
+        let signature = sign_message::<MinSig>(
+            &private,
+            outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+            &root,
+        )
+        .encode()
+        .to_vec();
+
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut registry = L2RegistryContract::new(storage.clone());
+            registry
+                .register_network(L2_CHAIN_ID, caller(), &public)
+                .unwrap();
+            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
+            let scope = ExecutionScope::new();
+
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let missing = factory
+                .offer_tribute(&scope, &NoParentBodies, offer(&root, &signature))
+                .unwrap_err();
+            assert!(revert_message(missing).contains("zkProof is required"));
+
+            let mut wrong_root = offer(&root, &signature);
+            wrong_root.zk_proof = dummy_full_proof([0x24; 32]);
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let mismatch = factory
+                .offer_tribute(&scope, &NoParentBodies, wrong_root)
+                .unwrap_err();
+            assert!(revert_message(mismatch).contains("merkle_root"));
+        });
+    }
+
+    #[test]
     fn offer_skips_signature_check_for_unregistered_and_disabled() {
         use commonware_codec::Encode;
-        use commonware_cryptography::{bls12381, Signer as _};
-        use commonware_math::algebra::Random;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self},
+            variant::MinSig,
+        };
 
-        let private = bls12381::PrivateKey::random(rand_core::OsRng);
-        let public = private.public_key().encode().to_vec();
+        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
 
         let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
         StorageHandle::enter(&mut storage, |storage| {

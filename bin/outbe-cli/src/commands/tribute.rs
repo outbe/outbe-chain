@@ -66,7 +66,11 @@ pub enum TributeCmd {
         /// network has ZK verification enabled in the L2Registry.
         #[arg(long, default_value = "0x")]
         zk_merkle_root: String,
-        /// BLS MinPk signature (96 bytes, `0x`-hex) over `--zk-merkle-root`
+        /// Combined `outbe.full_proof@1.0.0` bytes (`0x`-hex), including its
+        /// four embedded public inputs.
+        #[arg(long, default_value = "0x")]
+        zk_proof: String,
+        /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
         /// produced with the network key registered in the L2Registry.
         #[arg(long, default_value = "0x")]
         signature: String,
@@ -88,6 +92,7 @@ impl TributeCmd {
                 currency,
                 exclude_from_intex_issuance,
                 zk_merkle_root,
+                zk_proof,
                 signature,
             } => {
                 offer(
@@ -98,6 +103,7 @@ impl TributeCmd {
                     currency,
                     exclude_from_intex_issuance,
                     &zk_merkle_root,
+                    &zk_proof,
                     &signature,
                 )
                 .await
@@ -234,11 +240,13 @@ async fn offer(
     currency: u16,
     exclude_from_intex_issuance: bool,
     zk_merkle_root: &str,
+    zk_proof: &str,
     signature: &str,
 ) -> Result<()> {
     let signer = crate::commands::require_signer(private_key)?;
     let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
+    let zk_proof = decode_hex_bytes(zk_proof, "--zk-proof")?;
     let signature = decode_hex_bytes(signature, "--signature")?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
@@ -294,14 +302,14 @@ async fn offer(
     let salt = outbe_tee::OFFER_HKDF_SALT;
     let (cipher_text, nonce, eph_pub) = encrypt_offer(&offer_pub, &salt, &plaintext)?;
 
-    // 4. Build + send `offerTribute` (msg.value MUST be 0; ZK fields are stubs).
+    // 4. Build + send `offerTribute` (msg.value MUST be 0).
     let call = ITributeFactory::offerTributeCall {
         cipherText: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
         referenceCurrency: currency,
         excludeFromIntexIssuance: exclude_from_intex_issuance,
-        zkProof: Bytes::new(),
+        zkProof: zk_proof,
         zkVerificationKey: Bytes::new(),
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: zk_merkle_root,

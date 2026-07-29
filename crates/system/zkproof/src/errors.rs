@@ -18,6 +18,16 @@ pub enum ZkProofError {
     InputTooShort(usize),
     #[error("zk_verify: malformed ABI input ({0})")]
     MalformedAbi(&'static str),
+    #[error("zk_verify: combined proof is too short ({0} < 4 bytes)")]
+    CombinedProofTooShort(usize),
+    #[error("zk_verify: full proof public input count is {actual}, expected {expected}")]
+    WrongPublicInputCount { expected: usize, actual: usize },
+    #[error("zk_verify: combined proof public inputs are truncated ({actual} < {expected} bytes)")]
+    TruncatedPublicInputs { expected: usize, actual: usize },
+    #[error("zk_verify: public input at index {0} is not a canonical BN254 field element")]
+    NonCanonicalPublicInput(usize),
+    #[error("zk_verify: malformed combined proof ({0})")]
+    MalformedCombinedProof(&'static str),
 }
 
 impl From<ZkProofError> for PrecompileError {

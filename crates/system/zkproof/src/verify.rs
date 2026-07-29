@@ -7,8 +7,11 @@
 
 use std::sync::Once;
 
+use ark_bn254::Fr;
+use ark_ff::{BigInteger, PrimeField};
+use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::noir::CIRCUIT_REGISTRY;
-use outbe_zk_canonical::RegistryEntry;
+use outbe_zk_canonical::{CircuitId, RegistryEntry};
 use tracing::{info, trace, warn};
 
 use crate::errors::ZkProofError;
@@ -20,6 +23,17 @@ use crate::errors::ZkProofError;
 /// This is the upstream-pinned preinit size (see `outbe-zk-backend`'s
 /// `PINNED_G1_SHA256`).
 const SRS_POINTS: u32 = (1 << 20) + 1;
+const FULL_PROOF_PUBLIC_INPUT_COUNT: usize = 4;
+
+/// Public claim carried by the canonical `outbe.full_proof@1.0.0`
+/// combined-proof format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullProofPublicInputs {
+    pub derived_owner: [u8; 32],
+    pub nft_hash: [u8; 32],
+    pub binding_hash: [u8; 32],
+    pub merkle_root: [u8; 32],
+}
 
 /// One-shot initialization of the Barretenberg global CRS.
 ///
@@ -88,6 +102,67 @@ pub fn zk_verify(input: &[u8]) -> Result<[u8; 32], ZkProofError> {
     Ok(bool_to_32b(ok))
 }
 
+/// Decode and validate the four public inputs embedded in a canonical full
+/// proof. The proof bytes remain self-contained and are passed unchanged to
+/// Barretenberg after callers compare this claim with their expected values.
+pub fn decode_full_proof_public_inputs(
+    combined_proof: &[u8],
+) -> Result<FullProofPublicInputs, ZkProofError> {
+    let header = combined_proof
+        .get(..4)
+        .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
+    let count = u32::from_be_bytes(header.try_into().expect("four-byte slice")) as usize;
+    if count != FULL_PROOF_PUBLIC_INPUT_COUNT {
+        return Err(ZkProofError::WrongPublicInputCount {
+            expected: FULL_PROOF_PUBLIC_INPUT_COUNT,
+            actual: count,
+        });
+    }
+
+    let public_end = 4 + count * 32;
+    if combined_proof.len() < public_end {
+        return Err(ZkProofError::TruncatedPublicInputs {
+            expected: public_end,
+            actual: combined_proof.len(),
+        });
+    }
+    let proof_bytes = &combined_proof[public_end..];
+    if proof_bytes.is_empty() {
+        return Err(ZkProofError::MalformedCombinedProof(
+            "proof section is empty",
+        ));
+    }
+    if !proof_bytes.len().is_multiple_of(32) {
+        return Err(ZkProofError::MalformedCombinedProof(
+            "proof section is not a multiple of 32 bytes",
+        ));
+    }
+
+    let mut words = [[0u8; 32]; FULL_PROOF_PUBLIC_INPUT_COUNT];
+    for (index, word) in combined_proof[4..public_end].chunks_exact(32).enumerate() {
+        words[index].copy_from_slice(word);
+        if !is_canonical_field_word(&words[index]) {
+            return Err(ZkProofError::NonCanonicalPublicInput(index));
+        }
+    }
+
+    Ok(FullProofPublicInputs {
+        derived_owner: words[0],
+        nft_hash: words[1],
+        binding_hash: words[2],
+        merkle_root: words[3],
+    })
+}
+
+/// Verify the pinned canonical `outbe.full_proof@1.0.0` circuit.
+///
+/// Malformed combined proofs are errors. Well-formed proofs that do not verify
+/// return `Ok(false)`.
+pub fn verify_full_proof(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
+    decode_full_proof_public_inputs(combined_proof)?;
+    Ok(verify_inner(FullProof::VK_BYTES, combined_proof))
+}
+
 /// Stateless lookup against `outbe-zk-canonical`'s static circuit registry.
 /// Activation/deprecation timing is enforced by consumer contracts, so
 /// the on-chain verifier is unconditionally permissive over registered
@@ -149,6 +224,14 @@ fn bool_to_32b(b: bool) -> [u8; 32] {
         out[31] = 1;
     }
     out
+}
+
+fn is_canonical_field_word(word: &[u8; 32]) -> bool {
+    let field = Fr::from_be_bytes_mod_order(word);
+    let bytes = field.into_bigint().to_bytes_be();
+    let mut canonical = [0u8; 32];
+    canonical[32 - bytes.len()..].copy_from_slice(&bytes);
+    canonical == *word
 }
 
 /// Dispatch the actual UltraHonkKeccak verification.
