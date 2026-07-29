@@ -26,8 +26,12 @@ pub enum ZkProofError {
     TruncatedPublicInputs { expected: usize, actual: usize },
     #[error("zk_verify: public input at index {0} is not a canonical BN254 field element")]
     NonCanonicalPublicInput(usize),
-    #[error("zk_verify: malformed combined proof ({0})")]
-    MalformedCombinedProof(&'static str),
+    #[error("zk_verify: full combined proof length is {actual} bytes, expected {expected}")]
+    WrongCombinedProofLength { expected: usize, actual: usize },
+    #[error("zk verifier CRS initialization failed: {0}")]
+    CrsInitialization(String),
+    #[error("zk verification backend failed: {0}")]
+    VerificationBackend(String),
 }
 
 impl From<ZkProofError> for PrecompileError {

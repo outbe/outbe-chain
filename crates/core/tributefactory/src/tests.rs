@@ -65,13 +65,13 @@ mod l2_zk_gate {
     }
 
     fn dummy_full_proof(root: [u8; 32]) -> Bytes {
-        let mut proof = Vec::with_capacity(4 + 5 * 32);
+        let mut proof = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
         proof.extend_from_slice(&4u32.to_be_bytes());
         proof.extend_from_slice(&[0x01; 32]);
         proof.extend_from_slice(&[0x02; 32]);
         proof.extend_from_slice(&[0x03; 32]);
         proof.extend_from_slice(&root);
-        proof.extend_from_slice(&[0u8; 32]);
+        proof.resize(outbe_zkproof::FULL_PROOF_COMBINED_LEN, 0);
         proof.into()
     }
 

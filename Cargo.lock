@@ -8665,8 +8665,10 @@ dependencies = [
  "ark-ff 0.6.0",
  "outbe-poseidon",
  "outbe-primitives",
+ "outbe-protocol",
  "outbe-zk-backend",
  "outbe-zk-canonical",
+ "rand 0.8.6",
  "thiserror 2.0.18",
  "tracing",
 ]

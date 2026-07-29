@@ -148,7 +148,7 @@ fn full_proof_public_inputs_are_decoded_in_circuit_order() {
         fr_be(&Fr::from(33u64)),
         fr_be(&Fr::from(44u64)),
     ];
-    let proof = combined_full_proof(words, 1);
+    let proof = combined_full_proof(words, 274);
 
     let decoded = decode_full_proof_public_inputs(&proof).unwrap();
 
@@ -160,7 +160,7 @@ fn full_proof_public_inputs_are_decoded_in_circuit_order() {
 
 #[test]
 fn full_proof_rejects_wrong_public_input_count() {
-    let mut proof = combined_full_proof([[0u8; 32]; 4], 1);
+    let mut proof = combined_full_proof([[0u8; 32]; 4], 274);
     proof[..4].copy_from_slice(&3u32.to_be_bytes());
 
     assert!(matches!(
@@ -189,7 +189,7 @@ fn full_proof_rejects_non_canonical_public_input() {
     non_canonical[32 - modulus.len()..].copy_from_slice(&modulus);
     let mut words = [[0u8; 32]; 4];
     words[2] = non_canonical;
-    let proof = combined_full_proof(words, 1);
+    let proof = combined_full_proof(words, 274);
 
     assert!(matches!(
         decode_full_proof_public_inputs(&proof),
@@ -198,30 +198,28 @@ fn full_proof_rejects_non_canonical_public_input() {
 }
 
 #[test]
-fn full_proof_rejects_missing_or_unaligned_proof_section() {
+fn full_proof_rejects_wrong_proof_section_length() {
     let empty = combined_full_proof([[0u8; 32]; 4], 0);
     assert!(matches!(
         decode_full_proof_public_inputs(&empty),
-        Err(ZkProofError::MalformedCombinedProof(
-            "proof section is empty"
-        ))
+        Err(ZkProofError::WrongCombinedProofLength { .. })
     ));
 
-    let mut unaligned = combined_full_proof([[0u8; 32]; 4], 1);
-    unaligned.push(0);
+    let oversized = combined_full_proof([[0u8; 32]; 4], 275);
     assert!(matches!(
-        decode_full_proof_public_inputs(&unaligned),
-        Err(ZkProofError::MalformedCombinedProof(
-            "proof section is not a multiple of 32 bytes"
-        ))
+        decode_full_proof_public_inputs(&oversized),
+        Err(ZkProofError::WrongCombinedProofLength { .. })
     ));
 }
 
 #[test]
-fn full_proof_well_formed_but_invalid_proof_returns_false() {
-    let proof = combined_full_proof([[0u8; 32]; 4], 1);
+fn full_proof_with_invalid_curve_points_returns_backend_error() {
+    let proof = combined_full_proof([[0u8; 32]; 4], 274);
 
-    assert!(!verify_full_proof(&proof).unwrap());
+    assert!(matches!(
+        verify_full_proof(&proof),
+        Err(ZkProofError::VerificationBackend(_))
+    ));
 }
 
 #[test]

@@ -220,8 +220,13 @@ fn validate_zk_result(
         }
         .into());
     }
-    let verified = outbe_zkproof::verify_full_proof(zk_proof)
-        .map_err(|error| TributeFactoryError::MalformedZkProof(error.to_string()))?;
+    let verified = outbe_zkproof::verify_full_proof(zk_proof).map_err(|error| match error {
+        outbe_zkproof::ZkProofError::VerificationBackend(message)
+        | outbe_zkproof::ZkProofError::CrsInitialization(message) => {
+            PrecompileError::Fatal(format!("ZK verifier unavailable: {message}"))
+        }
+        other => TributeFactoryError::MalformedZkProof(other.to_string()).into(),
+    })?;
     if !verified {
         return Err(TributeFactoryError::InvalidZkProof.into());
     }
@@ -331,7 +336,7 @@ mod zk_result_tests {
     }
 
     fn dummy_proof(public: FullProofPublicInputs) -> Vec<u8> {
-        let mut proof = Vec::with_capacity(4 + 5 * 32);
+        let mut proof = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
         proof.extend_from_slice(&4u32.to_be_bytes());
         for word in [
             public.derived_owner,
@@ -341,7 +346,7 @@ mod zk_result_tests {
         ] {
             proof.extend_from_slice(&word);
         }
-        proof.extend_from_slice(&[0u8; 32]);
+        proof.resize(outbe_zkproof::FULL_PROOF_COMBINED_LEN, 0);
         proof
     }
 
@@ -370,7 +375,7 @@ mod zk_result_tests {
     }
 
     #[test]
-    fn rejects_invalid_proof_after_public_inputs_match() {
+    fn treats_backend_rejection_as_fatal_after_public_inputs_match() {
         let public = public_inputs();
         let expected = TributeZkExpectedHashes {
             nft_hash: B256::from(public.nft_hash),
@@ -378,6 +383,9 @@ mod zk_result_tests {
         };
 
         let error = validate_zk_result(&dummy_proof(public), public, Some(&expected)).unwrap_err();
-        assert!(error.to_string().contains("ZK proof verification failed"));
+        assert!(
+            error.to_string().contains("ZK verifier unavailable"),
+            "unexpected error: {error}"
+        );
     }
 }
