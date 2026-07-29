@@ -730,6 +730,7 @@ mod tests {
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],
+            zk_expected_hashes: None,
             status: TributeOfferStatus::Created,
         }];
         let hash = B256::repeat_byte(0xAB);

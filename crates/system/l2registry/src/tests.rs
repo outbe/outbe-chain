@@ -1,7 +1,10 @@
 use alloy_primitives::Address;
 use commonware_codec::Encode;
-use commonware_cryptography::{bls12381, Signer as _};
-use commonware_math::algebra::Random;
+use commonware_cryptography::bls12381::primitives::{
+    group::Private,
+    ops::{self, sign_message},
+    variant::MinSig,
+};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -16,9 +19,9 @@ fn l1_addr() -> Address {
     Address::repeat_byte(0x11)
 }
 
-fn keypair() -> (bls12381::PrivateKey, Vec<u8>) {
-    let private = bls12381::PrivateKey::random(rand_core::OsRng);
-    let public = private.public_key().encode().to_vec();
+fn keypair() -> (Private, Vec<u8>) {
+    let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+    let public = public.encode().to_vec();
     (private, public)
 }
 
@@ -79,12 +82,12 @@ fn register_rejects_invalid_inputs() {
         assert!(revert_message(err).contains("l1 address"));
 
         let err = registry
-            .register_network(L2_CHAIN_ID, l1_addr(), &public[..47])
+            .register_network(L2_CHAIN_ID, l1_addr(), &public[..95])
             .unwrap_err();
-        assert!(revert_message(err).contains("48 bytes"));
+        assert!(revert_message(err).contains("96 bytes"));
 
         let err = registry
-            .register_network(L2_CHAIN_ID, l1_addr(), &[0xAB; 48])
+            .register_network(L2_CHAIN_ID, l1_addr(), &[0xAB; 96])
             .unwrap_err();
         assert!(revert_message(err).contains("group element"));
     });
@@ -127,9 +130,8 @@ fn toggle_and_remove_require_registration() {
 #[test]
 fn zk_signature_check_paths() {
     let (private, public) = keypair();
-    let root = b"zk-merkle-root".to_vec();
-    let good_sig = private
-        .sign(ZK_MERKLE_ROOT_NAMESPACE, &root)
+    let root = [0x42; 32];
+    let good_sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &root)
         .encode()
         .to_vec();
 
@@ -168,7 +170,7 @@ fn zk_signature_check_paths() {
         // Enabled + empty root.
         let err =
             check_zk_merkle_root_signature(storage.clone(), l1_addr(), &[], &good_sig).unwrap_err();
-        assert!(revert_message(err).contains("zkMerkleRoot is required"));
+        assert!(revert_message(err).contains("exactly 32 bytes"));
 
         // Enabled + malformed signature bytes.
         let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &[0x01; 8])
@@ -176,8 +178,7 @@ fn zk_signature_check_paths() {
         assert!(revert_message(err).contains("invalid BLS signature"));
 
         // Enabled + signature over a different message.
-        let wrong_sig = private
-            .sign(ZK_MERKLE_ROOT_NAMESPACE, b"other-root")
+        let wrong_sig = sign_message::<MinSig>(&private, ZK_MERKLE_ROOT_NAMESPACE, &[0x24; 32])
             .encode()
             .to_vec();
         let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &wrong_sig)
@@ -186,8 +187,7 @@ fn zk_signature_check_paths() {
 
         // Enabled + signature by a different key.
         let (other_private, _) = keypair();
-        let foreign_sig = other_private
-            .sign(ZK_MERKLE_ROOT_NAMESPACE, &root)
+        let foreign_sig = sign_message::<MinSig>(&other_private, ZK_MERKLE_ROOT_NAMESPACE, &root)
             .encode()
             .to_vec();
         let err = check_zk_merkle_root_signature(storage.clone(), l1_addr(), &root, &foreign_sig)

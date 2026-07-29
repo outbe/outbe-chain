@@ -97,6 +97,7 @@ mod tests {
                 reference_currency: 840,
                 exclude_from_intex_issuance: false,
                 tribute_price_minor: U256::from(1u64),
+                zk_context: None,
             }],
         };
         let bytes = encode_request(&req).unwrap();

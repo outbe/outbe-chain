@@ -27,7 +27,6 @@ ocomp-integration = [
     "dep:outbe-oracle",
     "dep:outbe-update",
     "dep:outbe-zerofee",
-    "dep:rand",
     "dep:reth-chainspec",
     "dep:reth-ethereum",
     "dep:reth-primitives-traits",
@@ -63,6 +62,11 @@ mongodb.workspace = true
 hex.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-primitives.workspace = true
+outbe-protocol.workspace = true
+outbe-protocol-derive.workspace = true
+outbe-zk-backend.workspace = true
+outbe-zk-canonical.workspace = true
+outbe-zkproof.workspace = true
 outbe-common = { workspace = true, optional = true }
 outbe-consensus = { workspace = true, optional = true }
 outbe-fidelity = { workspace = true, optional = true }
@@ -76,7 +80,7 @@ outbe-offchain-storage = { workspace = true, optional = true }
 outbe-oracle = { workspace = true, optional = true }
 outbe-update = { workspace = true, optional = true }
 outbe-zerofee = { workspace = true, optional = true }
-rand = { workspace = true, optional = true }
+rand.workspace = true
 reth-chainspec = { workspace = true, optional = true }
 reth-ethereum = { workspace = true, optional = true }
 reth-primitives-traits = { workspace = true, optional = true }
@@ -100,8 +104,10 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
 
-# BLS MinPk keygen/signing for the L2Registry zk-gate scenarios (PFS-001-10/-11):
+# BLS MinSig keygen/signing for the L2Registry zk-gate scenarios (PFS-001-10/-11):
 # the harness plays the L2 network signing `zkMerkleRoot` with a registered key.
 bytes.workspace = true
 commonware-codec.workspace = true

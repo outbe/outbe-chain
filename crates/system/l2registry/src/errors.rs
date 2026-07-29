@@ -11,10 +11,10 @@ pub enum L2RegistryError {
     #[error("l1 address must be non-zero")]
     InvalidL1Address,
 
-    #[error("BLS public key must be 48 bytes, got {length}")]
+    #[error("BLS MinSig group public key must be 96 bytes, got {length}")]
     InvalidPublicKeyLength { length: usize },
 
-    #[error("BLS public key is not a valid MinPk group element")]
+    #[error("BLS public key is not a valid MinSig G2 group element")]
     InvalidPublicKey,
 
     #[error("L2 network {chain_id} is already registered")]
@@ -26,7 +26,7 @@ pub enum L2RegistryError {
     #[error("L2 network {chain_id} is not registered")]
     NetworkNotRegistered { chain_id: u64 },
 
-    #[error("zkMerkleRoot is required when ZK verification is enabled")]
+    #[error("zkMerkleRoot must be exactly 32 bytes when ZK verification is enabled")]
     ZkMerkleRootRequired,
 
     #[error("invalid BLS signature over zkMerkleRoot")]

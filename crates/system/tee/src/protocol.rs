@@ -53,6 +53,23 @@ pub struct EncryptedTributeOffer {
     pub exclude_from_intex_issuance: bool,
     /// Current USDC/COEN oracle rate (at this block) the enclave applies.
     pub tribute_price_minor: U256,
+    /// Public ZK claim context supplied only for registered L2 networks with
+    /// ZK verification enabled. The owner is the first public input embedded
+    /// in `zkProof`; the chain id is read from the local execution context.
+    #[serde(default)]
+    pub zk_context: Option<TributeZkContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TributeZkContext {
+    pub derived_owner: B256,
+    pub chain_id: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TributeZkExpectedHashes {
+    pub nft_hash: B256,
+    pub binding_hash: B256,
 }
 
 /// Status of a single offer after enclave processing.
@@ -92,6 +109,10 @@ pub struct TributeOfferResult {
     pub wallet_addresses: Vec<String>,
     /// SRA addresses — host routes agent rewards. Public on-chain.
     pub sra_addresses: Vec<String>,
+    /// Expected public hashes recomputed over the decrypted TributeDraft.
+    /// Present only when the matching request carried [`TributeZkContext`].
+    #[serde(default)]
+    pub zk_expected_hashes: Option<TributeZkExpectedHashes>,
     pub status: TributeOfferStatus,
 }
 
@@ -483,6 +504,14 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
         buf.push(u8::from(offer.exclude_from_intex_issuance));
         buf.extend_from_slice(&offer.tribute_price_minor.to_be_bytes::<32>());
+        match &offer.zk_context {
+            Some(context) => {
+                buf.push(1);
+                buf.extend_from_slice(context.derived_owner.as_slice());
+                buf.extend_from_slice(&context.chain_id.to_be_bytes());
+            }
+            None => buf.push(0),
+        }
     }
     alloy_primitives::keccak256(buf)
 }

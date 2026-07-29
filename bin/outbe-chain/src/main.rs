@@ -277,12 +277,12 @@ fn run_node() -> eyre::Result<()> {
     // (`--tee-enclave-socket` → `init_enclave_client`); the offer-decryption key
     // exists only inside the enclave (single path, no in-process key material).
 
-    // Initialize Barretenberg global CRS for the zkVerify precompile.
+    // Initialize the hash-pinned Barretenberg global CRS before block
+    // execution. Tribute admission is consensus-critical, so a node that
+    // cannot initialize the verifier must not start.
     // Must run before the tokio runtime starts — `setup_srs` uses
-    // `reqwest::blocking` internally and would panic from an async
-    // context. Without this, the `0xEE08` precompile silently returns
-    // `0x..00` for every input (verifier requires the CRS).
-    outbe_zkproof::init_crs();
+    // `reqwest::blocking` internally and would panic from an async context.
+    outbe_zkproof::init_crs()?;
 
     let cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
 
