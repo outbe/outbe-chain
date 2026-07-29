@@ -215,24 +215,6 @@
     },
     {
       "type": "function",
-      "name": "expireSeries",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "getAllSeries",
       "inputs": [],
       "outputs": [
@@ -1360,44 +1342,6 @@
     },
     {
       "type": "event",
-      "name": "SeriesExpired",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "SeriesExpiredProgress",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "processed",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "TransferBatch",
       "inputs": [
         {
@@ -1572,33 +1516,12 @@
     },
     {
       "type": "error",
-      "name": "NothingToExpire",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "QuantityTooLarge",
       "inputs": [
         {
           "name": "quantity",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SeriesNotYetExpired",
-      "inputs": [
-        {
-          "name": "deadline",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "nowTs",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ]
     },

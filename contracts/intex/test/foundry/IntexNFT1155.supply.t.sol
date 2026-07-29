@@ -8,7 +8,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Test} from "forge-std/Test.sol";
 
-/// @title — supply cap, burnSettled state gate, paginated expireSeries and holders getter.
+/// @title — supply cap, burnSettled state gate, and the paginated holders getter.
 /// @notice Every test here exercises a behavior introduced by the lifecycle/DoS hardening pass.
 contract IntexNFT1155SupplyTest is Test {
     IntexNFT1155 nft;
@@ -154,160 +154,6 @@ contract IntexNFT1155SupplyTest is Test {
         nft.burnSettled(holderA, SERIES_ID, 0);
     }
 
-    // --- expireSeries pagination (stateless, sweeps from index 0 every page) ---
-
-    function _seedHolders(uint32 cap, uint256 count, uint256 perHolder) internal returns (address[] memory holders) {
-        _createSeries(cap);
-        holders = new address[](count);
-        vm.startPrank(bridger);
-        for (uint256 i = 0; i < count; i++) {
-            // Synthesize a non-zero address that ERC1155 accepts.
-            address h = address(uint160(0x1000 + i));
-            holders[i] = h;
-            nft.mint(h, perHolder, SERIES_ID);
-        }
-        nft.markCalled(SERIES_ID);
-        vm.stopPrank();
-        vm.warp(block.timestamp + CALL_PERIOD + 1);
-    }
-
-    function test_ExpireSeries_ZeroLimit_Reverts() public {
-        _seedHolders(100, 3, 5);
-        vm.prank(bridger);
-        vm.expectRevert(IIntexNFT1155.ZeroLimit.selector);
-        nft.expireSeries(SERIES_ID, 0);
-    }
-
-    function test_R03_ExpireSeries_RequiresRelayerRole() public {
-        // Ungated expireSeries would let any address mass-burn balances past the deadline.
-        _seedHolders(50, 3, 5);
-
-        address rando = address(0xBAD);
-        bytes32 relayerRole = nft.RELAYER_ROLE();
-        vm.prank(rando);
-        vm.expectRevert(
-            abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, rando, relayerRole)
-        );
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-    }
-
-    function test_ExpireSeries_BeforeDeadline_Reverts() public {
-        _createSeries(10);
-        vm.startPrank(bridger);
-        nft.mint(holderA, 5, SERIES_ID);
-        nft.markCalled(SERIES_ID);
-        // No warp — still inside the call period: not-yet-expired, not the idempotent no-op.
-        IIntexNFT1155.SeriesData memory d = nft.readData(SERIES_ID);
-        uint32 derivedDeadline = d.calledAt + d.callTrigger.intexCallPeriod;
-        vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155.SeriesNotYetExpired.selector, derivedDeadline, uint32(block.timestamp))
-        );
-        nft.expireSeries(SERIES_ID, 100);
-        vm.stopPrank();
-    }
-
-    function test_ExpireSeries_NotCalled_Reverts() public {
-        _createSeries(10);
-        vm.warp(block.timestamp + 365 days);
-        vm.prank(bridger);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.InvalidState.selector,
-                uint8(IIntexNFT1155.IntexState.Called),
-                uint8(IIntexNFT1155.IntexState.Issued)
-            )
-        );
-        nft.expireSeries(SERIES_ID, 100);
-    }
-
-    function test_ExpireSeries_FinalPageEmitsSeriesExpired() public {
-        _seedHolders(20, 3, 5);
-
-        vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.SeriesExpired(TOKEN_ID, bridger);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-
-        assertEq(nft.totalSupply(TOKEN_ID), 0);
-        assertEq(nft.seriesHolderCount(TOKEN_ID), 0);
-        // State stays Called.
-        assertEq(uint8(nft.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
-    }
-
-    function test_ExpireSeries_MidPageEmitsProgress() public {
-        _seedHolders(50, 5, 3);
-
-        vm.expectEmit(true, false, false, true);
-        emit IIntexNFT1155.SeriesExpiredProgress(SERIES_ID, 2);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, 2);
-
-        assertEq(nft.seriesHolderCount(TOKEN_ID), 3, "two holders swept this page");
-        assertEq(nft.totalSupply(TOKEN_ID), 3 * 3);
-    }
-
-    function test_ExpireSeries_DrainsAcrossMultiplePages() public {
-        uint256 holderCount = 10;
-        uint256 perHolder = 4;
-        _seedHolders(uint32(holderCount * perHolder), holderCount, perHolder);
-
-        // Page 1: 4 holders → progress (6 remaining).
-        vm.expectEmit(true, false, false, true);
-        emit IIntexNFT1155.SeriesExpiredProgress(SERIES_ID, 4);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, 4);
-        assertEq(nft.seriesHolderCount(TOKEN_ID), 6);
-
-        // Page 2: 4 holders → progress (2 remaining).
-        vm.expectEmit(true, false, false, true);
-        emit IIntexNFT1155.SeriesExpiredProgress(SERIES_ID, 4);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, 4);
-        assertEq(nft.seriesHolderCount(TOKEN_ID), 2);
-
-        // Page 3: 4 requested, 2 actually swept → final-page emits SeriesExpired.
-        vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.SeriesExpired(TOKEN_ID, bridger);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, 4);
-
-        assertEq(nft.seriesHolderCount(TOKEN_ID), 0);
-        assertEq(nft.totalSupply(TOKEN_ID), 0);
-    }
-
-    function test_ExpireSeries_AfterFullSweep_Reverts() public {
-        _seedHolders(15, 3, 5);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-
-        // Idempotency: with totalSupply == 0, the next call reverts NothingToExpire (not
-        // SeriesNotYetExpired — the deadline has passed; there is simply nothing left to sweep).
-        vm.prank(bridger);
-        vm.expectRevert(IIntexNFT1155.NothingToExpire.selector);
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-    }
-
-    function test_ExpireSeries_PreservesSettledBalances() public {
-        // A holder that already settled some keeps the Settled balance through expiration.
-        _createSeries(10);
-        vm.startPrank(bridger);
-        nft.mint(holderA, 10, SERIES_ID);
-        nft.markCalled(SERIES_ID);
-        vm.stopPrank();
-        vm.prank(settler);
-        nft.settle(SERIES_ID, holderA, holderA, 4);
-
-        vm.warp(block.timestamp + CALL_PERIOD + 1);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-
-        (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID);
-        assertEq(nft.balanceOf(holderA, issued), 0);
-        assertEq(nft.balanceOf(holderA, settled), 4);
-        assertEq(nft.totalSupply(issued), 0);
-        assertEq(nft.totalSupply(settled), 4);
-    }
-
     // --- Live-supply cap (a burn frees cap room; cap is `totalSupply ≤ issuedIntexCount`) ---
 
     function test_Cap_Mint_AfterSettle_FreesCapRoom() public {
@@ -370,28 +216,6 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, cap, "totalSupply back at cap after refill");
     }
 
-    function test_Cap_Mint_AfterExpireSeries_FreesCapRoom() public {
-        // expireSeries drains totalSupply to 0, freeing the full cap; a subsequent mint draws
-        // against the live (now-zero) supply rather than a cumulative counter.
-        uint32 cap = 10;
-        _createSeries(cap);
-
-        vm.startPrank(bridger);
-        nft.mint(holderA, cap, SERIES_ID);
-        nft.markCalled(SERIES_ID);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + CALL_PERIOD + 1);
-        // Permissioned per R-03 — caller pranks as bridger to satisfy the role.
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID, type(uint256).max);
-
-        assertEq(nft.totalSupply(TOKEN_ID), 0);
-        vm.prank(bridger);
-        nft.mint(holderA, 1, SERIES_ID);
-        assertEq(nft.readData(SERIES_ID).totalSupply, 1, "mint draws against the freed cap");
-    }
-
     function test_Cap_TotalSupply_TracksLiveIssuedBalance() public {
         uint32 cap = 10;
         _createSeries(cap);
@@ -443,10 +267,19 @@ contract IntexNFT1155SupplyTest is Test {
 
     // --- getIssuedHoldersWithBalances pagination ---
 
+    function _seedHolders(uint32 cap, uint256 count, uint256 perHolder) internal returns (address[] memory holders) {
+        _createSeries(cap);
+        holders = new address[](count);
+        vm.startPrank(bridger);
+        for (uint256 i = 0; i < count; i++) {
+            address h = address(uint160(0x1000 + i));
+            holders[i] = h;
+            nft.mint(h, perHolder, SERIES_ID);
+        }
+        vm.stopPrank();
+    }
+
     function test_GetIssuedHolders_ZeroLimit_Reverts() public {
-        // ZeroLimit is the single canonical error for any pagination zero-limit, replacing the
-        // earlier two-error split (ZeroLimit + ZeroPaginationLimit) so callers can branch on
-        // one selector across `expireSeries` and the holders getter.
         _createSeries(10);
         vm.expectRevert(IIntexNFT1155.ZeroLimit.selector);
         nft.getIssuedHoldersWithBalances(SERIES_ID, 0, 0);
@@ -454,7 +287,6 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_GetIssuedHolders_OffsetBeyondLength_ReturnsEmpty() public {
         address[] memory seeded = _seedHolders(50, 3, 5);
-        // Pull state out of "Called" timing isn't important — view function ignores deadline.
         (address[] memory holders, uint256[] memory issued, uint256[] memory settled, uint256 total) =
             nft.getIssuedHoldersWithBalances(SERIES_ID, 999, 100);
         assertEq(holders.length, 0);

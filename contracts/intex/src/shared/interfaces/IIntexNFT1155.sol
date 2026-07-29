@@ -24,8 +24,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called. Expiration after the call deadline
-    ///      is signalled by the `SeriesExpired` event; it is not a distinct on-chain state.
+    /// @dev Lifecycle: Issued -> Qualified -> Called. Expiry is not a distinct on-chain
+    ///      state; it is derived from `calledAt + intexCallPeriod` against the clock.
     enum IntexState {
         Issued,
         Qualified,
@@ -122,20 +122,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when a series passes its call deadline without full settlement.
-    /// @dev Fires once, on the page that drains the final Issued holder. Mid-page progress
-    ///      is reported separately via `SeriesExpiredProgress`.
-    /// @param tokenId Issued token id.
-    /// @param account Address that triggered the expiration call.
-    event SeriesExpired(uint256 indexed tokenId, address indexed account);
-
-    /// @notice Emitted on every paginated `expireSeries` call that does not fully drain the
-    ///         remaining holder set. Lets indexers track sweep progress without scanning logs
-    ///         on the Issued token id.
-    /// @param seriesId Series identifier.
-    /// @param processed Number of holders swept in this call.
-    event SeriesExpiredProgress(uint32 indexed seriesId, uint256 processed);
-
     /// @notice Emitted when settlement burns Issued and mints Settled.
     /// @param seriesId Series identifier.
     /// @param to Recipient of the newly minted Settled tokens.
@@ -162,10 +148,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error InvalidState(uint8 expected, uint8 actual);
     /// @notice Token id does not exist.
     error NonexistentToken(uint256 tokenId);
-    /// @notice `expireSeries` was called before the series passed its call deadline (or was never called).
-    error SeriesNotYetExpired(uint32 deadline, uint32 nowTs);
-    /// @notice `expireSeries` has nothing to expire — the series supply is already zero (swept).
-    error NothingToExpire();
     /// @notice Series already exists for this token id.
     error TokenAlreadyExists(uint256 tokenId);
     /// @notice `createSeries` was called with a zero issued-intex count (the supply cap cannot be zero).
@@ -192,8 +174,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
     error SupplyCapExceeded(uint32 seriesId, uint256 attempted, uint256 cap);
-    /// @notice Pagination was invoked with a zero page limit (`expireSeries`,
-    ///         `getIssuedHoldersWithBalances`).
+    /// @notice Pagination was invoked with a zero page limit (`getIssuedHoldersWithBalances`).
     error ZeroLimit();
 
     // --- Writes ---
@@ -231,18 +212,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
     function markCalled(uint32 seriesId) external;
-
-    /// @notice Signal that a Called series has passed its settlement deadline without full settlement.
-    /// @dev Gated by `RELAYER_ROLE` — mass-burning balances is a privileged operation and
-    ///      mirrors the role the bridge already uses for `markCalled` / `markQualified`.
-    ///      Paginated to avoid block-gas-limit DoS on large holder sets: each call burns up
-    ///      to `limit` of the remaining holders. Mid-page calls emit `SeriesExpiredProgress`;
-    ///      the call that drains the last holder emits `SeriesExpired`. Once swept, the
-    ///      function reverts because `totalSupply == 0` (idempotency invariant). `limit`
-    ///      must be > 0.
-    /// @param seriesId Series identifier.
-    /// @param limit Maximum number of holders to sweep in this call.
-    function expireSeries(uint32 seriesId, uint256 limit) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.

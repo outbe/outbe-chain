@@ -18,13 +18,13 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
  * @dev Series lifecycle: Issued -> Qualified -> Called.
- *      Expiration after the call deadline is signalled by the SeriesExpired event;
- *      it is not a distinct on-chain state.
+ *      Expiry is not an on-chain state: it is derived from `calledAt + intexCallPeriod`
+ *      against the clock (settle/bridge gates, metadata rendering).
  * @dev Each series has two token ids: issued = `uint256(seriesId)`,
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role; gates series lifecycle, mint, expireSeries, and
+    /// @notice Bridge relayer role; gates series lifecycle, mint, and
     ///         bridge crosschainBurn/crosschainMint.
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
     /// @notice Settlement contract role; allowed to call `settle` (burn Issued + mint Settled).
@@ -293,67 +293,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         emit MetadataUpdate(tokenId);
     }
 
-    /// @inheritdoc IIntexNFT1155
-    function expireSeries(uint32 seriesId, uint256 limit) external onlyRole(RELAYER_ROLE) {
-        if (limit == 0) revert ZeroLimit();
-
-        IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = uint256(seriesId);
-        IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
-
-        if (data.issuedAt == 0) {
-            revert NonexistentToken(tokenId);
-        }
-        if (data.state != IIntexNFT1155.IntexState.Called) {
-            revert InvalidState(uint8(IIntexNFT1155.IntexState.Called), uint8(data.state));
-        }
-        uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
-        if (data.calledAt == 0 || block.timestamp <= derivedDeadline) {
-            revert SeriesNotYetExpired(derivedDeadline, uint32(block.timestamp));
-        }
-        // Idempotency guard: once every holder has been swept, `totalSupply` is zero and
-        // a second expiration call is meaningless. Reverting here keeps the SeriesExpired
-        // event single-shot for indexers without introducing a dedicated terminal flag.
-        if (data.totalSupply == 0) {
-            revert NothingToExpire();
-        }
-
-        // Pagination: always sweep from index 0 of the live holder array. The existing
-        // `_update → _removeSeriesHolder` swap-and-pop flow shrinks the array as each
-        // burn drops a balance to zero, so the next call naturally picks up where this
-        // one left off without an explicit cursor.
-        uint256 remaining = $.seriesHolders[tokenId].length;
-        uint256 toProcess = limit < remaining ? limit : remaining;
-        uint256 burned = 0;
-        for (uint256 i = 0; i < toProcess; i++) {
-            // Each `_burn` triggers `_removeSeriesHolder`, swapping the tail into slot 0.
-            // Reading `seriesHolders[tokenId][0]` on every iteration is therefore the
-            // correct way to advance through the shrinking page.
-            address holder = $.seriesHolders[tokenId][0];
-            uint256 bal = balanceOf(holder, tokenId);
-            if (bal > 0) {
-                _burn(holder, tokenId, bal);
-                // forge-lint: disable-next-line(unsafe-typecast) -- bal <= totalSupply (uint32) by construction
-                burned += bal;
-            }
-        }
-
-        if (burned > 0) {
-            // forge-lint: disable-next-line(unsafe-typecast) -- burned == Σ bal, each ≤ totalSupply (uint32)
-            data.totalSupply -= uint32(burned);
-        }
-
-        // Final page <=> the holder array drained to empty on this call. Mid-page progress
-        // is surfaced via SeriesExpiredProgress so off-chain indexers can track sweeps
-        // without polling the holders array. State stays Called.
-        if ($.seriesHolders[tokenId].length == 0) {
-            emit SeriesExpired(tokenId, msg.sender);
-            emit MetadataUpdate(tokenId);
-        } else {
-            emit SeriesExpiredProgress(seriesId, toProcess);
-        }
-    }
-
     /// @inheritdoc IERC1155Bridgeable
     /// @dev Bridge crosschainBurn gating:
     ///      - Settled token ids are soulbound — always reverts.
@@ -404,9 +343,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
-            // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline. Without this a
-            // `crosschainMint` after `expireSeries` drained the series could re-inflate `totalSupply`
-            // (capped by `issuedIntexCount`, but still a post-lifecycle mutation).
+            // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline.
             uint32 derivedDeadline = data.calledAt + data.callTrigger.intexCallPeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
@@ -638,7 +575,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///         series, and maintains the owned-series / series-holder enumeration indexes.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
-    ///        bridge crosschainBurn/crosschainMint on Issued, expireSeries, mint).
+    ///        bridge crosschainBurn/crosschainMint on Issued, mint).
     ///      - Holder-to-holder transfers:
     ///          * Settled token ids are soulbound — always reverts.
     ///          * Issued token ids are transferable while the series is Issued or Qualified.

@@ -9,7 +9,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
 /// @dev ERC-4906 discipline: `MetadataUpdate` fires exactly when the rendered document changes
-///      (series birth, lifecycle transitions, expiry-sweep completion) and never on supply moves.
+///      (series birth, lifecycle transitions) and never on supply moves.
 contract IntexNFT1155Erc4906Test is Test {
     bytes32 internal constant METADATA_UPDATE_TOPIC = keccak256("MetadataUpdate(uint256)");
     uint32 internal constant SERIES_ID = 20260622;
@@ -94,18 +94,6 @@ contract IntexNFT1155Erc4906Test is Test {
         nft.crosschainMint(user3, iTok, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "bridge moves are supply-only");
-
-        vm.warp(block.timestamp + CALL_PERIOD + 1);
-
-        // Holders: user and user3 — first page sweeps one, final page drains.
-        nft.expireSeries(SERIES_ID, 1);
-        (count,) = _metadataUpdates();
-        assertEq(count, 0, "sweep progress page is silent");
-
-        nft.expireSeries(SERIES_ID, 10);
-        (count, tokenId) = _metadataUpdates();
-        assertEq(count, 1, "sweep completion emits once");
-        assertEq(tokenId, iTok);
 
         vm.stopPrank();
     }
