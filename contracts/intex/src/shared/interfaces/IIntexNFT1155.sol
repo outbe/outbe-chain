@@ -118,9 +118,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 callDeadlineAt
     );
 
-    /// @notice Emitted when token metadata is updated (ERC-4906).
+    /// @notice Emitted when token metadata is updated (ERC-4906; `tokenId` is non-indexed per the EIP).
     /// @param tokenId Token id whose metadata changed.
-    event MetadataUpdate(uint256 indexed tokenId);
+    event MetadataUpdate(uint256 tokenId);
 
     /// @notice Emitted when collection metadata is updated.
     /// @param description New collection-level description string.

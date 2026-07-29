@@ -358,10 +358,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // without polling the holders array. State stays Called.
         if ($.seriesHolders[tokenId].length == 0) {
             emit SeriesExpired(tokenId, msg.sender);
+            emit MetadataUpdate(tokenId);
         } else {
             emit SeriesExpiredProgress(seriesId, toProcess);
         }
-        emit MetadataUpdate(tokenId);
     }
 
     /// @inheritdoc IERC1155Bridgeable
@@ -397,7 +397,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- amount <= balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
         _burn(from, tokenId, amount);
-        emit MetadataUpdate(tokenId);
     }
 
     /// @inheritdoc IERC1155Bridgeable
@@ -443,7 +442,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by cap check above
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, amount, "");
-        emit MetadataUpdate(tokenId);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -483,8 +481,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         _mint(to, sTok, amount, "");
 
         emit IntexSettled(seriesId, to, amount);
-        emit MetadataUpdate(iTok);
-        emit MetadataUpdate(sTok);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -515,7 +511,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         _burn(holder, sTok, amount);
 
         emit IntexCompleted(seriesId, holder, amount);
-        emit MetadataUpdate(sTok);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -536,7 +531,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         _burn(holder, iTok, amount);
 
         emit IntexParked(seriesId, holder, amount);
-        emit MetadataUpdate(iTok);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -975,7 +969,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         override(IERC165, ERC1155Upgradeable, AccessControlUpgradeable)
         returns (bool)
     {
+        // 0x49064906 = ERC-4906; literal because OZ's IERC4906 extends IERC721.
         return interfaceId == type(IIntexNFT1155).interfaceId || interfaceId == type(IERC1155Bridgeable).interfaceId
-            || super.supportsInterface(interfaceId);
+            || interfaceId == bytes4(0x49064906) || super.supportsInterface(interfaceId);
     }
 }

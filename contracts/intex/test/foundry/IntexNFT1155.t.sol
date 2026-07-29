@@ -458,10 +458,6 @@ contract IntexNFT1155Test is Test {
             callDeadlineAt
         );
         nft.markCalled(SERIES_ID_1);
-
-        vm.expectEmit();
-        emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
-        nft.crosschainBurn(user, TOKEN_ID_1, 5);
         vm.stopPrank();
     }
 
