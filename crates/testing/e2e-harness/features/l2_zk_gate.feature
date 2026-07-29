@@ -11,8 +11,8 @@ Feature: L2Registry zk signature gate on tribute offers
     Then the tribute transaction succeeds and supply becomes one
 
   @pfs-001-11
-  Scenario: A zkMerkleRoot signed with the registered network key passes the gate
+  Scenario: A valid FullProof whose root is signed by the registered network passes the gate
     Given a fresh localnet with a 6-block voting window
     When an L2 network is registered for the operator with zk enabled
-    And the operator submits an encrypted tribute offer with a valid L2 signature
+    And the operator submits an encrypted tribute offer with a valid ZK proof and L2 signature
     Then the tribute transaction succeeds and supply becomes one
