@@ -655,9 +655,7 @@ pub enum EnclaveRequest {
     /// Apply a standalone Fidelity cohort mutation (`In`/`Out`) over encrypted
     /// per-account state, on its own round-trip. Consensus path, re-executed by
     /// every validator. See [`FidelityCohortRequest`].
-    ApplyFidelityCohortOp {
-        request: Box<FidelityCohortRequest>,
-    },
+    ApplyFidelityCohortOp { request: Box<FidelityCohortRequest> },
 
     /// Batch-decrypt cohort blobs and return one plaintext league per owner —
     /// metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP prepare

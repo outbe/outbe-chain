@@ -632,9 +632,7 @@ mod tests {
     /// it across the workspace rather than duplicate the generated artifact.
     #[test]
     fn golden_matches_decay_py_reference() {
-        let raw = include_str!(
-            "../../../crates/core/fidelity/tests/fixtures/rcfi_golden.json"
-        );
+        let raw = include_str!("../../../crates/core/fidelity/tests/fixtures/rcfi_golden.json");
         let v: serde_json::Value = serde_json::from_str(raw).unwrap();
         let txs: Vec<(u64, bool, U256)> = v["transactions"]
             .as_array()

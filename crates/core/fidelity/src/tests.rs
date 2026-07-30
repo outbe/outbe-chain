@@ -93,7 +93,8 @@ fn snapshot_batches_owner_leagues_in_order() {
         api::cohort_in(storage.clone(), BOB, U256::from(1_000u64), T0).unwrap();
         api::cohort_out(storage.clone(), BOB, U256::from(1_000u64), T0 + 10 * DAY).unwrap();
 
-        let leagues = api::snapshot_leagues(storage.clone(), T0 + 100 * DAY, &[ALICE, BOB]).unwrap();
+        let leagues =
+            api::snapshot_leagues(storage.clone(), T0 + 100 * DAY, &[ALICE, BOB]).unwrap();
         assert_eq!(leagues.len(), 2);
         assert_eq!(leagues[0], (ALICE, MAX_LEAGUE));
         assert_eq!(leagues[1].0, BOB);

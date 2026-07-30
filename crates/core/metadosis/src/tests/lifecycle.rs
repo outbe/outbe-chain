@@ -320,7 +320,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    outbe_fidelity::enclave_client::test_enclave::install();
+        outbe_fidelity::enclave_client::test_enclave::install();
         seed(&mut provider, U256::from(9));
         let before_storage = provider.storage.clone();
         let before_events = provider.events.clone();

@@ -250,7 +250,8 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
         let amount = U256::from(1_000u64);
         let later = CREATED_AT + ONE_YEAR_SECS;
         // No cohort yet: no account has qualified, so the league is the floor.
-        let league_before = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        let league_before =
+            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_before, MIN_LEAGUE);
 
         runtime::mint(
@@ -382,7 +383,8 @@ fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         // fresh gratis cohort (rather than it having pre-existed).
         seed_promis(storage.clone(), alice(), amount);
         let later = CREATED_AT + ONE_YEAR_SECS;
-        let league_before = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        let league_before =
+            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
         assert_eq!(league_before, MIN_LEAGUE);
 
         // mineFromPromis on the gratisfactory precompile. Both the promis burn and

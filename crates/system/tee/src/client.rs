@@ -594,9 +594,9 @@ fn verify_fidelity_tag(
 
     let vk = VerifyingKey::from_bytes(attestation_pub)
         .map_err(|e| TransportError::FidelityAttestation(format!("bad attestation key: {e}")))?;
-    let sig_bytes: [u8; 64] = tag
-        .try_into()
-        .map_err(|_| TransportError::FidelityAttestation(format!("bad tag length {}", tag.len())))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::FidelityAttestation(format!("bad tag length {}", tag.len()))
+    })?;
     let sig = Signature::from_bytes(&sig_bytes);
     vk.verify_strict(preimage, &sig)
         .map_err(|e| TransportError::FidelityAttestation(format!("signature invalid: {e}")))
