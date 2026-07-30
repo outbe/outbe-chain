@@ -1,52 +1,95 @@
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const PACKAGES: &[(&str, &str)] = &[
-    ("libsgx-dcap-quote-verify", "1.26.100.1-noble1"),
-    ("libsgx-dcap-quote-verify-dev", "1.26.100.1-noble1"),
-    ("libsgx-headers", "2.29.100.1-noble1"),
-    ("libstdc++6", "14.2.0-4ubuntu2~24.04.1"),
-    ("libgcc-s1", "14.2.0-4ubuntu2~24.04.1"),
-];
-
-const ARTIFACTS: &[(&str, u64, &str)] = &[
-    (
-        "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
-        5_322_424,
-        "4745bc5b46cbdc17a78119ae2db08f54b86ff9077c5ab480f378741396365aef",
-    ),
-    (
-        "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
-        2_592_224,
-        "1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11",
-    ),
-    (
-        "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
-        183_024,
-        "d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb",
-    ),
-];
+const PROJECT_TOOLCHAIN: &str = include_str!("../../../release/project-toolchain-v1.json");
+const NATIVE_QVL_MANIFEST: &str = include_str!("../../../release/dcap-native-qvl-v1.json");
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE");
+    println!("cargo:rerun-if-changed=../../../release/project-toolchain-v1.json");
+    println!("cargo:rerun-if-changed=../../../release/dcap-native-qvl-v1.json");
 
     if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP").is_none() {
         return;
     }
 
+    let project_pin: serde_json::Value =
+        serde_json::from_str(PROJECT_TOOLCHAIN).expect("project toolchain pin must be valid JSON");
+    let qvl_manifest: serde_json::Value =
+        serde_json::from_str(NATIVE_QVL_MANIFEST).expect("native-QVL manifest must be valid JSON");
+    let package_pins = project_pin["system_packages"]
+        .as_object()
+        .expect("project toolchain must pin system_packages");
     let target = std::env::var("TARGET").expect("Cargo must set TARGET");
+    let expected_target = project_pin["target"]
+        .as_str()
+        .expect("project toolchain must pin target");
     assert_eq!(
-        target, "x86_64-unknown-linux-gnu",
-        "native-dcap is pinned to the x86_64 GNU/Linux Intel QVL artifact"
+        target, expected_target,
+        "native-dcap target must match the project toolchain pin"
     );
-    for (package, expected_version) in PACKAGES {
-        verify_package(package, expected_version);
+
+    let mut required_packages = BTreeSet::new();
+    let dcap = qvl_manifest["intel_dcap"]
+        .as_object()
+        .expect("native-QVL manifest must declare intel_dcap");
+    for (package_field, version_field) in [
+        ("runtime_package", "runtime_package_version"),
+        ("development_package", "development_package_version"),
+        ("headers_package", "headers_package_version"),
+    ] {
+        let package = dcap[package_field]
+            .as_str()
+            .expect("native-QVL package name must be a string");
+        let manifest_version = dcap[version_field]
+            .as_str()
+            .expect("native-QVL package version must be a string");
+        assert_eq!(
+            manifest_version,
+            pinned_package_version(package_pins, package),
+            "native-QVL package version must match the project toolchain pin: {package}"
+        );
+        required_packages.insert(package);
     }
-    for (path, expected_size, expected_sha256) in ARTIFACTS {
-        verify_artifact(path, *expected_size, expected_sha256);
+
+    let artifacts = qvl_manifest["artifacts"]
+        .as_array()
+        .expect("native-QVL manifest must declare artifacts");
+    let mut qvl_library_dir = None;
+    for artifact in artifacts {
+        let package = artifact["package"]
+            .as_str()
+            .expect("native-QVL artifact package must be a string");
+        let manifest_version = artifact["package_version"]
+            .as_str()
+            .expect("native-QVL artifact package version must be a string");
+        assert_eq!(
+            manifest_version,
+            pinned_package_version(package_pins, package),
+            "native-QVL artifact version must match the project toolchain pin: {package}"
+        );
+        required_packages.insert(package);
+
+        let path = artifact["path"]
+            .as_str()
+            .expect("native-QVL artifact path must be a string");
+        let expected_size = artifact["size"]
+            .as_u64()
+            .expect("native-QVL artifact size must be an unsigned integer");
+        let expected_sha256 = artifact["sha256"]
+            .as_str()
+            .expect("native-QVL artifact SHA-256 must be a string");
+        verify_artifact(path, expected_size, expected_sha256);
         println!("cargo:rerun-if-changed={path}");
+        if artifact["role"].as_str() == Some("qvl") {
+            qvl_library_dir = Path::new(path).parent().map(Path::to_path_buf);
+        }
+    }
+    for package in required_packages {
+        verify_package(package, pinned_package_version(package_pins, package));
     }
 
     println!("cargo:rerun-if-changed=native/qvl_wrapper.c");
@@ -58,8 +101,23 @@ fn main() {
         c.define("OUTBE_QVL_TEST_TRACE", None);
     }
     c.compile("outbe_native_qvl_wrapper");
-    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
+    let qvl_library_dir: PathBuf =
+        qvl_library_dir.expect("native-QVL manifest must contain the qvl artifact");
+    println!(
+        "cargo:rustc-link-search=native={}",
+        qvl_library_dir.display()
+    );
     println!("cargo:rustc-link-lib=dylib=sgx_dcap_quoteverify");
+}
+
+fn pinned_package_version<'a>(
+    package_pins: &'a serde_json::Map<String, serde_json::Value>,
+    package: &str,
+) -> &'a str {
+    package_pins
+        .get(package)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("project toolchain does not pin required package: {package}"))
 }
 
 fn verify_package(package: &str, expected_version: &str) {

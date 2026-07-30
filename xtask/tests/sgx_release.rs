@@ -65,11 +65,41 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
     assert!(template.contains("sgx.debug = false"));
     assert!(template.contains("sgx.remote_attestation = \"none\""));
     assert!(!template.contains("gramine-direct"));
+    assert!(template.contains("loader.env.LD_LIBRARY_PATH = \"/qvl:/lib\""));
+    for trusted_qvl_file in [
+        "file:{{ install_root }}/gramine/runtime/qvl/libsgx_dcap_quoteverify.so.1",
+        "file:{{ install_root }}/gramine/runtime/qvl/libstdc++.so.6",
+        "file:{{ install_root }}/gramine/runtime/qvl/libgcc_s.so.1",
+    ] {
+        assert!(
+            template.contains(trusted_qvl_file),
+            "release manifest does not pin {trusted_qvl_file}"
+        );
+    }
 
     let adapter =
         fs::read_to_string(root.join("scripts/release/build-testnet-sgx-bundle-in-container.sh"))
             .expect("Gramine container adapter");
     assert!(adapter.contains("--chroot \"${bundle_root}\""));
+    assert!(adapter.contains("verify_dcap_native_qvl.py"));
+    assert!(adapter.contains("--install-dir"));
+
+    let bundle_spec: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join("release/testnet-sgx-bundle-v1.json")).expect("bundle spec"),
+    )
+    .expect("valid bundle spec JSON");
+    let inputs = bundle_spec["inputs"]
+        .as_array()
+        .expect("bundle spec inputs")
+        .iter()
+        .map(|value| value.as_str().expect("string input"))
+        .collect::<Vec<_>>();
+    assert!(inputs.contains(&"release/dcap-native-qvl-v1.json"));
+    assert_eq!(
+        bundle_spec["project_toolchain"],
+        "release/project-toolchain-v1.json"
+    );
+    assert!(inputs.contains(&"scripts/release/verify_dcap_native_qvl.py"));
 }
 
 #[test]

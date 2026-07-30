@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#
+# Candidate build environment for the single Outbe Linux/SGX version pin.
+# Registry publication and release activation are intentionally separate.
+
+FROM rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5 AS rust
+
+FROM gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7 AS toolchain
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+
+ENV CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH} \
+    RUSTUP_HOME=/usr/local/rustup
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential=12.10ubuntu1 \
+      clang=1:18.0-59~exp2 \
+      cmake=3.28.3-1build7 \
+      gcc-14-base=14.2.0-4ubuntu2~24.04.1 \
+      git=1:2.43.0-1ubuntu7.3 \
+      libc++-dev=1:18.0-59~exp2 \
+      libc++abi-dev=1:18.0-59~exp2 \
+      libgcc-s1=14.2.0-4ubuntu2~24.04.1 \
+      libsgx-dcap-quote-verify=1.26.100.1-noble1 \
+      libsgx-dcap-quote-verify-dev=1.26.100.1-noble1 \
+      libsgx-headers=2.29.100.1-noble1 \
+      libssl-dev=3.0.13-0ubuntu3.12 \
+      libstdc++6=14.2.0-4ubuntu2~24.04.1 \
+      pkg-config=1.8.1-2build1 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN rustup component add rustfmt clippy rust-src \
+      --toolchain 1.96.0-x86_64-unknown-linux-gnu
+
+COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
+COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
+COPY scripts/release/verify_dcap_native_qvl.py /opt/outbe/toolchain/verify_dcap_native_qvl.py
+COPY scripts/release/verify_project_toolchain.py /opt/outbe/toolchain/verify_project_toolchain.py
+
+RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
+    test "$(dpkg-query -W -f='${Version}' gramine)" = "1.9" && \
+    python3 /opt/outbe/toolchain/verify_dcap_native_qvl.py \
+      --manifest /opt/outbe/toolchain/dcap-native-qvl-v1.json \
+      --root /
+
+WORKDIR /workspace
+ENTRYPOINT []

@@ -97,6 +97,14 @@ official Intel parser/test vectors; a real Intel-rooted Platform-CA quote
 requires registered multi-package SGX hardware and is a fail-not-skip I9
 release gate.
 
+Toolchain staging is intentionally separate from container delivery:
+`release/project-toolchain-v1.json` is the single exact version pin and is
+bound into ELF and SGX release inputs, while its activation remains
+`pending-container-delivery`. This state does not claim that the current
+production ELF/SGX builders use the unified image, and it does not complete
+the native-DCAP release gate. Image delivery and activation must be resolved
+before the production enclave is built with `native-dcap`.
+
 **Acceptance:**
 
 - a real Processor-CA positive/negative cryptographic corpus bound to

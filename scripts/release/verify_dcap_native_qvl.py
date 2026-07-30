@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -13,25 +14,52 @@ from typing import Any
 
 EXPECTED_ROLES = ("qvl", "cxx-runtime", "gcc-runtime")
 EXPECTED_STATUS = "inactive-until-i9"
-EXPECTED_DCAP = {
-    "runtime_package": "libsgx-dcap-quote-verify",
-    "runtime_package_version": "1.26.100.1-noble1",
-    "development_package": "libsgx-dcap-quote-verify-dev",
-    "development_package_version": "1.26.100.1-noble1",
-    "headers_package": "libsgx-headers",
-    "headers_package_version": "2.29.100.1-noble1",
-    "collateral_major_version": 3,
-    "collateral_minor_version": 1,
-    "qve_report_info": "null",
-    "qve_enabled": False,
-    "tvl_enabled": False,
-    "qpl_or_pccs_during_consensus": False,
-}
-EXPECTED_ARTIFACTS = (
+
+
+def _load_project_pin_verifier():
+    path = Path(__file__).with_name("verify_project_toolchain.py")
+    spec = importlib.util.spec_from_file_location("outbe_project_pin_verifier", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load project toolchain verifier: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _project_pin_path() -> Path:
+    adjacent = Path(__file__).with_name("project-toolchain-v1.json")
+    if adjacent.is_file():
+        return adjacent
+    return Path(__file__).resolve().parents[2] / "release/project-toolchain-v1.json"
+
+
+PROJECT_VERSION_PIN = _load_project_pin_verifier().load_and_validate_pin(
+    _project_pin_path()
+)
+
+
+def expected_dcap(pin: dict[str, Any]) -> dict[str, Any]:
+    packages = pin["system_packages"]
+    return {
+        "runtime_package": "libsgx-dcap-quote-verify",
+        "runtime_package_version": packages["libsgx-dcap-quote-verify"],
+        "development_package": "libsgx-dcap-quote-verify-dev",
+        "development_package_version": packages["libsgx-dcap-quote-verify-dev"],
+        "headers_package": "libsgx-headers",
+        "headers_package_version": packages["libsgx-headers"],
+        "collateral_major_version": 3,
+        "collateral_minor_version": 1,
+        "qve_report_info": "null",
+        "qve_enabled": False,
+        "tvl_enabled": False,
+        "qpl_or_pccs_during_consensus": False,
+    }
+
+
+_EXPECTED_ARTIFACT_BASE = (
     {
         "role": "qvl",
         "package": "libsgx-dcap-quote-verify",
-        "package_version": "1.26.100.1-noble1",
         "path": "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
         "install_name": "libsgx_dcap_quoteverify.so.1",
         "size": 5322424,
@@ -41,7 +69,6 @@ EXPECTED_ARTIFACTS = (
     {
         "role": "cxx-runtime",
         "package": "libstdc++6",
-        "package_version": "14.2.0-4ubuntu2~24.04.1",
         "path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
         "install_name": "libstdc++.so.6",
         "size": 2592224,
@@ -50,13 +77,27 @@ EXPECTED_ARTIFACTS = (
     {
         "role": "gcc-runtime",
         "package": "libgcc-s1",
-        "package_version": "14.2.0-4ubuntu2~24.04.1",
         "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
         "install_name": "libgcc_s.so.1",
         "size": 183024,
         "sha256": "d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb",
     },
 )
+
+
+def expected_artifacts(pin: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    packages = pin["system_packages"]
+    return tuple(
+        {
+            **artifact,
+            "package_version": packages[artifact["package"]],
+        }
+        for artifact in _EXPECTED_ARTIFACT_BASE
+    )
+
+
+EXPECTED_DCAP = expected_dcap(PROJECT_VERSION_PIN)
+EXPECTED_ARTIFACTS = expected_artifacts(PROJECT_VERSION_PIN)
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -118,8 +159,11 @@ def verify_manifest(
         raise ValueError(f"native-QVL status must be {EXPECTED_STATUS}")
     if manifest.get("target") != "x86_64-unknown-linux-gnu":
         raise ValueError("native-QVL V1 target must be x86_64-unknown-linux-gnu")
-    if manifest.get("gramine_version") != "1.9":
-        raise ValueError("native-QVL V1 requires exact Gramine 1.9")
+    gramine_version = PROJECT_VERSION_PIN["gramine"]["version"]
+    if manifest.get("gramine_version") != gramine_version:
+        raise ValueError(
+            f"native-QVL V1 requires exact Gramine {gramine_version}"
+        )
 
     dcap = manifest.get("intel_dcap")
     if not isinstance(dcap, dict):
@@ -171,6 +215,33 @@ def verify_manifest(
             raise ValueError(f"native-QVL artifact SHA-256 mismatch: {configured}")
 
 
+def install_verified_artifacts(
+    manifest: dict[str, Any],
+    root: Path,
+    destination: Path,
+    *,
+    check_packages: bool = False,
+) -> None:
+    """Install only exact verified artifacts under their contract install names."""
+    verify_manifest(manifest, root, check_packages=check_packages)
+    if destination.exists():
+        if not destination.is_dir() or any(destination.iterdir()):
+            raise ValueError("native-QVL install destination must be empty")
+    else:
+        destination.mkdir(parents=True)
+
+    for artifact in manifest["artifacts"]:
+        configured = artifact["path"]
+        payload = artifact_path(root, configured).read_bytes()
+        if len(payload) != artifact["size"]:
+            raise ValueError(f"native-QVL artifact size mismatch: {configured}")
+        if hashlib.sha256(payload).hexdigest() != artifact["sha256"]:
+            raise ValueError(f"native-QVL artifact SHA-256 mismatch: {configured}")
+        target = destination / artifact["install_name"]
+        target.write_bytes(payload)
+        target.chmod(0o644)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -179,14 +250,25 @@ def main() -> int:
         default=Path("release/dcap-native-qvl-v1.json"),
     )
     parser.add_argument("--root", type=Path, default=Path("/"))
+    parser.add_argument(
+        "--install-dir",
+        type=Path,
+        help="copy exact verified artifacts under their contract install names",
+    )
     args = parser.parse_args()
 
     try:
-        verify_manifest(
-            load_manifest(args.manifest),
-            args.root,
-            check_packages=args.root.resolve() == Path("/"),
-        )
+        manifest = load_manifest(args.manifest)
+        check_packages = args.root.resolve() == Path("/")
+        if args.install_dir is None:
+            verify_manifest(manifest, args.root, check_packages=check_packages)
+        else:
+            install_verified_artifacts(
+                manifest,
+                args.root,
+                args.install_dir,
+                check_packages=check_packages,
+            )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         parser.error(str(error))
     print("native-QVL artifact contract verified")

@@ -52,6 +52,7 @@ hex.workspace = true
 
 [build-dependencies]
 cc = "1.2"
+serde_json.workspace = true
 sha2.workspace = true
 
 [lints]

@@ -64,6 +64,67 @@ class NativeQvlManifestTests(unittest.TestCase):
     def test_exact_artifacts_and_boundary_pass(self) -> None:
         self.verify_synthetic_manifest()
 
+    def test_expected_package_versions_come_from_the_project_pin(self) -> None:
+        pin = copy.deepcopy(verifier.PROJECT_VERSION_PIN)
+        pin["system_packages"]["libsgx-dcap-quote-verify"] = "test-qvl-version"
+        pin["system_packages"]["libstdc++6"] = "test-cxx-version"
+
+        self.assertEqual(
+            verifier.expected_dcap(pin)["runtime_package_version"],
+            "test-qvl-version",
+        )
+        self.assertEqual(
+            verifier.expected_artifacts(pin)[1]["package_version"],
+            "test-cxx-version",
+        )
+
+    def test_verified_artifacts_install_under_exact_contract_names(self) -> None:
+        destination = self.root / "bundle-qvl"
+        with mock.patch.object(
+            verifier,
+            "EXPECTED_ARTIFACTS",
+            tuple(self.artifacts),
+        ):
+            verifier.install_verified_artifacts(
+                self.manifest,
+                self.root,
+                destination,
+            )
+
+        self.assertEqual(
+            sorted(path.name for path in destination.iterdir()),
+            sorted(artifact["install_name"] for artifact in self.artifacts),
+        )
+        for index, artifact in enumerate(self.artifacts):
+            self.assertEqual(
+                (destination / artifact["install_name"]).read_bytes(),
+                f"artifact-{artifact['role']}".encode(),
+            )
+            self.assertEqual(
+                (destination / artifact["install_name"]).stat().st_mode & 0o777,
+                0o644,
+                f"unexpected mode for artifact {index}",
+            )
+
+    def test_install_rejects_a_nonempty_destination(self) -> None:
+        destination = self.root / "bundle-qvl"
+        destination.mkdir()
+        (destination / "uncontracted.so").write_bytes(b"host substitution")
+
+        with (
+            mock.patch.object(
+                verifier,
+                "EXPECTED_ARTIFACTS",
+                tuple(self.artifacts),
+            ),
+            self.assertRaisesRegex(ValueError, "destination must be empty"),
+        ):
+            verifier.install_verified_artifacts(
+                self.manifest,
+                self.root,
+                destination,
+            )
+
     def test_changed_artifact_fails_closed(self) -> None:
         (self.root / "native/0").write_bytes(b"substituted")
         with self.assertRaisesRegex(ValueError, "size mismatch"):
