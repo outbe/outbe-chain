@@ -132,6 +132,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub reentrancy_stack: ReentrancyStack,
     /// EVM spec id, captured at provider construction time.
     pub spec: SpecId,
+    /// Immutable genesis hash sourced from the canonical ChainSpec.
+    pub genesis_hash: B256,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
     /// The same block-scoped lifecycle capability used by the outer EVM.
@@ -151,6 +153,7 @@ pub struct CtxStorageProviderConfig {
     pub self_address: Address,
     pub reentrancy_stack: ReentrancyStack,
     pub spec: SpecId,
+    pub genesis_hash: B256,
     pub runtime_body_readers: Option<RuntimeBodyReaders>,
     pub execution_scope: Arc<ExecutionScope>,
     pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -215,6 +218,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             self_address: config.self_address,
             reentrancy_stack: config.reentrancy_stack,
             spec: config.spec,
+            genesis_hash: config.genesis_hash,
             runtime_body_readers: config.runtime_body_readers,
             execution_scope: config.execution_scope,
             ocomp_finality_authority: config.ocomp_finality_authority,
@@ -252,6 +256,10 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn chain_id(&self) -> u64 {
         ContextTr::cfg(self.ctx).chain_id()
+    }
+
+    fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
     }
 
     fn timestamp(&self) -> U256 {
@@ -418,6 +426,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             self.self_address,
             self.is_static,
             self.spec,
+            self.genesis_hash,
             self.runtime_body_readers.clone(),
             self.execution_scope.clone(),
             self.ocomp_finality_authority.clone(),

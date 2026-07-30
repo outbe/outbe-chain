@@ -10,7 +10,7 @@
 //! sub-call driver in [`crate::sub_call`].
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
@@ -115,6 +115,20 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
     precompile_routes::EXACT_ADDRESSES
 }
 
+/// Immutable protocol context shared by every Outbe precompile dispatch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutbePrecompileExecutionContext {
+    spec: SpecId,
+    genesis_hash: B256,
+}
+
+impl OutbePrecompileExecutionContext {
+    #[must_use]
+    pub const fn new(spec: SpecId, genesis_hash: B256) -> Self {
+        Self { spec, genesis_hash }
+    }
+}
+
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
 /// via the `set_ctx_dispatch_hook` fork extension.
 ///
@@ -128,7 +142,7 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 /// Registers Outbe precompiles with an executor-owned compressed-entity scope.
 pub fn extend_outbe_precompiles<DB>(
     precompiles: &mut PrecompilesMap,
-    spec: SpecId,
+    execution_context: OutbePrecompileExecutionContext,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -138,6 +152,7 @@ pub fn extend_outbe_precompiles<DB>(
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let OutbePrecompileExecutionContext { spec, genesis_hash } = execution_context;
     let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
@@ -158,6 +173,7 @@ pub fn extend_outbe_precompiles<DB>(
                 inputs,
                 OutbeDispatchRuntime {
                     spec,
+                    genesis_hash,
                     runtime_body_readers: runtime_body_readers.as_ref(),
                     execution_scope: &execution_scope,
                     ocomp_finality_authority: ocomp_finality_authority.clone(),
@@ -173,6 +189,7 @@ pub fn extend_outbe_precompiles<DB>(
 /// Executor-owned runtime authorities carried into one Outbe dispatch.
 struct OutbeDispatchRuntime<'a> {
     spec: SpecId,
+    genesis_hash: B256,
     runtime_body_readers: Option<&'a RuntimeBodyReaders>,
     execution_scope: &'a Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -193,6 +210,7 @@ where
 {
     let OutbeDispatchRuntime {
         spec,
+        genesis_hash,
         runtime_body_readers,
         execution_scope,
         ocomp_finality_authority,
@@ -279,6 +297,7 @@ where
             self_address: address,
             reentrancy_stack: ReentrancyStack,
             spec,
+            genesis_hash,
             runtime_body_readers: runtime_body_readers.cloned(),
             execution_scope: execution_scope.clone(),
             ocomp_finality_authority: ocomp_finality_authority.clone(),
@@ -391,6 +410,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     eth: EthPrecompiles,
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
+    genesis_hash: B256,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     execution_scope: Arc<ExecutionScope>,
     ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -402,6 +422,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
 impl<DB> OutbeSubCallPrecompiles<DB> {
     pub(crate) fn new(
         spec: SpecId,
+        genesis_hash: B256,
         runtime_body_readers: Option<RuntimeBodyReaders>,
         execution_scope: Arc<ExecutionScope>,
         ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
@@ -411,6 +432,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
+            genesis_hash,
             runtime_body_readers,
             execution_scope,
             ocomp_finality_authority,
@@ -449,6 +471,7 @@ where
             inputs,
             OutbeDispatchRuntime {
                 spec: self.spec,
+                genesis_hash: self.genesis_hash,
                 runtime_body_readers: self.runtime_body_readers.as_ref(),
                 execution_scope: &self.execution_scope,
                 ocomp_finality_authority: self.ocomp_finality_authority.clone(),

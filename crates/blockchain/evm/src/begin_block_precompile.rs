@@ -1044,6 +1044,7 @@ fn block_runtime_context_from_storage(
     let block_number = storage.block_number()?;
     let timestamp = u256_to_u64("block timestamp", storage.timestamp()?)?;
     let chain_id = storage.chain_id()?;
+    let genesis_hash = storage.genesis_hash()?;
     let proposer = current_preloaded_system_tx_context()
         .map(|context| context.proposer)
         .unwrap_or(storage.beneficiary()?);
@@ -1064,7 +1065,14 @@ fn block_runtime_context_from_storage(
     };
 
     Ok(BlockRuntimeContext::new(
-        BlockContext::new(block_number, timestamp, chain_id, proposer, validators),
+        BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash,
+            proposer,
+            validators,
+        ),
         storage,
     ))
 }

@@ -278,6 +278,10 @@ mod tests {
             self.inner.chain_id()
         }
 
+        fn genesis_hash(&self) -> B256 {
+            self.inner.genesis_hash()
+        }
+
         fn timestamp(&self) -> U256 {
             self.inner.timestamp()
         }

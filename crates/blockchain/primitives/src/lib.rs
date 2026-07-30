@@ -26,6 +26,8 @@ pub mod stablecoin;
 pub mod stablecoin_fork;
 pub mod storage;
 pub mod system_tx;
+#[cfg(feature = "tee-attestation-v1")]
+pub mod tee_attestation_v1;
 pub mod tee_bootstrap;
 pub mod time;
 pub mod units;

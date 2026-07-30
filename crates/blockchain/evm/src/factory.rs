@@ -10,7 +10,7 @@ use alloy_evm::{
     revm::handler::{instructions::EthInstructions, EthFrame, EthPrecompiles, PrecompileProvider},
     Evm, EvmFactory,
 };
-use alloy_primitives::{Address, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 use core::ops::{Deref, DerefMut};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
@@ -37,7 +37,7 @@ use std::sync::Arc;
 
 use crate::{
     create_guard::{self, ReservedNamespaceHandler},
-    precompiles::extend_outbe_precompiles,
+    precompiles::{extend_outbe_precompiles, OutbePrecompileExecutionContext},
 };
 
 #[cfg(test)]
@@ -331,6 +331,8 @@ where
 /// Custom EVM factory that registers Outbe stateful precompiles.
 #[derive(Clone, Default)]
 pub struct OutbeEvmFactory {
+    /// Immutable chain identity installed by `OutbeEvmConfig`.
+    genesis_hash: B256,
     runtime_body_readers: Option<RuntimeBodyReaders>,
     compressed_tree_service:
         Arc<std::sync::RwLock<Option<Arc<outbe_compressed_entities::CompressedTreeService>>>>,
@@ -344,6 +346,7 @@ impl core::fmt::Debug for OutbeEvmFactory {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("OutbeEvmFactory")
+            .field("genesis_hash", &self.genesis_hash)
             .field("runtime_body_readers", &self.runtime_body_readers.is_some())
             .field(
                 "compressed_tree_service",
@@ -387,10 +390,25 @@ impl OutbeEvmFactory {
         Self::default()
     }
 
+    /// Binds every EVM/precompile context created by this factory to the
+    /// canonical genesis hash from ChainSpec.
+    #[must_use]
+    pub fn with_genesis_hash(mut self, genesis_hash: B256) -> Self {
+        self.genesis_hash = genesis_hash;
+        self
+    }
+
+    /// Returns the immutable genesis hash installed for every EVM context.
+    #[must_use]
+    pub const fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
+    }
+
     /// Constructs an EVM factory with read-only Tribute and Nod body authority.
     #[must_use]
     pub fn with_runtime_body_readers(runtime_body_readers: RuntimeBodyReaders) -> Self {
         Self {
+            genesis_hash: B256::ZERO,
             runtime_body_readers: Some(runtime_body_readers),
             compressed_tree_service: Arc::default(),
             ocomp_finality_authority: Arc::default(),
@@ -494,7 +512,7 @@ impl EvmFactory for OutbeEvmFactory {
         // Register Outbe stateful precompiles via dynamic lookup.
         extend_outbe_precompiles::<DB>(
             &mut precompiles,
-            spec,
+            OutbePrecompileExecutionContext::new(spec, self.genesis_hash),
             runtime_body_readers.clone(),
             execution_scope.clone(),
             ocomp_finality_authority,

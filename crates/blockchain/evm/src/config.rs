@@ -526,7 +526,10 @@ impl OutbeEvmConfig {
     pub fn new(chain_spec: Arc<ChainSpec<OutbeHeader>>) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new().with_genesis_hash(chain_spec.genesis_hash()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: None,
             accounted_parent_artifact_provider: None,
@@ -548,7 +551,8 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: None,
@@ -569,7 +573,10 @@ impl OutbeEvmConfig {
         Self::install_consensus_chain_id(&chain_spec);
         let summary_cache = bridge.clone();
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new().with_genesis_hash(chain_spec.genesis_hash()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(Arc::new(
@@ -593,7 +600,8 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: Some(bridge),
@@ -619,7 +627,10 @@ impl OutbeEvmConfig {
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::new().with_genesis_hash(chain_spec.genesis_hash()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
@@ -647,7 +658,8 @@ impl OutbeEvmConfig {
         Self {
             inner: EthEvmConfig::new_with_evm_factory(
                 chain_spec.clone(),
-                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone())
+                    .with_genesis_hash(chain_spec.genesis_hash()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: None,
@@ -1852,6 +1864,18 @@ mod tests {
 
     fn test_chain_spec() -> std::sync::Arc<ChainSpec<OutbeHeader>> {
         MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+    }
+
+    #[test]
+    fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
+        let chain_spec = test_chain_spec();
+        let expected = chain_spec.genesis_hash();
+        let config = OutbeEvmConfig::new(chain_spec);
+
+        assert_eq!(
+            config.inner.executor_factory.evm_factory().genesis_hash(),
+            expected
+        );
     }
 
     fn test_parent() -> SealedHeader<OutbeHeader> {

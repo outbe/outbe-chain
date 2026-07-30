@@ -54,6 +54,7 @@ trybuild = "1"
 [features]
 default = []
 test-utils = []
+tee-attestation-v1 = []
 
 [lints]
 workspace = true

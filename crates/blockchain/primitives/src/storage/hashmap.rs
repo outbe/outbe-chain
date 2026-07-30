@@ -26,6 +26,7 @@ pub struct HashMapStorageProvider {
     /// entry yields `Ok(None)` (block outside retention / unknown).
     canonical_block_hashes: BTreeMap<u64, B256>,
     chain_id: u64,
+    genesis_hash: B256,
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
@@ -63,6 +64,11 @@ struct Snapshot {
 impl HashMapStorageProvider {
     /// Creates a new test storage provider with the given chain ID.
     pub fn new(chain_id: u64) -> Self {
+        Self::new_with_chain_identity(chain_id, B256::ZERO)
+    }
+
+    /// Creates a test provider with an explicit immutable chain identity.
+    pub fn new_with_chain_identity(chain_id: u64, genesis_hash: B256) -> Self {
         Self {
             storage: HashMap::new(),
             transient: HashMap::new(),
@@ -71,6 +77,7 @@ impl HashMapStorageProvider {
             ordered_events: Vec::new(),
             canonical_block_hashes: BTreeMap::new(),
             chain_id,
+            genesis_hash,
             timestamp: U256::ZERO,
             beneficiary: Address::ZERO,
             block_number: 0,
@@ -312,6 +319,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn chain_id(&self) -> u64 {
         self.chain_id
+    }
+
+    fn genesis_hash(&self) -> B256 {
+        self.genesis_hash
     }
 
     fn timestamp(&self) -> U256 {

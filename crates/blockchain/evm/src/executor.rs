@@ -679,6 +679,7 @@ fn build_block_context<DB>(
     block_number: u64,
     timestamp: u64,
     chain_id: u64,
+    genesis_hash: B256,
     proposer: Address,
 ) -> Result<BlockContext, BlockExecutionError>
 where
@@ -687,7 +688,14 @@ where
 {
     let mut provider = DirectStorageProvider::new(
         db,
-        BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new()),
+        BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash,
+            proposer,
+            Vec::new(),
+        ),
     );
     let storage = StorageHandle::new(&mut provider);
     let validators = (|| -> outbe_primitives::error::Result<Vec<Address>> {
@@ -706,10 +714,11 @@ where
         ))
     })?;
 
-    Ok(BlockContext::new(
+    Ok(BlockContext::new_with_genesis_hash(
         block_number,
         timestamp,
         chain_id,
+        genesis_hash,
         proposer,
         validators,
     ))
@@ -807,6 +816,8 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
 pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
+    /// Immutable chain identity sourced from the executor's canonical ChainSpec.
+    genesis_hash: B256,
     /// Optional bridge to the consensus layer for finalization data.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
@@ -942,8 +953,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
         parent_artifact_hint: Option<AccountedParentArtifact>,
     ) -> Self {
+        let genesis_hash = inner.spec.genesis_hash();
         Self {
             inner,
+            genesis_hash,
             bridge,
             final_extra_data: block_extra_data.clone(),
             block_extra_data,
@@ -1387,7 +1400,14 @@ where
         let scope = self.compressed_entities_scope.clone();
         let (changes, events, seal_output) = {
             let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
             run_atomic_storage_hook_with_output(db, ctx, |hook_ctx| {
                 let lifecycle = outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
                     hook_ctx.clone(),
@@ -1844,7 +1864,14 @@ where
         let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
         let chain_id = self.inner.evm.chain_id();
         let db = self.inner.evm.db_mut();
-        let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+        let ctx = BlockContext::new_with_genesis_hash(
+            block_number,
+            timestamp,
+            chain_id,
+            self.genesis_hash,
+            proposer,
+            Vec::new(),
+        );
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
@@ -2391,7 +2418,14 @@ where
 
         let snapshot = {
             let db = self.inner.evm.db_mut();
-            let ctx = BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+            let ctx = BlockContext::new_with_genesis_hash(
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+                Vec::new(),
+            );
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             read_committee_snapshot(storage, snapshot_key).map_err(|error| {
@@ -2523,8 +2557,14 @@ where
             let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
             let snapshot = {
                 let db = self.inner.evm.db_mut();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 read_committee_snapshot(storage, snapshot_key).map_err(|error| {
@@ -2985,7 +3025,14 @@ where
             let scope = self.compressed_entities_scope.clone();
             let (changes, events) = {
                 let db = self.inner.evm.db_mut();
-                let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+                let ctx = build_block_context(
+                    db,
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                )?;
                 run_atomic_storage_hooks(db, ctx, |hook_ctx| {
                     let lifecycle =
                         outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(
@@ -3073,7 +3120,14 @@ where
         //    we notify the state root hook via system_caller.
         let (hook_changes, hook_events) = {
             let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(db, block_number, timestamp, chain_id, proposer)?;
+            let ctx = build_block_context(
+                db,
+                block_number,
+                timestamp,
+                chain_id,
+                self.genesis_hash,
+                proposer,
+            )?;
             run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
                 let result = match self.runtime_body_readers.as_ref() {
                     Some(readers) => run_outbe_pre_execution_hooks_with_readers(
@@ -3560,8 +3614,14 @@ where
                 let timestamp = self.inner.evm.block().timestamp().saturating_to::<u64>();
                 let chain_id = self.inner.evm.chain_id();
                 let proposer = self.inner.evm.block().beneficiary();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
 
                 // Same soft-failure path as `classify`: stateful authorization rejection becomes a
                 // `status=0` receipt rather than a hard block error. We borrow `db` only inside the
@@ -3628,8 +3688,14 @@ where
             // real bytecode in steady state.
             let signer_state = {
                 let db = self.inner.evm.db_mut();
-                let ctx =
-                    BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                let ctx = BlockContext::new_with_genesis_hash(
+                    block_number,
+                    timestamp,
+                    chain_id,
+                    self.genesis_hash,
+                    proposer,
+                    Vec::new(),
+                );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 storage.with_account_info(signer, |info| {
@@ -3695,8 +3761,14 @@ where
                 // and cannot undo the flushed counter write.
                 let (authorize_outcome, sponsorship_events, sponsorship_changes) = {
                     let db = self.inner.evm.db_mut();
-                    let ctx =
-                        BlockContext::new(block_number, timestamp, chain_id, proposer, Vec::new());
+                    let ctx = BlockContext::new_with_genesis_hash(
+                        block_number,
+                        timestamp,
+                        chain_id,
+                        self.genesis_hash,
+                        proposer,
+                        Vec::new(),
+                    );
                     let mut provider = DirectStorageProvider::new(db, ctx);
                     let outcome = {
                         let storage = StorageHandle::new(&mut provider);
