@@ -370,25 +370,6 @@ contract IntexNFT1155Test is Test {
         nft.readData(SERIES_ID_1);
     }
 
-    function test_SetCollectionMetadata() public {
-        string memory description = "Intex financial instrument NFT";
-
-        vm.prank(admin);
-        vm.expectEmit();
-        emit IIntexNFT1155.CollectionMetadataUpdated(description);
-        nft.setCollectionMetadata(description);
-
-        assertEq(nft.collectionDescription(), description);
-    }
-
-    function test_OnlyAdminCanSetCollectionMetadata() public {
-        string memory description = "Test description";
-
-        vm.prank(user);
-        vm.expectRevert();
-        nft.setCollectionMetadata(description);
-    }
-
     function test_TransferRestrictions() public {
         _createSeries(SERIES_ID_1, 0);
         vm.prank(bridger);
@@ -458,10 +439,6 @@ contract IntexNFT1155Test is Test {
             callDeadlineAt
         );
         nft.markCalled(SERIES_ID_1);
-
-        vm.expectEmit();
-        emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
-        nft.crosschainBurn(user, TOKEN_ID_1, 5);
         vm.stopPrank();
     }
 
@@ -964,28 +941,6 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(TOKEN_ID_1), 10);
     }
 
-    function test_ExpireSeries_PreservesSettled() public {
-        uint32 customCallPeriod = uint32(1 days);
-
-        _createSeries(SERIES_ID_1, customCallPeriod);
-        vm.startPrank(bridger);
-        nft.mint(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1);
-        vm.stopPrank();
-        _grantSettlementRole(address(this));
-        nft.settle(SERIES_ID_1, user, user, 4);
-
-        vm.warp(block.timestamp + customCallPeriod + 1);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-
-        (uint256 issued, uint256 settled) = nft.tokenIds(SERIES_ID_1);
-        assertEq(nft.balanceOf(user, issued), 0, "Issued swept on expiration");
-        assertEq(nft.balanceOf(user, settled), 4, "Settled survives expiration");
-        assertEq(nft.totalSupply(issued), 0);
-        assertEq(nft.totalSupply(settled), 4);
-    }
-
     function test_BridgeOnSettled_Forbidden() public {
         _createSeries(SERIES_ID_1, 0);
         vm.startPrank(bridger);
@@ -1000,94 +955,6 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
         nft.crosschainBurn(user, sTok, 1);
-    }
-
-    // --- Tests for expireSeries ---
-    function test_ExpireSeries() public {
-        uint32 customCallPeriod = uint32(1 days);
-
-        _createSeries(SERIES_ID_1, customCallPeriod);
-        vm.startPrank(bridger);
-        nft.mint(user, 10, SERIES_ID_1);
-        nft.mint(user2, 5, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1);
-        vm.stopPrank();
-
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 10);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
-
-        vm.warp(block.timestamp + customCallPeriod + 1);
-
-        vm.expectEmit(true, true, false, false);
-        emit IIntexNFT1155.SeriesExpired(TOKEN_ID_1, bridger);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-
-        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
-        // Expiration is event-only; the series stays in Called.
-        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
-        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 0);
-        assertEq(nft.totalSupply(TOKEN_ID_1), 0);
-    }
-
-    function test_ExpireSeriesRevertsBeforeDeadline() public {
-        _createSeries(SERIES_ID_1, 0);
-        vm.startPrank(bridger);
-        nft.mint(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1);
-
-        vm.expectRevert();
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-        vm.stopPrank();
-    }
-
-    function test_ExpireSeriesRevertsInIssuedState() public {
-        _createSeries(SERIES_ID_1, 0);
-
-        vm.prank(bridger);
-        vm.expectRevert();
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-    }
-
-    function test_ExpireSeriesRevertsIfAlreadyExpired() public {
-        uint32 customCallPeriod = uint32(1 days);
-
-        _createSeries(SERIES_ID_1, customCallPeriod);
-        vm.startPrank(bridger);
-        nft.mint(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + customCallPeriod + 1);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-
-        vm.prank(bridger);
-        vm.expectRevert();
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-    }
-
-    function test_IssuedBalanceWipedAfterExpiration() public {
-        uint32 customCallPeriod = uint32(1 days);
-
-        _createSeries(SERIES_ID_1, customCallPeriod);
-        vm.startPrank(bridger);
-        nft.mint(user, 10, SERIES_ID_1);
-        nft.markCalled(SERIES_ID_1);
-        vm.stopPrank();
-
-        vm.warp(block.timestamp + customCallPeriod + 1);
-        vm.prank(bridger);
-        nft.expireSeries(SERIES_ID_1, type(uint256).max);
-
-        // expireSeries sweeps the Issued balance to zero; nothing left to transfer.
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 0);
-        assertEq(nft.totalSupply(TOKEN_ID_1), 0);
-
-        vm.prank(user);
-        vm.expectRevert();
-        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 5, "");
     }
 
     // --- Tests for Enumerable Functions ---

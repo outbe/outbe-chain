@@ -274,7 +274,7 @@ define_exact_routes! {
     VAULT_ROUTER_ADDRESS => (DispatchAdapter::Basic(outbe_vaultrouter::precompile::dispatch), default_base_gas),
     CREDIS_ADDRESS => (DispatchAdapter::Basic(outbe_credis::precompile::dispatch), default_base_gas),
     CREDIS_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_credisfactory::precompile::dispatch), default_base_gas),
-    TRIBUTE_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tributefactory::precompile::dispatch), default_base_gas),
+    TRIBUTE_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tributefactory::precompile::dispatch), outbe_tributefactory::precompile::base_gas),
     VALIDATOR_SET_ADDRESS => (DispatchAdapter::Basic(outbe_validatorset::precompile::dispatch), default_base_gas),
     SLASH_INDICATOR_ADDRESS => (DispatchAdapter::Basic(outbe_slashindicator::precompile::dispatch), outbe_slashindicator::precompile::base_gas),
     STAKING_ADDRESS => (DispatchAdapter::Basic(outbe_staking::precompile::dispatch), default_base_gas),

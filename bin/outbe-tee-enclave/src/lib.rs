@@ -33,3 +33,4 @@ pub mod promis;
 pub mod run;
 pub mod seal;
 pub mod transport;
+pub mod zk_claim;

@@ -11,6 +11,18 @@ pub enum TributeFactoryError {
     #[error("decryption failed: {0}")]
     DecryptionFailed(String),
 
+    #[error("zkProof is required when ZK verification is enabled")]
+    ZkProofRequired,
+
+    #[error("malformed zkProof: {0}")]
+    MalformedZkProof(String),
+
+    #[error("ZK public input mismatch: {field}")]
+    ZkPublicInputMismatch { field: &'static str },
+
+    #[error("ZK proof verification failed")]
+    InvalidZkProof,
+
     #[error("worldwide_day {worldwide_day} is not in OFFERING status (status={status})")]
     WorldwideDayNotOffering {
         worldwide_day: WorldwideDay,

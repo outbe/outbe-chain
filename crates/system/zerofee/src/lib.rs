@@ -33,7 +33,7 @@ pub mod state;
 
 pub use constants::{
     FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT,
-    MIN_FREE_TX_MAX_FEE_PER_GAS,
+    FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
 };
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,

@@ -1,8 +1,8 @@
 //! `L2Registry` — storage-backed registry of L2 networks (`0x…EE0E`).
 //!
 //! Records registered L2 networks keyed by `chain_id`: the L1 operator address
-//! that submits on behalf of the network, the network's BLS MinPk public key
-//! (48 bytes, the same variant used for validator consensus keys), and a
+//! that submits on behalf of the network, its BLS MinSig committee group key
+//! (compressed G2, 96 bytes), and a
 //! per-network `zk_enabled` flag. All mutating methods are permissionless by
 //! design.
 //!

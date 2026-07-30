@@ -188,7 +188,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Qualified/Called), and issued/called timestamps.",
+      "lifecycle state (Issued/Qualified/Called), issued/called timestamps, and the derived " +
+      "callDeadline/expired pair — check `expired` before attempting settle (past-deadline settles revert).",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -199,6 +200,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [series],
       })) as Record<string, bigint | number>;
       const u256 = (v: bigint | number) => v as bigint;
+      const callDeadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.intexCallPeriod) : 0;
       return ok({
         network: n.name,
         seriesId: Number(d.seriesId),
@@ -216,6 +218,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         state: intexState(d.state),
         issuedAt: epochIso(d.issuedAt),
         calledAt: epochIso(d.calledAt),
+        callDeadline: epochIso(callDeadlineSec),
+        expired: callDeadlineSec > 0 && Math.floor(Date.now() / 1000) > callDeadlineSec,
       });
     }),
   );

@@ -194,19 +194,6 @@
     },
     {
       "type": "function",
-      "name": "collectionDescription",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "string",
-          "internalType": "string"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "contractURI",
       "inputs": [],
       "outputs": [
@@ -216,7 +203,7 @@
           "internalType": "string"
         }
       ],
-      "stateMutability": "view"
+      "stateMutability": "pure"
     },
     {
       "type": "function",
@@ -339,24 +326,6 @@
         },
         {
           "name": "amount",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "expireSeries",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "limit",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1327,19 +1296,6 @@
     },
     {
       "type": "function",
-      "name": "setCollectionMetadata",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "internalType": "string"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "settle",
       "inputs": [
         {
@@ -1521,7 +1477,7 @@
       "name": "uri",
       "inputs": [
         {
-          "name": "",
+          "name": "tokenId",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1575,19 +1531,6 @@
           "type": "bool",
           "indexed": false,
           "internalType": "bool"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "CollectionMetadataUpdated",
-      "inputs": [
-        {
-          "name": "description",
-          "type": "string",
-          "indexed": false,
-          "internalType": "string"
         }
       ],
       "anonymous": false
@@ -1761,7 +1704,7 @@
         {
           "name": "tokenId",
           "type": "uint256",
-          "indexed": true,
+          "indexed": false,
           "internalType": "uint256"
         }
       ],
@@ -1838,44 +1781,6 @@
           "type": "address",
           "indexed": true,
           "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "SeriesExpired",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "account",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "SeriesExpiredProgress",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "processed",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -2063,11 +1968,6 @@
     },
     {
       "type": "error",
-      "name": "CollectionDescriptionTooLong",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "ERC1155InsufficientBalance",
       "inputs": [
         {
@@ -2239,33 +2139,12 @@
     },
     {
       "type": "error",
-      "name": "NothingToExpire",
-      "inputs": []
-    },
-    {
-      "type": "error",
       "name": "QuantityTooLarge",
       "inputs": [
         {
           "name": "quantity",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SeriesNotYetExpired",
-      "inputs": [
-        {
-          "name": "deadline",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "nowTs",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ]
     },

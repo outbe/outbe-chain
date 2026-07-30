@@ -66,7 +66,21 @@ pub enum TributeCmd {
         /// network has ZK verification enabled in the L2Registry.
         #[arg(long, default_value = "0x")]
         zk_merkle_root: String,
-        /// BLS MinPk signature (96 bytes, `0x`-hex) over `--zk-merkle-root`
+        /// Combined `outbe.full_proof@1.0.0` bytes (`0x`-hex), including its
+        /// four embedded public inputs.
+        #[arg(long, default_value = "0x")]
+        zk_proof: String,
+        /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
+        /// `nft_hash` and `binding_hash`. Required with `--zk-proof`; otherwise
+        /// generated randomly.
+        #[arg(long)]
+        tribute_draft_id: Option<String>,
+        /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the
+        /// TributeDraft. Required with `--zk-proof`; otherwise generated
+        /// randomly.
+        #[arg(long)]
+        su_hash: Option<String>,
+        /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`
         /// produced with the network key registered in the L2Registry.
         #[arg(long, default_value = "0x")]
         signature: String,
@@ -88,6 +102,9 @@ impl TributeCmd {
                 currency,
                 exclude_from_intex_issuance,
                 zk_merkle_root,
+                zk_proof,
+                tribute_draft_id,
+                su_hash,
                 signature,
             } => {
                 offer(
@@ -98,6 +115,9 @@ impl TributeCmd {
                     currency,
                     exclude_from_intex_issuance,
                     &zk_merkle_root,
+                    &zk_proof,
+                    tribute_draft_id.as_deref(),
+                    su_hash.as_deref(),
                     &signature,
                 )
                 .await
@@ -234,12 +254,19 @@ async fn offer(
     currency: u16,
     exclude_from_intex_issuance: bool,
     zk_merkle_root: &str,
+    zk_proof: &str,
+    tribute_draft_id: Option<&str>,
+    su_hash: Option<&str>,
     signature: &str,
 ) -> Result<()> {
     let signer = crate::commands::require_signer(private_key)?;
     let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(zk_merkle_root, "--zk-merkle-root")?;
+    let zk_proof = decode_hex_bytes(zk_proof, "--zk-proof")?;
     let signature = decode_hex_bytes(signature, "--signature")?;
+    let has_zk_proof = !zk_proof.is_empty();
+    let tribute_draft_id = offer_hex32(tribute_draft_id, "--tribute-draft-id", has_zk_proof)?;
+    let su_hash = offer_hex32(su_hash, "--su-hash", has_zk_proof)?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
     let bootstrapped = {
@@ -276,12 +303,12 @@ async fn offer(
     // and the enclave verifies the two copies match.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
-        "tribute_draft_id": random_hex32()?,
+        "tribute_draft_id": tribute_draft_id,
         "worldwide_day": wwd,
         "currency": currency,
         "amount_base": amount_base,
         "amount_atto": "0",
-        "su_hashes": [random_hex32()?],
+        "su_hashes": [su_hash],
         "wallet_addresses": [],
         "sra_addresses": [],
     });
@@ -294,14 +321,14 @@ async fn offer(
     let salt = outbe_tee::OFFER_HKDF_SALT;
     let (cipher_text, nonce, eph_pub) = encrypt_offer(&offer_pub, &salt, &plaintext)?;
 
-    // 4. Build + send `offerTribute` (msg.value MUST be 0; ZK fields are stubs).
+    // 4. Build + send `offerTribute` (msg.value MUST be 0).
     let call = ITributeFactory::offerTributeCall {
         cipherText: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
         referenceCurrency: currency,
         excludeFromIntexIssuance: exclude_from_intex_issuance,
-        zkProof: Bytes::new(),
+        zkProof: zk_proof,
         zkVerificationKey: Bytes::new(),
         zkPublicKey: Bytes::new(),
         zkMerkleRoot: zk_merkle_root,
@@ -344,6 +371,23 @@ fn random_hex32() -> Result<String> {
     ring::rand::SystemRandom::new()
         .fill(&mut bytes)
         .map_err(|_| eyre::eyre!("rng failure"))?;
+    Ok(format!("0x{}", hex::encode(bytes)))
+}
+
+fn offer_hex32(value: Option<&str>, flag: &str, required: bool) -> Result<String> {
+    let Some(value) = value else {
+        if required {
+            return Err(eyre::eyre!("{flag} is required with --zk-proof"));
+        }
+        return random_hex32();
+    };
+    let bytes = decode_hex_bytes(value, flag)?;
+    if bytes.len() != 32 {
+        return Err(eyre::eyre!(
+            "{flag} must contain exactly 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
     Ok(format!("0x{}", hex::encode(bytes)))
 }
 
@@ -505,5 +549,24 @@ mod tests {
     async fn test_supply_returns_without_error() {
         let mock = tribute_mock();
         supply(&mock).await.unwrap();
+    }
+
+    #[test]
+    fn zk_offer_requires_explicit_draft_inputs() {
+        let error = offer_hex32(None, "--tribute-draft-id", true).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("--tribute-draft-id is required with --zk-proof"));
+    }
+
+    #[test]
+    fn explicit_offer_input_must_be_exactly_32_bytes() {
+        let error = offer_hex32(Some("0x0102"), "--su-hash", true).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("--su-hash must contain exactly 32 bytes"));
+
+        let value = format!("0x{}", "01".repeat(32));
+        assert_eq!(offer_hex32(Some(&value), "--su-hash", true).unwrap(), value);
     }
 }
