@@ -1,7 +1,9 @@
 # I0 checkpoint — inactive V1 manifest and deterministic context
 
 Date: 2026-07-30
-Base: `d44bf85609e1cb5da2526795874d3d80c4e03f3d` (`main`)
+Audited tree: `f00cabbae368a3e7d9fe0015c34a81969911e525`
+after rebasing onto `777624e625f7ce8ef32c1f2cc8a8c620d5b59912`
+(`origin/main`).
 
 ## Result
 
@@ -71,10 +73,11 @@ All commands ran offline.
 
 ```text
 cargo test -p outbe-primitives --offline
-PASS: 231 unit tests plus all integration, compile-fail, and doc tests
+PASS: 233 unit tests plus all integration, compile-fail, and doc tests
 
 cargo test -p outbe-primitives --features tee-attestation-v1 --offline
-PASS: default suite plus 14 V1 codec/boundary/golden tests
+PASS: 233 unit tests plus all integration, compile-fail, and doc tests,
+including 14/14 V1 codec/boundary/golden tests
 
 cargo clippy -p outbe-primitives --features tee-attestation-v1 --all-targets --offline -- -D warnings
 PASS
@@ -83,8 +86,11 @@ cargo check -p outbe-evm --offline
 PASS
 
 cargo test -p outbe-evm --offline
-PASS: 175 unit tests and all integration/doc tests
-NOTE: one pre-existing `call_trampoline_full_block_diff` test remains explicitly ignored by its owning code; it is unrelated to I0.
+BASELINE TEST-DEFECT: 174 unit tests pass and
+`zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance` fails before
+its EVM assertion. The same focused failure reproduces from a clean
+`origin/main@777624e` archive; see the finding below. It is not an I0
+regression and no DCAP/product code was changed to hide it.
 
 cargo clippy -p outbe-evm --all-targets --offline -- -D warnings
 PASS
@@ -96,10 +102,48 @@ git diff --check
 PASS
 ```
 
-The decision amendment reran the complete default and
-`tee-attestation-v1`-enabled `outbe-primitives` suites plus the feature-enabled
-all-target clippy gate. The V1 integration suite remains 14/14, including the
-new broad-to-strict Platform policy transition and unknown-set rejection.
+The post-rebase audit reran the complete default and
+`tee-attestation-v1`-enabled `outbe-primitives` suites, both all-target clippy
+gates, and the exact active-precompile route enumeration. The V1 integration
+suite remains 14/14, including the broad-to-strict Platform policy transition
+and unknown-set rejection.
+
+## Baseline regression finding
+
+```text
+ID: I0-BASELINE-ORACLE-DELEGATION-TEST
+Status: test-defect
+Observed: outbe-evm unit test fails while reading its seeded Oracle delegate.
+Expected: the fixture creates a production-reachable active Oracle delegate.
+Production reachability: the current public setDelegate selector writes the
+  role-scoped ValidatorSet forward/reverse indexes; production resolution
+  reads those indexes.
+Reproduction command: cargo test -p outbe-evm
+  executor::tests::zero_fee_oracle_vote_from_delegated_feeder_keeps_zero_balance
+  --offline -- --exact --nocapture
+SHA/environment: both f00cabb and clean origin/main@777624e,
+  x86_64-unknown-linux-gnu, 2026-07-30T16:02:16Z.
+Evidence: both trees fail with "caller is not an active ORACLE signer";
+  the test writes legacy oracle.feeder_delegation directly, while
+  resolve_validator_for_feeder delegates to
+  ValidatorSet::resolve_validator_for_role.
+Test setup validity: invalid after 777624e; it bypasses setDelegate and creates
+  a state the current production route does not create.
+Affected invariant/postcondition: none in I0; failure occurs before the tested
+  transaction and before any V1 path.
+Competing causes excluded: the clean origin/main archive fails identically;
+  origin/main introduced the role resolver and left this older fixture
+  unchanged; I0's diff does not change either resolver or fixture.
+Root cause: stale direct-storage test fixture after the role-delegation schema
+  migration in 777624e.
+Counterfactual proof: not needed for product behavior; this is a test-defect
+  present in the upstream baseline. No product edit is warranted in I0.
+Proposed minimal fix: in the owning non-DCAP change, drive setDelegate through
+  its public precompile route before executing the Oracle vote.
+Regression: tracked explicitly here; it does not waive any I0-relevant test.
+Verdict scope: only this one outbe-evm test setup; no claim about unrelated
+  Oracle or delegation behavior.
+```
 
 ## Scope and fail-open audit
 
