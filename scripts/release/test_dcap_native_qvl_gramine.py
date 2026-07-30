@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -46,7 +45,7 @@ def build_test_binary() -> Path:
             "-p",
             "outbe-tee",
             "--features",
-            "native-dcap",
+            "native-dcap,native-dcap-test-trace",
             "--test",
             "native_qvl",
             "--offline",
@@ -96,94 +95,31 @@ def render_manifest(entrypoint: Path, qvl_lib_dir: Path, output: Path) -> None:
 
 def assert_no_forbidden_verifier_syscalls(trace_path: Path) -> None:
     lines = trace_path.read_text(encoding="utf-8").splitlines()
-    verifier_started = False
-    tentative_unix_fds: set[int] = set()
-    gramine_unix_fds: set[int] = set()
-    local_sync_fds: set[int] = {1, 2}
+    in_qvl = False
+    completed_calls = 0
     forbidden: list[str] = []
 
-    def first_fd(line: str) -> int | None:
-        match = re.match(r"^\d+\s+\w+\((\d+)", line)
-        return int(match.group(1)) if match else None
-
-    def result_fd(line: str) -> int | None:
-        match = re.search(r"\)\s+=\s+(\d+)$", line)
-        return int(match.group(1)) if match else None
-
-    def result_fd_pair(line: str) -> tuple[int, int] | None:
-        match = re.search(r"\[(\d+),\s*(\d+)\].*=\s+0$", line)
-        return (int(match.group(1)), int(match.group(2))) if match else None
-
-    # Gramine initializes abstract AF_UNIX IPC, resolves `localhost` and reads
-    # CLOCK_REALTIME before the application entrypoint. Scan that prefix only
-    # to prove the provenance of descriptors later used for Gramine IPC.
     for line in lines:
-        if "running 5 tests" in line:
-            verifier_started = True
-
-        if " socket(AF_UNIX" in line:
-            descriptor = result_fd(line)
-            if descriptor is not None:
-                tentative_unix_fds.add(descriptor)
+        if "OUTBE_QVL_BEGIN" in line:
+            if in_qvl:
+                forbidden.append("nested native-QVL BEGIN marker")
+            in_qvl = True
             continue
-
-        if " socketpair(AF_UNIX" in line or " pipe(" in line or " pipe2(" in line:
-            pair = result_fd_pair(line)
-            if pair is not None:
-                local_sync_fds.update(pair)
+        if "OUTBE_QVL_END" in line:
+            if not in_qvl:
+                forbidden.append("native-QVL END marker without BEGIN")
+            else:
+                completed_calls += 1
+            in_qvl = False
             continue
-
-        if " eventfd(" in line or " eventfd2(" in line:
-            descriptor = result_fd(line)
-            if descriptor is not None:
-                local_sync_fds.add(descriptor)
-            continue
-
-        descriptor = first_fd(line)
-        if (
-            (' bind(' in line or ' connect(' in line)
-            and 'sun_path=@"/gramine/' in line
-            and descriptor in tentative_unix_fds
-        ):
-            gramine_unix_fds.add(descriptor)
-            continue
-
-        if " accept4(" in line and descriptor in gramine_unix_fds:
-            accepted = result_fd(line)
-            if accepted is not None:
-                gramine_unix_fds.add(accepted)
-            continue
-
-        if not verifier_started:
-            continue
-        if " write(" in line and descriptor in local_sync_fds | gramine_unix_fds:
-            continue
-        if "clock_gettime(CLOCK_MONOTONIC" in line:
-            continue
-        if "clock_gettime64(CLOCK_MONOTONIC" in line:
-            continue
-        if descriptor in gramine_unix_fds and any(
-            syscall in line
-            for syscall in (
-                " listen(",
-                " shutdown(",
-                " getsockname(",
-                " getpeername(",
-                " getsockopt(",
-                " setsockopt(",
-                " send(",
-                " sendto(",
-                " sendmsg(",
-                " recv(",
-                " recvfrom(",
-                " recvmsg(",
-            )
-        ):
-            continue
-        forbidden.append(line)
-
-    if not verifier_started:
-        raise RuntimeError("native-QVL syscall trace has no test-start marker")
+        if in_qvl:
+            forbidden.append(line)
+    if in_qvl:
+        forbidden.append("native-QVL trace ended without END marker")
+    if completed_calls != 4:
+        forbidden.append(
+            f"expected 4 traced native-QVL calls, observed {completed_calls}"
+        )
     if forbidden:
         joined = "\n".join(forbidden[:10])
         raise RuntimeError(f"native-QVL Gramine path used forbidden syscalls:\n{joined}")
@@ -218,8 +154,7 @@ def main() -> int:
                 "-f",
                 "-qq",
                 "-e",
-                "trace=network,clock_gettime,clock_gettime64,gettimeofday,time,"
-                "write,pipe,pipe2,eventfd,eventfd2",
+                "trace=network,clock_gettime,clock_gettime64,gettimeofday,time,write",
                 "-s",
                 "256",
                 "-o",

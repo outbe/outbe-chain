@@ -30,6 +30,7 @@ const ARTIFACTS: &[(&str, u64, &str)] = &[
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE");
 
     if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP").is_none() {
         return;
@@ -49,11 +50,14 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=native/qvl_wrapper.c");
-    cc::Build::new()
-        .file("native/qvl_wrapper.c")
+    let mut c = cc::Build::new();
+    c.file("native/qvl_wrapper.c")
         .flag_if_supported("-std=c11")
-        .warnings_into_errors(true)
-        .compile("outbe_native_qvl_wrapper");
+        .warnings_into_errors(true);
+    if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE").is_some() {
+        c.define("OUTBE_QVL_TEST_TRACE", None);
+    }
+    c.compile("outbe_native_qvl_wrapper");
     println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
     println!("cargo:rustc-link-lib=dylib=sgx_dcap_quoteverify");
 }

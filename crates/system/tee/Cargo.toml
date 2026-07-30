@@ -29,6 +29,9 @@ dcap = ["dep:dcap-qvl"]
 # enclave. This is intentionally separate from the legacy host-local `dcap`
 # feature above.
 native-dcap = []
+# Test-only syscall-boundary markers around native QVL calls. The production
+# enclave crate does not forward this feature.
+native-dcap-test-trace = ["native-dcap"]
 
 [dev-dependencies]
 k256.workspace = true

@@ -14,6 +14,19 @@
 
 #include <sgx_dcap_quoteverify.h>
 
+#ifdef OUTBE_QVL_TEST_TRACE
+#include <unistd.h>
+
+static void test_trace_marker(const char *marker, size_t marker_size) {
+    ssize_t written = write(STDERR_FILENO, marker, marker_size);
+    (void)written;
+}
+
+#define TEST_TRACE_MARKER(marker) test_trace_marker(marker, sizeof(marker) - 1)
+#else
+#define TEST_TRACE_MARKER(marker) ((void)0)
+#endif
+
 struct outbe_qvl_collateral_v1 {
     const uint8_t *pck_crl_issuer_chain;
     uint32_t pck_crl_issuer_chain_size;
@@ -123,11 +136,14 @@ int32_t outbe_qvl_verify_quote_v1(
     };
 
     uint32_t supplemental_size = 0;
+    TEST_TRACE_MARKER("OUTBE_QVL_BEGIN\n");
     quote3_error_t qvl_error = sgx_qv_get_quote_supplemental_data_size(&supplemental_size);
     if (qvl_error != SGX_QL_SUCCESS) {
+        TEST_TRACE_MARKER("OUTBE_QVL_END\n");
         return OUTBE_QVL_WRAPPER_QVL_ERROR;
     }
     if (supplemental_size != sizeof(sgx_ql_qv_supplemental_t)) {
+        TEST_TRACE_MARKER("OUTBE_QVL_END\n");
         return OUTBE_QVL_WRAPPER_UNSUPPORTED_ABI;
     }
 
@@ -146,6 +162,7 @@ int32_t outbe_qvl_verify_quote_v1(
         NULL,
         supplemental_size,
         (uint8_t *)&supplemental);
+    TEST_TRACE_MARKER("OUTBE_QVL_END\n");
 
     output->aggregate_status = (uint32_t)aggregate_status;
     output->collateral_expiration_status = collateral_expiration_status;
