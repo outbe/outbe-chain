@@ -52,6 +52,14 @@ pub struct Rpc {
     cfg: Config,
 }
 
+pub struct TributeZkOffer<'a> {
+    pub tribute_draft_id_hex: &'a str,
+    pub su_hash_hex: &'a str,
+    pub merkle_root_hex: &'a str,
+    pub proof_hex: &'a str,
+    pub signature_hex: &'a str,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedEntityAtHeader {
     pub result: PointReadResultV1,
@@ -1600,8 +1608,7 @@ impl Rpc {
         &self,
         key: &str,
         wwd: &str,
-        zk_merkle_root_hex: &str,
-        signature_hex: &str,
+        zk: TributeZkOffer<'_>,
     ) -> Option<String> {
         let args = vec![
             "--private-key".to_owned(),
@@ -1611,10 +1618,16 @@ impl Rpc {
             "tribute".to_owned(),
             "offer".to_owned(),
             wwd.to_owned(),
+            "--tribute-draft-id".to_owned(),
+            zk.tribute_draft_id_hex.to_owned(),
+            "--su-hash".to_owned(),
+            zk.su_hash_hex.to_owned(),
             "--zk-merkle-root".to_owned(),
-            zk_merkle_root_hex.to_owned(),
+            zk.merkle_root_hex.to_owned(),
+            "--zk-proof".to_owned(),
+            zk.proof_hex.to_owned(),
             "--signature".to_owned(),
-            signature_hex.to_owned(),
+            zk.signature_hex.to_owned(),
         ];
         let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
         parse::extract_tx_hash(&out)

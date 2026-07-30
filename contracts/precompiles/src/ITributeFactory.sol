@@ -2,18 +2,16 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
-    // `zkProof`, `zkVerificationKey`, and `zkPublicKey` are ABI stubs reserved
-    // for the future ZK-verification path. Dispatch ignores them today; clients
-    // must pass well-formed bytes, but no verification runs. Do not remove from
-    // the ABI without a migration plan — the fields are part of the external
-    // contract surface.
+    // `zkProof` is the self-describing combined proof for the pinned
+    // `outbe.full_proof@1.0.0` circuit. It is mandatory for a registered L2
+    // operator with ZK verification enabled. `zkVerificationKey` and
+    // `zkPublicKey` remain ignored ABI placeholders: the circuit is pinned by
+    // the chain and the root-signing key comes from L2Registry.
     //
-    // `signature` is the L2 network's BLS MinPk signature G2 (128 bytes) over
-    // `zkMerkleRoot`. When the caller is registered in the L2Registry as an L1
-    // operator address and that network has ZK verification enabled, the
-    // signature must verify against the network's registered public key or the
-    // call reverts. Unregistered callers (and networks with ZK disabled) may
-    // pass empty bytes.
+    // `signature` is the L2 committee's compressed BLS MinSig signature in G1
+    // (48 bytes) over the 32-byte `zkMerkleRoot`. L2Registry stores the
+    // corresponding compressed G2 group key (96 bytes). Unregistered callers
+    // and networks with ZK disabled may pass empty ZK fields.
     function offerTribute(
         bytes calldata cipherText,
         bytes calldata nonce,

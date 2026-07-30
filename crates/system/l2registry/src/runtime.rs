@@ -1,7 +1,6 @@
 use alloy_primitives::{Address, Bytes};
-use bytes::Bytes as CodecBytes;
 use commonware_codec::DecodeExt;
-use commonware_cryptography::bls12381;
+use commonware_cryptography::bls12381::primitives::group::G2;
 use outbe_primitives::error::Result;
 
 use crate::errors::L2RegistryError;
@@ -28,7 +27,7 @@ impl L2RegistryContract<'_> {
                 .map_err(|_| L2RegistryError::InvalidPublicKeyLength {
                     length: public_key.len(),
                 })?;
-        // Group check: the stored key must be a valid MinPk public key so the
+        // Group check: the stored key must be a valid MinSig G2 group key so the
         // offer-time verification path can never fail on decode.
         decode_public_key(pubkey)?;
 
@@ -44,11 +43,12 @@ impl L2RegistryContract<'_> {
             .into());
         }
 
-        let (pubkey_lo, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
+        let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
         self.networks.create(&L2NetworkRecord {
             chain_id,
             l1_address,
             pubkey_lo,
+            pubkey_mid,
             pubkey_hi,
             zk_enabled: false,
         })?;
@@ -103,8 +103,7 @@ impl L2RegistryContract<'_> {
     }
 }
 
-/// Decodes a 48-byte MinPk public key, performing the group check.
-pub(crate) fn decode_public_key(pubkey: &[u8; BLS_PUBLIC_KEY_LEN]) -> Result<bls12381::PublicKey> {
-    <bls12381::PublicKey as DecodeExt<()>>::decode(CodecBytes::copy_from_slice(pubkey))
-        .map_err(|_| L2RegistryError::InvalidPublicKey.into())
+/// Decodes a 96-byte MinSig G2 group public key, performing the group check.
+pub(crate) fn decode_public_key(pubkey: &[u8; BLS_PUBLIC_KEY_LEN]) -> Result<G2> {
+    G2::decode(pubkey.as_slice()).map_err(|_| L2RegistryError::InvalidPublicKey.into())
 }

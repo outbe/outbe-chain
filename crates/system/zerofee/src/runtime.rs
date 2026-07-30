@@ -29,13 +29,15 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::ZEROFEE_ADDRESS, storage::StorageHandle, time::timestamp_to_date_key,
+    addresses::{TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
+    storage::StorageHandle,
+    time::timestamp_to_date_key,
 };
 
 use crate::{
     constants::{
         FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT,
-        MIN_FREE_TX_MAX_FEE_PER_GAS,
+        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
     },
     hooks::{ZeroFeePolicyError, ZeroFeeTransaction},
     precompile::IZeroFee,
@@ -81,10 +83,15 @@ pub fn classify_sponsorship(tx: &ZeroFeeTransaction<'_>) -> Result<(), ZeroFeePo
         });
     }
 
-    if tx.gas_limit > FREE_TX_DAILY_GAS_LIMIT {
+    let gas_limit = if tx.to == Some(TRIBUTE_FACTORY_ADDRESS) {
+        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
+    } else {
+        FREE_TX_DAILY_GAS_LIMIT
+    };
+    if tx.gas_limit > gas_limit {
         return Err(ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
             gas_limit: tx.gas_limit,
-            limit: FREE_TX_DAILY_GAS_LIMIT,
+            limit: gas_limit,
         });
     }
 
@@ -291,6 +298,30 @@ mod tests {
         tx.gas_limit = crate::FREE_TX_DAILY_GAS_LIMIT + 1;
         let err = classify_sponsorship(&tx).unwrap_err();
         assert_eq!(err.code(), 114, "free-tx gas overflow → code 114");
+    }
+
+    #[test]
+    fn classify_accepts_tribute_factory_zk_gas_limit() {
+        let mut tx = ok_envelope(&[]);
+        tx.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
+
+        assert!(classify_sponsorship(&tx).is_ok());
+    }
+
+    #[test]
+    fn classify_rejects_tribute_factory_above_zk_gas_limit() {
+        let mut tx = ok_envelope(&[]);
+        tx.to = Some(TRIBUTE_FACTORY_ADDRESS);
+        tx.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1;
+
+        assert_eq!(
+            classify_sponsorship(&tx),
+            Err(ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
+                gas_limit: crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1,
+                limit: crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+            })
+        );
     }
 
     #[test]
