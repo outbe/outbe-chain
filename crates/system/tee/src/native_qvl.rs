@@ -57,13 +57,9 @@ pub struct NativeQvlSupplemental {
     pub latest_issue_date: i64,
     pub earliest_expiration_date: i64,
     pub tcb_evaluation_data_number: u32,
-    pub root_key_id: [u8; 48],
-    pub tcb_cpusvn: [u8; 16],
-    pub tcb_pce_isvsvn: u16,
     pub pce_id: u16,
     pub tee_type: u32,
     pub sgx_type: u8,
-    pub platform_instance_id: [u8; 16],
     pub dynamic_platform: i32,
     pub cached_keys: i32,
     pub smt_enabled: i32,
@@ -158,13 +154,9 @@ struct RawResult {
     latest_issue_date: i64,
     earliest_expiration_date: i64,
     tcb_evaluation_data_number: u32,
-    root_key_id: [u8; 48],
-    tcb_cpusvn: [u8; 16],
-    tcb_pce_isvsvn: u16,
     pce_id: u16,
     tee_type: u32,
     sgx_type: u8,
-    platform_instance_id: [u8; 16],
     dynamic_platform: i32,
     cached_keys: i32,
     smt_enabled: i32,
@@ -184,13 +176,9 @@ impl Default for RawResult {
             latest_issue_date: 0,
             earliest_expiration_date: 0,
             tcb_evaluation_data_number: 0,
-            root_key_id: [0; 48],
-            tcb_cpusvn: [0; 16],
-            tcb_pce_isvsvn: 0,
             pce_id: 0,
             tee_type: 0,
             sgx_type: 0,
-            platform_instance_id: [0; 16],
             dynamic_platform: 0,
             cached_keys: 0,
             smt_enabled: 0,
@@ -204,12 +192,11 @@ impl Default for RawResult {
 const _: () = {
     assert!(std::mem::size_of::<RawCollateral>() == 112);
     assert!(std::mem::align_of::<RawCollateral>() == 8);
-    assert!(std::mem::size_of::<RawResult>() == 608);
+    assert!(std::mem::size_of::<RawResult>() == 528);
     assert!(std::mem::align_of::<RawResult>() == 8);
     assert!(std::mem::offset_of!(RawResult, earliest_issue_date) == 16);
-    assert!(std::mem::offset_of!(RawResult, root_key_id) == 44);
-    assert!(std::mem::offset_of!(RawResult, advisory_ids) == 148);
-    assert!(std::mem::offset_of!(RawResult, qe_status) == 600);
+    assert!(std::mem::offset_of!(RawResult, advisory_ids) == 68);
+    assert!(std::mem::offset_of!(RawResult, qe_status) == 520);
 };
 
 #[allow(unsafe_code)]
@@ -310,13 +297,9 @@ fn convert_output(output: RawResult) -> Result<NativeQvlVerdict, NativeQvlError>
             latest_issue_date: output.latest_issue_date,
             earliest_expiration_date: output.earliest_expiration_date,
             tcb_evaluation_data_number: output.tcb_evaluation_data_number,
-            root_key_id: output.root_key_id,
-            tcb_cpusvn: output.tcb_cpusvn,
-            tcb_pce_isvsvn: output.tcb_pce_isvsvn,
             pce_id: output.pce_id,
             tee_type: output.tee_type,
             sgx_type: output.sgx_type,
-            platform_instance_id: output.platform_instance_id,
             dynamic_platform: output.dynamic_platform,
             cached_keys: output.cached_keys,
             smt_enabled: output.smt_enabled,

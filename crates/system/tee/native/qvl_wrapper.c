@@ -40,13 +40,9 @@ struct outbe_qvl_result_v1 {
     int64_t latest_issue_date;
     int64_t earliest_expiration_date;
     uint32_t tcb_evaluation_data_number;
-    uint8_t root_key_id[48];
-    uint8_t tcb_cpusvn[16];
-    uint16_t tcb_pce_isvsvn;
     uint16_t pce_id;
     uint32_t tee_type;
     uint8_t sgx_type;
-    uint8_t platform_instance_id[16];
     int32_t dynamic_platform;
     int32_t cached_keys;
     int32_t smt_enabled;
@@ -59,17 +55,15 @@ _Static_assert(sizeof(struct outbe_qvl_collateral_v1) == 112,
                "unexpected Outbe collateral ABI size");
 _Static_assert(_Alignof(struct outbe_qvl_collateral_v1) == 8,
                "unexpected Outbe collateral ABI alignment");
-_Static_assert(sizeof(struct outbe_qvl_result_v1) == 608,
+_Static_assert(sizeof(struct outbe_qvl_result_v1) == 528,
                "unexpected Outbe result ABI size");
 _Static_assert(_Alignof(struct outbe_qvl_result_v1) == 8,
                "unexpected Outbe result ABI alignment");
 _Static_assert(offsetof(struct outbe_qvl_result_v1, earliest_issue_date) == 16,
                "unexpected Outbe result date offset");
-_Static_assert(offsetof(struct outbe_qvl_result_v1, root_key_id) == 44,
-               "unexpected Outbe result root-key offset");
-_Static_assert(offsetof(struct outbe_qvl_result_v1, advisory_ids) == 148,
+_Static_assert(offsetof(struct outbe_qvl_result_v1, advisory_ids) == 68,
                "unexpected Outbe result advisory offset");
-_Static_assert(offsetof(struct outbe_qvl_result_v1, qe_status) == 600,
+_Static_assert(offsetof(struct outbe_qvl_result_v1, qe_status) == 520,
                "unexpected Outbe result QE-status offset");
 _Static_assert(sizeof(sgx_ql_qv_supplemental_t) == 672,
                "unexpected Intel QVL supplemental ABI");
@@ -165,19 +159,9 @@ int32_t outbe_qvl_verify_quote_v1(
     output->latest_issue_date = (int64_t)supplemental.latest_issue_date;
     output->earliest_expiration_date = (int64_t)supplemental.earliest_expiration_date;
     output->tcb_evaluation_data_number = supplemental.tcb_eval_ref_num;
-    memcpy(output->root_key_id, supplemental.root_key_id, sizeof(output->root_key_id));
-    memcpy(
-        output->tcb_cpusvn,
-        supplemental.tcb_cpusvn.svn,
-        sizeof(output->tcb_cpusvn));
-    output->tcb_pce_isvsvn = supplemental.tcb_pce_isvsvn;
     output->pce_id = supplemental.pce_id;
     output->tee_type = supplemental.tee_type;
     output->sgx_type = supplemental.sgx_type;
-    memcpy(
-        output->platform_instance_id,
-        supplemental.platform_instance_id,
-        sizeof(output->platform_instance_id));
     output->dynamic_platform = (int32_t)supplemental.dynamic_platform;
     output->cached_keys = (int32_t)supplemental.cached_keys;
     output->smt_enabled = (int32_t)supplemental.smt_enabled;

@@ -105,15 +105,29 @@ def assert_no_forbidden_verifier_syscalls(trace_path: Path) -> None:
     # Gramine initializes internal AF_UNIX IPC, resolves `localhost` and reads
     # CLOCK_REALTIME before the application entrypoint. Those startup calls do
     # not execute in or influence the verifier. From the public-test marker
-    # onward, fail on external networking or wall-clock reads while permitting
-    # the Rust test runner's CLOCK_MONOTONIC duration accounting.
+    # onward, the trace contains only network, clock and write syscalls: allow
+    # test output and CLOCK_MONOTONIC duration accounting, and fail closed on
+    # every other traced syscall.
+    def allowed(line: str) -> bool:
+        if " write(" in line:
+            return True
+        if "clock_gettime(CLOCK_MONOTONIC" in line:
+            return True
+        if "clock_gettime64(CLOCK_MONOTONIC" in line:
+            return True
+        if "socket(AF_UNIX" in line or "socketpair(AF_UNIX" in line:
+            return True
+        if 'sun_path=@"/gramine/' in line and (
+            " bind(" in line or " connect(" in line
+        ):
+            return True
+        return any(
+            syscall in line
+            for syscall in (" listen(", " accept4(", " shutdown(")
+        )
+
     forbidden = [
-        line
-        for line in lines[verifier_start + 1 :]
-        if "AF_INET" in line
-        or "AF_INET6" in line
-        or "CLOCK_REALTIME" in line
-        or " time(" in line
+        line for line in lines[verifier_start + 1 :] if not allowed(line)
     ]
     if forbidden:
         joined = "\n".join(forbidden[:10])
@@ -149,7 +163,7 @@ def main() -> int:
                 "-f",
                 "-qq",
                 "-e",
-                "trace=network,clock_gettime,time,write",
+                "trace=network,clock_gettime,clock_gettime64,gettimeofday,time,write",
                 "-s",
                 "256",
                 "-o",
