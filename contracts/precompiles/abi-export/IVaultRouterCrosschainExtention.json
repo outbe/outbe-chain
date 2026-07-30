@@ -1,130 +1,6 @@
 [
   {
     "type": "function",
-    "name": "addLiquiditySource",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "internalType": "enum IVaultProvider.LiquiditySource"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addLiquidityTarget",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "internalType": "enum IVaultProvider.LiquidityTarget"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "addVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "assetAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "assetVaultAt",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "assetVaultsCount",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "assetsCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "crosschainAsset",
     "inputs": [],
     "outputs": [
@@ -220,12 +96,12 @@
       {
         "name": "kind",
         "type": "uint8",
-        "internalType": "enum IVaultProvider.CrosschainOperationKind"
+        "internalType": "enum IVaultRouterCrosschainExtention.CrosschainOperationKind"
       },
       {
         "name": "status",
         "type": "uint8",
-        "internalType": "enum IVaultProvider.CrosschainOperationStatus"
+        "internalType": "enum IVaultRouterCrosschainExtention.CrosschainOperationStatus"
       }
     ],
     "stateMutability": "view"
@@ -311,104 +187,6 @@
   },
   {
     "type": "function",
-    "name": "depositLiquidity",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "assetsAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sharesAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "liquiditySourceAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "internalType": "enum IVaultProvider.LiquiditySource"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquiditySourcesCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquidityTargetAt",
-    "inputs": [
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "internalType": "enum IVaultProvider.LiquidityTarget"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "liquidityTargetsCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "onCrosschainTokensReceived",
     "inputs": [
       {
@@ -440,19 +218,6 @@
       }
     ],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -566,7 +331,7 @@
   },
   {
     "type": "function",
-    "name": "remoteVaultProvider",
+    "name": "remoteVaultRouter",
     "inputs": [
       {
         "name": "chainId",
@@ -582,45 +347,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquiditySource",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeLiquidityTarget",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "removeVault",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -660,7 +386,7 @@
   },
   {
     "type": "function",
-    "name": "setRemoteVaultProvider",
+    "name": "setRemoteVaultRouter",
     "inputs": [
       {
         "name": "chainId",
@@ -668,32 +394,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "provider",
+        "name": "router",
         "type": "address",
         "internalType": "address"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "sharesBalance",
-    "inputs": [
-      {
-        "name": "vault",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -707,35 +414,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "withdrawLiquidity",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "receiver",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "burnedShares",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
@@ -925,163 +603,7 @@
   },
   {
     "type": "event",
-    "name": "LiquidityDeposited",
-    "inputs": [
-      {
-        "name": "source",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "assetsAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sharesAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquiditySource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquiditySourceAdded",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquiditySource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquiditySourceRemoved",
-    "inputs": [
-      {
-        "name": "sourceAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquiditySource"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityTargetAdded",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquidityTarget"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityTargetRemoved",
-    "inputs": [
-      {
-        "name": "targetAddress",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquidityTarget"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidityWithdrawn",
-    "inputs": [
-      {
-        "name": "target",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "receiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "assetsAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "burnedShares",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "targetType",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum IVaultProvider.LiquidityTarget"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RemoteVaultProviderUpdated",
+    "name": "RemoteVaultRouterUpdated",
     "inputs": [
       {
         "name": "chainId",
@@ -1090,51 +612,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "oldProvider",
+        "name": "oldRouter",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "newProvider",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VaultAdded",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VaultRemoved",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vault",
+        "name": "newRouter",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -1224,22 +708,6 @@
   },
   {
     "type": "error",
-    "name": "InsufficientSharesForWithdraw",
-    "inputs": [
-      {
-        "name": "availableShares",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requiredShares",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidCrosschainCallback",
     "inputs": []
   },
@@ -1255,27 +723,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidLiquiditySource",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidLiquidityTarget",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LiquiditySourceNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "LiquidityTargetNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RemoteVaultProviderNotConfigured",
+    "name": "RemoteVaultRouterNotConfigured",
     "inputs": [
       {
         "name": "chainId",
@@ -1283,25 +731,5 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "ReserveVaultAlreadyAdded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReserveVaultAssetMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReserveVaultNotConfigured",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReserveVaultNotFound",
-    "inputs": []
   }
 ]

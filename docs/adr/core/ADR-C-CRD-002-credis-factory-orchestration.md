@@ -12,7 +12,7 @@
 
 CredisFactory turns one shielded pledged-Gratis note into a credit position and
 reserve disbursement, then turns repayments into reclaim notes. It is the atomicity
-owner across GratisPool, Oracle, Credis, external asset contracts and VaultProvider.
+owner across GratisPool, Oracle, Credis, external asset contracts and VaultRouter.
 It does not own any of those modules' state.
 
 ## Decision
@@ -30,7 +30,7 @@ It does not own any of those modules' state.
 5. staticcall the selected asset's `isoCode()` and snapshot its refinancing rate;
 6. create the Credis position using the nullifier as unique identity input;
 7. persist the original denomination for reclaim derivation; and
-8. withdraw exactly the position asset/amount through VaultProvider into the bundle.
+8. withdraw exactly the position asset/amount through VaultRouter into the bundle.
 
 The caller cannot redirect a copied proof because receiver binding uses the bundle.
 All steps and the success event are one EVM rollback domain.
@@ -42,7 +42,7 @@ position, next installment, asset, amount and nonzero reclaim commitment. It the
 
 1. advances the Credis next installment at canonical time;
 2. pulls the exact recorded asset/amount from the caller;
-3. approves and deposits it through VaultProvider; and
+3. approves and deposits it through VaultRouter; and
 4. appends the caller-supplied reclaim commitment at the denomination one decade
    below the original pledge denomination.
 
@@ -64,7 +64,7 @@ The last two are intended invariants that current implementation does not yet pr
 ## Failure, replay and external trust
 
 User/proof/authorization/rate/liquidity errors revert. Oracle values and asset ISO
-are snapshotted for later determinism. ERC-20 and VaultProvider are adversarial
+are snapshotted for later determinism. ERC-20 and VaultRouter are adversarial
 external-call boundaries: return data, actual balance deltas and asset identity must
 be validated according to supported-token policy.
 
@@ -81,7 +81,7 @@ production-interface credit lifecycle or failure-injection matrix exists.
 ## Consequences
 
 CredisFactory presents two business commands while hiding proof/pricing/vault
-choreography. Credis and VaultProvider remain separately auditable state owners.
+choreography. Credis and VaultRouter remain separately auditable state owners.
 
 ## Rejected alternatives
 
@@ -104,7 +104,7 @@ choreography. Credis and VaultProvider remain separately auditable state owners.
 4. Decide and enforce early-payment policy imported from ADR-C-CRD-001.
 5. Use actual ERC-20 balance deltas or explicitly reject fee-on-transfer/rebasing
    assets for disbursement and repayment.
-6. Validate that asset ISO, Oracle settlement pair, VaultProvider vault asset and
+6. Validate that asset ISO, Oracle settlement pair, VaultRouter vault asset and
    token decimals describe the same economic currency.
 7. Hard-coded six-decimal conversion and `COEN/0xUSD` symbol require a versioned
    multi-currency/decimal design.
@@ -120,4 +120,4 @@ choreography. Credis and VaultProvider remain separately auditable state owners.
 13. Define behavior when Oracle data changes between mempool admission and block
     execution; execution snapshot is authority.
 14. Production deployment must structurally prove CredisFactory is registered as
-    the correct VaultProvider source/target type.
+    the correct VaultRouter source/target type.

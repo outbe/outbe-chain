@@ -1,9 +1,9 @@
 //! Outbound sub-call ABI surfaces.
 //!
-//! These are the external contract interfaces the vaultprovider runtime
+//! These are the external contract interfaces the vaultrouter runtime
 //! invokes via `StorageHandle::call` / `StorageHandle::staticcall`. They are
 //! NOT the precompile's own inbound ABI (which lives in
-//! `api.rs::IVaultProvider`).
+//! `api.rs::IVaultRouter` and its optional cross-chain extension).
 //!
 //! The Solidity original used OpenZeppelin `SafeERC20` (`forceApprove`,
 //! `safeTransferFrom`); here those become plain ERC-20 `approve` / `transferFrom`
@@ -23,10 +23,15 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IVaultV2 {
         function asset() external view returns (address);
+        function owner() external view returns (address);
         function deposit(uint256 assets, address onBehalf) external returns (uint256 shares);
         function previewWithdraw(uint256 assets) external view returns (uint256 shares);
         function withdraw(uint256 assets, address receiver, address onBehalf)
             external returns (uint256 shares);
+    }
+
+    interface IReferenceCurrency {
+        function isoCode() external view returns (uint16);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

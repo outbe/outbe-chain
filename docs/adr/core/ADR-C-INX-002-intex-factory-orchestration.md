@@ -4,7 +4,7 @@
 - **Date:** 2026-07-22
 - **Decision owners:** Intex protocol maintainers
 - **Scope:** `crates/core/intexfactory`, its begin-block hooks and external
-  ERC-1155, OriginRouter, VaultProvider and token seams
+  ERC-1155, OriginRouter, VaultRouter and token seams
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-CYC-001, ADR-S-ORC-001, ADR-C-PRM-001, ADR-C-PRM-002, ADR-C-VLT-001, ADR-C-INX-001
 - **Related:** ADR-C-LYS-001, ADR-B-CRY-001, PFS-009 and PFS-004
 - **Supersedes:** IntexFactory portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
@@ -45,7 +45,7 @@ authorized settler. Amount must not exceed holder's Issued ERC-1155 balance.
 
 Factory derives exact payment from immutable entry price and Promis load, pulls the
 settler's payment asset, measures actual received balance delta, approves and
-deposits it through VaultProvider, requires nonzero shares, then tells ERC-1155 to
+deposits it through VaultRouter, requires nonzero shares, then tells ERC-1155 to
 burn holder Issued and mint settler soulbound Settled units. Settle count and event
 commit last in the same EVM frame.
 
@@ -93,7 +93,7 @@ must not be logged-and-skipped indefinitely without escalation.
 
 ## Security, compatibility and evidence
 
-Desis, OriginRouter, ERC-1155, VaultProvider and PromisFactory addresses/roles are
+Desis, OriginRouter, ERC-1155, VaultRouter and PromisFactory addresses/roles are
 privileged deployment wiring. Asset/currency binding, Oracle snapshots, bridge
 sender/domain and PoW format are security boundaries.
 
@@ -122,7 +122,7 @@ module-level module audit profile.
 
 ## Open questions and technical debt
 
-1. Settlement asset is selected as `VaultProvider.assetAt(0)`. Bind each series to
+1. Settlement asset is selected as `VaultRouter.assetAt(0)`. Bind each series to
    its actual issuance/reference settlement asset; enumeration order is not identity.
 2. Prove local Rust series, local ERC-1155 and remote series creation are idempotent
    and recoverable across bridge failure/finality without duplicates.
@@ -148,6 +148,6 @@ module-level module audit profile.
 13. Pin PoW difficulty/preimage with independent vectors and activation rules;
     prove sequence increment rolls back on NFT/Promis failures.
 14. Add PFS-004 e2e covering real bridge, Oracle scan, dual-wallet settlement,
-    VaultProvider, mining, replay, failures and restart.
+    VaultRouter, mining, replay, failures and restart.
 15. Prove native IntexFactory balance always equals aggregate unfinished
     distributions and parked/unclaimed obligations.

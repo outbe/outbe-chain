@@ -42,7 +42,6 @@ use crate::{
 /// accounting is migrated to the direct result-vote path.
 #[derive(Debug, Default)]
 pub struct OcompActivationBlockMeter;
-
 /// ABI-encode a revert reason as the Solidity-standard `Error(string)`
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
 fn encode_revert_reason(msg: String) -> Bytes {

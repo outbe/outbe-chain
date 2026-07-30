@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::{AnadosisResult, CredisContract};
 use outbe_oracle::api::{get_exchange_rate, get_refinancing_rate};
-use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
@@ -104,7 +104,7 @@ pub fn request_credis(
     )?;
 
     // Withdraw the matching stablecoin from the vault to the smart account.
-    outbe_vaultprovider::api::withdraw_liquidity(&storage, asset, amount_stables, bundle_account)?;
+    outbe_vaultrouter::api::withdraw(&storage, asset, amount_stables, bundle_account)?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
@@ -174,14 +174,14 @@ pub fn pay_anadosis(
 
     // 2) Approve the vault to spend that exact amount.
     let approve = IERC20::approveCall {
-        spender: VAULT_PROVIDER_ADDRESS,
+        spender: VAULT_ROUTER_ADDRESS,
         amount,
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
     // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
-    outbe_vaultprovider::api::deposit_liquidity(&storage, asset, amount)?;
+    outbe_vaultrouter::api::deposit(&storage, asset, amount)?;
 
     // 4) Release this installment's share of collateral from the pledger's own
     //    pledged ledger back to its liquid Gratis balance.

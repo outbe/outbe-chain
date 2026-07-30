@@ -171,7 +171,7 @@ These rules refine the external baselines for this repository:
   or compatibility-controlled API where absence semantics are part of the
   return contract; it is not the default spelling for a getter.
 - Established Cargo/package compounds such as `validatorset`, `teeregistry`,
-  and `vaultprovider` remain local spellings. Do not mechanically re-segment
+  and `vaultrouter` remain local spellings. Do not mechanically re-segment
   them from ordinary English.
 - Solidity names owned by an external standard preserve the standard's casing,
   initialisms, and grammar even when the project-owned mold differs.
@@ -439,7 +439,7 @@ the primitive representation alone.
 The `outbe-` prefix is stable, but the suffix is not mechanically re-segmented:
 infrastructure packages use names such as `offchain-storage`, while established
 domain modules use compounds such as `validatorset`, `teeregistry`, and
-`vaultprovider`. Reuse the bounded context's spelling instead of inventing a
+`vaultrouter`. Reuse the bounded context's spelling instead of inventing a
 second package form.
 
 Rust acronyms use word casing inside identifiers: `Rpc`, `Evm`, `Dkg`, `Vrf`,

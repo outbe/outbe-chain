@@ -24,7 +24,7 @@ time, delegates authenticated ledger mutation to ADR-C-NOD-001 and emits `NodIss
 `INodFactory.mineGratis` is the sole user ABI command. It rejects value, requires exact
 36-byte Nod id, verified owner and bucket bodies, caller ownership, valid bounded
 PoW nonce and a qualified bucket. For nonzero recorded cost it transfers the chosen
-asset from owner to NodFactory, approves VaultProvider and deposits the exact cost.
+asset from owner to NodFactory, approves VaultRouter and deposits the exact cost.
 It then consumes the Nod, emits `NodBurned`, and mints exactly its `gratis_load_minor`
 through Gratisfactory, which also records the Fidelity acquisition cohort.
 
@@ -59,8 +59,8 @@ the same function, so the intended Lysis authority is currently conventional.
 Mining also has a public Rust API duplicating the ABI command.
 
 Outbound effects use EVM subcalls to arbitrary `asset`, then the fixed
-VaultProvider precompile. VaultProvider independently requires NodFactory to be a
-registered `NodCostPrice` liquidity source and chooses the configured reserve vault.
+VaultRouter precompile. VaultRouter independently requires NodFactory to be a
+registered `NodCostAmount` stables source and chooses the configured reserve vault.
 Gratis/Fidelity mutation uses an in-process typed API after Nod removal.
 
 ## Atomicity, external calls and reentrancy
@@ -98,7 +98,7 @@ allowance semantics and vault asset conformance.
 
 Evidence inspected includes NodFactory runtime/API/precompile/errors/tests and
 Solidity interfaces, Lysis production caller, Nod verified-capability API,
-Gratisfactory/Fidelity mint path, VaultProvider authorization/deposit path and EVM
+Gratisfactory/Fidelity mint path, VaultRouter authorization/deposit path and EVM
 subcall adapter. Current unit tests cover issuance overlay visibility, duplicate and
 owner rejection, qualified zero-cost removal and event order. They do not prove the
 nonzero-cost production path.
@@ -118,7 +118,7 @@ external payment risk independently auditable. Deleting before payment was not
 adopted in current code, but journal rollback means either order can be atomic;
 the selected order still needs a reentrancy argument. Treating PoW as a ledger
 field was rejected because Nod deletion already provides one-shot consumption.
-Combining this ADR with ADR-C-NOD-001 was rejected because external assets, VaultProvider
+Combining this ADR with ADR-C-NOD-001 was rejected because external assets, VaultRouter
 and Gratis/Fidelity are a separate authority and failure domain.
 
 ## Open questions and technical debt
@@ -131,7 +131,7 @@ and Gratis/Fidelity are a separate authority and failure domain.
 - Define safe allowance handling for USDT-like zero-first tokens, fee-on-transfer,
   rebasing and malicious tokens. Prove the vault received exactly `cost`, not merely
   that calls returned.
-- Validate the VaultProvider returned share amount and bind a minimum/expected
+- Validate the VaultRouter returned share amount and bind a minimum/expected
   receipt if economic conservation depends on shares; NodFactory currently ignores
   the decoded result.
 - Close `issue_nod` behind an unforgeable Lysis capability/receipt and validate all
@@ -148,7 +148,7 @@ and Gratis/Fidelity are a separate authority and failure domain.
 - Validate nonzero Gratis load and cost/floor/entry/currency relationships before
   issuance; a zero-load Nod can currently be mined for a zero mint.
 - Add nonzero-cost production tests using real ERC20 return variants, allowance,
-  registered VaultProvider/vault, rollback at every step, malicious callbacks and
+  registered VaultRouter/vault, rollback at every step, malicious callbacks and
   exact balance/share conservation.
 - Add replay/concurrency tests for two mining transactions targeting the same Nod
   and for re-execution after a reverted downstream Fidelity mutation.

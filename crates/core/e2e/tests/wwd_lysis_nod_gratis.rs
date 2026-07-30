@@ -30,7 +30,7 @@
 //! What is still bypassed in this test:
 //!   - NOD `cost_amount_minor` payment goes through the precompile's new
 //!     `IERC20.transferFrom` / `IERC20.approve` /
-//!     `IVaultProvider.depositLiquidity` sequence, but the storage provider
+//!     `IVaultRouter.deposit` sequence, but the storage provider
 //!     stubs all sub-calls via `enable_sub_call_stub()`. The miner's balance
 //!     is not debited and no real vault deposit occurs — vault-side wiring
 //!     is covered separately.
@@ -77,7 +77,7 @@ use outbe_oracle::{
     contract::OracleContract,
     logic::{init_from_genesis, OracleGenesisConfig},
 };
-use outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::units::Units;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -518,11 +518,11 @@ fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
-    // The NOD-cost payment branch deposits into the vault provider via an EVM
-    // sub-call to VAULT_PROVIDER_ADDRESS. enable_sub_call_stub covers the ERC-20
+    // The NOD-cost payment branch deposits into the vault router via an EVM
+    // sub-call to VAULT_ROUTER_ADDRESS. enable_sub_call_stub covers the ERC-20
     // legs; the provider is stubbed to return a decodable uint256 (shares).
     provider.enable_sub_call_stub();
-    provider.stub_sub_call_at(VAULT_PROVIDER_ADDRESS, Bytes::from(vec![0u8; 32]));
+    provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, Bytes::from(vec![0u8; 32]));
     // Adjacent WWDs exercise overlapping lifecycles while the ticks below keep
     // every transition in timestamp order.
     let green_wwd = WorldwideDay::new(20241221);

@@ -22,7 +22,7 @@ fn expected_exact_addresses() -> [Address; 37] {
         INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
-        VAULT_PROVIDER_ADDRESS,
+        VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         TRIBUTE_FACTORY_ADDRESS,

@@ -2,7 +2,7 @@
 
 - **Status:** Draft
 - **Actors:** Desis issuer, IntexFactory, Intex ledger, OriginRouter/bridge,
-  Intex ERC-1155, holder/authorized settler, VaultProvider, Oracle and PromisFactory
+  Intex ERC-1155, holder/authorized settler, VaultRouter, Oracle and PromisFactory
 - **Trigger:** Desis clearing issues a series; later holder/settler settles and mines
 - **Topology/services:** Outbe validators, configured Oracle/vault/asset, local
   ERC-1155 contracts and paired bridge/router deployment
@@ -22,7 +22,7 @@ and converts consumed soulbound Settled units into the exact Promis load once.
 - **Trigger:** Desis issues an Intex series; an eligible holder later settles Issued units and mines the resulting Settled units.
 - **Environment:** Finalizing validators with configured Oracle/vault/asset and a paired ERC-1155 bridge/router deployment.
 - **Canonical inputs:** Unique series/currencies/recipients/quantities/prices/Promis load, bridge replay identity, Oracle observations, holder/settler authorization, settlement balance/allowance and sequence-bound PoW.
-- **System under test:** Desis, IntexFactory/Intex, ERC-1155 ledger and bridge, VaultProvider, Oracle and PromisFactory.
+- **System under test:** Desis, IntexFactory/Intex, ERC-1155 ledger and bridge, VaultRouter, Oracle and PromisFactory.
 - **Expected response:** Matching Rust/ERC-1155 series, bridge evidence, qualification/call state, reserve deposit, Issued-to-Settled transition, mine sequence and minted Promis.
 - **Response measures:** Series/delivery are unique; Issued burned equals Settled minted; measured settlement equals reserved value; Settled burned times load equals Promis minted.
 - **Failure guarantee:** Failed or replayed issuance, delivery, settlement or mining changes no series count, reserve/token balance, ownership, sequence or Promis supply.
@@ -31,7 +31,7 @@ and converts consumed soulbound Settled units into the exact Promis load once.
 
 - Desis provides a unique series id, issuance/reference currencies, recipients,
   quantities, entry price and Promis load whose totals fit declared supply.
-- OriginRouter, ERC-1155, bridge and VaultProvider addresses/roles are correctly
+- OriginRouter, ERC-1155, bridge and VaultRouter addresses/roles are correctly
   wired; relay float covers outbound delivery.
 - Oracle and call parameters are configured and settlement asset is bound to the
   series currency.
@@ -47,7 +47,7 @@ and converts consumed soulbound Settled units into the exact Promis load once.
 | 3 | per-chain ERC-1155 | create series/supply cap, mint winners | token metadata/state |
 | 4 | IntexFactory | enroll floor index; later qualify/call from canonical Oracle scans | typed FSM state |
 | 5 | holder | optionally authorize a distinct settler | per-series authorization |
-| 6 | IntexFactory/VaultProvider | pull actual payment delta and deposit reserves | token/share deltas |
+| 6 | IntexFactory/VaultRouter | pull actual payment delta and deposit reserves | token/share deltas |
 | 7 | ERC-1155 | burn holder Issued and mint settler soulbound Settled units | balances/event |
 | 8 | holder of Settled | submit sequence-bound valid PoW | mine sequence |
 | 9 | ERC-1155 + PromisFactory | burn Settled and mint `promis_load * amount` | closed balances/supply |
@@ -96,7 +96,7 @@ and bridge delivery without reissuing the series.
 
 ## Open questions and technical debt
 
-- Settlement asset is currently selected through the first VaultProvider asset in
+- Settlement asset is currently selected through the first VaultRouter asset in
   inspected paths; bind it to the series currency before accepting this flow.
 - Define bridge delivery idempotency and recovery after source finality/remote
   failure.

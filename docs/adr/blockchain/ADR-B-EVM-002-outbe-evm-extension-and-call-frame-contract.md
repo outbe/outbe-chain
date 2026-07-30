@@ -223,10 +223,9 @@ and activation contract.
 
 ## Open questions and technical debt
 
-1. `outbe_dispatch_fn` and `outbe_precompile_addresses` duplicate exact-route facts.
-   The latter already omits at least `VAULT_PROVIDER_ADDRESS`, `GOVERNANCE_ADDRESS`
-   and `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` present in lookup; replace both with one
-   compact exact-route declaration and make current registration tests exhaustive.
+1. `define_exact_routes!` now centralizes exact-route dispatch and enumeration, but
+   its behavioral registration tests must remain exhaustive as route adapters and
+   capabilities evolve.
 2. `DEBUG_SUBCALL_PRECOMPILE_ADDRESS` is registered in the normal table. Prove it is
    impossible on production networks or gate it by a non-consensus test build; a
    debug capability must not silently become protocol ABI.
@@ -249,13 +248,12 @@ and activation contract.
 8. `compressed_tree_service` is an `RwLock<Option<_>>` mutable after factory cloning.
    Prove no EVM construction can race installation/replacement and observe a
    different authority generation; prefer immutable assembly.
-9. Runtime body readers are optional, then selected through a second hard-coded
-   address match. Move required/optional reader selection into the exact route's
-   dispatch adapter. Whether missing readers can fail at EVM construction rather than
-   dispatch remains part of typed production-mode construction debt.
-10. `OUTBE_SYSTEM_TX_ADDRESS` uses body-aware dispatch only when readers exist but
-    otherwise falls through to the generic function, unlike Tribute/Nod addresses.
-    Prove this asymmetry is intentional and cannot cause validator-mode divergence.
+9. Runtime body-reader requirements are selected through each exact route's dispatch
+   adapter. Whether missing readers can fail at EVM construction rather than dispatch
+   remains part of typed production-mode construction debt.
+10. `OUTBE_SYSTEM_TX_ADDRESS` uses an optional-reader adapter, unlike the
+    reader-required Tribute/Nod addresses. Prove this asymmetry is intentional and
+    cannot cause validator-mode divergence.
 11. Pre-decoding first maps `SharedBuffer` to empty bytes for base-gas calculation,
     then materializes real bytes for dispatch. Input-dependent gas can therefore be
     undercharged for contract-originated calls. Materialize once before pricing.

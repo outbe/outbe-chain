@@ -4169,7 +4169,7 @@ mod tests {
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
             DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
-            STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS,
+            STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
 
@@ -4186,7 +4186,7 @@ mod tests {
             // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
             // accounts are never EIP-161-empty.
             ZEROFEE_ADDRESS,
-            VAULT_PROVIDER_ADDRESS,
+            VAULT_ROUTER_ADDRESS,
             GOVERNANCE_ADDRESS,
             // Stablecoin Factory and Policy Registry marker code is genesis-active
             // even before Stablecoin V1 runtime activation.

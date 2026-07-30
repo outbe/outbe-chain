@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {BnbVaultProvider} from "src/BnbVaultProvider.sol";
+import {TargetChainVaultRouter} from "src/TargetChainVaultRouter.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "src/interfaces/IERC7786.sol";
 import {IERC7786TokenReceiver} from "src/interfaces/IERC7786TokenReceiver.sol";
 
@@ -88,7 +88,7 @@ contract MockMessageBridge is IERC7786GatewaySource, IGatewayQuote {
         emit MessageSent(sendId, "", recipient, payload, msg.value, new bytes[](0));
     }
 
-    function deliver(BnbVaultProvider recipient, bytes32 receiveId, bytes calldata sender, bytes calldata payload)
+    function deliver(TargetChainVaultRouter recipient, bytes32 receiveId, bytes calldata sender, bytes calldata payload)
         external
         returns (bytes4)
     {
@@ -137,7 +137,7 @@ contract MockTokenBridge {
     }
 
     function deliverDeposit(
-        BnbVaultProvider recipient,
+        TargetChainVaultRouter recipient,
         uint32 sourceDomain,
         bytes calldata from,
         uint256 amount,
@@ -148,9 +148,9 @@ contract MockTokenBridge {
     }
 }
 
-contract BnbVaultProviderTest is Test {
+contract TargetChainVaultRouterTest is Test {
     uint32 internal constant OUTBE_DOMAIN = 54_322_345;
-    address internal constant OUTBE_PROVIDER = 0x0000000000000000000000000000000000001017;
+    address internal constant OUTBE_ROUTER = 0x0000000000000000000000000000000000001017;
     uint256 internal constant ACK_GAS_LIMIT = 300_000;
     uint256 internal constant RETURN_GAS_LIMIT = 400_000;
 
@@ -158,7 +158,7 @@ contract BnbVaultProviderTest is Test {
     MockOneToOneVault internal vault;
     MockMessageBridge internal messageBridge;
     MockTokenBridge internal tokenBridge;
-    BnbVaultProvider internal provider;
+    TargetChainVaultRouter internal router;
     address internal user;
     bytes internal outbeSender;
 
@@ -167,17 +167,17 @@ contract BnbVaultProviderTest is Test {
         vault = new MockOneToOneVault(asset);
         messageBridge = new MockMessageBridge();
         tokenBridge = new MockTokenBridge(asset);
-        provider = new BnbVaultProvider(
+        router = new TargetChainVaultRouter(
             address(asset),
             address(vault),
             address(tokenBridge),
             address(messageBridge),
             OUTBE_DOMAIN,
-            OUTBE_PROVIDER,
+            OUTBE_ROUTER,
             address(this)
         );
         user = makeAddr("user");
-        outbeSender = InteroperableAddress.formatEvmV1(OUTBE_DOMAIN, OUTBE_PROVIDER);
+        outbeSender = InteroperableAddress.formatEvmV1(OUTBE_DOMAIN, OUTBE_ROUTER);
     }
 
     function test_crosschainDeposit_depositsMintedWCOENAndSendsAcknowledgement() external {
@@ -185,22 +185,22 @@ contract BnbVaultProviderTest is Test {
         bytes32 operationId = keccak256("deposit-1");
         uint256 acknowledgementFee = 0.01 ether;
         messageBridge.setFee(acknowledgementFee);
-        vm.deal(address(provider), acknowledgementFee);
+        vm.deal(address(router), acknowledgementFee);
 
         bytes4 result = tokenBridge.deliverDeposit(
-            provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount)
+            router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount)
         );
 
         assertEq(result, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(asset.balanceOf(address(vault)), amount);
-        assertEq(vault.balanceOf(address(provider)), amount);
-        assertEq(provider.totalManagedShares(), amount);
+        assertEq(vault.balanceOf(address(router)), amount);
+        assertEq(router.totalManagedShares(), amount);
         assertEq(messageBridge.lastValue(), acknowledgementFee);
         assertEq(messageBridge.lastRecipient(), outbeSender);
 
         (uint256 kind, bytes32 ackOperationId, address ackUser, uint256 ackAmount) =
             abi.decode(messageBridge.lastPayload(), (uint256, bytes32, address, uint256));
-        assertEq(kind, provider.DEPOSIT_ACKNOWLEDGEMENT());
+        assertEq(kind, router.DEPOSIT_ACKNOWLEDGEMENT());
         assertEq(ackOperationId, operationId);
         assertEq(ackUser, user);
         assertEq(ackAmount, amount);
@@ -214,22 +214,22 @@ contract BnbVaultProviderTest is Test {
         bytes32 operationId = keccak256("withdraw");
         uint256 returnFee = 0.02 ether;
         tokenBridge.setFee(returnFee);
-        vm.deal(address(provider), returnFee);
+        vm.deal(address(router), returnFee);
 
-        bytes memory payload = abi.encode(provider.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
-        bytes4 result = messageBridge.deliver(provider, bytes32(uint256(1)), outbeSender, payload);
+        bytes memory payload = abi.encode(router.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
+        bytes4 result = messageBridge.deliver(router, bytes32(uint256(1)), outbeSender, payload);
 
         assertEq(result, IERC7786Recipient.receiveMessage.selector);
-        assertEq(vault.balanceOf(address(provider)), deposited - amount);
-        assertEq(provider.totalManagedShares(), deposited - amount);
+        assertEq(vault.balanceOf(address(router)), deposited - amount);
+        assertEq(router.totalManagedShares(), deposited - amount);
         assertEq(tokenBridge.lastDestination(), OUTBE_DOMAIN);
-        assertEq(tokenBridge.lastReceiver(), OUTBE_PROVIDER);
+        assertEq(tokenBridge.lastReceiver(), OUTBE_ROUTER);
         assertEq(tokenBridge.lastAmount(), amount);
         assertEq(tokenBridge.lastGasLimit(), RETURN_GAS_LIMIT);
 
         (uint256 kind, bytes32 returnedOperationId, address returnedUser, uint256 returnedAmount) =
             abi.decode(tokenBridge.lastExtraData(), (uint256, bytes32, address, uint256));
-        assertEq(kind, provider.WITHDRAW_RETURN());
+        assertEq(kind, router.WITHDRAW_RETURN());
         assertEq(returnedOperationId, operationId);
         assertEq(returnedUser, user);
         assertEq(returnedAmount, amount);
@@ -240,14 +240,14 @@ contract BnbVaultProviderTest is Test {
         uint256 amount = 100 ether;
         bytes32 operationId = keccak256("bad-shares");
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultProvider.InvalidShareAmount.selector, amount, amount + 1));
-        tokenBridge.deliverDeposit(provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
+        tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
-        assertEq(asset.balanceOf(address(provider)), 0);
+        assertEq(asset.balanceOf(address(router)), 0);
         assertEq(asset.balanceOf(address(vault)), 0);
-        assertEq(vault.balanceOf(address(provider)), 0);
-        (BnbVaultProvider.OperationKind kind,,) = provider.operations(operationId);
-        assertEq(uint256(kind), uint256(BnbVaultProvider.OperationKind.None));
+        assertEq(vault.balanceOf(address(router)), 0);
+        (TargetChainVaultRouter.OperationKind kind,,) = router.operations(operationId);
+        assertEq(uint256(kind), uint256(TargetChainVaultRouter.OperationKind.None));
     }
 
     function test_depositRequiresGasTankAndRemainsRetryable() external {
@@ -255,12 +255,14 @@ contract BnbVaultProviderTest is Test {
         uint256 amount = 10 ether;
         bytes32 operationId = keccak256("needs-gas");
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultProvider.InsufficientNativeGas.selector, uint256(0), 1 ether));
-        tokenBridge.deliverDeposit(provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
+        vm.expectRevert(
+            abi.encodeWithSelector(TargetChainVaultRouter.InsufficientNativeGas.selector, uint256(0), 1 ether)
+        );
+        tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
-        vm.deal(address(provider), 1 ether);
-        tokenBridge.deliverDeposit(provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
-        assertEq(provider.totalManagedShares(), amount);
+        vm.deal(address(router), 1 ether);
+        tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
+        assertEq(router.totalManagedShares(), amount);
     }
 
     function test_withdrawRevertsAndRollsBackWhenVaultBreaksOneToOneInvariant() external {
@@ -270,15 +272,15 @@ contract BnbVaultProviderTest is Test {
 
         uint256 amount = 40 ether;
         bytes32 operationId = keccak256("bad-withdraw-shares");
-        bytes memory payload = abi.encode(provider.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
+        bytes memory payload = abi.encode(router.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultProvider.InvalidShareAmount.selector, amount, amount + 1));
-        messageBridge.deliver(provider, bytes32(uint256(1)), outbeSender, payload);
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.InvalidShareAmount.selector, amount, amount + 1));
+        messageBridge.deliver(router, bytes32(uint256(1)), outbeSender, payload);
 
-        assertEq(vault.balanceOf(address(provider)), deposited);
-        assertEq(provider.totalManagedShares(), deposited);
-        (BnbVaultProvider.OperationKind kind,,) = provider.operations(operationId);
-        assertEq(uint256(kind), uint256(BnbVaultProvider.OperationKind.None));
+        assertEq(vault.balanceOf(address(router)), deposited);
+        assertEq(router.totalManagedShares(), deposited);
+        (TargetChainVaultRouter.OperationKind kind,,) = router.operations(operationId);
+        assertEq(uint256(kind), uint256(TargetChainVaultRouter.OperationKind.None));
     }
 
     function test_withdrawRequiresGasTankAndRemainsRetryable() external {
@@ -288,18 +290,20 @@ contract BnbVaultProviderTest is Test {
         uint256 amount = 40 ether;
         uint256 returnFee = 1 ether;
         bytes32 operationId = keccak256("withdraw-needs-gas");
-        bytes memory payload = abi.encode(provider.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
+        bytes memory payload = abi.encode(router.WITHDRAW_REQUEST(), operationId, user, amount, RETURN_GAS_LIMIT);
         tokenBridge.setFee(returnFee);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultProvider.InsufficientNativeGas.selector, uint256(0), returnFee));
-        messageBridge.deliver(provider, bytes32(uint256(1)), outbeSender, payload);
-        assertEq(vault.balanceOf(address(provider)), deposited);
-        assertEq(provider.totalManagedShares(), deposited);
+        vm.expectRevert(
+            abi.encodeWithSelector(TargetChainVaultRouter.InsufficientNativeGas.selector, uint256(0), returnFee)
+        );
+        messageBridge.deliver(router, bytes32(uint256(1)), outbeSender, payload);
+        assertEq(vault.balanceOf(address(router)), deposited);
+        assertEq(router.totalManagedShares(), deposited);
 
-        vm.deal(address(provider), returnFee);
-        messageBridge.deliver(provider, bytes32(uint256(2)), outbeSender, payload);
-        assertEq(vault.balanceOf(address(provider)), deposited - amount);
-        assertEq(provider.totalManagedShares(), deposited - amount);
+        vm.deal(address(router), returnFee);
+        messageBridge.deliver(router, bytes32(uint256(2)), outbeSender, payload);
+        assertEq(vault.balanceOf(address(router)), deposited - amount);
+        assertEq(router.totalManagedShares(), deposited - amount);
     }
 
     function test_replayAndAuthenticationAreRejected() external {
@@ -307,12 +311,12 @@ contract BnbVaultProviderTest is Test {
         bytes32 operationId = keccak256("replay");
         _deposit(operationId, amount);
 
-        vm.expectRevert(abi.encodeWithSelector(BnbVaultProvider.OperationAlreadyExecuted.selector, operationId));
-        tokenBridge.deliverDeposit(provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
+        vm.expectRevert(abi.encodeWithSelector(TargetChainVaultRouter.OperationAlreadyExecuted.selector, operationId));
+        tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
 
-        vm.expectRevert(BnbVaultProvider.UnauthorizedCrosschainSender.selector);
+        vm.expectRevert(TargetChainVaultRouter.UnauthorizedCrosschainSender.selector);
         tokenBridge.deliverDeposit(
-            provider,
+            router,
             OUTBE_DOMAIN,
             InteroperableAddress.formatEvmV1(OUTBE_DOMAIN, makeAddr("attacker")),
             amount,
@@ -321,7 +325,7 @@ contract BnbVaultProviderTest is Test {
     }
 
     function _deposit(bytes32 operationId, uint256 amount) internal {
-        tokenBridge.deliverDeposit(provider, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
+        tokenBridge.deliverDeposit(router, OUTBE_DOMAIN, outbeSender, amount, _depositData(operationId, user, amount));
     }
 
     function _depositData(bytes32 operationId, address account, uint256 amount) internal pure returns (bytes memory) {

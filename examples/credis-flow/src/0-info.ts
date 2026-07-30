@@ -5,7 +5,7 @@ import {
   SmartAccountFactory__factory,
   IERC20__factory,
   ITokenBundle__factory,
-  IVaultProvider__factory,
+  IVaultRouter__factory,
 } from "./contracts/index.js";
 import {
   DEFAULT_GRATIS_ADDRESS,
@@ -44,7 +44,7 @@ const credisAddress = process.env["CREDIS_ADDRESS"] || DEFAULT_CREDIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envPath);
+const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 function formatDate(timestamp: bigint): string {
   if (timestamp === 0n) return "N/A";
@@ -59,7 +59,7 @@ async function main() {
   const saFactory = SmartAccountFactory__factory.connect(smartAccountFactoryAddress, provider);
   const token = IERC20__factory.connect(erc20Address, provider);
   const bundlePlugin = ITokenBundle__factory.connect(bundleModulePluginAddress, provider);
-  const vaultProvider = IVaultProvider__factory.connect(vaultProviderAddress, provider);
+  const vaultRouter = IVaultRouter__factory.connect(vaultRouterAddress, provider);
 
   console.log("=== Credis Info ===");
   console.log(`Env:              ${envName}`);
@@ -71,7 +71,7 @@ async function main() {
   console.log(`SA Factory:       ${smartAccountFactoryAddress}`);
   console.log(`Bundle Plugin:    ${bundleModulePluginAddress}`);
   console.log(`ERC20:            ${erc20Address}  TotalSupply: ${(await token.totalSupply()).toString()} ${await token.name()}`);
-  console.log(`Vault Provider:   ${vaultProviderAddress}`);
+  console.log(`Vault Router:   ${vaultRouterAddress}`);
 
   const [gratisMeta, erc20Meta] = await Promise.all([fetchTokenMeta(gratis), fetchTokenMeta(token)]);
 
@@ -93,7 +93,7 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultProviderAddress],
+    [vaultRouterAddress],
     SALT,
   );
 
@@ -101,7 +101,7 @@ async function main() {
   await printSmartAccountInfo(provider, token, bundlePlugin, smartAccountAddr, erc20Meta);
   await printCredisInfo(credis, smartAccountAddr, erc20Meta);
   await printCcaInfo(provider, token, erc20Meta);
-  await printVaultProviderInfo(vaultProvider, token, erc20Address, erc20Meta);
+  await printVaultRouterInfo(vaultRouter, token, erc20Address, erc20Meta);
 }
 
 async function printUserInfo(
@@ -218,22 +218,22 @@ async function printCcaInfo(
   console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
 }
 
-async function printVaultProviderInfo(
-  vaultProvider: ReturnType<typeof IVaultProvider__factory.connect>,
+async function printVaultRouterInfo(
+  vaultRouter: ReturnType<typeof IVaultRouter__factory.connect>,
   token: ReturnType<typeof IERC20__factory.connect>,
   assetAddress: string,
   erc20Meta: TokenMeta,
 ) {
-  console.log(`\n=== Vault Provider: ${vaultProviderAddress} ===`);
+  console.log(`\n=== Vault Router: ${vaultRouterAddress} ===`);
 
-  const vaultCount = await vaultProvider.assetVaultsCount(assetAddress);
+  const vaultCount = await vaultRouter.assetVaultsCount(assetAddress);
   if (vaultCount === 0n) {
     console.log(`  No vaults registered for asset ${assetAddress}`);
     return;
   }
 
-  const underlyingVault = await vaultProvider.assetVaultAt(assetAddress, 0);
-  const sharesBalance = await vaultProvider.sharesBalance(underlyingVault);
+  const underlyingVault = await vaultRouter.assetVaultAt(assetAddress, 0);
+  const sharesBalance = await vaultRouter.sharesBalance(underlyingVault);
   const vaultErc20Balance = await token.balanceOf(underlyingVault);
 
   console.log(`  Underlying Outbe vault:  ${underlyingVault}`);

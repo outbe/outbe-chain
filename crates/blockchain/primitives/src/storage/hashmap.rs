@@ -45,6 +45,9 @@ pub struct HashMapStorageProvider {
     /// Per-address return data stubs. Entries registered via
     /// [`Self::stub_sub_call_at`] take priority over `sub_call_stub`.
     sub_call_stubs: HashMap<Address, Bytes>,
+    /// Per-address-and-selector return data stubs. These take priority over
+    /// address-wide stubs so tests can model contracts with multiple views.
+    sub_call_selector_stubs: HashMap<(Address, [u8; 4]), Bytes>,
     lysis_activation_entitled: bool,
     lysis_activation_attempted: bool,
     lysis_activation_call_id: Option<B256>,
@@ -81,6 +84,7 @@ impl HashMapStorageProvider {
             snapshots: Vec::new(),
             sub_call_stub: false,
             sub_call_stubs: HashMap::new(),
+            sub_call_selector_stubs: HashMap::new(),
             lysis_activation_entitled: false,
             lysis_activation_attempted: false,
             lysis_activation_call_id: None,
@@ -106,7 +110,7 @@ impl HashMapStorageProvider {
     ///
     /// Use only in tests whose runtime now issues Rust → Solidity sub-calls
     /// (e.g. credisfactory `request_credis` / `pay_anadosis` calling
-    /// `IVaultProvider` and `IERC20`) but do not assert vault/EVM state on the
+    /// `IVaultRouter` and `IERC20`) but do not assert vault/EVM state on the
     /// child frame.
     pub fn enable_sub_call_stub(&mut self) {
         self.sub_call_stub = true;
@@ -120,6 +124,17 @@ impl HashMapStorageProvider {
     /// a real EVM sub-frame.
     pub fn stub_sub_call_at(&mut self, address: Address, returndata: Bytes) {
         self.sub_call_stubs.insert(address, returndata);
+    }
+
+    /// Register fixed returndata for one function selector at `address`.
+    pub fn stub_sub_call_at_selector(
+        &mut self,
+        address: Address,
+        selector: [u8; 4],
+        returndata: Bytes,
+    ) {
+        self.sub_call_selector_stubs
+            .insert((address, selector), returndata);
     }
 
     // Test helper methods
@@ -453,6 +468,24 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
+        if let Some(selector) = input
+            .calldata
+            .get(..4)
+            .and_then(|bytes| bytes.try_into().ok())
+        {
+            if let Some(returndata) = self
+                .sub_call_selector_stubs
+                .get(&(input.target, selector))
+                .cloned()
+            {
+                return Ok(SubCallOutput {
+                    status: SubCallStatus::Success,
+                    returndata,
+                    gas_used: 0,
+                    gas_refunded: 0,
+                });
+            }
+        }
         if let Some(returndata) = self.sub_call_stubs.get(&input.target).cloned() {
             return Ok(SubCallOutput {
                 status: SubCallStatus::Success,

@@ -30,7 +30,7 @@ const userPrivateKey = requireEnv("USER_PRIVATE_KEY", envPath);
 const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envPath);
+const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 async function main(): Promise<void> {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // ── Step 1: Predict Bundle account address ─────────────────────────────────
 
   console.log("\n[1] Predicting Bundle account address...");
-  const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultProviderAddress], SALT);
+  const accountAddr = await factory.getAccountAddress(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
   console.log(`    → ${accountAddr}`);
 
   // ── Step 2: Deploy if not exists ──────────────────────────────────────────
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const code = await provider.getCode(accountAddr);
   if (code === "0x") {
     console.log("    Account not deployed — creating...");
-    const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], [vaultProviderAddress], SALT);
+    const tx = await factory.createAccount(userAddr, ccaAddress, [erc20Address], [vaultRouterAddress], SALT);
     const receipt = await tx.wait();
     console.log(`    Deployed at block ${receipt!.blockNumber}, tx: ${tx.hash}`);
   } else {

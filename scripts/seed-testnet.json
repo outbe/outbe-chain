@@ -48,7 +48,7 @@
   "intex_factory": {
     "profile": "dev"
   },
-  "vault_provider": {
+  "vault_router": {
     "owner": "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
   },
   "oracle": {

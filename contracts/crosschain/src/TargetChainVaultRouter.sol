@@ -34,12 +34,12 @@ interface IERC7786TokenBridge {
     ) external payable returns (bytes32 sendId);
 }
 
-/// @title BnbVaultProvider
-/// @notice Fixed BNB adapter for the Outbe cross-chain WCOEN vault.
+/// @title TargetChainVaultRouter
+/// @notice Fixed target-chain adapter for the Outbe cross-chain WCOEN vault.
 /// @dev Tokens arrive through ERC7786TokenBridge.sendAndCall, are deposited into one immutable
 ///      1:1 vault, and the resulting real vault shares remain in this contract. Outbe stores only
 ///      the mirrored receipt balance. This contract has no vault/source/target management registry.
-contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, ReentrancyGuard {
+contract TargetChainVaultRouter is IERC7786Recipient, IERC7786TokenReceiver, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant DEPOSIT_REQUEST = 1;
@@ -88,7 +88,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
     IERC7786TokenBridge public immutable tokenBridge;
     IERC7786GatewaySource public immutable messageBridge;
     uint32 public immutable outbeDomain;
-    address public immutable outbeProvider;
+    address public immutable outbeRouter;
 
     uint256 public totalManagedShares;
     mapping(bytes32 operationId => Operation operation) public operations;
@@ -99,7 +99,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         address tokenBridge_,
         address messageBridge_,
         uint32 outbeDomain_,
-        address outbeProvider_,
+        address outbeRouter_,
         address owner_
     ) Ownable(owner_) {
         _requireContract(asset_);
@@ -107,7 +107,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         _requireContract(tokenBridge_);
         _requireContract(messageBridge_);
         if (outbeDomain_ == 0) revert InvalidSourceDomain(0);
-        if (outbeProvider_ == address(0)) revert ZeroAddress();
+        if (outbeRouter_ == address(0)) revert ZeroAddress();
 
         address vaultAsset = IOneToOneVault(vault_).asset();
         if (vaultAsset != asset_) revert InvalidVaultAsset(asset_, vaultAsset);
@@ -119,7 +119,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         tokenBridge = IERC7786TokenBridge(tokenBridge_);
         messageBridge = IERC7786GatewaySource(messageBridge_);
         outbeDomain = outbeDomain_;
-        outbeProvider = outbeProvider_;
+        outbeRouter = outbeRouter_;
 
         IERC20(asset_).forceApprove(vault_, type(uint256).max);
     }
@@ -127,7 +127,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
     receive() external payable {}
 
     function expectedOutbeSender() public view returns (bytes memory) {
-        return InteroperableAddress.formatEvmV1(outbeDomain, outbeProvider);
+        return InteroperableAddress.formatEvmV1(outbeDomain, outbeRouter);
     }
 
     /// @notice Called by the BNB WCOEN token bridge after synthetic WCOEN is minted to this adapter.
@@ -155,7 +155,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         totalManagedShares += shares;
 
         bytes memory acknowledgement = abi.encode(DEPOSIT_ACKNOWLEDGEMENT, operationId, user, amount);
-        bytes memory recipient = InteroperableAddress.formatEvmV1(outbeDomain, outbeProvider);
+        bytes memory recipient = InteroperableAddress.formatEvmV1(outbeDomain, outbeRouter);
         bytes[] memory attributes = _gasAttributes(acknowledgementGasLimit);
         uint256 nativeFee = IGatewayQuote(address(messageBridge)).quote(recipient, acknowledgement, attributes);
         _requireNativeGas(nativeFee);
@@ -165,7 +165,7 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
     }
 
-    /// @notice Receives an authenticated withdrawal request from the Outbe VaultProvider.
+    /// @notice Receives an authenticated withdrawal request from the Outbe VaultRouter.
     /// @dev Withdrawn BNB WCOEN is burned by the token bridge and returned to Outbe with a completion hook.
     function receiveMessage(bytes32, bytes calldata sender, bytes calldata payload)
         external
@@ -193,12 +193,12 @@ contract BnbVaultProvider is IERC7786Recipient, IERC7786TokenReceiver, Ownable, 
         totalManagedShares -= amount;
 
         bytes memory returnData = abi.encode(WITHDRAW_RETURN, operationId, user, amount);
-        uint256 nativeFee = tokenBridge.quoteSend(outbeDomain, outbeProvider, amount, returnData, returnGasLimit);
+        uint256 nativeFee = tokenBridge.quoteSend(outbeDomain, outbeRouter, amount, returnData, returnGasLimit);
         _requireNativeGas(nativeFee);
 
         asset.forceApprove(address(tokenBridge), amount);
         bytes32 sendId =
-            tokenBridge.sendAndCall{value: nativeFee}(outbeDomain, outbeProvider, amount, returnData, returnGasLimit);
+            tokenBridge.sendAndCall{value: nativeFee}(outbeDomain, outbeRouter, amount, returnData, returnGasLimit);
         asset.forceApprove(address(tokenBridge), 0);
 
         emit CrosschainWithdrawalExecuted(operationId, user, amount, amount, sendId);

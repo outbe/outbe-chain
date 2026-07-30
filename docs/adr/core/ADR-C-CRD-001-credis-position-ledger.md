@@ -100,7 +100,7 @@ all factory rollback points. Status remains Proposed.
 ## Consequences
 
 Credis becomes a pure debt-state module. Proof privacy, rates, assets and liquidity
-remain in CredisFactory/VaultProvider and can fail without weakening its FSM.
+remain in CredisFactory/VaultRouter and can fail without weakening its FSM.
 
 ## Rejected alternatives
 

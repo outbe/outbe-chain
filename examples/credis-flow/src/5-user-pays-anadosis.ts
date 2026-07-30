@@ -4,7 +4,7 @@ import {
   ICredis__factory,
   SmartAccountFactory__factory,
   IERC20__factory,
-  IVaultProvider__factory,
+  IVaultRouter__factory,
   IGratis__factory,
   IEntryPoint__factory,
 } from "./contracts/index.js";
@@ -59,7 +59,7 @@ const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", envContext);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envContext);
 const erc20Address = requireEnv("ERC20_ADDRESS", envContext);
-const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envContext);
+const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envContext);
 
 function formatDate(timestamp: bigint): string {
   if (timestamp === 0n) return "N/A";
@@ -127,7 +127,7 @@ function printState(label: string, state: State, erc20Meta: TokenMeta, smartAcco
   console.log(`\n=== ${label} ===`);
   console.log(`  Bundle Account (${smartAccountAddr}):`);
   console.log(`    ERC20 balance: ${formatTokenMeta(state.saErc20Balance, erc20Meta)}`);
-  console.log(`  Vault Provider (${vaultProviderAddress}):`);
+  console.log(`  Vault Router (${vaultRouterAddress}):`);
   console.log(`    Vault ERC20:   ${formatTokenMeta(state.vaultErc20Balance, erc20Meta)}`);
   console.log(`  Credis:`);
   console.log(`    Has overdue:   ${state.hasOverdue}`);
@@ -141,7 +141,7 @@ async function main() {
   console.log(`CredisFactory:    ${credisFactoryAddress}`);
   console.log(`Credis:           ${credisAddress}`);
   console.log(`ERC20:            ${erc20Address}`);
-  console.log(`Vault Provider:   ${vaultProviderAddress}`);
+  console.log(`Vault Router:   ${vaultRouterAddress}`);
   console.log(`Position ID:      ${positionId}`);
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -151,11 +151,11 @@ async function main() {
   const token = IERC20__factory.connect(erc20Address, provider);
   const credis = ICredis__factory.connect(credisAddress, provider);
 
-  const vaultProvider = IVaultProvider__factory.connect(vaultProviderAddress, provider);
+  const vaultRouter = IVaultRouter__factory.connect(vaultRouterAddress, provider);
 
   const [erc20Meta, underlyingVaultAddr] = await Promise.all([
     fetchTokenMeta(token),
-    vaultProvider.assetVaultAt(erc20Address, 0),
+    vaultRouter.assetVaultAt(erc20Address, 0),
   ]);
 
   // Predict Bundle account address
@@ -163,7 +163,7 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultProviderAddress],
+    [vaultRouterAddress],
     SALT,
   );
   console.log(`Bundle Account:    ${smartAccountAddr}`);
@@ -325,7 +325,7 @@ async function main() {
     { name: "EntryPoint", iface: IEntryPoint__factory.createInterface() },
     { name: "ICredisFactory", iface: ICredisFactory__factory.createInterface() },
     { name: "ICredis", iface: ICredis__factory.createInterface() },
-    { name: "VaultProvider", iface: IVaultProvider__factory.createInterface() },
+    { name: "VaultRouter", iface: IVaultRouter__factory.createInterface() },
     { name: "IGratis", iface: IGratis__factory.createInterface() },
     { name: "ERC20", iface: IERC20__factory.createInterface() },
   ];

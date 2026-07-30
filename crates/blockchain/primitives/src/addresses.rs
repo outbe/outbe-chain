@@ -305,9 +305,9 @@ pub const DEBUG_SUBCALL_PRECOMPILE_ADDRESS: Address =
 /// (bid ingestion, reveal, clearing, issuance handoff to IntexFactory).
 pub const DESIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001016");
 
-/// VaultProvider precompile address. Reserve liquidity router: registers
+/// VaultRouter precompile address. Reserve liquidity router: registers
 /// ERC-4626 vaults per asset.
-pub const VAULT_PROVIDER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
+pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
 
 /// Governance precompile address. On-chain registry of the normative texts
 /// (meta-canon, canon) and improvement proposals (OIP, GIP): read/update the

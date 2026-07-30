@@ -34,7 +34,7 @@ const smartAccountFactoryAddress = requireEnv("SMART_ACCOUNT_FACTORY_ADDRESS", e
 const bundleModulePluginAddress = requireEnv("BUNDLE_MODULE_PLUGIN_ADDRESS", envPath);
 const entryPointAddress = requireEnv("ENTRYPOINT_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
-const vaultProviderAddress = requireEnv("VAULT_PROVIDER_ADDRESS", envPath);
+const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -51,7 +51,7 @@ async function main() {
     userAddress,
     ccaAddress,
     [erc20Address],
-    [vaultProviderAddress],
+    [vaultRouterAddress],
     SALT,
   );
 

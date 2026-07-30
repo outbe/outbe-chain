@@ -271,7 +271,7 @@ define_exact_routes! {
     INTEX_ADDRESS => (DispatchAdapter::Basic(outbe_intex::precompile::dispatch), default_base_gas),
     INTEX_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_intexfactory::precompile::dispatch), default_base_gas),
     DESIS_ADDRESS => (DispatchAdapter::Basic(outbe_desis::precompile::dispatch), default_base_gas),
-    VAULT_PROVIDER_ADDRESS => (DispatchAdapter::Basic(outbe_vaultprovider::precompile::dispatch), default_base_gas),
+    VAULT_ROUTER_ADDRESS => (DispatchAdapter::Basic(outbe_vaultrouter::precompile::dispatch), default_base_gas),
     CREDIS_ADDRESS => (DispatchAdapter::Basic(outbe_credis::precompile::dispatch), default_base_gas),
     CREDIS_FACTORY_ADDRESS => (DispatchAdapter::Basic(outbe_credisfactory::precompile::dispatch), default_base_gas),
     TRIBUTE_FACTORY_ADDRESS => (DispatchAdapter::ReadersRequired(outbe_tributefactory::precompile::dispatch), outbe_tributefactory::precompile::base_gas),

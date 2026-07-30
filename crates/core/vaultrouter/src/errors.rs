@@ -1,17 +1,17 @@
-//! Error type for the vaultprovider precompile.
+//! Error type for the vaultrouter precompile.
 //!
-//! Mirrors the custom errors of the Solidity `IVaultProvider` interface plus
+//! Mirrors the custom errors of the Solidity vault-router interfaces plus
 //! the `ErrorsLib` reverts the original contract used (`ZeroAddress`,
 //! `Unauthorized`). Following the repo convention, precompile reverts carry a
 //! string reason rather than an ABI-encoded custom-error selector.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum VaultProviderError {
+pub enum VaultRouterError {
     #[error("zero address")]
     ZeroAddress,
     #[error("unauthorized")]
@@ -20,12 +20,16 @@ pub enum VaultProviderError {
     InvalidLiquiditySource,
     #[error("invalid liquidity target")]
     InvalidLiquidityTarget,
+    #[error("invalid reference currency")]
+    InvalidReferenceCurrency,
     #[error("reserve vault not configured")]
     ReserveVaultNotConfigured,
     #[error("reserve vault already added")]
     ReserveVaultAlreadyAdded,
     #[error("reserve vault not found")]
     ReserveVaultNotFound,
+    #[error("reserve vault owner not renounced: {0}")]
+    ReserveVaultOwnerNotRenounced(Address),
     #[error("liquidity source not found")]
     LiquiditySourceNotFound,
     #[error("liquidity target not found")]
@@ -38,8 +42,8 @@ pub enum VaultProviderError {
     CrosschainAssetNotConfigured,
     #[error("crosschain token bridge not configured")]
     CrosschainTokenBridgeNotConfigured,
-    #[error("remote vault provider not configured for chain {0}")]
-    RemoteVaultProviderNotConfigured(U256),
+    #[error("remote vault router not configured for chain {0}")]
+    RemoteVaultRouterNotConfigured(U256),
     #[error("crosschain fee mismatch: provided={provided}, required={required}")]
     CrosschainFeeMismatch { provided: U256, required: U256 },
     #[error("invalid crosschain amount")]
@@ -68,8 +72,8 @@ pub enum VaultProviderError {
     UndecodableReturn(&'static str),
 }
 
-impl From<VaultProviderError> for PrecompileError {
-    fn from(err: VaultProviderError) -> Self {
+impl From<VaultRouterError> for PrecompileError {
+    fn from(err: VaultRouterError) -> Self {
         PrecompileError::Revert(err.to_string())
     }
 }
