@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {IntexNFT1155V2Reinit} from "./upgrade/UpgradeStubs.sol";
 
 /// @dev EIP-170 runtime-size guard for IntexNFT1155.
 ///
@@ -22,5 +23,18 @@ contract IntexNFT1155SizeTest is Test {
         IntexNFT1155 nft = new IntexNFT1155();
         uint256 size = address(nft).code.length;
         assertLe(size, EIP170_LIMIT, "IntexNFT1155 runtime bytecode exceeds the EIP-170 limit");
+    }
+
+    function test_IntexNFT1155V2Reinit_RuntimeSize_WithinEIP170() public {
+        // Tightest inheritor: base contract + a reinitializer migration entrypoint. `new` is used
+        // (not vm.getDeployedCode) so the linked IntexMetadata placeholder gets resolved.
+        IntexNFT1155V2Reinit nft = new IntexNFT1155V2Reinit();
+        uint256 size = address(nft).code.length;
+        assertLe(size, EIP170_LIMIT, "IntexNFT1155V2Reinit runtime bytecode exceeds the EIP-170 limit");
+    }
+
+    function test_IntexMetadata_RuntimeSize_WithinEIP170() public view {
+        bytes memory runtime = vm.getDeployedCode("IntexMetadata.sol:IntexMetadata");
+        assertLe(runtime.length, EIP170_LIMIT, "IntexMetadata runtime bytecode exceeds the EIP-170 limit");
     }
 }

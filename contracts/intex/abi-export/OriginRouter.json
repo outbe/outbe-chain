@@ -8,11 +8,6 @@
           "name": "bridge_",
           "type": "address",
           "internalType": "address"
-        },
-        {
-          "name": "bnbChainId_",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ],
       "stateMutability": "nonpayable"
@@ -20,19 +15,6 @@
     {
       "type": "receive",
       "stateMutability": "payable"
-    },
-    {
-      "type": "function",
-      "name": "BNB_CHAIN_ID",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -101,6 +83,19 @@
     },
     {
       "type": "function",
+      "name": "addTarget",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "desis",
       "inputs": [],
       "outputs": [
@@ -111,6 +106,19 @@
         }
       ],
       "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "flushPendingSend",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
     },
     {
       "type": "function",
@@ -201,6 +209,25 @@
     },
     {
       "type": "function",
+      "name": "isTarget",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "onCrosschainTokensReceived",
       "inputs": [
         {
@@ -255,6 +282,11 @@
               "internalType": "uint32"
             },
             {
+              "name": "srcChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
               "name": "amount",
               "type": "uint128",
               "internalType": "uint128"
@@ -263,6 +295,47 @@
               "name": "settled",
               "type": "bool",
               "internalType": "bool"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "parkedSend",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct IOriginRouter.ParkedSend",
+          "components": [
+            {
+              "name": "dstChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "gasLimit",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "sent",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "payload",
+              "type": "bytes",
+              "internalType": "bytes"
             }
           ]
         }
@@ -286,6 +359,11 @@
       "type": "function",
       "name": "quoteSendAuctionResult",
       "inputs": [
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
         {
           "name": "worldwideDay",
           "type": "uint32",
@@ -324,30 +402,6 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "quoteSendAuctionStageReveal",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "isGreenDay",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "outputs": [
@@ -447,6 +501,11 @@
               "name": "commitBondMinor",
               "type": "uint128",
               "internalType": "uint128"
+            },
+            {
+              "name": "dayState",
+              "type": "uint8",
+              "internalType": "uint8"
             }
           ]
         }
@@ -470,7 +529,17 @@
           "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
           "components": [
             {
+              "name": "dstChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
               "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -589,6 +658,11 @@
       "name": "quoteSendRefundInstructions",
       "inputs": [
         {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
@@ -668,6 +742,19 @@
     },
     {
       "type": "function",
+      "name": "removeTarget",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "renounceRole",
       "inputs": [
         {
@@ -720,6 +807,11 @@
       "name": "sendAuctionResult",
       "inputs": [
         {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
@@ -759,37 +851,7 @@
           "internalType": "uint32"
         }
       ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "payable"
-    },
-    {
-      "type": "function",
-      "name": "sendAuctionStageReveal",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "isGreenDay",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "payable"
     },
     {
@@ -880,17 +942,16 @@
               "name": "commitBondMinor",
               "type": "uint128",
               "internalType": "uint128"
+            },
+            {
+              "name": "dayState",
+              "type": "uint8",
+              "internalType": "uint8"
             }
           ]
         }
       ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "payable"
     },
     {
@@ -903,7 +964,17 @@
           "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
           "components": [
             {
+              "name": "dstChainId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
               "name": "seriesId",
+              "type": "uint32",
+              "internalType": "uint32"
+            },
+            {
+              "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -981,6 +1052,35 @@
     },
     {
       "type": "function",
+      "name": "sendLeg",
+      "inputs": [
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "payload",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "gasLimit",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "sendMarkCalled",
       "inputs": [
         {
@@ -989,13 +1089,7 @@
           "internalType": "uint32"
         }
       ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "payable"
     },
     {
@@ -1008,19 +1102,18 @@
           "internalType": "uint32"
         }
       ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "payable"
     },
     {
       "type": "function",
       "name": "sendRefundInstructions",
       "inputs": [
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
         {
           "name": "worldwideDay",
           "type": "uint32",
@@ -1123,6 +1216,38 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "targets",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32[]",
+          "internalType": "uint32[]"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "targetsOf",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32[]",
+          "internalType": "uint32[]"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1269,8 +1394,14 @@
     },
     {
       "type": "event",
-      "name": "ClearingAutoDispatchFailed",
+      "name": "BidsDoneReceived",
       "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
         {
           "name": "worldwideDay",
           "type": "uint32",
@@ -1278,22 +1409,15 @@
           "internalType": "uint32"
         },
         {
-          "name": "reason",
-          "type": "bytes",
+          "name": "totalBatches",
+          "type": "uint16",
           "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "ClearingAutoDispatched",
-      "inputs": [
+          "internalType": "uint16"
+        },
         {
-          "name": "worldwideDay",
+          "name": "totalBids",
           "type": "uint32",
-          "indexed": true,
+          "indexed": false,
           "internalType": "uint32"
         }
       ],
@@ -1421,6 +1545,31 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "PendingSendFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": false,
+          "internalType": "bytes32"
         }
       ],
       "anonymous": false
@@ -1628,6 +1777,57 @@
           "type": "address",
           "indexed": true,
           "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "SendParked",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "TargetAdded",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "TargetRemoved",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
         }
       ],
       "anonymous": false
@@ -1869,6 +2069,22 @@
     },
     {
       "type": "error",
+      "name": "NoParkedSend",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoTargets",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "NotEnoughNative",
       "inputs": [
         {
@@ -1881,6 +2097,27 @@
     {
       "type": "error",
       "name": "NotInitializing",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "NotSeriesTarget",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "OnlySelf",
       "inputs": []
     },
     {
@@ -1984,6 +2221,28 @@
         },
         {
           "name": "body",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TargetAlreadyRegistered",
+      "inputs": [
+        {
+          "name": "chainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TargetNotRegistered",
+      "inputs": [
+        {
+          "name": "chainId",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -2097,6 +2356,11 @@
           "internalType": "string"
         }
       ]
+    },
+    {
+      "type": "error",
+      "name": "ZeroChainId",
+      "inputs": []
     }
   ]
 }
