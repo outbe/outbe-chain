@@ -1,6 +1,6 @@
 # DCAP and Remote Attestation Decision Map
 
-Status: design and engineering choices complete; implementation planned
+Status: design complete; native Intel QVL/QvE amendment accepted; implementation planned
 Source plan: `/home/ubuntu/piolium/remediation-plan.md`
 Reference implementation: `/home/ubuntu/SecretNetwork`
 
@@ -38,7 +38,7 @@ In scope:
 
 - quote creation and `REPORT_DATA`;
 - canonical quote/collateral evidence;
-- deterministic QVL and TCB policy;
+- deterministic native QVL/QvE invocation and TCB policy;
 - measurement and hardware admission;
 - node-to-enclave registration, leases, renewal, and expiry;
 - proof of possession of attested keys;
@@ -88,14 +88,34 @@ Type: Research
 
 ### Question
 
-What result is consensus authority: host/QvE output or deterministic
-verification of the submitted evidence?
+What result is consensus authority: an untrusted host result, or a pinned QvE
+result inside a deterministic protocol envelope?
 
 ### Answer
 
-`RESOLVED`: every node runs the same pure verifier over transaction bytes,
-the active policy, and block timestamp. It performs no network, PCCS,
-filesystem, environment, or wall-clock reads.
+`RESOLVED` and amended after confirming that every production validator and
+full node is an x86_64 Intel SGX machine.
+
+Every node runs the same exact-pinned native Intel QVL/QvE stack over canonical
+transaction evidence, the active policy, and the consensus block timestamp.
+The native verifier is consensus-safe only inside this protocol envelope:
+
+- the node release pins the QVL, QvE, TVL and native dependency artifacts by
+  version and digest; a local replacement or mismatch fails closed;
+- QVL runs in QvE mode over the submitted self-contained collateral and the
+  explicit consensus block timestamp;
+- the Outbe attestation enclave verifies the QvE report and identity with the
+  pinned TVL, including the request nonce and exact quote/result/supplemental
+  binding; an untrusted host `qv_result` alone is never authority;
+- the canonical Outbe wrapper independently enforces exact evidence grammar,
+  TCB Info schema v3, the separate Platform/QE policy, measurement policy and
+  stable verdict/reject codes;
+- no network, PCCS, filesystem, environment, local cache or wall-clock input
+  participates in block execution.
+
+The QvE report and its nonce are local verification artifacts, not
+consensus-state bytes. Only the stable semantic Outbe verdict affects block
+validity and state.
 
 Secret Network's Go `VerifyCertDCAP` only extracts a key; its real path invokes
 Intel QVL outside the enclave and verifies a QvE report inside the enclave:
@@ -104,8 +124,10 @@ Intel QVL outside the enclave and verifies a QvE report inside the enclave:
 - `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/execute/src/registration/onchain.rs:44`
 - `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/shared/crypto/src/dcap.rs:27`
 
-That is suitable for an enclave-local decision, not as Outbe's
-consensus-native verifier.
+Outbe adopts that native trust boundary and strengthens its protocol envelope:
+the evidence is canonical, block time is mandatory, native artifacts are
+release-pinned, schema/status policy is explicit, and every missing or
+mismatched component rejects.
 
 ## #4: What evidence is canonical?
 
@@ -531,54 +553,65 @@ Type: Research
 
 ### Question
 
-Which pinned Rust verifier and parser subset produces deterministic results on
-the supported x86_64 production target and exposes every required protocol
-check?
+Which pinned native Intel verifier profile and Outbe policy wrapper produce
+deterministic results on the supported x86_64 production target and expose
+every required protocol check?
 
 ### Answer
 
-`RESOLVED`; implementation acceptance remains in the backlog.
+`RESOLVED` at the architecture level; exact native package selection and
+artifact digests are the first I1 engineering gate.
 
-The cryptographic core is exact-pinned `dcap-qvl = 0.5.2`, crates.io checksum
-`92a14fb8954c867d6855e44d98eab18e769816357738406691ebe60d8fdd005d`,
-upstream commit `31a32a44de4cf68cb50c079e5bfd5348e4e6f4d5`, wrapped by a
-consensus-owned Outbe verifier. The current host-local call in
-`crates/system/tee/src/quote.rs` is not reusable: it reads environment,
-filesystem, and wall clock and the dependency is optional.
+V1 uses Intel's native DCAP Quote Verification Library in QvE mode, plus the
+matching QvE and Trusted Verification Library. The production node release
+must pin the complete native set by exact version, package/source provenance,
+binary digest and QvE identity/ISVSVN requirements. A verifier update is a
+coordinated protocol/release activation, never a node-local choice.
 
-The production dependency uses `default-features = false` and exactly
-`std`, `ring`, and `default-x509`. Ring is the sole crypto backend; HTTP,
-report generation, RustCrypto, TCB overrides and language bindings are absent.
+The previously investigated exact-pinned `dcap-qvl = 0.5.2` Ring profile is
+retained only as prototype and differential-test evidence. It is not a second
+production verifier and does not enter the V1 consensus dependency tree. The
+current host-local call in `crates/system/tee/src/quote.rs` is also not
+reusable: it reads environment, filesystem and wall clock and the dependency
+is optional.
 
-The production wrapper:
+The production native adapter and Outbe wrapper:
 
 - accept only canonical evidence bytes, the active policy, and block timestamp;
 - require full input consumption and reject trailing/unsupported quote data;
-- enforce platform and QE status, minimum TCB evaluation data number, PCE ID,
-  exact measurement policy, and the pinned Intel root outside permissive
-  upstream defaults;
-- provide a deterministic DER-to-QVL adapter and stable Outbe verdict codes;
-- never expose upstream error strings as consensus output.
-
-The public QVL API is sufficient for the adapter and authenticated PCK
-extension checks, so a fork is not planned. An implementation-discovered API
-gap requires a separate minimal source-diff review rather than an implicit
-fork.
+- construct the exact native collateral structure without allowing QVL/QPL to
+  fetch or substitute collateral;
+- invoke QVL in QvE mode and accept the native result only after the pinned TVL
+  verifies the QvE report, identity, nonce and result binding inside the Outbe
+  attestation enclave;
+- parse the same authenticated signed documents to enforce TCB Info schema v3,
+  separate Platform `UpToDate | SWHardeningNeeded`, QE `UpToDate`, minimum TCB
+  evaluation number, FMSPC/PCE ID, exact measurement policy and pinned Intel
+  root;
+- preserve authenticated Platform advisory IDs in the stable verdict;
+- provide stable Outbe verdict codes and never expose native addresses,
+  package-specific errors or upstream strings as consensus output.
 
 Implementation/release acceptance evidence:
 
 - fixed positive and negative quote/collateral vectors;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
-- dependency and Intel-root pinning;
-- no optional verifier feature or fail-open fallback;
+- exact native artifact, QvE identity and Intel-root pinning;
+- rejection of forged, replayed, nonce-mismatched or tampered QvE reports;
+- rejection when native libraries, QvE, TVL or their required versions are
+  absent;
+- no live PCCS/QPL collateral substitution, optional verifier or fail-open
+  fallback;
 - byte-stable verdict vectors across supported x86_64 validator builds.
 
-Secret Network's host Intel QVL plus enclave QvE-report path is not copied
-because it is not a consensus-native deterministic verifier.
+This follows Secret Network's deployed host-QVL plus enclave-QvE-report
+boundary while making its implicit deployment assumptions explicit protocol
+and release gates.
 
-Local prototype evidence, including the demonstrated upstream trailing-byte
-acceptance and Ring/RustCrypto differential timing, is recorded in
+Local prototype evidence, including pure-Rust trailing-byte behavior,
+Ring/RustCrypto timing and the later Secret Network/native amendment, is
+recorded in
 `plans/evidence/dcap-qvl-engineering-gates.md`.
 
 ## #18: What evidence caps and gas prices are normative?

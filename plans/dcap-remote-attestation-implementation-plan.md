@@ -17,7 +17,7 @@ cap. The work below stays focused on DCAP and remote attestation.
 
 ```text
 I0 manifest/context
- ├─> I1 strict QVL
+ ├─> I1 pinned native QVL/QvE
  └─> I2 enclave initialization
        ├─> I3 validator registration ─┐
        └─> I4 full-node registration ├─> I5 renewal/expiry ─> I6 sessions
@@ -57,13 +57,21 @@ production behavior.
 
 ## I1 — Verify one canonical DCAP evidence value deterministically
 
-**Outcome:** `verify_dcap_evidence(evidence, policy, block_timestamp)` returns a
-stable Outbe verdict with no host inputs.
+**Outcome:** the consensus-facing
+`verify_dcap_evidence(evidence, policy, block_timestamp)` boundary returns a
+stable Outbe verdict backed by pinned native Intel QVL/QvE verification, with
+no local host inputs.
 
 **Includes:**
 
-- exact-pinned Ring-only `dcap-qvl 0.5.2`;
-- DER-to-QVL and exact signed-JSON adapter;
+- first, a narrow feasibility gate that selects one supported Intel DCAP
+  release, records package/source provenance and binary digests, and proves
+  QvE-mode plus pinned-TVL verification in the current Outbe/Gramine runtime;
+- exact-pinned native QVL, QvE, TVL and required dependency artifacts;
+- canonical DER/signed-JSON to native collateral adapter with no QPL/PCCS
+  substitution during consensus;
+- QvE report/identity verification inside the Outbe attestation enclave,
+  bound to request nonce, quote, result and supplemental data;
 - full outer/inner quote consumption and type-5 chain equality;
 - pinned Intel root, FMSPC/PCE ID, TCB evaluation number, platform/QE status,
   advisory and measurement enforcement;
@@ -76,8 +84,13 @@ stable Outbe verdict with no host inputs.
 - time boundary and strict status matrix pass;
 - no environment, filesystem, network, wall clock, optional verifier or
   upstream error string reaches consensus;
+- forged host results, replayed/tampered QvE reports and nonce/binding
+  mismatches reject;
 - byte-stable fixture verdicts pass across supported x86_64 validator builds;
-- Ring-only dependency tree contains no HTTP/report/RustCrypto/override path.
+- exact native versions and digests match the release manifest; a missing or
+  mismatched QVL, QvE, TVL or dependency fails closed;
+- no second pure-Rust production verifier or live collateral-fetch path enters
+  the consensus dependency tree.
 
 ## I2 — Initialize an enclave once and restrict quote generation to NodeHost
 
@@ -111,7 +124,8 @@ intent-bound evidence and create exactly one active leased binding.
 
 - validator node ID: EVM address plus consensus BLS public key;
 - node and enclave proof-of-possession signatures;
-- consensus QVL call, platform admission and exact measurement rule;
+- consensus-facing native QVL/QvE call, platform admission and exact
+  measurement rule;
 - append-only TeeRegistry V1 schema, views and bounded events;
 - exact `registerEnclave` gas and idempotent-current replay;
 - deterministic active-binding/readiness view for downstream consensus users.
@@ -128,7 +142,8 @@ intent-bound evidence and create exactly one active leased binding.
 ## I4 — Register a full-node enclave through the same policy
 
 **Outcome:** a full node binds its persistent Reth P2P key to one attested
-enclave using the same QVL, lease and registry semantics as a validator.
+enclave using the same native QVL/QvE, lease and registry semantics as a
+validator.
 
 **Includes:**
 
@@ -247,8 +262,8 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - Processor and Platform x86_64 verdict/benchmark matrix passes;
 - the slowest supported validator keeps full-block execution inside the
   consensus timing budget;
-- missing QVL, collateral or SGX support, including an unsupported
-  architecture, is deterministic rejection;
+- missing or mismatched QVL/QvE/TVL/native dependencies, collateral or SGX
+  support, including an unsupported architecture, is deterministic rejection;
 - pre-A0/legacy chain behavior remains covered and intentional.
 
 ## Explicit non-goals
@@ -260,6 +275,7 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - a continuous light client inside the enclave;
 - privacy-preserving/unlinkable hardware admission;
 - consensus membership/readiness and protected-transaction execution gating;
-- ARM TEE, aarch64 and multi-TEE portability in V1.
+- ARM TEE, aarch64 and multi-TEE portability in V1;
+- a second pure-Rust production DCAP verifier or dual-verifier consensus.
 
 Those topics require separate plans and cannot expand these issues implicitly.

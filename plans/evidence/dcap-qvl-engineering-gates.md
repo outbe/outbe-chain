@@ -4,33 +4,76 @@ Date: 2026-07-30
 
 Repository base: `d44bf85` (`main`)
 
+Native amendment base: `b31068d` (`main`)
+
 Host: `x86_64-unknown-linux-gnu`, Rust `1.96.0`
 
-This note records the throwaway prototype used to close decision-map questions
-#17 and #18. It is evidence for the selected design, not a substitute for the
-x86_64 real-hardware release gates listed below.
+This note records the throwaway prototype used to investigate decision-map
+questions #17 and #18 and the later native Intel amendment. It is engineering
+evidence, not a substitute for the x86_64 real-hardware release gates listed
+below.
 
-## Selected QVL profile
+## Selected production verifier boundary
+
+V1 follows the Secret Network-style native Intel boundary because every
+production validator and full node is required to run on x86_64 Intel SGX:
+
+- Intel native QVL runs in QvE mode over canonical, self-contained evidence
+  and an explicit consensus block timestamp;
+- the matching pinned TVL verifies the QvE report and identity inside the Outbe
+  attestation enclave;
+- an untrusted host `qv_result`, local PCCS response, cache entry or clock is
+  never consensus authority;
+- the Outbe wrapper enforces exact grammar, TCB Info schema v3, separate
+  Platform/QE policy, measurement policy and stable verdict codes over the same
+  authenticated bytes;
+- missing or mismatched QVL, QvE, TVL or native dependencies fail closed.
+
+I1 starts with a narrow native feasibility gate: select one supported Intel
+DCAP release, record exact package/source provenance and binary digests, and
+prove QvE-mode plus TVL verification in the current Outbe/Gramine runtime with
+one fixed real SGX vector. The documents intentionally do not invent a native
+version before that executable gate.
+
+The stable result must not contain QvE nonce/report bytes, addresses, native
+error strings or other run-specific data. Those are local verification
+artifacts; only the canonical Outbe verdict affects consensus.
+
+## Superseded pure-Rust prototype profile
 
 - Crate: exact `dcap-qvl = 0.5.2`
 - crates.io checksum:
   `92a14fb8954c867d6855e44d98eab18e769816357738406691ebe60d8fdd005d`
 - upstream source commit:
   `31a32a44de4cf68cb50c079e5bfd5348e4e6f4d5`
-- production features:
+- prototype features:
   `default-features = false`, `std`, `ring`, `default-x509`
-- excluded in production: `report`, HTTP/PCCS client, `rustcrypto`,
+- excluded from the prototype: `report`, HTTP/PCCS client, `rustcrypto`,
   `danger-allow-tcb-override`, language bindings and every fail-open path
 
-Ring is selected as the sole production backend. In the local differential
-run it produced the same complete reports as RustCrypto for the bundled SGX
-and TDX fixtures and was approximately twice as fast. Shipping only one
-backend removes feature-selected behavior from the consensus binary.
+The local differential run showed that Ring produced the same complete reports
+as RustCrypto for the bundled SGX and TDX fixtures and was approximately twice
+as fast. This profile is now retained only as comparative test evidence. It is
+not shipped as a second V1 verifier and does not define production behavior.
 
-`dcap-qvl` remains a cryptographic core, not the protocol authority. An Outbe
-wrapper must decode the canonical evidence, construct the in-memory QVL
-collateral deterministically, call the pinned verifier with the consensus block
-timestamp and map the outcome into stable Outbe verdict codes.
+## Secret Network and current Intel collateral evidence
+
+The inspected Secret Network `master` at
+`95d87aef4164cb3d056c3a364802552467ba394a` uses host Intel QVL plus
+enclave-side QvE report verification and admits only `OK` and
+`SW_HARDENING_NEEDED`. Outbe adopts that boundary with mandatory block time,
+canonical evidence, exact native artifact pins and explicit Platform/QE
+policy.
+
+Secret Network's saved 2021 fixture has SGX Quote v3 but TCB Info schema v2.
+That is historical collateral, not a hardware-version constraint: on
+2026-07-30 Intel PCS v4 returned signed TCB Info schema v3, evaluation number
+19, for the same FMSPC `00906ED50000`. Schema v3 therefore does not upgrade or
+repair hardware; it is Outbe's canonical collateral grammar. Actual admission
+still depends on the verified CPU SVN/PCE SVN match and resulting status.
+
+Reference:
+`https://api.trustedservices.intel.com/sgx/certification/v4/tcb?fmspc=00906ED50000`.
 
 ## Fixture results
 
@@ -63,14 +106,15 @@ does not weaken the lease margin.
 
 ## Required wrapper checks demonstrated by the prototype
 
-Pinned upstream QVL accepted both:
+The superseded pure-Rust prototype accepted both:
 
 - one byte appended after an otherwise complete quote;
 - one byte appended inside the declared quote authentication-data region after
   increasing that region's length.
 
-The prototype's exact SGX-v3 length grammar rejected both. Production must
-perform that strict check before QVL and must require:
+The prototype's exact SGX-v3 length grammar rejected both. The native
+production adapter must perform the same strict check before QVL and must
+require:
 
 - exact quote v3/SGX/P-256/Intel QE vendor/type-5 certification data;
 - complete consumption of both the outer quote and inner authentication data;
@@ -86,12 +130,12 @@ perform that strict check before QVL and must require:
 - exact policy measurement and pinned Intel root;
 - stable Outbe reject codes, never consensus-visible upstream error strings.
 
-The public `dcap-qvl` parsing APIs are sufficient for the adapter and the
-additional PCK-extension checks. A fork is not the default plan. If
-implementation exposes an unavoidable API gap, a minimal vendored patch needs
-a separate source-diff and conformance review.
+The native QVL aggregate result is necessary but not sufficient for Outbe's
+stricter policy. The wrapper parses the same QvE-authenticated signed documents
+to enforce schema v3 and separate Platform/QE status. It does not implement a
+second certificate/signature verifier.
 
-## Local timing and memory
+## Non-normative pure-Rust timing and memory
 
 Release build, 40 iterations:
 
@@ -135,7 +179,7 @@ therefore:
 Caps are checked from declared lengths before allocation, decoding, state
 access or cryptographic work. All sums and products use checked `u64`.
 
-The normative QVL formula remains:
+The normative verification-charge formula remains:
 
 ```text
 QVL_DCAP =
@@ -159,8 +203,11 @@ At the 896-KiB evidence cap and 64 rules:
 - combined `OST3` is `330,924,008`, leaving `169,075,992` of the bootstrap
   block for the other four mandatory system transactions.
 
-Batch-local collateral deduplication reduces encoded bytes only. QVL gas is
-charged for every participant's logical evidence dimensions.
+Batch-local collateral deduplication reduces encoded bytes only. Verification
+gas is charged for every participant's logical evidence dimensions. I1 and I9
+must benchmark the pinned native QVL/QvE path; if it cannot satisfy the
+documented block budgets, implementation stops on that evidence instead of
+silently changing the schedule or weakening verification.
 
 ## Release evidence still required by implementation
 
@@ -171,6 +218,9 @@ decisions:
 - current PCS fixtures with large real CRLs;
 - cap-minus-one/cap/cap-plus-one and allocation-before-decode tests;
 - byte-stable verdict vectors across supported x86_64 validator builds;
+- exact QVL/QvE/TVL/native dependency version and digest evidence;
+- forged-result, QvE-report tamper, nonce mismatch and missing-native-stack
+  rejection vectors;
 - valid, invalid-early, invalid-late and dense 32-validator benchmarks on the
   slowest supported x86_64 validator class;
 - fail-not-skip SGX/DCAP end-to-end release CI.
