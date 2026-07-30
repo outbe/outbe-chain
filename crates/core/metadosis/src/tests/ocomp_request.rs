@@ -441,7 +441,9 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 #[test]
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider);
+    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
+    // it is armed mid-test so the later day becomes eligible.
+    let fixture = prepare_two_ready_days_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
         let first_ctx = BlockRuntimeContext::new(
@@ -480,6 +482,10 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
                 .worldwide_day,
             fixture.later_wwd
         );
+
+        // Arm Oracle so the later day is eligible on the next block; the first
+        // day's deferral must not have starved it.
+        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let next_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
@@ -532,7 +538,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 #[test]
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider);
+    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
         for (block_number, block_time) in [
@@ -975,7 +981,10 @@ fn prepare_request_fixture(
     }
 }
 
-fn prepare_two_ready_days_fixture(provider: &mut HashMapStorageProvider) -> TwoReadyDaysFixture {
+fn prepare_two_ready_days_fixture(
+    provider: &mut HashMapStorageProvider,
+    oracle_ready: bool,
+) -> TwoReadyDaysFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let first_wwd = outbe_common::WorldwideDay::new(2026_0710);
@@ -990,7 +999,11 @@ fn prepare_two_ready_days_fixture(provider: &mut HashMapStorageProvider) -> TwoR
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        // When false the Oracle profile is left un-armed so the terminal request
+        // defers with OracleProfileNotReady (arm it mid-test to make a day eligible).
+        if oracle_ready {
+            outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
