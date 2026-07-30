@@ -125,6 +125,24 @@ pub fn dispatch(
                 getEpochStartBlock(_) => metadata::<IValidatorSet::getEpochStartBlockCall>(|| {
                     vs.epoch_start_block.read()
                 }),
+                setDelegate(c) => mutate_void(c, caller, |sender, c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.set_delegate(sender, role, c.delegate)
+                }),
+                revokeDelegate(c) => mutate_void(c, caller, |sender, c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.revoke_delegate(sender, role)
+                }),
+                getDelegate(c) => view(c, |c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.get_delegate(c.validator, role)
+                }),
+                resolveValidator(c) => view(c, |c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    Ok(vs
+                        .resolve_validator_for_role(c.signer, role)?
+                        .unwrap_or(Address::ZERO))
+                }),
                 registerValidator(c) => mutate_void(c, caller, |sender, c| {
                     if c.consensusPubkey.len() != 48 {
                         return Err(PrecompileError::Revert(

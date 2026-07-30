@@ -43,6 +43,13 @@ struct FinalizedTarget {
     hash: B256,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FinalizedTargetDisposition {
+    Attempt,
+    Unchanged,
+    Rejected,
+}
+
 impl FinalizedTarget {
     const fn new(number: u64, hash: B256) -> Self {
         Self { number, hash }
@@ -765,17 +772,19 @@ where
                                 continue;
                             }
                         }
-                        if record_or_publish_finalized_target(
+                        match record_or_publish_finalized_target(
                             &mut latest_target,
                             &mut pending_target,
                             target,
                             &readiness_publisher,
                             &projection_exit,
                         ) {
-                            can_start_attempt = true;
-                        } else {
-                            can_start_attempt = false;
-                            finality_stalled = true;
+                            FinalizedTargetDisposition::Attempt => can_start_attempt = true,
+                            FinalizedTargetDisposition::Unchanged => can_start_attempt = false,
+                            FinalizedTargetDisposition::Rejected => {
+                                can_start_attempt = false;
+                                finality_stalled = true;
+                            }
                         }
                     }
                     None => {
@@ -1014,17 +1023,19 @@ where
                                     continue;
                                 }
                             }
-                            if record_or_publish_finalized_target(
+                            match record_or_publish_finalized_target(
                                 &mut latest_target,
                                 &mut pending_target,
                                 target,
                                 &readiness_publisher,
                                 &projection_exit,
                             ) {
-                                can_start_attempt = true;
-                            } else {
-                                can_start_attempt = false;
-                                finality_stalled = true;
+                                FinalizedTargetDisposition::Attempt => can_start_attempt = true,
+                                FinalizedTargetDisposition::Unchanged => can_start_attempt = false,
+                                FinalizedTargetDisposition::Rejected => {
+                                    can_start_attempt = false;
+                                    finality_stalled = true;
+                                }
                             }
                         }
                         Ok(None) => {}
@@ -1192,10 +1203,7 @@ fn record_finalized_target(
                 incoming.hash
             ))
         }
-        Some(current) if incoming == current => {
-            *pending = Some(incoming);
-            Ok(true)
-        }
+        Some(current) if incoming == current => Ok(pending.is_some()),
         _ => {
             *latest = Some(incoming);
             *pending = Some(incoming);
@@ -1236,9 +1244,10 @@ fn record_or_publish_finalized_target(
     incoming: FinalizedTarget,
     publisher: &ProjectionReadinessPublisher,
     exit: &tokio::sync::mpsc::UnboundedSender<ProjectionExit>,
-) -> bool {
+) -> FinalizedTargetDisposition {
     match record_finalized_target(latest, pending, incoming) {
-        Ok(should_attempt) => should_attempt,
+        Ok(true) => FinalizedTargetDisposition::Attempt,
+        Ok(false) => FinalizedTargetDisposition::Unchanged,
         Err(error) => {
             error!(%error, "rejected unsafe finalized projection target");
             publish_fatal(
@@ -1247,7 +1256,7 @@ fn record_or_publish_finalized_target(
                 ProjectionFailureClass::CheckpointMismatch,
                 error.to_string(),
             );
-            false
+            FinalizedTargetDisposition::Rejected
         }
     }
 }
@@ -1679,6 +1688,22 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_finalized_target_is_retryable_only_while_pending() {
+        let current = FinalizedTarget::new(10, B256::repeat_byte(1));
+        let mut latest = Some(current);
+        let mut pending = Some(current);
+
+        assert!(record_finalized_target(&mut latest, &mut pending, current).unwrap());
+        assert_eq!(pending, Some(current));
+
+        pending = None;
+        assert!(!record_finalized_target(&mut latest, &mut pending, current).unwrap());
+
+        assert_eq!(latest, Some(current));
+        assert_eq!(pending, None);
+    }
+
+    #[test]
     fn finalized_target_conflict_publishes_fatal_exit_on_every_ingress_path() {
         let current = FinalizedTarget::new(10, B256::repeat_byte(1));
         let mut latest = Some(current);
@@ -1693,13 +1718,16 @@ mod tests {
         );
         let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        assert!(!record_or_publish_finalized_target(
-            &mut latest,
-            &mut pending,
-            FinalizedTarget::new(10, B256::repeat_byte(2)),
-            &publisher,
-            &exit_tx,
-        ));
+        assert_eq!(
+            record_or_publish_finalized_target(
+                &mut latest,
+                &mut pending,
+                FinalizedTarget::new(10, B256::repeat_byte(2)),
+                &publisher,
+                &exit_tx,
+            ),
+            super::FinalizedTargetDisposition::Rejected
+        );
         assert!(matches!(
             readiness.current(),
             outbe_offchain_data::ProjectionStatus::Fatal { error, .. }

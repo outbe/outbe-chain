@@ -9,9 +9,9 @@ Type=simple
 User=outbe-ocomp-export
 Group=outbe-ocomp-artifacts
 UMask=0027
-EnvironmentFile=/etc/outbe/outbe-ocomp.env
-EnvironmentFile=/etc/outbe/outbe-ocomp-export.env
-ExecStart=/usr/local/bin/outbe-ocomp snapshot-exporter
+EnvironmentFile=/opt/outbe-chain/ocomp.env
+EnvironmentFile=/opt/outbe-chain/ocomp-export.env
+ExecStart=/opt/outbe-chain/outbe-ocomp snapshot-exporter
 Restart=on-failure
 RestartSec=5
 Slice=outbe-ocomp.slice
@@ -29,10 +29,10 @@ CapabilityBoundingSet=
 RestrictSUIDSGID=yes
 LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadOnlyPaths=/var/lib/outbe/ce
-ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/objects
-ReadWritePaths=/var/lib/outbe-ocomp/cas-v1/staging/exporter
-ReadWritePaths=/var/lib/outbe-ocomp/exporter-v1
+ReadOnlyPaths=/opt/outbe-chain/ocomp/ce
+ReadWritePaths=/opt/outbe-chain/ocomp/data/cas-v1/objects
+ReadWritePaths=/opt/outbe-chain/ocomp/data/cas-v1/staging/exporter
+ReadWritePaths=/opt/outbe-chain/ocomp/data/exporter-v1
 
 [Install]
 WantedBy=outbe-ocomp.target

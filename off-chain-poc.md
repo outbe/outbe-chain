@@ -216,7 +216,7 @@ are not PoC deliverables.
 | execution | each of four validator domains executes the complete job through bounded work |
 | parallelism | deterministic units and fixed reduction, exercised with 1, 2 and 4 workers |
 | correctness | exactly three distinct eligible on-chain vote slots over one canonical `ResultDigest` |
-| keys | separate OCOMP key per validator; the supervisor never receives OCOMP or validator EVM private keys |
+| keys | separate node-owned OCOMP attestation key and supervisor-owned role-delegated OCOMP EVM key per validator domain; neither process receives the other's key |
 | evidence | four bounded vote slots plus consensus-owned finality binding and one canonical full result stored at quorum |
 | vote submission | Supervisor owns prepare/submit/inclusion/finality/reorg workflow; it uses canonical `latest` nonce plus the frozen gas envelope, never `eth_estimateGas`/pending execution, and rebroadcasts exact journaled bytes; exact-selector validator ZeroFee waives fee, while OCOMP alone validates protocol |
 | quorum apply | the third matching public full-result vote applies inside its normal block execution |
@@ -1214,16 +1214,18 @@ relay or collector.
 The PoC Supervisor reads the validator account nonce from canonical `latest`
 state and uses the frozen bounded gas envelope. It does not call
 `eth_estimateGas` or request a `pending` block build. Its single-writer journal
-retains the exact node-signed raw transaction and nonce, so retry/reorg
+retains the exact locally signed raw transaction and nonce, so retry/reorg
 rebroadcast does not reconstruct or re-sign the transaction.
 
-The inner OCOMP signature and outer EVM transaction signature remain
-node-owned; the Supervisor calls restricted signing seams and never receives
-private keys. The outer transaction is fee-free for the validator through a
-dedicated exact-selector, zero-value, bounded-envelope ZeroFee hook modelled on
-Oracle. That hook decides only the fee waiver. The OCOMP on-chain module alone
-checks `VOTING_OPEN`, JobId, height, committee, key epoch, bounded canonical
-result, signature, slot and equivocation rules.
+The inner OCOMP signature remains node-owned. The Supervisor receives only that
+canonical sign-once attestation, constructs the fixed outer EIP-1559 envelope
+and signs it with its own role-delegated OCOMP EVM key. The node never loads or
+exposes that outer transaction key. The outer transaction is fee-free for the
+represented validator through a dedicated exact-selector, zero-value,
+bounded-envelope ZeroFee hook modelled on Oracle. That hook resolves the
+role-scoped sender and decides only the fee waiver. The OCOMP on-chain module
+alone checks `VOTING_OPEN`, JobId, height, committee, key epoch, bounded
+canonical result, signature, slot and equivocation rules.
 
 Consensus owns a separate bounded `OcompVoteAccountabilityV1` keyed by `JobId`
 with four fixed `ResultVoteSlotV1` records:
@@ -1802,8 +1804,8 @@ This is an inventory for the next planning step, not a task breakdown.
 - separate PoC OCOMP keys and proof-of-possession registration;
 - `OcompAttestationGate`;
 - durable sign-once journal;
-- Supervisor-owned `ResultVoteV1` submission/reorg journal, restricted
-  node-owned outer EVM signing seam and exact-selector validator ZeroFee hook;
+- Supervisor-owned `ResultVoteV1` submission/reorg journal, local
+  role-delegated outer EVM signer and exact-selector validator ZeroFee hook;
 - four fixed consensus slots in separate accountability state;
 - deterministic q=3 tally, fourth-vote window and accountability summary;
 - q-forming full-result application; no separate activator.

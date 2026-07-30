@@ -79,6 +79,11 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///       prune ring bounding the participation guard (slot 30).
 ///   46: finalized_participation_ring_seq — u64
 ///       monotonic index counter for slot 45.
+///   47: committee_snapshot_vrf_public_polynomial_hash — mapping(B256 => B256)
+///   48: delegate_by_validator_role — mapping(address => mapping(uint8 => address))
+///       explicit operational key selected by a validator for one protocol role.
+///   49: validator_by_role_delegate — mapping(uint8 => mapping(address => address))
+///       reverse role-scoped lookup used by protocol consumers and ZeroFee.
 #[contract(addr = VALIDATOR_SET_ADDRESS)]
 pub struct ValidatorSet {
     // Config (slots 0-4)
@@ -214,4 +219,13 @@ pub struct ValidatorSet {
     /// derive any signer's threshold pubkey to verify an invalid-seed-partial
     /// slash offense. `B256::ZERO` means no full polynomial was available.
     pub committee_snapshot_vrf_public_polynomial_hash: Mapping<B256, B256>,
+
+    /// Slot 48 — validator-owned operational-key assignment, keyed first by the
+    /// validator identity and then by a stable protocol role id.
+    pub delegate_by_validator_role: Mapping<Address, Mapping<u8, Address>>,
+
+    /// Slot 49 — reverse role-scoped operational-key lookup. The same delegate
+    /// may serve different roles, but a `(role, delegate)` pair resolves to at
+    /// most one validator.
+    pub validator_by_role_delegate: Mapping<u8, Mapping<Address, Address>>,
 }

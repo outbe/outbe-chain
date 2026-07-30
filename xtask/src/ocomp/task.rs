@@ -2012,6 +2012,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &checked_capacity,
                 &base.join("genesis.json"),
                 &base.join("validators.json"),
+                super::finalize::FinalArtifactOverrides::default(),
                 &checked_artifacts,
                 true,
             )?;
@@ -2031,6 +2032,7 @@ pub fn run(repository_root: &Path, task: &str) -> Result<()> {
                 &generated_capacity,
                 &base.join("genesis.json"),
                 &base.join("validators.json"),
+                super::finalize::FinalArtifactOverrides::default(),
                 &generated_artifacts,
                 false,
             )?;

@@ -188,9 +188,14 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         oracle.set_exchange_rate(Address::ZERO, base, quote, *rate, 0, 0)?;
     }
 
-    // Record feeder delegations.
+    // Record role-scoped feeder delegations in ValidatorSet.
+    let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     for (validator, feeder) in &config.feeder_delegations {
-        oracle.feeder_delegation.write(validator, *feeder)?;
+        validator_set.set_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            *feeder,
+        )?;
     }
 
     // Import settlement currencies.
@@ -319,10 +324,14 @@ pub fn export_genesis(
         pairs.push((base, quote));
     }
 
-    // Export feeder delegations.
+    // Export authoritative role-scoped feeder delegations.
+    let validator_set = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     let mut feeder_delegations = Vec::new();
     for validator in validators {
-        let feeder = oracle.feeder_delegation.read(validator)?;
+        let feeder = validator_set.get_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )?;
         if feeder != Address::ZERO {
             feeder_delegations.push((*validator, feeder));
         }
@@ -897,49 +906,38 @@ impl OracleContract<'_> {
 
     /// Returns the feeder address for a validator. Address::ZERO means self-delegation.
     pub fn get_feeder(&self, validator: &Address) -> Result<Address> {
-        self.feeder_delegation.read(validator)
+        let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+        vs.get_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )
     }
 
     /// Delegates feeder consent from validator to feeder.
     pub fn delegate_feeder(&mut self, validator: Address, feeder: Address) -> Result<()> {
-        // Verify caller is a registered validator (cross-call)
-        let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
-        let info = vs.get_validator(validator)?;
-        if info.is_none() {
-            return Err(PrecompileError::Revert("not a registered validator".into()));
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+        if feeder.is_zero() {
+            return vs.revoke_delegate(
+                validator,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            );
         }
-
-        self.feeder_delegation.write(&validator, feeder)?;
-        Ok(())
+        vs.set_delegate(
+            validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            feeder,
+        )
     }
 
     /// Resolves which validator a feeder is acting for.
     /// Returns the validator address if the caller is a valid feeder.
     pub fn resolve_validator_for_feeder(&self, caller: Address) -> Result<Address> {
         let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
-        let all = vs.get_all_validators()?;
-
-        // Check if caller is directly a validator (self-delegation)
-        for v in &all {
-            if v.validator_address == caller {
-                let delegated = self.feeder_delegation.read(&caller)?;
-                if delegated == Address::ZERO || delegated == caller {
-                    return Ok(caller);
-                }
-            }
-        }
-
-        // Check if caller is a delegated feeder for any validator
-        for v in &all {
-            let delegated = self.feeder_delegation.read(&v.validator_address)?;
-            if delegated == caller {
-                return Ok(v.validator_address);
-            }
-        }
-
-        Err(PrecompileError::Revert(
-            "caller is not a validator or delegated feeder".into(),
-        ))
+        vs.resolve_validator_for_role(
+            caller,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )?
+        .ok_or_else(|| PrecompileError::Revert("caller is not an active ORACLE signer".into()))
     }
 
     // -----------------------------------------------------------------------
@@ -950,7 +948,11 @@ impl OracleContract<'_> {
     ///
     /// The caller must be the validator itself or a delegated feeder.
     /// Each tuple contains (pair_hash, rate, volume) for one pair.
-    pub fn submit_vote(&mut self, caller: Address, tuples: &[(B256, U256, U256)]) -> Result<()> {
+    pub fn submit_vote(
+        &mut self,
+        caller: Address,
+        tuples: &[(B256, U256, U256)],
+    ) -> Result<Address> {
         let validator = self.resolve_validator_for_feeder(caller)?;
 
         // Validate tuple count: cannot exceed active pair count
@@ -1012,7 +1014,7 @@ impl OracleContract<'_> {
         // Add to voter list for tally iteration
         self.voter_list.push(validator)?;
 
-        Ok(())
+        Ok(validator)
     }
 
     /// Clears all votes and resets the voter list. Called after tally.

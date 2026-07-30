@@ -370,10 +370,10 @@ pub fn dispatch(
                             (hash, t.exchangeRate, t.volume)
                         })
                         .collect();
-                    oracle.submit_vote(sender, &tuples)?;
+                    let validator = oracle.submit_vote(sender, &tuples)?;
                     // Emit event after successful vote
                     let event = IOracle::VoteSubmitted {
-                        validator: sender,
+                        validator,
                         tupleCount: tuple_count,
                     };
                     let _ = oracle

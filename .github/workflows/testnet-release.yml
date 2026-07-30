@@ -1,6 +1,11 @@
 name: testnet SGX release
 
 on:
+  # Pushing an immutable testnet tag triggers this release, but indirectly: the
+  # `dispatch-testnet-release` job in release.yml invokes this workflow with
+  # `--ref main`. The workflow ref must stay `refs/heads/main` because the
+  # published Sigstore certificate identity is pinned to it, both here and in
+  # xtask/src/release/sgx.rs + release/release-manifest-v1.schema.json.
   workflow_dispatch:
     inputs:
       release_tag:
@@ -110,6 +115,25 @@ jobs:
             -C "${RUNNER_TEMP}/unsigned-a" .
           cp "${RUNNER_TEMP}/elf-a/release-manifest.json" \
             "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json"
+
+      - name: Package the reproducible binaries and deployment assets
+        run: |
+          set -euo pipefail
+          epoch="$(jq -r .build.source_date_epoch "${RUNNER_TEMP}/elf-a/release-manifest.json")"
+          # Every artifact of release/reproducible-elf-build-v1.json, including
+          # outbe-ocomp, plus the SHA256SUMS and manifest that bind them.
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
+            -C "${RUNNER_TEMP}/elf-a" .
+          tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
+            | grep -qx './bin/outbe-ocomp'
+          # OCOMP install script and unit files, so an operator can deploy the
+          # stack from the release alone.
+          tar --sort=name --format=gnu --mtime="@${epoch}" \
+            --owner=0 --group=0 --numeric-owner \
+            -cf "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar" \
+            ocomp.sh ocomp.env.example deploy/systemd
 
       - name: Upload exact unsigned release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -503,6 +527,8 @@ jobs:
           assets=(
             "${RUNNER_TEMP}/final/ReleaseManifest.json"
             "${RUNNER_TEMP}/final/ReleaseManifest.sigstore.json"
+            "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar"
+            "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar"
             "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar"
             "${RUNNER_TEMP}/published/outbe-tee-enclave.spdx.json"
             "${RUNNER_TEMP}/published/oci-evidence.json"

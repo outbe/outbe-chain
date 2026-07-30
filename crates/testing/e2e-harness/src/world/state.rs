@@ -170,7 +170,7 @@ pub struct FixtureState {
     pub ocomp_non_quorum_changed_binding_reverted: Option<bool>,
     pub ocomp_non_quorum_state_unchanged: Option<bool>,
     pub ocomp_expired_without_nod: Option<bool>,
-    /// A node-signed transaction held by the deadline scenario until the
+    /// A locally signed OCOMP transaction held by the deadline scenario until the
     /// exclusive boundary. Raw bytes are never published as scenario evidence.
     pub ocomp_held_late_vote_raw: Option<Vec<u8>>,
     pub ocomp_held_late_vote_hash: Option<alloy_primitives::B256>,
