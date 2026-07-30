@@ -2,9 +2,10 @@
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
-    DcapEvidenceV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-    RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
+    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
+    DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
+    QvlTcbStatusV1, RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
+    TeeRegistryGasScheduleV1,
 };
 use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
 use serde::Deserialize;
@@ -40,6 +41,7 @@ fn embedded_pck_chain() -> Vec<u8> {
 }
 
 fn policy() -> TeePolicyV1 {
+    let measurements = outbe_tee::quote::parse_quote_measurements(QUOTE).unwrap();
     let intel_root_der_hash = B256::from_slice(
         &hex::decode("44a0196b2b99f889b8e149e95b807a350e7424964399e885a7cbb8ccfab674d3").unwrap(),
     );
@@ -70,10 +72,10 @@ fn policy() -> TeePolicyV1 {
         resource_schedule_hash: B256::repeat_byte(0x44),
         measurement_rules: vec![TeeMeasurementRuleV1 {
             enclave_profile: EnclaveProfile::Validator,
-            mrenclave: B256::repeat_byte(0x55),
-            mrsigner: B256::repeat_byte(0x66),
-            isv_prod_id: 0,
-            minimum_isv_svn: 0,
+            mrenclave: B256::from(measurements.mrenclave),
+            mrsigner: B256::from(measurements.mrsigner),
+            isv_prod_id: measurements.isv_prod_id,
+            minimum_isv_svn: measurements.isv_svn,
             admit_from_height: 1,
             admit_until_height_exclusive: 100,
         }],
@@ -240,6 +242,19 @@ fn semantically_equivalent_noncanonical_pem_collateral_is_rejected() {
 }
 
 #[test]
+fn collateral_certificate_counts_are_exact() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    let duplicate = evidence.components[2].bytes.clone();
+    evidence.components[2].bytes.extend_from_slice(&duplicate);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::CollateralNonCanonical)
+    );
+}
+
+#[test]
 fn signed_json_wrapper_with_equivalent_whitespace_is_rejected() {
     let policy = policy();
     let mut evidence = evidence_with_synthetic_intent_binding(&policy);
@@ -247,6 +262,21 @@ fn signed_json_wrapper_with_equivalent_whitespace_is_rejected() {
 
     assert_eq!(
         verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::CollateralNonCanonical)
+    );
+}
+
+#[test]
+fn duplicate_keys_anywhere_in_signed_json_are_rejected() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    let tcb_info = String::from_utf8(evidence.components[4].bytes.clone()).unwrap();
+    evidence.components[4].bytes = tcb_info
+        .replace("\"tcbLevels\":", "\"tcbLevels\":[],\"tcbLevels\":")
+        .into_bytes();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
         Err(DcapRejectCodeV1::CollateralNonCanonical)
     );
 }
@@ -305,5 +335,70 @@ fn both_signed_document_evaluation_numbers_must_meet_policy() {
     assert_eq!(
         verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
         Err(DcapRejectCodeV1::TcbEvaluationNumberTooLow)
+    );
+}
+
+#[test]
+fn signed_tcb_fmspc_must_match_the_verified_pck_certificate() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    let tcb_info = String::from_utf8(evidence.components[4].bytes.clone()).unwrap();
+    evidence.components[4].bytes = tcb_info
+        .replace("\"fmspc\":\"00A067110000\"", "\"fmspc\":\"00A067110001\"")
+        .into_bytes();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::PlatformIdentityMismatch)
+    );
+}
+
+#[test]
+fn signed_tcb_pce_id_must_match_the_verified_pck_certificate() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    let tcb_info = String::from_utf8(evidence.components[4].bytes.clone()).unwrap();
+    evidence.components[4].bytes = tcb_info
+        .replace("\"pceId\":\"0000\"", "\"pceId\":\"0001\"")
+        .into_bytes();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::PlatformIdentityMismatch)
+    );
+}
+
+#[test]
+fn quote_measurements_must_match_an_active_policy_rule_for_the_profile() {
+    let mut policy = policy();
+    policy.measurement_rules[0].mrenclave = B256::repeat_byte(0x55);
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::MeasurementRejected)
+    );
+}
+
+#[test]
+fn consensus_qvl_precharge_matches_the_normative_formula_exactly() {
+    let policy = policy();
+    let evidence = evidence(&policy);
+    let evidence_len = AttestationEvidenceV1::Dcap(evidence)
+        .encode_canonical()
+        .unwrap()
+        .len();
+    let expected = 1_500_000
+        + 6 * u64::try_from(evidence_len).unwrap()
+        + 120_000 * 9
+        + 180_000 * 2
+        + 160_000 * 2
+        + 10_000 * u64::try_from(policy.measurement_rules.len()).unwrap();
+
+    assert_eq!(
+        TeeRegistryGasScheduleV1::normative()
+            .qvl_dcap(evidence_len, policy.measurement_rules.len())
+            .unwrap(),
+        expected
     );
 }
