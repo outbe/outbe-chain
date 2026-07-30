@@ -112,8 +112,32 @@ pub mod test_enclave {
 
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
         STATE_KEY.with(|k| {
-            k.borrow()
-                .map(|key| outbe_tee_enclave::gratis::apply_op(&key, req))
+            k.borrow().map(|key| {
+                let mut result = outbe_tee_enclave::gratis::apply_op(&key, req);
+                // Mirror the real transport's combined op: on success, apply the
+                // co-located fidelity cohort section under the INDEPENDENT
+                // fidelity key (the shared dev fidelity identity, so a folded
+                // mint writes a blob the fidelity stand-in can later read).
+                if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
+                    (&result.status, &req.fidelity)
+                {
+                    let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
+                        outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
+                        outbe_tee_enclave::dev::fidelity_chain(),
+                        DEV_EPOCH,
+                    )
+                    .expect("derive dev fidelity state key");
+                    let outcome = outbe_tee_enclave::fidelity::apply_cohort_section(
+                        &fidelity_key,
+                        req.account,
+                        req.amount,
+                        section,
+                    )
+                    .expect("in-process fidelity cohort section");
+                    result.fidelity = Some(outcome);
+                }
+                result
+            })
         })
     }
 }

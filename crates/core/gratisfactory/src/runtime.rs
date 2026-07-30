@@ -3,17 +3,18 @@
 //! Bridges the confidential Gratis token (`outbe_gratis::api`) and the Fidelity
 //! ledger. `pledge_gratis`/`unpledge_gratis` move gratis into/out of the credis
 //! escrow; `mine`/`mine_coen` own the mint/burn plus Fidelity cohort bookkeeping.
-//! `mine` wraps `outbe_gratis::api::mine` and records the acquisition cohort
-//! (`cohort_in`); `mine_coen` wraps `outbe_gratis::api::burn`, records the sale
-//! cohort (`cohort_out`), and mints native COEN 1:1. `mine_from_promis` burns
-//! public promis and mints the matching Gratis, recording a fresh acquisition
-//! cohort (promis itself is fidelity-neutral).
+//! The Fidelity cohort op rides INSIDE the gratis enclave round-trip (no extra
+//! trip): `mine` folds an acquisition (`In`), `mine_coen` a sale (`Out`), and
+//! `pledge_gratis` a read-only league `Probe` for the eligibility gate. The
+//! factory persists the returned fidelity outcome. `mine_from_promis` burns
+//! public promis and reuses `mine` (promis itself is fidelity-neutral).
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
+use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
@@ -29,14 +30,17 @@ pub fn pledge_gratis(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<B256> {
-    {
-        let league = outbe_fidelity::api::league(storage.clone(), caller)?;
-        // todo implement correct fidelity check
-        if league == u16::MAX {
-            return Err(GratisFactoryError::FidelityNotEligible.into());
-        }
+    // Fold a read-only league probe into the pledge round-trip (no separate
+    // fidelity call): the pledge op returns the caller's current league.
+    let now = storage.timestamp()?.to::<u64>();
+    let section =
+        outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
+    let (handle, outcome) = gratis::pledge_with_fidelity(storage, caller, amount, auth, section)?;
+    // todo implement correct fidelity eligibility check on `outcome.league`
+    if outcome.league == u16::MAX {
+        return Err(GratisFactoryError::FidelityNotEligible.into());
     }
-    gratis::pledge(storage, caller, amount, auth)
+    Ok(handle)
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
@@ -59,11 +63,13 @@ pub fn mint(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    gratis::mint(storage.clone(), account, amount, auth)?;
-
+    // Fold the acquisition cohort into the gratis mint round-trip; persist the
+    // returned fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
-    outbe_fidelity::api::cohort_in(storage.clone(), account, amount, now)?;
-
+    let section =
+        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::In, now)?;
+    let outcome = gratis::mint_with_fidelity(storage.clone(), account, amount, auth, section)?;
+    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
     Ok(())
 }
 
@@ -94,10 +100,13 @@ pub fn mine_coen(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::burn(storage.clone(), account, amount, auth)?;
-
+    // Fold the sale cohort into the gratis burn round-trip; persist the returned
+    // fidelity blob.
     let now = storage.timestamp()?.to::<u64>();
-    outbe_fidelity::api::cohort_out(storage.clone(), account, amount, now)?;
+    let section =
+        outbe_fidelity::api::cohort_section(storage.clone(), account, FidelityCohortOp::Out, now)?;
+    let outcome = gratis::burn_with_fidelity(storage.clone(), account, amount, auth, section)?;
+    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)?;
 
     // Mint native COEN to the seller 1:1 against the burned gratis.
     storage.increase_balance(account, amount)?;

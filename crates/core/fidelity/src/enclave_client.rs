@@ -170,16 +170,13 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
-    use alloy_primitives::{B256, U256};
+    use alloy_primitives::B256;
     use std::cell::RefCell;
 
     thread_local! {
         static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
     }
 
-    /// Fixed dev group signature + epoch, so the derived state key (and thus
-    /// every account's view key) is deterministic across a test process.
-    const DEV_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
     const DEV_EPOCH: u64 = 0;
 
     /// Chain id the in-process enclave binds. Query auth is chain-scoped, so the
@@ -187,18 +184,23 @@ pub mod test_enclave {
     /// `storage.chain_id()` — tests that exercise the query path build their
     /// storage with this id and sign over [`dev_chain`]. Cohort/snapshot ops do
     /// not verify chain id, so downstream crates may use any storage chain id.
-    pub const DEV_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+    ///
+    /// The group sig + chain are the SHARED dev fidelity identity
+    /// ([`outbe_tee_enclave::dev`]): the gratis stand-in derives the same
+    /// fidelity key when it applies a folded cohort section, so a folded mint and
+    /// a standalone snapshot agree.
+    pub const DEV_CHAIN_ID: u64 = outbe_tee_enclave::dev::FIDELITY_CHAIN_ID;
 
     /// The resident chain id as a `B256`, matching the runtime's
     /// `B256::from(U256::from(storage.chain_id()))` encoding.
     pub fn dev_chain() -> B256 {
-        B256::from(U256::from(DEV_CHAIN_ID))
+        outbe_tee_enclave::dev::fidelity_chain()
     }
 
     /// Install the in-process enclave for the current thread.
     pub fn install() {
         let key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
-            DEV_GROUP_SIG,
+            outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
             dev_chain(),
             DEV_EPOCH,
         )

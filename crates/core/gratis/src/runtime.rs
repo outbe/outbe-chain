@@ -19,11 +19,22 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::GRATIS_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth};
+use outbe_tee::protocol::{
+    FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
+    GratisOpStatus, ModifyAuth,
+};
 
 use crate::enclave_client::apply_gratis_op;
 use crate::precompile::IGratis;
 use crate::schema::Gratis;
+
+/// A co-located fidelity section was sent, so the enclave must return its
+/// outcome; a missing one is an enclave/transport fault.
+fn require_fidelity_outcome(outcome: Option<FidelityOpOutcome>) -> Result<FidelityOpOutcome> {
+    outcome.ok_or_else(|| {
+        PrecompileError::Fatal("enclave dropped the fidelity section outcome".to_string())
+    })
+}
 
 /// The chain id the enclave binds a modify-auth to, as a `B256` (host and client
 /// must agree on this encoding). The account's modify key is already chain-bound
@@ -97,18 +108,21 @@ fn write_account_blobs(
     Ok(())
 }
 
-/// Mint `amount` gratis to `caller` (owner-authorized).
-pub(crate) fn mint(
+/// Mint `amount` gratis to `caller` (owner-authorized), optionally carrying a
+/// co-located fidelity cohort section applied in the SAME enclave round-trip.
+fn mint_impl(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<()> {
+    fidelity: Option<FidelityOpSection>,
+) -> Result<Option<FidelityOpOutcome>> {
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
     let mut req = base_request(GratisOp::Mint, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    req.fidelity = fidelity;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -126,21 +140,46 @@ pub(crate) fn mint(
             newTotalSupply: new_supply,
         }),
     )?;
-    Ok(())
+    Ok(result.fidelity)
 }
 
-/// Burn `amount` gratis from `caller` (owner-authorized). Returns remaining supply.
-pub(crate) fn burn(
+/// Mint `amount` gratis to `caller` (owner-authorized).
+pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<U256> {
+) -> Result<()> {
+    mint_impl(storage, caller, amount, auth, None).map(|_| ())
+}
+
+/// Mint gratis and apply a co-located fidelity cohort acquisition in one
+/// enclave round-trip; returns the fidelity outcome for the caller to persist.
+pub(crate) fn mint_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    require_fidelity_outcome(mint_impl(storage, caller, amount, auth, Some(fidelity))?)
+}
+
+/// Burn `amount` gratis from `caller` (owner-authorized), optionally carrying a
+/// co-located fidelity cohort section. Returns remaining supply + the outcome.
+fn burn_impl(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: Option<FidelityOpSection>,
+) -> Result<(U256, Option<FidelityOpOutcome>)> {
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
     let mut req = base_request(GratisOp::Burn, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    req.fidelity = fidelity;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -158,24 +197,48 @@ pub(crate) fn burn(
             remainingSupply: remaining,
         }),
     )?;
-    Ok(remaining)
+    Ok((remaining, result.fidelity))
+}
+
+/// Burn `amount` gratis from `caller` (owner-authorized). Returns remaining supply.
+pub(crate) fn burn(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+) -> Result<U256> {
+    Ok(burn_impl(storage, caller, amount, auth, None)?.0)
+}
+
+/// Burn gratis and apply a co-located fidelity cohort sale in one enclave
+/// round-trip; returns the fidelity outcome for the caller to persist.
+pub(crate) fn burn_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?.1)
 }
 
 /// Lock `amount` of `caller`'s balance into a new pending `PledgeLockTicket`. The
 /// amount leaves the liquid balance but is NOT yet credited to the pledged ledger
 /// (that happens at `consume_pledge`). Returns the pledge handle the CCA later
 /// presents at `requestCredis`.
-pub(crate) fn pledge(
+fn pledge_impl(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
-) -> Result<B256> {
+    fidelity: Option<FidelityOpSection>,
+) -> Result<(B256, Option<FidelityOpOutcome>)> {
     let gratis = Gratis::new(storage.clone());
     check_op_nonce(&gratis, caller, auth.op_nonce)?;
     let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
     req.current_balance = gratis.balance_ct_of(caller)?;
     req.modify_auth = auth;
+    req.fidelity = fidelity;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, caller, &result)?;
@@ -194,7 +257,30 @@ pub(crate) fn pledge(
             totalPledged: total_pledged,
         }),
     )?;
-    Ok(result.pledge_handle)
+    Ok((result.pledge_handle, result.fidelity))
+}
+
+pub(crate) fn pledge(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+) -> Result<B256> {
+    Ok(pledge_impl(storage, caller, amount, auth, None)?.0)
+}
+
+/// Pledge and carry a co-located fidelity **probe** (read-only league) in the
+/// same round-trip; returns the pledge handle + the caller's league outcome for
+/// the eligibility gate.
+pub(crate) fn pledge_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<(B256, FidelityOpOutcome)> {
+    let (handle, outcome) = pledge_impl(storage, caller, amount, auth, Some(fidelity))?;
+    Ok((handle, require_fidelity_outcome(outcome)?))
 }
 
 /// Return a still-pending pledge (e.g. credis rejected): credit the ticket amount
@@ -345,10 +431,16 @@ pub(crate) fn release_to_eoa(
 /// reducing both `total_supply` and `pledged_total_supply`. Amount-based (no ticket):
 /// the credis position's outstanding collateral is the authority. Returns the burned
 /// amount.
-pub(crate) fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
+fn burn_pledged_impl(
+    storage: StorageHandle<'_>,
+    eoa: Address,
+    amount: U256,
+    fidelity: Option<FidelityOpSection>,
+) -> Result<(U256, Option<FidelityOpOutcome>)> {
     let gratis = Gratis::new(storage.clone());
     let mut req = base_request(GratisOp::BurnPledged, chain_id_b256(&storage)?, eoa, amount);
     req.current_pledged = gratis.pledged_ct_of(eoa)?;
+    req.fidelity = fidelity;
     let result = apply_gratis_op(req)?;
     ensure_applied(&result)?;
     write_account_blobs(&gratis, eoa, &result)?;
@@ -372,5 +464,21 @@ pub(crate) fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U25
             remainingSupply: remaining,
         }),
     )?;
-    Ok(result.gratis_amount)
+    Ok((result.gratis_amount, result.fidelity))
+}
+
+pub(crate) fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
+    Ok(burn_pledged_impl(storage, eoa, amount, None)?.0)
+}
+
+/// Burn collateral at credis expiry and apply a co-located fidelity cohort sale
+/// for `eoa` in one round-trip; returns the burned amount + the fidelity outcome.
+pub(crate) fn burn_pledged_with_fidelity(
+    storage: StorageHandle<'_>,
+    eoa: Address,
+    amount: U256,
+    fidelity: FidelityOpSection,
+) -> Result<(U256, FidelityOpOutcome)> {
+    let (burned, outcome) = burn_pledged_impl(storage, eoa, amount, Some(fidelity))?;
+    Ok((burned, require_fidelity_outcome(outcome)?))
 }

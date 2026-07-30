@@ -31,8 +31,8 @@ impl FidelityContract<'_> {
     }
 
     /// Build the cohort op section from committed storage (current blob + the
-    /// plaintext global anchor).
-    fn cohort_section(
+    /// plaintext global anchor), for folding into a co-located gratis op.
+    pub fn cohort_section(
         &self,
         account: Address,
         op: FidelityCohortOp,
@@ -46,9 +46,11 @@ impl FidelityContract<'_> {
         })
     }
 
-    /// Persist a cohort outcome: store the new ciphertext and, on the account's
-    /// first acquisition, anchor the global `first_qualified_start` (set-once).
-    fn apply_outcome(&self, account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
+    /// Persist a cohort outcome (from a folded gratis op or the standalone
+    /// path): store the new ciphertext and, on the account's first acquisition,
+    /// anchor the global `first_qualified_start` (set-once). A probe outcome
+    /// (empty blob, no init) is a no-op.
+    pub fn apply_outcome(&self, account: Address, outcome: &FidelityOpOutcome) -> Result<()> {
         if !outcome.new_blob.is_empty() {
             self.write_cohorts_ct(account, &outcome.new_blob)?;
         }

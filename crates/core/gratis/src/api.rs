@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::ModifyAuth;
+pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
 
 use crate::runtime;
 use crate::schema::Gratis;
@@ -50,6 +50,19 @@ pub fn mint(
     runtime::mint(storage, caller, amount, auth)
 }
 
+/// Mint gratis AND apply a co-located fidelity cohort section in ONE enclave
+/// round-trip. Returns the fidelity outcome for the caller to persist via
+/// `outbe_fidelity::api::apply_fidelity_outcome`.
+pub fn mint_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    runtime::mint_with_fidelity(storage, caller, amount, auth, fidelity)
+}
+
 /// Burn `amount` gratis from `caller`. Returns the remaining total supply.
 pub fn burn(
     storage: StorageHandle<'_>,
@@ -58,6 +71,18 @@ pub fn burn(
     auth: ModifyAuth,
 ) -> Result<U256> {
     runtime::burn(storage, caller, amount, auth)
+}
+
+/// Burn gratis AND apply a co-located fidelity cohort section in ONE enclave
+/// round-trip. Returns the fidelity outcome for the caller to persist.
+pub fn burn_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<FidelityOpOutcome> {
+    runtime::burn_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
 /// Pledge `amount` gratis from `caller` into a new pending `PledgeLockTicket`.
@@ -69,6 +94,20 @@ pub fn pledge(
     auth: ModifyAuth,
 ) -> Result<B256> {
     runtime::pledge(storage, caller, amount, auth)
+}
+
+/// Pledge gratis AND carry a co-located fidelity **probe** in ONE round-trip.
+/// Returns `(pledge_handle, fidelity_outcome)`; the outcome's `league` is the
+/// caller's current league for the eligibility gate (nothing to persist — a
+/// probe never mutates cohorts).
+pub fn pledge_with_fidelity(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    amount: U256,
+    auth: ModifyAuth,
+    fidelity: FidelityOpSection,
+) -> Result<(B256, FidelityOpOutcome)> {
+    runtime::pledge_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
 /// Directly unpledge an unspent (pending) pledge (`pledge_handle`) back to `caller`.
@@ -115,4 +154,16 @@ pub fn release_to_eoa(storage: StorageHandle<'_>, eoa: Address, amount: U256) ->
 /// (reduces `total_supply`). Returns the burned amount.
 pub fn burn_pledged(storage: StorageHandle<'_>, eoa: Address, amount: U256) -> Result<U256> {
     runtime::burn_pledged(storage, eoa, amount)
+}
+
+/// Credis expiry burn AND a co-located fidelity cohort sale for `eoa` in ONE
+/// round-trip. Returns `(burned_amount, fidelity_outcome)` for the caller to
+/// persist via `outbe_fidelity::api::apply_fidelity_outcome`.
+pub fn burn_pledged_with_fidelity(
+    storage: StorageHandle<'_>,
+    eoa: Address,
+    amount: U256,
+    fidelity: FidelityOpSection,
+) -> Result<(U256, FidelityOpOutcome)> {
+    runtime::burn_pledged_with_fidelity(storage, eoa, amount, fidelity)
 }
