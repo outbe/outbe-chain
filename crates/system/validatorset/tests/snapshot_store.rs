@@ -104,6 +104,16 @@ fn validator_set_slot30_finalized_participation_recorded_does_not_move() {
     });
 }
 
+#[test]
+fn validator_operational_key_slots_48_and_49_are_append_only() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let vs = ValidatorSet::new(storage);
+        assert_eq!(vs.delegate_by_validator_role.base_slot(), U256::from(48u64));
+        assert_eq!(vs.validator_by_role_delegate.base_slot(), U256::from(49u64));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // 3. test vector for committee_set_hash + snapshot_key.
 // ---------------------------------------------------------------------------

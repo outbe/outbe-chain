@@ -79,6 +79,20 @@ const NETWORK_MANIFEST_FILE: &str = "network-binding-v1.json";
 const SEMANTICS_MANIFEST_FILE: &str = "semantic-artifacts-v1.json";
 const COMMITTEE_MANIFEST_FILE: &str = "result-committee-public-v1.json";
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FinalArtifactOverrides<'a> {
+    pub registrations_dir: Option<&'a Path>,
+    pub release_artifacts_dir: Option<&'a Path>,
+}
+
+struct LoadedReleaseArtifacts {
+    correctness_bytes: Vec<u8>,
+    protocol_bundle: ProtocolBundleV1,
+    protocol_bundle_bytes: Vec<u8>,
+    source_availability_policy_id: B256,
+    semantic_bytes: Vec<u8>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GeneratedCapacityInputV1 {
     schema_version: u16,
@@ -92,7 +106,7 @@ struct GeneratedCapacityInputV1 {
     capacity_profile_ocb1_hex: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 struct SemanticArtifactsV1 {
     intent_codec_id: B256,
     finalized_intent_proof_codec_id: B256,
@@ -113,6 +127,27 @@ struct SemanticArtifactsV1 {
     upgrade_fsm_semantics_hash: B256,
     release_placeholder_hash: B256,
     source_availability_policy_id: B256,
+}
+
+#[derive(Debug, Deserialize)]
+struct FrozenSemanticArtifactsDocumentV1 {
+    schema_version: u16,
+    kind: String,
+    artifacts: SemanticArtifactsV1,
+}
+
+#[derive(Debug, Deserialize)]
+struct FrozenReleaseBindingV1 {
+    schema_version: u16,
+    kind: String,
+    classification: String,
+    fork_id: B256,
+    correctness_profile_id: B256,
+    capacity_profile_id: B256,
+    protocol_bundle_hash: B256,
+    correctness_profile_ocb1_sha256: B256,
+    protocol_bundle_ocb1_sha256: B256,
+    semantic_artifacts_sha256: B256,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,12 +220,19 @@ pub fn run(
     capacity_path: &Path,
     base_genesis_path: &Path,
     validators_path: &Path,
+    overrides: FinalArtifactOverrides<'_>,
     output_dir: &Path,
     check: bool,
 ) -> Result<()> {
     let capacity_path = resolve(repository_root, capacity_path);
     let base_genesis_path = resolve(repository_root, base_genesis_path);
     let validators_path = resolve(repository_root, validators_path);
+    let registrations_dir = overrides
+        .registrations_dir
+        .map(|path| resolve(repository_root, path));
+    let release_artifacts_dir = overrides
+        .release_artifacts_dir
+        .map(|path| resolve(repository_root, path));
     let output_dir = resolve(repository_root, output_dir);
     ensure!(
         output_dir != Path::new("/") && output_dir.parent().is_some(),
@@ -206,7 +248,7 @@ pub fn run(
     let capacity_profile = CapacityProfileV1::decode_canonical(&capacity_bytes, &limits)
         .wrap_err("decode generated capacity profile")?;
 
-    let (source_sets, semantic) = semantic_artifacts(repository_root)?;
+    let (source_sets, generated_semantic) = semantic_artifacts(repository_root)?;
     let generator_source_sha256 = *source_sets
         .get("generator")
         .ok_or_else(|| eyre::eyre!("semantic source set omitted the generator"))?;
@@ -217,25 +259,56 @@ pub fn run(
         capacity_profile.profile_id == capacity_profile_id,
         "capacity profile id differs from the frozen profile id"
     );
-    let correctness_profile = CorrectnessProfileV1 {
-        profile_id: correctness_profile_id,
-        program: ProgramId::LysisV1,
-        arithmetic_profile_id: semantic.arithmetic_profile_id,
-        object_codec_registry_hash: semantic.object_codec_registry_hash,
-        list_root_scheme_id: semantic.list_root_scheme_id,
-        result_signature_profile_id: semantic.result_signature_profile_id,
-        finality_verifier_profile_id: semantic.finality_verifier_and_vote_domain_id,
+    let release = if let Some(release_artifacts_dir) = release_artifacts_dir.as_deref() {
+        load_release_artifacts(
+            release_artifacts_dir,
+            fork_id,
+            correctness_profile_id,
+            capacity_profile_id,
+            &limits,
+        )?
+    } else {
+        let correctness_profile = CorrectnessProfileV1 {
+            profile_id: correctness_profile_id,
+            program: ProgramId::LysisV1,
+            arithmetic_profile_id: generated_semantic.arithmetic_profile_id,
+            object_codec_registry_hash: generated_semantic.object_codec_registry_hash,
+            list_root_scheme_id: generated_semantic.list_root_scheme_id,
+            result_signature_profile_id: generated_semantic.result_signature_profile_id,
+            finality_verifier_profile_id: generated_semantic.finality_verifier_and_vote_domain_id,
+        };
+        let correctness_bytes = correctness_profile
+            .encode_canonical(&limits)
+            .wrap_err("encode correctness profile")?;
+        let protocol_bundle = protocol_bundle(fork_id, capacity_profile_id, generated_semantic);
+        let protocol_bundle_bytes = protocol_bundle
+            .encode_canonical(&limits)
+            .wrap_err("encode final protocol bundle")?;
+        let semantic_document = SemanticArtifactsDocumentV1 {
+            schema_version: FINAL_ARTIFACT_SCHEMA_VERSION,
+            kind: "outbe-ocomp-semantic-artifacts-v1",
+            source_sets: source_sets.clone(),
+            artifacts: generated_semantic,
+        };
+        let semantic_bytes = pretty_json(&semantic_document)?;
+        LoadedReleaseArtifacts {
+            correctness_bytes,
+            protocol_bundle,
+            protocol_bundle_bytes,
+            source_availability_policy_id: generated_semantic.source_availability_policy_id,
+            semantic_bytes,
+        }
     };
-    let correctness_bytes = correctness_profile
-        .encode_canonical(&limits)
-        .wrap_err("encode correctness profile")?;
-    let protocol_bundle = protocol_bundle(fork_id, capacity_profile_id, semantic);
+    let LoadedReleaseArtifacts {
+        correctness_bytes,
+        protocol_bundle,
+        protocol_bundle_bytes,
+        source_availability_policy_id,
+        semantic_bytes,
+    } = release;
     protocol_bundle
         .validate_lysis_v1_input_codecs()
         .wrap_err("validate final Lysis input codec bundle")?;
-    let protocol_bundle_bytes = protocol_bundle
-        .encode_canonical(&limits)
-        .wrap_err("encode final protocol bundle")?;
     let protocol_bundle_hash = protocol_bundle
         .protocol_bundle_hash(&limits)
         .wrap_err("hash final protocol bundle")?;
@@ -256,12 +329,17 @@ pub fn run(
     let chain_id = base_spec.chain().id();
     let genesis_hash = base_spec.genesis_hash();
     let validator_identities = validator_identities(&validators_path)?;
+    let registrations = registrations_dir
+        .as_deref()
+        .map(|directory| load_registrations(directory, &limits))
+        .transpose()?;
     let result_committee = result_committee(
         chain_id,
         genesis_hash,
         fork_id,
         protocol_bundle_hash,
         validator_identities,
+        registrations.as_ref(),
         &limits,
     )?;
     let committee_bytes = result_committee
@@ -280,7 +358,7 @@ pub fn run(
             protocol_bundle_hash,
             correctness_profile_id,
             capacity_profile,
-            source_availability_policy_id: semantic.source_availability_policy_id,
+            source_availability_policy_id,
             result_committee_snapshot_hash,
         },
         protocol_bundle,
@@ -310,13 +388,6 @@ pub fn run(
     let chain_manifest_bytes = pretty_json(&chain_manifest)?;
     validate_armed_manifest(&chain_manifest_bytes, genesis_hash, &install)?;
 
-    let semantic_document = SemanticArtifactsDocumentV1 {
-        schema_version: FINAL_ARTIFACT_SCHEMA_VERSION,
-        kind: "outbe-ocomp-semantic-artifacts-v1",
-        source_sets,
-        artifacts: semantic,
-    };
-    let semantic_bytes = pretty_json(&semantic_document)?;
     let committee_document =
         committee_document(&install.result_committee, result_committee_snapshot_hash);
     let committee_document_bytes = pretty_json(&committee_document)?;
@@ -368,6 +439,136 @@ pub fn run(
     ] {
         update_or_check(&output_dir.join(name), bytes, check)?;
     }
+    Ok(())
+}
+
+fn load_release_artifacts(
+    directory: &Path,
+    fork_id: B256,
+    correctness_profile_id: B256,
+    capacity_profile_id: B256,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> Result<LoadedReleaseArtifacts> {
+    let binding_path = directory.join(NETWORK_MANIFEST_FILE);
+    let binding_bytes = fs::read(&binding_path)
+        .wrap_err_with(|| format!("read frozen release binding {}", binding_path.display()))?;
+    let binding: FrozenReleaseBindingV1 =
+        serde_json::from_slice(&binding_bytes).wrap_err("decode frozen release binding")?;
+    ensure!(
+        binding.schema_version == FINAL_ARTIFACT_SCHEMA_VERSION
+            && binding.kind == FINAL_ARTIFACT_KIND
+            && binding.classification == "final"
+            && binding.fork_id == fork_id
+            && binding.correctness_profile_id == correctness_profile_id
+            && binding.capacity_profile_id == capacity_profile_id,
+        "frozen release binding does not match the OCOMP V1 release"
+    );
+
+    let correctness_path = directory.join(CORRECTNESS_FILE);
+    let correctness_bytes = fs::read(&correctness_path).wrap_err_with(|| {
+        format!(
+            "read frozen correctness profile {}",
+            correctness_path.display()
+        )
+    })?;
+    let correctness_profile = CorrectnessProfileV1::decode_canonical(&correctness_bytes, limits)
+        .wrap_err("decode frozen correctness profile")?;
+    ensure!(
+        sha256(&correctness_bytes) == binding.correctness_profile_ocb1_sha256
+            && correctness_profile.profile_id == correctness_profile_id
+            && correctness_profile.program == ProgramId::LysisV1,
+        "frozen correctness profile does not match the OCOMP V1 release"
+    );
+
+    let bundle_path = directory.join(BUNDLE_FILE);
+    let protocol_bundle_bytes = fs::read(&bundle_path)
+        .wrap_err_with(|| format!("read frozen protocol bundle {}", bundle_path.display()))?;
+    let protocol_bundle = ProtocolBundleV1::decode_canonical(&protocol_bundle_bytes, limits)
+        .wrap_err("decode frozen protocol bundle")?;
+    let protocol_bundle_hash = protocol_bundle
+        .protocol_bundle_hash(limits)
+        .wrap_err("hash frozen protocol bundle")?;
+    ensure!(
+        sha256(&protocol_bundle_bytes) == binding.protocol_bundle_ocb1_sha256
+            && protocol_bundle_hash == binding.protocol_bundle_hash
+            && protocol_bundle.fork_id == fork_id
+            && protocol_bundle.correctness_profile_id == correctness_profile_id
+            && protocol_bundle.capacity_profile_id == capacity_profile_id
+            && protocol_bundle.object_codec_registry_hash
+                == correctness_profile.object_codec_registry_hash
+            && protocol_bundle.result_signature_profile_id
+                == correctness_profile.result_signature_profile_id
+            && protocol_bundle.finality_verifier_and_vote_domain_id
+                == correctness_profile.finality_verifier_profile_id,
+        "frozen protocol bundle and correctness profile are inconsistent"
+    );
+
+    let semantic_path = directory.join(SEMANTICS_MANIFEST_FILE);
+    let semantic_bytes = fs::read(&semantic_path)
+        .wrap_err_with(|| format!("read frozen semantic manifest {}", semantic_path.display()))?;
+    let semantic: FrozenSemanticArtifactsDocumentV1 =
+        serde_json::from_slice(&semantic_bytes).wrap_err("decode frozen semantic manifest")?;
+    ensure!(
+        sha256(&semantic_bytes) == binding.semantic_artifacts_sha256
+            && semantic.schema_version == FINAL_ARTIFACT_SCHEMA_VERSION
+            && semantic.kind == "outbe-ocomp-semantic-artifacts-v1",
+        "frozen semantic manifest has an invalid identity"
+    );
+    validate_release_semantics(semantic.artifacts, &correctness_profile, &protocol_bundle)?;
+    let source_availability_policy_id = semantic.artifacts.source_availability_policy_id;
+    ensure!(
+        !source_availability_policy_id.is_zero(),
+        "frozen source availability policy id is zero"
+    );
+
+    Ok(LoadedReleaseArtifacts {
+        correctness_bytes,
+        protocol_bundle,
+        protocol_bundle_bytes,
+        source_availability_policy_id,
+        semantic_bytes,
+    })
+}
+
+fn validate_release_semantics(
+    semantic: SemanticArtifactsV1,
+    correctness: &CorrectnessProfileV1,
+    bundle: &ProtocolBundleV1,
+) -> Result<()> {
+    ensure!(
+        semantic.intent_codec_id == bundle.intent_codec_id
+            && semantic.finalized_intent_proof_codec_id == bundle.finalized_intent_proof_codec_id
+            && semantic.result_codec_id == bundle.result_codec_id
+            && semantic.action_codec_id == bundle.action_codec_id
+            && semantic.activation_codec_id == bundle.activation_codec_id
+            && semantic.evidence_codec_id == bundle.evidence_codec_id
+            && semantic.arithmetic_profile_id == correctness.arithmetic_profile_id
+            && semantic.lysis_program_semantics_hash == bundle.lysis_program_semantics_hash
+            && semantic.activation_apply_semantics_hash == bundle.activation_apply_semantics_hash
+            && semantic.effect_contract_registry_hash == bundle.effect_contract_registry_hash
+            && semantic.object_codec_registry_hash == bundle.object_codec_registry_hash
+            && semantic.object_codec_registry_hash == correctness.object_codec_registry_hash
+            && semantic.list_root_scheme_id == correctness.list_root_scheme_id
+            && semantic.result_signature_profile_id == bundle.result_signature_profile_id
+            && semantic.result_signature_profile_id == correctness.result_signature_profile_id
+            && semantic.finality_verifier_and_vote_domain_id
+                == bundle.finality_verifier_and_vote_domain_id
+            && semantic.finality_verifier_and_vote_domain_id
+                == correctness.finality_verifier_profile_id
+            && semantic.anti_equivocation_journal_schema_hash
+                == bundle.anti_equivocation_journal_schema_hash
+            && semantic.mode_pause_revocation_semantics_hash
+                == bundle.mode_pause_revocation_semantics_hash
+            && semantic.upgrade_fsm_semantics_hash == bundle.upgrade_fsm_semantics_hash
+            && semantic.release_placeholder_hash == bundle.release_requirement_catalog_hash
+            && semantic.release_placeholder_hash == bundle.release_requirement_catalog_parent_hash
+            && semantic.release_placeholder_hash == bundle.release_gate_authority_envelope_hash
+            && semantic.release_placeholder_hash == bundle.release_approval_policy_hash
+            && semantic.release_placeholder_hash == bundle.release_validator_command_artifact_hash
+            && semantic.release_placeholder_hash == bundle.migration_manifest_hash
+            && semantic.release_placeholder_hash == bundle.required_upgrade_handler_set_hash,
+        "frozen semantic manifest is inconsistent with its correctness profile or protocol bundle"
+    );
     Ok(())
 }
 
@@ -526,7 +727,7 @@ fn protocol_bundle(
     }
 }
 
-fn validator_identities(path: &Path) -> Result<[B256; 4]> {
+pub fn validator_identities(path: &Path) -> Result<[B256; 4]> {
     let validators: serde_json::Value =
         serde_json::from_slice(&fs::read(path).wrap_err("read validators manifest")?)
             .wrap_err("decode validators manifest")?;
@@ -573,50 +774,69 @@ fn result_committee(
     fork_id: B256,
     protocol_bundle_hash: B256,
     validator_identities: [B256; 4],
+    registrations: Option<&[OcompKeyRegistrationV1; 4]>,
     limits: &outbe_ocomp_protocol::SchemaLimits,
 ) -> Result<OcompCommitteeSnapshotV1> {
     let mut ordered_members = Vec::with_capacity(4);
     for (index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
         let validator_index = u8::try_from(index)?;
-        let key = reference_signing_key(validator_index);
-        let public_key: [u8; 33] = key
-            .verifying_key()
-            .to_encoded_point(true)
-            .as_bytes()
-            .try_into()?;
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
-                chain_id,
-                genesis_hash,
-                fork_id,
-                protocol_bundle_hash,
-                validator_index,
-                validator_identity_hash,
-                ocomp_public_key_sec1: public_key,
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-                valid_until_height_exclusive: u64::MAX,
-            },
-            proof_of_possession: [0; 64],
-        };
-        registration.proof_of_possession = sign_digest(
-            &key,
+        let registration = if let Some(registrations) = registrations {
+            registrations[index].clone()
+        } else {
+            let key = reference_signing_key(validator_index);
+            let public_key: [u8; 33] = key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()?;
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    fork_id,
+                    protocol_bundle_hash,
+                    validator_index,
+                    validator_identity_hash,
+                    ocomp_public_key_sec1: public_key,
+                    key_epoch: 1,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                    valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+                    valid_until_height_exclusive: u64::MAX,
+                },
+                proof_of_possession: [0; 64],
+            };
+            registration.proof_of_possession = sign_digest(
+                &key,
+                registration
+                    .proof_of_possession_digest(limits)
+                    .wrap_err("derive final OCOMP proof-of-possession digest")?,
+            )?;
             registration
-                .proof_of_possession_digest(limits)
-                .wrap_err("derive final OCOMP proof-of-possession digest")?,
-        )?;
+        };
+        ensure!(
+            registration.core.chain_id == chain_id
+                && registration.core.genesis_hash == genesis_hash
+                && registration.core.fork_id == fork_id
+                && registration.core.protocol_bundle_hash == protocol_bundle_hash
+                && registration.core.validator_index == validator_index
+                && registration.core.validator_identity_hash == validator_identity_hash
+                && registration.core.key_epoch == 1
+                && registration.core.allowed_purpose_bitmap == RESULT_SIGNATURE_PURPOSE_BITMAP
+                && registration.core.valid_from_height == OCOMP_POC_FINAL_ACTIVATION_HEIGHT
+                && registration.core.valid_until_height_exclusive == u64::MAX,
+            "validator-{validator_index} OCOMP registration does not match the requested chain binding"
+        );
         registration
             .validate_proof_of_possession(limits)
-            .wrap_err("verify generated OCOMP proof of possession")?;
+            .wrap_err("verify OCOMP proof of possession")?;
         ordered_members.push(OcompMemberV1 {
-            validator_index,
-            validator_identity_hash,
-            ocomp_public_key_sec1: public_key,
-            key_epoch: 1,
-            allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-            valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
-            valid_until_height_exclusive: u64::MAX,
+            validator_index: registration.core.validator_index,
+            validator_identity_hash: registration.core.validator_identity_hash,
+            ocomp_public_key_sec1: registration.core.ocomp_public_key_sec1,
+            key_epoch: registration.core.key_epoch,
+            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
+            valid_from_height: registration.core.valid_from_height,
+            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
             proof_of_possession: registration.proof_of_possession,
         });
     }
@@ -633,6 +853,27 @@ fn result_committee(
         .validate_semantics(limits)
         .wrap_err("validate generated final OCOMP committee")?;
     Ok(committee)
+}
+
+fn load_registrations(
+    directory: &Path,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> Result<[OcompKeyRegistrationV1; 4]> {
+    let mut registrations = Vec::with_capacity(4);
+    for index in 0..4 {
+        let path = directory
+            .join(format!("validator-{index}"))
+            .join("ocomp-registration-v1.ocb1");
+        let bytes = fs::read(&path)
+            .wrap_err_with(|| format!("read OCOMP registration {}", path.display()))?;
+        registrations.push(
+            OcompKeyRegistrationV1::decode_canonical(&bytes, limits)
+                .wrap_err_with(|| format!("decode OCOMP registration {}", path.display()))?,
+        );
+    }
+    registrations
+        .try_into()
+        .map_err(|_| eyre::eyre!("expected exactly four OCOMP registrations"))
 }
 
 fn reference_signing_key(validator_index: u8) -> SigningKey {
@@ -824,7 +1065,7 @@ fn semantic_digest(label: &str, descriptor: &str, inputs: &[B256]) -> B256 {
 }
 
 fn parse_b256(value: &str) -> Result<B256> {
-    let bytes = hex::decode(value)?;
+    let bytes = hex::decode(value.strip_prefix("0x").unwrap_or(value))?;
     ensure!(bytes.len() == 32, "expected 32-byte hexadecimal digest");
     Ok(B256::from_slice(&bytes))
 }
@@ -938,6 +1179,136 @@ mod tests {
         pretty_json(&validators).unwrap()
     }
 
+    fn write_registrations(
+        directory: &Path,
+        chain_id: u64,
+        genesis_hash: B256,
+        fork_id: B256,
+        protocol_bundle_hash: B256,
+        validator_identities: [B256; 4],
+    ) {
+        let limits = poc_schema_limits();
+        for (index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
+            let validator_index = u8::try_from(index).unwrap();
+            let key = reference_signing_key(validator_index);
+            let public_key = key
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap();
+            let mut registration = OcompKeyRegistrationV1 {
+                core: OcompKeyRegistrationCoreV1 {
+                    chain_id,
+                    genesis_hash,
+                    fork_id,
+                    protocol_bundle_hash,
+                    validator_index,
+                    validator_identity_hash,
+                    ocomp_public_key_sec1: public_key,
+                    key_epoch: 1,
+                    allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
+                    valid_from_height: OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+                    valid_until_height_exclusive: u64::MAX,
+                },
+                proof_of_possession: [0; 64],
+            };
+            registration.proof_of_possession = sign_digest(
+                &key,
+                registration.proof_of_possession_digest(&limits).unwrap(),
+            )
+            .unwrap();
+            let validator_dir = directory.join(format!("validator-{index}"));
+            fs::create_dir_all(&validator_dir).unwrap();
+            fs::write(
+                validator_dir.join("ocomp-registration-v1.ocb1"),
+                registration.encode_canonical(&limits).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn frozen_release_accepts_external_public_registrations_and_rejects_rebinding() {
+        let repository_root = repository_root();
+        let fixture = repository_root.join("crates/testing/e2e-harness/fixtures/ocomp-final-v1");
+        let artifacts = fixture.join("artifacts");
+        let base_genesis = fixture.join("base/genesis.json");
+        let validators = fixture.join("base/validators.json");
+        let temporary = tempfile::tempdir().unwrap();
+        let registrations = temporary.path().join("registrations");
+        let output = temporary.path().join("final");
+
+        let chain_spec = parse_chain_spec(&base_genesis).unwrap();
+        let limits = poc_schema_limits();
+        let bundle = ProtocolBundleV1::decode_canonical(
+            &fs::read(artifacts.join(BUNDLE_FILE)).unwrap(),
+            &limits,
+        )
+        .unwrap();
+        write_registrations(
+            &registrations,
+            chain_spec.chain().id(),
+            chain_spec.genesis_hash(),
+            bundle.fork_id,
+            bundle.protocol_bundle_hash(&limits).unwrap(),
+            validator_identities(&validators).unwrap(),
+        );
+
+        run(
+            &repository_root,
+            &artifacts.join(GENERATED_CAPACITY_FILE),
+            &base_genesis,
+            &validators,
+            FinalArtifactOverrides {
+                registrations_dir: Some(&registrations),
+                release_artifacts_dir: Some(&artifacts),
+            },
+            &output,
+            false,
+        )
+        .unwrap();
+        let generated_spec = parse_chain_spec(&output.join(CHAIN_MANIFEST_FILE)).unwrap();
+        let install = outbe_node::ocomp::fork::load_ocomp_fork_install(&generated_spec)
+            .unwrap()
+            .unwrap();
+        assert_eq!(install.result_committee.ordered_members.len(), 4);
+        assert_eq!(
+            install.request_profile.protocol_bundle_hash,
+            bundle.protocol_bundle_hash(&limits).unwrap()
+        );
+
+        let path = registrations.join("validator-0/ocomp-registration-v1.ocb1");
+        let mut rebound =
+            OcompKeyRegistrationV1::decode_canonical(&fs::read(&path).unwrap(), &limits).unwrap();
+        rebound.core.chain_id = rebound.core.chain_id.saturating_add(1);
+        rebound.proof_of_possession = sign_digest(
+            &reference_signing_key(0),
+            rebound.proof_of_possession_digest(&limits).unwrap(),
+        )
+        .unwrap();
+        fs::write(path, rebound.encode_canonical(&limits).unwrap()).unwrap();
+        let error = run(
+            &repository_root,
+            &artifacts.join(GENERATED_CAPACITY_FILE),
+            &base_genesis,
+            &validators,
+            FinalArtifactOverrides {
+                registrations_dir: Some(&registrations),
+                release_artifacts_dir: Some(&artifacts),
+            },
+            &temporary.path().join("rebound"),
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the requested chain binding"),
+            "unexpected error: {error:?}"
+        );
+    }
+
     #[test]
     fn ocm_cap_001_final_artifacts_are_chain_bound_reproducible_and_node_loadable() {
         let repository_root = repository_root();
@@ -954,6 +1325,7 @@ mod tests {
             &capacity,
             &base_genesis,
             &validators,
+            FinalArtifactOverrides::default(),
             &output,
             false,
         )
@@ -963,6 +1335,7 @@ mod tests {
             &capacity,
             &base_genesis,
             &validators,
+            FinalArtifactOverrides::default(),
             &output,
             true,
         )
@@ -1006,6 +1379,7 @@ mod tests {
                 &capacity,
                 &base_genesis,
                 &validators,
+                FinalArtifactOverrides::default(),
                 &output,
                 true,
             )

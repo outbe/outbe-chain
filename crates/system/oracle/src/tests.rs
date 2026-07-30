@@ -777,6 +777,7 @@ mod oracle_tests {
         // Set stake and status to ACTIVE
         vs.val_stake.write(&addr, stake).unwrap();
         vs.val_status.write(&addr, status::ACTIVE).unwrap();
+        vs.val_has_bls_share.write(&addr, true).unwrap();
     }
 
     #[test]
@@ -1401,6 +1402,16 @@ mod oracle_tests {
     #[test]
     fn test_init_from_genesis_custom_config() {
         with_storage(|storage| {
+            register_validator(
+                storage.clone(),
+                Address::new([0x11; 20]),
+                U256::in_units(100u64),
+            );
+            register_validator(
+                storage.clone(),
+                Address::new([0x22; 20]),
+                U256::in_units(100u64),
+            );
             let config = crate::logic::OracleGenesisConfig {
                 vote_period: 5,
                 reward_band: U256::from(10_000_000_000_000_000u128), // 0.01
@@ -2107,6 +2118,7 @@ mod oracle_tests {
         let exported = {
             let mut storage = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut storage, |storage| {
+                register_validator(storage.clone(), v1, U256::in_units(100u64));
                 let mut oracle = OracleContract::new(storage.clone());
                 crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
                 crate::logic::export_genesis(&oracle, &[v1, v2]).unwrap()
@@ -2141,6 +2153,7 @@ mod oracle_tests {
 
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
+            register_validator(storage.clone(), v1, U256::in_units(100u64));
             let mut oracle = OracleContract::new(storage.clone());
             crate::logic::init_from_genesis(&mut oracle, &exported).unwrap();
 

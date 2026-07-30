@@ -512,15 +512,37 @@ fn open_regular_nofollow(path: &Path) -> Result<File, CasError> {
 }
 
 fn create_directory(path: &Path) -> Result<(), CasError> {
-    fs::create_dir_all(path).map_err(|source| CasError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o770)).map_err(|source| CasError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    match fs::create_dir(path) {
+        Ok(()) => {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o770)).map_err(|source| {
+                CasError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            reject_symlink_directory(path)
+        }
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty() && *parent != path)
+            else {
+                return Err(CasError::Io {
+                    path: path.to_path_buf(),
+                    source,
+                });
+            };
+            create_directory(parent)?;
+            create_directory(path)
+        }
+        Err(source) => Err(CasError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
 }
 
 fn reject_symlink_directory(path: &Path) -> Result<(), CasError> {

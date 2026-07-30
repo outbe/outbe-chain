@@ -26,7 +26,7 @@ The current workspace contains 65 Cargo packages.
 | `outbe-chain` | `bin/outbe-chain` | ADR-B-NOD-001, ADR-B-SUP-001, ADR-B-OPS-001 | Process entrypoint/lifecycle/deployment profile |
 | `outbe-cli` | `bin/outbe-cli` | ADR-B-CLI-001 | Operator transaction intent |
 | `outbe-feeder` | `bin/outbe-feeder` | ADR-S-ORC-002 | External Oracle ingestion entrypoint |
-| `outbe-ocomp` | `bin/outbe-ocomp` | ADR-S-OCM-001 through ADR-S-OCM-003 | OCOMP supervisor, export and worker entrypoint |
+| `outbe-ocomp` | `bin/outbe-ocomp` | ADR-S-OCM-001 through ADR-S-OCM-003, ADR-S-VAL-002 | OCOMP supervisor, export, role signing and worker entrypoint |
 | `outbe-keygen` | `bin/outbe-keygen` | ADR-S-KEY-001 | Validator key ceremony entrypoint |
 | `outbe-tee-enclave` | `bin/outbe-tee-enclave` | ADR-S-TEE-001, ADR-S-KEY-001 | Enclave and mock entrypoints |
 | `outbe-consensus` | `crates/blockchain/consensus` | ADR-B-CNS-001 through ADR-B-CNS-003, ADR-B-CRY-001 | Consensus/DKG/delivery authority |
@@ -68,7 +68,7 @@ The current workspace contains 65 Cargo packages.
 | `outbe-desis` | `crates/core/desis` | ADR-C-DES-001, PFS-004 and PFS-009 | Native cross-chain auction FSM |
 | `outbe-governance` | `crates/core/governance` | ADR-S-GOV-001 | System authority despite physical path |
 | `outbe-cycle` | `crates/system/cycle` | ADR-S-CYC-001 | Scheduler |
-| `outbe-validatorset` | `crates/system/validatorset` | ADR-S-VAL-001 | Validator registry |
+| `outbe-validatorset` | `crates/system/validatorset` | ADR-S-VAL-001 through ADR-S-VAL-002 | Validator registry and role delegation |
 | `outbe-staking` | `crates/system/staking` | ADR-S-STK-001 | Stake ledger |
 | `outbe-rewards` | `crates/system/rewards` | ADR-S-RWD-001 | Participation/reward settlement |
 | `outbe-slashindicator` | `crates/system/slashindicator` | ADR-S-SLS-001 | Offense/slashing authority |
@@ -102,10 +102,10 @@ not a package or implementation claim.
 | Planned surface | Owning ADR(s) | Required boundary |
 |---|---|---|
 | OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate, full-result votes and typed quorum apply |
-| standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003 | cursor, planner, scheduler, reducer and journal; no key/writer |
+| standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003, ADR-S-VAL-002 | cursor, planner, scheduler, reducer, dedicated role EVM signer and journal |
 | standalone snapshot exporter | ADR-S-OCM-001, ADR-S-OCM-002 | opaque finalized read lease to authenticated CAS manifest |
 | standalone worker | ADR-S-OCM-001, ADR-S-OCM-003 | one immutable `UnitId`, sandboxed and retryable |
-| validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004 | submit its own signed full result through the restricted ZeroFee seam; no relay or public activator |
+| validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004, ADR-S-VAL-002 | submit its own attested full result from a role-delegated EVM signer through the restricted ZeroFee seam; no relay or public activator |
 | OCOMP local stores | ADR-S-OCM-002 through ADR-S-OCM-004 | pin/export/CAS/supervisor/sign-once journals with separate authority |
 
 ### Executable target and command registry
@@ -187,7 +187,7 @@ rules; this table names the state/business owner.
 | `intex`, `intexfactory` | ADR-C-INX-001 and ADR-C-INX-002 |
 | `gem`, `gemfactory` | ADR-C-GEM-001 and ADR-C-GEM-002 |
 | `desis` | ADR-C-DES-001 |
-| `validatorset` | ADR-S-VAL-001 |
+| `validatorset` | ADR-S-VAL-001, ADR-S-VAL-002 |
 | `staking` | ADR-S-STK-001 |
 | `rewards` | ADR-S-RWD-001 |
 | `slashindicator` | ADR-S-SLS-001 |

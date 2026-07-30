@@ -2,7 +2,7 @@
 
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use eyre::{ensure, Result, WrapErr as _};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, encode_v1, P2pAddress, P2pIngress, P2P_ADDRESS_VERSION_V1,
@@ -48,6 +48,26 @@ pub enum ValidatorCmd {
     /// included in the next DKG reshare target (stale-join guard). Send only
     /// after `outbe-cli monitor` / `outbe_syncStatus` shows the node at tip.
     ConfirmReady,
+    /// Assign a role-scoped operational key to this validator.
+    Delegate {
+        /// Operational role granted to the delegate.
+        #[arg(value_enum)]
+        role: ValidatorDelegateRoleArg,
+        /// Dedicated operational EVM address.
+        delegate: Address,
+    },
+    /// Revoke this validator's operational key for one role.
+    RevokeDelegate {
+        /// Operational role to revoke.
+        #[arg(value_enum)]
+        role: ValidatorDelegateRoleArg,
+    },
+    /// Read a validator's operational key for one role.
+    GetDelegate {
+        validator: Address,
+        #[arg(value_enum)]
+        role: ValidatorDelegateRoleArg,
+    },
     /// Set a validator Commonware P2P address in the on-chain registry
     SetP2p {
         /// Validator address to update. Defaults to the signer address.
@@ -91,6 +111,12 @@ impl ValidatorCmd {
             }
             Self::Deactivate => deactivate(client, private_key).await,
             Self::ConfirmReady => confirm_ready(client, private_key).await,
+            Self::Delegate {
+                role,
+                delegate: delegate_address,
+            } => delegate(client, private_key, role, delegate_address).await,
+            Self::RevokeDelegate { role } => revoke_delegate(client, private_key, role).await,
+            Self::GetDelegate { validator, role } => get_delegate(client, validator, role).await,
             Self::SetP2p {
                 validator,
                 symmetric,
@@ -110,6 +136,21 @@ impl ValidatorCmd {
                 set_p2p(client, private_key, options).await
             }
             Self::GetP2p { validator } => get_p2p(client, validator).await,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ValidatorDelegateRoleArg {
+    Oracle,
+    Ocomp,
+}
+
+impl ValidatorDelegateRoleArg {
+    const fn id(self) -> u8 {
+        match self {
+            Self::Oracle => 1,
+            Self::Ocomp => 2,
         }
     }
 }
@@ -303,6 +344,67 @@ async fn confirm_ready(client: &(impl Rpc + Sync), private_key: Option<&str>) ->
         )
         .await?;
     println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
+async fn delegate(
+    client: &(impl Rpc + Sync),
+    private_key: Option<&str>,
+    role: ValidatorDelegateRoleArg,
+    delegate: Address,
+) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let call = IValidatorSet::setDelegateCall {
+        role: role.id(),
+        delegate,
+    };
+    let tx_hash = signer
+        .send_tx(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            call.abi_encode(),
+            Default::default(),
+        )
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
+async fn revoke_delegate(
+    client: &(impl Rpc + Sync),
+    private_key: Option<&str>,
+    role: ValidatorDelegateRoleArg,
+) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let call = IValidatorSet::revokeDelegateCall { role: role.id() };
+    let tx_hash = signer
+        .send_tx(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            call.abi_encode(),
+            Default::default(),
+        )
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
+async fn get_delegate(
+    client: &(impl Rpc + Sync),
+    validator: Address,
+    role: ValidatorDelegateRoleArg,
+) -> Result<()> {
+    let call = IValidatorSet::getDelegateCall {
+        validator,
+        role: role.id(),
+    };
+    let result = client
+        .eth_call(abi::VALIDATOR_SET_ADDR, &call.abi_encode())
+        .await?;
+    let delegate = IValidatorSet::getDelegateCall::abi_decode_returns(&result)?;
+    println!("Validator: {validator:?}");
+    println!("Role:      {role:?}");
+    println!("Delegate:  {delegate:?}");
     Ok(())
 }
 
@@ -727,6 +829,34 @@ mod tests {
             mock.recorded_calls().is_empty(),
             "missing signer must not call RPC"
         );
+    }
+
+    #[tokio::test]
+    async fn test_delegate_ocomp_sends_role_scoped_transaction() {
+        let delegate_address = Address::repeat_byte(0x22);
+        let data = IValidatorSet::setDelegateCall {
+            role: ValidatorDelegateRoleArg::Ocomp.id(),
+            delegate: delegate_address,
+        }
+        .abi_encode();
+        let mock =
+            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
+
+        delegate(
+            &mock,
+            Some(TEST_KEY),
+            ValidatorDelegateRoleArg::Ocomp,
+            delegate_address,
+        )
+        .await
+        .unwrap();
+        mock.assert_done();
+    }
+
+    #[test]
+    fn validator_delegate_role_ids_are_protocol_stable() {
+        assert_eq!(ValidatorDelegateRoleArg::Oracle.id(), 1);
+        assert_eq!(ValidatorDelegateRoleArg::Ocomp.id(), 2);
     }
 
     #[test]
