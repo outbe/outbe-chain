@@ -40,6 +40,7 @@ use outbe_consensus::{
         HybridCertificate, VrfProof,
     },
 };
+use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
@@ -754,6 +755,20 @@ struct OpeningContractFixture {
     storage_proofs: Vec<Vec<Bytes>>,
 }
 
+/// A deterministic, valid Fidelity league for populating a fixture snapshot slot.
+///
+/// This is NOT the Fidelity league derivation — that lives in `outbe_fidelity`
+/// (`league_from_rcfi`, RCFI → league). These fixtures mock the on-chain state a
+/// node would read, so each snapshot slot needs *some* value in the canonical
+/// `[MIN_LEAGUE, MAX_LEAGUE]` range. The value is opaque to the tests, which
+/// assert opening-proof layout and deterministic re-execution — never league
+/// semantics. A distinct (but arbitrary) per-owner value just spreads tributes
+/// across more than one Lysis per-league group; owner order carries no meaning.
+pub fn fixture_league(owner_index: usize) -> u16 {
+    let span = usize::from(MAX_LEAGUE - MIN_LEAGUE) + 1;
+    MIN_LEAGUE + u16::try_from(owner_index % span).unwrap_or(0)
+}
+
 /// Returns the per-owner Fidelity league snapshot slots (which live in Metadosis
 /// storage and are merged into the intent account's storage trie by the caller)
 /// plus the standalone Oracle opening contract.
@@ -768,12 +783,9 @@ fn lysis_contracts(
         .iter()
         .enumerate()
         .map(|(owner_index, owner)| {
-            // One league word per owner. Any value in [1, 4096] is a valid league;
-            // a distinct per-owner value exercises the per-owner mapping.
-            let league = u16::try_from((owner_index % 4096) + 1).unwrap_or(1);
             (
                 league_snapshot_slot(day.value(), *owner),
-                U256::from(league),
+                U256::from(fixture_league(owner_index)),
             )
         })
         .collect();

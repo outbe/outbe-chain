@@ -19,7 +19,7 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_consensus::block::ConsensusBlock;
-use outbe_e2e_harness::ocomp_finality_fixture::finalized_intent_proof_fixture;
+use outbe_e2e_harness::ocomp_finality_fixture::{fixture_league, finalized_intent_proof_fixture};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
@@ -994,18 +994,16 @@ fn raw_fidelity_opening(
     finalized_state_root: B256,
     wwd: u32,
 ) -> RawContractOpeningProofV1 {
-    // One per-owner league word in Metadosis storage (owner order matches the
-    // node's canonical slot plan). Any value in [1, 4096] is a valid league.
+    // One per-owner league word in Metadosis storage, in owner order (the node's
+    // canonical slot plan). `fixture_league` fabricates an opaque valid value;
+    // the real league derivation lives in `outbe_fidelity`.
     let ordered_slots = subjects
         .owners
         .iter()
         .enumerate()
-        .map(|(owner_index, owner)| {
-            let league = u16::try_from((owner_index % 4096) + 1).unwrap_or(1);
-            RawStorageSlotV1 {
-                slot: league_snapshot_slot(wwd, *owner),
-                value: U256::from(league),
-            }
+        .map(|(owner_index, owner)| RawStorageSlotV1 {
+            slot: league_snapshot_slot(wwd, *owner),
+            value: U256::from(fixture_league(owner_index)),
         })
         .collect::<Vec<_>>();
     RawContractOpeningProofV1 {
