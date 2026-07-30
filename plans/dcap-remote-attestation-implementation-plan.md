@@ -13,6 +13,14 @@ The decision map overrides stale portions of
 extra role keys, continuity/migration machinery and the former 1-MiB evidence
 cap. The work below stays focused on DCAP and remote attestation.
 
+Active-goal amendment (2026-07-30): any earlier orchestration text requiring
+an aarch64 matrix, exact `dcap-qvl 0.5.2` Ring-only production verifier, or
+forbidding the Secret Network-style native Intel QVL/QvE boundary is stale and
+is superseded by this plan and its decision map. Completion requires the
+x86_64 Intel SGX Processor/Platform and pinned native QVL/QvE/TVL matrix. All
+other scope, checkpoint, real-case, reporting and blocker controls remain in
+force.
+
 ## Dependency order
 
 ```text

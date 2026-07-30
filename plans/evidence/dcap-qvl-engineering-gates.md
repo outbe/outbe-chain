@@ -4,7 +4,7 @@ Date: 2026-07-30
 
 Repository base: `d44bf85` (`main`)
 
-Native amendment base: `b31068d` (`main`)
+Native amendment base after rebasing onto `777624e`: `5fb89ce` (`main`)
 
 Host: `x86_64-unknown-linux-gnu`, Rust `1.96.0`
 
