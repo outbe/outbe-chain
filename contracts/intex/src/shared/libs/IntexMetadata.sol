@@ -15,6 +15,10 @@ library IntexMetadata {
     string internal constant DESCRIPTION =
         "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
+    /// @dev Prices arrive on the 1e18 oracle scale; six fraction digits resolve sub-cent COEN rates.
+    uint8 private constant PRICE_DECIMALS = 18;
+    uint8 private constant PRICE_PRECISION = 6;
+
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id (Issued or Settled class).
     /// @param timestamp Current block timestamp.
@@ -87,18 +91,17 @@ library IntexMetadata {
             ",\"display_type\":\"number\"}"
         );
 
-        // Prices are quoted strings: a JSON number cannot keep trailing zeros ("125.00" -> 125),
-        // so the two-decimal format only survives as text. Raw values stay in readData.
+        // Raw minor units stay in readData; these are display values.
         string memory economics = string.concat(
-            ",{\"trait_type\":\"Entry Price\",\"value\":\"",
-            _amountPlain(data.entryPriceMinor, 2),
-            "\",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Floor Price\",\"value\":\"",
-            _amountPlain(data.floorPriceMinor, 2),
-            "\",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Call Price\",\"value\":\"",
-            _amountPlain(data.callPriceMinor, 2),
-            "\",\"display_type\":\"number\"},",
+            ",{\"trait_type\":\"Entry Price\",\"value\":",
+            _amountPlain(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
+            ",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Floor Price\",\"value\":",
+            _amountPlain(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
+            ",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Call Price\",\"value\":",
+            _amountPlain(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
+            ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
             Strings.toString(data.promisLoadMinor / 1e18),
             ",\"display_type\":\"number\"}"
@@ -172,9 +175,9 @@ library IntexMetadata {
 
     function _svgData(IIntexNFT1155.SeriesData memory data, bool settled) private pure returns (string memory) {
         string memory rows = string.concat(
-            _generateField("Entry Price", _formatAmount(data.entryPriceMinor, 2), 265),
-            _generateField("Floor Price", _formatAmount(data.floorPriceMinor, 2), 310),
-            _generateField("Call Price", _formatAmount(data.callPriceMinor, 2), 355),
+            _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 265),
+            _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
+            _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 355),
             _generateField("Promis Load", _formatInteger(data.promisLoadMinor / 1e18), 400)
         );
         if (!settled && data.calledAt != 0) {
@@ -210,22 +213,40 @@ library IntexMetadata {
         return "Called";
     }
 
-    /// @dev Fixed-point amount as `int.dd` without thousand separators — safe as a JSON number.
-    function _amountPlain(uint256 amount, uint8 decimals) private pure returns (string memory) {
+    /// @dev Fixed-point amount without thousand separators — safe as a JSON number.
+    function _amountPlain(uint256 amount, uint8 decimals, uint8 shown) private pure returns (string memory) {
         uint256 divisor = 10 ** decimals;
-        uint256 decimalPart = (amount % divisor) / (10 ** (decimals - 2));
-        return string.concat(
-            Strings.toString(amount / divisor), ".", decimalPart < 10 ? "0" : "", Strings.toString(decimalPart)
-        );
+        return string.concat(Strings.toString(amount / divisor), _fraction(amount % divisor, decimals, shown));
     }
 
-    /// @dev Fixed-point amount as `int.dd` with thousand separators — SVG display only.
-    function _formatAmount(uint256 amount, uint8 decimals) private pure returns (string memory) {
+    /// @dev Fixed-point amount with thousand separators — SVG display only.
+    function _formatAmount(uint256 amount, uint8 decimals, uint8 shown) private pure returns (string memory) {
         uint256 divisor = 10 ** decimals;
-        uint256 decimalPart = (amount % divisor) / (10 ** (decimals - 2));
-        return string.concat(
-            _formatInteger(amount / divisor), ".", decimalPart < 10 ? "0" : "", Strings.toString(decimalPart)
-        );
+        return string.concat(_formatInteger(amount / divisor), _fraction(amount % divisor, decimals, shown));
+    }
+
+    /// @dev `.ddd` capped at `shown` digits, trailing zeros trimmed; empty when nothing remains.
+    ///      Leading zeros are kept, so 0.001 never collapses to 0.1.
+    function _fraction(uint256 remainder, uint8 decimals, uint8 shown) private pure returns (string memory) {
+        uint256 value = remainder / (10 ** (decimals - shown));
+        if (value == 0) return "";
+
+        bytes memory digits = bytes(Strings.toString(value));
+        uint256 lead = shown - digits.length;
+        uint256 kept = digits.length;
+        while (digits[kept - 1] == "0") {
+            --kept;
+        }
+
+        bytes memory out = new bytes(1 + lead + kept);
+        out[0] = ".";
+        for (uint256 i = 0; i < lead; ++i) {
+            out[1 + i] = "0";
+        }
+        for (uint256 i = 0; i < kept; ++i) {
+            out[1 + lead + i] = digits[i];
+        }
+        return string(out);
     }
 
     function _formatInteger(uint256 value) private pure returns (string memory) {
