@@ -9,6 +9,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -33,57 +34,68 @@ class NativeQvlManifestTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.root = Path(self.tempdir.name)
         self.artifacts = []
-        for index, role in enumerate(verifier.EXPECTED_ROLES):
+        for index, expected in enumerate(verifier.EXPECTED_ARTIFACTS):
+            role = expected["role"]
             payload = f"artifact-{role}".encode()
             path = f"/native/{index}"
             target = self.root / path.removeprefix("/")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
-            self.artifacts.append(
-                {
-                    "role": role,
-                    "package": role,
-                    "package_version": "1",
-                    "path": path,
-                    "install_name": f"{role}.so",
-                    "size": len(payload),
-                    "sha256": hashlib.sha256(payload).hexdigest(),
-                }
-            )
+            artifact = dict(expected)
+            artifact["path"] = path
+            artifact["size"] = len(payload)
+            artifact["sha256"] = hashlib.sha256(payload).hexdigest()
+            self.artifacts.append(artifact)
         self.manifest = {
             "schema_version": 1,
-            "status": "inactive-until-i9",
+            "status": verifier.EXPECTED_STATUS,
             "target": "x86_64-unknown-linux-gnu",
             "gramine_version": "1.9",
-            "intel_dcap": {
-                "collateral_major_version": 3,
-                "collateral_minor_version": 1,
-                "qve_report_info": "null",
-                "qve_enabled": False,
-                "tvl_enabled": False,
-                "qpl_or_pccs_during_consensus": False,
-            },
+            "intel_dcap": dict(verifier.EXPECTED_DCAP),
             "artifacts": self.artifacts,
         }
 
+    def verify_synthetic_manifest(self, manifest=None) -> None:
+        with mock.patch.object(
+            verifier, "EXPECTED_ARTIFACTS", tuple(self.artifacts)
+        ):
+            verifier.verify_manifest(manifest or self.manifest, self.root)
+
     def test_exact_artifacts_and_boundary_pass(self) -> None:
-        verifier.verify_manifest(self.manifest, self.root)
+        self.verify_synthetic_manifest()
 
     def test_changed_artifact_fails_closed(self) -> None:
         (self.root / "native/0").write_bytes(b"substituted")
         with self.assertRaisesRegex(ValueError, "size mismatch"):
-            verifier.verify_manifest(self.manifest, self.root)
+            self.verify_synthetic_manifest()
+
+    def test_status_change_fails_closed(self) -> None:
+        changed = copy.deepcopy(self.manifest)
+        changed["status"] = "active"
+        with self.assertRaisesRegex(ValueError, "status"):
+            self.verify_synthetic_manifest(changed)
 
     def test_qve_or_qpl_boundary_change_fails_closed(self) -> None:
         changed = copy.deepcopy(self.manifest)
         changed["intel_dcap"]["qve_enabled"] = True
-        with self.assertRaisesRegex(ValueError, "qve_enabled"):
-            verifier.verify_manifest(changed, self.root)
+        with self.assertRaisesRegex(ValueError, "Intel DCAP metadata"):
+            self.verify_synthetic_manifest(changed)
 
         changed = copy.deepcopy(self.manifest)
         changed["intel_dcap"]["qpl_or_pccs_during_consensus"] = True
-        with self.assertRaisesRegex(ValueError, "qpl_or_pccs"):
-            verifier.verify_manifest(changed, self.root)
+        with self.assertRaisesRegex(ValueError, "Intel DCAP metadata"):
+            self.verify_synthetic_manifest(changed)
+
+    def test_package_or_build_id_change_fails_closed(self) -> None:
+        changed = copy.deepcopy(self.manifest)
+        changed["intel_dcap"]["development_package_version"] = "substituted"
+        with self.assertRaisesRegex(ValueError, "Intel DCAP metadata"):
+            self.verify_synthetic_manifest(changed)
+
+        changed = copy.deepcopy(self.manifest)
+        changed["artifacts"][0]["elf_build_id"] = "substituted"
+        with self.assertRaisesRegex(ValueError, "artifact metadata"):
+            self.verify_synthetic_manifest(changed)
 
 
 if __name__ == "__main__":

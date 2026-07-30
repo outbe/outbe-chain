@@ -39,6 +39,7 @@ hex.workspace = true
 
 [build-dependencies]
 cc = "1.2"
+sha2.workspace = true
 
 [lints]
 workspace = true

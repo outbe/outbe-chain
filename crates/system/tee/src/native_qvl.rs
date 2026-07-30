@@ -49,7 +49,7 @@ impl NativeQvlStatus {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NativeQvlSupplemental {
     pub major_version: u16,
     pub minor_version: u16,
@@ -72,14 +72,40 @@ pub struct NativeQvlSupplemental {
     pub qe_tcb_evaluation_data_number: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct NativeQvlVerdict {
     pub aggregate_status: NativeQvlStatus,
     pub collateral_expired: bool,
     pub supplemental: NativeQvlSupplemental,
 }
 
-#[derive(Clone, Copy, Debug)]
+impl std::fmt::Debug for NativeQvlVerdict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeQvlVerdict")
+            .field("aggregate_status", &self.aggregate_status)
+            .field("collateral_expired", &self.collateral_expired)
+            .field(
+                "supplemental_version",
+                &(
+                    self.supplemental.major_version,
+                    self.supplemental.minor_version,
+                ),
+            )
+            .field(
+                "tcb_evaluation_data_number",
+                &self.supplemental.tcb_evaluation_data_number,
+            )
+            .field("pce_id", &self.supplemental.pce_id)
+            .field("tee_type", &self.supplemental.tee_type)
+            .field("sgx_type", &self.supplemental.sgx_type)
+            .field("advisory_ids", &self.supplemental.advisory_ids)
+            .field("qe_status", &self.supplemental.qe_status)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct NativeDcapCollateral<'a> {
     pub pck_crl_issuer_chain: &'a [u8],
     pub root_ca_crl: &'a [u8],
@@ -124,7 +150,6 @@ struct RawCollateral {
 
 #[repr(C)]
 struct RawResult {
-    qvl_error: u32,
     aggregate_status: u32,
     collateral_expiration_status: u32,
     supplemental_major_version: u16,
@@ -134,7 +159,6 @@ struct RawResult {
     earliest_expiration_date: i64,
     tcb_evaluation_data_number: u32,
     root_key_id: [u8; 48],
-    pck_ppid: [u8; 16],
     tcb_cpusvn: [u8; 16],
     tcb_pce_isvsvn: u16,
     pce_id: u16,
@@ -152,7 +176,6 @@ struct RawResult {
 impl Default for RawResult {
     fn default() -> Self {
         Self {
-            qvl_error: 0,
             aggregate_status: 0,
             collateral_expiration_status: 0,
             supplemental_major_version: 0,
@@ -162,7 +185,6 @@ impl Default for RawResult {
             earliest_expiration_date: 0,
             tcb_evaluation_data_number: 0,
             root_key_id: [0; 48],
-            pck_ppid: [0; 16],
             tcb_cpusvn: [0; 16],
             tcb_pce_isvsvn: 0,
             pce_id: 0,
@@ -178,6 +200,17 @@ impl Default for RawResult {
         }
     }
 }
+
+const _: () = {
+    assert!(std::mem::size_of::<RawCollateral>() == 112);
+    assert!(std::mem::align_of::<RawCollateral>() == 8);
+    assert!(std::mem::size_of::<RawResult>() == 608);
+    assert!(std::mem::align_of::<RawResult>() == 8);
+    assert!(std::mem::offset_of!(RawResult, earliest_issue_date) == 16);
+    assert!(std::mem::offset_of!(RawResult, root_key_id) == 44);
+    assert!(std::mem::offset_of!(RawResult, advisory_ids) == 148);
+    assert!(std::mem::offset_of!(RawResult, qe_status) == 600);
+};
 
 #[allow(unsafe_code)]
 unsafe extern "C" {
@@ -258,7 +291,10 @@ fn call_native(
 
 fn convert_output(output: RawResult) -> Result<NativeQvlVerdict, NativeQvlError> {
     if output.supplemental_major_version != 3
+        || output.supplemental_minor_version != 0
         || output.earliest_issue_date <= 0
+        || output.latest_issue_date < output.earliest_issue_date
+        || output.earliest_expiration_date <= output.latest_issue_date
         || output.earliest_expiration_date <= 0
         || output.collateral_expiration_status > 1
     {
@@ -295,7 +331,7 @@ fn parse_advisory_ids(bytes: &[u8; 450]) -> Result<Vec<String>, NativeQvlError> 
     let end = bytes
         .iter()
         .position(|byte| *byte == 0)
-        .unwrap_or(bytes.len());
+        .ok_or(NativeQvlError::MalformedSupplemental)?;
     let value =
         std::str::from_utf8(&bytes[..end]).map_err(|_| NativeQvlError::MalformedSupplemental)?;
     if value.is_empty() {

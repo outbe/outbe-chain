@@ -7,6 +7,7 @@
  */
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -31,7 +32,6 @@ struct outbe_qvl_collateral_v1 {
 };
 
 struct outbe_qvl_result_v1 {
-    uint32_t qvl_error;
     uint32_t aggregate_status;
     uint32_t collateral_expiration_status;
     uint16_t supplemental_major_version;
@@ -41,7 +41,6 @@ struct outbe_qvl_result_v1 {
     int64_t earliest_expiration_date;
     uint32_t tcb_evaluation_data_number;
     uint8_t root_key_id[48];
-    uint8_t pck_ppid[16];
     uint8_t tcb_cpusvn[16];
     uint16_t tcb_pce_isvsvn;
     uint16_t pce_id;
@@ -55,6 +54,25 @@ struct outbe_qvl_result_v1 {
     uint32_t qe_status;
     uint32_t qe_tcb_evaluation_data_number;
 };
+
+_Static_assert(sizeof(struct outbe_qvl_collateral_v1) == 112,
+               "unexpected Outbe collateral ABI size");
+_Static_assert(_Alignof(struct outbe_qvl_collateral_v1) == 8,
+               "unexpected Outbe collateral ABI alignment");
+_Static_assert(sizeof(struct outbe_qvl_result_v1) == 608,
+               "unexpected Outbe result ABI size");
+_Static_assert(_Alignof(struct outbe_qvl_result_v1) == 8,
+               "unexpected Outbe result ABI alignment");
+_Static_assert(offsetof(struct outbe_qvl_result_v1, earliest_issue_date) == 16,
+               "unexpected Outbe result date offset");
+_Static_assert(offsetof(struct outbe_qvl_result_v1, root_key_id) == 44,
+               "unexpected Outbe result root-key offset");
+_Static_assert(offsetof(struct outbe_qvl_result_v1, advisory_ids) == 148,
+               "unexpected Outbe result advisory offset");
+_Static_assert(offsetof(struct outbe_qvl_result_v1, qe_status) == 600,
+               "unexpected Outbe result QE-status offset");
+_Static_assert(sizeof(sgx_ql_qv_supplemental_t) == 672,
+               "unexpected Intel QVL supplemental ABI");
 
 enum outbe_qvl_wrapper_status {
     OUTBE_QVL_WRAPPER_OK = 0,
@@ -113,7 +131,6 @@ int32_t outbe_qvl_verify_quote_v1(
     uint32_t supplemental_size = 0;
     quote3_error_t qvl_error = sgx_qv_get_quote_supplemental_data_size(&supplemental_size);
     if (qvl_error != SGX_QL_SUCCESS) {
-        output->qvl_error = (uint32_t)qvl_error;
         return OUTBE_QVL_WRAPPER_QVL_ERROR;
     }
     if (supplemental_size != sizeof(sgx_ql_qv_supplemental_t)) {
@@ -136,7 +153,6 @@ int32_t outbe_qvl_verify_quote_v1(
         supplemental_size,
         (uint8_t *)&supplemental);
 
-    output->qvl_error = (uint32_t)qvl_error;
     output->aggregate_status = (uint32_t)aggregate_status;
     output->collateral_expiration_status = collateral_expiration_status;
     if (qvl_error != SGX_QL_SUCCESS) {
@@ -150,7 +166,6 @@ int32_t outbe_qvl_verify_quote_v1(
     output->earliest_expiration_date = (int64_t)supplemental.earliest_expiration_date;
     output->tcb_evaluation_data_number = supplemental.tcb_eval_ref_num;
     memcpy(output->root_key_id, supplemental.root_key_id, sizeof(output->root_key_id));
-    memcpy(output->pck_ppid, supplemental.pck_ppid, sizeof(output->pck_ppid));
     memcpy(
         output->tcb_cpusvn,
         supplemental.tcb_cpusvn.svn,

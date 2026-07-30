@@ -5,6 +5,11 @@ with `dcap-qvl 0.5.2`:
 
 - upstream source commit:
   `31a32a44de4cf68cb50c079e5bfd5348e4e6f4d5`;
+- upstream repository:
+  `https://github.com/Phala-Network/dcap-qvl`;
+- upstream paths:
+  `sample/sgx_quote` and `sample/sgx_quote_collateral.json`;
+- upstream license: MIT;
 - quote SHA-256:
   `f8b81014b6e443609746822194910f5dc1c92c322fa0584298d1e33e505ca3b5`;
 - collateral-wrapper SHA-256:
