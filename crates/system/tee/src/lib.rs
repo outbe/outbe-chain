@@ -13,6 +13,8 @@ pub mod bootstrap;
 pub mod client;
 pub mod client_global;
 pub mod codec;
+#[cfg(feature = "native-dcap")]
+pub mod dcap_v1;
 pub mod endorsement;
 pub mod errors;
 pub mod handoff;

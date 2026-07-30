@@ -28,7 +28,7 @@ dcap = ["dep:dcap-qvl"]
 # Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
 # enclave. This is intentionally separate from the legacy host-local `dcap`
 # feature above.
-native-dcap = []
+native-dcap = ["outbe-primitives/tee-attestation-v1"]
 # Test-only syscall-boundary markers around native QVL calls. The production
 # enclave crate does not forward this feature.
 native-dcap-test-trace = ["native-dcap"]
