@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -95,40 +96,94 @@ def render_manifest(entrypoint: Path, qvl_lib_dir: Path, output: Path) -> None:
 
 def assert_no_forbidden_verifier_syscalls(trace_path: Path) -> None:
     lines = trace_path.read_text(encoding="utf-8").splitlines()
-    try:
-        verifier_start = next(
-            index for index, line in enumerate(lines) if "running 5 tests" in line
-        )
-    except StopIteration as error:
-        raise RuntimeError("native-QVL syscall trace has no test-start marker") from error
+    verifier_started = False
+    tentative_unix_fds: set[int] = set()
+    gramine_unix_fds: set[int] = set()
+    local_sync_fds: set[int] = {1, 2}
+    forbidden: list[str] = []
 
-    # Gramine initializes internal AF_UNIX IPC, resolves `localhost` and reads
-    # CLOCK_REALTIME before the application entrypoint. Those startup calls do
-    # not execute in or influence the verifier. From the public-test marker
-    # onward, the trace contains only network, clock and write syscalls: allow
-    # test output and CLOCK_MONOTONIC duration accounting, and fail closed on
-    # every other traced syscall.
-    def allowed(line: str) -> bool:
-        if " write(" in line:
-            return True
-        if "clock_gettime(CLOCK_MONOTONIC" in line:
-            return True
-        if "clock_gettime64(CLOCK_MONOTONIC" in line:
-            return True
-        if "socket(AF_UNIX" in line or "socketpair(AF_UNIX" in line:
-            return True
-        if 'sun_path=@"/gramine/' in line and (
-            " bind(" in line or " connect(" in line
+    def first_fd(line: str) -> int | None:
+        match = re.match(r"^\d+\s+\w+\((\d+)", line)
+        return int(match.group(1)) if match else None
+
+    def result_fd(line: str) -> int | None:
+        match = re.search(r"\)\s+=\s+(\d+)$", line)
+        return int(match.group(1)) if match else None
+
+    def result_fd_pair(line: str) -> tuple[int, int] | None:
+        match = re.search(r"\[(\d+),\s*(\d+)\].*=\s+0$", line)
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    # Gramine initializes abstract AF_UNIX IPC, resolves `localhost` and reads
+    # CLOCK_REALTIME before the application entrypoint. Scan that prefix only
+    # to prove the provenance of descriptors later used for Gramine IPC.
+    for line in lines:
+        if "running 5 tests" in line:
+            verifier_started = True
+
+        if " socket(AF_UNIX" in line:
+            descriptor = result_fd(line)
+            if descriptor is not None:
+                tentative_unix_fds.add(descriptor)
+            continue
+
+        if " socketpair(AF_UNIX" in line or " pipe(" in line or " pipe2(" in line:
+            pair = result_fd_pair(line)
+            if pair is not None:
+                local_sync_fds.update(pair)
+            continue
+
+        if " eventfd(" in line or " eventfd2(" in line:
+            descriptor = result_fd(line)
+            if descriptor is not None:
+                local_sync_fds.add(descriptor)
+            continue
+
+        descriptor = first_fd(line)
+        if (
+            (' bind(' in line or ' connect(' in line)
+            and 'sun_path=@"/gramine/' in line
+            and descriptor in tentative_unix_fds
         ):
-            return True
-        return any(
-            syscall in line
-            for syscall in (" listen(", " accept4(", " shutdown(")
-        )
+            gramine_unix_fds.add(descriptor)
+            continue
 
-    forbidden = [
-        line for line in lines[verifier_start + 1 :] if not allowed(line)
-    ]
+        if " accept4(" in line and descriptor in gramine_unix_fds:
+            accepted = result_fd(line)
+            if accepted is not None:
+                gramine_unix_fds.add(accepted)
+            continue
+
+        if not verifier_started:
+            continue
+        if " write(" in line and descriptor in local_sync_fds | gramine_unix_fds:
+            continue
+        if "clock_gettime(CLOCK_MONOTONIC" in line:
+            continue
+        if "clock_gettime64(CLOCK_MONOTONIC" in line:
+            continue
+        if descriptor in gramine_unix_fds and any(
+            syscall in line
+            for syscall in (
+                " listen(",
+                " shutdown(",
+                " getsockname(",
+                " getpeername(",
+                " getsockopt(",
+                " setsockopt(",
+                " send(",
+                " sendto(",
+                " sendmsg(",
+                " recv(",
+                " recvfrom(",
+                " recvmsg(",
+            )
+        ):
+            continue
+        forbidden.append(line)
+
+    if not verifier_started:
+        raise RuntimeError("native-QVL syscall trace has no test-start marker")
     if forbidden:
         joined = "\n".join(forbidden[:10])
         raise RuntimeError(f"native-QVL Gramine path used forbidden syscalls:\n{joined}")
@@ -163,7 +218,8 @@ def main() -> int:
                 "-f",
                 "-qq",
                 "-e",
-                "trace=network,clock_gettime,clock_gettime64,gettimeofday,time,write",
+                "trace=network,clock_gettime,clock_gettime64,gettimeofday,time,"
+                "write,pipe,pipe2,eventfd,eventfd2",
                 "-s",
                 "256",
                 "-o",
