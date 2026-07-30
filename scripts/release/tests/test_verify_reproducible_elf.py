@@ -107,7 +107,7 @@ class ReproducibleElfVerifierTests(unittest.TestCase):
     def test_identical_outputs_pass_with_per_artifact_evidence(self) -> None:
         evidence = verifier.verify_outputs(self.first, self.second, REPO_ROOT)
         self.assertEqual(evidence["result"], "passed")
-        self.assertEqual(len(evidence["artifacts"]), 5)
+        self.assertEqual(len(evidence["artifacts"]), 6)
         self.assertEqual(evidence["differences"], [])
 
     def test_changed_artifact_fails_with_named_difference(self) -> None:

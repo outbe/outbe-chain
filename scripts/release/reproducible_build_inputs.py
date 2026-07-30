@@ -28,6 +28,7 @@ EXPECTED_ARTIFACTS = (
     "outbe-keygen",
     "outbe-feeder",
     "outbe-tee-enclave",
+    "outbe-ocomp",
 )
 
 
@@ -36,10 +37,14 @@ def load_and_validate_build_spec(path: Path) -> dict[str, Any]:
     manifest_generator.validate_build_spec(build_spec)
     names = tuple(artifact.get("name") for artifact in build_spec.get("artifacts", []))
     if names != EXPECTED_ARTIFACTS:
-        raise ValueError("build spec must declare the exact five-ELF release matrix")
-    enclave = build_spec["artifacts"][-1]
+        raise ValueError("build spec must declare the exact production ELF release matrix")
+    enclave = next(
+        artifact
+        for artifact in build_spec["artifacts"]
+        if artifact.get("role") == "tee-enclave"
+    )
     if enclave.get("classification") != "production" or "mock" in enclave.get("features", []):
-        raise ValueError("production enclave must be the final non-mock ELF subject")
+        raise ValueError("production enclave must be a non-mock ELF subject")
     return build_spec
 
 
