@@ -11,9 +11,7 @@ pub const OCOMP_POC_MAX_COHORTS_PER_OWNER: u16 = 64;
 
 /// Bounded readiness projection consumed by OCOMP pre-admission.
 ///
-/// Fidelity no longer exposes any cohort counts to OCOMP: leagues are
-/// snapshotted per owner by Metadosis at prepare time, so the only thing
-/// pre-admission needs from Fidelity is that its OCOMP profile is armed.
+/// Leagues are snapshotted per owner by Metadosis at prepare time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FidelityOcompProjection {
     pub profile_ready: bool,
