@@ -8,7 +8,7 @@ Host: `x86_64-unknown-linux-gnu`, Rust `1.96.0`
 
 This note records the throwaway prototype used to close decision-map questions
 #17 and #18. It is evidence for the selected design, not a substitute for the
-cross-architecture and real-hardware release gates listed below.
+x86_64 real-hardware release gates listed below.
 
 ## Selected QVL profile
 
@@ -75,7 +75,12 @@ perform that strict check before QVL and must require:
 - exact quote v3/SGX/P-256/Intel QE vendor/type-5 certification data;
 - complete consumption of both the outer quote and inner authentication data;
 - exact canonical DER components and exact signed-JSON bytes;
-- both platform and QE status `UpToDate`, with no advisories;
+- TCB Info schema exactly v3, regardless of the reported Platform status;
+- Platform status `UpToDate` or `SWHardeningNeeded`, with authenticated
+  advisory IDs preserved in the stable verdict;
+- QE status exactly `UpToDate`;
+- rejection of configuration-needed, out-of-date and revoked Platform or QE
+  results, and of `SWHardeningNeeded` for QE;
 - both signed documents' minimum TCB evaluation data number;
 - verified PCK FMSPC and PCE ID equal the signed TCB Info values;
 - exact policy measurement and pinned Intel root;
@@ -165,7 +170,10 @@ decisions:
 - a real Platform-CA SGX fixture in addition to the Processor-CA fixture;
 - current PCS fixtures with large real CRLs;
 - cap-minus-one/cap/cap-plus-one and allocation-before-decode tests;
-- byte-identical stable verdict vectors on x86_64 and aarch64;
+- byte-stable verdict vectors across supported x86_64 validator builds;
 - valid, invalid-early, invalid-late and dense 32-validator benchmarks on the
-  slowest supported validator class;
+  slowest supported x86_64 validator class;
 - fail-not-skip SGX/DCAP end-to-end release CI.
+
+ARM TEE and aarch64 are not production targets for V1 and therefore do not
+carry fixture, verdict or release-gate requirements.

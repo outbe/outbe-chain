@@ -4,10 +4,10 @@ use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1,
-    QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
-    TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
-    MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
+    PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1,
+    ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
+    TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
+    MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
 };
 
@@ -455,7 +455,7 @@ fn policy(
         tcb_info_schema_version: 3,
         qe_identity_schema_version: 2,
         minimum_tcb_evaluation_data_number: 1,
-        accepted_platform_tcb_status: QvlTcbStatusV1::UpToDate,
+        accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
         maximum_lease: 604_800,
@@ -474,9 +474,10 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let first_hash = first.policy_hash().unwrap();
     assert_eq!(
         hex::encode(first_hash),
-        "2fd9eba57340225c00e45f8c4eb5fa3463f0a708918e5301351e587f65996e47"
+        "4dbc61a63c5c3107b56a75eb3a38f640e22650a34ad25cb52060726b1f7baacd"
     );
-    let second = policy(2, 100, first_hash);
+    let mut second = policy(2, 100, first_hash);
+    second.accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::UpToDateOnly;
     let schedule = TeePolicyScheduleV1 {
         chain_id: [0; 32],
         genesis_hash: B256::repeat_byte(0x11),
@@ -495,7 +496,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let encoded = schedule.encode_canonical().unwrap();
     assert_eq!(
         hex::encode(schedule.schedule_hash().unwrap()),
-        "1bf8cdff9e59ec9739d655d846bdfc72b330e78ff5254c5932ad8fbb066bf9cd"
+        "ff3de6da76820b4a84e27f68d0de81b28278b1244c62cf3962707e409660786c"
     );
     assert_eq!(
         TeePolicyScheduleV1::decode_canonical(&encoded).unwrap(),
@@ -504,7 +505,36 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     assert_eq!(schedule.active_policy(1).unwrap(), &first);
     assert_eq!(schedule.active_policy(99).unwrap(), &first);
     assert_eq!(schedule.active_policy(100).unwrap(), &second);
+    assert_eq!(
+        schedule
+            .active_policy(1)
+            .unwrap()
+            .accepted_platform_tcb_statuses,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded
+    );
+    assert_eq!(
+        schedule
+            .active_policy(100)
+            .unwrap()
+            .accepted_platform_tcb_statuses,
+        PlatformTcbStatusSetV1::UpToDateOnly
+    );
     assert!(schedule.schedule_hash().is_ok());
+
+    // Fixed V1 layout through minimum_tcb_evaluation_data_number is 178 bytes.
+    let mut unknown_platform_status_set = first.encode_canonical().unwrap();
+    assert_eq!(
+        unknown_platform_status_set[178],
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded as u8
+    );
+    unknown_platform_status_set[178] = 0xff;
+    assert!(matches!(
+        TeePolicyV1::decode_canonical(&unknown_platform_status_set),
+        Err(CodecError::UnknownDiscriminant {
+            field: "accepted Platform TCB status set",
+            value: 0xff
+        })
+    ));
 
     let mut trailing = encoded;
     trailing.push(0);

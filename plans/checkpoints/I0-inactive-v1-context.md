@@ -16,11 +16,17 @@ the quote binds `node_host_authorization_hash`; there is no role-key set.
 genesis/policy/single-`NodeHost` commitment. The intent also binds the exact
 operation (`register`, `renew`, measurement transition, or replacement).
 
+The 2026-07-30 decision amendment keeps V1 scoped to x86_64 Intel SGX and
+encodes two exact Platform TCB admission sets. The initial policy admits
+`UpToDate` and `SWHardeningNeeded`; a later governance policy may tighten this
+to `UpToDate` only. QE remains `UpToDate` only, and TCB Info schema v3 remains
+mandatory.
+
 ## Outcome and includes audit
 
 | Requirement | Evidence | Status |
 |---|---|---|
-| Canonical V1 codecs, domains, enums, bounds, and golden vectors | `tee_attestation_v1` defines node IDs, operation-bound registration intents, DCAP/dev evidence, strict TCB status, measurement rules, policies, policy schedules, registry gas schedules, resource schedules, and their domain hashes. Tests pin canonical bytes and hashes. | Pass |
+| Canonical V1 codecs, domains, enums, bounds, and golden vectors | `tee_attestation_v1` defines node IDs, operation-bound registration intents, DCAP/dev evidence, exact Platform TCB status sets, strict QE status, measurement rules, policies, policy schedules, registry gas schedules, resource schedules, and their domain hashes. Tests pin canonical bytes and hashes. | Pass |
 | `TeePolicyScheduleV1` | Strict version/chain/genesis identity, sorted activation heights, monotonic versions, predecessor hashes, bounded policies/rules, and height selection. | Pass |
 | `TeeRegistryGasScheduleV1` | Only the normative coefficient vector encodes/decodes; all arithmetic is checked. | Pass |
 | `ResourceScheduleV1` | Commits both schedule hashes and the exact `500,000,000` block-1 / `30,000,000` steady gas limits. Non-normative values do not encode. | Pass |
@@ -37,6 +43,8 @@ operation (`register`, `renew`, measurement transition, or replacement).
 | `cap-1`, `cap`, `cap+1`, and overflow | Aggregate evidence boundary vectors cover all three sizes; quote/component/framing/rule caps and `usize`→gas overflow reject deterministically. | Pass |
 | No active V1 selector or storage layout | Repository scan finds the V1 module only behind the direct-harness Cargo feature and its tests. The module declares no address, selector, state schema, or runtime registration. | Pass |
 | Legacy behavior byte-identical | Default feature set remains empty. The complete default `outbe-primitives` suite and complete `outbe-evm` suite pass; the only active-path change is additive immutable context propagation. | Pass |
+| Revised TCB policy is governance-tightenable | The public schedule vector starts with `UpToDateOrSWHardeningNeeded`, activates `UpToDateOnly` through a predecessor-bound policy, round-trips both values, and rejects an unknown status set. QE has only the canonical `UpToDate` value. | Pass |
+| Production architecture is bounded | Decision, evidence and implementation documents consistently specify x86_64 Intel SGX only. ARM TEE, aarch64 fixtures and cross-architecture release gates are explicit V1 non-goals. | Pass |
 
 ## Fixed vectors
 
@@ -47,9 +55,9 @@ operation (`register`, `renew`, measurement transition, or replacement).
 - Report-policy/`NodeHost` commitment:
   `378c9bbee1671eeb2d8447ba76919a81f2175148800244ff0ca20c2e907d5216`
 - Policy hash:
-  `2fd9eba57340225c00e45f8c4eb5fa3463f0a708918e5301351e587f65996e47`
+  `4dbc61a63c5c3107b56a75eb3a38f640e22650a34ad25cb52060726b1f7baacd`
 - Policy schedule hash:
-  `1bf8cdff9e59ec9739d655d846bdfc72b330e78ff5254c5932ad8fbb066bf9cd`
+  `ff3de6da76820b4a84e27f68d0de81b28278b1244c62cf3962707e409660786c`
 - Maximum DCAP verification charge:
   `9,405,024`
 - Maximum registration transaction gas:
@@ -87,6 +95,11 @@ PASS: 8 tests
 git diff --check
 PASS
 ```
+
+The decision amendment reran the complete default and
+`tee-attestation-v1`-enabled `outbe-primitives` suites plus the feature-enabled
+all-target clippy gate. The V1 integration suite remains 14/14, including the
+new broad-to-strict Platform policy transition and unknown-set rejection.
 
 ## Scope and fail-open audit
 

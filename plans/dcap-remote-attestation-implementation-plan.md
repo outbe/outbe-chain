@@ -76,7 +76,7 @@ stable Outbe verdict with no host inputs.
 - time boundary and strict status matrix pass;
 - no environment, filesystem, network, wall clock, optional verifier or
   upstream error string reaches consensus;
-- x86_64/aarch64 fixtures produce byte-identical verdicts;
+- byte-stable fixture verdicts pass across supported x86_64 validator builds;
 - Ring-only dependency tree contains no HTTP/report/RustCrypto/override path.
 
 ## I2 — Initialize an enclave once and restrict quote generation to NodeHost
@@ -231,7 +231,7 @@ before committing bootstrap state.
 ## I9 — Activate production DCAP and make the release gate fail closed
 
 **Outcome:** the production chain activates the V1 manifest only after all
-determinism, capacity and real-hardware evidence passes.
+determinism, capacity and x86_64 SGX real-hardware evidence passes.
 
 **Includes:**
 
@@ -244,10 +244,11 @@ determinism, capacity and real-hardware evidence passes.
 **Acceptance:**
 
 - real SGX/DCAP job is fail-not-skip;
-- Processor and Platform, x86_64 and aarch64 verdict/benchmark matrix passes;
+- Processor and Platform x86_64 verdict/benchmark matrix passes;
 - the slowest supported validator keeps full-block execution inside the
   consensus timing budget;
-- missing QVL, collateral or SGX support is deterministic rejection;
+- missing QVL, collateral or SGX support, including an unsupported
+  architecture, is deterministic rejection;
 - pre-A0/legacy chain behavior remains covered and intentional.
 
 ## Explicit non-goals
@@ -257,7 +258,8 @@ determinism, capacity and real-hardware evidence passes.
 - software migration bundles and continuity state machines;
 - proof that a previously delivered permanent key was deleted;
 - a continuous light client inside the enclave;
-- privacy-preserving/unlinkable hardware admission.
-- consensus membership/readiness and protected-transaction execution gating.
+- privacy-preserving/unlinkable hardware admission;
+- consensus membership/readiness and protected-transaction execution gating;
+- ARM TEE, aarch64 and multi-TEE portability in V1.
 
 Those topics require separate plans and cannot expand these issues implicitly.

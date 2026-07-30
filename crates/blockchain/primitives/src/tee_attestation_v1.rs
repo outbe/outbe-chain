@@ -683,6 +683,26 @@ impl QvlTcbStatusV1 {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PlatformTcbStatusSetV1 {
+    UpToDateOnly = 0x01,
+    UpToDateOrSWHardeningNeeded = 0x02,
+}
+
+impl PlatformTcbStatusSetV1 {
+    fn decode(value: u8) -> Result<Self, CodecError> {
+        match value {
+            0x01 => Ok(Self::UpToDateOnly),
+            0x02 => Ok(Self::UpToDateOrSWHardeningNeeded),
+            value => Err(CodecError::UnknownDiscriminant {
+                field: "accepted Platform TCB status set",
+                value,
+            }),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeMeasurementRuleV1 {
     pub enclave_profile: EnclaveProfile,
@@ -761,7 +781,7 @@ pub struct TeePolicyV1 {
     pub tcb_info_schema_version: u8,
     pub qe_identity_schema_version: u8,
     pub minimum_tcb_evaluation_data_number: u32,
-    pub accepted_platform_tcb_status: QvlTcbStatusV1,
+    pub accepted_platform_tcb_statuses: PlatformTcbStatusSetV1,
     pub accepted_qe_tcb_status: QvlTcbStatusV1,
     pub minimum_lease: u64,
     pub maximum_lease: u64,
@@ -790,7 +810,7 @@ impl TeePolicyV1 {
         out.push(self.tcb_info_schema_version);
         out.push(self.qe_identity_schema_version);
         put_u32(&mut out, self.minimum_tcb_evaluation_data_number);
-        out.push(self.accepted_platform_tcb_status as u8);
+        out.push(self.accepted_platform_tcb_statuses as u8);
         out.push(self.accepted_qe_tcb_status as u8);
         put_u64(&mut out, self.minimum_lease);
         put_u64(&mut out, self.maximum_lease);
@@ -827,7 +847,7 @@ impl TeePolicyV1 {
         let tcb_info_schema_version = decoder.u8()?;
         let qe_identity_schema_version = decoder.u8()?;
         let minimum_tcb_evaluation_data_number = decoder.u32()?;
-        let accepted_platform_tcb_status = QvlTcbStatusV1::decode(decoder.u8()?)?;
+        let accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::decode(decoder.u8()?)?;
         let accepted_qe_tcb_status = QvlTcbStatusV1::decode(decoder.u8()?)?;
         let minimum_lease = decoder.u64()?;
         let maximum_lease = decoder.u64()?;
@@ -865,7 +885,7 @@ impl TeePolicyV1 {
             tcb_info_schema_version,
             qe_identity_schema_version,
             minimum_tcb_evaluation_data_number,
-            accepted_platform_tcb_status,
+            accepted_platform_tcb_statuses,
             accepted_qe_tcb_status,
             minimum_lease,
             maximum_lease,

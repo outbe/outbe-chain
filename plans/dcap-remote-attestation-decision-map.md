@@ -74,6 +74,9 @@ May production fall back to unattested or development evidence?
 - Missing verifier, quote, collateral, or hardware support is rejection.
 - V1 accepts SGX ECDSA Quote v3 only. TDX and quote v4/v5 require a later
   policy version.
+- The only production V1 target is x86_64 with Intel SGX. ARM TEE and aarch64
+  are not planned or supported by this protocol version; adding another TEE or
+  architecture requires an explicit later protocol and release decision.
 
 This closes the behavior in
 `findings/M1-strict-tee-policy-accepts-unattested-sidecar/report.md`.
@@ -143,15 +146,26 @@ Which code identity and Intel TCB results are acceptable in production?
 
 `RESOLVED`.
 
-- Platform and QE TCB levels must be `UpToDate`.
-- The aggregate verification result must be fully acceptable under that strict
-  policy; `SWHardeningNeeded`, configuration-needed, out-of-date, revoked, and
-  advisory-bearing results are rejected in V1.
+- Platform TCB may be `UpToDate` or `SWHardeningNeeded`.
+- QE TCB must be `UpToDate`.
+- TCB Info schema v3 remains mandatory. A schema-v2 result is rejected even
+  when its reported status is `UpToDate`.
+- Intel-authenticated advisory IDs accompanying an admitted
+  `SWHardeningNeeded` Platform result are preserved in the stable verdict.
+- Configuration-needed, out-of-date and revoked Platform or QE results are
+  rejected. `SWHardeningNeeded` is not admitted for QE.
 - Admission requires exact `MRENCLAVE`, matching `MRSIGNER`, `ISVPRODID`, and
   minimum `ISVSVN`.
 - `MRSIGNER` alone or a higher SVN never admits unknown code.
 
-Do not copy Secret Network's warning-only handling of non-OK QVL outcomes:
+The initial policy follows Secret Network's practical acceptance of
+`SWHardeningNeeded`, but makes the accepted Platform set explicit and keeps QE
+strict. Governance may later activate a complete policy that tightens Platform
+admission to `UpToDate` only; existing leases remain valid only until their
+bounded expiry and cannot renew under a policy they no longer satisfy.
+
+Do not copy Secret Network's undifferentiated warning-only handling of other
+non-OK QVL outcomes:
 `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/execute/src/registration/onchain.rs:50`.
 
 ## #6: Who changes attestation policy and hardware admission?
@@ -517,8 +531,9 @@ Type: Research
 
 ### Question
 
-Which pinned Rust verifier and parser subset produce byte-identical results on
-all supported architectures and expose every required protocol check?
+Which pinned Rust verifier and parser subset produces deterministic results on
+the supported x86_64 production target and exposes every required protocol
+check?
 
 ### Answer
 
@@ -557,7 +572,7 @@ Implementation/release acceptance evidence:
 - canonical DER and signed-JSON behavior;
 - dependency and Intel-root pinning;
 - no optional verifier feature or fail-open fallback;
-- cross-architecture result equality.
+- byte-stable verdict vectors across supported x86_64 validator builds.
 
 Secret Network's host Intel QVL plus enclave QvE-report path is not copied
 because it is not a consensus-native deterministic verifier.
@@ -607,9 +622,9 @@ For 32 participants at the evidence cap and 64 rules, OST3 precharge is
 `169,075,992` gas for the other mandatory block-1 work.
 
 Secret Network's opaque host-call pricing and permissive section allocation are
-not suitable precedent. Processor/Platform, large-CRL, cap-boundary,
-cross-architecture and slowest-validator benchmarks remain mandatory release
-tests under I1/I8/I9, not open design questions.
+not suitable precedent. Processor/Platform, large-CRL, cap-boundary and
+slowest-supported-x86_64-validator benchmarks remain mandatory release tests
+under I1/I8/I9, not open design questions.
 
 ## #19: Deferred continuity rule
 
