@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "inactive-until-i9",
+  "target": "x86_64-unknown-linux-gnu",
+  "gramine_version": "1.9",
+  "intel_dcap": {
+    "runtime_package": "libsgx-dcap-quote-verify",
+    "runtime_package_version": "1.26.100.1-noble1",
+    "development_package": "libsgx-dcap-quote-verify-dev",
+    "development_package_version": "1.26.100.1-noble1",
+    "headers_package": "libsgx-headers",
+    "headers_package_version": "2.29.100.1-noble1",
+    "collateral_major_version": 3,
+    "collateral_minor_version": 1,
+    "qve_report_info": "null",
+    "qve_enabled": false,
+    "tvl_enabled": false,
+    "qpl_or_pccs_during_consensus": false
+  },
+  "artifacts": [
+    {
+      "role": "qvl",
+      "package": "libsgx-dcap-quote-verify",
+      "package_version": "1.26.100.1-noble1",
+      "path": "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
+      "install_name": "libsgx_dcap_quoteverify.so.1",
+      "size": 5322424,
+      "sha256": "4745bc5b46cbdc17a78119ae2db08f54b86ff9077c5ab480f378741396365aef",
+      "elf_build_id": "663c0acf2b4673c22c66f01112c5f38d856fd5a5"
+    },
+    {
+      "role": "cxx-runtime",
+      "package": "libstdc++6",
+      "package_version": "14.2.0-4ubuntu2~24.04.1",
+      "path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.33",
+      "install_name": "libstdc++.so.6",
+      "size": 2592224,
+      "sha256": "1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11"
+    },
+    {
+      "role": "gcc-runtime",
+      "package": "libgcc-s1",
+      "package_version": "14.2.0-4ubuntu2~24.04.1",
+      "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "install_name": "libgcc_s.so.1",
+      "size": 183024,
+      "sha256": "d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb"
+    }
+  ]
+}

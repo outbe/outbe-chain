@@ -8417,9 +8417,11 @@ name = "outbe-tee"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "cc",
  "commonware-runtime",
  "dcap-qvl",
  "ed25519-dalek",
+ "hex",
  "k256 0.13.4",
  "outbe-primitives",
  "postcard",

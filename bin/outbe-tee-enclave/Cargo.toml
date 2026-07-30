@@ -10,6 +10,9 @@ publish.workspace = true
 # quote). The production binary is built WITHOUT this feature and therefore
 # physically contains no mock key material. See plan §"Mock build-time isolation".
 mock = []
+# Production DCAP verifier feasibility path. This forwards the exact-pinned
+# native QVL feature into the enclave crate without enabling it in dev builds.
+native-dcap = ["outbe-tee/native-dcap"]
 
 [lib]
 name = "outbe_tee_enclave"

@@ -25,12 +25,20 @@ dcap-qvl = { version = "0.5", optional = true }
 # Enables cryptographic DCAP quote verification (Intel QVL + PCCS collateral).
 # OFF by default; turn on for gramine-sgx / CI builds (`--features dcap`).
 dcap = ["dep:dcap-qvl"]
+# Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
+# enclave. This is intentionally separate from the legacy host-local `dcap`
+# feature above.
+native-dcap = []
 
 [dev-dependencies]
 k256.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true }
 commonware-runtime.workspace = true
+hex.workspace = true
+
+[build-dependencies]
+cc = "1.2"
 
 [lints]
 workspace = true

@@ -16,6 +16,8 @@ pub mod codec;
 pub mod endorsement;
 pub mod errors;
 pub mod handoff;
+#[cfg(feature = "native-dcap")]
+pub mod native_qvl;
 pub mod protocol;
 pub mod quote;
 pub mod tee_dkg;
