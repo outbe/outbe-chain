@@ -60,7 +60,7 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":100000000000.00,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":1.00,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.00,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000.00,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
         assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
         assertFalse(json.contains("\"Call Deadline\""), "no call rows before markCalled");
     }
@@ -190,7 +190,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("INTEX SERIES"), "header");
         assertTrue(svg.contains(bytes(DISPLAY_ID)), "composite id");
         assertTrue(svg.contains("100,000,000,000.00"), "entry price with separators");
-        assertTrue(svg.contains("100,000.00"), "promis load with separators");
+        assertTrue(svg.contains(">100,000</text>"), "promis load as whole units");
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
 }

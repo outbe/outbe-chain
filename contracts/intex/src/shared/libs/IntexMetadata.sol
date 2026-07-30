@@ -99,7 +99,7 @@ library IntexMetadata {
             _amountPlain(data.callPriceMinor, 2),
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
-            _amountPlain(data.promisLoadMinor, 18),
+            Strings.toString(data.promisLoadMinor / 1e18),
             ",\"display_type\":\"number\"}"
         );
 
@@ -174,7 +174,7 @@ library IntexMetadata {
             _generateField("Entry Price", _formatAmount(data.entryPriceMinor, 2), 265),
             _generateField("Floor Price", _formatAmount(data.floorPriceMinor, 2), 310),
             _generateField("Call Price", _formatAmount(data.callPriceMinor, 2), 355),
-            _generateField("Promis Load", _formatAmount(data.promisLoadMinor, 18), 400)
+            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / 1e18), 400)
         );
         if (!settled && data.calledAt != 0) {
             uint256 deadline = uint256(data.calledAt) + data.callTrigger.intexCallPeriod;
