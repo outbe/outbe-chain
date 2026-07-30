@@ -40,7 +40,7 @@ use outbe_consensus::{
         HybridCertificate, VrfProof,
     },
 };
-use outbe_fidelity::{fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1};
+use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 use outbe_metadosis::schema::OCOMP_JOB_RECORDS_BASE_SLOT;
 use outbe_node::ocomp::finality::{PublicAccountProofV1, PublicBlockViewV1, PublicStorageProofV1};
 use outbe_ocomp_protocol::{
@@ -49,13 +49,14 @@ use outbe_ocomp_protocol::{
         intent_storage_key, CertifiedParentAccountingMetadataV2, FinalizedIntentProofV1,
         JobIntentV1, ParentProofKind,
     },
+    league_snapshot::league_snapshot_slot,
     opening::OpeningSubjectsV1,
     state::{OcompJobRecordV1, OcompJobStatus},
     SchemaLimits,
 };
 use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
 use outbe_primitives::{
-    addresses::{FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS},
     header::OutbeHeader,
     storage::types::StorageKey as _,
     OutbeBlock,
@@ -437,7 +438,7 @@ pub fn finalized_intent_proof_fixture(
     intent: JobIntentV1,
     limits: &SchemaLimits,
 ) -> FinalizedIntentProofFixture {
-    build_finalized_intent_proof_fixture(intent, limits, Vec::new()).0
+    build_finalized_intent_proof_fixture(intent, limits, Vec::new(), None).0
 }
 
 /// Builds one state root containing ValidatorSet, JobIntent, Fidelity and
@@ -462,9 +463,14 @@ pub fn finalized_lysis_input_fixture(
             .collect(),
         settlement_isos: settlement_isos.into_iter().collect(),
     };
-    let contracts = lysis_contracts(WorldwideDay::new(intent.wwd), &subjects);
-    let (finalized, opening_provider) =
-        build_finalized_intent_proof_fixture(intent, limits, contracts);
+    let (fidelity_league_slots, oracle_contract) =
+        lysis_contracts(WorldwideDay::new(intent.wwd), &subjects);
+    let (finalized, opening_provider) = build_finalized_intent_proof_fixture(
+        intent,
+        limits,
+        fidelity_league_slots,
+        Some(oracle_contract),
+    );
     FinalizedLysisInputFixture {
         finalized,
         opening_provider: opening_provider.expect("Lysis fixture includes opening contracts"),
@@ -475,7 +481,8 @@ pub fn finalized_lysis_input_fixture(
 fn build_finalized_intent_proof_fixture(
     intent: JobIntentV1,
     limits: &SchemaLimits,
-    opening_contracts: Vec<OpeningContractFixture>,
+    fidelity_league_slots: Vec<(B256, U256)>,
+    oracle_contract: Option<OpeningContractFixture>,
 ) -> (FinalizedIntentProofFixture, Option<LysisOpeningProvider>) {
     let canonical_job_intent = intent
         .encode_canonical(limits)
@@ -493,11 +500,22 @@ fn build_finalized_intent_proof_fixture(
         .encode_canonical(limits)
         .expect("fixture job record is canonical");
     let intent_slots = dynamic_bytes_storage_slots(logical_key, &encoded_record);
-    let (intent_storage_root, intent_storage_proofs) = storage_trie(&intent_slots);
+    // The Fidelity league snapshot now lives in Metadosis storage, so its slots
+    // share the intent account's storage trie under one storage root. The intent
+    // finality proof and the league opening are two paths in the same trie.
+    let mut metadosis_slots = intent_slots.clone();
+    metadosis_slots.extend(
+        fidelity_league_slots
+            .iter()
+            .map(|(slot, value)| (U256::from_be_bytes(slot.0), *value)),
+    );
+    let (metadosis_storage_root, metadosis_storage_proofs) = storage_trie(&metadosis_slots);
+    let intent_storage_proofs = metadosis_storage_proofs[..intent_slots.len()].to_vec();
+    let fidelity_storage_proofs = metadosis_storage_proofs[intent_slots.len()..].to_vec();
     let intent_account = TrieAccount {
         nonce: 0,
         balance: U256::ZERO,
-        storage_root: intent_storage_root,
+        storage_root: metadosis_storage_root,
         code_hash: KECCAK_EMPTY,
     };
 
@@ -516,15 +534,35 @@ fn build_finalized_intent_proof_fixture(
         storage_root: validator_storage_root,
         code_hash: KECCAK_EMPTY,
     };
-    let mut state_accounts = vec![
-        (METADOSIS_ADDRESS, intent_account),
-        (VALIDATOR_SET_ADDRESS, validator_account),
-    ];
-    state_accounts.extend(
-        opening_contracts
-            .iter()
-            .map(|contract| (contract.address, contract.account)),
-    );
+    // The Fidelity league opening shares the Metadosis intent account, so it is
+    // NOT a distinct state account — only Oracle adds one. When no openings are
+    // requested (proof-only fixtures), Metadosis and ValidatorSet are the only
+    // accounts and no opening provider is produced.
+    let (state_accounts, opening_contracts) = match oracle_contract {
+        Some(oracle_contract) => {
+            let fidelity_opening = OpeningContractFixture {
+                address: METADOSIS_ADDRESS,
+                slots: fidelity_league_slots,
+                account: intent_account,
+                storage_proofs: fidelity_storage_proofs,
+            };
+            (
+                vec![
+                    (METADOSIS_ADDRESS, intent_account),
+                    (VALIDATOR_SET_ADDRESS, validator_account),
+                    (ORACLE_ADDRESS, oracle_contract.account),
+                ],
+                vec![fidelity_opening, oracle_contract],
+            )
+        }
+        None => (
+            vec![
+                (METADOSIS_ADDRESS, intent_account),
+                (VALIDATOR_SET_ADDRESS, validator_account),
+            ],
+            Vec::new(),
+        ),
+    };
     let (state_root, account_proofs) = account_trie(&state_accounts);
     let header = OutbeHeader::new(Header {
         number: intent.logical_evaluation_height,
@@ -717,26 +755,40 @@ struct OpeningContractFixture {
     storage_proofs: Vec<Vec<Bytes>>,
 }
 
-fn lysis_contracts(day: WorldwideDay, subjects: &OpeningSubjectsV1) -> Vec<OpeningContractFixture> {
-    let mut fidelity_values = BTreeMap::new();
-    for (owner_index, owner) in subjects.owners.iter().enumerate() {
-        let counts = fidelity_count_slot_plan_v1(*owner);
-        let plan = fidelity_opening_slot_plan_v1(*owner, 1, 1)
-            .expect("fixture Fidelity counts fit the frozen profile");
-        for (slot_index, slot) in plan.slots.iter().enumerate() {
-            fidelity_values.insert(
-                *slot,
-                U256::from(
-                    owner_index
-                        .saturating_mul(100)
-                        .saturating_add(slot_index)
-                        .saturating_add(1),
-                ),
-            );
-        }
-        fidelity_values.insert(counts.active_count, U256::from(1));
-        fidelity_values.insert(counts.sold_count, U256::from(1));
-    }
+/// A deterministic, valid Fidelity league for populating a fixture snapshot slot.
+///
+/// This is NOT the Fidelity league derivation — that lives in `outbe_fidelity`
+/// (`league_from_rcfi`, RCFI → league). These fixtures mock the on-chain state a
+/// node would read, so each snapshot slot needs *some* value in the canonical
+/// `[MIN_LEAGUE, MAX_LEAGUE]` range. The value is opaque to the tests, which
+/// assert opening-proof layout and deterministic re-execution — never league
+/// semantics. A distinct (but arbitrary) per-owner value just spreads tributes
+/// across more than one Lysis per-league group; owner order carries no meaning.
+pub fn fixture_league(owner_index: usize) -> u16 {
+    let span = usize::from(MAX_LEAGUE - MIN_LEAGUE) + 1;
+    MIN_LEAGUE + u16::try_from(owner_index % span).unwrap_or(0)
+}
+
+/// Returns the per-owner Fidelity league snapshot slots (which live in Metadosis
+/// storage and are merged into the intent account's storage trie by the caller)
+/// plus the standalone Oracle opening contract.
+fn lysis_contracts(
+    day: WorldwideDay,
+    subjects: &OpeningSubjectsV1,
+) -> (Vec<(B256, U256)>, OpeningContractFixture) {
+    // Owner order (subjects.owners is strictly ordered) matches the node's
+    // `ordered_league_snapshot_slots`, so the opening's slot order is canonical.
+    let fidelity_league_slots: Vec<(B256, U256)> = subjects
+        .owners
+        .iter()
+        .enumerate()
+        .map(|(owner_index, owner)| {
+            (
+                league_snapshot_slot(day.value(), *owner),
+                U256::from(fixture_league(owner_index)),
+            )
+        })
+        .collect();
 
     let settlement_pairs = subjects
         .settlement_isos
@@ -766,10 +818,10 @@ fn lysis_contracts(day: WorldwideDay, subjects: &OpeningSubjectsV1) -> Vec<Openi
     oracle_values.insert(oracle_counts.slots[count_base + 2], U256::from(1));
     oracle_values.insert(oracle_counts.slots[count_base + 3], U256::ZERO);
 
-    vec![
-        opening_contract(FIDELITY_ADDRESS, fidelity_values.into_iter().collect()),
+    (
+        fidelity_league_slots,
         opening_contract(ORACLE_ADDRESS, oracle_values.into_iter().collect()),
-    ]
+    )
 }
 
 fn opening_contract(address: Address, slots: Vec<(B256, U256)>) -> OpeningContractFixture {

@@ -84,7 +84,6 @@ wire_struct! {
         pub retry_backoff_blocks: u64,
         pub max_terminal_job_records: u16,
         pub max_reference_currencies: u16,
-        pub max_fidelity_cohorts_per_owner: u16,
         pub max_oracle_wwd_pair_entries: u32,
         pub max_active_scurve_entries: u32,
         pub result_deadline_blocks: u64,

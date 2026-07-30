@@ -934,9 +934,6 @@ pub mod update {
                 let mut tribute = ctx.contract::<outbe_tribute::TributeContract>();
                 tribute.initialize_fresh_ocomp_profile()?;
 
-                let mut fidelity = ctx.contract::<outbe_fidelity::FidelityContract>();
-                fidelity.initialize_fresh_ocomp_profile()?;
-
                 outbe_oracle::api::initialize_fresh_ocomp_profile(ctx.storage.clone())?;
 
                 let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
@@ -1025,12 +1022,6 @@ pub mod update {
                         .profile_ready
                 );
                 assert!(
-                    outbe_fidelity::FidelityContract::new(storage.clone())
-                        .ocomp_projection()
-                        .unwrap()
-                        .profile_ready
-                );
-                assert!(
                     outbe_oracle::api::ocomp_pre_admission_projection(
                         storage.clone(),
                         outbe_common::WorldwideDay::from_timestamp(ACTIVATION_TIMESTAMP),
@@ -1063,12 +1054,6 @@ pub mod update {
                 assert!(
                     !outbe_tribute::TributeContract::new(storage.clone())
                         .pre_admission_projection(wwd)
-                        .unwrap()
-                        .profile_ready
-                );
-                assert!(
-                    !outbe_fidelity::FidelityContract::new(storage.clone())
-                        .ocomp_projection()
                         .unwrap()
                         .profile_ready
                 );

@@ -590,7 +590,6 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: Some(supervisor_socket.clone()),
             development_node_snapshot_exporter_socket: None,
-            ..RuntimeArgs::default()
         };
         let profile = RuntimeProfile::resolve(&args, ProcessRole::Supervisor).unwrap();
 
@@ -608,7 +607,6 @@ mod tests {
             development_ce_datadir: None,
             development_node_supervisor_socket: None,
             development_node_snapshot_exporter_socket: None,
-            ..RuntimeArgs::default()
         };
         assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
     }

@@ -1,6 +1,5 @@
 use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
-use outbe_fidelity::FidelityOcompProjection;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{AuctionEntryPriceSource, PreAdmissionEnvelopeV1},
@@ -29,7 +28,10 @@ pub(crate) struct PreAdmissionContext {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PreAdmissionInputs {
     pub tribute: TributePreAdmissionProjection,
-    pub fidelity: FidelityOcompProjection,
+    /// Ordered commitment over the day's snapshotted `(owner, league)` pairs,
+    /// computed by the caller from the sealed owner set. Sealed into the
+    /// envelope so the OCOMP opening's owner/league set is consensus-committed.
+    pub fidelity_league_snapshot_root: B256,
     pub oracle: OcompOraclePreAdmissionProjection,
 }
 
@@ -45,9 +47,6 @@ pub(crate) enum PreAdmissionDeferredReason {
     TributeNotSealed,
     EmptyTributeDay,
     ReferenceCurrencyCountExceeded { actual: u16, limit: u16 },
-    FidelityProfileNotReady,
-    FidelityProfileCapMismatch { actual: u16, expected: u16 },
-    FidelityCohortCapExceeded { actual: u16, limit: u16 },
     OracleProfileNotReady,
     OracleOpeningCountExceeded { actual: u16, limit: u16 },
     OracleWwdPairEntriesExceeded { actual: u32, limit: u32 },
@@ -64,7 +63,6 @@ pub(crate) fn evaluate_pre_admission(
 ) -> Result<PreAdmissionDecision> {
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let tribute = inputs.tribute;
-    let fidelity = inputs.fidelity;
     let oracle = inputs.oracle;
 
     if !tribute.profile_ready {
@@ -91,27 +89,6 @@ pub(crate) fn evaluate_pre_admission(
             PreAdmissionDeferredReason::ReferenceCurrencyCountExceeded {
                 actual: tribute.distinct_reference_currency_count,
                 limit: reference_currency_limit,
-            },
-        ));
-    }
-    if !fidelity.profile_ready {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityProfileNotReady,
-        ));
-    }
-    if fidelity.max_cohorts_per_owner != context.capacity_profile.max_fidelity_cohorts_per_owner {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityProfileCapMismatch {
-                actual: fidelity.max_cohorts_per_owner,
-                expected: context.capacity_profile.max_fidelity_cohorts_per_owner,
-            },
-        ));
-    }
-    if fidelity.max_cohorts_observed > fidelity.max_cohorts_per_owner {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityCohortCapExceeded {
-                actual: fidelity.max_cohorts_observed,
-                limit: fidelity.max_cohorts_per_owner,
             },
         ));
     }
@@ -202,7 +179,7 @@ pub(crate) fn evaluate_pre_admission(
             sealed_tribute_canonical_body_bytes: tribute.canonical_body_bytes,
             distinct_owner_count: tribute.distinct_owner_count,
             distinct_reference_currency_count: tribute.distinct_reference_currency_count,
-            max_fidelity_cohorts_observed: fidelity.max_cohorts_observed,
+            fidelity_league_snapshot_root: inputs.fidelity_league_snapshot_root,
             oracle_wwd_pair_entries_observed: oracle.wwd_pair_entries,
             active_scurve_entries_observed: oracle.active_scurve_entries,
             auction_entry_price: oracle.auction_entry_price,

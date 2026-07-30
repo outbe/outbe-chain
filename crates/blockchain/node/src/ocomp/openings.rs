@@ -1,17 +1,17 @@
 //! Exact-block Fidelity and Oracle raw opening construction for LYSIS_V1.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_fidelity::{fidelity_count_slot_plan_v1, fidelity_opening_slot_plan_v1};
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{job_id_from_intent_id, VerifiedFinalizedIntentV1},
+    league_snapshot::ordered_league_snapshot_slots,
     opening::{LysisOpeningsProofV1, OpeningSubjectsV1},
     SchemaLimits,
 };
 use outbe_oracle::{oracle_count_slot_plan_v1, oracle_opening_slot_plan_v1};
-use outbe_primitives::addresses::{FIDELITY_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS};
 use reth_provider::StateProviderFactory;
 use reth_storage_api::StateProvider;
 
@@ -38,12 +38,13 @@ where
             ))
         })?;
 
-    let fidelity_slots = fidelity_slots(state.as_ref(), &subjects, limits.max_collection_items)?;
+    let fidelity_slots =
+        fidelity_league_slots(&subjects, candidate.wwd, limits.max_collection_items)?;
     let oracle_slots = oracle_slots(state.as_ref(), candidate, &subjects)?;
     let fidelity = build_verified_raw_contract_opening(
         state.as_ref(),
         candidate.state_root,
-        FIDELITY_ADDRESS,
+        METADOSIS_ADDRESS,
         &fidelity_slots,
         limits,
     )
@@ -113,17 +114,18 @@ pub fn verify_lysis_openings(
         .collect::<Vec<_>>();
     verify_raw_contract_opening(
         &openings.fidelity,
-        FIDELITY_ADDRESS,
+        METADOSIS_ADDRESS,
         finalized.request.state_root,
         &supplied_fidelity_slots,
         limits,
     )
     .map_err(|error| RetentionError::Source(error.to_string()))?;
     let expected_fidelity_slots =
-        fidelity_slots_from_authenticated_opening(&openings.fidelity, expected_subjects)?;
+        ordered_league_snapshot_slots(finalized.intent.wwd, &expected_subjects.owners);
     if supplied_fidelity_slots != expected_fidelity_slots {
         return Err(RetentionError::Source(
-            "Fidelity opening does not match the canonical count-derived slot plan".to_owned(),
+            "Fidelity league opening does not match the canonical per-owner snapshot slots"
+                .to_owned(),
         ));
     }
 
@@ -152,33 +154,6 @@ pub fn verify_lysis_openings(
         ));
     }
     Ok(())
-}
-
-fn fidelity_slots_from_authenticated_opening(
-    opening: &outbe_ocomp_protocol::opening::RawContractOpeningProofV1,
-    subjects: &OpeningSubjectsV1,
-) -> Result<Vec<B256>, RetentionError> {
-    let values = opening
-        .ordered_slots
-        .iter()
-        .map(|raw| (raw.slot, raw.value))
-        .collect::<BTreeMap<_, _>>();
-    let mut slots = Vec::new();
-    let mut unique = BTreeSet::new();
-    for owner in &subjects.owners {
-        let counts = fidelity_count_slot_plan_v1(*owner);
-        let active_count =
-            authenticated_u32(&values, counts.active_count, "Fidelity active_count")?;
-        let sold_count = authenticated_u32(&values, counts.sold_count, "Fidelity sold_count")?;
-        let plan = fidelity_opening_slot_plan_v1(*owner, active_count, sold_count)
-            .map_err(|error| RetentionError::Source(error.to_string()))?;
-        for slot in plan.slots {
-            if unique.insert(slot) {
-                slots.push(slot);
-            }
-        }
-    }
-    Ok(slots)
 }
 
 fn oracle_slots_from_authenticated_opening(
@@ -275,50 +250,23 @@ fn validate_subjects(subjects: &OpeningSubjectsV1) -> Result<(), RetentionError>
     Ok(())
 }
 
-fn fidelity_slots(
-    state: &dyn StateProvider,
+/// Canonical per-owner Fidelity league snapshot slots in Metadosis storage.
+///
+/// Unlike the former raw-cohort plan this reads no contract state: each owner
+/// contributes exactly one slot derived purely from `(wwd, owner)`. Owners are
+/// already strictly ordered and unique (`validate_subjects`), so the slots are
+/// distinct and follow the canonical owner order the verifier reconstructs.
+fn fidelity_league_slots(
     subjects: &OpeningSubjectsV1,
+    wwd: u32,
     max_slots: usize,
 ) -> Result<Vec<B256>, RetentionError> {
-    let mut slots = Vec::new();
-    let mut unique = BTreeSet::new();
-    for owner in &subjects.owners {
-        let counts = fidelity_count_slot_plan_v1(*owner);
-        let active_count = read_u32(
-            state,
-            FIDELITY_ADDRESS,
-            counts.active_count,
-            "Fidelity active_count",
-        )?;
-        let sold_count = read_u32(
-            state,
-            FIDELITY_ADDRESS,
-            counts.sold_count,
-            "Fidelity sold_count",
-        )?;
-        let plan = fidelity_opening_slot_plan_v1(*owner, active_count, sold_count)
-            .map_err(|error| RetentionError::Source(error.to_string()))?;
-        let additional_slots = plan
-            .slots
-            .iter()
-            .filter(|slot| !unique.contains(*slot))
-            .count();
-        if slots
-            .len()
-            .checked_add(additional_slots)
-            .is_none_or(|total| total > max_slots)
-        {
-            return Err(RetentionError::Source(
-                "Fidelity raw opening slot count exceeds the bounded profile".to_owned(),
-            ));
-        }
-        for slot in plan.slots {
-            if unique.insert(slot) {
-                slots.push(slot);
-            }
-        }
+    if subjects.owners.len() > max_slots {
+        return Err(RetentionError::Source(
+            "Fidelity league opening slot count exceeds the bounded profile".to_owned(),
+        ));
     }
-    Ok(slots)
+    Ok(ordered_league_snapshot_slots(wwd, &subjects.owners))
 }
 
 fn oracle_slots(

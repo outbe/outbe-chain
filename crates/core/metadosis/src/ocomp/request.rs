@@ -3,7 +3,6 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     partition_collection_key, ExecutionScope, PartitionRef, SealedCollectionRoot,
 };
-use outbe_fidelity::schema::FidelityContract;
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::{
     intent::{
@@ -125,7 +124,6 @@ fn build_and_commit_request(
     let stored_tribute_projection = tribute.pre_admission_projection(wwd)?;
     let candidate_tribute_projection =
         candidate_tribute_projection(stored_tribute_projection, exact_collection)?;
-    let fidelity = FidelityContract::new(ctx.storage.clone()).ocomp_projection()?;
     let current_vwap = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
     let oracle = outbe_oracle::api::ocomp_pre_admission_projection(
         ctx.storage.clone(),
@@ -133,6 +131,16 @@ fn build_and_commit_request(
         current_vwap,
         ctx.block.timestamp,
     )?;
+    // The per-owner league snapshot and its root were committed during the
+    // active-phase prepare step (`build_fidelity_league_snapshot`). This terminal
+    // request runs post-seal and cannot enumerate tributes, so it only reads the
+    // committed root (a plain storage read) to bind into the sealed envelope.
+    let snapshot_root = metadosis.ocomp_fidelity_league_snapshot_root.read(&wwd)?;
+    if snapshot_root.is_zero() {
+        return Err(fatal(
+            "OCOMP Fidelity league snapshot missing at terminal request",
+        ));
+    }
     let pre_admission_context = PreAdmissionContext {
         chain_id: profile.chain_id,
         genesis_hash: profile.genesis_hash,
@@ -144,7 +152,7 @@ fn build_and_commit_request(
         &pre_admission_context,
         &PreAdmissionInputs {
             tribute: candidate_tribute_projection,
-            fidelity,
+            fidelity_league_snapshot_root: snapshot_root,
             oracle,
         },
     )?;
@@ -166,7 +174,7 @@ fn build_and_commit_request(
         &pre_admission_context,
         &PreAdmissionInputs {
             tribute: sealed_tribute_projection,
-            fidelity: FidelityContract::new(ctx.storage.clone()).ocomp_projection()?,
+            fidelity_league_snapshot_root: snapshot_root,
             oracle: outbe_oracle::api::ocomp_pre_admission_projection(
                 ctx.storage.clone(),
                 wwd,

@@ -46,7 +46,6 @@ use outbe_evm::{
     system_tx::{split_system_layout, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind},
     OutbeEvmConfig, OutbeEvmSigner, RethAccountedParentArtifactProvider,
 };
-use outbe_fidelity::schema::FidelityContract;
 use outbe_intex::IntexContract;
 use outbe_metadosis::{
     constants::{
@@ -809,9 +808,6 @@ fn prepare_parent(proposer: Address, snapshot: &StoredCommitteeSnapshot) -> Prep
             .unwrap();
         write_committee_snapshot(storage.clone(), FINALIZED_EPOCH, snapshot).unwrap();
 
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         let mut oracle_genesis = outbe_oracle::logic::OracleGenesisConfig::default_config();
         oracle_genesis.initial_rates.push((

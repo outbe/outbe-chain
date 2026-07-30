@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{decode_tribute_v1, CanonicalBodyError};
-use outbe_fidelity::{evaluate_fidelity_opening_v1, FidelityOpeningEvaluationError};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
     decode_finalized_output_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
@@ -36,6 +35,7 @@ use outbe_ocomp_protocol::input::{
     AuthenticatedInputChunkV1, AuthenticatedOpeningV1, InputChunkKind, InputChunkRefV1,
     InputManifestV1, OpeningSourceKind,
 };
+use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 use outbe_ocomp_protocol::unit::{
     BinaryReducerNode, CanonicalInputRefV1, FidelityIndexHalfOpenRange, InputPurpose,
     InputSourceKind, PlanCommitmentV1, UnitArtifactV1, UnitInterval, UnitPhase, UnitSpecV1,
@@ -145,8 +145,6 @@ pub enum WorkerError {
     Planner(#[from] PlannerErrorV1),
     #[error(transparent)]
     CanonicalBody(#[from] CanonicalBodyError),
-    #[error(transparent)]
-    FidelityOpening(#[from] FidelityOpeningEvaluationError),
     #[error(transparent)]
     OracleOpening(#[from] OracleOpeningEvaluationError),
     #[error(transparent)]
@@ -480,16 +478,22 @@ fn execute_fidelity_map_unit(
                         .ordered_slots
                         .iter()
                         .map(|slot| (slot.slot, slot.value))
-                        .collect::<Vec<_>>();
-                    for observation in evaluate_fidelity_opening_v1(
-                        &owners,
-                        &slot_values,
-                        plan.logical_evaluation_time,
-                    )? {
-                        if leagues
-                            .insert(observation.owner, observation.league)
-                            .is_some()
-                        {
+                        .collect::<BTreeMap<_, _>>();
+                    for owner in &owners {
+                        // Independently re-derive each owner's snapshot slot rather
+                        // than trusting slot order; the MPT-proven value is the
+                        // on-chain league Metadosis committed for this day at
+                        // prepare time. An absent (zero) or out-of-range word means
+                        // the owner was not snapshotted and is rejected.
+                        let slot = league_snapshot_slot(manifest.wwd, *owner);
+                        let word = slot_values
+                            .get(&slot)
+                            .copied()
+                            .ok_or(WorkerError::UnitBindingMismatch)?;
+                        if word.is_zero() || word > U256::from(u16::MAX) {
+                            return Err(WorkerError::UnitBindingMismatch);
+                        }
+                        if leagues.insert(*owner, word.to::<u16>()).is_some() {
                             return Err(WorkerError::UnitBindingMismatch);
                         }
                     }

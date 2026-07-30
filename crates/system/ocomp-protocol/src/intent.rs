@@ -45,7 +45,7 @@ wire_struct! {
         pub sealed_tribute_canonical_body_bytes: u64,
         pub distinct_owner_count: u32,
         pub distinct_reference_currency_count: u16,
-        pub max_fidelity_cohorts_observed: u16,
+        pub fidelity_league_snapshot_root: B256,
         pub oracle_wwd_pair_entries_observed: u32,
         pub active_scurve_entries_observed: u32,
         pub auction_entry_price: U256,

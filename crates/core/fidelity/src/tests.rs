@@ -68,50 +68,37 @@ fn deposits_keep_efficiency_one() {
 }
 
 #[test]
-fn fresh_ocomp_profile_enforces_the_fidelity_cohort_cap() {
+fn owner_cohorts_are_unbounded() {
     with_contract(|contract| {
-        contract.initialize_fresh_ocomp_profile().unwrap();
-
-        for offset in 0..64 {
+        // Accumulate well past the former 64-cohort ceiling — there is no cap.
+        for offset in 0..100 {
             contract
                 .cohort_in(ALICE, U256::from(1), T0 + offset)
                 .unwrap();
         }
-        let at_cap = contract.ocomp_projection().unwrap();
-        assert!(at_cap.profile_ready);
-        assert_eq!(at_cap.max_cohorts_per_owner, 64);
-        assert_eq!(at_cap.max_cohorts_observed, 64);
-        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 64);
-
-        assert!(contract.cohort_in(ALICE, U256::from(1), T0 + 64).is_err());
-        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 64);
-        assert_eq!(contract.ocomp_projection().unwrap(), at_cap);
+        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 100);
     });
 }
 
 #[test]
-fn fidelity_cap_allows_full_move_but_rolls_back_partial_split() {
+fn partial_sale_past_the_former_cap_is_not_rolled_back() {
     with_contract(|contract| {
-        contract.initialize_fresh_ocomp_profile().unwrap();
         for offset in 0..64 {
             contract
                 .cohort_in(ALICE, U256::from(2), T0 + offset)
                 .unwrap();
         }
 
+        // Full consume → 63 active, 1 sold (total 64).
         contract.cohort_out(ALICE, U256::from(2), T0 + 100).unwrap();
-        assert_eq!(contract.active_count.read(&ALICE).unwrap(), 63);
-        assert_eq!(contract.sold_count.read(&ALICE).unwrap(), 1);
         assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 64);
-        let before = contract.ocomp_projection().unwrap();
-        let youngest_before = active(contract, ALICE, 62).unwrap();
 
-        assert!(contract.cohort_out(ALICE, U256::from(1), T0 + 101).is_err());
-
+        // A partial split adds a sold cohort (total 65) — formerly rejected by the
+        // cap, now succeeds and is not rolled back.
+        contract.cohort_out(ALICE, U256::from(1), T0 + 101).unwrap();
         assert_eq!(contract.active_count.read(&ALICE).unwrap(), 63);
-        assert_eq!(contract.sold_count.read(&ALICE).unwrap(), 1);
-        assert_eq!(active(contract, ALICE, 62).unwrap(), youngest_before);
-        assert_eq!(contract.ocomp_projection().unwrap(), before);
+        assert_eq!(contract.sold_count.read(&ALICE).unwrap(), 2);
+        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 65);
     });
 }
 

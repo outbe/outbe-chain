@@ -2,7 +2,6 @@ use alloy_primitives::{address, b256, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_desis::{AuctionStage, DesisContract};
-use outbe_fidelity::schema::FidelityContract;
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
 use outbe_oracle::contract::OracleContract;
@@ -48,9 +47,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
@@ -111,6 +107,12 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             )
             .unwrap();
         tribute.seal_day(wwd).unwrap();
+
+        // Mirror production: the league snapshot is built in the active CE phase
+        // (process_ocomp_ready_candidate) before the post-seal terminal request.
+        metadosis
+            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .unwrap();
 
         end_block(storage.clone(), &scope).unwrap();
         let ctx = BlockRuntimeContext::new(
@@ -439,7 +441,9 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 #[test]
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider);
+    // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
+    // it is armed mid-test so the later day becomes eligible.
+    let fixture = prepare_two_ready_days_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
         let first_ctx = BlockRuntimeContext::new(
@@ -478,9 +482,10 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
                 .worldwide_day,
             fixture.later_wwd
         );
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
+
+        // Arm Oracle so the later day is eligible on the next block; the first
+        // day's deferral must not have starved it.
+        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
 
         let next_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
@@ -533,13 +538,9 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 #[test]
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
-    let fixture = prepare_two_ready_days_fixture(&mut provider);
+    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
-
         for (block_number, block_time) in [
             (fixture.block_number, fixture.block_time),
             (fixture.block_number + 1, fixture.block_time + 1),
@@ -883,7 +884,7 @@ struct TwoReadyDaysFixture {
 
 fn prepare_request_fixture(
     provider: &mut HashMapStorageProvider,
-    fidelity_ready: bool,
+    oracle_ready: bool,
 ) -> PreparedRequestFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
@@ -899,14 +900,14 @@ fn prepare_request_fixture(
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        if fidelity_ready {
-            FidelityContract::new(storage.clone())
-                .initialize_fresh_ocomp_profile()
-                .unwrap();
-        }
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
+        // left un-armed so the terminal request defers with OracleProfileNotReady
+        // (the deferral path formerly exercised via Fidelity readiness).
+        if oracle_ready {
+            outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -964,6 +965,11 @@ fn prepare_request_fixture(
             )
             .unwrap();
         tribute.seal_day(wwd).unwrap();
+        // Mirror production: the league snapshot is built in the active CE phase
+        // before the post-seal terminal request reads its committed root.
+        metadosis
+            .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+            .unwrap();
         end_block(storage, &scope).unwrap();
     });
 
@@ -975,7 +981,10 @@ fn prepare_request_fixture(
     }
 }
 
-fn prepare_two_ready_days_fixture(provider: &mut HashMapStorageProvider) -> TwoReadyDaysFixture {
+fn prepare_two_ready_days_fixture(
+    provider: &mut HashMapStorageProvider,
+    oracle_ready: bool,
+) -> TwoReadyDaysFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let first_wwd = outbe_common::WorldwideDay::new(2026_0710);
@@ -990,7 +999,11 @@ fn prepare_two_ready_days_fixture(provider: &mut HashMapStorageProvider) -> TwoR
         begin_block(storage.clone(), &scope).unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        // When false the Oracle profile is left un-armed so the terminal request
+        // defers with OracleProfileNotReady (arm it mid-test to make a day eligible).
+        if oracle_ready {
+            outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis
@@ -1056,6 +1069,11 @@ fn prepare_two_ready_days_fixture(provider: &mut HashMapStorageProvider) -> TwoR
                 )
                 .unwrap();
             tribute.seal_day(wwd).unwrap();
+            // Mirror production: build each day's league snapshot in the active
+            // CE phase before the post-seal terminal request.
+            metadosis
+                .build_fidelity_league_snapshot(&scope, &parent, wwd, wwd.start_timestamp())
+                .unwrap();
         }
         end_block(storage, &scope).unwrap();
     });

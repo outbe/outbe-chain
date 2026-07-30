@@ -28,8 +28,12 @@ pub(crate) const H_SEC: u64 = 365 * 86_400;
 /// Saturation limit `L = H / ln2` in fixed-point decayed-days
 /// (≈ 526.583690 days). `526583689924471619584 = round(365/ln2 · 10^18)`.
 pub(crate) const L_FP: U256 = U256::from_limbs([10074855860604174336, 28, 0, 0]);
-pub(crate) const MIN_LEAGUE: u16 = 1;
-pub(crate) const MAX_LEAGUE: u16 = 4096;
+/// Inclusive bounds of the Fidelity league scale. A valid league is always in
+/// `[MIN_LEAGUE, MAX_LEAGUE]`; the derivation from RCFI lives in
+/// [`league_from_rcfi`]. Public so consumers (and fixtures) reference the
+/// canonical range instead of hard-coding it.
+pub const MIN_LEAGUE: u16 = 1;
+pub const MAX_LEAGUE: u16 = 4096;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RcfiAccumulator {

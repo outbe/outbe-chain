@@ -138,6 +138,7 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
     );
 }
 
+mod league_snapshot;
 mod lifecycle;
 mod ocomp_budget;
 mod ocomp_request;

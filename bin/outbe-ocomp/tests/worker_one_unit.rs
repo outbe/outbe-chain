@@ -9,7 +9,6 @@ use std::process::{Child, Command, Stdio};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
-use outbe_fidelity::fidelity_opening_slot_plan_v1;
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_finalized_output_run,
     decode_fixed_reduce_output, decode_gratis_prefix_down_output, decode_gratis_segment_summary,
@@ -62,6 +61,7 @@ use outbe_ocomp_protocol::intent::{
     JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
     TributeInputBindingV1,
 };
+use outbe_ocomp_protocol::league_snapshot::league_snapshot_slot;
 use outbe_ocomp_protocol::opening::{
     LysisOpeningsProofV1, OpeningSubjectsV1, RawContractOpeningProofV1, RawStorageSlotV1,
 };
@@ -149,15 +149,12 @@ fn real_worker_processes_execute_through_output_finalize() {
     let fidelity_raw = RawContractOpeningProofV1 {
         contract_address: Address::repeat_byte(0x54),
         state_root: finalized_state_root,
-        ordered_slots: fidelity_opening_slot_plan_v1(owner, 0, 0)
-            .expect("fixture Fidelity slot plan")
-            .slots
-            .into_iter()
-            .map(|slot| RawStorageSlotV1 {
-                slot,
-                value: U256::ZERO,
-            })
-            .collect(),
+        // One per-owner league word (a valid league in [1, 4096]) at the Metadosis
+        // snapshot slot, keyed by the same wwd the manifest carries.
+        ordered_slots: vec![RawStorageSlotV1 {
+            slot: league_snapshot_slot(day.value(), owner),
+            value: U256::from(1u16),
+        }],
         account_proof: ProofBytes(vec![0xa1]),
         storage_proof: ProofBytes(vec![0xb1]),
     };
