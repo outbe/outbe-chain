@@ -279,6 +279,33 @@ pub struct FidelityOpOutcome {
     pub league: u16,
 }
 
+/// Inputs for a STANDALONE `ApplyFidelityCohortOp` — a cohort mutation applied
+/// on its own enclave round-trip (used where there is no co-located Gratis op to
+/// fold into, i.e. the fidelity crate's `cohort_in`/`cohort_out` before the
+/// Phase-3 round-trip fold). The section carries the op/timestamp/anchor/blob;
+/// `account` + `amount` are the mutation's subject. Consensus path (called from
+/// precompile-driven factory flows, re-executed by every validator).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FidelityCohortRequest {
+    pub chain_id: B256,
+    pub account: Address,
+    pub amount: U256,
+    pub section: FidelityOpSection,
+}
+
+/// Public result of an `ApplyFidelityCohortOp`: the plaintext outcome plus the
+/// determinism/attestation material. Cohort contents never appear here.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FidelityCohortResult {
+    pub outcome: FidelityOpOutcome,
+    /// Diagnostic hash of the canonical request inputs; the host recomputes it to
+    /// detect enclave non-determinism, then discards.
+    pub inputs_canonical_hash: B256,
+    /// Local-only attestation tag over `(inputs_canonical_hash ‖ result)`; the
+    /// host verifies it against the pinned enclave attestation key, then discards.
+    pub attestation_tag: Vec<u8>,
+}
+
 /// Outcome of a single Gratis op.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum GratisOpStatus {
@@ -625,6 +652,13 @@ pub enum EnclaveRequest {
         owner_sig: Vec<u8>,
     },
 
+    /// Apply a standalone Fidelity cohort mutation (`In`/`Out`) over encrypted
+    /// per-account state, on its own round-trip. Consensus path, re-executed by
+    /// every validator. See [`FidelityCohortRequest`].
+    ApplyFidelityCohortOp {
+        request: Box<FidelityCohortRequest>,
+    },
+
     /// Batch-decrypt cohort blobs and return one plaintext league per owner —
     /// metadosis's once-per-WWD Fidelity snapshot. Consensus path (OCOMP prepare
     /// step in begin-block, re-executed by every validator).
@@ -864,6 +898,10 @@ pub enum EnclaveResponse {
     PromisOpApplied {
         result: Box<PromisOpResult>,
     },
+    /// Result of an `ApplyFidelityCohortOp`: the plaintext cohort outcome.
+    FidelityCohortApplied {
+        result: Box<FidelityCohortResult>,
+    },
     /// Result of a `SnapshotFidelityLeagues`: one plaintext league per owner, in
     /// request order.
     FidelityLeaguesSnapshotted {
@@ -999,6 +1037,39 @@ pub fn promis_op_attestation_preimage(
     let result_json = serde_json::to_vec(&probe).unwrap_or_default();
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/promis-attestation/v1");
+    buf.extend_from_slice(inputs_canonical_hash.as_slice());
+    buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&result_json);
+    buf
+}
+
+/// Deterministic hash over the canonical inputs of a standalone Fidelity cohort
+/// op. SHARED by the enclave (returned in `FidelityCohortApplied`) and the host
+/// (recomputed and compared). Length-prefixed; diagnostic only.
+pub fn fidelity_cohort_canonical_hash(req: &FidelityCohortRequest) -> B256 {
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(req.chain_id.as_slice());
+    buf.extend_from_slice(req.account.as_slice());
+    buf.extend_from_slice(&req.amount.to_be_bytes::<32>());
+    buf.push(req.section.op as u8);
+    buf.extend_from_slice(&req.section.timestamp.to_be_bytes());
+    buf.extend_from_slice(&req.section.first_qualified_start.to_be_bytes());
+    buf.extend_from_slice(&(req.section.current_blob.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&req.section.current_blob);
+    alloy_primitives::keccak256(buf)
+}
+
+/// Domain-separated attestation preimage for a standalone Fidelity cohort op —
+/// its own tag so no other attestation can be replayed as one. Local-only.
+pub fn fidelity_cohort_attestation_preimage(
+    inputs_canonical_hash: B256,
+    result: &FidelityCohortResult,
+) -> Vec<u8> {
+    let mut probe = result.clone();
+    probe.attestation_tag = Vec::new();
+    let result_json = serde_json::to_vec(&probe).unwrap_or_default();
+    let mut buf = Vec::with_capacity(39 + 32 + 4 + result_json.len());
+    buf.extend_from_slice(b"outbe/tee/fidelity-cohort-attestation/v1");
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

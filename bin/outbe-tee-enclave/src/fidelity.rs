@@ -13,7 +13,7 @@
 //!   ([`query_index`], gated by a signed, expiring authorization — never a raw
 //!   view key).
 //!
-//! The RCFI arithmetic is `outbe_fidelity::math` — the exact accumulator the
+//! The RCFI arithmetic is `outbe_fidelity_math` — the exact accumulator the
 //! chain historically ran over plaintext cohorts — so the two evaluation paths
 //! cannot drift. Every function is a pure transform of its inputs + the
 //! resident state key (consensus determinism); business failures return
@@ -21,9 +21,10 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_fidelity::math::{league_from_rcfi, t_dec, RcfiAccumulator};
+use outbe_fidelity_math::{league_from_rcfi, t_dec, RcfiAccumulator};
 use outbe_tee::protocol::{
-    eip191_hash, fidelity_query_auth_message, fidelity_query_canonical_hash, FidelityCohortOp,
+    eip191_hash, fidelity_cohort_canonical_hash, fidelity_query_auth_message,
+    fidelity_query_canonical_hash, FidelityCohortOp, FidelityCohortRequest, FidelityCohortResult,
     FidelityLeagueEntry, FidelityOpOutcome, FidelityOpSection, FidelityQueryRequest,
     FidelityQueryResult, FidelitySnapshotRequest,
 };
@@ -192,9 +193,8 @@ impl CohortState {
 
     /// `(rcfi, efficiency, league)` at `timestamp` — the same
     /// `RcfiAccumulator` + `league_from_rcfi` pipeline the chain historically
-    /// ran over plaintext cohort slots. `first_qualified_start = 0` means no
-    /// account has qualified (league floor).
-    fn evaluate(&self, timestamp: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
+    /// ran over plaintext cohort slots.
+    fn rcfi_triple(&self, timestamp: u64) -> Result<(U256, U256, U256)> {
         let mut acc = RcfiAccumulator::default();
         for (size, acquired_at) in &self.active {
             acc.add_active(*size, *acquired_at, timestamp)
@@ -204,9 +204,14 @@ impl CohortState {
             acc.add_sold(*size, *acquired_at, *sold_at, timestamp)
                 .ok_or_else(|| err("rcfi arithmetic overflow"))?;
         }
-        let (rcfi, efficiency, _) = acc
-            .finish(self.qualified_start, timestamp)
-            .ok_or_else(|| err("rcfi arithmetic overflow"))?;
+        acc.finish(self.qualified_start, timestamp)
+            .ok_or_else(|| err("rcfi arithmetic overflow"))
+    }
+
+    /// `(rcfi, efficiency, league)` at `timestamp`. `first_qualified_start = 0`
+    /// means no account has qualified (league floor).
+    fn evaluate(&self, timestamp: u64, first_qualified_start: u64) -> Result<(U256, U256, u16)> {
+        let (rcfi, efficiency, _) = self.rcfi_triple(timestamp)?;
         let max = if first_qualified_start == 0 {
             U256::ZERO
         } else {
@@ -269,6 +274,22 @@ pub fn apply_cohort_section(
         new_blob,
         qualified_start_initialized,
         league,
+    })
+}
+
+/// Apply a STANDALONE cohort op (its own round-trip). Thin wrapper over
+/// [`apply_cohort_section`] that sets the canonical inputs hash; the caller
+/// (dispatch) signs `attestation_tag`. Errors surface as an enclave error →
+/// host `Fatal`.
+pub fn apply_cohort_op(
+    state_key: &[u8; 32],
+    req: &FidelityCohortRequest,
+) -> Result<FidelityCohortResult> {
+    let outcome = apply_cohort_section(state_key, req.account, req.amount, &req.section)?;
+    Ok(FidelityCohortResult {
+        outcome,
+        inputs_canonical_hash: fidelity_cohort_canonical_hash(req),
+        attestation_tag: Vec::new(),
     })
 }
 
@@ -353,7 +374,7 @@ pub fn query_index(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
+    use outbe_fidelity_math::{MAX_LEAGUE, MIN_LEAGUE};
 
     const CHAIN: B256 = B256::repeat_byte(0xC2);
     const DAY: u64 = 86_400;
@@ -596,6 +617,75 @@ mod tests {
             *b ^= 1;
         }
         assert!(snapshot_leagues(&sk, &bad).is_err());
+    }
+
+    /// 1e18-scaled fixed point → f64 (via micro-units to avoid precision loss).
+    fn fp_to_f64(fp: U256) -> f64 {
+        let micros: u128 = (fp / U256::from(1_000_000_000_000u128)).to::<u128>();
+        micros as f64 / 1_000_000.0
+    }
+
+    /// Golden replay of the PDF `reference/decay.py` scenario through the enclave
+    /// `CohortState` port — the on-chain math moved here, so this is where the
+    /// float-model agreement is pinned (±1 decayed day, ±1e-3 efficiency). The
+    /// fixture lives in the fidelity crate (regenerated from `decay.py`); we read
+    /// it across the workspace rather than duplicate the generated artifact.
+    #[test]
+    fn golden_matches_decay_py_reference() {
+        let raw = include_str!(
+            "../../../crates/core/fidelity/tests/fixtures/rcfi_golden.json"
+        );
+        let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let txs: Vec<(u64, bool, U256)> = v["transactions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| {
+                (
+                    t["ts"].as_u64().unwrap(),
+                    t["kind"].as_str().unwrap() == "deposit",
+                    t["amount_e18"].as_str().unwrap().parse::<U256>().unwrap(),
+                )
+            })
+            .collect();
+        let samples = v["samples"].as_array().unwrap();
+        assert!(!samples.is_empty());
+
+        for s in samples {
+            let ts = s["ts"].as_u64().unwrap();
+            let want_rcfi = s["rcfi"].as_f64().unwrap();
+            let want_eff = s["efficiency"].as_f64().unwrap();
+            let want_dage = s["d_age"].as_f64().unwrap();
+
+            // Rebuild state from every tx up to and including the sample instant,
+            // mirroring the reference's `tx.date <= current_date` loop.
+            let mut state = CohortState::default();
+            for (t_ts, deposit, amount) in &txs {
+                if *t_ts <= ts {
+                    if *deposit {
+                        state.cohort_in(*amount, *t_ts);
+                    } else {
+                        state.cohort_out(*amount, *t_ts);
+                    }
+                }
+            }
+            let (rcfi_fp, eff_fp, dage_fp) = state.rcfi_triple(ts).unwrap();
+            assert!(
+                (fp_to_f64(rcfi_fp) - want_rcfi).abs() <= 1.0,
+                "rcfi at ts={ts}: got {}, want {want_rcfi}",
+                fp_to_f64(rcfi_fp)
+            );
+            assert!(
+                (fp_to_f64(eff_fp) - want_eff).abs() <= 1e-3,
+                "efficiency at ts={ts}: got {}, want {want_eff}",
+                fp_to_f64(eff_fp)
+            );
+            assert!(
+                (fp_to_f64(dage_fp) - want_dage).abs() <= 1.0,
+                "d_age at ts={ts}: got {}, want {want_dage}",
+                fp_to_f64(dage_fp)
+            );
+        }
     }
 
     /// Deterministic secp256k1 signer and its EVM address (mirrors the

@@ -411,6 +411,34 @@ pub fn dispatch(
                 result: Box::new(result),
             }
         }
+        EnclaveRequest::ApplyFidelityCohortOp { request } => {
+            // Standalone cohort mutation over the independent Fidelity key
+            // domain. Consensus path, re-executed by every validator.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "ApplyFidelityCohortOp: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::apply_cohort_op(&key, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_cohort_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityCohortApplied {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
         EnclaveRequest::SnapshotFidelityLeagues { request } => {
             // Same resident-key derivation + attestation as ApplyGratisOp, over
             // the independent Fidelity key domain. Consensus path (metadosis

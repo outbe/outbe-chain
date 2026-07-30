@@ -274,6 +274,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
     }
 
     let mut overflow = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     seed(&mut overflow, U256::from(1));
     let before_storage = overflow.storage.clone();
     let before_events = overflow.events.clone();
@@ -294,6 +295,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
     });
 
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     seed(&mut probe, U256::from(9));
     probe.fail_after_mutation_at(usize::MAX);
     apply_limit(&mut probe, U256::from(100)).unwrap();
@@ -318,6 +320,7 @@ fn ocomp_day_limit_overflow_and_every_mutation_failure_are_atomic() {
 
     for operation in 0..mutation_count {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
         seed(&mut provider, U256::from(9));
         let before_storage = provider.storage.clone();
         let before_events = provider.events.clone();
@@ -1465,6 +1468,7 @@ fn zero_limit_green_day_dispatches_no_brief() {
 #[test]
 fn test_events_emitted_for_accumulation_and_lifecycle() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let contract_addr = outbe_primitives::addresses::METADOSIS_ADDRESS;
 
     StorageHandle::enter(&mut storage, |storage| {

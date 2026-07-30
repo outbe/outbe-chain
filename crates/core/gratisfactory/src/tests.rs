@@ -15,6 +15,9 @@ use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
 };
 
+use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
+use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
+
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
 
@@ -75,9 +78,11 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();
+    fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     let out = StorageHandle::enter(&mut storage, |s| f(s.clone()));
+    fidelity_enclave::uninstall();
     outbe_promis::enclave_client::test_enclave::uninstall();
     test_enclave::uninstall();
     out
@@ -244,10 +249,9 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
     with_env(|storage| {
         let amount = U256::from(1_000u64);
         let later = CREATED_AT + ONE_YEAR_SECS;
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert_eq!(rcfi_before, U256::ZERO);
+        // No cohort yet: no account has qualified, so the league is the floor.
+        let league_before = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        assert_eq!(league_before, MIN_LEAGUE);
 
         runtime::mint(
             storage.clone(),
@@ -263,11 +267,9 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
             amount
         );
 
-        // The acquisition cohort was recorded, so aged RCFI a year later is positive.
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert!(rcfi_after > U256::ZERO);
+        // The acquisition cohort was recorded: sole holder, no sales → top league.
+        let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        assert_eq!(league_after, MAX_LEAGUE);
     });
 }
 
@@ -307,10 +309,8 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
             CREATED_AT - ONE_YEAR_SECS,
         )
         .unwrap();
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
-            .unwrap();
-        assert!(rcfi_before > U256::ZERO);
+        let league_before = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
+        assert_eq!(league_before, MAX_LEAGUE);
 
         // mineCoen burns gratis (op = Burn) at op-nonce 1.
         let call = Bytes::from(
@@ -332,10 +332,9 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
         );
         assert_eq!(storage.balance(alice()).unwrap(), amount);
 
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .get_fidelity_index(alice())
-            .unwrap();
-        assert_eq!(rcfi_after, U256::ZERO);
+        // Fully sold → efficiency 0 → league drops to the floor.
+        let league_after = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
+        assert_eq!(league_after, MIN_LEAGUE);
     });
 }
 
@@ -383,10 +382,8 @@ fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         // fresh gratis cohort (rather than it having pre-existed).
         seed_promis(storage.clone(), alice(), amount);
         let later = CREATED_AT + ONE_YEAR_SECS;
-        let rcfi_before = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert_eq!(rcfi_before, U256::ZERO);
+        let league_before = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        assert_eq!(league_before, MIN_LEAGUE);
 
         // mineFromPromis on the gratisfactory precompile. Both the promis burn and
         // the gratis mint are enclave-confidential, so the call carries two modify
@@ -424,12 +421,11 @@ fn mine_from_promis_burns_promis_mints_gratis_creating_fidelity_cohort() {
         );
 
         // A fresh gratis acquisition cohort was recorded at conversion time
-        // (CREATED_AT), so the aged RCFI a year later is now positive. If
-        // `mine_from_promis` stopped recording the cohort, this would stay zero.
-        let rcfi_after = outbe_fidelity::FidelityContract::new(storage.clone())
-            .compute_fidelity_index(alice(), later)
-            .unwrap();
-        assert!(rcfi_after > U256::ZERO);
+        // (CREATED_AT): sole holder, no sales → top league a year later. If
+        // `mine_from_promis` stopped recording the cohort, this would stay at the
+        // floor.
+        let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
+        assert_eq!(league_after, MAX_LEAGUE);
     });
 }
 
