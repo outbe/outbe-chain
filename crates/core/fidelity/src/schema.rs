@@ -78,12 +78,6 @@ pub struct FidelityContract {
     // it ready.
     #[attribute(order = 6)]
     pub ocomp_profile_ready: outbe_primitives::storage::dsl::Value<bool>,
-
-    #[attribute(order = 7)]
-    pub ocomp_max_cohorts_per_owner: outbe_primitives::storage::dsl::Value<u16>,
-    // Historical order-8 `ocomp_max_cohorts_observed` was removed: it only fed the
-    // now-deleted raw-cohort OCOMP opening. It was the trailing field, so dropping
-    // it shifts no other slot; OCOMP now snapshots per-owner leagues in Metadosis.
 }
 
 /// Domain-separated per-owner cohort slot key: `keccak(domain ++ owner ++ index)`.

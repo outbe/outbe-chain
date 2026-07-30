@@ -6,9 +6,6 @@ use crate::schema::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 
-/// Fork-fixed PoC ceiling for one owner's complete Fidelity opening.
-pub const OCOMP_POC_MAX_COHORTS_PER_OWNER: u16 = 64;
-
 /// Bounded readiness projection consumed by OCOMP pre-admission.
 ///
 /// Leagues are snapshotted per owner by Metadosis at prepare time.
@@ -24,22 +21,13 @@ impl FidelityContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             if self.ocomp_profile_ready.read()? {
-                if self.ocomp_max_cohorts_per_owner.read()? != OCOMP_POC_MAX_COHORTS_PER_OWNER {
-                    return Err(PrecompileError::Fatal(
-                        "Fidelity OCOMP profile cap mismatch".into(),
-                    ));
-                }
                 return self.ocomp_projection();
             }
-            if self.first_qualified_start.read()? != 0
-                || self.ocomp_max_cohorts_per_owner.read()? != 0
-            {
+            if self.first_qualified_start.read()? != 0 {
                 return Err(PrecompileError::Fatal(
                     "Fidelity OCOMP fresh profile requires empty state".into(),
                 ));
             }
-            self.ocomp_max_cohorts_per_owner
-                .write(OCOMP_POC_MAX_COHORTS_PER_OWNER)?;
             self.ocomp_profile_ready.write(true)?;
             self.ocomp_projection()
         })
@@ -73,7 +61,6 @@ impl FidelityContract<'_> {
         if amount.is_zero() {
             return Ok(());
         }
-        self.ensure_owner_capacity(account, 1)?;
         // First acquisition establishes the qualified start date (proof-of-life
         // v1). A real chain timestamp is never 0, so 0 is a safe "unset" sentinel.
         if self.qualified_start.read(&account)? == 0 {
@@ -86,7 +73,6 @@ impl FidelityContract<'_> {
             self.first_qualified_start.write(timestamp)?;
         }
         self.push_active(account, amount, timestamp)?;
-        self.observe_owner_cohorts(account)?;
         Ok(())
     }
 
@@ -123,7 +109,6 @@ impl FidelityContract<'_> {
             } else {
                 // Partial: record the sold slice, shrink the active remainder in
                 // place (same index/acquired_at → stays the youngest tail).
-                self.ensure_owner_capacity(account, 1)?;
                 self.push_sold(account, remaining, cohort.acquired_at, timestamp)?;
                 self.active_cohorts.update(&ActiveCohort {
                     slot_key: key,
@@ -133,7 +118,6 @@ impl FidelityContract<'_> {
                 remaining = U256::ZERO;
             }
         }
-        self.observe_owner_cohorts(account)?;
         Ok(())
     }
 
@@ -173,47 +157,6 @@ impl FidelityContract<'_> {
                 PrecompileError::BodyReadCorruption("Fidelity sold cohort count overflow".into())
             })?,
         )?;
-        Ok(())
-    }
-
-    fn ensure_owner_capacity(&self, account: Address, additional: u32) -> Result<()> {
-        if !self.ocomp_profile_ready.read()? {
-            return Ok(());
-        }
-        let next = self
-            .owner_cohort_count(account)?
-            .checked_add(additional)
-            .ok_or_else(|| {
-                PrecompileError::BodyReadCorruption("Fidelity owner cohort count overflow".into())
-            })?;
-        let cap = u32::from(self.ocomp_max_cohorts_per_owner.read()?);
-        if cap == 0 || next > cap {
-            return Err(PrecompileError::Revert(
-                "Fidelity OCOMP cohort cap exceeded".into(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Post-mutation corruption guard: an owner's total cohort count must never
-    /// exceed the armed profile cap. `ensure_owner_capacity` enforces this before
-    /// each add; this re-checks after the write as defence in depth. No longer
-    /// tracks a high-water mark — OCOMP consumes per-owner league snapshots, not
-    /// cohort counts.
-    fn observe_owner_cohorts(&self, account: Address) -> Result<()> {
-        if !self.ocomp_profile_ready.read()? {
-            return Ok(());
-        }
-        let count = self.owner_cohort_count(account)?;
-        let cap = self.ocomp_max_cohorts_per_owner.read()?;
-        let count = u16::try_from(count).map_err(|_| {
-            PrecompileError::BodyReadCorruption("Fidelity bounded cohort count exceeds u16".into())
-        })?;
-        if cap == 0 || count > cap {
-            return Err(PrecompileError::BodyReadCorruption(
-                "Fidelity bounded cohort count exceeds profile cap".into(),
-            ));
-        }
         Ok(())
     }
 

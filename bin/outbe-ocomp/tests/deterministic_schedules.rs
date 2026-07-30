@@ -19,7 +19,7 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, encode_tribute_v1, TributeBodyV1};
 use outbe_consensus::block::ConsensusBlock;
-use outbe_e2e_harness::ocomp_finality_fixture::{fixture_league, finalized_intent_proof_fixture};
+use outbe_e2e_harness::ocomp_finality_fixture::{finalized_intent_proof_fixture, fixture_league};
 use outbe_lysis::program_v1::planner::{
     LysisPlanTopologyV1, LysisPlannerBindingsV1, LysisPlannerV1,
 };
