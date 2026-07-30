@@ -1,13 +1,41 @@
-# I1 checkpoint — native QvE/TVL feasibility blocker
+# I1 checkpoint — native verifier-boundary blocker (resolved)
 
 Date: 2026-07-30
 
 Audited tree: `9b1575f3a91c593b9458f3ab09a5c55f8aaba873`
 
-Status: `BLOCKED` pending an explicit verifier-boundary decision and access to
-an SGX execution host. I1 acceptance is not complete. I2–I9 remain stopped.
+Status: `RESOLVED` by the accepted enclave-resident native-QVL boundary.
+This document preserves the blocker investigation as an audit trail. I1 may
+continue without QvE/TVL; real SGX execution remains a fail-not-skip I9 release
+gate.
 
-## Gate being tested
+## Accepted resolution
+
+The selected option is **A: native QVL wholly inside the measured Gramine
+enclave**.
+
+Gramine's maintained DCAP integration confirms this is a supported
+composition: `ra_tls_verify_dcap.so` calls `sgx_qv_verify_quote` in-process
+with `p_qve_report_info = NULL`, while
+`ra_tls_verify_dcap_gramine.c` supplies dummy URTS enclave-management symbols
+instead of creating a nested Intel SDK enclave.
+
+Outbe will use a smaller raw-QVL adapter rather than the stock RA-TLS wrapper:
+
+- the only inputs are canonical evidence, active policy and consensus block
+  timestamp;
+- collateral is always non-null and submitted with the evidence;
+- no QPL/PCCS, wall clock, environment, filesystem cache or host verdict is
+  permitted during consensus;
+- exact QVL and dependency artifacts are release-pinned and integrity-pinned
+  in the signed Gramine manifest;
+- the stable Outbe wrapper remains the only policy/verdict authority.
+
+QvE and TVL are unnecessary because QVL and its result already execute inside
+the attestation enclave. A complete migration to Intel SGX SDK and a second
+verifier enclave are outside V1 scope.
+
+## Superseded gate that exposed the blocker
 
 The first I1 gate requires the exact-pinned native Intel QVL to run in QvE
 mode over canonical evidence and the consensus block timestamp, followed by
@@ -36,14 +64,18 @@ before production implementation proceeds.
     `da6eec0d62a0b77fae5502239f5a24795f25e032a64733bf65f2ab30216fb7f3`.
 - The CPU supports SGX, but the kernel SGX module and `/dev/sgx_enclave`,
   `/dev/sgx_provision`, `/dev/sgx/*` and `/dev/isgx` are absent.
-- QVL development headers, the Intel SGX SDK and `libsgx_dcap_tvl.a` are not
-  installed.
+- QVL development headers
+  (`libsgx-dcap-quote-verify-dev 1.26.100.1-noble1`) and
+  `libsgx-headers 2.29.100.1-noble1` are now installed. The Intel SGX SDK and
+  `libsgx_dcap_tvl.a` are not installed and are not required by the accepted
+  boundary.
 - The current Outbe release manifest sets
   `sgx.remote_attestation = "none"`. Its release contract contains no pinned
   QVL, QvE, TVL, URTS or Intel trusted-runtime artifact set.
 
-The missing SGX device is an execution-environment blocker for the mandatory
-QvE/TVL proof. It is not evidence that native DCAP is impossible.
+The missing SGX device prevented the former QvE/TVL proof. Under the accepted
+boundary it no longer blocks the I1 offline deterministic-verification work;
+it remains relevant to the mandatory I9 hardware release gate.
 
 ## Why the Secret Network composition does not fit directly
 
@@ -132,10 +164,13 @@ explicit non-goal.
 Host QVL without TVL, QvE authentication or an enclave-resident QVL is not an
 option because a host can forge the result.
 
-## Required user decision
+## Decision record
 
-Choose the verifier boundary. Option A is the narrowest path that preserves
-the core trust property with the existing Gramine runtime. After that choice,
-provide an SGX host with `/dev/sgx_enclave` and `/dev/sgx_provision` exposed,
-or separately authorize use of a designated SGX CI runner. Until both
-conditions are satisfied, I1 cannot pass its executable feasibility gate.
+The user accepted option A on 2026-07-30. I1 resumes with the updated
+feasibility gate recorded in the canonical decision map, engineering-gate
+evidence and implementation plan. Access to an SGX host with
+`/dev/sgx_enclave` and `/dev/sgx_provision`, or a designated SGX CI runner, is
+still required before I9 can pass.
+
+The follow-up executable proof is recorded in
+`plans/checkpoints/I1-native-qvl-feasibility.md`.

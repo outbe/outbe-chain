@@ -14,18 +14,18 @@ extra role keys, continuity/migration machinery and the former 1-MiB evidence
 cap. The work below stays focused on DCAP and remote attestation.
 
 Active-goal amendment (2026-07-30): any earlier orchestration text requiring
-an aarch64 matrix, exact `dcap-qvl 0.5.2` Ring-only production verifier, or
-forbidding the Secret Network-style native Intel QVL/QvE boundary is stale and
-is superseded by this plan and its decision map. Completion requires the
-x86_64 Intel SGX Processor/Platform and pinned native QVL/QvE/TVL matrix. All
-other scope, checkpoint, real-case, reporting and blocker controls remain in
-force.
+an aarch64 matrix or exact `dcap-qvl 0.5.2` Ring-only production verifier is
+stale and is superseded by this plan and its decision map. Completion requires
+the x86_64 Intel SGX Processor/Platform and pinned enclave-resident native
+QVL/dependency matrix. QvE/TVL and an Intel SGX SDK migration are not V1
+dependencies. All other scope, checkpoint, real-case, reporting and blocker
+controls remain in force.
 
 ## Dependency order
 
 ```text
 I0 manifest/context
- ├─> I1 pinned native QVL/QvE
+ ├─> I1 enclave-resident native QVL
  └─> I2 enclave initialization
        ├─> I3 validator registration ─┐
        └─> I4 full-node registration ├─> I5 renewal/expiry ─> I6 sessions
@@ -67,23 +67,31 @@ production behavior.
 
 **Outcome:** the consensus-facing
 `verify_dcap_evidence(evidence, policy, block_timestamp)` boundary returns a
-stable Outbe verdict backed by pinned native Intel QVL/QvE verification, with
-no local host inputs.
+stable Outbe verdict backed by pinned native Intel QVL executing inside the
+Outbe Gramine enclave, with no local host inputs.
 
 **Includes:**
 
-- first, a narrow feasibility gate that selects one supported Intel DCAP
-  release, records package/source provenance and binary digests, and proves
-  QvE-mode plus pinned-TVL verification in the current Outbe/Gramine runtime;
-- exact-pinned native QVL, QvE, TVL and required dependency artifacts;
+- completed feasibility gate (`c679649`, hardened by `bc96db2`, `d5ab89e` and
+  `fd1598c`, with QVL-scoped tracing in `8dcebae`): Intel DCAP QVL
+  `1.26.100.1-noble1`, its native dependencies and the
+  `x86_64-unknown-linux-gnu` target are exact-pinned, and a real Processor-CA
+  quote verifies through the public adapter both natively and under Gramine
+  Direct using submitted collateral and explicit consensus time;
+- exact-pinned native QVL and required dependency artifacts, integrity-pinned
+  as Gramine trusted files;
 - canonical DER/signed-JSON to native collateral adapter with no QPL/PCCS
   substitution during consensus;
-- QvE report/identity verification inside the Outbe attestation enclave,
-  bound to request nonce, quote, result and supplemental data;
+- in-enclave `sgx_qv_verify_quote` invocation with
+  `p_qve_report_info = NULL` and no host-verdict input;
 - full outer/inner quote consumption and type-5 chain equality;
 - pinned Intel root, FMSPC/PCE ID, TCB evaluation number, platform/QE status,
   advisory and measurement enforcement;
 - stable reject-code ordering and exact QVL gas precharge.
+
+The feasibility gate does not complete I1. Canonical grammar, signed-document
+time enforcement, Platform-CA coverage, final Outbe policy mapping and stable
+consensus verdict vectors remain in this item.
 
 **Acceptance:**
 
@@ -92,11 +100,10 @@ no local host inputs.
 - time boundary and strict status matrix pass;
 - no environment, filesystem, network, wall clock, optional verifier or
   upstream error string reaches consensus;
-- forged host results, replayed/tampered QvE reports and nonce/binding
-  mismatches reject;
+- a host verdict is not part of the interface and tampered evidence rejects;
 - byte-stable fixture verdicts pass across supported x86_64 validator builds;
 - exact native versions and digests match the release manifest; a missing or
-  mismatched QVL, QvE, TVL or dependency fails closed;
+  mismatched QVL or dependency fails closed;
 - no second pure-Rust production verifier or live collateral-fetch path enters
   the consensus dependency tree.
 
@@ -132,8 +139,8 @@ intent-bound evidence and create exactly one active leased binding.
 
 - validator node ID: EVM address plus consensus BLS public key;
 - node and enclave proof-of-possession signatures;
-- consensus-facing native QVL/QvE call, platform admission and exact
-  measurement rule;
+- consensus-facing enclave-resident native QVL call, platform admission and
+  exact measurement rule;
 - append-only TeeRegistry V1 schema, views and bounded events;
 - exact `registerEnclave` gas and idempotent-current replay;
 - deterministic active-binding/readiness view for downstream consensus users.
@@ -150,8 +157,8 @@ intent-bound evidence and create exactly one active leased binding.
 ## I4 — Register a full-node enclave through the same policy
 
 **Outcome:** a full node binds its persistent Reth P2P key to one attested
-enclave using the same native QVL/QvE, lease and registry semantics as a
-validator.
+enclave using the same enclave-resident native QVL, lease and registry
+semantics as a validator.
 
 **Includes:**
 
@@ -270,7 +277,7 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - Processor and Platform x86_64 verdict/benchmark matrix passes;
 - the slowest supported validator keeps full-block execution inside the
   consensus timing budget;
-- missing or mismatched QVL/QvE/TVL/native dependencies, collateral or SGX
+- missing or mismatched QVL/native dependencies, collateral or SGX
   support, including an unsupported architecture, is deterministic rejection;
 - pre-A0/legacy chain behavior remains covered and intentional.
 

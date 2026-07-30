@@ -1,6 +1,6 @@
 # DCAP and Remote Attestation Decision Map
 
-Status: design complete; native Intel QVL/QvE amendment accepted; implementation planned
+Status: design complete; enclave-resident native Intel QVL amendment accepted; implementation planned
 Source plan: `/home/ubuntu/piolium/remediation-plan.md`
 Reference implementation: `/home/ubuntu/SecretNetwork`
 
@@ -38,7 +38,7 @@ In scope:
 
 - quote creation and `REPORT_DATA`;
 - canonical quote/collateral evidence;
-- deterministic native QVL/QvE invocation and TCB policy;
+- deterministic enclave-resident native QVL invocation and TCB policy;
 - measurement and hardware admission;
 - node-to-enclave registration, leases, renewal, and expiry;
 - proof of possession of attested keys;
@@ -88,34 +88,44 @@ Type: Research
 
 ### Question
 
-What result is consensus authority: an untrusted host result, or a pinned QvE
-result inside a deterministic protocol envelope?
+What result is consensus authority: an untrusted host result, or a pinned
+native verifier executing inside the attestation enclave?
 
 ### Answer
 
-`RESOLVED` and amended after confirming that every production validator and
-full node is an x86_64 Intel SGX machine.
+`RESOLVED` and amended after validating Gramine's supported native-DCAP
+verification path.
 
-Every node runs the same exact-pinned native Intel QVL/QvE stack over canonical
-transaction evidence, the active policy, and the consensus block timestamp.
-The native verifier is consensus-safe only inside this protocol envelope:
+Every node executes the same exact-pinned native Intel QVL inside the existing
+Outbe Gramine enclave over canonical transaction evidence, the active policy,
+and the consensus block timestamp. The native verifier is consensus-safe only
+inside this protocol envelope:
 
-- the node release pins the QVL, QvE, TVL and native dependency artifacts by
-  version and digest; a local replacement or mismatch fails closed;
-- QVL runs in QvE mode over the submitted self-contained collateral and the
-  explicit consensus block timestamp;
-- the Outbe attestation enclave verifies the QvE report and identity with the
-  pinned TVL, including the request nonce and exact quote/result/supplemental
-  binding; an untrusted host `qv_result` alone is never authority;
+- the node release pins QVL and every native dependency by exact version and
+  digest, and the signed Gramine manifest integrity-pins them as trusted files;
+  a missing, substituted or mismatched artifact fails closed;
+- QVL runs in-process with non-null submitted collateral, the explicit
+  consensus block timestamp and `p_qve_report_info = NULL`;
+- no host-supplied `qv_result` enters the interface: the enclave receives only
+  canonical evidence, policy and block time, and computes the native result
+  itself;
 - the canonical Outbe wrapper independently enforces exact evidence grammar,
   TCB Info schema v3, the separate Platform/QE policy, measurement policy and
   stable verdict/reject codes;
 - no network, PCCS, filesystem, environment, local cache or wall-clock input
   participates in block execution.
 
-The QvE report and its nonce are local verification artifacts, not
-consensus-state bytes. Only the stable semantic Outbe verdict affects block
-validity and state.
+QvE and TVL are not part of the V1 boundary. They authenticate an Intel QVL
+result returned across an untrusted host boundary; here the QVL code and result
+already execute inside the attestation enclave. Intel's API calls this the
+non-QvE path, but the QVL execution is still protected by Gramine/SGX.
+
+Gramine ships this composition in `ra_tls_verify_dcap.so`: it links
+`libsgx_dcap_quoteverify`, invokes `sgx_qv_verify_quote` with
+`p_qve_report_info = NULL`, and supplies a Gramine compatibility shim instead
+of creating a nested SDK enclave. Outbe adopts only that raw native-QVL
+integration pattern, not Gramine's RA-TLS certificate, `time(NULL)` or
+QPL/PCCS lookup behavior.
 
 Secret Network's Go `VerifyCertDCAP` only extracts a key; its real path invokes
 Intel QVL outside the enclave and verifies a QvE report inside the enclave:
@@ -124,10 +134,11 @@ Intel QVL outside the enclave and verifies a QvE report inside the enclave:
 - `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/execute/src/registration/onchain.rs:44`
 - `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/shared/crypto/src/dcap.rs:27`
 
-Outbe adopts that native trust boundary and strengthens its protocol envelope:
-the evidence is canonical, block time is mandatory, native artifacts are
-release-pinned, schema/status policy is explicit, and every missing or
-mismatched component rejects.
+Outbe preserves the same security property—an untrusted host result is never
+authority—but uses the smaller Gramine-native composition: QVL itself executes
+inside the application enclave. Evidence is canonical, block time is
+mandatory, native artifacts are release-pinned, schema/status policy is
+explicit, and every missing or mismatched component rejects.
 
 ## #4: What evidence is canonical?
 
@@ -559,14 +570,24 @@ every required protocol check?
 
 ### Answer
 
-`RESOLVED` at the architecture level; exact native package selection and
-artifact digests are the first I1 engineering gate.
+`RESOLVED`, including the first executable I1 engineering gate.
 
-V1 uses Intel's native DCAP Quote Verification Library in QvE mode, plus the
-matching QvE and Trusted Verification Library. The production node release
-must pin the complete native set by exact version, package/source provenance,
-binary digest and QvE identity/ISVSVN requirements. A verifier update is a
-coordinated protocol/release activation, never a node-local choice.
+V1 uses Intel's native DCAP Quote Verification Library inside the existing
+Outbe Gramine enclave. The production node release must pin QVL and the
+complete native dependency set by exact version, package/source provenance and
+binary digest, and the signed Gramine manifest must integrity-pin those
+artifacts as trusted files. A verifier update is a coordinated
+protocol/release activation, never a node-local choice.
+
+The selected feasibility matrix is Intel DCAP QVL
+`1.26.100.1-noble1` on `x86_64-unknown-linux-gnu` with Gramine `1.9`.
+The inactive artifact contract is
+`release/dcap-native-qvl-v1.json`; it pins QVL, `libstdc++` and `libgcc_s` by
+exact package version, byte size and SHA-256. Commits `c679649`, `bc96db2`,
+`d5ab89e`, `fd1598c` and `8dcebae` prove the real Processor-CA fixture through
+the public Rust adapter both natively and under the checked-in Gramine Direct
+harness. This closes package selection only; full I1 policy verification and
+the fail-not-skip I9 SGX release gate remain open.
 
 The previously investigated exact-pinned `dcap-qvl = 0.5.2` Ring profile is
 retained only as prototype and differential-test evidence. It is not a second
@@ -581,9 +602,8 @@ The production native adapter and Outbe wrapper:
 - require full input consumption and reject trailing/unsupported quote data;
 - construct the exact native collateral structure without allowing QVL/QPL to
   fetch or substitute collateral;
-- invoke QVL in QvE mode and accept the native result only after the pinned TVL
-  verifies the QvE report, identity, nonce and result binding inside the Outbe
-  attestation enclave;
+- invoke QVL inside the Outbe Gramine enclave with explicit collateral and
+  timestamp, `p_qve_report_info = NULL`, and no host-result input;
 - parse the same authenticated signed documents to enforce TCB Info schema v3,
   separate Platform `UpToDate | SWHardeningNeeded`, QE `UpToDate`, minimum TCB
   evaluation number, FMSPC/PCE ID, exact measurement policy and pinned Intel
@@ -597,17 +617,16 @@ Implementation/release acceptance evidence:
 - fixed positive and negative quote/collateral vectors;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
-- exact native artifact, QvE identity and Intel-root pinning;
-- rejection of forged, replayed, nonce-mismatched or tampered QvE reports;
-- rejection when native libraries, QvE, TVL or their required versions are
-  absent;
+- exact native artifact and Intel-root pinning;
+- rejection of any host-supplied verdict field and of tampered evidence;
+- rejection when QVL or any required native dependency is absent or mismatched;
 - no live PCCS/QPL collateral substitution, optional verifier or fail-open
   fallback;
 - byte-stable verdict vectors across supported x86_64 validator builds.
 
-This follows Secret Network's deployed host-QVL plus enclave-QvE-report
-boundary while making its implicit deployment assumptions explicit protocol
-and release gates.
+This preserves Secret Network's deployed rule that the host is not verifier
+authority, while using Gramine's supported enclave-resident native-QVL
+composition instead of importing Intel SDK TVL into an incompatible runtime.
 
 Local prototype evidence, including pure-Rust trailing-byte behavior,
 Ring/RustCrypto timing and the later Secret Network/native amendment, is

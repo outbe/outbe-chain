@@ -9,35 +9,79 @@ Native amendment base after rebasing onto `777624e`: `5fb89ce` (`main`)
 Host: `x86_64-unknown-linux-gnu`, Rust `1.96.0`
 
 This note records the throwaway prototype used to investigate decision-map
-questions #17 and #18 and the later native Intel amendment. It is engineering
-evidence, not a substitute for the x86_64 real-hardware release gates listed
-below.
+questions #17 and #18, the later native Intel amendment, and the accepted
+Gramine-native verifier boundary. It is engineering evidence, not a substitute
+for the x86_64 real-hardware release gates listed below.
 
 ## Selected production verifier boundary
 
-V1 follows the Secret Network-style native Intel boundary because every
-production validator and full node is required to run on x86_64 Intel SGX:
+V1 runs Intel native QVL inside the existing Outbe Gramine enclave because
+every production validator and full node is required to run on x86_64 Intel
+SGX:
 
-- Intel native QVL runs in QvE mode over canonical, self-contained evidence
-  and an explicit consensus block timestamp;
-- the matching pinned TVL verifies the QvE report and identity inside the Outbe
-  attestation enclave;
-- an untrusted host `qv_result`, local PCCS response, cache entry or clock is
-  never consensus authority;
+- Intel native QVL runs in-process over canonical, self-contained evidence and
+  an explicit consensus block timestamp;
+- QVL is invoked with explicit non-null collateral and
+  `p_qve_report_info = NULL`; QvE and TVL are not V1 dependencies;
+- the host cannot supply a `qv_result`; local PCCS responses, cache entries and
+  clocks are never consensus authority;
 - the Outbe wrapper enforces exact grammar, TCB Info schema v3, separate
   Platform/QE policy, measurement policy and stable verdict codes over the same
   authenticated bytes;
-- missing or mismatched QVL, QvE, TVL or native dependencies fail closed.
+- missing or mismatched QVL or native dependencies fail closed.
 
-I1 starts with a narrow native feasibility gate: select one supported Intel
-DCAP release, record exact package/source provenance and binary digests, and
-prove QvE-mode plus TVL verification in the current Outbe/Gramine runtime with
-one fixed real SGX vector. The documents intentionally do not invent a native
-version before that executable gate.
+The narrow I1 feasibility gate passed in commits `c679649`, `bc96db2`,
+`d5ab89e`, `fd1598c` and `8dcebae`:
 
-The stable result must not contain QvE nonce/report bytes, addresses, native
-error strings or other run-specific data. Those are local verification
-artifacts; only the canonical Outbe verdict affects consensus.
+- QVL runtime and development package:
+  `libsgx-dcap-quote-verify 1.26.100.1-noble1`;
+- Intel headers: `libsgx-headers 2.29.100.1-noble1`;
+- target: `x86_64-unknown-linux-gnu`;
+- Gramine: `1.9`;
+- collateral ABI: `sgx_ql_qve_collateral_t` 3.1;
+- returned supplemental-data ABI: 3.0, with an exact structure-size check;
+- QVL:
+  `/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0`,
+  SHA-256
+  `4745bc5b46cbdc17a78119ae2db08f54b86ff9077c5ab480f378741396365aef`,
+  ELF build ID `663c0acf2b4673c22c66f01112c5f38d856fd5a5`;
+- C++ runtime:
+  `libstdc++.so.6.0.33`, SHA-256
+  `1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11`;
+- GCC runtime:
+  `libgcc_s.so.1`, SHA-256
+  `d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb`.
+
+`release/dcap-native-qvl-v1.json` records the inactive exact artifact contract,
+and `scripts/release/verify_dcap_native_qvl.py` fails closed on a missing,
+changed or boundary-incompatible artifact.
+
+The real Processor-CA fixture passed five public-interface tests both natively
+and under Gramine Direct: valid cryptographic verification, tampered quote,
+explicit expiration boundary, empty collateral and negative time. The
+checked-in Gramine harness separates Gramine initialization from the public
+verifier phase; test-only markers enclose exactly the native QVL calls, and no
+network, wall-clock or other write syscall occurred between them. QVL received
+non-null submitted collateral and
+`p_qve_report_info = NULL`; neither QPL/PCCS nor a host verdict is in the
+interface. The Gramine manifest exposed only pinned runtime libraries and
+fixtures, set `TZ=UTC`, and did not expose host timezone or OpenSSL
+configuration files. Real SGX execution remains a fail-not-skip I9 release
+gate.
+
+The stable result must not contain addresses, native error strings or other
+run-specific data. Only the canonical Outbe verdict affects consensus.
+
+The accepted composition is supported by Gramine's own DCAP verifier:
+
+- `ra_tls_verify_dcap.so` calls `sgx_qv_verify_quote` in-process;
+- its call supplies `p_qve_report_info = NULL`;
+- `ra_tls_verify_dcap_gramine.c` supplies dummy URTS enclave-management
+  functions because no nested Intel SDK enclave is created.
+
+Outbe reuses this raw QVL integration pattern only. Gramine's stock RA-TLS
+wrapper is not consensus-safe as-is because it uses `time(NULL)`, supplies
+`collateral = NULL`, and is coupled to X.509/RA-TLS.
 
 ## Superseded pure-Rust prototype profile
 
@@ -61,9 +105,10 @@ not shipped as a second V1 verifier and does not define production behavior.
 The inspected Secret Network `master` at
 `95d87aef4164cb3d056c3a364802552467ba394a` uses host Intel QVL plus
 enclave-side QvE report verification and admits only `OK` and
-`SW_HARDENING_NEEDED`. Outbe adopts that boundary with mandatory block time,
-canonical evidence, exact native artifact pins and explicit Platform/QE
-policy.
+`SW_HARDENING_NEEDED`. Outbe preserves its important trust property—an
+untrusted host result is never authority—but uses Gramine's supported
+enclave-resident QVL boundary with mandatory block time, canonical evidence,
+exact native artifact pins and explicit Platform/QE policy.
 
 Secret Network's saved 2021 fixture has SGX Quote v3 but TCB Info schema v2.
 That is historical collateral, not a hardware-version constraint: on
@@ -98,11 +143,15 @@ It is therefore a valid cryptographic fixture and a negative Outbe admission
 fixture. The TDX fixture returns `UpToDate`, but V1 rejects it before QVL policy
 admission because production accepts SGX quote v3 only.
 
-The QVL time window is inclusive at both endpoints. The tested SGX collateral
-accepted `not_before = 1750330571` and `not_after = 1752919278`, and rejected
-one second outside either boundary. Outbe leases still end at least one hour
-before the authenticated collateral deadline, so this inclusive QVL boundary
-does not weaken the lease margin.
+The earlier pure-Rust prototype treated both endpoints as inclusive. The
+selected native QVL 1.26 behavior is different: it returned
+`collateral_expiration_status = 0` at `1752919277` and `1` at the exact
+earliest expiration `1752919278`. It also did not enforce the lower signed
+document issue boundary by itself. Therefore the native flag is evidence, not
+the complete Outbe time policy: the wrapper must parse both authenticated
+signed documents and enforce their lower bounds plus the exclusive
+`block_timestamp < earliest_expiration_date` upper bound before admission.
+Outbe leases still end at least one hour before that authenticated deadline.
 
 ## Required wrapper checks demonstrated by the prototype
 
@@ -131,7 +180,7 @@ require:
 - stable Outbe reject codes, never consensus-visible upstream error strings.
 
 The native QVL aggregate result is necessary but not sufficient for Outbe's
-stricter policy. The wrapper parses the same QvE-authenticated signed documents
+stricter policy. The wrapper parses the same QVL-authenticated signed documents
 to enforce schema v3 and separate Platform/QE status. It does not implement a
 second certificate/signature verifier.
 
@@ -205,9 +254,9 @@ At the 896-KiB evidence cap and 64 rules:
 
 Batch-local collateral deduplication reduces encoded bytes only. Verification
 gas is charged for every participant's logical evidence dimensions. I1 and I9
-must benchmark the pinned native QVL/QvE path; if it cannot satisfy the
-documented block budgets, implementation stops on that evidence instead of
-silently changing the schedule or weakening verification.
+must benchmark the pinned enclave-resident native QVL path; if it cannot
+satisfy the documented block budgets, implementation stops on that evidence
+instead of silently changing the schedule or weakening verification.
 
 ## Release evidence still required by implementation
 
@@ -218,9 +267,10 @@ decisions:
 - current PCS fixtures with large real CRLs;
 - cap-minus-one/cap/cap-plus-one and allocation-before-decode tests;
 - byte-stable verdict vectors across supported x86_64 validator builds;
-- exact QVL/QvE/TVL/native dependency version and digest evidence;
-- forged-result, QvE-report tamper, nonce mismatch and missing-native-stack
-  rejection vectors;
+- signed Gramine release-manifest pins for the already selected QVL/native
+  dependency artifacts;
+- host-verdict rejection, evidence tamper and missing-native-stack rejection
+  vectors;
 - valid, invalid-early, invalid-late and dense 32-validator benchmarks on the
   slowest supported x86_64 validator class;
 - fail-not-skip SGX/DCAP end-to-end release CI.
