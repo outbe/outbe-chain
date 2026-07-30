@@ -8420,10 +8420,12 @@ dependencies = [
  "cc",
  "commonware-runtime",
  "dcap-qvl",
+ "der 0.7.10",
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
  "outbe-primitives",
+ "pem",
  "postcard",
  "rand 0.8.6",
  "serde",
@@ -8432,6 +8434,7 @@ dependencies = [
  "snow",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
 ]
 

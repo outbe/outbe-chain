@@ -7,9 +7,29 @@ use outbe_primitives::tee_attestation_v1::{
     RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
 };
 use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
+use serde::Deserialize;
 
 const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
+const COLLATERAL_WRAPPER: &str =
+    include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
 const PEM_CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
+
+#[derive(Deserialize)]
+struct FixtureCollateral {
+    pck_crl_issuer_chain: String,
+    root_ca_crl: String,
+    pck_crl: String,
+    tcb_info_issuer_chain: String,
+    tcb_info: String,
+    tcb_info_signature: String,
+    qe_identity_issuer_chain: String,
+    qe_identity: String,
+    qe_identity_signature: String,
+}
+
+fn signed_document(field: &str, body: &str, signature: &str) -> Vec<u8> {
+    format!(r#"{{"{field}":{body},"signature":"{signature}"}}"#).into_bytes()
+}
 
 fn embedded_pck_chain() -> Vec<u8> {
     let start = QUOTE
@@ -20,6 +40,9 @@ fn embedded_pck_chain() -> Vec<u8> {
 }
 
 fn policy() -> TeePolicyV1 {
+    let intel_root_der_hash = B256::from_slice(
+        &hex::decode("44a0196b2b99f889b8e149e95b807a350e7424964399e885a7cbb8ccfab674d3").unwrap(),
+    );
     TeePolicyV1 {
         policy_version: 1,
         chain_id: [0x11; 32],
@@ -27,7 +50,7 @@ fn policy() -> TeePolicyV1 {
         activation_height: 1,
         predecessor_policy_hash: B256::ZERO,
         attestation_mode: AttestationMode::DcapRequired,
-        intel_root_der_hash: B256::repeat_byte(0x33),
+        intel_root_der_hash,
         quote_version: 3,
         tee_type: 0,
         attestation_key_type: 2,
@@ -58,6 +81,7 @@ fn policy() -> TeePolicyV1 {
 }
 
 fn evidence(policy: &TeePolicyV1) -> DcapEvidenceV1 {
+    let collateral: FixtureCollateral = serde_json::from_str(COLLATERAL_WRAPPER).unwrap();
     let intent = RegistrationIntentV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
@@ -81,32 +105,62 @@ fn evidence(policy: &TeePolicyV1) -> DcapEvidenceV1 {
         noise_responder_x25519: [0xdd; 32],
         node_host_authorization_hash: B256::repeat_byte(0xee),
     };
-    let kinds = [
-        DcapCollateralKind::PckCertificateChain,
-        DcapCollateralKind::PckCrl,
-        DcapCollateralKind::PckCrlIssuerChain,
-        DcapCollateralKind::RootCaCrl,
-        DcapCollateralKind::TcbInfo,
-        DcapCollateralKind::TcbInfoIssuerChain,
-        DcapCollateralKind::QeIdentity,
-        DcapCollateralKind::QeIdentityIssuerChain,
+    let components = [
+        (
+            DcapCollateralKind::PckCertificateChain,
+            embedded_pck_chain(),
+        ),
+        (
+            DcapCollateralKind::PckCrl,
+            hex::decode(&collateral.pck_crl).unwrap(),
+        ),
+        (
+            DcapCollateralKind::PckCrlIssuerChain,
+            collateral.pck_crl_issuer_chain.into_bytes(),
+        ),
+        (
+            DcapCollateralKind::RootCaCrl,
+            hex::decode(&collateral.root_ca_crl).unwrap(),
+        ),
+        (
+            DcapCollateralKind::TcbInfo,
+            signed_document(
+                "tcbInfo",
+                &collateral.tcb_info,
+                &collateral.tcb_info_signature,
+            ),
+        ),
+        (
+            DcapCollateralKind::TcbInfoIssuerChain,
+            collateral.tcb_info_issuer_chain.into_bytes(),
+        ),
+        (
+            DcapCollateralKind::QeIdentity,
+            signed_document(
+                "enclaveIdentity",
+                &collateral.qe_identity,
+                &collateral.qe_identity_signature,
+            ),
+        ),
+        (
+            DcapCollateralKind::QeIdentityIssuerChain,
+            collateral.qe_identity_issuer_chain.into_bytes(),
+        ),
     ];
     DcapEvidenceV1 {
         intent,
         quote: QUOTE.to_vec(),
-        components: kinds
+        components: components
             .into_iter()
-            .enumerate()
-            .map(|(index, kind)| DcapCollateralComponentV1 {
-                kind,
-                bytes: if index == 0 {
-                    embedded_pck_chain()
-                } else {
-                    vec![1]
-                },
-            })
+            .map(|(kind, bytes)| DcapCollateralComponentV1 { kind, bytes })
             .collect(),
     }
+}
+
+fn evidence_with_synthetic_intent_binding(policy: &TeePolicyV1) -> DcapEvidenceV1 {
+    let mut evidence = evidence(policy);
+    evidence.quote[368..432].copy_from_slice(&evidence.intent.report_data().unwrap());
+    evidence
 }
 
 #[test]
@@ -167,5 +221,89 @@ fn quote_report_data_must_equal_the_canonical_registration_intent_binding() {
     assert_eq!(
         verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
         Err(DcapRejectCodeV1::ReportDataMismatch)
+    );
+}
+
+#[test]
+fn semantically_equivalent_noncanonical_pem_collateral_is_rejected() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    evidence.components[2].bytes = String::from_utf8(evidence.components[2].bytes.clone())
+        .unwrap()
+        .replace('\n', "\r\n")
+        .into_bytes();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::CollateralNonCanonical)
+    );
+}
+
+#[test]
+fn signed_json_wrapper_with_equivalent_whitespace_is_rejected() {
+    let policy = policy();
+    let mut evidence = evidence_with_synthetic_intent_binding(&policy);
+    evidence.components[4].bytes.insert(1, b' ');
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::CollateralNonCanonical)
+    );
+}
+
+#[test]
+fn intent_rebound_quote_is_rejected_by_native_qvl() {
+    let policy = policy();
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::NativeVerificationFailed)
+    );
+}
+
+#[test]
+fn consensus_time_before_either_signed_document_issue_time_is_rejected() {
+    let policy = policy();
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_750_330_570),
+        Err(DcapRejectCodeV1::CollateralNotYetValid)
+    );
+}
+
+#[test]
+fn earliest_signed_document_expiration_is_exclusive() {
+    let policy = policy();
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_752_919_278),
+        Err(DcapRejectCodeV1::CollateralExpired)
+    );
+}
+
+#[test]
+fn pck_chain_must_terminate_at_the_policy_pinned_intel_root() {
+    let mut policy = policy();
+    policy.intel_root_der_hash = B256::repeat_byte(0x33);
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::IntelRootMismatch)
+    );
+}
+
+#[test]
+fn both_signed_document_evaluation_numbers_must_meet_policy() {
+    let mut policy = policy();
+    policy.minimum_tcb_evaluation_data_number = 18;
+    let evidence = evidence_with_synthetic_intent_binding(&policy);
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_100_000),
+        Err(DcapRejectCodeV1::TcbEvaluationNumberTooLow)
     );
 }

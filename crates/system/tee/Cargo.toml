@@ -9,7 +9,7 @@ publish.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 outbe-primitives.workspace = true
 serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 postcard.workspace = true
 snow.workspace = true
 thiserror.workspace = true
@@ -20,6 +20,10 @@ ed25519-dalek.workspace = true
 # behind the `dcap` feature so the default dev-box build pulls nothing and the
 # strict path is only compiled for gramine-sgx / CI. See `quote::verify_dcap_signature`.
 dcap-qvl = { version = "0.5", optional = true }
+der = { version = "0.7.10", optional = true }
+pem = { version = "3.0.6", optional = true }
+sha2 = { workspace = true, optional = true }
+time = { workspace = true, features = ["parsing"], optional = true }
 
 [features]
 # Enables cryptographic DCAP quote verification (Intel QVL + PCCS collateral).
@@ -28,7 +32,13 @@ dcap = ["dep:dcap-qvl"]
 # Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
 # enclave. This is intentionally separate from the legacy host-local `dcap`
 # feature above.
-native-dcap = ["outbe-primitives/tee-attestation-v1"]
+native-dcap = [
+    "outbe-primitives/tee-attestation-v1",
+    "dep:der",
+    "dep:pem",
+    "dep:sha2",
+    "dep:time",
+]
 # Test-only syscall-boundary markers around native QVL calls. The production
 # enclave crate does not forward this feature.
 native-dcap-test-trace = ["native-dcap"]
