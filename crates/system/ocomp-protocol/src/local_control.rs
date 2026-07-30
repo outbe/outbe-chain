@@ -743,6 +743,7 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
 }
 
 #[allow(unsafe_code)]
+#[cfg(target_os = "linux")]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
     let mut credentials = libc::ucred {
         pid: 0,
@@ -773,4 +774,22 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
         uid: credentials.uid,
         gid: credentials.gid,
     })
+}
+
+/// macOS/BSD fallback: `SO_PEERCRED` is Linux-only; `getpeereid` returns the
+/// peer's effective uid/gid, which is all the auth policy checks. The peer pid
+/// is unavailable here and reported as 0 (diagnostic only).
+#[allow(unsafe_code)]
+#[cfg(not(target_os = "linux"))]
+fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
+    // SAFETY: `uid`/`gid` are valid writable objects for the call, and
+    // `stream.as_raw_fd()` remains owned and open for the duration of this
+    // non-owning `getpeereid` call.
+    let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) };
+    if result != 0 {
+        return Err(ControlError::Io(std::io::Error::last_os_error()));
+    }
+    Ok(PeerCredentials { pid: 0, uid, gid })
 }

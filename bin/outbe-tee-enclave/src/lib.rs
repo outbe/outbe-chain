@@ -24,6 +24,7 @@ pub mod confidential;
 pub mod crypto;
 pub mod dkg;
 pub mod errors;
+pub mod fidelity;
 pub mod gramine;
 pub mod gratis;
 pub mod keys;

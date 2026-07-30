@@ -374,6 +374,32 @@ pub fn dispatch(
                     }
                 };
             let mut result = crate::gratis::apply_op(&state_key, &request);
+            // Co-located Fidelity cohort section: applied atomically with the
+            // Gratis op under its own independent key domain. A failing section
+            // rejects the WHOLE op — the host writes neither ledger.
+            if let (outbe_tee::protocol::GratisOpStatus::Applied, Some(section)) =
+                (&result.status, &request.fidelity)
+            {
+                let fidelity_outcome =
+                    crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                        .and_then(|fidelity_key| {
+                            crate::fidelity::apply_cohort_section(
+                                &fidelity_key,
+                                request.account,
+                                request.amount,
+                                section,
+                            )
+                        });
+                match fidelity_outcome {
+                    Ok(outcome) => result.fidelity = Some(outcome),
+                    Err(e) => {
+                        result = crate::gratis::rejected_result(
+                            format!("fidelity section failed: {e}"),
+                            result.inputs_canonical_hash,
+                        );
+                    }
+                }
+            }
             // Sign (inputs_canonical_hash ‖ result) with the attestation key so the
             // host can prove the result came from this attested enclave.
             let preimage = outbe_tee::protocol::gratis_op_attestation_preimage(
@@ -383,6 +409,68 @@ pub fn dispatch(
             result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
             EnclaveResponse::GratisOpApplied {
                 result: Box::new(result),
+            }
+        }
+        EnclaveRequest::SnapshotFidelityLeagues { request } => {
+            // Same resident-key derivation + attestation as ApplyGratisOp, over
+            // the independent Fidelity key domain. Consensus path (metadosis
+            // OCOMP prepare, re-executed by every validator).
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "SnapshotFidelityLeagues: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let leagues =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::snapshot_leagues(&key, &request));
+            match leagues {
+                Ok(leagues) => {
+                    let inputs_canonical_hash =
+                        outbe_tee::protocol::fidelity_snapshot_canonical_hash(&request);
+                    let preimage = outbe_tee::protocol::fidelity_snapshot_attestation_preimage(
+                        inputs_canonical_hash,
+                        &leagues,
+                    );
+                    let attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityLeaguesSnapshotted {
+                        leagues,
+                        inputs_canonical_hash,
+                        attestation_tag,
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
+        EnclaveRequest::QueryFidelityIndex { request } => {
+            // Owner-authorized read (eth_call path, NOT consensus). The signed,
+            // expiring authorization is verified inside the engine — the trust
+            // boundary is the enclave, not the host that forwards the call.
+            let Some(derived) = offer_key.get() else {
+                return EnclaveResponse::Error {
+                    message: "QueryFidelityIndex: no resident group key (DKG not complete)"
+                        .to_string(),
+                };
+            };
+            let result =
+                crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0)
+                    .and_then(|key| crate::fidelity::query_index(&key, chain_id, &request));
+            match result {
+                Ok(mut result) => {
+                    let preimage = outbe_tee::protocol::fidelity_query_attestation_preimage(
+                        result.inputs_canonical_hash,
+                        &result,
+                    );
+                    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+                    EnclaveResponse::FidelityIndexQueried {
+                        result: Box::new(result),
+                    }
+                }
+                Err(e) => EnclaveResponse::Error {
+                    message: e.to_string(),
+                },
             }
         }
         EnclaveRequest::ApplyPromisOp { request } => {

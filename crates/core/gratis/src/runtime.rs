@@ -57,6 +57,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         pledge_handle: None,
         bundle_account: None,
         spend_auth: None,
+        fidelity: None,
     }
 }
 

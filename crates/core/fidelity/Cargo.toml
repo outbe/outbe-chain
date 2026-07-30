@@ -7,11 +7,14 @@ publish.workspace = true
 
 [dependencies]
 outbe-macros.workspace = true
-outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-primitives.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 [dev-dependencies]
+# test-utils only for the crate's own tests; keeping it out of [dependencies]
+# keeps the TEE enclave (which depends on this crate for `math`) free of it.
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true
 
 [lints]

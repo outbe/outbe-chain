@@ -35,26 +35,24 @@ pub(crate) const L_FP: U256 = U256::from_limbs([10074855860604174336, 28, 0, 0])
 pub const MIN_LEAGUE: u16 = 1;
 pub const MAX_LEAGUE: u16 = 4096;
 
+/// Public (not `pub(crate)`): the TEE enclave engine accumulates RCFI over
+/// decrypted cohorts with the exact same arithmetic, so this is the single
+/// source of truth shared by the on-chain and in-enclave evaluation paths.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct RcfiAccumulator {
+pub struct RcfiAccumulator {
     numerator: U256,
     denominator: U256,
 }
 
 impl RcfiAccumulator {
-    pub(crate) fn add_active(
-        &mut self,
-        size: U256,
-        acquired_at: u64,
-        timestamp: u64,
-    ) -> Option<()> {
+    pub fn add_active(&mut self, size: U256, acquired_at: u64, timestamp: u64) -> Option<()> {
         let contribution = size.checked_mul(t_dec(timestamp.saturating_sub(acquired_at)))?;
         self.numerator = self.numerator.checked_add(contribution)?;
         self.denominator = self.denominator.checked_add(contribution)?;
         Some(())
     }
 
-    pub(crate) fn add_sold(
+    pub fn add_sold(
         &mut self,
         size: U256,
         acquired_at: u64,
@@ -67,7 +65,7 @@ impl RcfiAccumulator {
         Some(())
     }
 
-    pub(crate) fn finish(self, qualified_start: u64, timestamp: u64) -> Option<(U256, U256, U256)> {
+    pub fn finish(self, qualified_start: u64, timestamp: u64) -> Option<(U256, U256, U256)> {
         if qualified_start == 0 {
             return Some((U256::ZERO, U256::ZERO, U256::ZERO));
         }
@@ -82,7 +80,7 @@ impl RcfiAccumulator {
     }
 }
 
-pub(crate) fn league_from_rcfi(rcfi: U256, maximum_rcfi: U256) -> Option<u16> {
+pub fn league_from_rcfi(rcfi: U256, maximum_rcfi: U256) -> Option<u16> {
     if maximum_rcfi.is_zero() {
         return Some(MIN_LEAGUE);
     }
@@ -187,7 +185,7 @@ pub(crate) fn pow_one_half_fp(x_fp: U256) -> U256 {
 /// Decayed time `T_dec(age) = L · (1 − (1/2)^(age/H))` in fixed-point
 /// decayed-days. `age_sec` is the elapsed time since the event in seconds;
 /// callers must clamp clock skew (`now < event_time`) to `0` before calling.
-pub(crate) fn t_dec(age_sec: u64) -> U256 {
+pub fn t_dec(age_sec: u64) -> U256 {
     if age_sec == 0 {
         return U256::ZERO;
     }

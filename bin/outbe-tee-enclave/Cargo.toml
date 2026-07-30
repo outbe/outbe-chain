@@ -42,6 +42,12 @@ serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 
+# RCFI decay math (`RcfiAccumulator`, `t_dec`, `league_from_rcfi`) for the
+# in-enclave Fidelity cohort engine — the same arithmetic the chain uses, so the
+# two evaluation paths cannot drift. Pulls only `outbe-primitives` (already in
+# the enclave graph) + alloy.
+outbe-fidelity.workspace = true
+
 # Poseidon-BN254 (same circom params as the chain's zkproof / wallet) for the
 # in-enclave `tribute_id` derivation. We depend on the lightweight Poseidon
 # stack directly — NOT `outbe-zkproof`, which pulls a heavy Barretenberg C++ FFI
