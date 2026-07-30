@@ -497,7 +497,6 @@ impl VerifiedCapacityEvidenceV1 {
             retry_backoff_blocks: 1,
             max_terminal_job_records: 365,
             max_reference_currencies: 8,
-            max_fidelity_cohorts_per_owner: 64,
             max_oracle_wwd_pair_entries: u32::try_from(candidate.max_oracle_wwd_pair_entries)
                 .map_err(|_| CapacityEvidenceError::GeneratedLimitOverflow)?,
             max_active_scurve_entries: u32::try_from(candidate.max_active_scurve_entries)

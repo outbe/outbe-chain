@@ -6,39 +6,7 @@ use crate::schema::{
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 
-/// Bounded readiness projection consumed by OCOMP pre-admission.
-///
-/// Leagues are snapshotted per owner by Metadosis at prepare time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FidelityOcompProjection {
-    pub profile_ready: bool,
-}
-
 impl FidelityContract<'_> {
-    /// Initializes the OCOMP profile only for the fresh-devnet empty Fidelity
-    /// state. The later fork handler owns the sole production call site.
-    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<FidelityOcompProjection> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            if self.ocomp_profile_ready.read()? {
-                return self.ocomp_projection();
-            }
-            if self.first_qualified_start.read()? != 0 {
-                return Err(PrecompileError::Fatal(
-                    "Fidelity OCOMP fresh profile requires empty state".into(),
-                ));
-            }
-            self.ocomp_profile_ready.write(true)?;
-            self.ocomp_projection()
-        })
-    }
-
-    pub fn ocomp_projection(&self) -> Result<FidelityOcompProjection> {
-        Ok(FidelityOcompProjection {
-            profile_ready: self.ocomp_profile_ready.read()?,
-        })
-    }
-
     pub fn owner_cohort_count(&self, account: Address) -> Result<u32> {
         self.active_count
             .read(&account)?

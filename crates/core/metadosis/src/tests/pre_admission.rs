@@ -1,5 +1,4 @@
 use alloy_primitives::{B256, U256};
-use outbe_fidelity::FidelityOcompProjection;
 use outbe_ocomp_protocol::{codec::CodecLimits, profile::CapacityProfileV1, SchemaLimits};
 use outbe_oracle::api::{OcompAuctionEntryPriceSource, OcompOraclePreAdmissionProjection};
 use outbe_tribute::TributePreAdmissionProjection;
@@ -36,7 +35,6 @@ fn capacity() -> CapacityProfileV1 {
         retry_backoff_blocks: 2,
         max_terminal_job_records: 365,
         max_reference_currencies: 16,
-        max_fidelity_cohorts_per_owner: 64,
         max_oracle_wwd_pair_entries: 256,
         max_active_scurve_entries: 256,
         result_deadline_blocks: 10,
@@ -68,9 +66,6 @@ fn inputs() -> PreAdmissionInputs {
             canonical_body_bytes: 40_000,
             distinct_owner_count: 256,
             distinct_reference_currency_count: 16,
-        },
-        fidelity: FidelityOcompProjection {
-            profile_ready: true,
         },
         fidelity_league_snapshot_root: B256::repeat_byte(0x6a),
         oracle: OcompOraclePreAdmissionProjection {

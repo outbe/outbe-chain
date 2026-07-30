@@ -68,17 +68,14 @@ fn deposits_keep_efficiency_one() {
 }
 
 #[test]
-fn fresh_ocomp_profile_does_not_cap_owner_cohorts() {
+fn owner_cohorts_are_unbounded() {
     with_contract(|contract| {
-        contract.initialize_fresh_ocomp_profile().unwrap();
-
         // Accumulate well past the former 64-cohort ceiling — there is no cap.
         for offset in 0..100 {
             contract
                 .cohort_in(ALICE, U256::from(1), T0 + offset)
                 .unwrap();
         }
-        assert!(contract.ocomp_projection().unwrap().profile_ready);
         assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 100);
     });
 }
@@ -86,7 +83,6 @@ fn fresh_ocomp_profile_does_not_cap_owner_cohorts() {
 #[test]
 fn partial_sale_past_the_former_cap_is_not_rolled_back() {
     with_contract(|contract| {
-        contract.initialize_fresh_ocomp_profile().unwrap();
         for offset in 0..64 {
             contract
                 .cohort_in(ALICE, U256::from(2), T0 + offset)

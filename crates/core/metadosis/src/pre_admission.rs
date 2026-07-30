@@ -1,6 +1,5 @@
 use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
-use outbe_fidelity::FidelityOcompProjection;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     intent::{AuctionEntryPriceSource, PreAdmissionEnvelopeV1},
@@ -29,7 +28,6 @@ pub(crate) struct PreAdmissionContext {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PreAdmissionInputs {
     pub tribute: TributePreAdmissionProjection,
-    pub fidelity: FidelityOcompProjection,
     /// Ordered commitment over the day's snapshotted `(owner, league)` pairs,
     /// computed by the caller from the sealed owner set. Sealed into the
     /// envelope so the OCOMP opening's owner/league set is consensus-committed.
@@ -49,7 +47,6 @@ pub(crate) enum PreAdmissionDeferredReason {
     TributeNotSealed,
     EmptyTributeDay,
     ReferenceCurrencyCountExceeded { actual: u16, limit: u16 },
-    FidelityProfileNotReady,
     OracleProfileNotReady,
     OracleOpeningCountExceeded { actual: u16, limit: u16 },
     OracleWwdPairEntriesExceeded { actual: u32, limit: u32 },
@@ -66,7 +63,6 @@ pub(crate) fn evaluate_pre_admission(
 ) -> Result<PreAdmissionDecision> {
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let tribute = inputs.tribute;
-    let fidelity = inputs.fidelity;
     let oracle = inputs.oracle;
 
     if !tribute.profile_ready {
@@ -94,11 +90,6 @@ pub(crate) fn evaluate_pre_admission(
                 actual: tribute.distinct_reference_currency_count,
                 limit: reference_currency_limit,
             },
-        ));
-    }
-    if !fidelity.profile_ready {
-        return Ok(PreAdmissionDecision::Deferred(
-            PreAdmissionDeferredReason::FidelityProfileNotReady,
         ));
     }
     if !oracle.profile_ready {

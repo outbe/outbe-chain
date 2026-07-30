@@ -2,7 +2,6 @@ use alloy_primitives::{address, b256, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_compressed_entities::{begin_block, end_block, ExecutionScope};
 use outbe_desis::{AuctionStage, DesisContract};
-use outbe_fidelity::schema::FidelityContract;
 use outbe_nod::NodContract;
 use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
 use outbe_oracle::contract::OracleContract;
@@ -48,9 +47,6 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
         outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
@@ -484,9 +480,6 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
                 .worldwide_day,
             fixture.later_wwd
         );
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
 
         let next_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
@@ -542,10 +535,6 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
     let fixture = prepare_two_ready_days_fixture(&mut provider);
 
     StorageHandle::enter(&mut provider, |storage| {
-        FidelityContract::new(storage.clone())
-            .initialize_fresh_ocomp_profile()
-            .unwrap();
-
         for (block_number, block_time) in [
             (fixture.block_number, fixture.block_time),
             (fixture.block_number + 1, fixture.block_time + 1),
@@ -889,7 +878,7 @@ struct TwoReadyDaysFixture {
 
 fn prepare_request_fixture(
     provider: &mut HashMapStorageProvider,
-    fidelity_ready: bool,
+    oracle_ready: bool,
 ) -> PreparedRequestFixture {
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
@@ -905,14 +894,14 @@ fn prepare_request_fixture(
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
 
-        if fidelity_ready {
-            FidelityContract::new(storage.clone())
-                .initialize_fresh_ocomp_profile()
-                .unwrap();
-        }
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair("COEN", "0xUSD").unwrap();
-        outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        // `oracle_ready` gates OCOMP admission: when false the Oracle profile is
+        // left un-armed so the terminal request defers with OracleProfileNotReady
+        // (the deferral path formerly exercised via Fidelity readiness).
+        if oracle_ready {
+            outbe_oracle::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        }
 
         let mut metadosis = MetadosisContract::new(storage.clone());
         metadosis

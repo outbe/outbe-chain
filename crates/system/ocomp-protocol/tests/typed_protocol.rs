@@ -500,7 +500,6 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         retry_backoff_blocks: 2,
         max_terminal_job_records: 365,
         max_reference_currencies: 16,
-        max_fidelity_cohorts_per_owner: 16,
         max_oracle_wwd_pair_entries: 128,
         max_active_scurve_entries: 128,
         result_deadline_blocks: 10,

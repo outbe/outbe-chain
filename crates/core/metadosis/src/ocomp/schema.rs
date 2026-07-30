@@ -1924,7 +1924,6 @@ pub(super) fn validate_request_profile(profile: &OcompRequestProfile) -> Result<
         || capacity.max_terminal_job_records != 365
         || capacity.max_reference_currencies == 0
         || capacity.max_reference_currencies > max_reference_currencies
-        || capacity.max_fidelity_cohorts_per_owner != 64
         || capacity.max_oracle_wwd_pair_entries == 0
         || capacity.max_oracle_wwd_pair_entries > max_oracle_entries
         || capacity.max_active_scurve_entries == 0

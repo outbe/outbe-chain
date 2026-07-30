@@ -365,7 +365,6 @@ mod tests {
                 retry_backoff_blocks: 1,
                 max_terminal_job_records: 365,
                 max_reference_currencies: 256,
-                max_fidelity_cohorts_per_owner: 64,
                 max_oracle_wwd_pair_entries: 256,
                 max_active_scurve_entries: 256,
                 result_deadline_blocks: 64,

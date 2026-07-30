@@ -72,12 +72,6 @@ pub struct FidelityContract {
     // Timestamps are monotonic, so the first write is the chain-wide minimum.
     #[attribute(order = 5)]
     pub first_qualified_start: outbe_primitives::storage::dsl::Value<u64>,
-
-    // Fresh-devnet OCOMP profile state. Appended to preserve all pre-fork
-    // storage offsets; the profile remains inert until its fork handler marks
-    // it ready.
-    #[attribute(order = 6)]
-    pub ocomp_profile_ready: outbe_primitives::storage::dsl::Value<bool>,
 }
 
 /// Domain-separated per-owner cohort slot key: `keccak(domain ++ owner ++ index)`.
