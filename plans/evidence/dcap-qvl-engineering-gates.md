@@ -143,6 +143,20 @@ It is therefore a valid cryptographic fixture and a negative Outbe admission
 fixture. The TDX fixture returns `UpToDate`, but V1 rejects it before QVL policy
 admission because production accepts SGX quote v3 only.
 
+The saved quote also carries `REPORT_DATA = "Hello, world!" || zeroes`; those
+signed bytes cannot be changed without invalidating the quote. It therefore
+cannot serve as the positive intent-binding vector. A new real Processor-CA
+fixture must be captured with
+`RegistrationIntentV1::report_data()` before I1 closes.
+
+No ready Intel-rooted type-5 Platform-CA quote plus complete collateral bundle
+exists in the inspected Secret Network or official Intel fixture corpora.
+Intel publishes a real Platform-CA PCK parser vector and synthetic
+Platform-CA verification vectors, but not hardware evidence usable for a
+positive native-QVL test. Because Platform CA applies to registered
+multi-package SGX platforms, the current single-package capture host cannot
+produce it.
+
 The earlier pure-Rust prototype treated both endpoints as inclusive. The
 selected native QVL 1.26 behavior is different: it returned
 `collateral_expiration_status = 0` at `1752919277` and `1` at the exact
@@ -263,7 +277,10 @@ instead of silently changing the schedule or weakening verification.
 These are acceptance criteria of the implementation tasks, not open product
 decisions:
 
-- a real Platform-CA SGX fixture in addition to the Processor-CA fixture;
+- for I1, a real accepted Processor-CA fixture bound to the canonical Outbe
+  intent plus official Intel synthetic Platform-CA parser/policy vectors;
+- for I9, a real accepted Platform-CA SGX fixture captured on a registered
+  multi-package platform; absence is a release failure, not a skipped test;
 - current PCS fixtures with large real CRLs;
 - cap-minus-one/cap/cap-plus-one and allocation-before-decode tests;
 - byte-stable verdict vectors across supported x86_64 validator builds;

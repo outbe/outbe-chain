@@ -90,12 +90,20 @@ Outbe Gramine enclave, with no local host inputs.
 - stable reject-code ordering and exact QVL gas precharge.
 
 The feasibility gate does not complete I1. Canonical grammar, signed-document
-time enforcement, Platform-CA coverage, final Outbe policy mapping and stable
-consensus verdict vectors remain in this item.
+time enforcement, final Outbe policy mapping and stable consensus verdict
+vectors remain in this item. I1 proves the native cryptographic path with a
+real Processor-CA quote. Platform-CA grammar and policy behavior use the
+official Intel parser/test vectors; a real Intel-rooted Platform-CA quote
+requires registered multi-package SGX hardware and is a fail-not-skip I9
+release gate.
 
 **Acceptance:**
 
-- Processor and Platform positive/negative fixture corpus;
+- a real Processor-CA positive/negative cryptographic corpus bound to
+  `RegistrationIntentV1::report_data()`;
+- synthetic Intel Platform-CA parser/policy vectors cover CA classification,
+  Platform/QE status mapping and every stable rejection branch, but are never
+  represented as real hardware evidence;
 - upstream trailing-byte cases reject;
 - time boundary and strict status matrix pass;
 - no environment, filesystem, network, wall clock, optional verifier or
@@ -274,7 +282,8 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 **Acceptance:**
 
 - real SGX/DCAP job is fail-not-skip;
-- Processor and Platform x86_64 verdict/benchmark matrix passes;
+- real Processor and real registered multi-package Platform x86_64
+  verdict/benchmark matrix passes;
 - the slowest supported validator keeps full-block execution inside the
   consensus timing budget;
 - missing or mismatched QVL/native dependencies, collateral or SGX

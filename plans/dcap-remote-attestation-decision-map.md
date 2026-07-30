@@ -614,7 +614,11 @@ The production native adapter and Outbe wrapper:
 
 Implementation/release acceptance evidence:
 
-- fixed positive and negative quote/collateral vectors;
+- a real Processor-CA positive/negative quote/collateral corpus bound to the
+  canonical Outbe registration intent;
+- official Intel synthetic Platform-CA vectors for deterministic parser and
+  policy coverage, clearly labelled as synthetic and never accepted as
+  hardware evidence;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
 - exact native artifact and Intel-root pinning;
@@ -623,6 +627,13 @@ Implementation/release acceptance evidence:
 - no live PCCS/QPL collateral substitution, optional verifier or fail-open
   fallback;
 - byte-stable verdict vectors across supported x86_64 validator builds.
+
+A real Intel-rooted Platform-CA type-5 quote cannot be derived from a
+Processor-CA quote or safely rebound to a different `REPORT_DATA`: either
+operation invalidates the signed evidence. It requires a registered
+multi-package SGX platform. Therefore the real Platform-CA matrix is an
+explicit fail-not-skip I9 release gate, while I1 uses Intel's synthetic
+Platform-CA vectors only for parser and policy coverage.
 
 This preserves Secret Network's deployed rule that the host is not verifier
 authority, while using Gramine's supported enclave-resident native-QVL

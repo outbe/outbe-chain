@@ -124,8 +124,10 @@ finding for this feasibility scope.
 - pinned Intel root, FMSPC/PCE ID and evaluation-number checks;
 - separate Platform and QE status matrix with authenticated advisories;
 - stable consensus verdict/reject ordering and gas precharge;
-- real Platform-CA and current large-CRL fixtures;
+- a real accepted Processor-CA intent-bound fixture, current large-CRL
+  coverage and synthetic Intel Platform-CA parser/policy vectors;
 - byte-stable vectors and bounded performance evidence.
 
-Real SGX device execution is intentionally retained as the fail-not-skip I9
-release gate rather than misrepresented by Gramine Direct.
+Real SGX device execution, including a real registered multi-package
+Platform-CA fixture, is intentionally retained as the fail-not-skip I9 release
+gate rather than misrepresented by Gramine Direct or synthetic evidence.
