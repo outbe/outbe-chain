@@ -87,17 +87,18 @@ library IntexMetadata {
             ",\"display_type\":\"number\"}"
         );
 
-        // Prices and load are human-formatted JSON numbers (comma-free); raw values stay in readData.
+        // Prices are quoted strings: a JSON number cannot keep trailing zeros ("125.00" -> 125),
+        // so the two-decimal format only survives as text. Raw values stay in readData.
         string memory economics = string.concat(
-            ",{\"trait_type\":\"Entry Price\",\"value\":",
+            ",{\"trait_type\":\"Entry Price\",\"value\":\"",
             _amountPlain(data.entryPriceMinor, 2),
-            ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Floor Price\",\"value\":",
+            "\",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Floor Price\",\"value\":\"",
             _amountPlain(data.floorPriceMinor, 2),
-            ",\"display_type\":\"number\"},",
-            "{\"trait_type\":\"Call Price\",\"value\":",
+            "\",\"display_type\":\"number\"},",
+            "{\"trait_type\":\"Call Price\",\"value\":\"",
             _amountPlain(data.callPriceMinor, 2),
-            ",\"display_type\":\"number\"},",
+            "\",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
             Strings.toString(data.promisLoadMinor / 1e18),
             ",\"display_type\":\"number\"}"

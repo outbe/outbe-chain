@@ -57,9 +57,12 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":840,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":840,\"display_type\":\"number\"}");
         // CreateSeriesLib defaults: entry 1e13, floor 100, call 200 (2-dec minor), promis 100k * 1e18.
-        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":100000000000.00,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":1.00,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.00,\"display_type\":\"number\"}");
+        // Prices are quoted so the two-decimal format survives JSON number normalization.
+        _assertContains(
+            json, "{\"trait_type\":\"Entry Price\",\"value\":\"100000000000.00\",\"display_type\":\"number\"}"
+        );
+        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":\"1.00\",\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":\"2.00\",\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
         assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
         assertFalse(json.contains("\"Call Deadline\""), "no call rows before markCalled");
@@ -143,7 +146,9 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, string.concat("\"name\":\"Intex Series ", DISPLAY_ID, " - Settled\","));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":100000000000.00,\"display_type\":\"number\"}");
+        _assertContains(
+            json, "{\"trait_type\":\"Entry Price\",\"value\":\"100000000000.00\",\"display_type\":\"number\"}"
+        );
         assertFalse(json.contains("Series State"), "lifecycle is final for the Settled class");
         assertFalse(json.contains("\"Called At\""), "no call rows on Settled");
         bytes memory svg = json.decodeSvg();
