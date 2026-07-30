@@ -187,12 +187,12 @@ fn dispatch_inner(
         }
         SystemTxInputV2::OcompTerminalRequest => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            let (scope, parent) = body_readers.ok_or_else(|| {
+            let (scope, _) = body_readers.ok_or_else(|| {
                 PrecompileError::Fatal(
                     "OCOMP terminal request requires execution seal authority".into(),
                 )
             })?;
-            run_ocomp_terminal_request(&ctx, scope, parent)?;
+            run_ocomp_terminal_request(&ctx, scope)?;
         }
     }
 
@@ -1033,9 +1033,8 @@ pub(crate) fn run_ocomp_lifecycle_begin(
 pub(crate) fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,
-    parent: &outbe_offchain_data::RuntimeBodyReaders,
 ) -> Result<()> {
-    outbe_metadosis::ocomp::request::run_terminal_request(ctx, scope, parent)
+    outbe_metadosis::ocomp::request::run_terminal_request(ctx, scope)
 }
 
 fn block_runtime_context_from_storage(
