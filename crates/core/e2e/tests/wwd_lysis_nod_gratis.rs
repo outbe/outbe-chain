@@ -52,6 +52,7 @@ use outbe_compressed_entities::{
     FinalizedMarker, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_desis::{AuctionStage, DesisContract};
+use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_metadosis::{
@@ -516,6 +517,7 @@ struct ScenarioOutcome {
 
 fn run_green_then_red_wwd_lysis_nod_mine_gratis() -> ScenarioOutcome {
     test_enclave::install();
+    fidelity_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
     // The NOD-cost payment branch deposits into the vault router via an EVM

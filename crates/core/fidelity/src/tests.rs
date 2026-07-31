@@ -167,3 +167,89 @@ fn max_rcfi_at_uses_plaintext_anchor() {
         assert!(later > early);
     });
 }
+
+#[test]
+fn cohort_ciphertext_is_deterministic_across_executions() {
+    // The consensus invariant: two independent executions of the SAME sequence
+    // of cohort ops produce BYTE-IDENTICAL ciphertext (and league), so every
+    // validator converges on identical encrypted state (deterministic nonce, no
+    // randomness).
+    let run = || {
+        with_env(|storage| {
+            api::cohort_in(storage.clone(), ALICE, U256::from(1_000u64), T0).unwrap();
+            api::cohort_in(storage.clone(), ALICE, U256::from(500u64), T0 + 10 * DAY).unwrap();
+            api::cohort_out(storage.clone(), ALICE, U256::from(300u64), T0 + 20 * DAY).unwrap();
+            let blob = FidelityContract::new(storage.clone())
+                .cohorts_ct_of(ALICE)
+                .unwrap();
+            let league = api::league_at(storage.clone(), ALICE, T0 + 100 * DAY).unwrap();
+            (blob, league)
+        })
+    };
+    let a = run();
+    let b = run();
+    assert!(!a.0.is_empty());
+    assert_eq!(
+        a.0, b.0,
+        "cohort ciphertext must be byte-identical across runs"
+    );
+    assert_eq!(a.1, b.1, "league must be identical across runs");
+}
+
+#[test]
+fn precompile_dispatch_query_auth_and_metadata() {
+    use crate::precompile::{dispatch, IFidelity};
+    use alloy_primitives::Bytes;
+    use alloy_sol_types::{SolCall, SolInterface};
+
+    with_env(|storage| {
+        let (sk, account) = evm_signer(0x77);
+        api::cohort_in(storage.clone(), account, U256::from(1_000u64), T0).unwrap();
+        let expiry = T0 + 400 * DAY;
+        let query_ts = T0 + 100 * DAY;
+
+        // getFidelityIndexAt through the ABI dispatch with a valid owner
+        // authorization → decoded RCFI is positive.
+        let sig = query_auth(&sk, account, expiry);
+        let call =
+            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
+                account,
+                timestamp: query_ts,
+                expiry,
+                signature: Bytes::from(sig),
+            })
+            .abi_encode();
+        let out = dispatch(storage.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
+        let rcfi = IFidelity::getFidelityIndexAtCall::abi_decode_returns(&out).unwrap();
+        assert!(rcfi > U256::ZERO);
+
+        // A signature from a different key is rejected by the dispatch.
+        let (other, _) = evm_signer(0x78);
+        let forged = query_auth(&other, account, expiry);
+        let bad =
+            IFidelity::IFidelityCalls::getFidelityIndexAt(IFidelity::getFidelityIndexAtCall {
+                account,
+                timestamp: query_ts,
+                expiry,
+                signature: Bytes::from(forged),
+            })
+            .abi_encode();
+        assert!(dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).is_err());
+
+        // Plaintext metadata needs no authorization.
+        let min_call =
+            IFidelity::IFidelityCalls::minLeague(IFidelity::minLeagueCall {}).abi_encode();
+        let out = dispatch(storage.clone(), &min_call, Address::ZERO, U256::ZERO).unwrap();
+        assert_eq!(
+            IFidelity::minLeagueCall::abi_decode_returns(&out).unwrap(),
+            MIN_LEAGUE
+        );
+        let max_call =
+            IFidelity::IFidelityCalls::maxLeague(IFidelity::maxLeagueCall {}).abi_encode();
+        let out = dispatch(storage.clone(), &max_call, Address::ZERO, U256::ZERO).unwrap();
+        assert_eq!(
+            IFidelity::maxLeagueCall::abi_decode_returns(&out).unwrap(),
+            MAX_LEAGUE
+        );
+    });
+}

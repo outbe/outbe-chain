@@ -127,14 +127,23 @@ pub mod test_enclave {
                         DEV_EPOCH,
                     )
                     .expect("derive dev fidelity state key");
-                    let outcome = outbe_tee_enclave::fidelity::apply_cohort_section(
+                    // Mirror the real transport: a failing fidelity section
+                    // rejects the WHOLE op (rejected_result), so the host reverts
+                    // and writes NEITHER ledger — not a panic.
+                    match outbe_tee_enclave::fidelity::apply_cohort_section(
                         &fidelity_key,
                         req.account,
                         req.amount,
                         section,
-                    )
-                    .expect("in-process fidelity cohort section");
-                    result.fidelity = Some(outcome);
+                    ) {
+                        Ok(outcome) => result.fidelity = Some(outcome),
+                        Err(e) => {
+                            result = outbe_tee_enclave::gratis::rejected_result(
+                                format!("fidelity section failed: {e}"),
+                                result.inputs_canonical_hash,
+                            );
+                        }
+                    }
                 }
                 result
             })

@@ -7453,6 +7453,7 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-desis",
  "outbe-evm",
+ "outbe-fidelity",
  "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
