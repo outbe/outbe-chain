@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable,
+    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -64,6 +64,23 @@ pub fn dispatch(
                         runtime::distribute(&storage, sender, c.worldwideDay, c.srcChainId, val)
                     })
                 }
+                // Permissionless: the merkle proof is the authorization, so the
+                // sender is irrelevant to the outcome.
+                payContributorBatch(c) => mutate_void(c, caller, |_sender, c| {
+                    runtime::pay_contributor_batch(
+                        &storage,
+                        c.worldwideDay,
+                        c.startIndex,
+                        &c.leaves,
+                        &c.proof,
+                    )
+                }),
+                contributorPayoutRound(c) => view(c, |c| {
+                    runtime::contributor_payout_round(&storage, c.worldwideDay)
+                }),
+                contributorPaidWord(c) => view(c, |c| {
+                    outbe_intex::api::paid_leaves_word(&storage, c.worldwideDay, c.wordIndex)
+                }),
             }
         },
     )

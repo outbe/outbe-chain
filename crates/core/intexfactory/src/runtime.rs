@@ -1,12 +1,13 @@
 //! IntexFactory runtime use-cases: issuance, settlement, Promis mining.
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
+use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::IntexState;
 use outbe_vaultrouter::api::IVaultRouter;
 
@@ -227,6 +228,11 @@ pub(crate) fn try_settle_proceeds(
     if outbe_intex::api::get_progress(storage, series_id)?.is_some() {
         return Ok(());
     }
+    // A certified round is drained by batch transactions, not by this sweep, and
+    // a day gets exactly one. Later arrivals simply accumulate in the pot.
+    if outbe_intex::api::certified_payout_round(storage, series_id)?.is_some() {
+        return Ok(());
+    }
     let deadline = outbe_intex::api::proceeds_deadline(storage, series_id)?;
     if deadline == 0 {
         return Ok(()); // never armed (no issuance for this series)
@@ -234,6 +240,15 @@ pub(crate) fn try_settle_proceeds(
     let complete = outbe_intex::api::proceeds_ready(storage, series_id)?;
     if !complete && now < deadline {
         return Ok(()); // keep waiting for the remaining chains
+    }
+
+    let certified = outbe_intex::api::certified_contributor_generation(storage, series_id)?;
+    let legacy_total = outbe_intex::api::contributor_total(storage, series_id)?;
+    // No contributor authority yet. Proceeds can complete before quorum installs
+    // the certified root, so hold the pot until the window really closes instead
+    // of burning a day that is about to become payable.
+    if certified.is_none() && legacy_total.is_zero() && now < deadline {
+        return Ok(());
     }
 
     let pot = outbe_intex::api::take_proceeds_pot(storage, series_id)?;
@@ -246,7 +261,29 @@ pub(crate) fn try_settle_proceeds(
         return Ok(());
     }
 
-    let total = outbe_intex::api::contributor_total(storage, series_id)?;
+    if let Some(generation) = certified {
+        // Contributor bodies live off-chain, so the round only fixes the amount
+        // every share divides; batches prove membership against the root.
+        if generation.contributor_count == 0 {
+            burn_ownerless_proceeds(storage, series_id, pot)?;
+        } else {
+            outbe_intex::api::open_certified_payout_round(storage, series_id, pot)?;
+            emit_event(
+                storage,
+                crate::precompile::IIntexFactory::ContributorPayoutOpened {
+                    worldwideDay: series_id,
+                    amount: pot,
+                    contributorCount: generation.contributor_count,
+                },
+            )?;
+        }
+        if complete {
+            outbe_intex::api::finalize_proceeds(storage, series_id)?;
+        }
+        return Ok(());
+    }
+
+    let total = legacy_total;
     if total.is_zero() {
         // Ownerless proceeds: burn instead of stranding them.
         burn_ownerless_proceeds(storage, series_id, pot)?;
@@ -260,6 +297,115 @@ pub(crate) fn try_settle_proceeds(
     // deadline forced a partial payout and the map is retained for a top-up.
     outbe_intex::api::set_proceeds_finalize_on_done(storage, series_id, complete)?;
     outbe_intex::api::start_distribution(storage, series_id, pot, total)
+}
+
+/// Pay one chunk-aligned range of certified contributors.
+///
+/// Permissionless by construction: the batch is only accepted if its records
+/// rebuild the day's certified contributor root, so a wrong owner, nominal or
+/// index cannot survive verification. Shares divide the amount frozen when the
+/// round opened, never the live balance.
+pub(crate) fn pay_contributor_batch(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+    start_index: u32,
+    leaves: &[crate::precompile::IIntexFactory::ContributorLeaf],
+    proof: &[B256],
+) -> Result<()> {
+    let round = outbe_intex::api::certified_payout_round(storage, worldwide_day)?
+        .ok_or(IntexFactoryError::NoCertifiedRound(worldwide_day))?;
+    let leaf_count =
+        u32::try_from(leaves.len()).map_err(|_| IntexFactoryError::BadContributorBatch)?;
+
+    // Cheapest gate first: a batch another sender already paid costs one
+    // storage read instead of a full proof verification.
+    outbe_intex::api::require_certified_leaves_unpaid(
+        storage,
+        worldwide_day,
+        start_index,
+        leaf_count,
+    )?;
+
+    let decoded: Vec<ContributorLeafData> = leaves.iter().map(decode_contributor_leaf).collect();
+    let generation = outbe_intex::api::verify_certified_contributor_batch(
+        storage,
+        worldwide_day,
+        start_index,
+        &decoded,
+        proof,
+    )?;
+    if generation.eligible_nominal_total.is_zero() {
+        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
+    }
+
+    storage.with_checkpoint(|| {
+        let mut paid = U256::ZERO;
+        for leaf in &decoded {
+            // Floor division for every leaf: batches arrive in any order, so no
+            // leaf can be the one that absorbs a remainder.
+            let share = round
+                .amount
+                .checked_mul(leaf.nominal)
+                .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?
+                / generation.eligible_nominal_total;
+            storage.transfer_balance(INTEX_FACTORY_ADDRESS, leaf.owner, share)?;
+            paid += share;
+        }
+        outbe_intex::api::mark_certified_leaves_paid(
+            storage,
+            worldwide_day,
+            start_index,
+            leaf_count,
+            paid,
+        )?;
+        emit_event(
+            storage,
+            crate::precompile::IIntexFactory::ContributorBatchPaid {
+                worldwideDay: worldwide_day,
+                startIndex: start_index,
+                leafCount: leaf_count,
+                paidAmount: paid,
+            },
+        )
+    })
+}
+
+/// Progress of one day's payout round; all-zero when no round is open.
+pub(crate) fn contributor_payout_round(
+    storage: &StorageHandle<'_>,
+    worldwide_day: u32,
+) -> Result<crate::precompile::IIntexFactory::ContributorRound> {
+    let Some(round) = outbe_intex::api::certified_payout_round(storage, worldwide_day)? else {
+        return Ok(crate::precompile::IIntexFactory::ContributorRound {
+            amount: U256::ZERO,
+            contributorCount: 0,
+            paidSoFar: U256::ZERO,
+            paidLeafCount: 0,
+        });
+    };
+    let contributor_count =
+        outbe_intex::api::certified_contributor_generation(storage, worldwide_day)?
+            .map_or(0, |generation| generation.contributor_count);
+    Ok(crate::precompile::IIntexFactory::ContributorRound {
+        amount: round.amount,
+        contributorCount: contributor_count,
+        paidSoFar: round.paid_so_far,
+        paidLeafCount: round.paid_leaf_count,
+    })
+}
+
+/// Rebuilds the canonical 36-byte tribute id from its ABI digest/index split.
+fn decode_contributor_leaf(
+    leaf: &crate::precompile::IIntexFactory::ContributorLeaf,
+) -> ContributorLeafData {
+    let mut source_tribute_id = [0u8; 36];
+    source_tribute_id[..32].copy_from_slice(leaf.sourceTributeDigest.as_slice());
+    source_tribute_id[32..].copy_from_slice(leaf.sourceTributeIndex.as_slice());
+    ContributorLeafData {
+        owner: leaf.owner,
+        source_tribute_id,
+        nominal: leaf.nominal,
+    }
 }
 
 /// Begin-block sweep: settle every series whose proceeds fan-in deadline has
