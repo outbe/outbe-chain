@@ -2,6 +2,11 @@ use alloy_primitives::{Address, Bytes, U256};
 use outbe_primitives::dispatch::reject_value;
 use outbe_primitives::error::{PrecompileError, Result};
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// Dispatches an ABI-encoded call to the Rewards precompile.
 ///
 /// The Rewards precompile exposes **no** callable external methods. Validator

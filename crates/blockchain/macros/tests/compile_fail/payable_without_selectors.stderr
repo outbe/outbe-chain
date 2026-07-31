@@ -1,0 +1,7 @@
+error[E0425]: cannot find value `PAYABLE_SELECTORS` in module `self`
+  --> tests/compile_fail/payable_without_selectors.rs:20:1
+   |
+20 | #[contract_dispatch]
+   | ^^^^^^^^^^^^^^^^^^^^ not found in `self`
+   |
+   = note: this error originates in the attribute macro `contract_dispatch` (in Nightly builds, run with -Z macro-backtrace for more info)

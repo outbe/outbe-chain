@@ -129,6 +129,32 @@ VRF seed (or the genesis round-robin exception), not Ethereum's default
 randomness. The txpool uses ZeroFee admission with deterministic priority
 classes.
 
+**Native value at precompiles.** Value is default-denied at the precompile
+boundary. Each precompile route declares whether it accepts `msg.value`; today
+only `Staking.stake`, `IntexFactory.distribute` and `Vote.createProposal` do, and
+those three precompiles refuse value on every other selector they expose. A call
+carrying value to any other precompile address reverts with `outbe precompile:
+non-payable address called with value` before any state is read or written, so
+value cannot strand at an address that has no accounting entry for it. A call
+that runs out of gas before that check, or that re-enters the same precompile,
+reports those conditions instead.
+
+An Outbe precompile cannot be reached through `DELEGATECALL` or `CALLCODE`: such a
+frame reverts with `outbe precompile: delegated call frame cannot execute a
+precompile`, with or without value. Those opcodes run borrowed code in the
+caller's context, which a precompile cannot provide — it would read and write its
+own state while `msg.sender` stayed the frame's inherited caller, letting any
+contract act against a precompile as whoever called it. Plain `CALL` and
+`STATICCALL` are unaffected, as is delegatecalling Ethereum's own precompiles
+`0x01`–`0x0a`, which resolve to no Outbe route.
+
+In the reserved `0x53c0` stablecoin class, a plain native transfer succeeds only
+at an address the Factory never issued, so an externally owned account whose
+address falls in the prefix can still receive funds. The same transfer to an
+issued token address reverts with `stablecoin token cannot receive native value`,
+because that address has no key and no selector that moves native balance. See
+`docs/adr/blockchain/ADR-B-EVM-002-outbe-evm-extension-and-call-frame-contract.md`.
+
 **L2 network registry.** The **L2Registry** precompile at
 `0x000000000000000000000000000000000000EE0E` (ABI:
 `contracts/precompiles/src/IL2Registry.sol`) records L2 networks keyed by

@@ -9,6 +9,19 @@ use outbe_primitives::storage::StorageHandle;
 use crate::constants::{POSEIDON_GAS_BASE, POSEIDON_GAS_PER_INPUT, ZK_VERIFY_GAS};
 use crate::{poseidon, verify};
 
+/// Selectors on the Poseidon precompile (`0xEE07`) that accept native value. The
+/// route table binds this to that address's `ValuePolicy` at compile time.
+///
+/// One constant per address: sharing a single list across both zkproof routes
+/// would make populating one silently authorize the other. Both dispatchers take
+/// raw hash/proof bytes rather than an ABI selector, so a populated list here
+/// could not be enforced module-side either.
+pub const POSEIDON_PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
+/// Selectors on the UltraHonkKeccak verifier precompile (`0xEE08`) that accept
+/// native value. See [`POSEIDON_PAYABLE_SELECTORS`].
+pub const GROTH16_PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// Dispatch for the Poseidon-BN254 hash precompile (`0xEE07`).
 pub fn dispatch_poseidon(
     _storage: StorageHandle,

@@ -7,6 +7,7 @@
 //! EVM journal and become receipt-visible.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
+
 use outbe_primitives::{
     addresses::SYSTEM_ADDRESS,
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -21,6 +22,11 @@ use crate::{
     executor::{apply_boundary_outcome, validate_finalized_metadata, AccountedParentArtifact},
     system_tx::SystemTxInputV2,
 };
+
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 /// Execution context preloaded by the executor before calling the
 /// begin-block precompile.
