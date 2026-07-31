@@ -16,7 +16,7 @@ pub mod v1_precompile;
 
 pub use runtime::{TeeBootstrapData, TeeRegistration};
 pub use schema::TeeRegistry;
-pub use v1::{V1RegistrationOutcome, ValidatorEnclaveBindingV1};
+pub use v1::{NodeEnclaveBindingV1, V1RegistrationOutcome};
 
 #[cfg(test)]
 mod tests;

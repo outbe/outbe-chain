@@ -268,6 +268,10 @@ semantics as a validator.
 - an accepted real full-node `DcapRequired` registration is closed by I9; I4's
   hardware-free accepted-path test begins only after the verifier boundary.
 
+I4 is closed for the inactive FullNode route. It reuses the I3 bounded
+enclave-resident verifier, common registration state machine and persistent
+NodeHost lifecycle. See `plans/checkpoints/I4-full-node-registration.md`.
+
 ## I5 — Renew, expire and supersede an attested binding
 
 **Outcome:** an active binding renews with a fresh quote in its final third and

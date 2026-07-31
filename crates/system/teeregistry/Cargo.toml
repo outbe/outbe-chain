@@ -19,6 +19,7 @@ tee-attestation-v1 = []
 
 [dev-dependencies]
 ed25519-dalek.workspace = true
+k256.workspace = true
 
 [lints]
 workspace = true

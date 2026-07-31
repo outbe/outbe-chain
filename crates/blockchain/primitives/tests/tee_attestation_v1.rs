@@ -283,6 +283,18 @@ fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
         .unwrap_err(),
         CodecError::NonCanonical("full-node node id is not canonical compressed secp256k1")
     );
+    assert_eq!(
+        NodeIdV1::FullNode {
+            reth_p2p_public: {
+                let mut invalid = [0xff; 33];
+                invalid[0] = 0x02;
+                invalid
+            }
+        }
+        .encode_canonical()
+        .unwrap_err(),
+        CodecError::NonCanonical("full-node node id is not canonical compressed secp256k1")
+    );
 }
 
 #[test]

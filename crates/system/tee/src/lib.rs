@@ -41,7 +41,10 @@ pub use handoff::{
     answer_handoff_request, run_handoff_as_newcomer, HandoffEvent, HandoffGossip,
     HandoffWireMessage,
 };
-pub use node_host::{connect_or_initialize_validator_enclave, ValidatorNodeHostIdentityV1};
+pub use node_host::{
+    connect_or_initialize_full_node_enclave, connect_or_initialize_validator_enclave,
+    FullNodeNodeHostIdentityV1, ValidatorNodeHostIdentityV1,
+};
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 
 /// Noise pattern for the node <-> enclave channel: **IK** (the responder/enclave

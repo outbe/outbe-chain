@@ -1,4 +1,4 @@
-//! Inactive-until-I9 TeeRegistry V1 validator registration state machine.
+//! Inactive-until-I9 TeeRegistry V1 node-enclave registration state machine.
 //!
 //! The production entry point exists only with the tee-attestation-v1 feature;
 //! default builds retain the legacy route until A0 activation. Accepted
@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::sol;
 use outbe_primitives::{
     error::{PrecompileError, Result},
-    tee_attestation_v1::{NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
+    tee_attestation_v1::{EnclaveProfile, NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
 };
 use outbe_validatorset::contract::ValidatorSet;
 
@@ -20,8 +20,8 @@ use alloy_primitives::keccak256;
 
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, EnclaveProfile,
-    PlatformTcbStatusSetV1, RegistrationIntentV1,
+    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, PlatformTcbStatusSetV1,
+    RegistrationIntentV1,
 };
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_tee::dcap_protocol::{
@@ -48,8 +48,7 @@ pub enum V1RegistrationOutcome {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ValidatorEnclaveBindingV1 {
-    pub validator: Address,
+pub struct NodeEnclaveBindingV1 {
     pub node_id_hash: B256,
     pub enclave_id: B256,
     pub binding_id: B256,
@@ -189,9 +188,74 @@ impl TeeRegistry<'_> {
     pub fn validator_enclave_binding_v1(
         &self,
         validator: Address,
-    ) -> Result<Option<ValidatorEnclaveBindingV1>> {
+    ) -> Result<Option<NodeEnclaveBindingV1>> {
         let node_id_hash = self.validator_v1_node_hash.read(&validator)?;
         if node_id_hash.is_zero() {
+            return Ok(None);
+        }
+        self.node_enclave_binding_v1(node_id_hash)
+    }
+
+    pub fn full_node_enclave_binding_v1(
+        &self,
+        reth_p2p_public: [u8; 33],
+    ) -> Result<Option<NodeEnclaveBindingV1>> {
+        let node_id_hash = NodeIdV1::FullNode { reth_p2p_public }
+            .node_id_hash()
+            .map_err(|error| revert_codec("full-node P2P identity is invalid", error))?;
+        let binding = self.node_enclave_binding_v1(node_id_hash)?;
+        if binding.is_some()
+            && self.v1_node_profile.read(&node_id_hash)? != EnclaveProfile::FullNode as u64
+        {
+            return Err(PrecompileError::Fatal(
+                "stored full-node binding has the wrong enclave profile".into(),
+            ));
+        }
+        Ok(binding)
+    }
+
+    /// Deterministic attestation readiness only. Full nodes do not consult the
+    /// validator set; the exact compressed Reth P2P key is their node identity.
+    pub fn is_full_node_enclave_ready_v1(&self, reth_p2p_public: [u8; 33]) -> Result<bool> {
+        let Some(binding) = self.full_node_enclave_binding_v1(reth_p2p_public)? else {
+            return Ok(false);
+        };
+        Ok(!binding.binding_id.is_zero()
+            && !binding.enclave_id.is_zero()
+            && binding.valid_until > consensus_timestamp(&self.storage)?)
+    }
+
+    /// Deterministic attestation readiness only. Consensus membership/status is a
+    /// separate consumer concern, but missing, expired or key-rotated bindings
+    /// are never ready.
+    pub fn is_validator_enclave_ready_v1(&self, validator: Address) -> Result<bool> {
+        let Some(binding) = self.validator_enclave_binding_v1(validator)? else {
+            return Ok(false);
+        };
+        if binding.binding_id.is_zero()
+            || binding.enclave_id.is_zero()
+            || self.v1_node_profile.read(&binding.node_id_hash)? != EnclaveProfile::Validator as u64
+        {
+            return Ok(false);
+        }
+        let validators = ValidatorSet::new(self.storage.clone());
+        let Some(record) = validators.get_validator(validator)? else {
+            return Ok(false);
+        };
+        let expected_node_hash = NodeIdV1::Validator {
+            address: validator.into_array(),
+            bls_minpk_public: record.consensus_pubkey,
+        }
+        .node_id_hash()
+        .map_err(|error| revert_codec("validator node identity is invalid", error))?;
+        if expected_node_hash != binding.node_id_hash {
+            return Ok(false);
+        }
+        Ok(binding.valid_until > consensus_timestamp(&self.storage)?)
+    }
+
+    fn node_enclave_binding_v1(&self, node_id_hash: B256) -> Result<Option<NodeEnclaveBindingV1>> {
+        if self.v1_node_intent_hash.read(&node_id_hash)?.is_zero() {
             return Ok(None);
         }
         let isv_prod_id = checked_u16(
@@ -206,8 +270,7 @@ impl TeeRegistry<'_> {
             self.v1_node_platform_tcb_status.read(&node_id_hash)?,
             "stored V1 Platform TCB status",
         )?;
-        Ok(Some(ValidatorEnclaveBindingV1 {
-            validator,
+        Ok(Some(NodeEnclaveBindingV1 {
             node_id_hash,
             enclave_id: self.v1_node_enclave_id.read(&node_id_hash)?,
             binding_id: self.v1_node_binding_id.read(&node_id_hash)?,
@@ -231,45 +294,19 @@ impl TeeRegistry<'_> {
             verdict_hash: self.v1_node_verdict_hash.read(&node_id_hash)?,
         }))
     }
-
-    /// Deterministic attestation readiness only. Consensus membership/status is a
-    /// separate consumer concern, but missing, expired or key-rotated bindings
-    /// are never ready.
-    pub fn is_validator_enclave_ready_v1(&self, validator: Address) -> Result<bool> {
-        let Some(binding) = self.validator_enclave_binding_v1(validator)? else {
-            return Ok(false);
-        };
-        if binding.binding_id.is_zero() || binding.enclave_id.is_zero() {
-            return Ok(false);
-        }
-        let validators = ValidatorSet::new(self.storage.clone());
-        let Some(record) = validators.get_validator(validator)? else {
-            return Ok(false);
-        };
-        let expected_node_hash = NodeIdV1::Validator {
-            address: validator.into_array(),
-            bls_minpk_public: record.consensus_pubkey,
-        }
-        .node_id_hash()
-        .map_err(|error| revert_codec("validator node identity is invalid", error))?;
-        if expected_node_hash != binding.node_id_hash {
-            return Ok(false);
-        }
-        Ok(binding.valid_until > consensus_timestamp(&self.storage)?)
-    }
 }
 
 #[cfg(feature = "tee-attestation-v1")]
 impl TeeRegistry<'_> {
     /// Production verifier boundary. The caller/relay is intentionally absent.
-    pub fn register_validator_enclave_v1(
+    pub fn register_enclave_v1(
         &mut self,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
-        self.register_validator_enclave_with_active_policy_v1(
+        self.register_enclave_with_active_policy_v1(
             evidence,
             node_signature,
             enclave_signature,
@@ -277,7 +314,7 @@ impl TeeRegistry<'_> {
         )
     }
 
-    pub(crate) fn register_validator_enclave_with_active_policy_v1(
+    pub(crate) fn register_enclave_with_active_policy_v1(
         &mut self,
         evidence: &[u8],
         node_signature: &[u8; 65],
@@ -319,10 +356,10 @@ impl TeeRegistry<'_> {
         })?;
         let AttestationEvidenceV1::Dcap(evidence) = decoded else {
             return Err(PrecompileError::Fatal(
-                "enclave accepted non-DCAP evidence for validator registration".into(),
+                "enclave accepted non-DCAP evidence for node registration".into(),
             ));
         };
-        self.apply_verified_validator_registration_v1(
+        self.apply_verified_registration_v1(
             &evidence.intent,
             node_signature,
             enclave_signature,
@@ -332,7 +369,7 @@ impl TeeRegistry<'_> {
         )
     }
 
-    fn apply_verified_validator_registration_v1(
+    fn apply_verified_registration_v1(
         &mut self,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
@@ -352,10 +389,9 @@ impl TeeRegistry<'_> {
             .map_err(|error| revert_codec("registration intent chain mismatch", error))?;
         if intent.operation != AttestationOperationV1::RegisterEnclave
             || intent.attestation_mode != AttestationMode::DcapRequired
-            || intent.enclave_profile != EnclaveProfile::Validator
         {
             return Err(PrecompileError::Revert(
-                "registration intent is not a validator DCAP registration".into(),
+                "registration intent is not a DCAP node registration".into(),
             ));
         }
         let policy_hash = policy
@@ -377,7 +413,7 @@ impl TeeRegistry<'_> {
         }
         if !intent.verify_node_signature(node_signature) {
             return Err(PrecompileError::Revert(
-                "validator node proof of possession is invalid".into(),
+                "node proof of possession is invalid".into(),
             ));
         }
         if !intent.verify_enclave_signature(enclave_signature) {
@@ -386,32 +422,31 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        let (validator, consensus_pubkey) = match &intent.node_id {
+        let validator = match &intent.node_id {
             NodeIdV1::Validator {
                 address,
                 bls_minpk_public,
-            } => (Address::from(*address), *bls_minpk_public),
-            NodeIdV1::FullNode { .. } => {
-                return Err(PrecompileError::Revert(
-                    "full-node identity cannot authorize validator registration".into(),
-                ))
+            } => {
+                let validator = Address::from(*address);
+                let validators = ValidatorSet::new(self.storage.clone());
+                let Some(record) = validators.get_validator(validator)? else {
+                    return Err(PrecompileError::Revert(
+                        "validator identity is not registered".into(),
+                    ));
+                };
+                if record.consensus_pubkey != *bls_minpk_public {
+                    return Err(PrecompileError::Revert(
+                        "validator consensus public key mismatch".into(),
+                    ));
+                }
+                Some(validator)
             }
+            NodeIdV1::FullNode { .. } => None,
         };
-        let validators = ValidatorSet::new(self.storage.clone());
-        let Some(record) = validators.get_validator(validator)? else {
-            return Err(PrecompileError::Revert(
-                "validator identity is not registered".into(),
-            ));
-        };
-        if record.consensus_pubkey != consensus_pubkey {
-            return Err(PrecompileError::Revert(
-                "validator consensus public key mismatch".into(),
-            ));
-        }
 
         let height = self.storage.block_number()?;
         let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
-            rule.enclave_profile == EnclaveProfile::Validator
+            rule.enclave_profile == intent.enclave_profile
                 && rule.mrenclave == verdict.mrenclave
                 && rule.mrsigner == verdict.mrsigner
                 && rule.isv_prod_id == verdict.isv_prod_id
@@ -421,7 +456,7 @@ impl TeeRegistry<'_> {
         });
         if !measurement_accepted {
             return Err(PrecompileError::Revert(
-                "QVL verdict does not match an active validator measurement rule".into(),
+                "QVL verdict does not match an active profile measurement rule".into(),
             ));
         }
         if verdict.platform_tcb_status == DcapPlatformTcbStatusV1::SWHardeningNeeded
@@ -471,7 +506,7 @@ impl TeeRegistry<'_> {
         let node_id_hash = intent
             .node_id
             .node_id_hash()
-            .map_err(|error| revert_codec("validator node identity is invalid", error))?;
+            .map_err(|error| revert_codec("node identity is invalid", error))?;
         let intent_hash = intent
             .intent_hash()
             .map_err(|error| revert_codec("registration intent is invalid", error))?;
@@ -480,12 +515,12 @@ impl TeeRegistry<'_> {
         if !current_intent_hash.is_zero() {
             if current_intent_hash != intent_hash {
                 return Err(PrecompileError::Revert(
-                    "validator node already has a different enclave binding".into(),
+                    "node already has a different enclave binding".into(),
                 ));
             }
             if self.v1_node_evidence_hash.read(&node_id_hash)? != evidence_hash {
                 return Err(PrecompileError::Revert(
-                    "validator registration is not an exact evidence replay".into(),
+                    "node registration is not an exact evidence replay".into(),
                 ));
             }
             if self.v1_node_binding_id.read(&node_id_hash)? != intent.binding_id
@@ -498,11 +533,13 @@ impl TeeRegistry<'_> {
             return Ok(V1RegistrationOutcome::Idempotent);
         }
 
-        let validator_node_hash = self.validator_v1_node_hash.read(&validator)?;
-        if !validator_node_hash.is_zero() && validator_node_hash != node_id_hash {
-            return Err(PrecompileError::Revert(
-                "validator address already has another node binding".into(),
-            ));
+        if let Some(validator) = validator {
+            let validator_node_hash = self.validator_v1_node_hash.read(&validator)?;
+            if !validator_node_hash.is_zero() && validator_node_hash != node_id_hash {
+                return Err(PrecompileError::Revert(
+                    "validator address already has another node binding".into(),
+                ));
+            }
         }
         let enclave_owner = self.v1_enclave_node_hash.read(&intent.enclave_id)?;
         if !enclave_owner.is_zero() && enclave_owner != node_id_hash {
@@ -528,8 +565,10 @@ impl TeeRegistry<'_> {
         let attestation = B256::from(intent.attestation_ed25519);
         let noise = B256::from(intent.noise_responder_x25519);
 
-        self.validator_v1_node_hash
-            .write(&validator, node_id_hash)?;
+        if let Some(validator) = validator {
+            self.validator_v1_node_hash
+                .write(&validator, node_id_hash)?;
+        }
         self.v1_node_enclave_id
             .write(&node_id_hash, intent.enclave_id)?;
         self.v1_enclave_node_hash
@@ -575,32 +614,36 @@ impl TeeRegistry<'_> {
         self.v1_node_verdict_hash
             .write(&node_id_hash, verdict_hash)?;
 
-        let first_registration = self.recipient_x25519.read(&validator)?.is_zero();
-        self.recipient_x25519.write(&validator, recipient)?;
-        self.attestation_pub.write(&validator, attestation)?;
-        self.noise_static_pub.write(&validator, noise)?;
-        self.mrenclave.write(&validator, verdict.mrenclave)?;
-        self.mrsigner.write(&validator, verdict.mrsigner)?;
-        self.isv_svn.write(&validator, u64::from(verdict.isv_svn))?;
-        self.keys_hash.write(
-            &validator,
-            compute_keys_hash(
-                validator,
-                recipient,
-                attestation,
-                noise,
-                verdict.mrenclave,
-                verdict.mrsigner,
-                verdict.isv_svn,
-            ),
-        )?;
-        if first_registration {
-            let count = self
-                .registered_count
-                .read()?
-                .checked_add(1)
-                .ok_or_else(|| PrecompileError::Fatal("TEE registered-count overflow".into()))?;
-            self.registered_count.write(count)?;
+        if let Some(validator) = validator {
+            let first_registration = self.recipient_x25519.read(&validator)?.is_zero();
+            self.recipient_x25519.write(&validator, recipient)?;
+            self.attestation_pub.write(&validator, attestation)?;
+            self.noise_static_pub.write(&validator, noise)?;
+            self.mrenclave.write(&validator, verdict.mrenclave)?;
+            self.mrsigner.write(&validator, verdict.mrsigner)?;
+            self.isv_svn.write(&validator, u64::from(verdict.isv_svn))?;
+            self.keys_hash.write(
+                &validator,
+                compute_keys_hash(
+                    validator,
+                    recipient,
+                    attestation,
+                    noise,
+                    verdict.mrenclave,
+                    verdict.mrsigner,
+                    verdict.isv_svn,
+                ),
+            )?;
+            if first_registration {
+                let count = self
+                    .registered_count
+                    .read()?
+                    .checked_add(1)
+                    .ok_or_else(|| {
+                        PrecompileError::Fatal("TEE registered-count overflow".into())
+                    })?;
+                self.registered_count.write(count)?;
+            }
         }
 
         self.emit(EnclaveRegisteredV1 {
@@ -614,7 +657,7 @@ impl TeeRegistry<'_> {
     }
 
     #[cfg(test)]
-    pub(crate) fn register_validator_enclave_after_verifier_for_test(
+    pub(crate) fn register_enclave_after_verifier_for_test(
         &mut self,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
@@ -622,7 +665,7 @@ impl TeeRegistry<'_> {
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
-        self.apply_verified_validator_registration_v1(
+        self.apply_verified_registration_v1(
             intent,
             node_signature,
             enclave_signature,
@@ -633,7 +676,7 @@ impl TeeRegistry<'_> {
     }
 
     #[cfg(test)]
-    pub(crate) fn register_validator_enclave_after_verifier_with_active_policy_for_test(
+    pub(crate) fn register_enclave_after_verifier_with_active_policy_for_test(
         &mut self,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
@@ -641,7 +684,7 @@ impl TeeRegistry<'_> {
         policy: &TeePolicyV1,
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
-        self.apply_verified_validator_registration_v1(
+        self.apply_verified_registration_v1(
             intent,
             node_signature,
             enclave_signature,

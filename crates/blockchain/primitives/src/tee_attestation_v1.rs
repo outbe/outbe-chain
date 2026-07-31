@@ -219,7 +219,9 @@ impl NodeIdV1 {
                 bls_minpk_public,
             } if *address != [0; 20] && *bls_minpk_public != [0; 48] => Ok(()),
             Self::FullNode { reth_p2p_public }
-                if matches!(reth_p2p_public[0], 0x02 | 0x03) && reth_p2p_public[1..] != [0; 32] =>
+                if matches!(reth_p2p_public[0], 0x02 | 0x03)
+                    && reth_p2p_public[1..] != [0; 32]
+                    && k256::PublicKey::from_sec1_bytes(reth_p2p_public).is_ok() =>
             {
                 Ok(())
             }

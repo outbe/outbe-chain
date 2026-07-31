@@ -41,7 +41,7 @@ use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{sync::Arc, thread};
+use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
 
@@ -273,11 +273,30 @@ fn run_dkg_command(args: &[String]) -> eyre::Result<()> {
     }
 }
 
+fn load_reth_p2p_node_host_signer(
+    network: &reth_node_core::args::NetworkArgs,
+    default_secret_path: PathBuf,
+) -> eyre::Result<(k256::ecdsa::SigningKey, [u8; 33])> {
+    let reth_p2p_secret = network
+        .secret_key(default_secret_path)
+        .wrap_err("failed to load persistent Reth P2P identity for TEE")?;
+    let signing = k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+        .map_err(|error| eyre::eyre!("invalid Reth P2P signing key: {error}"))?;
+    let reth_p2p_public = signing
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
+    Ok((signing, reth_p2p_public))
+}
+
 /// Run the main node (Reth execution + Commonware consensus).
 fn run_node() -> eyre::Result<()> {
     // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` → `init_enclave_client`); the offer-decryption key
-    // exists only inside the enclave (single path, no in-process key material).
+    // (`--tee-enclave-socket` → persistent production NodeHost authorization);
+    // the offer-decryption key exists only inside the enclave (single path, no
+    // in-process key material).
 
     // Initialize the hash-pinned Barretenberg global CRS before block
     // execution. Tribute admission is consensus-critical, so a node that
@@ -554,15 +573,40 @@ fn run_node() -> eyre::Result<()> {
                 .wrap_err("validator NodeHost enclave initialization failed")?;
                 outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
             } else {
-                // Full-node production NodeHost identity is the I4 slice. Until
-                // then, preserve the existing development/mock connection path.
-                let tee_policy = outbe_engine::stack::tee_policy_from_chain_spec(
-                    builder.config().chain.as_ref(),
+                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+
+                // Resolve the identity through the same Reth API and default
+                // discovery-secret path used later by the network builder.
+                let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+                    &builder.config().network,
+                    builder.config().datadir().p2p_secret(),
                 )?;
-                let connect_policy =
-                    outbe_engine::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-                outbe_tributefactory::init_enclave_client(&socket, &connect_policy)
-                    .wrap_err("TEE enclave connect/attest failed")?;
+                let endpoint = socket
+                    .to_str()
+                    .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+                let client = outbe_tee::connect_or_initialize_full_node_enclave(
+                    endpoint,
+                    &node_data_dir,
+                    outbe_tee::FullNodeNodeHostIdentityV1 {
+                        chain_id: builder.config().chain.chain().id(),
+                        genesis_hash: builder.config().chain.genesis_hash(),
+                        reth_p2p_public,
+                    },
+                    |hash| {
+                        let (signature, recovery): (
+                            k256::ecdsa::Signature,
+                            k256::ecdsa::RecoveryId,
+                        ) = signing
+                            .sign_prehash(hash.as_slice())
+                            .map_err(|error| error.to_string())?;
+                        let mut bytes = [0_u8; 65];
+                        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                        bytes[64] = recovery.to_byte();
+                        Ok(bytes)
+                    },
+                )
+                .wrap_err("full-node NodeHost enclave initialization failed")?;
+                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
             }
             info!(
                 socket = %socket.display(),
@@ -851,6 +895,32 @@ mod tests {
         let tree = engine.tree_config();
         assert!(tree.always_process_payload_attributes_on_canonical_head());
         assert!(tree.unwind_canonical_header());
+    }
+
+    #[test]
+    fn full_node_identity_uses_reth_secret_resolver_and_persists_exact_key() {
+        let root = tempfile::tempdir().unwrap();
+        let explicit_secret = root.path().join("operator-p2p.key");
+        let unused_default = root.path().join("default-discovery-secret");
+        let mut network = reth_node_core::args::NetworkArgs::default();
+        network.p2p_secret_key = Some(explicit_secret.clone());
+
+        let (first_signer, first_public) =
+            super::load_reth_p2p_node_host_signer(&network, unused_default.clone()).unwrap();
+        assert!(explicit_secret.is_file());
+        assert!(!unused_default.exists());
+        assert_eq!(
+            first_signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes(),
+            first_public
+        );
+
+        drop(first_signer);
+        let (_, restored_public) =
+            super::load_reth_p2p_node_host_signer(&network, unused_default).unwrap();
+        assert_eq!(restored_public, first_public);
     }
 
     #[test]

@@ -2202,4 +2202,100 @@ mod tests {
             .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1)
             .is_file());
     }
+
+    #[test]
+    fn full_node_host_state_uses_exact_reth_p2p_identity_and_reconnects() {
+        use alloy_primitives::U256;
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
+        };
+        use outbe_tee::{connect_or_initialize_full_node_enclave, FullNodeNodeHostIdentityV1};
+
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("enclave.sock");
+        let endpoint = socket.to_str().unwrap().to_string();
+        let chain_id = 17_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x12);
+        let boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-state"),
+            0,
+        ));
+        std::fs::create_dir(&boot.tee_dir).unwrap();
+        let keys = Arc::new(EnclaveKeys::new([0x75; 32], Some([0x75; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server_keys = keys.clone();
+        let server_initialization = initialization.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let (stream, _) = listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys,
+                    &offer_key,
+                    Some(&boot),
+                    &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
+        let reth_p2p_public: [u8; 33] = signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
+        let identity = FullNodeNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            reth_p2p_public,
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+
+        let mut initialized =
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(initialized);
+
+        let mut reconnected =
+            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(reconnected);
+        server.join().unwrap();
+
+        let manifest_bytes = std::fs::read(
+            node_data_dir
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+        )
+        .unwrap();
+        let manifest = EnclaveInitializationManifestV1::decode_canonical(&manifest_bytes).unwrap();
+        assert_eq!(manifest.enclave_profile, EnclaveProfile::FullNode);
+        assert_eq!(manifest.node_id, NodeIdV1::FullNode { reth_p2p_public });
+    }
 }

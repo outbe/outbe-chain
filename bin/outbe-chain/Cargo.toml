@@ -23,7 +23,6 @@ outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
-outbe-tributefactory.workspace = true
 outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
@@ -40,6 +39,7 @@ commonware-runtime.workspace = true
 
 clap.workspace = true
 eyre.workspace = true
+k256.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

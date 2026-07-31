@@ -1,7 +1,7 @@
-//! Inactive-until-I9 ABI for TeeRegistry V1 validator registration.
+//! Inactive-until-I9 ABI for TeeRegistry V1 node-enclave registration.
 //!
 //! The production EVM route deliberately continues to point at the legacy ABI.
-//! I3 exposes this dispatcher only through the `tee-attestation-v1` feature so
+//! I3/I4 expose this dispatcher only through the `tee-attestation-v1` feature so
 //! its canonical framing, gas and state-machine boundary can be tested before
 //! the A0 activation owned by I9.
 
@@ -17,11 +17,11 @@ use outbe_primitives::{
     },
 };
 
-use crate::{TeeRegistry, V1RegistrationOutcome, ValidatorEnclaveBindingV1};
+use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 
 sol! {
     #[derive(Debug, PartialEq, Eq)]
-    struct ValidatorEnclaveBindingV1View {
+    struct NodeEnclaveBindingV1View {
         bool exists;
         bytes32 nodeIdHash;
         bytes32 enclaveId;
@@ -56,9 +56,19 @@ sol! {
         function validatorEnclaveBinding(address validator)
             external
             view
-            returns (ValidatorEnclaveBindingV1View memory);
+            returns (NodeEnclaveBindingV1View memory);
+
+        function fullNodeEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
+            external
+            view
+            returns (NodeEnclaveBindingV1View memory);
 
         function isValidatorEnclaveReady(address validator) external view returns (bool);
+
+        function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
+            external
+            view
+            returns (bool);
     }
 }
 
@@ -119,7 +129,7 @@ pub fn dispatch(
                         preflight.enclave_signature.try_into().map_err(|_| {
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
-                    let outcome = registry.register_validator_enclave_with_active_policy_v1(
+                    let outcome = registry.register_enclave_with_active_policy_v1(
                         preflight.evidence,
                         &node_signature,
                         &enclave_signature,
@@ -137,8 +147,19 @@ pub fn dispatch(
                         registry.validator_enclave_binding_v1(call.validator)?,
                     ))
                 }),
+                fullNodeEnclaveBinding(call) => view(call, |call| {
+                    Ok(binding_view(registry.full_node_enclave_binding_v1(
+                        full_node_public_key(call.rethP2pPrefix, call.rethP2pX),
+                    )?))
+                }),
                 isValidatorEnclaveReady(call) => view(call, |call| {
                     registry.is_validator_enclave_ready_v1(call.validator)
+                }),
+                isFullNodeEnclaveReady(call) => view(call, |call| {
+                    registry.is_full_node_enclave_ready_v1(full_node_public_key(
+                        call.rethP2pPrefix,
+                        call.rethP2pX,
+                    ))
                 }),
             }
         },
@@ -285,7 +306,7 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
         .enclave_signature
         .try_into()
         .map_err(|_| PrecompileError::Fatal("preflight enclave signature mismatch".into()))?;
-    TeeRegistry::new(storage).register_validator_enclave_after_verifier_with_active_policy_for_test(
+    TeeRegistry::new(storage).register_enclave_after_verifier_with_active_policy_for_test(
         intent,
         &node_signature,
         &enclave_signature,
@@ -338,9 +359,16 @@ fn invalid_register_abi(reason: &'static str) -> PrecompileError {
     PrecompileError::Revert(format!("invalid canonical V1 registration ABI: {reason}"))
 }
 
-fn binding_view(binding: Option<ValidatorEnclaveBindingV1>) -> ValidatorEnclaveBindingV1View {
+fn full_node_public_key(prefix: u8, x: B256) -> [u8; 33] {
+    let mut public = [0_u8; 33];
+    public[0] = prefix;
+    public[1..].copy_from_slice(x.as_slice());
+    public
+}
+
+fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1View {
     let Some(binding) = binding else {
-        return ValidatorEnclaveBindingV1View {
+        return NodeEnclaveBindingV1View {
             exists: false,
             nodeIdHash: B256::ZERO,
             enclaveId: B256::ZERO,
@@ -365,7 +393,7 @@ fn binding_view(binding: Option<ValidatorEnclaveBindingV1>) -> ValidatorEnclaveB
             verdictHash: B256::ZERO,
         };
     };
-    ValidatorEnclaveBindingV1View {
+    NodeEnclaveBindingV1View {
         exists: true,
         nodeIdHash: binding.node_id_hash,
         enclaveId: binding.enclave_id,
@@ -574,9 +602,50 @@ mod tests {
                 )
             })
             .unwrap();
-        let binding = ValidatorEnclaveBindingV1View::abi_decode(&encoded).unwrap();
+        let binding = NodeEnclaveBindingV1View::abi_decode(&encoded).unwrap();
         assert!(!binding.exists);
         assert_eq!(binding.nodeIdHash, B256::ZERO);
         assert_eq!(encoded.len(), 22 * 32);
+
+        let p2p_signing = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
+        let encoded_public = p2p_signing.verifying_key().to_encoded_point(true);
+        let reth_p2p_prefix = encoded_public.as_bytes()[0];
+        let reth_p2p_x = B256::from_slice(&encoded_public.as_bytes()[1..]);
+        let ready_call = ITeeRegistryV1::isFullNodeEnclaveReadyCall {
+            rethP2pPrefix: reth_p2p_prefix,
+            rethP2pX: reth_p2p_x,
+        };
+        let ready = provider
+            .enter(|storage| dispatch(storage, &ready_call.abi_encode(), Address::ZERO, U256::ZERO))
+            .unwrap();
+        assert!(!bool::abi_decode(&ready).unwrap());
+
+        let binding_call = ITeeRegistryV1::fullNodeEnclaveBindingCall {
+            rethP2pPrefix: reth_p2p_prefix,
+            rethP2pX: reth_p2p_x,
+        };
+        let encoded = provider
+            .enter(|storage| {
+                dispatch(
+                    storage,
+                    &binding_call.abi_encode(),
+                    Address::ZERO,
+                    U256::ZERO,
+                )
+            })
+            .unwrap();
+        assert!(
+            !NodeEnclaveBindingV1View::abi_decode(&encoded)
+                .unwrap()
+                .exists
+        );
+
+        let invalid = ITeeRegistryV1::isFullNodeEnclaveReadyCall {
+            rethP2pPrefix: 0x04,
+            rethP2pX: reth_p2p_x,
+        };
+        assert!(provider
+            .enter(|storage| dispatch(storage, &invalid.abi_encode(), Address::ZERO, U256::ZERO))
+            .is_err());
     }
 }

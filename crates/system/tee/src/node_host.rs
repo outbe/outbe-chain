@@ -1,4 +1,4 @@
-//! Persistent host-side authorization for one production validator enclave.
+//! Persistent host-side authorization for one production node enclave.
 //!
 //! The private NodeHost Noise key is write-once. A canonical public manifest is
 //! first written as `pending`, committed by the enclave, then promoted to the
@@ -34,14 +34,49 @@ pub struct ValidatorNodeHostIdentityV1 {
 }
 
 impl ValidatorNodeHostIdentityV1 {
-    fn node_id(self) -> NodeIdV1 {
-        NodeIdV1::Validator {
-            address: self.validator.into_array(),
-            bls_minpk_public: self.consensus_bls_public,
+    fn into_common(self) -> NodeHostIdentityV1 {
+        NodeHostIdentityV1 {
+            chain_id: self.chain_id,
+            genesis_hash: self.genesis_hash,
+            enclave_profile: EnclaveProfile::Validator,
+            node_id: NodeIdV1::Validator {
+                address: self.validator.into_array(),
+                bls_minpk_public: self.consensus_bls_public,
+            },
         }
     }
+}
 
-    fn chain_id_word(self) -> [u8; 32] {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FullNodeNodeHostIdentityV1 {
+    pub chain_id: u64,
+    pub genesis_hash: B256,
+    pub reth_p2p_public: [u8; 33],
+}
+
+impl FullNodeNodeHostIdentityV1 {
+    fn into_common(self) -> NodeHostIdentityV1 {
+        NodeHostIdentityV1 {
+            chain_id: self.chain_id,
+            genesis_hash: self.genesis_hash,
+            enclave_profile: EnclaveProfile::FullNode,
+            node_id: NodeIdV1::FullNode {
+                reth_p2p_public: self.reth_p2p_public,
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct NodeHostIdentityV1 {
+    chain_id: u64,
+    genesis_hash: B256,
+    enclave_profile: EnclaveProfile,
+    node_id: NodeIdV1,
+}
+
+impl NodeHostIdentityV1 {
+    fn chain_id_word(&self) -> [u8; 32] {
         U256::from(self.chain_id).to_be_bytes()
     }
 }
@@ -62,7 +97,46 @@ pub fn connect_or_initialize_validator_enclave<F>(
 where
     F: Fn(B256) -> Result<[u8; 65], String>,
 {
-    validate_identity(identity)?;
+    connect_or_initialize_enclave(
+        endpoint,
+        node_data_dir,
+        identity.into_common(),
+        sign_authorization,
+    )
+}
+
+/// Connect to the one initialized full-node enclave, or perform its one-time
+/// initialization when no committed host manifest exists.
+///
+/// The authorization signer must be the exact persistent Reth P2P key whose
+/// compressed public key is carried by `identity`.
+pub fn connect_or_initialize_full_node_enclave<F>(
+    endpoint: &str,
+    node_data_dir: &Path,
+    identity: FullNodeNodeHostIdentityV1,
+    sign_authorization: F,
+) -> Result<AuthorizedEnclaveClient, TransportError>
+where
+    F: Fn(B256) -> Result<[u8; 65], String>,
+{
+    connect_or_initialize_enclave(
+        endpoint,
+        node_data_dir,
+        identity.into_common(),
+        sign_authorization,
+    )
+}
+
+fn connect_or_initialize_enclave<F>(
+    endpoint: &str,
+    node_data_dir: &Path,
+    identity: NodeHostIdentityV1,
+    sign_authorization: F,
+) -> Result<AuthorizedEnclaveClient, TransportError>
+where
+    F: Fn(B256) -> Result<[u8; 65], String>,
+{
+    validate_identity(&identity)?;
     let paths = NodeHostPaths::new(node_data_dir);
     ensure_private_directory(&paths.root)?;
 
@@ -90,13 +164,13 @@ where
 
     if committed_exists {
         let manifest = read_manifest(&paths.manifest)?;
-        validate_manifest_identity(&manifest, identity, &node_host)?;
+        validate_manifest_identity(&manifest, &identity, &node_host)?;
         return AuthorizedEnclaveClient::connect_endpoint(endpoint, &manifest, &node_host);
     }
 
     if pending_exists {
         let manifest = read_manifest(&paths.pending_manifest)?;
-        validate_manifest_identity(&manifest, identity, &node_host)?;
+        validate_manifest_identity(&manifest, &identity, &node_host)?;
         if let Ok(client) =
             AuthorizedEnclaveClient::connect_endpoint(endpoint, &manifest, &node_host)
         {
@@ -115,15 +189,15 @@ where
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: identity.chain_id_word(),
         genesis_hash: identity.genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: identity.node_id(),
+        enclave_profile: identity.enclave_profile,
+        node_id: identity.node_id.clone(),
         initialization_challenge: challenge.challenge,
         node_host_noise_x25519: node_host.public(),
         recipient_x25519: challenge.recipient_x25519,
         attestation_ed25519: challenge.attestation_ed25519,
         noise_responder_x25519: challenge.noise_responder_x25519,
     };
-    validate_manifest_identity(&manifest, identity, &node_host)?;
+    validate_manifest_identity(&manifest, &identity, &node_host)?;
     write_manifest_once(&paths.pending_manifest, &manifest, &paths.root)?;
     let signature = sign_manifest(&manifest, &sign_authorization)?;
     let client =
@@ -132,22 +206,22 @@ where
     Ok(client)
 }
 
-fn validate_identity(identity: ValidatorNodeHostIdentityV1) -> Result<(), TransportError> {
-    if identity.chain_id == 0
-        || identity.genesis_hash.is_zero()
-        || identity.validator.is_zero()
-        || identity.consensus_bls_public == [0; 48]
-    {
+fn validate_identity(identity: &NodeHostIdentityV1) -> Result<(), TransportError> {
+    if identity.chain_id == 0 || identity.genesis_hash.is_zero() {
         return Err(TransportError::Codec(
-            "validator NodeHost identity contains a zero chain or node identity".into(),
+            "NodeHost identity contains a zero chain identity".into(),
         ));
     }
+    identity
+        .node_id
+        .node_id_hash()
+        .map_err(|error| TransportError::Codec(error.to_string()))?;
     Ok(())
 }
 
 fn validate_manifest_identity(
     manifest: &EnclaveInitializationManifestV1,
-    identity: ValidatorNodeHostIdentityV1,
+    identity: &NodeHostIdentityV1,
     node_host: &NodeHostNoiseKey,
 ) -> Result<(), TransportError> {
     manifest
@@ -155,12 +229,12 @@ fn validate_manifest_identity(
         .map_err(|error| TransportError::Codec(error.to_string()))?;
     if manifest.chain_id != identity.chain_id_word()
         || manifest.genesis_hash != identity.genesis_hash
-        || manifest.enclave_profile != EnclaveProfile::Validator
-        || manifest.node_id != identity.node_id()
+        || manifest.enclave_profile != identity.enclave_profile
+        || manifest.node_id != identity.node_id
         || manifest.node_host_noise_x25519 != node_host.public()
     {
         return Err(TransportError::Codec(
-            "persisted NodeHost manifest does not match this validator startup identity".into(),
+            "persisted NodeHost manifest does not match this node startup identity".into(),
         ));
     }
     Ok(())
@@ -179,7 +253,7 @@ where
     let signature = sign_authorization(hash).map_err(TransportError::Codec)?;
     if !manifest.verify_node_signature(&signature) {
         return Err(TransportError::Codec(
-            "validator signer produced an invalid NodeHost manifest signature".into(),
+            "node signer produced an invalid NodeHost manifest signature".into(),
         ));
     }
     Ok(signature)
