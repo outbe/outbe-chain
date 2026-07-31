@@ -15,6 +15,8 @@ pub const RESOURCE_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/resource-schedule/v1";
 pub const NODE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/node-id/v1";
 pub const REGISTRATION_INTENT_DOMAIN_V1: &[u8] = b"outbe/tee/registration-intent/v1";
 pub const ATTESTATION_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/attestation-evidence/v1";
+pub const ENCLAVE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/enclave-id/v1";
+pub const INITIALIZATION_MANIFEST_DOMAIN_V1: &[u8] = b"outbe/tee/initialization-manifest/v1";
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
 
 pub const MAX_QUOTE_BYTES: usize = 16 * 1024;
@@ -226,6 +228,144 @@ impl NodeIdV1 {
             )),
             Self::FullNode { .. } => Err(CodecError::NonCanonical(
                 "full-node node id is not canonical compressed secp256k1",
+            )),
+        }
+    }
+}
+
+/// The single node authorization an enclave accepts before sealing its V1
+/// identity. The node signature is carried separately so the canonical hash is
+/// stable and can be reused as `RegistrationIntentV1::node_host_authorization_hash`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnclaveInitializationManifestV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub enclave_profile: EnclaveProfile,
+    pub node_id: NodeIdV1,
+    pub initialization_challenge: [u8; 32],
+    pub node_host_noise_x25519: [u8; 32],
+    pub recipient_x25519: [u8; 32],
+    pub attestation_ed25519: [u8; 32],
+    pub noise_responder_x25519: [u8; 32],
+}
+
+impl EnclaveInitializationManifestV1 {
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(300);
+        out.push(PROTOCOL_VERSION_V1);
+        out.extend_from_slice(&self.chain_id);
+        out.extend_from_slice(self.genesis_hash.as_slice());
+        out.push(self.enclave_profile as u8);
+        self.node_id.encode_into(&mut out);
+        out.extend_from_slice(&self.initialization_challenge);
+        out.extend_from_slice(&self.node_host_noise_x25519);
+        out.extend_from_slice(&self.recipient_x25519);
+        out.extend_from_slice(&self.attestation_ed25519);
+        out.extend_from_slice(&self.noise_responder_x25519);
+        Ok(out)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
+        let mut decoder = Decoder::new(input);
+        decoder.version("EnclaveInitializationManifestV1")?;
+        let value = Self {
+            chain_id: decoder.array()?,
+            genesis_hash: B256::from(decoder.array::<32>()?),
+            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
+            node_id: NodeIdV1::decode_from(&mut decoder)?,
+            initialization_challenge: decoder.array()?,
+            node_host_noise_x25519: decoder.array()?,
+            recipient_x25519: decoder.array()?,
+            attestation_ed25519: decoder.array()?,
+            noise_responder_x25519: decoder.array()?,
+        };
+        decoder.finish()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn authorization_hash(&self) -> Result<B256, CodecError> {
+        Ok(domain_hash(
+            INITIALIZATION_MANIFEST_DOMAIN_V1,
+            &self.encode_canonical()?,
+        ))
+    }
+
+    /// Stable enclave identity derived from the three persistent public keys
+    /// committed by every registration and renewal intent.
+    pub fn enclave_id(&self) -> Result<B256, CodecError> {
+        self.validate()?;
+        let mut keys = [0u8; 96];
+        keys[..32].copy_from_slice(&self.recipient_x25519);
+        keys[32..64].copy_from_slice(&self.attestation_ed25519);
+        keys[64..].copy_from_slice(&self.noise_responder_x25519);
+        Ok(domain_hash(ENCLAVE_ID_DOMAIN_V1, &keys))
+    }
+
+    /// Verify the node proof of possession over the exact canonical manifest.
+    /// Validators authorize with their EVM key; full nodes authorize with the
+    /// compressed secp256k1 key already used as their Reth P2P identity.
+    pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
+        let Ok(hash) = self.authorization_hash() else {
+            return false;
+        };
+        match &self.node_id {
+            NodeIdV1::Validator { address, .. } => {
+                crate::tee_bootstrap::recover_signer(&hash, signature)
+                    .map(|recovered| recovered.as_slice() == address)
+                    .unwrap_or(false)
+            }
+            NodeIdV1::FullNode { reth_p2p_public } => {
+                crate::tee_bootstrap::recover_signer_public_key(&hash, signature)
+                    .map(|recovered| &recovered == reth_p2p_public)
+                    .unwrap_or(false)
+            }
+        }
+    }
+
+    /// Ensure a requested quote is for this exact initialized identity. Dynamic
+    /// operation/version/nonce/lease/policy fields remain part of the intent and
+    /// may change; node, chain, profile and persistent key authority may not.
+    pub fn validate_intent_binding(&self, intent: &RegistrationIntentV1) -> Result<(), CodecError> {
+        self.validate()?;
+        intent.validate()?;
+        if intent.chain_id != self.chain_id
+            || intent.genesis_hash != self.genesis_hash
+            || intent.enclave_profile != self.enclave_profile
+            || intent.node_id != self.node_id
+            || intent.enclave_id != self.enclave_id()?
+            || intent.recipient_x25519 != self.recipient_x25519
+            || intent.attestation_ed25519 != self.attestation_ed25519
+            || intent.noise_responder_x25519 != self.noise_responder_x25519
+            || intent.node_host_authorization_hash != self.authorization_hash()?
+        {
+            return Err(CodecError::NonCanonical(
+                "registration intent does not match initialized enclave",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate(&self) -> Result<(), CodecError> {
+        self.node_id.validate()?;
+        if self.chain_id == [0; 32]
+            || self.genesis_hash.is_zero()
+            || self.initialization_challenge == [0; 32]
+            || self.node_host_noise_x25519 == [0; 32]
+            || self.recipient_x25519 == [0; 32]
+            || self.attestation_ed25519 == [0; 32]
+            || self.noise_responder_x25519 == [0; 32]
+        {
+            return Err(CodecError::NonCanonical(
+                "initialization manifest contains a zero identity or commitment",
+            ));
+        }
+        match (&self.node_id, self.enclave_profile) {
+            (NodeIdV1::Validator { .. }, EnclaveProfile::Validator)
+            | (NodeIdV1::FullNode { .. }, EnclaveProfile::FullNode) => Ok(()),
+            _ => Err(CodecError::NonCanonical(
+                "node kind does not match enclave profile",
             )),
         }
     }

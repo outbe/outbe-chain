@@ -5,8 +5,11 @@
 //! cryptographic logic — only the shape of requests and responses.
 //!
 //! Transport (later slice): length-prefixed framing over UDS, wrapped in a
-//! Noise-IK transport (payload layer). `GetQuote` is callable before the Noise
-//! handshake; every other command is only valid inside an established session.
+//! Noise-IK transport (payload layer). Production first exposes only an
+//! initialization challenge. A node-signed manifest installs one persistent
+//! `NodeHost` initiator; every later command, including quote generation, is
+//! accepted only after that initiator is authenticated by Noise message 1.
+//! Legacy `GetQuote` exists only for the separate development transport.
 //!
 //! Opaque byte fields (`Vec<u8>`) intentionally hide DKG wire internals: the
 //! host parses only the public envelope and forwards the encrypted
@@ -338,16 +341,34 @@ pub struct PromisOpResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
-    /// Callable BEFORE the Noise handshake (unauthenticated). `nonce` provides
-    /// freshness against quote replay.
+    /// Development-only legacy pre-handshake quote. The production server
+    /// rejects this variant and never routes it after initialization.
     GetQuote { nonce: [u8; 32] },
+    /// Production pre-handshake discovery for an uninitialized enclave. Returns
+    /// one challenge plus the persistent enclave public keys to be signed by the
+    /// node identity. Rejected once initialization is committed.
+    GetInitializationChallenge,
+    /// Production pre-handshake initialization authorization. `manifest` is the
+    /// canonical `EnclaveInitializationManifestV1`; `node_signature` is a
+    /// recoverable secp256k1 signature (`r || s || v`). The following Noise IK
+    /// message 1 must authenticate the exact NodeHost key in the manifest.
+    Initialize {
+        manifest: Vec<u8>,
+        node_signature: Vec<u8>,
+    },
+    /// Production pre-handshake marker for an already initialized enclave. The
+    /// responder returns nothing until the following Noise IK message 1 proves
+    /// possession of the sealed NodeHost static key.
+    OpenSession,
     /// Noise-IK handshake message.
     SessionHandshake { noise_msg: Vec<u8> },
     /// Return the enclave's public keys (recipient X25519, attestation, Noise
     /// static, tribute-BLS).
     GetPublicKeys,
-    /// Load the sealed root seed from disk, or start fresh.
-    Initialize,
+    /// Generate a fresh DCAP quote for the exact canonical registration or
+    /// renewal intent. Production accepts this only inside an authenticated
+    /// NodeHost session and only when the intent matches the sealed identity.
+    GenerateDcapQuote { intent: Vec<u8> },
 
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
@@ -598,6 +619,22 @@ pub enum EnclaveResponse {
         /// can log the exact mode instead of guessing direct-vs-bare.
         attestation: String,
     },
+    /// Public first-boot material. This is not attestation and carries no
+    /// authority; the node identity must sign all fields in the canonical
+    /// initialization manifest before the enclave accepts a Noise initiator.
+    InitializationChallenge {
+        challenge: [u8; 32],
+        recipient_x25519_pub: [u8; 32],
+        attestation_pub: [u8; 32],
+        noise_static_pub: [u8; 32],
+    },
+    /// Intent-bound real quote generated only for an authenticated NodeHost.
+    /// The canonical intent is echoed byte-for-byte so callers cannot associate
+    /// the returned quote with another request.
+    DcapQuote {
+        intent: Vec<u8>,
+        quote_body: Vec<u8>,
+    },
     Handshake {
         noise_msg: Vec<u8>,
     },
@@ -615,6 +652,8 @@ pub enum EnclaveResponse {
         dkg_enc_sig: Vec<u8>,
     },
     Initialized {
+        enclave_id: B256,
+        node_host_authorization_hash: B256,
         sealed_loaded: bool,
     },
     /// Generic acknowledgement (e.g. `DkgOpen` / `DkgDealerReceiveAck`).

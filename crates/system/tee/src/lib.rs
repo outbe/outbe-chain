@@ -27,10 +27,12 @@ pub mod tee_dkg;
 pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistration};
 pub use client::{
     verify_gratis_op_attestation, verify_peer_quote, verify_promis_op_attestation,
-    verify_tribute_offer_attestation, AttestedPeerKeys, EnclaveClient, QuotePolicy,
+    verify_tribute_offer_attestation, AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient,
+    EnclaveInitializationChallenge, NodeHostNoiseKey, QuotePolicy,
 };
 pub use client_global::{
-    install_enclave_client, is_enclave_configured, seal_offer_key_for_registry, try_with_enclave,
+    install_authorized_enclave_client, install_enclave_client, is_enclave_configured,
+    seal_offer_key_for_registry, try_with_enclave, RuntimeEnclaveClient,
 };
 pub use errors::TransportError;
 pub use handoff::{

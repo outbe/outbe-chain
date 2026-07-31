@@ -350,7 +350,7 @@ fn revert(message: String) -> PrecompileError {
 /// `v` is accepted as either the raw recovery id (`0`/`1`) or the EIP-155-free
 /// legacy form (`27`/`28`). Mirrors the construction in
 /// [`crate::signer::OutbeEvmSigner`] so a signature produced there round-trips.
-pub fn recover_signer(prehash: &B256, signature: &[u8; 65]) -> Result<Address> {
+pub fn recover_signer_public_key(prehash: &B256, signature: &[u8; 65]) -> Result<[u8; 33]> {
     let recid_byte = signature[64];
     let normalized = match recid_byte {
         27 | 28 => recid_byte - 27,
@@ -363,6 +363,21 @@ pub fn recover_signer(prehash: &B256, signature: &[u8; 65]) -> Result<Address> {
     let verifying_key =
         VerifyingKey::recover_from_prehash(prehash.as_slice(), &ecdsa_sig, recovery_id)
             .map_err(|error| revert(format!("TeeBootstrap: signature recovery failed: {error}")))?;
+    let encoded = verifying_key.to_encoded_point(true);
+    encoded
+        .as_bytes()
+        .try_into()
+        .map_err(|_| revert("TeeBootstrap: compressed public key is not 33 bytes".to_string()))
+}
+
+/// Recover the EVM address that produced a recoverable secp256k1 signature.
+pub fn recover_signer(prehash: &B256, signature: &[u8; 65]) -> Result<Address> {
+    let compressed = recover_signer_public_key(prehash, signature)?;
+    let verifying_key = VerifyingKey::from_sec1_bytes(&compressed).map_err(|error| {
+        revert(format!(
+            "TeeBootstrap: recovered key decode failed: {error}"
+        ))
+    })?;
     // Uncompressed SEC1 point: 0x04 || X(32) || Y(32). The EVM address is the
     // low 20 bytes of keccak256(X || Y).
     let encoded = verifying_key.to_encoded_point(false);

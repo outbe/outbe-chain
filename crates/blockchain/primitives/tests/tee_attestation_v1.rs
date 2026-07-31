@@ -1,12 +1,13 @@
 #![cfg(feature = "tee-attestation-v1")]
 
 use alloy_primitives::B256;
+use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
-    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1,
-    PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1,
-    ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
-    TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
+    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
+    EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
+    RegistryMutatorV1, ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
+    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, ACTIVE_TEE_ATTESTATION_V1_MANIFEST,
     MAX_ACTIVE_MEASUREMENT_RULES, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
 };
@@ -35,6 +36,126 @@ fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {
         noise_responder_x25519: [0x53; 32],
         node_host_authorization_hash: B256::repeat_byte(0x54),
     }
+}
+
+fn recoverable_signature(key: &SigningKey, prehash: B256) -> [u8; 65] {
+    let (signature, recovery_id) = key.sign_prehash(prehash.as_slice()).unwrap();
+    let mut out = [0u8; 65];
+    out[..64].copy_from_slice(signature.to_bytes().as_slice());
+    out[64] = recovery_id.to_byte();
+    out
+}
+
+fn validator_initialization_manifest(key: &SigningKey) -> EnclaveInitializationManifestV1 {
+    let public = key.verifying_key().to_encoded_point(false);
+    let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+    let mut address = [0u8; 20];
+    address.copy_from_slice(&address_hash.as_slice()[12..]);
+    EnclaveInitializationManifestV1 {
+        chain_id: [0x10; 32],
+        genesis_hash: B256::repeat_byte(0x11),
+        enclave_profile: EnclaveProfile::Validator,
+        node_id: NodeIdV1::Validator {
+            address,
+            bls_minpk_public: [0x32; 48],
+        },
+        initialization_challenge: [0x41; 32],
+        node_host_noise_x25519: [0x42; 32],
+        recipient_x25519: [0x51; 32],
+        attestation_ed25519: [0x52; 32],
+        noise_responder_x25519: [0x53; 32],
+    }
+}
+
+fn intent_for_manifest(manifest: &EnclaveInitializationManifestV1) -> RegistrationIntentV1 {
+    RegistrationIntentV1 {
+        chain_id: manifest.chain_id,
+        genesis_hash: manifest.genesis_hash,
+        operation: AttestationOperationV1::RegisterEnclave,
+        attestation_mode: AttestationMode::DcapRequired,
+        policy_hash: B256::repeat_byte(0x21),
+        enclave_profile: manifest.enclave_profile,
+        node_id: manifest.node_id.clone(),
+        enclave_id: manifest.enclave_id().unwrap(),
+        binding_id: B256::repeat_byte(0x42),
+        binding_version: 1,
+        registration_version: 0,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        requested_valid_until: 7_200,
+        recipient_x25519: manifest.recipient_x25519,
+        attestation_ed25519: manifest.attestation_ed25519,
+        noise_responder_x25519: manifest.noise_responder_x25519,
+        node_host_authorization_hash: manifest.authorization_hash().unwrap(),
+    }
+}
+
+#[test]
+fn initialization_manifest_is_canonical_node_signed_and_intent_bound() {
+    let validator_key = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+    let manifest = validator_initialization_manifest(&validator_key);
+    let encoded = manifest.encode_canonical().unwrap();
+    assert_eq!(
+        EnclaveInitializationManifestV1::decode_canonical(&encoded).unwrap(),
+        manifest
+    );
+    let signature = recoverable_signature(&validator_key, manifest.authorization_hash().unwrap());
+    assert!(manifest.verify_node_signature(&signature));
+    assert!(manifest
+        .validate_intent_binding(&intent_for_manifest(&manifest))
+        .is_ok());
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert_eq!(
+        EnclaveInitializationManifestV1::decode_canonical(&trailing).unwrap_err(),
+        CodecError::TrailingBytes(1)
+    );
+}
+
+#[test]
+fn initialization_manifest_rejects_wrong_signer_profile_and_intent_keys() {
+    let validator_key = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+    let other_key = SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
+    let manifest = validator_initialization_manifest(&validator_key);
+    let wrong_signature = recoverable_signature(&other_key, manifest.authorization_hash().unwrap());
+    assert!(!manifest.verify_node_signature(&wrong_signature));
+
+    let mut wrong_profile = manifest.clone();
+    wrong_profile.enclave_profile = EnclaveProfile::FullNode;
+    assert_eq!(
+        wrong_profile.encode_canonical().unwrap_err(),
+        CodecError::NonCanonical("node kind does not match enclave profile")
+    );
+
+    let mut wrong_intent = intent_for_manifest(&manifest);
+    wrong_intent.noise_responder_x25519[0] ^= 1;
+    assert_eq!(
+        manifest.validate_intent_binding(&wrong_intent).unwrap_err(),
+        CodecError::NonCanonical("registration intent does not match initialized enclave")
+    );
+}
+
+#[test]
+fn full_node_initialization_signature_uses_the_exact_reth_p2p_key() {
+    let full_node_key = SigningKey::from_bytes((&[0x71; 32]).into()).unwrap();
+    let compressed: [u8; 33] = full_node_key
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .unwrap();
+    let mut manifest = validator_initialization_manifest(&full_node_key);
+    manifest.enclave_profile = EnclaveProfile::FullNode;
+    manifest.node_id = NodeIdV1::FullNode {
+        reth_p2p_public: compressed,
+    };
+    let signature = recoverable_signature(&full_node_key, manifest.authorization_hash().unwrap());
+    assert!(manifest.verify_node_signature(&signature));
+
+    let other_key = SigningKey::from_bytes((&[0x72; 32]).into()).unwrap();
+    let wrong_signature = recoverable_signature(&other_key, manifest.authorization_hash().unwrap());
+    assert!(!manifest.verify_node_signature(&wrong_signature));
 }
 
 #[test]

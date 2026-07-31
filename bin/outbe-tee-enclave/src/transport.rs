@@ -1,8 +1,10 @@
 //! Enclave-side transport: framed UDS server + Noise-IK responder + dispatch.
 //!
-//! Per connection: cleartext `GetQuote` (so the host can pin the attested Noise
-//! static key) -> Noise-IK responder handshake -> encrypted request/response
-//! loop until the peer closes. Fully blocking; one connection at a time (PoC).
+//! Production accepts only initialization discovery, a signed write-once
+//! initialization manifest, or `OpenSession` before Noise IK. The responder
+//! authenticates the persistent NodeHost static key immediately after message 1
+//! and before decoding any encrypted request. The legacy cleartext `GetQuote`
+//! preamble exists only in the separate development/mock mode.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -17,6 +19,7 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::NOISE_PARAMS;
 
 use crate::dkg::{build_ceremony_info, DkgSessionStore};
+use crate::initialization::{InitializationMode, InitializationState, PendingInitialization};
 use crate::keys::EnclaveKeys;
 use crate::process::process_tribute_offer_batch;
 use crate::seal::{
@@ -54,17 +57,24 @@ impl DerivedTributeOfferKey {
     }
     /// Build from an explicit secret + public + group signature (the
     /// `DkgRecoverTributeOffer` / handoff-ingest arms, which already hold the public).
-    fn from_parts(secret: [u8; 32], public: [u8; 32], group_sig: Vec<u8>) -> Self {
+    fn from_parts(
+        secret: Zeroizing<[u8; 32]>,
+        public: [u8; 32],
+        group_sig: Zeroizing<Vec<u8>>,
+    ) -> Self {
         Self {
-            secret: Zeroizing::new(secret),
+            secret,
             public,
-            group_sig: Zeroizing::new(group_sig),
+            group_sig,
         }
     }
     /// Reconstruct from a resident offer secret + group signature (recomputes the
     /// public key). Used by the seal/unseal boot path to restore the DKG-derived
     /// offer key on restart without re-running the ceremony.
-    fn from_secret_and_group_sig(secret: [u8; 32], group_sig: Vec<u8>) -> Self {
+    fn from_secret_and_group_sig(
+        secret: Zeroizing<[u8; 32]>,
+        group_sig: Zeroizing<Vec<u8>>,
+    ) -> Self {
         let public = crate::crypto::x25519_public(&secret);
         Self::from_parts(secret, public, group_sig)
     }
@@ -80,7 +90,7 @@ pub type SharedTributeOfferKey = Arc<OnceLock<DerivedTributeOfferKey>>;
 /// available. Real `EGETKEY(MRSIGNER)` under `gramine-sgx`; a fixed mock key
 /// under `mock`/test (stable across rebuilds, simulating MRSIGNER); nothing under
 /// `gramine-direct` prod, where there is no confidential at-rest persistence.
-fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
+pub(crate) fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     if let Ok(k) = crate::gramine::sealing_key_256(true) {
         return Some((k, KeyPolicy::MrSigner));
     }
@@ -94,22 +104,23 @@ fn sealing_key() -> Option<([u8; 32], KeyPolicy)> {
     }
 }
 
-/// Write `data` to `path` with mode 0600, atomically (temp file + rename).
-fn atomic_write_0600(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+/// Create one owner-only durable sealed blob without replacing existing state.
+/// A crash can leave a partial final file, which is deliberately fail-closed:
+/// subsequent startup rejects it and never converts corruption into rotation.
+pub(crate) fn write_once_0600(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
     }
-    std::fs::rename(&tmp, path)
+    Ok(())
 }
 
 /// Restore the offer key + group signature from the sealed blob at boot (restart
@@ -130,8 +141,7 @@ pub fn unseal_tribute_offer_and_group_sig_on_boot(
                 path.display()
             );
             Some(DerivedTributeOfferKey::from_secret_and_group_sig(
-                *secret,
-                group_sig.to_vec(),
+                secret, group_sig,
             ))
         }
         Err(e) => {
@@ -196,7 +206,7 @@ fn seal_tribute_offer_and_group_sig_if_configured(
         cfg.chain_id,
         &header,
     ) {
-        Ok(blob) => match atomic_write_0600(&path, &blob) {
+        Ok(blob) => match write_once_0600(&path, &blob) {
             Ok(()) => eprintln!(
                 "outbe-tee-enclave: sealed offer key + group signature -> {}",
                 path.display()
@@ -215,7 +225,8 @@ pub fn serve_connection<S: Read + Write>(
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), TransportError> {
-    serve_connection_with(stream, keys, offer_key, None)
+    let initialization = InitializationState::development();
+    serve_connection_with(stream, keys, offer_key, None, &initialization)
 }
 
 /// Serve a single client connection end-to-end. `offer_key` is the shared,
@@ -228,18 +239,51 @@ pub fn serve_connection_with<S: Read + Write>(
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
 ) -> Result<(), TransportError> {
-    // 1. GetQuote (cleartext, pre-handshake).
+    // 1. Minimal cleartext preamble. Production never emits a quote here.
     let first = decode_request(&read_frame(&mut stream)?)?;
-    let nonce = match first {
-        EnclaveRequest::GetQuote { nonce } => nonce,
-        _ => {
+    let pending: Option<PendingInitialization> = match (initialization.mode(), first) {
+        (InitializationMode::Development, EnclaveRequest::GetQuote { nonce }) => {
+            write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
+            None
+        }
+        (InitializationMode::Production, EnclaveRequest::GetInitializationChallenge) => {
+            let response = initialization
+                .challenge_response(keys)
+                .map_err(TransportError::Handshake)?;
+            write_frame(&mut stream, &encode_response(&response)?)?;
+            return Ok(());
+        }
+        (
+            InitializationMode::Production,
+            EnclaveRequest::Initialize {
+                manifest,
+                node_signature,
+            },
+        ) => Some(
+            initialization
+                .prepare(&manifest, &node_signature, keys)
+                .map_err(TransportError::Handshake)?,
+        ),
+        (InitializationMode::Production, EnclaveRequest::OpenSession) => {
+            initialization
+                .expected_node_host()
+                .map_err(TransportError::Handshake)?;
+            None
+        }
+        (InitializationMode::Development, _) => {
             return Err(TransportError::Handshake(
-                "expected GetQuote before handshake".to_string(),
-            ))
+                "development transport expected legacy GetQuote before handshake".to_string(),
+            ));
+        }
+        (InitializationMode::Production, _) => {
+            return Err(TransportError::Handshake(
+                "production transport expected initialization discovery, Initialize, or OpenSession"
+                    .to_string(),
+            ));
         }
     };
-    write_frame(&mut stream, &encode_response(&keys.quote(nonce))?)?;
 
     // 2. Noise-IK responder handshake.
     let params = NOISE_PARAMS
@@ -255,6 +299,33 @@ pub fn serve_connection_with<S: Read + Write>(
     handshake
         .read_message(&msg1, &mut buf)
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
+
+    // Noise IK authenticates the initiator static in message 1. Reject it here,
+    // before message 2, transport mode, encrypted request decoding, or effects.
+    if initialization.mode() == InitializationMode::Production {
+        let expected = pending
+            .as_ref()
+            .map(PendingInitialization::node_host_noise_x25519)
+            .map(Ok)
+            .unwrap_or_else(|| initialization.expected_node_host())
+            .map_err(TransportError::Handshake)?;
+        let remote = handshake.get_remote_static().ok_or_else(|| {
+            TransportError::Handshake("Noise IK message 1 omitted initiator static key".to_string())
+        })?;
+        if remote != expected {
+            return Err(TransportError::Handshake(
+                "Noise IK initiator is not the authorized NodeHost".to_string(),
+            ));
+        }
+    }
+
+    let initialized_this_connection = pending.is_some();
+    if let Some(pending) = pending {
+        initialization
+            .commit(pending, keys)
+            .map_err(TransportError::Handshake)?;
+    }
+
     let n = handshake
         .write_message(&[], &mut buf)
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
@@ -263,6 +334,20 @@ pub fn serve_connection_with<S: Read + Write>(
     let mut noise = handshake
         .into_transport_mode()
         .map_err(|e| TransportError::Handshake(e.to_string()))?;
+
+    // Initialization success is disclosed only inside the newly authenticated
+    // channel. OpenSession and the dev path wait for the first explicit command.
+    if initialized_this_connection {
+        let response = initialization
+            .initialized_response()
+            .map_err(TransportError::Handshake)?;
+        let plain = encode_response(&response)?;
+        let mut ct = vec![0u8; plain.len() + 64];
+        let n = noise
+            .write_message(&plain, &mut ct)
+            .map_err(|e| TransportError::Noise(e.to_string()))?;
+        write_frame(&mut stream, &ct[..n])?;
+    }
 
     // Resident DKG ceremonies for this connection. A ceremony spans many
     // request/response round-trips on one connection (PoC: one connection per
@@ -279,14 +364,27 @@ pub fn serve_connection_with<S: Read + Write>(
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
+        if let Err(message) = initialization.authorize_command(&req, offer_key.get().is_some()) {
+            let response = EnclaveResponse::Error {
+                message: message.to_string(),
+            };
+            let plain = encode_response(&response)?;
+            let mut ct = vec![0u8; plain.len() + 64];
+            let n = noise
+                .write_message(&plain, &mut ct)
+                .map_err(|e| TransportError::Noise(e.to_string()))?;
+            write_frame(&mut stream, &ct[..n])?;
+            continue;
+        }
 
-        let resp = dispatch(
+        let resp = dispatch_with_initialization(
             req,
             keys,
             &mut dkg,
             offer_key,
             boot.map(|b| b.chain_id)
                 .unwrap_or(alloy_primitives::B256::ZERO),
+            Some(initialization),
         );
 
         // Persist the offer key + share the first time it becomes available
@@ -316,7 +414,25 @@ pub fn dispatch(
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
 ) -> EnclaveResponse {
+    dispatch_with_initialization(req, keys, dkg, offer_key, chain_id, None)
+}
+
+fn dispatch_with_initialization(
+    req: EnclaveRequest,
+    keys: &EnclaveKeys,
+    dkg: &mut DkgSessionStore,
+    offer_key: &SharedTributeOfferKey,
+    chain_id: alloy_primitives::B256,
+    initialization: Option<&InitializationState>,
+) -> EnclaveResponse {
     match req {
+        EnclaveRequest::GetQuote { .. }
+        | EnclaveRequest::GetInitializationChallenge
+        | EnclaveRequest::Initialize { .. }
+        | EnclaveRequest::OpenSession
+        | EnclaveRequest::SessionHandshake { .. } => EnclaveResponse::Error {
+            message: "pre-handshake request is not valid inside a Noise session".to_string(),
+        },
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
             // Advertise the DKG-derived offer key once available, so clients
             // encrypt to it; fall back to the dev offer key pre-DKG.
@@ -330,9 +446,23 @@ pub fn dispatch(
             dkg_enc_pub: keys.dkg_enc_public(),
             dkg_enc_sig: keys.sign_dkg_enc_binding(chain_id),
         },
-        EnclaveRequest::Initialize => EnclaveResponse::Initialized {
-            sealed_loaded: false,
-        },
+        EnclaveRequest::GenerateDcapQuote { intent } => {
+            let Some(initialization) = initialization else {
+                return EnclaveResponse::Error {
+                    message: "DCAP quote generation requires initialized production state"
+                        .to_string(),
+                };
+            };
+            let result = (|| -> Result<Vec<u8>, String> {
+                let report_data = initialization.quote_report_data(&intent)?;
+                let quote = crate::gramine::dcap_quote(&report_data)?;
+                validate_generated_quote_binding(report_data, quote)
+            })();
+            match result {
+                Ok(quote_body) => EnclaveResponse::DcapQuote { intent, quote_body },
+                Err(message) => EnclaveResponse::Error { message },
+            }
+        }
         EnclaveRequest::ProcessTributeOfferBatch { offers } => {
             let derived = offer_key.get();
             let km = match derived {
@@ -538,7 +668,7 @@ pub fn dispatch(
                 // `recipient_x25519` (its `tribute_offer` X25519 key) — the key the
                 // server sealed the handoff to.
                 let group_sig = Zeroizing::new(crate::crypto::decrypt_share(
-                    &keys.tribute_offer_x25519_secret(),
+                    keys.tribute_offer_x25519_secret(),
                     &blob,
                 )?);
                 let (secret, public) = crate::crypto::derive_tribute_offer_secret_from_group_sig(
@@ -553,9 +683,7 @@ pub fn dispatch(
                     ));
                 }
                 Ok(DerivedTributeOfferKey::from_parts(
-                    secret,
-                    public,
-                    group_sig.to_vec(),
+                    secret, public, group_sig,
                 ))
             })();
             match derived {
@@ -671,8 +799,7 @@ pub fn dispatch(
             });
             match result {
                 Ok((secret, public, group_sig, group_public_key)) => {
-                    let derived =
-                        DerivedTributeOfferKey::from_parts(secret, public, group_sig.to_vec());
+                    let derived = DerivedTributeOfferKey::from_parts(secret, public, group_sig);
                     // Write-once: the first ceremony's key is canonical. A re-run
                     // that derives the SAME key is idempotent; a DIVERGENT key is a
                     // determinism fault — reject rather than keep a stale key.
@@ -697,12 +824,6 @@ pub fn dispatch(
                 },
             }
         }
-        EnclaveRequest::GetQuote { .. } => EnclaveResponse::Error {
-            message: "GetQuote is only valid before the handshake".to_string(),
-        },
-        EnclaveRequest::SessionHandshake { .. } => EnclaveResponse::Error {
-            message: "SessionHandshake is only valid during the handshake".to_string(),
-        },
     }
 }
 
@@ -770,6 +891,20 @@ fn into_response(result: crate::errors::Result<EnclaveResponse>) -> EnclaveRespo
     })
 }
 
+/// Re-parse the quote returned by Gramine before exposing it to NodeHost. This
+/// keeps a stale/misbound device response from being paired with the requested
+/// canonical intent even though the later consensus QVL remains authoritative.
+fn validate_generated_quote_binding(
+    expected_report_data: [u8; 64],
+    quote: Vec<u8>,
+) -> Result<Vec<u8>, String> {
+    let parsed = outbe_tee::quote::parse_quote_measurements(&quote)?;
+    if parsed.report_data != expected_report_data {
+        return Err("generated DCAP quote REPORT_DATA does not match requested intent".to_string());
+    }
+    Ok(quote)
+}
+
 /// Accept loop (used by the enclave binary). Each connection is served on its
 /// own thread so multiple long-lived clients are handled concurrently — the node
 /// keeps one connection open for offer decryption for its whole lifetime *and*
@@ -783,6 +918,7 @@ pub fn serve(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    initialization: Arc<InitializationState>,
 ) -> Result<(), TransportError> {
     // The DKG-derived offer key is shared across all connection threads: the DKG
     // ceremony connection writes it (Seam F), the offer-decrypt connection reads
@@ -792,9 +928,12 @@ pub fn serve(
         let keys = Arc::clone(&keys);
         let offer_key = Arc::clone(&offer_key);
         let boot = boot.clone();
+        let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
             // PoC: surface to stderr; one bad client must not kill the enclave.
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) =
+                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), &initialization)
+            {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -813,6 +952,7 @@ pub fn serve_tcp(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    initialization: Arc<InitializationState>,
 ) -> Result<(), TransportError> {
     for conn in listener.incoming() {
         let stream = conn?;
@@ -821,8 +961,11 @@ pub fn serve_tcp(
         let keys = Arc::clone(&keys);
         let offer_key = Arc::clone(&offer_key);
         let boot = boot.clone();
+        let initialization = Arc::clone(&initialization);
         std::thread::spawn(move || {
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) =
+                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), &initialization)
+            {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -834,6 +977,93 @@ pub fn serve_tcp(
 mod tests {
     use super::*;
     use alloy_primitives::B256;
+
+    #[test]
+    fn generated_quote_binding_rejects_post_syscall_report_data_substitution() {
+        let expected = [0xA1; 64];
+        let mut quote = vec![0u8; outbe_tee::quote::MIN_QUOTE_LEN];
+        let report_data_offset = outbe_tee::quote::MIN_QUOTE_LEN - 64;
+        quote[report_data_offset..].copy_from_slice(&expected);
+        assert_eq!(
+            validate_generated_quote_binding(expected, quote.clone()).unwrap(),
+            quote
+        );
+
+        let mut substituted = quote;
+        substituted[report_data_offset] ^= 1;
+        assert!(validate_generated_quote_binding(expected, substituted)
+            .unwrap_err()
+            .contains("does not match requested intent"));
+    }
+
+    fn spawn_production_connection(
+        keys: Arc<EnclaveKeys>,
+        boot: Arc<EnclaveBootConfig>,
+        offer_key: SharedTributeOfferKey,
+        initialization: Arc<InitializationState>,
+    ) -> (
+        std::os::unix::net::UnixStream,
+        std::thread::JoinHandle<Result<(), TransportError>>,
+    ) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        let handle = std::thread::spawn(move || {
+            serve_connection_with(server, &keys, &offer_key, Some(&boot), &initialization)
+        });
+        (client, handle)
+    }
+
+    fn signed_initialization_manifest(
+        keys: &EnclaveKeys,
+        challenge: [u8; 32],
+        node_host_noise_x25519: [u8; 32],
+        profile: outbe_primitives::tee_attestation_v1::EnclaveProfile,
+    ) -> (
+        outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+        [u8; 65],
+    ) {
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
+        };
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let mut address = [0u8; 20];
+        address.copy_from_slice(&hash[12..]);
+        let node_id = match profile {
+            EnclaveProfile::Validator => NodeIdV1::Validator {
+                address,
+                bls_minpk_public: [0x32; 48],
+            },
+            EnclaveProfile::FullNode => NodeIdV1::FullNode {
+                reth_p2p_public: signing
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+            },
+        };
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: [0x10; 32],
+            genesis_hash: B256::repeat_byte(0x11),
+            enclave_profile: profile,
+            node_id,
+            initialization_challenge: challenge,
+            node_host_noise_x25519,
+            recipient_x25519: keys.tribute_offer_public(),
+            attestation_ed25519: keys.attestation_pub(),
+            noise_responder_x25519: keys.noise_public(),
+        };
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+            .sign_prehash(manifest.authorization_hash().unwrap().as_slice())
+            .unwrap();
+        let mut signature_bytes = [0u8; 65];
+        signature_bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+        signature_bytes[64] = recovery.to_byte();
+        (manifest, signature_bytes)
+    }
 
     /// One in-process enclave: its key material, resident DKG store, and the
     /// shared DKG-derived offer key slot.
@@ -1154,7 +1384,10 @@ mod tests {
         share: Vec<u8>,
     ) -> (SharedTributeOfferKey, [u8; 32]) {
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        let derived = DerivedTributeOfferKey::from_secret_and_group_sig(secret, share);
+        let derived = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new(secret),
+            Zeroizing::new(share),
+        );
         let public = derived.public();
         offer_key.set(derived).ok().expect("set offer key");
         (offer_key, public)
@@ -1273,7 +1506,9 @@ mod tests {
         server
             .offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install server offer key");
@@ -1319,7 +1554,9 @@ mod tests {
         server
             .offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install");
@@ -1357,7 +1594,9 @@ mod tests {
                 .expect("derive");
         e.offer_key
             .set(DerivedTributeOfferKey::from_parts(
-                secret, public, group_sig,
+                secret,
+                public,
+                Zeroizing::new(group_sig),
             ))
             .ok()
             .expect("install");
@@ -1454,5 +1693,232 @@ mod tests {
             ),
             "owner_sig must bind the requester ephemeral (no cross-target replay)"
         );
+    }
+
+    #[test]
+    fn production_initialization_binds_noise_initiator_before_request_decode() {
+        use outbe_tee::codec::{decode_response, encode_request};
+
+        let root = tempfile::tempdir().unwrap();
+        let boot = Arc::new(EnclaveBootConfig::new(
+            [0x10; 32],
+            root.path().to_path_buf(),
+            0,
+        ));
+        let keys = Arc::new(EnclaveKeys::new([7; 32], Some([1; 32])).unwrap());
+        let initialization =
+            Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+
+        let challenge = match initialization.challenge_response(&keys).unwrap() {
+            EnclaveResponse::InitializationChallenge { challenge, .. } => challenge,
+            response => panic!("unexpected challenge response: {response:?}"),
+        };
+        let node_host_private = [0x51; 32];
+        let node_host_public =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(node_host_private))
+                .to_bytes();
+        let (manifest, node_signature) = signed_initialization_manifest(
+            &keys,
+            challenge,
+            node_host_public,
+            outbe_primitives::tee_attestation_v1::EnclaveProfile::Validator,
+        );
+
+        // First connection: signed manifest plus possession of the exact embedded
+        // NodeHost Noise key commits the write-once authorization.
+        let (mut client, server) = spawn_production_connection(
+            keys.clone(),
+            boot.clone(),
+            offer_key.clone(),
+            initialization.clone(),
+        );
+        write_frame(
+            &mut client,
+            &encode_request(&EnclaveRequest::Initialize {
+                manifest: manifest.encode_canonical().unwrap(),
+                node_signature: node_signature.to_vec(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut handshake = snow::Builder::new(params)
+            .local_private_key(&node_host_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let mut buf = [0u8; 2048];
+        let len = handshake.write_message(&[], &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let msg2 = read_frame(&mut client).unwrap();
+        handshake.read_message(&msg2, &mut buf).unwrap();
+        let mut noise = handshake.into_transport_mode().unwrap();
+        let frame = read_frame(&mut client).unwrap();
+        let len = noise.read_message(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            decode_response(&buf[..len]).unwrap(),
+            EnclaveResponse::Initialized {
+                sealed_loaded: false,
+                ..
+            }
+        ));
+        drop(client);
+        server.join().unwrap().unwrap();
+        assert_eq!(
+            initialization.expected_node_host().unwrap(),
+            node_host_public
+        );
+
+        // The authorized persistent key can reconnect and issue an allowed
+        // command through the production channel.
+        let (mut client, server) = spawn_production_connection(
+            keys.clone(),
+            boot.clone(),
+            offer_key.clone(),
+            initialization.clone(),
+        );
+        write_frame(
+            &mut client,
+            &encode_request(&EnclaveRequest::OpenSession).unwrap(),
+        )
+        .unwrap();
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut handshake = snow::Builder::new(params)
+            .local_private_key(&node_host_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let len = handshake.write_message(&[], &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let msg2 = read_frame(&mut client).unwrap();
+        handshake.read_message(&msg2, &mut buf).unwrap();
+        let mut noise = handshake.into_transport_mode().unwrap();
+        let request = encode_request(&EnclaveRequest::GetPublicKeys).unwrap();
+        let len = noise.write_message(&request, &mut buf).unwrap();
+        write_frame(&mut client, &buf[..len]).unwrap();
+        let frame = read_frame(&mut client).unwrap();
+        let len = noise.read_message(&frame, &mut buf).unwrap();
+        assert!(matches!(
+            decode_response(&buf[..len]).unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(client);
+        server.join().unwrap().unwrap();
+
+        // An unknown initiator is rejected after Noise message 1 even when that
+        // message carries bytes that are not a valid EnclaveRequest. The server
+        // never writes message 2 and therefore cannot decode or dispatch them.
+        let (mut attacker, server) =
+            spawn_production_connection(keys.clone(), boot, offer_key, initialization.clone());
+        write_frame(
+            &mut attacker,
+            &encode_request(&EnclaveRequest::OpenSession).unwrap(),
+        )
+        .unwrap();
+        let attacker_private = [0xA5; 32];
+        let params = NOISE_PARAMS.parse().unwrap();
+        let mut attacker_handshake = snow::Builder::new(params)
+            .local_private_key(&attacker_private)
+            .remote_public_key(&keys.noise_public())
+            .build_initiator()
+            .unwrap();
+        let len = attacker_handshake
+            .write_message(&[0xff; 32], &mut buf)
+            .unwrap();
+        write_frame(&mut attacker, &buf[..len]).unwrap();
+        assert!(read_frame(&mut attacker).is_err());
+        let error = server.join().unwrap().unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("initiator is not the authorized NodeHost"));
+        assert_eq!(
+            initialization.expected_node_host().unwrap(),
+            node_host_public
+        );
+    }
+
+    #[test]
+    fn public_node_host_client_initializes_and_reconnects_both_profiles() {
+        use outbe_primitives::tee_attestation_v1::EnclaveProfile;
+        use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
+
+        for (profile, seed) in [
+            (EnclaveProfile::Validator, 0x71),
+            (EnclaveProfile::FullNode, 0x72),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let socket = root.path().join("enclave.sock");
+            let endpoint = socket.to_str().unwrap().to_string();
+            let boot = Arc::new(EnclaveBootConfig::new(
+                [0x10; 32],
+                root.path().to_path_buf(),
+                0,
+            ));
+            let keys = Arc::new(EnclaveKeys::new([seed; 32], Some([seed; 32])).unwrap());
+            let initialization =
+                Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server_keys = keys.clone();
+            let server_boot = boot.clone();
+            let server_initialization = initialization.clone();
+            let server_offer_key = offer_key.clone();
+            let server = std::thread::spawn(move || {
+                for _ in 0..3 {
+                    let (stream, _) = listener.accept().unwrap();
+                    serve_connection_with(
+                        stream,
+                        &server_keys,
+                        &server_offer_key,
+                        Some(&server_boot),
+                        &server_initialization,
+                    )
+                    .unwrap();
+                }
+            });
+
+            let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
+            assert_eq!(challenge.recipient_x25519, keys.tribute_offer_public());
+            assert_eq!(challenge.attestation_ed25519, keys.attestation_pub());
+            assert_eq!(challenge.noise_responder_x25519, keys.noise_public());
+
+            let node_host_path = root.path().join("node-host-noise.key");
+            let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
+            let (manifest, node_signature) = signed_initialization_manifest(
+                &keys,
+                challenge.challenge,
+                node_host.public(),
+                profile,
+            );
+            let mut initialized = AuthorizedEnclaveClient::initialize_endpoint(
+                &endpoint,
+                &manifest,
+                &node_signature,
+                &node_host,
+            )
+            .unwrap();
+            assert!(matches!(
+                initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+                EnclaveResponse::PublicKeys { .. }
+            ));
+            drop(initialized);
+
+            drop(node_host);
+            let node_host = NodeHostNoiseKey::load(&node_host_path).unwrap();
+            let mut reconnected =
+                AuthorizedEnclaveClient::connect_endpoint(&endpoint, &manifest, &node_host)
+                    .unwrap();
+            assert!(matches!(
+                reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
+                EnclaveResponse::PublicKeys { .. }
+            ));
+            drop(reconnected);
+            server.join().unwrap();
+            assert_eq!(
+                initialization.expected_node_host().unwrap(),
+                node_host.public()
+            );
+        }
     }
 }

@@ -8424,10 +8424,12 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "libc",
  "outbe-primitives",
  "pem",
  "postcard",
  "rand 0.8.6",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8436,6 +8438,8 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

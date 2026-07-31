@@ -58,6 +58,11 @@ impl EnclaveBootConfig {
     pub fn sealed_root_path(&self) -> PathBuf {
         self.tee_dir.join("sealed_root.bin")
     }
+
+    /// Write-once sealed NodeHost authorization installed by I2 initialization.
+    pub fn sealed_node_authorization_path(&self) -> PathBuf {
+        self.tee_dir.join("sealed_node_authorization_v1.bin")
+    }
 }
 
 pub const SEAL_MAGIC: &[u8; 5] = b"TSEAL";
@@ -157,16 +162,18 @@ fn aes256gcm_decrypt(
     nonce: &[u8; 12],
     aad: &[u8],
     ciphertext: &[u8],
-) -> Result<Vec<u8>> {
+) -> Result<Zeroizing<Vec<u8>>> {
     use aead::BoundKey;
     let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, key)
         .map_err(|_| TeeError::SealedBlobUnsealFailed)?;
     let mut opening = aead::OpeningKey::new(unbound, OneNonce::new(*nonce));
-    let mut in_out = ciphertext.to_vec();
-    let plaintext = opening
+    let mut in_out = Zeroizing::new(ciphertext.to_vec());
+    let plaintext_len = opening
         .open_in_place(aead::Aad::from(aad), &mut in_out)
-        .map_err(|_| TeeError::SealedBlobUnsealFailed)?;
-    Ok(plaintext.to_vec())
+        .map_err(|_| TeeError::SealedBlobUnsealFailed)?
+        .len();
+    in_out.truncate(plaintext_len);
+    Ok(in_out)
 }
 
 /// Encode the sealed payload: `tribute_offer_secret(32) ‖ group_sig_len u16 LE ‖ group_sig`.
@@ -189,19 +196,20 @@ fn encode_sealed_payload(
 }
 
 /// Decode a sealed payload into `(tribute_offer_secret, group_sig_bytes)`, length-checked.
-fn decode_sealed_payload(pt: &[u8]) -> Result<([u8; 32], Vec<u8>)> {
+fn decode_sealed_payload(pt: &[u8]) -> Result<(Zeroizing<[u8; 32]>, Zeroizing<Vec<u8>>)> {
     if pt.len() < 34 {
         return Err(TeeError::SealedBlobBadPayload(pt.len()));
     }
-    let mut tribute_offer_secret = [0u8; 32];
-    tribute_offer_secret.copy_from_slice(&pt[..32]);
     let mut len_bytes = [0u8; 2];
     len_bytes.copy_from_slice(&pt[32..34]);
     let group_sig_len = u16::from_le_bytes(len_bytes) as usize;
     if pt.len() != 34 + group_sig_len {
         return Err(TeeError::SealedBlobBadPayload(pt.len()));
     }
-    Ok((tribute_offer_secret, pt[34..].to_vec()))
+    let mut tribute_offer_secret = Zeroizing::new([0u8; 32]);
+    tribute_offer_secret.copy_from_slice(&pt[..32]);
+    let group_sig = Zeroizing::new(pt[34..].to_vec());
+    Ok((tribute_offer_secret, group_sig))
 }
 
 /// Seal the DKG-derived offer secret together with the group threshold signature
@@ -271,19 +279,10 @@ pub fn unseal_tribute_offer_and_group_sig(
     aad.extend_from_slice(chain_id.as_slice());
 
     let ciphertext = &blob[prefix + HEADER_LEN..];
-    let plaintext = Zeroizing::new(aes256gcm_decrypt(
-        sealing_key,
-        &header.nonce,
-        &aad,
-        ciphertext,
-    )?);
+    let plaintext = aes256gcm_decrypt(sealing_key, &header.nonce, &aad, ciphertext)?;
 
     let (tribute_offer_secret, group_sig) = decode_sealed_payload(&plaintext)?;
-    Ok((
-        Zeroizing::new(tribute_offer_secret),
-        Zeroizing::new(group_sig),
-        header,
-    ))
+    Ok((tribute_offer_secret, group_sig, header))
 }
 
 /// Fixed mock sealing key — stable across rebuilds so it simulates MRSIGNER

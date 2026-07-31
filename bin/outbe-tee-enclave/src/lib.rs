@@ -26,6 +26,7 @@ pub mod dkg;
 pub mod errors;
 pub mod gramine;
 pub mod gratis;
+pub mod initialization;
 pub mod keys;
 pub mod payload;
 pub mod process;

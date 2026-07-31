@@ -201,6 +201,20 @@ only its persistent `NodeHost` Noise initiator can request later quotes.
   commitments;
 - Gramine development behavior exists only under the separate dev manifest.
 
+**I2 checkpoint (2026-07-31):** canonical node-signed write-once
+initialization, sealed identity restore, persistent owner-only `NodeHost`
+credentials, initiator rejection before request decode/side effects, the
+deny-by-default command matrix and separate production/mock builds are closed.
+Validator and full-node UDS lifecycle tests cover initialization, key reload and
+authorized reconnect. Exact initial/renewal `REPORT_DATA` binding is closed
+deterministically. Secret-bearing handoff commands remain fail-closed until I6
+adds in-enclave finalized-proof verification. Real `outbe-chain` validator and
+full-node signer/datadir wiring is deliberately closed with their registration
+slices in I3/I4; bootstrap caller migration remains I8.
+Fresh accepted execution of the real Gramine quote path remains a fail-not-skip
+I9 release gate. See
+`plans/checkpoints/I2-node-bound-initialization.md`.
+
 ## I3 — Register a validator enclave end to end
 
 **Outcome:** a permissionless relay can submit a validator's fresh,

@@ -1,10 +1,11 @@
 //! Process-global enclave client shared by every enclave-using module.
 //!
-//! The host connects to the enclave sidecar once at startup (attesting its quote)
-//! and installs the verified [`EnclaveClient`] here. Both the offer-decrypt path
-//! (`tributefactory`) and the on-chain offer-key delivery (`teeregistry`) then
-//! reach the single connection through [`try_with_enclave`] — the enclave client is
-//! TEE infrastructure, so it lives in `outbe-tee`, not in any business module.
+//! Production installs an [`AuthorizedEnclaveClient`] after node-signed,
+//! write-once initialization; the separate dev/mock path may install the legacy
+//! [`EnclaveClient`]. Both expose only requests and the manifest/quote-bound
+//! attestation key needed by runtime consumers. The offer-decrypt and key-delivery
+//! paths reach the single connection through [`try_with_enclave`]. TEE transport
+//! infrastructure lives here rather than in a business module.
 //!
 //! Determinism: the enclave returns byte-identical output across validators (same
 //! resident keys), so routing a request through this global does not affect
@@ -14,29 +15,58 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use crate::client::EnclaveClient;
+use crate::client::{AuthorizedEnclaveClient, EnclaveClient};
+use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 
-static ENCLAVE_CLIENT: OnceLock<Mutex<EnclaveClient>> = OnceLock::new();
+pub enum RuntimeEnclaveClient {
+    Development(EnclaveClient),
+    Production(AuthorizedEnclaveClient),
+}
+
+impl RuntimeEnclaveClient {
+    pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        match self {
+            Self::Development(client) => client.request(request),
+            Self::Production(client) => client.request(request),
+        }
+    }
+
+    pub fn attestation_pub(&self) -> [u8; 32] {
+        match self {
+            Self::Development(client) => client.attestation_pub(),
+            Self::Production(client) => client.attestation_pub(),
+        }
+    }
+}
+
+static ENCLAVE_CLIENT: OnceLock<Mutex<RuntimeEnclaveClient>> = OnceLock::new();
 
 /// True once a process-global enclave client is installed.
 pub fn is_enclave_configured() -> bool {
     ENCLAVE_CLIENT.get().is_some()
 }
 
-/// Install the verified process-global enclave client (once). The connect +
-/// attestation verification is the caller's responsibility; this only stores the
-/// client so every enclave-using module shares one connection.
+/// Install the separate dev/mock legacy client once.
 pub fn install_enclave_client(client: EnclaveClient) -> Result<(), &'static str> {
     ENCLAVE_CLIENT
-        .set(Mutex::new(client))
+        .set(Mutex::new(RuntimeEnclaveClient::Development(client)))
         .map_err(|_| "enclave client already initialized")
 }
 
+/// Install a production NodeHost-authorized client once. Initialization and
+/// manifest validation are completed by `AuthorizedEnclaveClient` before this.
+pub fn install_authorized_enclave_client(
+    client: AuthorizedEnclaveClient,
+) -> Result<(), &'static str> {
+    ENCLAVE_CLIENT
+        .set(Mutex::new(RuntimeEnclaveClient::Production(client)))
+        .map_err(|_| "enclave client already initialized")
+}
 /// Run `f` against the process-global enclave client. Returns `None` if no client
 /// is configured or the mutex is poisoned (the caller maps that to a typed
 /// `tee_sidecar_unavailable` error).
-pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveClient) -> R) -> Option<R> {
+pub fn try_with_enclave<R>(f: impl FnOnce(&mut RuntimeEnclaveClient) -> R) -> Option<R> {
     let mutex = ENCLAVE_CLIENT.get()?;
     let mut client = mutex.lock().ok()?;
     Some(f(&mut client))

@@ -45,7 +45,7 @@ outbe-tee.workspace = true
 # Already in the enclave build graph transitively via `outbe-tee` (so no MRENCLAVE
 # change vs. today); declared directly only to name `tee_bootstrap::recover_signer`,
 # reused so the enclave and host recover EIP-191 signers with one identical impl.
-outbe-primitives.workspace = true
+outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
 alloy-primitives.workspace = true
 ring.workspace = true
 x25519-dalek.workspace = true

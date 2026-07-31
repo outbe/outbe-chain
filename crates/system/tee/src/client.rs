@@ -1,19 +1,26 @@
 //! Blocking node-side client for the enclave channel (Noise-IK over framed UDS).
 //!
-//! Flow: connect -> `GetQuote` (cleartext, unauthenticated)
-//! -> verify quote against policy + REPORT_DATA key binding -> pin the enclave
-//! Noise static key -> Noise-IK handshake -> encrypted request/response.
+//! Production first discovers an initialization challenge, submits one canonical
+//! node-signed manifest, and proves possession of its persistent `NodeHost` Noise
+//! initiator key. Later connections use `OpenSession` plus the same key. The
+//! legacy `EnclaveClient` GetQuote flow remains for the separate dev/mock
+//! transport and is not accepted by the production enclave.
 //!
 //! The client is fully synchronous: it is meant to be driven straight from the
 //! `offerTributeBatch` precompile path with a blocking UDS round-trip — no
 //! async, no `spawn`, nothing that would capture a `StorageHandle`.
 
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use alloy_primitives::{keccak256, B256};
+use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
+use rand::RngCore as _;
+use zeroize::Zeroizing;
 
 use crate::codec::{decode_response, encode_request, read_frame, write_frame};
 use crate::errors::TransportError;
@@ -142,6 +149,109 @@ pub struct EnclaveClient {
     /// so a key-handoff newcomer can forward its own attested quote to a server
     /// (which re-verifies it via [`verify_peer_quote`] before sealing).
     raw_quote: EnclaveResponse,
+}
+
+/// Persistent Noise IK initiator identity authorized by one enclave manifest.
+/// The private bytes are zeroized on drop and are never exposed by this API.
+#[derive(Clone)]
+pub struct NodeHostNoiseKey {
+    private: Zeroizing<[u8; 32]>,
+    public: [u8; 32],
+}
+
+impl core::fmt::Debug for NodeHostNoiseKey {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("NodeHostNoiseKey")
+            .field("public", &self.public)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NodeHostNoiseKey {
+    /// Construct from bytes loaded by the node's persistent secret store.
+    pub fn from_private(private: [u8; 32]) -> Self {
+        Self::from_zeroizing(Zeroizing::new(private))
+    }
+
+    fn from_zeroizing(private: Zeroizing<[u8; 32]>) -> Self {
+        let static_secret = x25519_dalek::StaticSecret::from(*private);
+        let public = x25519_dalek::PublicKey::from(&static_secret).to_bytes();
+        Self { private, public }
+    }
+
+    /// Create the NodeHost identity exactly once with owner-only permissions.
+    /// Existing files reject; callers must never rotate this key implicitly.
+    pub fn create_new(path: &Path) -> Result<Self, TransportError> {
+        let mut private = Zeroizing::new([0u8; 32]);
+        rand::rngs::OsRng.fill_bytes(&mut *private);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(private.as_ref())?;
+        file.sync_all()?;
+        if let Some(parent) = path.parent().filter(|value| !value.as_os_str().is_empty()) {
+            File::open(parent)?.sync_all()?;
+        }
+        Ok(Self::from_zeroizing(private))
+    }
+
+    /// Load the one existing NodeHost identity. Missing, truncated, symlinked or
+    /// over-permissive/foreign-owned files fail closed; loss never triggers key
+    /// regeneration. `O_NOFOLLOW` and metadata from the opened descriptor avoid
+    /// a path-check/read race.
+    pub fn load(path: &Path) -> Result<Self, TransportError> {
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() {
+            return Err(TransportError::Codec(
+                "NodeHost key path must be a regular non-symlink file".to_string(),
+            ));
+        }
+        if metadata.permissions().mode() & 0o777 != 0o600 {
+            return Err(TransportError::Codec(
+                "NodeHost key file mode must be exactly 0600".to_string(),
+            ));
+        }
+        if metadata.uid() != rustix::process::geteuid().as_raw() {
+            return Err(TransportError::Codec(
+                "NodeHost key file must be owned by the current effective user".to_string(),
+            ));
+        }
+        let mut private = Zeroizing::new([0u8; 32]);
+        file.read_exact(&mut *private)?;
+        let mut trailing = [0u8; 1];
+        if file.read(&mut trailing)? != 0 {
+            return Err(TransportError::Codec(
+                "NodeHost key must be exactly 32 bytes".to_string(),
+            ));
+        }
+        Ok(Self::from_zeroizing(private))
+    }
+
+    pub fn public(&self) -> [u8; 32] {
+        self.public
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnclaveInitializationChallenge {
+    pub challenge: [u8; 32],
+    pub recipient_x25519: [u8; 32],
+    pub attestation_ed25519: [u8; 32],
+    pub noise_responder_x25519: [u8; 32],
+}
+
+/// Production session authenticated by the sealed NodeHost initiator key.
+pub struct AuthorizedEnclaveClient {
+    stream: Transport,
+    noise: snow::TransportState,
+    attestation_pub: [u8; 32],
 }
 
 /// Bound on a single blocking enclave read/write: a wedged enclave that accepts
@@ -365,6 +475,207 @@ impl EnclaveClient {
             mrsigner: self.identity.mrsigner,
             isv_svn: self.identity.isv_svn,
         }
+    }
+}
+
+impl AuthorizedEnclaveClient {
+    /// Fetch the one-time production initialization challenge and persistent
+    /// enclave public keys. The discovery connection closes after this response.
+    pub fn discover_endpoint(
+        endpoint: &str,
+    ) -> Result<EnclaveInitializationChallenge, TransportError> {
+        let mut stream = connect_endpoint_transport(endpoint)?;
+        with_io_phase(
+            write_frame(
+                &mut stream,
+                &encode_request(&EnclaveRequest::GetInitializationChallenge)?,
+            ),
+            "initialization challenge write",
+        )?;
+        let response = decode_response(&with_io_phase(
+            read_frame(&mut stream),
+            "initialization challenge read",
+        )?)?;
+        match response {
+            EnclaveResponse::InitializationChallenge {
+                challenge,
+                recipient_x25519_pub,
+                attestation_pub,
+                noise_static_pub,
+            } => Ok(EnclaveInitializationChallenge {
+                challenge,
+                recipient_x25519: recipient_x25519_pub,
+                attestation_ed25519: attestation_pub,
+                noise_responder_x25519: noise_static_pub,
+            }),
+            EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+            _ => Err(TransportError::UnexpectedResponse),
+        }
+    }
+
+    /// Commit one canonical signed initialization manifest. The enclave accepts
+    /// it only if Noise message 1 proves the exact NodeHost key embedded in it.
+    pub fn initialize_endpoint(
+        endpoint: &str,
+        manifest: &EnclaveInitializationManifestV1,
+        node_signature: &[u8; 65],
+        node_host: &NodeHostNoiseKey,
+    ) -> Result<Self, TransportError> {
+        if manifest.node_host_noise_x25519 != node_host.public() {
+            return Err(TransportError::Handshake(
+                "initialization manifest does not bind the supplied NodeHost key".to_string(),
+            ));
+        }
+        let manifest_bytes = manifest
+            .encode_canonical()
+            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        let preamble = EnclaveRequest::Initialize {
+            manifest: manifest_bytes,
+            node_signature: node_signature.to_vec(),
+        };
+        let mut client = Self::connect_with_preamble(
+            endpoint,
+            &preamble,
+            manifest.noise_responder_x25519,
+            node_host,
+            manifest.attestation_ed25519,
+        )?;
+        let response = client.receive_response("initialization acknowledgement read")?;
+        let expected_enclave_id = manifest
+            .enclave_id()
+            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        let expected_authorization_hash = manifest
+            .authorization_hash()
+            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        match response {
+            EnclaveResponse::Initialized {
+                enclave_id,
+                node_host_authorization_hash,
+                sealed_loaded: false,
+            } if enclave_id == expected_enclave_id
+                && node_host_authorization_hash == expected_authorization_hash =>
+            {
+                Ok(client)
+            }
+            EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+            _ => Err(TransportError::UnexpectedResponse),
+        }
+    }
+
+    /// Reconnect to an initialized production enclave using the same manifest and
+    /// persistent NodeHost key. No quote is generated for this local session.
+    pub fn connect_endpoint(
+        endpoint: &str,
+        manifest: &EnclaveInitializationManifestV1,
+        node_host: &NodeHostNoiseKey,
+    ) -> Result<Self, TransportError> {
+        if manifest.node_host_noise_x25519 != node_host.public() {
+            return Err(TransportError::Handshake(
+                "sealed manifest does not bind the supplied NodeHost key".to_string(),
+            ));
+        }
+        manifest
+            .encode_canonical()
+            .map_err(|error| TransportError::Codec(error.to_string()))?;
+        Self::connect_with_preamble(
+            endpoint,
+            &EnclaveRequest::OpenSession,
+            manifest.noise_responder_x25519,
+            node_host,
+            manifest.attestation_ed25519,
+        )
+    }
+
+    fn connect_with_preamble(
+        endpoint: &str,
+        preamble: &EnclaveRequest,
+        enclave_static: [u8; 32],
+        node_host: &NodeHostNoiseKey,
+        attestation_pub: [u8; 32],
+    ) -> Result<Self, TransportError> {
+        let mut stream = connect_endpoint_transport(endpoint)?;
+        with_io_phase(
+            write_frame(&mut stream, &encode_request(preamble)?),
+            "production preamble write",
+        )?;
+        let params = NOISE_PARAMS
+            .parse()
+            .map_err(|error| TransportError::Noise(format!("{error:?}")))?;
+        let mut handshake = snow::Builder::new(params)
+            .local_private_key(node_host.private.as_ref())
+            .remote_public_key(&enclave_static)
+            .build_initiator()
+            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+        let mut buffer = [0u8; 1024];
+        let length = handshake
+            .write_message(&[], &mut buffer)
+            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+        with_io_phase(
+            write_frame(&mut stream, &buffer[..length]),
+            "Noise handshake request write",
+        )?;
+        let message = with_io_phase(read_frame(&mut stream), "Noise handshake response read")?;
+        handshake
+            .read_message(&message, &mut buffer)
+            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+        let noise = handshake
+            .into_transport_mode()
+            .map_err(|error| TransportError::Handshake(error.to_string()))?;
+        Ok(Self {
+            stream,
+            noise,
+            attestation_pub,
+        })
+    }
+
+    fn receive_response(
+        &mut self,
+        operation: &'static str,
+    ) -> Result<EnclaveResponse, TransportError> {
+        let ciphertext = with_io_phase(read_frame(&mut self.stream), operation)?;
+        let mut plaintext = vec![0u8; ciphertext.len()];
+        let length = self
+            .noise
+            .read_message(&ciphertext, &mut plaintext)
+            .map_err(|error| TransportError::Noise(error.to_string()))?;
+        let response = decode_response(&plaintext[..length])?;
+        if let EnclaveResponse::Error { message } = &response {
+            return Err(TransportError::EnclaveError(message.clone()));
+        }
+        Ok(response)
+    }
+
+    pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+        let plaintext = encode_request(request)?;
+        let mut ciphertext = vec![0u8; plaintext.len() + 64];
+        let length = self
+            .noise
+            .write_message(&plaintext, &mut ciphertext)
+            .map_err(|error| TransportError::Noise(error.to_string()))?;
+        with_io_phase(
+            write_frame(&mut self.stream, &ciphertext[..length]),
+            "encrypted enclave request write",
+        )?;
+        self.receive_response("encrypted enclave response read")
+    }
+
+    pub fn attestation_pub(&self) -> [u8; 32] {
+        self.attestation_pub
+    }
+}
+
+fn connect_endpoint_transport(endpoint: &str) -> Result<Transport, TransportError> {
+    if endpoint.contains(':') {
+        let stream = TcpStream::connect(endpoint)?;
+        let _ = stream.set_nodelay(true);
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
+        Ok(Transport::Tcp(stream))
+    } else {
+        let stream = UnixStream::connect(endpoint)?;
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
+        Ok(Transport::Unix(stream))
     }
 }
 
@@ -830,5 +1141,58 @@ mod tests {
             body,
         );
         assert!(verify_quote(&q, &QuotePolicy::dev_accept_any()).is_err());
+    }
+
+    #[test]
+    fn node_host_key_store_is_write_once_owner_only_and_never_regenerates() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("node-host-noise.key");
+        let created = NodeHostNoiseKey::create_new(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            NodeHostNoiseKey::load(&path).unwrap().public(),
+            created.public()
+        );
+
+        let create_error = NodeHostNoiseKey::create_new(&path).unwrap_err();
+        assert!(matches!(
+            create_error,
+            TransportError::Io(ref error)
+                if error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(NodeHostNoiseKey::load(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("exactly 0600"));
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(&path, [0x11; 31]).unwrap();
+        assert!(NodeHostNoiseKey::load(&path).is_err());
+        std::fs::write(&path, [0x11; 33]).unwrap();
+        assert!(NodeHostNoiseKey::load(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("exactly 32 bytes"));
+
+        std::fs::remove_file(&path).unwrap();
+        let target = root.path().join("node-host-noise-target.key");
+        std::fs::write(&target, [0x22; 32]).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(NodeHostNoiseKey::load(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(matches!(
+            NodeHostNoiseKey::load(&path),
+            Err(TransportError::Io(ref error))
+                if error.kind() == std::io::ErrorKind::NotFound
+        ));
     }
 }
