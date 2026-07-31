@@ -268,7 +268,12 @@ do_start() {
             # clean re-bootstrap. Offset by 1 so the seed is never all-zero.
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
-            local tee_port=$((7000 + PORT_OFFSET + i))
+            # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
+            # *:7000 by default on Apple Silicon — the very platform `localnet-tee`
+            # targets — so the node would connect to AirPlay and fail-fast on a quote
+            # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
+            # binds 127.0.0.1 only; `localhost` could resolve to ::1).
+            local tee_port=$((17000 + PORT_OFFSET + i))
             local tee_endpoint="127.0.0.1:$tee_port"
             # Tag the container with PORT_OFFSET so parallel localnets get
             # distinct names (`outbe-tee-gramine-<offset>-<i>`) and each run only
@@ -326,9 +331,9 @@ do_start() {
                 # `docker rm -f`), then launch the mock directly. A re-bootstrap
                 # wipes PID_DIR, orphaning the previous run's enclave still bound to
                 # this port; the node would then attach to a STALE enclave (old
-                # chain's offer key) and crash with "offer key divergence". Target
-                # our own binary on this exact socket only — never the OS's :7000
-                # (macOS AirPlay binds *:7000, which we leave alone).
+                # chain's offer key) and crash with "offer key divergence". Scope the
+                # pkill to our binary on this exact socket only, never a foreign
+                # listener on the same port.
                 local prev_pidf="$PID_DIR/validator-$i.enclave.pid"
                 [ -f "$prev_pidf" ] && kill "$(cat "$prev_pidf")" 2>/dev/null || true
                 pkill -f "outbe-tee-enclave.*--socket $tee_endpoint( |\$)" 2>/dev/null || true
