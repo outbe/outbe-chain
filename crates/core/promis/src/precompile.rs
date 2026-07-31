@@ -6,6 +6,11 @@ use outbe_primitives::error::Result;
 
 use crate::schema::Promis;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// `IPromis` interface ID (XOR of non-ERC-165 selectors in IPromis). Regenerated
 /// when the ABI surface changes; guarded by `test_iface_id_matches_selector_xor`.
 pub(crate) const IPROMIS_INTERFACE_ID: [u8; 4] = [0x4b, 0xb3, 0x17, 0xe4];

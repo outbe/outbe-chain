@@ -460,6 +460,18 @@ pub fn contract_view(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// payable; first two parameters after `&mut self` are
 /// `caller: Address, value: U256`. Consumed by the surrounding
 /// `#[contract_dispatch]` macro.
+///
+/// Using this requires the module to publish its payable surface next to the
+/// impl block:
+///
+/// ```ignore
+/// pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[__MyContractAbi::fundCall::SELECTOR];
+/// ```
+///
+/// The generated dispatch refuses value for every selector missing from that
+/// list, and the precompile route table asserts at compile time that the list
+/// agrees with the address's declared value policy. Omitting the const is a
+/// compile error (see `tests/compile_fail/payable_without_selectors.rs`).
 #[proc_macro_attribute]
 pub fn contract_payable(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

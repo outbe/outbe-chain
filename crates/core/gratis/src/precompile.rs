@@ -6,6 +6,11 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::Gratis;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol!("../../../contracts/precompiles/src/IGratis.sol");
 
 const TRANSFER_NOT_ALLOWED: &str = "gratis token transfers are not allowed";
