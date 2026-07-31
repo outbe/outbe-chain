@@ -215,19 +215,23 @@ pub fn serve_connection<S: Read + Write>(
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
 ) -> Result<(), TransportError> {
-    serve_connection_with(stream, keys, offer_key, None)
+    serve_connection_with(stream, keys, offer_key, None, alloy_primitives::B256::ZERO)
 }
 
 /// Serve a single client connection end-to-end. `offer_key` is the shared,
 /// write-once DKG-derived offer key slot (populated by the DKG connection's
 /// Seam F, read by the offer-decrypt path). `boot` carries the seal/unseal
-/// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
-/// persists the offer secret + threshold share after Seam F.
+/// configuration (tee-dir / isv_svn); when `Some`, the sealing path persists the
+/// offer secret + threshold share after Seam F. `chain_id` is the enclave's
+/// resident chain, from `--chain-id` — it scopes every state-key derivation and
+/// the owner-authorized fidelity query, so it is bound independently of whether
+/// sealing (`--tee-dir`) is configured.
 pub fn serve_connection_with<S: Read + Write>(
     mut stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     // 1. GetQuote (cleartext, pre-handshake).
     let first = decode_request(&read_frame(&mut stream)?)?;
@@ -280,14 +284,7 @@ pub fn serve_connection_with<S: Read + Write>(
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
 
-        let resp = dispatch(
-            req,
-            keys,
-            &mut dkg,
-            offer_key,
-            boot.map(|b| b.chain_id)
-                .unwrap_or(alloy_primitives::B256::ZERO),
-        );
+        let resp = dispatch(req, keys, &mut dkg, offer_key, chain_id);
 
         // Persist the offer key + share the first time it becomes available
         // (write-once).
@@ -899,6 +896,7 @@ pub fn serve(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     // The DKG-derived offer key is shared across all connection threads: the DKG
     // ceremony connection writes it (Seam F), the offer-decrypt connection reads
@@ -910,7 +908,9 @@ pub fn serve(
         let boot = boot.clone();
         std::thread::spawn(move || {
             // PoC: surface to stderr; one bad client must not kill the enclave.
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) =
+                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), chain_id)
+            {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });
@@ -929,6 +929,7 @@ pub fn serve_tcp(
     keys: Arc<EnclaveKeys>,
     boot: Option<Arc<EnclaveBootConfig>>,
     offer_key: SharedTributeOfferKey,
+    chain_id: alloy_primitives::B256,
 ) -> Result<(), TransportError> {
     for conn in listener.incoming() {
         let stream = conn?;
@@ -938,7 +939,9 @@ pub fn serve_tcp(
         let offer_key = Arc::clone(&offer_key);
         let boot = boot.clone();
         std::thread::spawn(move || {
-            if let Err(err) = serve_connection_with(stream, &keys, &offer_key, boot.as_deref()) {
+            if let Err(err) =
+                serve_connection_with(stream, &keys, &offer_key, boot.as_deref(), chain_id)
+            {
                 eprintln!("tee enclave: connection error: {err}");
             }
         });

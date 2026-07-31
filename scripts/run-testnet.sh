@@ -297,14 +297,21 @@ do_start() {
             # key from seal (real EGETKEY under gramine-sgx) instead of re-running
             # the ceremony — which the node skips on a non-fresh chain. Needs SGX
             # (no EGETKEY under gramine-direct → sealing is a no-op).
+            # The enclave's resident chain id, bound on EVERY launch (independent of
+            # sealing): it scopes state-key derivation and the owner-authorized
+            # fidelity query, which cross-checks it against the node's chain. Gating
+            # it on sealing left a non-sealing enclave at ZERO chain, so those
+            # queries failed with "query authorization is for a different chain".
+            local tee_chain_hex
+            tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
+            local -a tee_chain_args=(--chain-id "$tee_chain_hex")
+            # OUTBE_TEE_SEAL adds the persistent seal dir on top (restart fast-path).
             local -a tee_seal_mount=() tee_seal_args=()
             if [ -n "${OUTBE_TEE_SEAL:-}" ]; then
                 local tee_data_dir="$validator_dir/tee"
                 mkdir -p "$tee_data_dir"
-                local tee_chain_hex
-                tee_chain_hex=0x$(printf '%064x' "$(python3 -c "import json;print(json.load(open('$OUTPUT_DIR/genesis.json'))['config']['chainId'])")")
                 tee_seal_mount=(-v "$(readlink -f "$tee_data_dir"):/tee")
-                tee_seal_args=(--tee-dir /tee --chain-id "$tee_chain_hex")
+                tee_seal_args=(--tee-dir /tee)
             fi
             # DKG identity source. The mock (gramine-direct, no EGETKEY) uses a
             # deterministic per-index --dkg-seed. Real gramine-sgx WITH sealing
@@ -328,9 +335,9 @@ do_start() {
                 sleep 0.3
                 local -a bare_seal_args=()
                 [ -n "${OUTBE_TEE_SEAL:-}" ] &&
-                    bare_seal_args=(--tee-dir "$(readlink -f "$tee_data_dir")" --chain-id "$tee_chain_hex")
+                    bare_seal_args=(--tee-dir "$(readlink -f "$tee_data_dir")")
                 "$tee_enclave_bin" --socket "$tee_endpoint" \
-                    "${tee_dkg_arg[@]}" "${bare_seal_args[@]}" \
+                    "${tee_dkg_arg[@]}" "${tee_chain_args[@]}" "${bare_seal_args[@]}" \
                     > "$validator_dir/enclave.log" 2>&1 &
                 echo "$!" > "$prev_pidf"
             else
@@ -343,7 +350,7 @@ do_start() {
                     -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
                     -v "$(readlink -f "$tee_test_signing_key"):/run/secrets/outbe-test-sgx-key.pem:ro" \
                     "$tee_gramine_image" \
-                    --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_seal_args[@]}" >/dev/null
+                    --socket "$tee_endpoint" "${tee_dkg_arg[@]}" "${tee_chain_args[@]}" "${tee_seal_args[@]}" >/dev/null
                 echo "$tee_ctr" > "$PID_DIR/validator-$i.enclave.docker"
             fi
             local tee_up=""
