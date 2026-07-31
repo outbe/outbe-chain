@@ -9,6 +9,7 @@
 pub mod api;
 pub mod certified;
 pub mod errors;
+pub mod payout;
 pub mod precompile;
 pub mod schema;
 pub(crate) mod state;
@@ -16,9 +17,12 @@ pub(crate) mod state;
 pub use certified::{install_certified_contributor_root, CertifiedContributorRootV1};
 pub use errors::IntexError;
 pub use schema::{
-    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexCallTrigger,
-    IntexContract, IntexState, SeriesRecord,
+    CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
+    DistProgress, IntexCallTrigger, IntexContract, IntexState, SeriesRecord,
 };
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_payout;

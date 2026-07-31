@@ -13,6 +13,9 @@ alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 
+[features]
+test-utils = []
+
 [dev-dependencies]
 revm.workspace = true
 

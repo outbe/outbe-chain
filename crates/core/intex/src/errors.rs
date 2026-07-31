@@ -18,6 +18,14 @@ pub enum IntexError {
     InvalidState { expected: u8, actual: u8 },
     #[error("invalid stored lifecycle state value: {0}")]
     InvalidStateValue(u8),
+    #[error("invalid contributor payout batch: {0}")]
+    BadContributorBatch(&'static str),
+    #[error("contributor batch does not match the certified root")]
+    ContributorProofMismatch,
+    #[error("contributor leaves already paid for series {0}")]
+    ContributorLeavesAlreadyPaid(u32),
+    #[error("certified payout round already open for series {0}")]
+    CertifiedRoundExists(u32),
 }
 
 impl From<IntexError> for PrecompileError {
