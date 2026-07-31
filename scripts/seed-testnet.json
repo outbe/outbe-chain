@@ -3,20 +3,13 @@
     "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000",
     "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000000000000000"
   },
-  "gratis_balances": {
-    "0x64CCA861d30714593cB690e0a550C8a9b8b3b058": "1000000000000000000000"
-  },
-  "promis_balances": {
-    "0x64CCA861d30714593cB690e0a550C8a9b8b3b058": "1000000000000000000000"
-  },
   "tributes": [],
-  "nods": [
+  "gems": [
     {
-      "owner": "0x1111111111111111111111111111111111111111",
-      "gratis_load": "100000000000000000",
-      "worldwide_day": 20241220,
-      "league_id": 1,
-      "floor_price": "540000000000000000"
+      "owner": "0x64CCA861d30714593cB690e0a550C8a9b8b3b058",
+      "gem_load": "1000000000000000000000",
+      "issuance_currency": 840,
+      "reference_currency": 840
     }
   ],
   "metadosis": {
@@ -55,7 +48,7 @@
   "intex_factory": {
     "profile": "dev"
   },
-  "vault_provider": {
+  "vault_router": {
     "owner": "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
   },
   "oracle": {

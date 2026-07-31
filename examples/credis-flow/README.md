@@ -4,30 +4,55 @@ End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. E
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
 flow — from pledging Gratis to repaying anadosis and unpledging.
 
-### Shielded Gratis/Credis design
+### Confidential (TEE) Gratis/Credis design
 
-These scripts target the current shielded Gratis/Credis interfaces: the pool
-surface lives in `IGratisPool` (merkle commitments, nullifier hashes, ZK
-proofs), `unpledgeGratis(args)` and `requestCredis(asset, vaultProvider,
-bundleAccount, args)` take shielded args, and `anadosis(positionId,
-reclaimCommitment)` carries a **per-installment** reclaim commitment.
+These scripts target the confidential Gratis/Credis interfaces after the TEE
+migration. There is no ZK pool: per-account Gratis balances and pledged amounts
+are **encrypted at rest** and only the SGX enclave (and the account's view-key
+holder, client-side) can read them.
 
-Reclaim is no longer pre-supplied at `requestCredis`. Instead, each anadosis
-payment generates a fresh reclaim note and inserts it into the **anadosis
-denomination** — one decade below the pledge denom, worth `pledge / 10` — so the
-borrower can `unpledgeGratis` one installment's share immediately, without
-waiting for the loan to complete. The reclaim commitment MUST be computed with
-the anadosis denomination's id (`5-user-pays-anadosis.ts` derives it from
-`getNextAnadosis().gratisAmount`); a wrong-denom note inserts but is permanently
-unspendable, and the chain cannot detect it. `npm run generate-types` stages the
-ABIs and runs typechain; `npx tsc --noEmit` is clean.
+- **Keys.** `src/confidential.ts` fetches an account's enclave-derived **view key**
+  (decrypts its balance ciphertext) and **modify key** (authorizes writes) via the
+  `outbe_deriveGratisKeys(account, ephemeralPubkey)` RPC, then decrypts / MACs
+  byte-for-byte against the enclave (`bin/outbe-tee-enclave/src/gratis.rs`).
+- **Reads** (`balanceOf`/`pledgedOf`) return the account's ciphertext blob; scripts
+  decrypt it with the view key. `opNonceOf(account)` returns the write counter.
+- **Writes** carry `(mac, opNonce)`: `pledgeGratis(amount, mac, opNonce)` returns a
+  `pledgeHandle`; `unpledgeGratis(amount, handle, mac, opNonce)`;
+  `mineCoen(amount, mac, opNonce)`. `mac = HMAC(modifyKey, op ‖ amount ‖ opNonce ‖
+  chainId)` and `opNonce` must equal `gratis.opNonceOf(account)`.
+- **Credis.** `requestCredis(asset, bundleAccount, pledgeHandle, spendAuth)` — the
+  user hands the CCA a `pledgeSecret` (`HMAC(modifyKey, handle)`); the CCA binds it
+  to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
+  `anadosis(positionId)` pays one installment and **automatically** releases 1/N of
+  the pledged collateral back to the pledger's encrypted balance — no reclaim note,
+  no separate unpledge step.
+
+Crypto uses Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256, ChaCha20-Poly1305)
+plus `@noble/curves` for X25519. `npm run generate-types` stages the ABIs and runs
+typechain; `npx tsc --noEmit` is clean.
+
+> AUTH: `outbe_deriveGratisKeys(account, ephemeralPubkey, signature)` requires
+> proof of control of `account` — an EIP-191 `personal_sign` over
+> `"outbe/gratis/derive-keys/v1" ‖ account ‖ ephemeralPubkey`, which the node
+> recovers and matches before asking the enclave. `deriveGratisKeys(signer)` in
+> `confidential.ts` produces it, so you sign with the account key (read-only
+> scripts like `0-info` therefore need `USER_PRIVATE_KEY` to decrypt balances).
 
 Contract bindings come from this repo's own ABIs. `npm run generate-types` first
 runs `scripts/prepare-abis.mjs`, which copies the required JSONs out of
 `../../contracts/precompiles/abi-export/`
-and `../../contracts/account-abstraction/{abi-export,out}/` into a local
+and `../../contracts/smart-account/abi-export/` into a local
 `abi/` directory, then typechain generates ethers v6 factories into
 `src/contracts/`. Both directories are gitignored and regenerated on every build.
+
+The smart-account stack runs on **ZeroDev Kernel v4 / EntryPoint v0.9**. Because
+Kernel v4 models the account owner as a *permission* (not a plain root validator),
+owner and CCA UserOps use the permission nonce type and the Kernel v4
+`PermissionSignature` (`abi.encode(bytes[])`) format — see the helpers in
+`src/utils.ts` (`ownerPermissionId` / `ccaPermissionId` / `permissionNonceKey` /
+`encodePermissionSignature`). Redeploy the v4 smart-account stack (new bytecode →
+new addresses) and regenerate the deployment env before running these scripts.
 
 ### First-run quickstart
 
@@ -52,16 +77,21 @@ environment name by editing `DEFAULT_ENV` at the top of `utils.ts`.
 src/
 ├── 0-info.ts                   Print current state of all actors
 ├── 0-setup-native.ts           Fund user + CCA with native COEN
-├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault provider
-├── 1-pledge-gratis.ts          User pledges Gratis with a commitment
-├── 1.1-unpledge-gratis.ts      (Sanity) unpledge directly without going through credis
-├── 2-top-up-smart-account.ts   Deploy bundle account; transfer ERC20 into it
-├── 3-request-credis.ts         CCA calls requestCredis; vault funds enter bundle balance
+├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault router
+├── 0-setup-gratis.ts           Mine seeded gem → Promis → confidential Gratis
+├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
+├── 1-pledge-gratis.ts          User pledges Gratis (amount + modify-key MAC) → pledge handle
+├── 1.1-unpledge-gratis.ts      Direct reclaim of an UNSPENT pledge (e.g. credis rejected)
+├── 2-top-up-bundle-account.ts  Deploy bundle account; transfer ERC20 into it
+├── 3-request-credis.ts         CCA calls requestCredis(handle, spendAuth); vault funds enter bundle balance
 ├── 4-cca-simulate-purchase.ts  CCA uses bundle funds via per-token permission
 ├── 4.1-user-sa-withdraw.ts     User withdraws their free (non-bundled) balance
-├── 5-user-pays-anadosis.ts     User repays an installment (batched UserOp) + inserts that installment's reclaim note
-└── 6-user-unpledge-gratis.ts   User unpledges a reclaim ticket to unlock one installment's gratis (shielded)
+└── 5-user-pays-anadosis.ts     User repays an installment (batched UserOp); 1/N of the collateral auto-unlocks
 ```
+
+Collateral unlock is now automatic on each `anadosis` payment (released to the
+pledger's encrypted balance), so the old `6-user-unpledge-gratis.ts` reclaim step
+is gone.
 
 ## Installation
 
@@ -132,8 +162,8 @@ export BUNDLE_WITHDRAW_HOOK_ADDRESS=0xdF25D88FED0FF8af2003Eb98E0CC153303fcAF2c
 export SMART_ACCOUNT_FACTORY_ADDRESS=0xe28db1d1a138B21f2c84D7156b4Dab45a2F18E30
 
 export VAULT_ADDRESS=0xc0E713890eC7bbcC9e21e027c357c5042B7f03B6
-export VAULT_PROVIDER_IMPL_ADDRESS=0x7c43B530dE37E6943f8AfF0e0698246A7b87D682
-export VAULT_PROVIDER_ADDRESS=0xA447d123a93236A64CBBE1599E8102b54491F01E
+export VAULT_ROUTER_IMPL_ADDRESS=0x7c43B530dE37E6943f8AfF0e0698246A7b87D682
+export VAULT_ROUTER_ADDRESS=0xA447d123a93236A64CBBE1599E8102b54491F01E
 ```
 
 ## Running
@@ -149,6 +179,12 @@ npx tsx src/0-info.ts outbe-peira
 # Setup
 npx tsx src/0-setup-native.ts
 npx tsx src/0-setup-erc20.ts
+# Bootstrap confidential Gratis for the user. Gratis AND Promis are both
+# TEE-encrypted at rest, so neither can be plaintext-seeded at genesis — instead
+# genesis seeds the user a Settled *gem* (scripts/seed-testnet.json "gems"). This
+# script burns it for confidential Promis (IGemFactory.mineGemPromis), then
+# converts that Promis 1:1 into confidential Gratis (IGratisFactory.mineFromPromis).
+npx tsx src/0-setup-gratis.ts                          # converts the whole gem load by default
 
 # User pledges 77 Gratis with a random commitment
 npx tsx src/1-pledge-gratis.ts                          # default amount/commitment

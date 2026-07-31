@@ -54,6 +54,24 @@ pub struct GenesisAggregateVote {
     pub entries: Vec<(u32, U256, U256)>,
 }
 
+/// A reference currency for genesis import/export: an ISO 4217 numeric code
+/// plus its annualized refinancing rate (1e18 scaled). The refinancing rate is
+/// read by the Credis Factory at issuance and pinned onto the Anadosis
+/// schedule. Currencies used purely as pricing references (no credis) may carry
+/// a zero rate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReferenceCurrency {
+    /// ISO 4217 numeric code (e.g., 840 = USD).
+    pub iso_code: u16,
+    /// Annualized refinancing rate at 1e18 scale (e.g., 0.043 -> 43e15).
+    pub refinancing_rate: U256,
+}
+
+/// Genesis seed for the USD (ISO 840) refinancing rate: the current SOFR
+/// (Secured Overnight Financing Rate) at 1e18 scale.
+pub const DEFAULT_USD_REFINANCING_RATE: U256 =
+    U256::from_limbs([36_300_000_000_000_000u64, 0, 0, 0]);
+
 /// Configurable genesis parameters for the Oracle contract.
 ///
 /// All `U256` values use the 1e18 scale factor (`SCALE_1E18`).
@@ -81,10 +99,11 @@ pub struct OracleGenesisConfig {
     /// denom: stablecoin denom string (e.g., "0xUSD").
     /// pair_base/pair_quote: trading pair for this settlement currency.
     pub settlement_currencies: Vec<(u16, String, String, String)>,
-    /// Reference currencies as ISO 4217 numeric codes (e.g., 840 = USD).
-    /// These codes identify currencies that are valid for off-chain pricing
-    /// references. Pre-filled at genesis with `[840]`.
-    pub reference_currencies: Vec<u16>,
+    /// Reference currencies with their annualized refinancing rate (1e18
+    /// scaled). These ISO 4217 codes identify currencies valid for off-chain
+    /// pricing references; the refinancing rate is read by the Credis Factory
+    /// at issuance. Pre-filled at genesis with USD (840) at the current SOFR.
+    pub reference_currencies: Vec<ReferenceCurrency>,
     /// Penalty counters as `(validator, success, abstain, miss)`.
     pub penalty_counters: Vec<(Address, u64, u64, u64)>,
     /// Pending aggregate votes that have not yet been tallied.
@@ -111,7 +130,10 @@ impl OracleGenesisConfig {
             initial_rates: vec![],
             feeder_delegations: vec![],
             settlement_currencies: vec![],
-            reference_currencies: vec![840],
+            reference_currencies: vec![ReferenceCurrency {
+                iso_code: 840,
+                refinancing_rate: DEFAULT_USD_REFINANCING_RATE,
+            }],
             penalty_counters: vec![],
             aggregate_votes: vec![],
             snapshots: vec![],
@@ -166,9 +188,14 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         oracle.set_exchange_rate(Address::ZERO, base, quote, *rate, 0, 0)?;
     }
 
-    // Record feeder delegations.
+    // Record role-scoped feeder delegations in ValidatorSet.
+    let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     for (validator, feeder) in &config.feeder_delegations {
-        oracle.feeder_delegation.write(validator, *feeder)?;
+        validator_set.set_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            *feeder,
+        )?;
     }
 
     // Import settlement currencies.
@@ -210,20 +237,24 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         oracle.settlement_count.write(count + 1)?;
     }
 
-    // Import reference currencies.
+    // Import reference currencies and their refinancing rates.
     let mut seen_reference_iso: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
-    for iso_code in &config.reference_currencies {
-        if *iso_code == 0 {
+    for reference in &config.reference_currencies {
+        let iso_code = reference.iso_code;
+        if iso_code == 0 {
             return Err(PrecompileError::Revert(
                 "reference iso_code must be non-zero".into(),
             ));
         }
-        if !seen_reference_iso.insert(*iso_code) {
+        if !seen_reference_iso.insert(iso_code) {
             return Err(PrecompileError::Revert(format!(
                 "duplicate reference iso_code: {iso_code}"
             )));
         }
-        oracle.reference_currencies.push(*iso_code)?;
+        oracle.reference_currencies.push(iso_code)?;
+        oracle
+            .reference_refinancing_rate
+            .write(&iso_code, reference.refinancing_rate)?;
     }
 
     // Import penalty counters.
@@ -293,10 +324,14 @@ pub fn export_genesis(
         pairs.push((base, quote));
     }
 
-    // Export feeder delegations.
+    // Export authoritative role-scoped feeder delegations.
+    let validator_set = outbe_validatorset::contract::ValidatorSet::new(oracle.storage.clone());
     let mut feeder_delegations = Vec::new();
     for validator in validators {
-        let feeder = oracle.feeder_delegation.read(validator)?;
+        let feeder = validator_set.get_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )?;
         if feeder != Address::ZERO {
             feeder_delegations.push((*validator, feeder));
         }
@@ -402,8 +437,17 @@ pub fn export_genesis(
         settlement_currencies.push((iso_code, denom, base, quote));
     }
 
-    // Export reference currencies (bounded list of fiat codes; read_all OK).
-    let reference_currencies = oracle.reference_currencies.read_all()?;
+    // Export reference currencies with their refinancing rates (bounded list;
+    // read_all OK).
+    let reference_iso_codes = oracle.reference_currencies.read_all()?;
+    let mut reference_currencies = Vec::with_capacity(reference_iso_codes.len());
+    for iso_code in reference_iso_codes {
+        let refinancing_rate = oracle.reference_refinancing_rate.read(&iso_code)?;
+        reference_currencies.push(ReferenceCurrency {
+            iso_code,
+            refinancing_rate,
+        });
+    }
 
     Ok(OracleGenesisConfig {
         vote_period,
@@ -611,6 +655,66 @@ fn export_pair_metadata(oracle: &OracleContract, pair_id: u32) -> Result<(String
 }
 
 impl OracleContract<'_> {
+    /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
+    pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let (base, quote) = crate::api::DAY_TYPE_PAIR;
+            let expected_pair_id = self.get_pair_id(base, quote)?;
+            if expected_pair_id == 0 {
+                return Err(PrecompileError::Fatal(
+                    "Oracle OCOMP day-type pair is not registered".into(),
+                ));
+            }
+
+            if self.ocomp_profile_ready.read()? {
+                if self.ocomp_day_type_pair_id.read()? != expected_pair_id
+                    || self.ocomp_state_version.read()? == 0
+                {
+                    return Err(PrecompileError::Fatal(
+                        "Oracle OCOMP profile does not match the registered day-type pair".into(),
+                    ));
+                }
+                return Ok(());
+            }
+            if self.ocomp_day_type_pair_id.read()? != 0 || self.ocomp_state_version.read()? != 0 {
+                return Err(PrecompileError::Fatal(
+                    "Oracle OCOMP profile contains partial pre-fork state".into(),
+                ));
+            }
+
+            self.ocomp_day_type_pair_id.write(expected_pair_id)?;
+            self.ocomp_state_version.write(1)?;
+            self.ocomp_profile_ready.write(true)
+        })
+    }
+
+    /// Reserves the next OCOMP-visible Oracle version before its owner writes.
+    ///
+    /// Returning `None` keeps every historical pre-fork mutation byte-for-byte
+    /// inert. Overflow is rejected before any related owner state changes.
+    pub(crate) fn next_ocomp_state_version(&self) -> Result<Option<u64>> {
+        if !self.ocomp_profile_ready.read()? {
+            return Ok(None);
+        }
+        let current = self.ocomp_state_version.read()?;
+        if current == 0 {
+            return Err(PrecompileError::BodyReadCorruption(
+                "Oracle OCOMP profile is ready with zero state version".into(),
+            ));
+        }
+        current.checked_add(1).map(Some).ok_or_else(|| {
+            PrecompileError::BodyReadCorruption("Oracle OCOMP state version overflow".into())
+        })
+    }
+
+    pub(crate) fn commit_ocomp_state_version(&self, next: Option<u64>) -> Result<()> {
+        if let Some(version) = next {
+            self.ocomp_state_version.write(version)?;
+        }
+        Ok(())
+    }
+
     // -----------------------------------------------------------------------
     // Pair Registry
     // -----------------------------------------------------------------------
@@ -739,6 +843,19 @@ impl OracleContract<'_> {
         Ok((rate, block, ts))
     }
 
+    /// Annualized refinancing rate (1e18 scaled) for an ISO 4217 code, as pinned
+    /// on the reference-currency collection at genesis. Reverts when the code is
+    /// not a registered reference currency or carries no (non-zero) rate.
+    pub fn get_refinancing_rate(&self, iso_code: u16) -> Result<U256> {
+        let rate = self.reference_refinancing_rate.read(&iso_code)?;
+        if rate.is_zero() {
+            return Err(PrecompileError::Revert(format!(
+                "no refinancing rate for iso_code {iso_code}"
+            )));
+        }
+        Ok(rate)
+    }
+
     /// Sets the exchange rate for a pair (system-only bootstrap write).
     pub fn set_exchange_rate(
         &mut self,
@@ -789,49 +906,38 @@ impl OracleContract<'_> {
 
     /// Returns the feeder address for a validator. Address::ZERO means self-delegation.
     pub fn get_feeder(&self, validator: &Address) -> Result<Address> {
-        self.feeder_delegation.read(validator)
+        let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+        vs.get_delegate(
+            *validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )
     }
 
     /// Delegates feeder consent from validator to feeder.
     pub fn delegate_feeder(&mut self, validator: Address, feeder: Address) -> Result<()> {
-        // Verify caller is a registered validator (cross-call)
-        let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
-        let info = vs.get_validator(validator)?;
-        if info.is_none() {
-            return Err(PrecompileError::Revert("not a registered validator".into()));
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
+        if feeder.is_zero() {
+            return vs.revoke_delegate(
+                validator,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            );
         }
-
-        self.feeder_delegation.write(&validator, feeder)?;
-        Ok(())
+        vs.set_delegate(
+            validator,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+            feeder,
+        )
     }
 
     /// Resolves which validator a feeder is acting for.
     /// Returns the validator address if the caller is a valid feeder.
     pub fn resolve_validator_for_feeder(&self, caller: Address) -> Result<Address> {
         let vs = outbe_validatorset::contract::ValidatorSet::new(self.storage.clone());
-        let all = vs.get_all_validators()?;
-
-        // Check if caller is directly a validator (self-delegation)
-        for v in &all {
-            if v.validator_address == caller {
-                let delegated = self.feeder_delegation.read(&caller)?;
-                if delegated == Address::ZERO || delegated == caller {
-                    return Ok(caller);
-                }
-            }
-        }
-
-        // Check if caller is a delegated feeder for any validator
-        for v in &all {
-            let delegated = self.feeder_delegation.read(&v.validator_address)?;
-            if delegated == caller {
-                return Ok(v.validator_address);
-            }
-        }
-
-        Err(PrecompileError::Revert(
-            "caller is not a validator or delegated feeder".into(),
-        ))
+        vs.resolve_validator_for_role(
+            caller,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )?
+        .ok_or_else(|| PrecompileError::Revert("caller is not an active ORACLE signer".into()))
     }
 
     // -----------------------------------------------------------------------
@@ -842,7 +948,11 @@ impl OracleContract<'_> {
     ///
     /// The caller must be the validator itself or a delegated feeder.
     /// Each tuple contains (pair_hash, rate, volume) for one pair.
-    pub fn submit_vote(&mut self, caller: Address, tuples: &[(B256, U256, U256)]) -> Result<()> {
+    pub fn submit_vote(
+        &mut self,
+        caller: Address,
+        tuples: &[(B256, U256, U256)],
+    ) -> Result<Address> {
         let validator = self.resolve_validator_for_feeder(caller)?;
 
         // Validate tuple count: cannot exceed active pair count
@@ -904,7 +1014,7 @@ impl OracleContract<'_> {
         // Add to voter list for tally iteration
         self.voter_list.push(validator)?;
 
-        Ok(())
+        Ok(validator)
     }
 
     /// Clears all votes and resets the voter list. Called after tally.
@@ -971,7 +1081,24 @@ impl OracleContract<'_> {
     /// Each entry is (pair_id, rate, volume). The snapshot is appended at
     /// `snapshot_write_idx` and old entries beyond the retention window are evicted.
     pub fn write_snapshot(&mut self, timestamp: u64, entries: &[(u32, U256, U256)]) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
+        } else {
+            self.write_snapshot_inner(timestamp, entries)
+        }
+    }
+
+    fn write_snapshot_inner(
+        &mut self,
+        timestamp: u64,
+        entries: &[(u32, U256, U256)],
+    ) -> Result<()> {
         let idx = self.snapshot_write_idx.read()?;
+        let next_snapshot_idx = idx.checked_add(1).ok_or_else(|| {
+            PrecompileError::BodyReadCorruption("Oracle snapshot write index overflow".into())
+        })?;
+        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.snapshot_timestamp.write(&idx, timestamp)?;
         self.snapshot_pair_count.write(&idx, entries.len() as u32)?;
@@ -987,7 +1114,7 @@ impl OracleContract<'_> {
             volume_map.write(&pi, *volume)?;
         }
 
-        self.snapshot_write_idx.write(idx + 1)?;
+        self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
         for (pair_id, rate, volume) in entries {
@@ -1008,7 +1135,7 @@ impl OracleContract<'_> {
         // Evict old entries beyond retention window
         self.evict_old_snapshots(timestamp)?;
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Evicts snapshots older than the retention window.
@@ -1486,7 +1613,24 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| {
+                self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+            })
+        } else {
+            self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
+        }
+    }
+
+    fn store_worldwide_day_vwap_snapshot_inner(
+        &mut self,
+        worldwide_day: WorldwideDay,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<()> {
         let (pair_ids, vwaps, _) = self.calculate_vwaps(start_time, end_time)?;
+        let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
         self.worldwide_day_vwap_start
@@ -1504,7 +1648,7 @@ impl OracleContract<'_> {
             value_map.write(&i, *vwap)?;
         }
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Returns a stored WorldwideDay VWAP snapshot.
@@ -1571,6 +1715,15 @@ impl OracleContract<'_> {
     /// caller gates re-finalization via the `utc_day_vwap_last_finalized`
     /// watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
+        if self.ocomp_profile_ready.read()? {
+            let storage = self.storage.clone();
+            storage.with_checkpoint(|| self.finalize_utc_day_vwap_inner(utc_day))
+        } else {
+            self.finalize_utc_day_vwap_inner(utc_day)
+        }
+    }
+
+    fn finalize_utc_day_vwap_inner(&mut self, utc_day: u32) -> Result<()> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
@@ -1581,6 +1734,12 @@ impl OracleContract<'_> {
             Err(PrecompileError::Revert(msg)) if msg.contains("no VWAP data") => return Ok(()),
             Err(e) => return Err(e),
         };
+        let next_ocomp_version = self.next_ocomp_state_version()?;
+        let ocomp_pair_id = self
+            .ocomp_profile_ready
+            .read()?
+            .then(|| self.ocomp_day_type_pair_id.read())
+            .transpose()?;
 
         // `pair_ids.len()` is bounded by the registry's u32 `pair_count`, so the
         // conversion is lossless; `unwrap_or` keeps it panic-free per runtime rules.
@@ -1593,17 +1752,23 @@ impl OracleContract<'_> {
             let vwap = vwaps[i as usize];
             pair_id_map.write(&i, pair_id)?;
             value_map.write(&i, vwap)?;
+            if Some(pair_id) == ocomp_pair_id {
+                self.ocomp_day_type_vwap_by_utc_day.write(&utc_day, vwap)?;
+            }
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
                 pairId: pair_id,
                 vwap,
             };
-            let _ = self
+            let event_result = self
                 .storage
                 .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+            if next_ocomp_version.is_some() {
+                event_result?;
+            }
         }
 
-        Ok(())
+        self.commit_ocomp_state_version(next_ocomp_version)
     }
 
     /// Returns the finalized per-UTC-day VWAP for `pair_id` on `utc_day`

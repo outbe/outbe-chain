@@ -10,7 +10,7 @@ use crate::constants::{MAX_INPUTS, POSEIDON_GAS_BASE, POSEIDON_GAS_PER_INPUT, ZK
 use crate::errors::ZkProofError;
 use crate::poseidon::poseidon_hash;
 use crate::precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
-use crate::verify::zk_verify;
+use crate::verify::{decode_full_proof_public_inputs, verify_full_proof, zk_verify};
 
 const CHAIN_ID: u64 = 19_280_501;
 
@@ -128,6 +128,98 @@ fn abi_encode(circuit_hash: &[u8; 32], proof: &[u8]) -> Vec<u8> {
     let pad = (32 - proof.len() % 32) % 32;
     out.extend(core::iter::repeat_n(0u8, pad));
     out
+}
+
+fn combined_full_proof(public_inputs: [[u8; 32]; 4], proof_words: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32 * (4 + proof_words));
+    out.extend_from_slice(&4u32.to_be_bytes());
+    for public_input in public_inputs {
+        out.extend_from_slice(&public_input);
+    }
+    out.resize(out.len() + proof_words * 32, 0);
+    out
+}
+
+#[test]
+fn full_proof_public_inputs_are_decoded_in_circuit_order() {
+    let words = [
+        fr_be(&Fr::from(11u64)),
+        fr_be(&Fr::from(22u64)),
+        fr_be(&Fr::from(33u64)),
+        fr_be(&Fr::from(44u64)),
+    ];
+    let proof = combined_full_proof(words, 274);
+
+    let decoded = decode_full_proof_public_inputs(&proof).unwrap();
+
+    assert_eq!(decoded.derived_owner, words[0]);
+    assert_eq!(decoded.nft_hash, words[1]);
+    assert_eq!(decoded.binding_hash, words[2]);
+    assert_eq!(decoded.merkle_root, words[3]);
+}
+
+#[test]
+fn full_proof_rejects_wrong_public_input_count() {
+    let mut proof = combined_full_proof([[0u8; 32]; 4], 274);
+    proof[..4].copy_from_slice(&3u32.to_be_bytes());
+
+    assert!(matches!(
+        decode_full_proof_public_inputs(&proof),
+        Err(ZkProofError::WrongPublicInputCount {
+            expected: 4,
+            actual: 3
+        })
+    ));
+}
+
+#[test]
+fn full_proof_rejects_truncated_public_inputs() {
+    let proof = [4u32.to_be_bytes().as_slice(), &[0u8; 64]].concat();
+
+    assert!(matches!(
+        decode_full_proof_public_inputs(&proof),
+        Err(ZkProofError::TruncatedPublicInputs { .. })
+    ));
+}
+
+#[test]
+fn full_proof_rejects_non_canonical_public_input() {
+    let modulus = Fr::MODULUS.to_bytes_be();
+    let mut non_canonical = [0u8; 32];
+    non_canonical[32 - modulus.len()..].copy_from_slice(&modulus);
+    let mut words = [[0u8; 32]; 4];
+    words[2] = non_canonical;
+    let proof = combined_full_proof(words, 274);
+
+    assert!(matches!(
+        decode_full_proof_public_inputs(&proof),
+        Err(ZkProofError::NonCanonicalPublicInput(2))
+    ));
+}
+
+#[test]
+fn full_proof_rejects_wrong_proof_section_length() {
+    let empty = combined_full_proof([[0u8; 32]; 4], 0);
+    assert!(matches!(
+        decode_full_proof_public_inputs(&empty),
+        Err(ZkProofError::WrongCombinedProofLength { .. })
+    ));
+
+    let oversized = combined_full_proof([[0u8; 32]; 4], 275);
+    assert!(matches!(
+        decode_full_proof_public_inputs(&oversized),
+        Err(ZkProofError::WrongCombinedProofLength { .. })
+    ));
+}
+
+#[test]
+fn full_proof_with_invalid_curve_points_returns_backend_error() {
+    let proof = combined_full_proof([[0u8; 32]; 4], 274);
+
+    assert!(matches!(
+        verify_full_proof(&proof),
+        Err(ZkProofError::VerificationBackend(_))
+    ));
 }
 
 #[test]

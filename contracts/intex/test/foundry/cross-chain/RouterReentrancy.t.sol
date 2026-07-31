@@ -9,6 +9,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -51,9 +52,12 @@ contract ReentrancyProbeAuction {
         router = router_;
     }
 
-    function auctionStart(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
-        external
-    {
+    function auctionStart(
+        uint32,
+        IIntexAuction.WorldwideDayState,
+        IIntexAuction.AuctionSchedule calldata,
+        IIntexAuction.AuctionParams calldata
+    ) external {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -120,7 +124,7 @@ contract RouterReentrancyTest is CrossChainTest {
         _setUpBridge();
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
@@ -134,7 +138,7 @@ contract RouterReentrancyTest is CrossChainTest {
         bnbRouter.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3, 9e18
+            42, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3, 9e18, 1
         );
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -147,6 +151,14 @@ contract RouterReentrancyTest is CrossChainTest {
         ReentrancyProbeDesis probeDesis =
             new ReentrancyProbeDesis(address(bridge), BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter));
         outbeRouter.wire(address(probeDesis), makeAddr("factory"));
+
+        // Freeze day 42's snapshot with BNB so its bids pass the inbound membership check.
+        outbeRouter.addTarget(BNB_CHAIN_ID);
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = 42;
+        p.dayState = 1;
+        vm.prank(address(probeDesis));
+        outbeRouter.sendAuctionStageStart(p);
 
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
             42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)

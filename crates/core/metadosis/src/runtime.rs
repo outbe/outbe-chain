@@ -1,9 +1,12 @@
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
+use outbe_fidelity::schema::FidelityContract;
+use outbe_ocomp_protocol::league_snapshot::{fidelity_league_snapshot_root, league_snapshot_key};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     chain,
-    error::Result,
+    error::{PrecompileError, Result},
     time::{
         date_key_to_utc_timestamp as primitives_date_key_to_timestamp,
         previous_date_key as primitives_previous_date_key, timestamp_to_date_key as utc_date_key,
@@ -111,7 +114,11 @@ pub fn previous_date_key(date_key: u32) -> u32 {
 /// Cycle handler at UTC midnight. The `MetadosisLifecycle` wrapper
 /// was deleted altogether in the follow-up cleanup; tests that drive
 /// the WWD state machine sub-day call this function directly.
-pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn start_metadosis(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
     let mut metadosis = MetadosisContract::new(ctx.storage.clone());
     let timestamp = ctx.block.timestamp;
 
@@ -124,10 +131,24 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     advance_active_worldwide_days(ctx)?;
 
     let active = metadosis.active_wwd.read_all()?;
+    let schema_limits = crate::ocomp::schema::poc_schema_limits();
+    let ocomp_profile = metadosis.read_ocomp_request_profile(&schema_limits)?;
 
     for wwd in &active {
         if metadosis.get_wwd_status(*wwd)? == status::READY {
-            process_metadosis(&mut metadosis, ctx, *wwd)?;
+            if let Some(profile) = &ocomp_profile {
+                if !metadosis.ocomp_fsm_states.get_bytes(wwd).is_empty()? {
+                    metadosis.ocomp_fsm_state(
+                        *wwd,
+                        &schema_limits,
+                        crate::ocomp::request::fsm_limits(profile),
+                    )?;
+                    continue;
+                }
+                process_ocomp_ready_candidate(&mut metadosis, ctx, scope, parent, *wwd, profile)?;
+            } else {
+                process_metadosis(&mut metadosis, ctx, scope, parent, *wwd)?;
+            }
             break;
         }
     }
@@ -138,6 +159,100 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
     // deletes the oldest record past `MAX_RECORDS_KEPT`.
 
     Ok(())
+}
+
+fn process_ocomp_ready_candidate(
+    metadosis: &mut MetadosisContract<'_>,
+    ctx: &BlockRuntimeContext<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    wwd: WorldwideDay,
+    profile: &crate::ocomp::schema::OcompRequestProfile,
+) -> Result<()> {
+    let limit_amount = metadosis
+        .worldwide_days
+        .entry(wwd)
+        .metadosis_limit_amount()
+        .read()?;
+    let tribute_totals = TributeContract::new(metadosis.storage.clone()).get_day_totals(wwd)?;
+
+    // These branches are pinned to their pre-fork behavior and cannot invoke
+    // Lysis. Populated resolved days are instead indexed for the post-seal
+    // terminal request phase.
+    if limit_amount.is_zero()
+        || metadosis.get_wwd_day_type(wwd)? == day_type::UNKNOWN
+        || tribute_totals.tribute_count == 0
+    {
+        return process_metadosis(metadosis, ctx, scope, parent, wwd);
+    }
+    if metadosis
+        .calculate_metadosis(wwd, tribute_totals.tribute_nominal_amount, limit_amount)?
+        .gratis_allocation
+        .is_zero()
+    {
+        return process_metadosis(metadosis, ctx, scope, parent, wwd);
+    }
+    metadosis.initialize_ocomp_pre_admission(wwd)?;
+    // Build the per-owner Fidelity league snapshot now, while the CE lifecycle is
+    // active and the day's tributes are enumerable. The post-seal terminal request
+    // only reads the committed root (see `build_fidelity_league_snapshot`).
+    metadosis.build_fidelity_league_snapshot(scope, parent, wwd, ctx.block.timestamp)?;
+    metadosis.enqueue_ocomp_ready(
+        wwd,
+        ctx.block.block_number,
+        crate::ocomp::request::fsm_limits(profile),
+    )
+}
+
+impl MetadosisContract<'_> {
+    /// Snapshots each day-owner's Fidelity league into per-owner storage and
+    /// commits the ordered root, once per day. It MUST run during the active CE
+    /// lifecycle (tribute enumeration requires `PHASE_ACTIVE`); the terminal
+    /// request runs post-seal and only reads the committed root.
+    ///
+    /// Idempotent: a non-zero stored root means the snapshot already exists, so
+    /// re-entry is a no-op and the frozen leagues stay stable across the blocks
+    /// between READY enqueue and terminal-request consumption.
+    pub(crate) fn build_fidelity_league_snapshot(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        wwd: WorldwideDay,
+        timestamp: u64,
+    ) -> Result<()> {
+        if !self
+            .ocomp_fidelity_league_snapshot_root
+            .read(&wwd)?
+            .is_zero()
+        {
+            return Ok(());
+        }
+        let tributes =
+            TributeContract::new(self.storage.clone()).get_all_day_tributes(scope, parent, wwd)?;
+        let fidelity = FidelityContract::new(self.storage.clone());
+        let mut entries: Vec<(Address, u16)> = Vec::with_capacity(tributes.len());
+        for tribute in &tributes {
+            entries.push((tribute.owner, fidelity.league_at(tribute.owner, timestamp)?));
+        }
+        entries.sort_by_key(|(owner, _)| *owner);
+        // One canonical Tribute per owner per day → the owner set must be unique;
+        // this also yields the canonical order the OCOMP opening/subject encoding
+        // expects.
+        if entries.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+            return Err(PrecompileError::Fatal(
+                "OCOMP day owner set is not strictly ordered and unique".into(),
+            ));
+        }
+        for (owner, league) in &entries {
+            self.ocomp_fidelity_league_snapshot
+                .write(&league_snapshot_key(wwd.value(), *owner), *league)?;
+        }
+        // A non-empty day yields a non-zero domain-separated root; this doubles as
+        // the "already built" marker.
+        self.ocomp_fidelity_league_snapshot_root
+            .write(&wwd, fidelity_league_snapshot_root(wwd.value(), &entries))?;
+        Ok(())
+    }
 }
 
 /// Walk every active WorldwideDay's status machine forward to the phase
@@ -263,15 +378,6 @@ pub fn create_worldwide_day_for_date(
     Ok(())
 }
 
-/// Auction timestamp (scheduled process time) for a worldwide day.
-fn scheduled_auction_ts(metadosis: &MetadosisContract, wwd: WorldwideDay) -> Result<u64> {
-    metadosis
-        .worldwide_days
-        .entry(wwd)
-        .scheduled_process_time()
-        .read()
-}
-
 fn update_wwd_status_machine(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -289,13 +395,6 @@ fn update_wwd_status_machine(
 
     let new_status = metadosis.update_wwd_status(wwd, timestamp)?;
 
-    if current_status == status::OFFERING && new_status == status::OFFERING {
-        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
-        let is_green_day = metadosis.get_wwd_day_type(wwd)? == day_type::GREEN;
-        outbe_desis::api::dispatch_stage_reveal(ctx.storage.clone(), auction_ts, is_green_day)?;
-        return Ok(());
-    }
-
     if new_status == current_status {
         return Ok(());
     }
@@ -309,9 +408,6 @@ fn update_wwd_status_machine(
 
     if current_status < status::OFFERING && new_status == status::OFFERING {
         tribute.unseal_day(wwd)?;
-        let auction_ts = scheduled_auction_ts(metadosis, wwd)?;
-        let coen_price = metadosis.worldwide_days.entry(wwd).current_vwap().read()?;
-        outbe_desis::api::dispatch_stage_start(ctx.storage.clone(), auction_ts, coen_price)?;
     }
     if current_status == status::OFFERING {
         tribute.seal_day(wwd)?;
@@ -379,26 +475,21 @@ fn resolve_day_rate(metadosis: &mut MetadosisContract, wwd: WorldwideDay) -> Res
 
 /// Settle a READY worldwide day. The five terminal outcomes are intentionally
 /// **not** uniform — each has a distinct PROMIS interaction, so do not collapse
-/// them into one shared "settle" helper. PromisLimit is a cross-day accumulator;
-/// `set` replaces the whole pool, `add` contributes to it.
+/// them into one shared "settle" helper.
 ///
-/// | branch        | auction clearing        | PromisLimit                  | mark      |
-/// |---------------|-------------------------|------------------------------|-----------|
-/// | limit == 0    | clear(0) to close it     | —                            | FAILED    |
-/// | day = UNKNOWN | none (not GREEN)         | `add(limit)` so it isn't lost| FAILED    |
-/// | no tributes   | clear(limit), close      | `add(remainder)`             | COMPLETED |
-/// | lysis Ok      | add day remainder, then  | `set(clearing remainder)` —  | COMPLETED |
-/// |               | clear the **whole** pool | the pool minus what the      |           |
-/// |               |                          | auction consumed             |           |
-/// | lysis Err     | none                     | none (propagates, reverts)   | —         |
-///
-/// `dispatch_auction_clearing` returns the PROMIS the auction could not consume
-/// (rounding dust on success, whole supply on best-effort failure); that value —
-/// not zero — is what the success branch writes back via `set`. Do not re-add the
-/// dust inside Desis; that double-counts and the `set` here would wipe it.
+/// | branch        | auction brief             | PromisLimit                  | mark      |
+/// |---------------|---------------------------|------------------------------|-----------|
+/// | limit == 0    | none                      | —                            | FAILED    |
+/// | day = UNKNOWN | none                      | `add(limit)` so it isn't lost| FAILED    |
+/// | no tributes   | green: limit, red: record | `add` what the brief left    | COMPLETED |
+/// | lysis Ok      | green: day remainder,     | `add` what the brief left    | COMPLETED |
+/// |               | red: record only          |                              |           |
+/// | lysis Err     | none                      | none (propagates, reverts)   | —         |
 fn process_metadosis(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
     wwd: WorldwideDay,
 ) -> Result<()> {
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
@@ -412,12 +503,6 @@ fn process_metadosis(
     let wwd_type = metadosis.get_wwd_day_type(wwd)?;
 
     if limit_amount.is_zero() {
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        dispatch_auction_clearing(ctx, wwd_type, auction_ts, U256::ZERO)?;
         metadosis.mark_wwd_failed(wwd)?;
         metadosis.emit(IMetadosis::MetadosisSkipped {
             worldwideDay: wwd.into(),
@@ -436,21 +521,13 @@ fn process_metadosis(
         return Ok(());
     }
 
-    let tribute = TributeContract::new(metadosis.storage.clone());
+    let mut tribute = TributeContract::new(metadosis.storage.clone());
     let tribute_day_totals = tribute.get_day_totals(wwd)?;
 
     if tribute_day_totals.tribute_count == 0 {
-        // No tributes, but the day still opened a GREEN auction at
-        // FORMING->OFFERING (see `update_wwd_status_machine`). Close it so no
-        // started auction is left dangling on a terminal day; whatever the
-        // clearing does not deliver is routed to PROMIS as unallocated.
-        let auction_ts = metadosis
-            .worldwide_days
-            .entry(wwd)
-            .scheduled_process_time()
-            .read()?;
-        let to_promis = dispatch_auction_clearing(ctx, wwd_type, auction_ts, limit_amount)?;
+        let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, limit_amount)?;
         metadosis.mark_wwd_completed(wwd)?;
+        tribute.retire_completed_partition(scope, wwd)?;
         metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
             worldwideDay: wwd.into(),
             dayMetadosisLimit: limit_amount,
@@ -467,8 +544,34 @@ fn process_metadosis(
     let metadosis_parameters =
         metadosis.calculate_metadosis(wwd, tribute_nominal_total, limit_amount)?;
 
+    if metadosis_parameters.gratis_allocation.is_zero() {
+        let remainder = metadosis_parameters.metadosis_limit_remainder;
+        let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, remainder)?;
+        promis_limit.add_to_total_unallocated(to_promis)?;
+
+        metadosis.mark_wwd_completed(wwd)?;
+        tribute.retire_completed_partition(scope, wwd)?;
+
+        metadosis.emit(IMetadosis::MetadosisExecuted {
+            worldwideDay: wwd.into(),
+            tributeTotals: tribute_nominal_total,
+            dayGratisDemand: metadosis_parameters.gratis_demand,
+            dayGratisLimit: metadosis_parameters.gratis_supply,
+            dayGratisAllocation: U256::ZERO,
+            dayGratisAllocationRemainder: U256::ZERO,
+            netDayGratisAllocation: U256::ZERO,
+            dayMetadosisLimitRemainder: remainder,
+            status: "COMPLETED".into(),
+            blockNumber: ctx.block.block_number,
+        })?;
+
+        return Ok(());
+    }
+
     match outbe_lysis::runtime::lysis(
         metadosis.storage.clone(),
+        scope,
+        parent,
         wwd,
         metadosis_parameters.gratis_allocation,
     ) {
@@ -476,27 +579,11 @@ fn process_metadosis(
             let remainder =
                 lysis_result.remaining_gratis + metadosis_parameters.metadosis_limit_remainder;
 
-            promis_limit.add_to_total_unallocated(remainder)?;
-
-            let promis_total_unallocated = promis_limit.get_total_unallocated()?;
-
-            let auction_ts = metadosis
-                .worldwide_days
-                .entry(wwd)
-                .scheduled_process_time()
-                .read()?;
-
-            let clearing_reminder =
-                dispatch_auction_clearing(ctx, wwd_type, auction_ts, promis_total_unallocated)?;
-
-            //TODO: ADD GUARD
-            // if (clearing_reminder > promis_total_unallocated) {
-            //     //drop error
-            // }
-
-            promis_limit.set_total_unallocated(clearing_reminder)?;
+            let to_promis = dispatch_brief(ctx, metadosis, wwd_type, wwd, remainder)?;
+            promis_limit.add_to_total_unallocated(to_promis)?;
 
             metadosis.mark_wwd_completed(wwd)?;
+            tribute.retire_completed_partition(scope, wwd)?;
 
             metadosis.emit(IMetadosis::MetadosisExecuted {
                 worldwideDay: wwd.into(),
@@ -530,19 +617,50 @@ fn process_metadosis(
     }
 }
 
-fn dispatch_auction_clearing(
+/// Hand the day's auction brief to Desis: a green day carries `supply`, a red
+/// day is a cancelled record with none. Returns the PROMIS to route back into
+/// PromisLimit (everything on red or on a best-effort Desis failure).
+fn dispatch_brief(
     ctx: &BlockRuntimeContext,
+    metadosis: &MetadosisContract,
     dtype: u8,
-    auction_ts: u64,
+    wwd: WorldwideDay,
     supply: U256,
 ) -> Result<U256> {
-    if dtype != day_type::GREEN {
-        return Ok(supply);
+    let entry_price = resolve_auction_entry_price(metadosis, ctx, wwd)?;
+    let is_green = dtype == day_type::GREEN;
+    let brief_supply = if is_green { supply } else { U256::ZERO };
+    let accepted = outbe_desis::api::dispatch_auction_brief(
+        ctx.storage.clone(),
+        u32::from(wwd),
+        brief_supply,
+        entry_price,
+        is_green,
+        ctx.block.timestamp,
+    )?;
+    Ok(if accepted {
+        supply - brief_supply
+    } else {
+        supply
+    })
+}
+
+/// Auction entry price: the daily VWAP of the last closed UTC day, falling back
+/// to the day's forming snapshot when the daily store has no data yet.
+fn resolve_auction_entry_price(
+    metadosis: &MetadosisContract,
+    ctx: &BlockRuntimeContext,
+    wwd: WorldwideDay,
+) -> Result<U256> {
+    let last_closed = primitives_previous_date_key(utc_date_key(ctx.block.timestamp));
+    if let Some(vwap) =
+        outbe_oracle::api::day_type_pair_utc_vwap(metadosis.storage.clone(), last_closed)?
+    {
+        if !vwap.is_zero() {
+            return Ok(vwap);
+        }
     }
-    // Returns the PROMIS remainder the auction could not consume: the rounding
-    // remainder on a delivered clearing, or the whole `supply` on a best-effort
-    // Desis failure. The caller writes this back into the PromisLimit accumulator.
-    outbe_desis::api::dispatch_stage_clearing(ctx.storage.clone(), auction_ts, supply)
+    metadosis.worldwide_days.entry(wwd).current_vwap().read()
 }
 
 fn emit_failed_execution(

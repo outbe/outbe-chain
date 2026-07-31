@@ -25,7 +25,7 @@ const A = (hex: string): Address => getAddress(hex);
 const STRUCTS = [
   "struct NodData { uint256 nodId; address owner; uint32 worldwideDay; uint32 leagueId; uint256 floorPriceMinor; uint256 gratisLoadMinor; uint256 costOfGratisMinor; uint256 costAmountMinor; bool isQualified; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
   "struct GemData { uint256 gemId; address owner; uint8 gemType; uint8 state; uint256 gemLoad; uint256 entryPrice; uint256 costAmount; uint256 floorPrice; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
-  "struct Position { uint256 positionId; address asset; address bundleAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; }",
+  "struct Position { uint256 positionId; address asset; address bundleAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; uint256 credisPrincipal; uint256 refinancingRate; uint16 issuanceCurrency; bytes eoaCiphertext; }",
   "struct Anadosis { uint32 anadosisNumber; uint64 dueDate; uint64 paidAt; uint256 anadosisAmount; uint256 gratisAmount; }",
   "struct PledgeTicket { uint256 commitment; uint256 amount; int64 createdAtBlock; }",
   "struct ExchangeRateTuple { string base; string quote; uint256 exchangeRate; uint256 volume; }",
@@ -52,7 +52,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     address: A("0x0000000000000000000000000000000000001100"),
     note: "TributeFactory (offerTribute, enclave decrypt)",
     abi: parseAbi([
-      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot) returns (uint256 tributeId)",
+      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bool excludeFromIntexIssuance, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot, bytes signature) returns (uint256 tributeId)",
     ]),
   },
 
@@ -76,28 +76,29 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
-    note: "Gratis ERC-20",
+    note: "Gratis — confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
     abi: parseAbi([
       "function name() view returns (string)",
       "function symbol() view returns (string)",
       "function decimals() view returns (uint8)",
       "function totalSupply() view returns (uint256)",
       "function pledgedTotalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (uint256 balanceMinor)",
-      "function pledgedOf(address account) view returns (uint256 pledgedMinor)",
+      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
+      "function pledgedOf(address account) view returns (bytes pledgedCiphertext)",
       "function allowance(address owner, address spender) view returns (uint256)",
     ]),
   },
 
   promis: {
     address: A("0x0000000000000000000000000000000000001337"),
-    note: "Promis token",
+    note: "Promis — confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
     abi: parseAbi([
       "function name() view returns (string)",
       "function symbol() view returns (string)",
       "function decimals() view returns (uint8)",
       "function totalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (uint256 balanceMinor)",
+      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
+      "function opNonceOf(address account) view returns (uint64)",
     ]),
   },
 
@@ -204,6 +205,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function getVoteTargets() view returns (uint32[] pairIds)",
       "function isVoteTarget(string base, string quote) view returns (bool)",
       "function getReferenceCurrencies() view returns (uint16[] isoCodes)",
+      "function getRefinancingRate(uint16 isoCode) view returns (uint256 rate)",
       "function getSettlementCount() view returns (uint32 count)",
       "function getFeederDelegation(address validator) view returns (address feeder)",
       "function getVotePenaltyCounter(address validator) view returns (uint64 success, uint64 abstain, uint64 miss)",
@@ -284,6 +286,40 @@ export const CONTRACTS: Record<string, ContractEntry> = {
       "function registeredCount() view returns (uint256)",
     ]),
   },
+
+  governance: {
+    address: A("0x0000000000000000000000000000000000001018"),
+    note: "Governance (canon, meta-canon, OIP, GIP)",
+    // `statusCode` (not `status`) so it bypasses the WorldwideDay status
+    // humanizer in format.ts; the proposal status name is attached in view.ts.
+    abi: parseAbi([
+      "struct Proposal { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; string text; }",
+      "struct ProposalMeta { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; }",
+      "function getMetaCanon() view returns (string text, uint64 version, bytes32 hash)",
+      "function getCanon() view returns (string text, uint64 version, bytes32 hash)",
+      "function getMetaCanonRevisionHash(uint64 version) view returns (bytes32)",
+      "function getCanonRevisionHash(uint64 version) view returns (bytes32)",
+      "function getOip(uint256 id) view returns (Proposal)",
+      "function getGip(uint256 id) view returns (Proposal)",
+      "function oipCount() view returns (uint64)",
+      "function gipCount() view returns (uint64)",
+      "function getOipsByAuthor(address author, uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function getGipsByAuthor(address author, uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function getAcceptedOips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function getAcceptedGips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function getRejectedOips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function getRejectedGips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
+      "function oipCountByAuthor(address author) view returns (uint256)",
+      "function gipCountByAuthor(address author) view returns (uint256)",
+      "function acceptedOipCount() view returns (uint256)",
+      "function acceptedGipCount() view returns (uint256)",
+      "function rejectedOipCount() view returns (uint256)",
+      "function rejectedGipCount() view returns (uint256)",
+      "function getOipDiff(uint256 id, uint8 base) view returns (string)",
+      "function getGipDiff(uint256 id, uint8 base) view returns (string)",
+      "function isAuthority(address who) view returns (bool)",
+    ]),
+  },
 };
 
 /** Resolve a contract by registry name or raw 0x address. */
@@ -319,6 +355,19 @@ export const WWD_STATUS = [
 ] as const;
 
 export const DAY_TYPE = ["UNKNOWN", "GREEN", "RED"] as const;
+
+// Governance proposal status (crates/core/governance/src/status.rs).
+export const PROPOSAL_STATUS = [
+  "Draft",
+  "Approved",
+  "Rejected",
+  "Rework",
+  "Implemented",
+] as const;
+
+export function proposalStatusName(v: number): string {
+  return PROPOSAL_STATUS[v] ?? `UNKNOWN(${v})`;
+}
 
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).
 export const GEM_STATE = ["Issued", "Qualified", "Settled"] as const;

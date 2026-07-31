@@ -61,6 +61,34 @@ pub struct ConsensusStatusInfo {
     pub is_validator: bool,
     /// Phase-1 finalized-parent certificate verification policy for this node.
     pub phase1_verification_mode: Phase1VerificationMode,
+    /// Local Mongo materialization and business-readiness state.
+    pub projection: ProjectionStatusInfo,
+}
+
+/// Operator-visible local projection state. This is local health, not consensus data.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectionStatusInfo {
+    pub state: ProjectionHealth,
+    pub checkpoint_number: Option<u64>,
+    pub checkpoint_hash: Option<B256>,
+    pub reth_finalized_number: Option<u64>,
+    pub reth_finalized_hash: Option<B256>,
+    pub lag_blocks: Option<u64>,
+    pub ready: bool,
+    pub unavailable_for_millis: Option<u64>,
+    pub last_failure_class: Option<String>,
+}
+
+/// Stable JSON projection-health vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectionHealth {
+    Starting,
+    CatchingUp,
+    Ready,
+    MongoUnavailable,
+    Fatal,
 }
 
 /// Operator-visible Phase-1 finalized-parent verification boundary.
@@ -90,6 +118,7 @@ pub struct SlashConfig {
     pub proposer_misdemeanor_threshold: u64,
     pub proposer_felony_threshold: u64,
     pub voter_misdemeanor_threshold: u64,
+    pub voter_felony_threshold: u64,
     pub slash_amount_percent: u64,
     pub evidence_reward_percent: u64,
 }
@@ -148,16 +177,66 @@ pub struct FinalizationProof {
     /// Hex of the `commonware_codec::Encode` finalized `ConsensusBlock`.
     pub block_hex: String,
 }
-
 /// Outbe custom RPC namespace.
 ///
 /// Provides read-only access to validator infrastructure state.
 /// Enable with `--http.api outbe`.
+/// Sealed Gratis view + modify keys returned by `outbe_deriveGratisKeys`.
+///
+/// The enclave derives the account's keys and seals them to the requester's
+/// ephemeral X25519 key: `sealed = AEAD(ECDHE(enclaveEphemeral, requesterEphemeral),
+/// view_key ‖ modify_key)`. The client recovers `view_key || modify_key` with its
+/// ephemeral secret + `enclaveEphemeralPubkey`. Opaque to the node.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GratisKeysSealed {
+    pub sealed: alloy_primitives::Bytes,
+    pub nonce: alloy_primitives::Bytes,
+    pub enclave_ephemeral_pubkey: B256,
+}
+
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeApi {
+    /// Returns one independently verifiable latest-finalized compressed-entity
+    /// point package. V1 deliberately has no caller-selected block.
+    #[method(name = "getCompressedEntity")]
+    async fn get_compressed_entity(
+        &self,
+        request: outbe_compressed_entities::PointReadRequestV1,
+    ) -> jsonrpsee::core::RpcResult<outbe_compressed_entities::PointReadResultV1>;
+
     /// Returns information about all active validators.
     #[method(name = "getValidators")]
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
+
+    /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`
+    /// or `Promis`) inside the enclave and return them sealed to `ephemeralPubkey`
+    /// (a client X25519 public key). Off-chain key delivery — it never touches
+    /// consensus state.
+    ///
+    /// The caller MUST prove control of `account`: `signature` is an EIP-191
+    /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" ‖ account ‖
+    /// ephemeralPubkey`, and the recovered signer must equal `account`. Without a
+    /// matching signature the enclave is never asked — otherwise anyone could obtain
+    /// any account's modify key.
+    #[method(name = "deriveKeys")]
+    async fn derive_keys(
+        &self,
+        ledger: outbe_tee::protocol::Ledger,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
+
+    /// Deprecated alias for `deriveKeys(Gratis, …)`, kept for existing Gratis
+    /// clients.
+    #[method(name = "deriveGratisKeys")]
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> jsonrpsee::core::RpcResult<GratisKeysSealed>;
 
     /// Returns detailed information about a single validator by address.
     #[method(name = "getValidator")]
@@ -226,6 +305,20 @@ pub trait OutbeApi {
 mod tests {
     use super::*;
 
+    fn ready_projection() -> ProjectionStatusInfo {
+        ProjectionStatusInfo {
+            state: ProjectionHealth::Ready,
+            checkpoint_number: Some(41),
+            checkpoint_hash: Some(B256::repeat_byte(0x41)),
+            reth_finalized_number: Some(41),
+            reth_finalized_hash: Some(B256::repeat_byte(0x41)),
+            lag_blocks: Some(0),
+            ready: true,
+            unavailable_for_millis: None,
+            last_failure_class: None,
+        }
+    }
+
     #[test]
     fn test_consensus_status_info_serialization_camel_case() {
         let info = ConsensusStatusInfo {
@@ -242,6 +335,7 @@ mod tests {
             vrf_expiry_height: 21621,
             is_validator: true,
             phase1_verification_mode: Phase1VerificationMode::ValidatorEnforced,
+            projection: ready_projection(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -322,6 +416,7 @@ mod tests {
             vrf_expiry_height: 21700,
             is_validator: false,
             phase1_verification_mode: Phase1VerificationMode::TrustedFinality,
+            projection: ready_projection(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -343,6 +438,8 @@ mod tests {
             deserialized.phase1_verification_mode,
             Phase1VerificationMode::TrustedFinality
         );
+        assert!(deserialized.projection.ready);
+        assert_eq!(deserialized.projection.checkpoint_number, Some(41));
     }
 
     #[test]

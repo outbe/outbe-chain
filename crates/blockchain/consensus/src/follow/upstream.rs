@@ -1,8 +1,8 @@
 //! Transport seam for the follower: where finalized blocks come from.
 //!
 //! The follower never runs consensus and is never admitted to the validators'
-//! `authenticated::lookup` P2P network (it has no registered signing key —
-//! transport A, the Tempo model). Instead it pulls already-finalized blocks
+//! `authenticated::lookup` P2P network because it has no registered signing key.
+//! Instead it pulls already-finalized blocks
 //! from an UPSTREAM node over RPC. This module defines the abstract seam so the
 //! verification core (marshal + `CommitteeChain` + resolver + driver) can be
 //! wired and compiled independently of any concrete RPC client.
@@ -26,6 +26,7 @@
 
 use std::future::Future;
 
+use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
 
 use crate::block::ConsensusBlock;
@@ -42,6 +43,54 @@ pub struct CertifiedFinalizedBlock {
     pub finalization: Finalization,
     /// The finalized consensus block.
     pub block: ConsensusBlock,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublicFinalizedBlockDecodeError {
+    #[error("invalid Commonware finalization bytes: {0}")]
+    Finalization(String),
+    #[error("trailing bytes after Commonware finalization")]
+    TrailingFinalization,
+    #[error("invalid finalized consensus block bytes: {0}")]
+    Block(String),
+    #[error("trailing bytes after finalized consensus block")]
+    TrailingBlock,
+    #[error("finalization committee decode bound must be non-zero")]
+    ZeroCommitteeBound,
+}
+
+/// Canonically decode the two byte strings exposed by
+/// `outbe_getFinalization(height)`.
+///
+/// Decoding establishes structure only. Callers must still authenticate the
+/// certificate against the historical committee before treating it as
+/// finality authority.
+pub fn decode_public_finalized_block(
+    finalization_bytes: &[u8],
+    block_bytes: &[u8],
+    max_committee_members: usize,
+) -> Result<CertifiedFinalizedBlock, PublicFinalizedBlockDecodeError> {
+    if max_committee_members == 0 {
+        return Err(PublicFinalizedBlockDecodeError::ZeroCommitteeBound);
+    }
+    let certificate_config = max_committee_members;
+    let mut finalization_reader = finalization_bytes;
+    let finalization = Finalization::read_cfg(&mut finalization_reader, &certificate_config)
+        .map_err(|error| PublicFinalizedBlockDecodeError::Finalization(error.to_string()))?;
+    if !finalization_reader.is_empty() {
+        return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
+    }
+
+    let mut block_reader = block_bytes;
+    let block = ConsensusBlock::read_cfg(&mut block_reader, &())
+        .map_err(|error| PublicFinalizedBlockDecodeError::Block(error.to_string()))?;
+    if !block_reader.is_empty() {
+        return Err(PublicFinalizedBlockDecodeError::TrailingBlock);
+    }
+    Ok(CertifiedFinalizedBlock {
+        finalization,
+        block,
+    })
 }
 
 /// Source of finalized blocks + certificates, by height, from an upstream node.

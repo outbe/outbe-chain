@@ -86,6 +86,53 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, None, None)
+}
+
+/// Dispatches begin-block work with explicit read-only body authority.
+pub fn dispatch_with_readers(
+    storage: StorageHandle,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_inner(storage, data, caller, value, Some((scope, parent)), None)
+}
+
+/// Production dispatch with both finalized body readers and the immutable
+/// chain-manifest fork authority.
+pub fn dispatch_with_readers_and_ocomp_install(
+    storage: StorageHandle,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_inner(
+        storage,
+        data,
+        caller,
+        value,
+        Some((scope, parent)),
+        ocomp_fork_install,
+    )
+}
+
+fn dispatch_inner(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+    body_readers: Option<(
+        &outbe_compressed_entities::ExecutionScope,
+        &outbe_offchain_data::RuntimeBodyReaders,
+    )>,
+    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
             "system precompile can only be called by SYSTEM_ADDRESS".into(),
@@ -109,9 +156,18 @@ pub fn dispatch(
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_late_finalize_credits(&ctx, &artifact)?;
         }
+        SystemTxInputV2::OcompLifecycleBegin => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_ocomp_lifecycle_begin(&ctx, ocomp_fork_install)?;
+        }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick(&ctx)?;
+            match body_readers {
+                Some((scope, parent)) => {
+                    run_cycle_tick_with_readers(&ctx, scope, parent)?;
+                }
+                None => run_cycle_tick(&ctx)?,
+            }
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
@@ -124,6 +180,19 @@ pub fn dispatch(
         SystemTxInputV2::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_oracle_slash_window(&ctx)?;
+        }
+        SystemTxInputV2::HookEvents => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_hook_events(&ctx)?;
+        }
+        SystemTxInputV2::OcompTerminalRequest => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let (scope, _) = body_readers.ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "OCOMP terminal request requires execution seal authority".into(),
+                )
+            })?;
+            run_ocomp_terminal_request(&ctx, scope)?;
         }
     }
 
@@ -399,6 +468,21 @@ pub(crate) fn run_finalization_and_slashing(
         ))
     })?;
 
+    // OCOMP finality is derived only from an actual consensus finalization
+    // certificate for the exact request parent. Certified notarization remains
+    // sufficient for ordinary parent accounting, but cannot create a JobId or
+    // open a result-vote window.
+    if metadata.proof_kind
+        == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization
+    {
+        outbe_metadosis::ocomp::expiry::record_certified_parent_finality(
+            ctx,
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+            finalized.state_root.unwrap_or(B256::ZERO),
+        )?;
+    }
+
     // the V3 Rewards fingerprint binds the canonical VRF proof
     // hash from the verified parent certificate. The executor's Phase 1
     // preflight (`apply_pre_execution_changes::verify_phase1_in_preexec`)
@@ -496,6 +580,54 @@ pub(crate) fn run_finalization_and_slashing(
 
 /// CycleTick system tx: record the proposer identity and run the Cycle begin-block tick.
 pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+
+    #[cfg(test)]
+    {
+        use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
+        use std::sync::Arc;
+
+        let storage: StorageReaderHandle = Arc::new(MemoryStorage::new());
+        let parent = outbe_offchain_data::RuntimeBodyReaders::new(storage);
+        let scope = outbe_compressed_entities::ExecutionScope::new();
+        let compressed =
+            outbe_compressed_entities::CompressedEntitiesLifecycleContext::new(ctx.clone(), &scope);
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::begin_block(
+            &compressed,
+        )?;
+        let lifecycle =
+            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent);
+        <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
+        <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
+            &compressed,
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(not(test))]
+    Err(PrecompileError::Fatal(
+        "Cycle execution body read authority was not supplied".into(),
+    ))
+}
+
+/// Production CycleTick path with explicit read-only body authority.
+pub(crate) fn run_cycle_tick_with_readers(
+    ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    parent: &outbe_offchain_data::RuntimeBodyReaders,
+) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+    // This body mutation must consume system-transaction gas and appear in its
+    // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
+    // buckets are not qualified until the following block.
+    let nod_lifecycle = outbe_nod::hooks::NodLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(&nod_lifecycle)?;
+    let cycle_lifecycle =
+        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent);
+    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
+}
+
+fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
     let allow_boundary_proposer = current_preloaded_system_tx_context()
         .map(|context| context.allow_boundary_proposer)
         .unwrap_or(false);
@@ -513,7 +645,7 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
             ctx.block.proposer
         )));
     }
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(ctx)
+    Ok(())
 }
 
 /// BoundaryOutcome system tx: activate a DKG/reshare boundary before user transactions.
@@ -871,6 +1003,40 @@ pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
     outbe_oracle::hooks::run_slash_window(ctx)
 }
 
+/// HookEvents system tx: no-op marker. Whitelisted pre-exec hook logs are
+/// attached to this phase's receipt by the executor without re-running hooks.
+pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
+    Ok(())
+}
+
+/// Reserved OCOMP expiry/reset slot. OCM-08 wires the bounded Metadosis
+/// lifecycle handler into this already receipt-visible phase.
+pub(crate) fn run_ocomp_lifecycle_begin(
+    ctx: &BlockRuntimeContext,
+    fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+) -> Result<()> {
+    if let Some(install) = fork_install {
+        if ctx.block.block_number == install.activation_height {
+            outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone())
+                .initialize_ocomp_fork_install(
+                    install,
+                    ctx.block.block_number,
+                    &outbe_metadosis::ocomp::schema::poc_schema_limits(),
+                )?;
+        }
+    }
+    outbe_metadosis::ocomp::expiry::run_lifecycle_begin(ctx)
+}
+
+/// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
+/// creation here without changing block ordering or the system-tx ABI.
+pub(crate) fn run_ocomp_terminal_request(
+    ctx: &BlockRuntimeContext,
+    scope: &outbe_compressed_entities::ExecutionScope,
+) -> Result<()> {
+    outbe_metadosis::ocomp::request::run_terminal_request(ctx, scope)
+}
+
 fn block_runtime_context_from_storage(
     storage: StorageHandle,
     include_validator_snapshot: bool,
@@ -1008,6 +1174,21 @@ mod tests {
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
         provider.enter(|storage| {
+            let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::ZERO,
+                    U256::from(3),
+                )
+                .unwrap();
+            storage
+                .sstore(
+                    outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+                    U256::from(1),
+                    U256::from_be_slice(root.as_slice()),
+                )
+                .unwrap();
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(128).unwrap();
@@ -1078,6 +1259,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::repeat_byte(0xEF),
@@ -1272,6 +1454,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,
@@ -1349,6 +1532,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
+                        state_root: None,
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,

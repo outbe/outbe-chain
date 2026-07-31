@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evidence-Based Defect Triage"
+  short_description: "Classify findings before changing product code"
+  default_prompt: "Use $evidence-based-defect-triage to investigate this finding and determine whether it is a confirmed product defect."

@@ -17,11 +17,14 @@ default = []
 [dependencies]
 # Internal
 outbe-consensus.workspace = true
+outbe-compressed-entities.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
 outbe-validatorset.workspace = true
 outbe-teeregistry.workspace = true
 outbe-tee.workspace = true
+outbe-update.workspace = true
 
 # Commonware
 commonware-actor.workspace = true
@@ -41,11 +44,14 @@ commonware-parallel.workspace = true
 reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network"] }
 reth-node-builder.workspace = true
 reth-provider.workspace = true
+reth-chain-state.workspace = true
+reth-storage-api.workspace = true
 reth-transaction-pool.workspace = true
 reth-primitives-traits.workspace = true
 
 # Alloy
 alloy-primitives.workspace = true
+alloy-eips.workspace = true
 alloy-consensus.workspace = true
 alloy-sol-types.workspace = true
 bytes.workspace = true
@@ -63,6 +69,7 @@ tokio.workspace = true
 rand_core.workspace = true
 tracing.workspace = true
 metrics.workspace = true
+thiserror.workspace = true
 
 # Follower upstream RPC client (HTTP) for --upstream full-node mode.
 jsonrpsee = { version = "0.26", default-features = false, features = ["http-client"] }

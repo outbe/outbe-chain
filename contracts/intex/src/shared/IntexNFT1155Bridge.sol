@@ -121,6 +121,8 @@ contract IntexNFT1155Bridge is
 
     /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
     function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
+        // reject a malformed recipient before burning; the receive path rejects it too
+        IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = _sendParam.tokenId;
@@ -154,6 +156,7 @@ contract IntexNFT1155Bridge is
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
+        IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         if (_sendParam.tokenIds.length > MAX_BATCH_SIZE) {
             revert IntexNFT1155BridgeCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
@@ -185,6 +188,7 @@ contract IntexNFT1155Bridge is
 
         bytes memory message = _buildMultiMsg(_sendParam);
         for (uint256 i = 0; i < len; i++) {
+            IntexNFT1155BridgeCodec.assertAddress(_sendParam.recipients[i]);
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
             token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }

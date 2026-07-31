@@ -20,13 +20,17 @@
 //!   - [`gramine`] — the real `/dev/attestation/*` quote/seal/measurement surface.
 
 pub mod compute;
+pub mod confidential;
 pub mod crypto;
 pub mod dkg;
 pub mod errors;
 pub mod gramine;
+pub mod gratis;
 pub mod keys;
 pub mod payload;
 pub mod process;
+pub mod promis;
 pub mod run;
 pub mod seal;
 pub mod transport;
+pub mod zk_claim;

@@ -9,15 +9,17 @@ import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfa
 
 /**
  *
- * NOTE: switching the active gateway drops messages already in flight through the previous one: they are rejected on
- * arrival ({ERC7786BridgeUnauthorizedGateway}) and never execute. Recovery is by re-sending from the source through
- * the new gateway, which is safe against double-execution because the in-flight message never executes.
+ * NOTE: switching a gateway (the default or a per-chain override) drops messages already in flight from the affected
+ * chain through the previous one: they are rejected on arrival ({ERC7786BridgeUnauthorizedGateway}) and never execute.
+ * Recovery is by re-sending from the source through the new gateway, which is safe against double-execution because
+ * the in-flight message never executes.
  */
 contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote, Ownable, Pausable {
     using InteroperableAddress for bytes;
 
     event MessageExecuted(bytes32 indexed receiveId, address indexed recipient);
     event GatewayUpdated(address indexed gateway);
+    event ChainGatewayUpdated(uint256 indexed chainId, address indexed gateway);
     event RemoteRegistered(bytes remote);
 
     error ERC7786BridgeUnauthorizedGateway(address caller);
@@ -35,8 +37,12 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     /// @dev Messages already delivered to their recipient, keyed by keccak256(sender, wrapped payload).
     mapping(bytes32 id => bool executed) private _executed;
 
-    /// @dev The single active gateway: sends outbound and is the only gateway trusted for inbound delivery.
+    /// @dev The default gateway: used for any chain without a per-chain override.
     address private _activeGateway;
+
+    /// @dev Per-chain gateway override, for outbound sends to and inbound trust from that chain. Zero means "use the
+    /// default gateway".
+    mapping(uint256 chainId => address gateway) private _gateways;
 
     /// @dev Nonce for message deduplication (internal)
     uint256 private _nonce;
@@ -48,7 +54,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     // ============================================ IERC7786GatewaySource ============================================
 
     /// @inheritdoc IERC7786GatewaySource
-    /// @dev Delegates to the active gateway, which owns the set of supported attributes.
+    /// @dev Delegates to the default gateway, which owns the set of supported attributes.
     function supportsAttribute(bytes4 selector) public view virtual returns (bool) {
         address gateway = getGateway();
         return gateway != address(0) && IERC7786GatewaySource(gateway).supportsAttribute(selector);
@@ -62,7 +68,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes32 sendId)
     {
-        address gateway = getGateway();
+        (uint256 dstChainId,) = recipient.parseEvmV1Calldata();
+        address gateway = getGateway(dstChainId);
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
 
         // address of the remote bridge, revert if not registered
@@ -83,9 +90,10 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
 
     /// @inheritdoc IGatewayQuote
     /// @dev Quotes the native fee {sendMessage} would require for the same `recipient`/`payload`, by delegating to the
-    /// active gateway. The payload is wrapped exactly as in {sendMessage} so the quoted message size matches.
+    /// recipient chain's gateway. The payload is wrapped exactly as in {sendMessage} so the quoted message size matches.
     function quote(bytes calldata recipient, bytes calldata payload) public view virtual returns (uint256 nativeFee) {
-        address gateway = getGateway();
+        (uint256 dstChainId,) = recipient.parseEvmV1Calldata();
+        address gateway = getGateway(dstChainId);
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
         bytes memory bridge = getRemoteBridge(recipient);
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
@@ -100,7 +108,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         virtual
         returns (uint256 nativeFee)
     {
-        address gateway = getGateway();
+        (uint256 dstChainId,) = recipient.parseEvmV1Calldata();
+        address gateway = getGateway(dstChainId);
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
         bytes memory bridge = getRemoteBridge(recipient);
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
@@ -113,11 +122,11 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     /**
      * @inheritdoc IERC7786Recipient
      *
-     * @dev Delivers a message to its final recipient. Only the active gateway may call this; the cross-chain `sender`
-     * must be the registered bridge on the source chain.
+     * @dev Delivers a message to its final recipient. Only the source chain's gateway may call this; the cross-chain
+     * `sender` must be the registered bridge on the source chain.
      *
-     * Reverts if the caller is not the active gateway, if the message does not originate from the registered bridge,
-     * if it was already executed, or if the recipient reverts / returns an invalid value. On a recipient revert the
+     * Reverts if the caller is not the source chain's gateway, if the message does not originate from the registered
+     * bridge, if it was already executed, or if the recipient reverts / returns an invalid value. On a recipient revert the
      * whole call reverts (so the deduplication flag is rolled back) and the message stays retryable via the
      * transport's own redelivery.
      */
@@ -133,8 +142,9 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes4)
     {
-        // Only the active gateway may deliver, and only from the registered bridge on the source chain.
-        require(msg.sender == getGateway(), ERC7786BridgeUnauthorizedGateway(msg.sender));
+        // Only the source chain's gateway may deliver, and only from the registered bridge on the source chain.
+        (uint256 srcChainId,) = sender.parseEvmV1Calldata();
+        require(msg.sender == getGateway(srcChainId), ERC7786BridgeUnauthorizedGateway(msg.sender));
         require(keccak256(getRemoteBridge(sender)) == keccak256(sender), ERC7786BridgeInvalidCrosschainSender());
 
         // Deduplicate. The id binds the source bridge (sender) and the wrapped payload (which carries the nonce).
@@ -160,6 +170,12 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         return _activeGateway;
     }
 
+    /// @dev Gateway for `chainId`: the per-chain override when set, the default gateway otherwise.
+    function getGateway(uint256 chainId) public view virtual returns (address) {
+        address gateway = _gateways[chainId];
+        return gateway == address(0) ? _activeGateway : gateway;
+    }
+
     function getRemoteBridge(bytes memory chain) public view virtual returns (bytes memory) {
         (bytes2 chainType, bytes memory chainReference,) = chain.parseV1();
         return getRemoteBridge(chainType, chainReference);
@@ -175,6 +191,12 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
 
     function setGateway(address gateway) public virtual onlyOwner {
         _setGateway(gateway);
+    }
+
+    /// @dev Sets the gateway override for `chainId`. The zero address clears it back to the default gateway.
+    function setGateway(uint256 chainId, address gateway) public virtual onlyOwner {
+        _gateways[chainId] = gateway;
+        emit ChainGatewayUpdated(chainId, gateway);
     }
 
     function registerRemoteBridge(bytes calldata bridge) public virtual onlyOwner {

@@ -24,6 +24,7 @@ pub trait Rpc {
         from: Address,
         to: Address,
         data: &[u8],
+        value: U256,
     ) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn eth_send_raw_transaction(
         &self,
@@ -198,13 +199,23 @@ impl Rpc for RpcClient {
         let result = self
             .call_rpc(
                 "eth_getTransactionCount",
-                serde_json::json!([format!("{address:?}"), "latest"]),
+                // Every caller uses this as the nonce of a transaction it is
+                // about to sign. Include already accepted pool transactions so
+                // a node-originated registration and an immediately following
+                // operator command cannot sign the same nonce.
+                serde_json::json!([format!("{address:?}"), "pending"]),
             )
             .await?;
         Self::parse_hex_u64(&result)
     }
 
-    async fn eth_estimate_gas(&self, from: Address, to: Address, data: &[u8]) -> Result<u64> {
+    async fn eth_estimate_gas(
+        &self,
+        from: Address,
+        to: Address,
+        data: &[u8],
+        value: U256,
+    ) -> Result<u64> {
         let result = self
             .call_rpc(
                 "eth_estimateGas",
@@ -212,6 +223,7 @@ impl Rpc for RpcClient {
                     "from": format!("{from:?}"),
                     "to": format!("{to:?}"),
                     "data": format!("0x{}", hex::encode(data)),
+                    "value": format!("{value:#x}"),
                 }]),
             )
             .await?;
@@ -370,6 +382,7 @@ pub mod mock {
                     from: signer.address(),
                     to,
                     data: data.clone(),
+                    value,
                 },
                 RecordedRpcResponse::U64(GAS_ESTIMATE),
             ),
@@ -457,6 +470,7 @@ pub mod mock {
             _from: Address,
             _to: Address,
             _data: &[u8],
+            _value: U256,
         ) -> Result<u64> {
             clone_result(&self.estimate_gas)
         }
@@ -530,11 +544,18 @@ pub mod mock {
                 .into_u64("eth_getTransactionCount")
         }
 
-        async fn eth_estimate_gas(&self, from: Address, to: Address, data: &[u8]) -> Result<u64> {
+        async fn eth_estimate_gas(
+            &self,
+            from: Address,
+            to: Address,
+            data: &[u8],
+            value: U256,
+        ) -> Result<u64> {
             self.next_response(RecordedRpcCall::EthEstimateGas {
                 from,
                 to,
                 data: data.to_vec(),
+                value,
             })?
             .into_u64("eth_estimateGas")
         }
@@ -775,8 +796,9 @@ mod tests {
         let from = address!("0x1111111111111111111111111111111111111111");
         let to = address!("0x000000000000000000000000000000000000EE02");
 
+        let value = U256::from(7u64);
         let gas = client
-            .eth_estimate_gas(from, to, &[0xde, 0xad])
+            .eth_estimate_gas(from, to, &[0xde, 0xad], value)
             .await
             .unwrap();
 
@@ -791,6 +813,7 @@ mod tests {
                     "from": format!("{from:?}"),
                     "to": format!("{to:?}"),
                     "data": "0xdead",
+                    "value": "0x7",
                 }],
                 "id": 1,
             })
@@ -1094,7 +1117,7 @@ mod tests {
             json!({
                 "jsonrpc": "2.0",
                 "method": "eth_getTransactionCount",
-                "params": [format!("{address:?}"), "latest"],
+                "params": [format!("{address:?}"), "pending"],
                 "id": 2,
             })
         );

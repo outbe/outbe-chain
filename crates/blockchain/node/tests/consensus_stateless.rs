@@ -16,13 +16,16 @@
 use alloy_consensus::{Block as AlloyBlock, Header, Transaction as _, TxLegacy};
 use alloy_primitives::{Address, Bloom, Bytes, TxKind, B256, B64, U256};
 use outbe_evm::system_tx::{
-    build_unsigned_system_tx, system_tx_visible_gas_limit, SystemTxInputV2, SystemTxKind,
-    BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
-    ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
-    SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    build_unsigned_system_tx, system_tx_visible_gas_limit, OcompLifecycleActivation,
+    SystemTxInputV2, SystemTxKind, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+    CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    SYSTEM_TX_INPUT_VERSION, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_evm::OutbeEvmSigner;
-use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
+use outbe_node::consensus::{
+    validate_system_tx_consensus_boundary, validate_system_tx_consensus_boundary_for_activation,
+    OutbeBeaconConsensus,
+};
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
@@ -164,6 +167,100 @@ fn phase1_metadata(block_number: u64, block_hash: B256) -> CertifiedParentAccoun
     }
 }
 
+fn ocomp_transactions(
+    signer: &OutbeEvmSigner,
+    block_number: u64,
+    parent_hash: B256,
+    active: bool,
+) -> Vec<TransactionSigned> {
+    let mut transactions = vec![
+        signed_v2(
+            signer,
+            SystemTxKind::CertifiedParentAccounting,
+            0,
+            block_number,
+            SystemTxInputV2::CertifiedParentAccounting {
+                metadata: phase1_metadata(block_number - 1, parent_hash),
+            },
+        ),
+        signed_v2(
+            signer,
+            SystemTxKind::LateFinalizeCredits,
+            1,
+            block_number,
+            SystemTxInputV2::LateFinalizeCredits {
+                artifact: Default::default(),
+            },
+        ),
+    ];
+    let mut ordinal = 2;
+    if active {
+        transactions.push(signed_v2(
+            signer,
+            SystemTxKind::OcompLifecycleBegin,
+            ordinal,
+            block_number,
+            SystemTxInputV2::OcompLifecycleBegin,
+        ));
+        ordinal += 1;
+    }
+    for (kind, input) in [
+        (SystemTxKind::CycleTick, SystemTxInputV2::CycleTick),
+        (
+            SystemTxKind::OracleSlashWindow,
+            SystemTxInputV2::OracleSlashWindow,
+        ),
+        (SystemTxKind::HookEvents, SystemTxInputV2::HookEvents),
+    ] {
+        transactions.push(signed_v2(signer, kind, ordinal, block_number, input));
+        ordinal += 1;
+    }
+    if active {
+        transactions.push(signed_v2(
+            signer,
+            SystemTxKind::OcompTerminalRequest,
+            ordinal,
+            block_number,
+            SystemTxInputV2::OcompTerminalRequest,
+        ));
+    }
+    transactions
+}
+
+#[test]
+fn stateless_import_enforces_ocomp_fork_boundary_at_h_minus_1_h_and_h_plus_1() {
+    const H: u64 = 32;
+    let signer = signer();
+    let activation = OcompLifecycleActivation::at_block(H);
+    let parent_hash = B256::repeat_byte(0x32);
+
+    let before = ocomp_transactions(&signer, H - 1, parent_hash, false);
+    validate_system_tx_consensus_boundary_for_activation(
+        &body(before),
+        &header_for(H - 1, parent_hash),
+        activation,
+    )
+    .expect("pre-fork baseline layout imports");
+
+    for height in [H, H + 1] {
+        let active = ocomp_transactions(&signer, height, parent_hash, true);
+        validate_system_tx_consensus_boundary_for_activation(
+            &body(active),
+            &header_for(height, parent_hash),
+            activation,
+        )
+        .expect("active lifecycle layout imports");
+    }
+
+    let premature = ocomp_transactions(&signer, H - 1, parent_hash, true);
+    assert!(validate_system_tx_consensus_boundary_for_activation(
+        &body(premature),
+        &header_for(H - 1, parent_hash),
+        activation,
+    )
+    .is_err());
+}
+
 #[test]
 fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
     const MAX_TX_GAS_LIMIT_OSAKA: u64 = 1 << 24;
@@ -208,6 +305,13 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
             3,
             2,
             SystemTxInputV2::OracleSlashWindow,
+        ),
+        signed_v2(
+            &signer,
+            SystemTxKind::HookEvents,
+            4,
+            2,
+            SystemTxInputV2::HookEvents,
         ),
     ];
     for tx in &transactions {
@@ -413,7 +517,14 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
         2,
         SystemTxInputV2::OracleSlashWindow,
     );
-    let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2]);
+    let hook_events2 = signed_v2(
+        &signer,
+        SystemTxKind::HookEvents,
+        4,
+        2,
+        SystemTxInputV2::HookEvents,
+    );
+    let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2, hook_events2]);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
         .expect_err(
@@ -551,6 +662,13 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
+        signed_v2(
+            &signer,
+            SystemTxKind::HookEvents,
+            4,
+            2,
+            SystemTxInputV2::HookEvents,
+        ),
     ];
     // The block's true transaction root (also written into the header).
     let correct_tx_root = calculate_transaction_root(&transactions);
@@ -630,7 +748,7 @@ fn v2_envelope_with_unknown_selector_rejects() {
 
 /// Build the canonical block-2 begin-zone set with a chosen LateFinalizeCredits
 /// body artifact (ordinals 0..=3): CPA, LateFinalizeCredits, CycleTick,
-/// OracleSlashWindow.
+/// OracleSlashWindow, HookEvents.
 fn begin_zone_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
@@ -668,6 +786,13 @@ fn begin_zone_txs_block2(
             3,
             2,
             SystemTxInputV2::OracleSlashWindow,
+        ),
+        signed_v2(
+            signer,
+            SystemTxKind::HookEvents,
+            4,
+            2,
+            SystemTxInputV2::HookEvents,
         ),
     ]
 }
@@ -725,7 +850,7 @@ fn mandatory_late_phase_cannot_be_skipped() {
     let parent_hash = B256::with_last_byte(0xA4);
     let mut txs =
         begin_zone_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
-    // Drop the LateFinalizeCredits tx (ordinal 1) — leaving CPA, CycleTick, OracleSlashWindow.
+    // Drop the LateFinalizeCredits tx (ordinal 1) — leaving CPA, CycleTick, OracleSlashWindow, HookEvents.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)

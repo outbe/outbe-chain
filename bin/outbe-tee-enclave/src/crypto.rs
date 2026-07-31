@@ -422,4 +422,71 @@ mod tests {
         // Public key matches the secret.
         assert_eq!(pk1, PublicKey::from(&StaticSecret::from(sk1)).to_bytes());
     }
+
+    /// `to_bytes` must lay out exactly `ephemeral_pub(32) || nonce(12) ||
+    /// ciphertext`, and `from_bytes` must read those same slices back. Uses
+    /// distinct, hand-picked bytes per field so a swapped/overlapping range fails.
+    #[test]
+    fn encrypted_share_wire_layout_is_exact() {
+        let share = EncryptedShare {
+            ephemeral_pub: [0xAAu8; 32],
+            nonce: [0xBBu8; 12],
+            ciphertext: vec![0xCC, 0xDD, 0xEE],
+        };
+        let wire = share.to_bytes();
+
+        assert_eq!(wire.len(), 44 + 3);
+        assert_eq!(&wire[..32], &[0xAAu8; 32]); // ephemeral_pub
+        assert_eq!(&wire[32..44], &[0xBBu8; 12]); // nonce
+        assert_eq!(&wire[44..], &[0xCC, 0xDD, 0xEE]); // ciphertext
+
+        // Round-trips without touching the crypto path.
+        assert_eq!(EncryptedShare::from_bytes(&wire).unwrap(), share);
+    }
+
+    /// The length check is `< 44`, so exactly 44 bytes is valid and decodes to an
+    /// empty ciphertext — the boundary case.
+    #[test]
+    fn encrypted_share_from_bytes_accepts_min_len_empty_ciphertext() {
+        let share = EncryptedShare {
+            ephemeral_pub: [1u8; 32],
+            nonce: [2u8; 12],
+            ciphertext: Vec::new(),
+        };
+        let wire = share.to_bytes();
+        assert_eq!(wire.len(), 44);
+        let parsed = EncryptedShare::from_bytes(&wire).unwrap();
+        assert_eq!(parsed, share);
+        assert!(parsed.ciphertext.is_empty());
+    }
+
+    /// Standalone AEAD round-trip plus tamper detection: flipping any ciphertext
+    /// or tag byte, or opening with the wrong nonce/key, must fail closed.
+    #[test]
+    fn chacha20poly1305_roundtrip_and_tamper_rejected() {
+        let key = [0x42u8; 32];
+        let nonce = [0x24u8; 12];
+        let plaintext = b"decode me";
+
+        let mut ct = chacha20poly1305_encrypt(&key, &nonce, plaintext).unwrap();
+        // seal appends a 16-byte Poly1305 tag.
+        assert_eq!(ct.len(), plaintext.len() + 16);
+        assert_eq!(
+            chacha20poly1305_decrypt(&key, &nonce, &ct).unwrap(),
+            plaintext
+        );
+
+        // Tampered ciphertext (flip a tag byte) -> DecryptFailed.
+        let last = ct.len() - 1;
+        ct[last] ^= 0x01;
+        assert!(matches!(
+            chacha20poly1305_decrypt(&key, &nonce, &ct),
+            Err(TeeError::DecryptFailed)
+        ));
+        ct[last] ^= 0x01; // restore
+
+        // Wrong nonce and wrong key both fail.
+        assert!(chacha20poly1305_decrypt(&key, &[0u8; 12], &ct).is_err());
+        assert!(chacha20poly1305_decrypt(&[0u8; 32], &nonce, &ct).is_err());
+    }
 }

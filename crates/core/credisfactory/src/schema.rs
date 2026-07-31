@@ -1,27 +1,20 @@
 //! Storage schema for the credisfactory precompile.
 //!
-//! The factory persists only the per-position **denomination index** set at
-//! `requestCredis`. Each `anadosis` call reads it to derive the anadosis
-//! (one-decade-down) denomination and insert the user-supplied per-installment
-//! reclaim commitment into the gratispool's matching Merkle tree (see
-//! `outbe_gratispool::api::add_commitment`).
-//!
-//! The credis schedule itself (positions, anadosis installments) lives in
-//! the `outbe_credis` crate; this schema only persists what the factory
-//! needs to bridge `requestCredis` → `anadosis` for the shielded flow.
+//! The credis schedule itself (positions, anadosis installments, the pledger EOA)
+//! lives in the `outbe_credis` crate. Collateral stays in the pledger's own
+//! confidential Gratis `pledged_ct` for the whole term (no escrow account), so this
+//! schema only needs the begin-block expiry-sweep cursor.
 
-use alloy_primitives::U256;
-use outbe_macros::{contract, storage_schema};
+use outbe_macros::contract;
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
+use outbe_primitives::storage::types::Slot;
 
 /// EVM storage layout for the credisfactory precompile.
-#[storage_schema]
+///
+/// Storage slots:
+///   0: u64 — begin-block expiry-scan cursor (index into the credis dense position
+///      index to resume from next block).
 #[contract(addr = CREDIS_FACTORY_ADDRESS)]
 pub struct CredisFactoryContract {
-    /// slot 0: per-position denomination id (widened from `u8` to `u32` for
-    /// the storage primitive's `StorageKey` requirements). Keyed by
-    /// `position_id`. Read on every `anadosis` to derive the anadosis
-    /// (one-decade-down) denomination for the reclaim-note insert.
-    #[attribute(order = 0)]
-    pub position_denom: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub expiry_scan_cursor: Slot<u64>,
 }

@@ -23,6 +23,7 @@ use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOffe
 use crate::compute::{check_currency, compute_nominal, compute_token_id, normalize_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
 use crate::payload::parse_and_validate;
+use crate::zk_claim::derive_expected_hashes;
 
 /// The enclave-resident offer decryption key material (derived from the sealed
 /// root seed via the HKDF chain). Borrowed for the duration of a batch call.
@@ -67,6 +68,7 @@ fn process_one(
     .map_err(|e| format!("decryption failed: {e}"))?;
 
     let payload = parse_and_validate(&plaintext)?;
+    let zk_expected_hashes = derive_expected_hashes(offer, &payload)?;
 
     // worldwide_day / currency come from the encrypted payload (authoritative);
     // the node already read the current USDC/COEN rate and passed it in.
@@ -106,6 +108,7 @@ fn process_one(
         issuance_currency: payload.currency,
         nominal_amount_minor,
         reference_currency: offer.reference_currency,
+        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
         tribute_price_minor: price,
         // Returned for the host's SU-hash used-marking + agent-reward routing
         // (public on-chain). Privacy-preserving markers-only form is a later
@@ -113,6 +116,7 @@ fn process_one(
         su_hashes: payload.su_hashes,
         wallet_addresses: payload.wallet_addresses,
         sra_addresses: payload.sra_addresses,
+        zk_expected_hashes,
         status: TributeOfferStatus::Created,
     })
 }
@@ -129,10 +133,12 @@ fn rejected(offer: &EncryptedTributeOffer, reason: String) -> TributeOfferResult
         issuance_currency: 0,
         nominal_amount_minor: U256::ZERO,
         reference_currency: offer.reference_currency,
+        exclude_from_intex_issuance: offer.exclude_from_intex_issuance,
         tribute_price_minor: offer.tribute_price_minor,
         su_hashes: Vec::new(),
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
+        zk_expected_hashes: None,
         status: TributeOfferStatus::Rejected { reason },
     }
 }
@@ -143,6 +149,7 @@ mod tests {
     use crate::compute::{compute_token_id, SCALE_1E18};
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
     use alloy_primitives::Address;
+    use outbe_tee::protocol::TributeZkContext;
     use x25519_dalek::{PublicKey, StaticSecret};
 
     const OFFER_SK: [u8; 32] = [7u8; 32];
@@ -169,7 +176,9 @@ mod tests {
             nonce: NONCE.to_vec(),
             ephemeral_pubkey: U256::from_be_bytes(eph_pub),
             reference_currency,
+            exclude_from_intex_issuance: false,
             tribute_price_minor: price,
+            zk_context: None,
         }
     }
 
@@ -215,6 +224,141 @@ mod tests {
     }
 
     #[test]
+    fn zk_enabled_offer_returns_expected_hashes_bound_to_owner_and_sender() {
+        let sender = Address::repeat_byte(0xAB);
+        let mut offer = make_tribute_offer(sender, GOOD_JSON, 840, SCALE_1E18);
+        offer.zk_context = Some(TributeZkContext {
+            derived_owner: B256::from([0x01; 32]),
+            chain_id: 19_280_501,
+        });
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
+        let expected = results[0]
+            .zk_expected_hashes
+            .as_ref()
+            .expect("ZK context must produce expected hashes");
+        assert_ne!(expected.nft_hash, B256::ZERO);
+        assert_ne!(expected.binding_hash, B256::ZERO);
+
+        offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
+        let (different_owner, _) = process_tribute_offer_batch(&key(), &[offer.clone()]);
+        assert_ne!(
+            different_owner[0]
+                .zk_expected_hashes
+                .as_ref()
+                .unwrap()
+                .nft_hash,
+            expected.nft_hash
+        );
+
+        offer.owner = Address::repeat_byte(0xCD);
+        let (different_sender, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert_ne!(
+            different_sender[0]
+                .zk_expected_hashes
+                .as_ref()
+                .unwrap()
+                .binding_hash,
+            expected.binding_hash
+        );
+    }
+
+    #[test]
+    fn zk_nft_hash_uses_canonical_su_id_set_order() {
+        let first = GOOD_JSON.replace(
+            r#""su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]"#,
+            r#""su_hashes": [
+                "0x2323232323232323232323232323232323232323232323232323232323232323",
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ]"#,
+        );
+        let second = GOOD_JSON.replace(
+            r#""su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]"#,
+            r#""su_hashes": [
+                "0x2222222222222222222222222222222222222222222222222222222222222222",
+                "0x2323232323232323232323232323232323232323232323232323232323232323"
+            ]"#,
+        );
+        let mut first = make_tribute_offer(Address::repeat_byte(0xAB), &first, 840, SCALE_1E18);
+        let mut second = make_tribute_offer(Address::repeat_byte(0xAB), &second, 840, SCALE_1E18);
+        let context = TributeZkContext {
+            derived_owner: B256::from([0x01; 32]),
+            chain_id: 19_280_501,
+        };
+        first.zk_context = Some(context.clone());
+        second.zk_context = Some(context);
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[first, second]);
+        assert_eq!(
+            results[0].zk_expected_hashes.as_ref().unwrap().nft_hash,
+            results[1].zk_expected_hashes.as_ref().unwrap().nft_hash
+        );
+    }
+
+    #[test]
+    fn zk_enabled_offer_rejects_noncanonical_atto_amount() {
+        let json = GOOD_JSON.replace(
+            r#""amount_atto": "0""#,
+            r#""amount_atto": "1000000000000000000""#,
+        );
+        let mut offer = make_tribute_offer(Address::repeat_byte(0xAB), &json, 840, SCALE_1E18);
+        offer.zk_context = Some(TributeZkContext {
+            derived_owner: B256::from([0x01; 32]),
+            chain_id: 19_280_501,
+        });
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert!(matches!(
+            &results[0].status,
+            TributeOfferStatus::Rejected { reason }
+                if reason.contains("amount_atto must be less than 1e18")
+        ));
+    }
+
+    #[test]
+    fn inputs_hash_binds_zk_owner_and_chain_id() {
+        let mut offer = make_tribute_offer(Address::repeat_byte(0xAB), GOOD_JSON, 840, SCALE_1E18);
+        offer.zk_context = Some(TributeZkContext {
+            derived_owner: B256::from([0x01; 32]),
+            chain_id: 19_280_501,
+        });
+        let original = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
+
+        offer.zk_context.as_mut().unwrap().derived_owner = B256::from([0x02; 32]);
+        let different_owner = outbe_tee::protocol::inputs_canonical_hash(&[offer.clone()]);
+        assert_ne!(original, different_owner);
+
+        offer.zk_context.as_mut().unwrap().chain_id += 1;
+        let different_chain = outbe_tee::protocol::inputs_canonical_hash(&[offer]);
+        assert_ne!(different_owner, different_chain);
+    }
+
+    /// The unencrypted `exclude_from_intex_issuance` ABI flag is echoed straight
+    /// back on the result (like `reference_currency`) — both on the created path
+    /// and, defensively, on the rejected path.
+    #[test]
+    fn exclude_from_intex_issuance_is_echoed() {
+        let owner = Address::repeat_byte(0xC1);
+        let price = U256::from(2u64) * SCALE_1E18;
+        let mut offer = make_tribute_offer(owner, GOOD_JSON, 840, price);
+        offer.exclude_from_intex_issuance = true;
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert_eq!(results[0].status, TributeOfferStatus::Created);
+        assert!(results[0].exclude_from_intex_issuance);
+
+        // Rejected path (zero price) still carries the flag.
+        let mut bad = make_tribute_offer(owner, GOOD_JSON, 840, U256::ZERO);
+        bad.exclude_from_intex_issuance = true;
+        let (rejected, _) = process_tribute_offer_batch(&key(), &[bad]);
+        assert!(matches!(
+            rejected[0].status,
+            TributeOfferStatus::Rejected { .. }
+        ));
+        assert!(rejected[0].exclude_from_intex_issuance);
+    }
+
+    #[test]
     fn zero_price_is_rejected_not_aborted() {
         // Distinct owners so both offers are independent (one owner = at most one
         // Tribute per day); only the zero-price one is rejected.
@@ -240,7 +384,9 @@ mod tests {
             nonce: NONCE.to_vec(),
             ephemeral_pubkey: U256::ZERO,
             reference_currency: 840,
+            exclude_from_intex_issuance: false,
             tribute_price_minor: SCALE_1E18,
+            zk_context: None,
         };
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
         assert!(matches!(

@@ -8,6 +8,7 @@
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers; migrate them opportunistically.
+pub mod delegation;
 pub mod errors;
 pub mod hooks;
 pub mod metrics;

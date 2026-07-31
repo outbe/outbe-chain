@@ -8,6 +8,12 @@ pub enum TransportError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("enclave io timeout during {operation} after {timeout_secs}s")]
+    IoTimeout {
+        operation: &'static str,
+        timeout_secs: u64,
+    },
+
     #[error("frame too large: {0} bytes")]
     FrameTooLarge(usize),
 
@@ -25,6 +31,12 @@ pub enum TransportError {
 
     #[error("offer attestation signature invalid: {0}")]
     TributeOfferAttestation(String),
+
+    #[error("gratis-op attestation signature invalid: {0}")]
+    GratisOpAttestation(String),
+
+    #[error("promis-op attestation signature invalid: {0}")]
+    PromisOpAttestation(String),
 
     #[error("unexpected response from enclave")]
     UnexpectedResponse,

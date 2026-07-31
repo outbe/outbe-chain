@@ -11,7 +11,7 @@ There are two node roles:
   lifecycle. The node always runs `--validator`; what it does depends on whether it
   currently holds a BLS threshold share:
   - **No share yet** — it follows finalized blocks through the consensus mesh as a
-    share-less *verifier* (the code calls this a "finalized-follower"): it syncs,
+    share-less _verifier_ (the code calls this a "finalized-follower"): it syncs,
     processes offers, and survives DKG rotations, but cannot vote. **This is a
     transient lifecycle phase, not a separate role** — a node is here only while it
     is waiting for its first share, or while a restarted node catches up. You do not
@@ -36,7 +36,7 @@ that share.
 
 > **Verified vs documented.** The validator path below — register → follow → stake →
 > confirm-ready → reshare → ACTIVE, restart-recovery, and exit — is exercised
-> end-to-end by `scripts/e2e/` on a gramine-**mock** localnet (no real SGX/MRENCLAVE
+> end-to-end by `crates/testing/e2e-harness` on a gramine-**mock** localnet (no real SGX/MRENCLAVE
 > attestation). The bare `--validator`-off full node is supported by the binary but
 > is not covered by those tests.
 
@@ -55,6 +55,10 @@ cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
   `polynomial.hex` and `dkg-output.hex` (public, no secret share).
 - The `outbe-tee-enclave` sidecar (real SGX under gramine in production; a mock
   binary on localnet). Required to execute tribute offers.
+- For testnet, deploy the exact Cosign-verified enclave image digest and compare its
+  signed ReleaseManifest measurements by following
+  [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
+  release bundle on the validator host.
 - An EVM account (secp256k1) funded with native COEN.
 
 `outbe-cli` / `outbe-keygen` never send key material to the RPC; only signed
@@ -232,15 +236,15 @@ validators have lost key material — rejected on mainnet).
 
 `validatorByAddress(addr)` on ValidatorSet (`0x…EE00`) returns the status code:
 
-| Code | Status | Meaning |
-|---|---|---|
-| 0 | REGISTERED | registered (+ usually P2P-announced + enclave-joined); not staked; non-voting follower |
-| 1 | PENDING | staked, awaiting confirm-ready + the reshare that grants a share (excluded from `activeValidatorCount`) |
-| 2 | ACTIVE | holds a share; voting |
-| 3 | EXITING | left the active set; still accountable (keeps signing) until the next reshare excludes it |
-| 4 | UNBONDING | excluded by a reshare; share cleared; stake unbonding |
-| 5 | INACTIVE | unbonding complete; stake withdrawn |
-| 6 | JAILED | punished on a felony (slashed + frozen); dropped from the committee at the next reshare, but kept in the registry pending unjail or unstake |
+| Code | Status     | Meaning                                                                                                                                     |
+| ---- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | REGISTERED | registered (+ usually P2P-announced + enclave-joined); not staked; non-voting follower                                                      |
+| 1    | PENDING    | staked, awaiting confirm-ready + the reshare that grants a share (excluded from `activeValidatorCount`)                                     |
+| 2    | ACTIVE     | holds a share; voting                                                                                                                       |
+| 3    | EXITING    | left the active set; still accountable (keeps signing) until the next reshare excludes it                                                   |
+| 4    | UNBONDING  | excluded by a reshare; share cleared; stake unbonding                                                                                       |
+| 5    | INACTIVE   | unbonding complete; stake withdrawn                                                                                                         |
+| 6    | JAILED     | punished on a felony (slashed + frozen); dropped from the committee at the next reshare, but kept in the registry pending unjail or unstake |
 
 ### Felony → JAILED
 
@@ -292,13 +296,13 @@ The DKG share is persisted to `--consensus.keys-dir` (default `<datadir>/keys`);
 restart recovers it and resumes signing without a new reshare (the "returning
 validator" case in section 3). Restart with the same `--datadir`/`--consensus.keys-dir`.
 
-Consensus recovery is fail-closed. A restarted validator uses durable consensus
-finalization and DKG boundary evidence, not just the latest local execution head,
-to decide which epoch committee it may sign for. If the local Reth head is only in
-the normal bounded in-flight window ahead of the marshal-finalized tip, and that
-head includes an unfinalized membership change, an old-epoch signer can still
-recover from the finalized DKG boundary and continue signing until the activation
-is actually finalized.
+Consensus recovery is fail-closed. A restarted validator decides which epoch
+committee it may sign for from durable consensus finalization and DKG boundary
+evidence. The latest local execution head alone is insufficient. If the local Reth
+head is only in the normal bounded in-flight window ahead of the marshal-finalized
+tip, and that head includes an unfinalized membership change, an old-epoch signer
+can still recover from the finalized DKG boundary and continue signing until the
+activation is actually finalized.
 
 Stop and investigate rather than deleting files if startup reports missing marshal
 finalization, inconsistent saved/pending DKG material, a pending boundary snapshot
@@ -319,53 +323,52 @@ restart in that case.
 
 ### Protocol addresses
 
-| Precompile | Address |
-|---|---|
+| Precompile   | Address                                      |
+| ------------ | -------------------------------------------- |
 | ValidatorSet | `0x000000000000000000000000000000000000EE00` |
-| Staking | `0x000000000000000000000000000000000000EE02` |
-| TeeRegistry | `0x000000000000000000000000000000000000EE0A` |
+| Staking      | `0x000000000000000000000000000000000000EE02` |
+| TeeRegistry  | `0x000000000000000000000000000000000000EE0A` |
 
 ### Key node flags
 
-| Flag | Purpose |
-|---|---|
-| `--validator` | run the consensus thread (validator); omit for a full node (EL sync + RPC only) |
-| `--consensus.signing-key` / `--validator.evm-key` | BLS signing key / secp256k1 system-tx signer (validator) |
-| `--consensus.signing-share` | BLS threshold share — present only once the node holds a share |
-| `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share |
-| `--consensus.keys-dir` | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`) |
-| `--consensus.listen-addr` / `--consensus.peers` | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>` |
-| `--tee-enclave-socket` | enclave sidecar socket (needed to execute tribute offers); the node fail-fasts without a healthy attested enclave |
-| `--testnet.trust-el-head` | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
-| `--testnet.force-dkg` | disaster-recovery only: force a fresh DKG when all validators lost key material (testnet/devnet, rejected on mainnet) |
+| Flag                                                       | Purpose                                                                                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--validator`                                              | run the consensus thread (validator); omit for a full node (EL sync + RPC only)                                                                 |
+| `--consensus.signing-key` / `--validator.evm-key`          | BLS signing key / secp256k1 system-tx signer (validator)                                                                                        |
+| `--consensus.signing-share`                                | BLS threshold share — present only once the node holds a share                                                                                  |
+| `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share                                                                                  |
+| `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
+| `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
+| `--tee-enclave-socket`                                     | enclave sidecar socket (needed to execute tribute offers); the node fail-fasts without a healthy attested enclave                               |
+| `--testnet.trust-el-head`                                  | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
+| `--testnet.force-dkg`                                      | disaster-recovery only: force a fresh DKG when all validators lost key material (testnet/devnet, rejected on mainnet)                           |
 
 ### Operator commands
 
-| Command | Purpose |
-|---|---|
-| `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration |
-| `outbe-cli tee join` | register the enclave + install the offer key (funded EOA only) |
-| `outbe-cli validator register` / `set-p2p` | register (→ REGISTERED) / publish the P2P address |
-| `outbe-cli staking stake` / `unstake` / `claim` | stake (→ PENDING at `min_stake`) / unstake / withdraw |
-| `outbe-cli staking unjail` | return a JAILED validator → PENDING (stake ≥ min_stake) |
-| `outbe-cli validator confirm-ready` | confirm caught-up (stale-join guard) |
-| `outbe-cli validator deactivate` | leave the active set (→ EXITING) |
-| `outbe-cli monitor health` / `readiness` / `watch` | health / readiness / dashboard |
-| `outbe-cli validator participation` / `list` / `info` | participation + set inspection |
+| Command                                                     | Purpose                                                        |
+| ----------------------------------------------------------- | -------------------------------------------------------------- |
+| `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration          |
+| `outbe-cli tee join`                                        | register the enclave + install the offer key (funded EOA only) |
+| `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
+| `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |
+| `outbe-cli staking unjail`                                  | return a JAILED validator → PENDING (stake ≥ min_stake)        |
+| `outbe-cli validator confirm-ready`                         | confirm caught-up (stale-join guard)                           |
+| `outbe-cli validator deactivate`                            | leave the active set (→ EXITING)                               |
+| `outbe-cli monitor health` / `readiness` / `watch`          | health / readiness / dashboard                                 |
+| `outbe-cli validator participation` / `list` / `info`       | participation + set inspection                                 |
 
 ---
 
 ## Localnet quickstart
 
-The validator path end-to-end (a 4-validator gramine-mock localnet) is in
-`scripts/e2e/`:
+The validator path end-to-end runs through the Rust/Cucumber harness on an
+isolated 4-validator gramine-mock localnet:
 
 ```sh
-cargo build -p outbe-chain --bin outbe-chain
-cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-sudo true   # the scripts use sudo for run-testnet.sh / docker
-scripts/e2e/s1_s2_s6_s3_lifecycle.sh   # follow → stake/confirm → ACTIVE → exit
+mise run e2e
 ```
 
-`scripts/e2e/lib.sh` holds the exact localnet command lines this guide generalizes;
-see `scripts/e2e/README.md`.
+The harness owns the node processes, enclave containers, port ranges, data
+directories, and a temporary MongoDB replica set. See
+`crates/testing/e2e-harness/README.md` for focused feature commands and debug
+options.

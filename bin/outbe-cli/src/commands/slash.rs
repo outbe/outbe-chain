@@ -185,6 +185,7 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
     let proposer_misd = cfg["proposerMisdemeanorThreshold"].as_u64().unwrap_or(0);
     let proposer_felony = cfg["proposerFelonyThreshold"].as_u64().unwrap_or(0);
     let voter_misd = cfg["voterMisdemeanorThreshold"].as_u64().unwrap_or(0);
+    let voter_felony = cfg["voterFelonyThreshold"].as_u64().unwrap_or(0);
     let slash_pct = cfg["slashAmountPercent"].as_u64().unwrap_or(0);
     let evidence_pct = cfg["evidenceRewardPercent"].as_u64().unwrap_or(0);
 
@@ -192,6 +193,7 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("Proposer Misdemeanor Threshold: {proposer_misd}");
     println!("Proposer Felony Threshold:      {proposer_felony}");
     println!("Voter Misdemeanor Threshold:    {voter_misd}");
+    println!("Voter Felony Threshold:         {voter_felony}");
     println!("Slash Amount:                   {slash_pct}%");
     println!("Evidence Reward:                {evidence_pct}%");
 
@@ -409,6 +411,7 @@ mod tests {
                 "proposerMisdemeanorThreshold": 10,
                 "proposerFelonyThreshold": 50,
                 "voterMisdemeanorThreshold": 10,
+                "voterFelonyThreshold": 30,
                 "slashAmountPercent": 5,
                 "evidenceRewardPercent": 10
             })),

@@ -6,7 +6,7 @@ use alloy_consensus::Transaction as _;
 use alloy_evm::{
     block::{BlockExecutorFactory, StateDB},
     eth::{EthBlockExecutionCtx, NextEvmEnvAttributes},
-    EvmEnv, RecoveredTx,
+    Evm, EvmEnv, RecoveredTx,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use reth_ethereum::evm::revm::inspector::Inspector;
@@ -30,16 +30,23 @@ use reth_evm::{
 use reth_primitives_traits::{
     AlloyBlockHeader as _, Recovered, SealedBlock, SealedHeader, SignedTransaction as _,
 };
-use reth_provider::HeaderProvider;
+use reth_provider::{BlockHashReader, BlockIdReader, HeaderProvider};
 use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 use std::{convert::Infallible, sync::Arc};
 
+use outbe_compressed_entities::{CompressedTreeService, ExecutionScope, ACTIVE_COMMITMENT_SCHEME};
+use outbe_metadosis::ocomp::activation::{
+    OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
+};
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     consensus_metadata::CertifiedParentAccountingMetadata,
+    projection::ExecutionReadBudget,
     reshare_artifact::{
-        decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
-        OutbeBlockArtifacts,
+        decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts,
+        ConsensusHeaderArtifact,
     },
     OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives,
 };
@@ -50,10 +57,71 @@ use crate::{
     factory::OutbeEvmFactory,
     signer::SharedOutbeEvmSigner,
     system_tx::{
-        build_unsigned_system_tx, split_system_layout, validate_active_system_tx_set,
-        SystemTxInputV2, SystemTxKind,
+        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, split_system_layout,
+        validate_system_tx_set_for_activation, OcompLifecycleActivation, SystemTxInputV2,
+        SystemTxKind, SystemTxVisibleGasPlan,
     },
 };
+
+/// Live execution wrapper that first binds the relayer-carried request header
+/// to this node's canonical finalized chain, then delegates cryptographic and
+/// storage-proof verification to the protocol authority.
+struct ProviderAnchoredOcompFinalityAuthority<P> {
+    provider: P,
+    inner: Arc<dyn OcompFinalizedIntentAuthority>,
+}
+
+impl<P> ProviderAnchoredOcompFinalityAuthority<P> {
+    fn new(provider: P, inner: Arc<dyn OcompFinalizedIntentAuthority>) -> Self {
+        Self { provider, inner }
+    }
+}
+
+impl<P> OcompFinalizedIntentAuthority for ProviderAnchoredOcompFinalityAuthority<P>
+where
+    P: BlockHashReader + BlockIdReader + Send + Sync,
+{
+    fn verify(
+        &self,
+        proof: &outbe_ocomp_protocol::intent::FinalizedIntentProofV1,
+        expected: outbe_ocomp_protocol::intent::ExpectedFinalizedIntentBindingV1,
+        limits: &outbe_ocomp_protocol::SchemaLimits,
+    ) -> Result<outbe_ocomp_protocol::intent::VerifiedFinalizedIntentV1, OcompFinalityAuthorityError>
+    {
+        let claimed = &proof.parent_accounting;
+        let finalized = self
+            .provider
+            .finalized_block_num_hash()
+            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
+            .ok_or_else(|| {
+                OcompFinalityAuthorityError::LocalAuthority(
+                    "finalized checkpoint is unavailable".into(),
+                )
+            })?;
+        if claimed.finalized_block_number > finalized.number {
+            return Err(OcompFinalityAuthorityError::LocalAuthority(format!(
+                "claimed request height {} is above local finalized height {}",
+                claimed.finalized_block_number, finalized.number
+            )));
+        }
+        let canonical_hash = self
+            .provider
+            .block_hash(claimed.finalized_block_number)
+            .map_err(|error| OcompFinalityAuthorityError::LocalAuthority(error.to_string()))?
+            .ok_or_else(|| {
+                OcompFinalityAuthorityError::LocalAuthority(format!(
+                    "canonical hash at finalized height {} is unavailable",
+                    claimed.finalized_block_number
+                ))
+            })?;
+        if canonical_hash != claimed.finalized_block_hash {
+            return Err(OcompFinalityAuthorityError::InvalidProof(
+                outbe_ocomp_protocol::intent::FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch,
+            ));
+        }
+        self.inner.verify(proof, expected, limits)
+    }
+}
 
 /// cache-side helper. Pulls an exact `(block_number, block_hash)`
 /// entry from the consensus bridge's execution-summary cache.
@@ -67,6 +135,7 @@ fn cached_accounted_parent_artifact(
         .map(|cached| AccountedParentArtifact {
             summary: cached.summary,
             timestamp: cached.timestamp,
+            state_root: cached.state_root,
         })
 }
 
@@ -220,6 +289,7 @@ fn decode_accounted_parent_artifact(header: &OutbeHeader) -> Option<AccountedPar
         .map(|summary| AccountedParentArtifact {
             summary,
             timestamp: header.timestamp(),
+            state_root: Some(header.state_root()),
         })
 }
 
@@ -231,6 +301,9 @@ pub struct OutbeBlockExecutionCtx<'a> {
     pub inner: EthBlockExecutionCtx<'a>,
     pub timestamp_millis_part: u64,
     pub block_hash: Option<B256>,
+    /// State root from the sealed block header on validator/import execution.
+    /// `None` while a proposer is still building the block.
+    pub block_state_root: Option<B256>,
     pub expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
     pub expected_end_system_txs: Vec<Recovered<TransactionSigned>>,
     pub system_layout_error: Option<String>,
@@ -264,6 +337,8 @@ pub struct OutbeBlockExecutionCtx<'a> {
     /// `expected_begin_system_txs`). Flows into the executor and into
     /// `build_begin_system_txs` so both proposer paths inject it identically.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 /// Attributes needed to construct the next Outbe block.
@@ -286,6 +361,8 @@ pub struct OutbeNextBlockEnvAttributes {
     /// tribute-DKG bootstrap producer. Flows into
     /// [`OutbeBlockExecutionCtx::pending_tee_bootstrap`].
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap::TeeBootstrapPayload>,
+    /// Local request budget for synchronous off-chain body reads.
+    pub execution_read_budget: Option<ExecutionReadBudget>,
 }
 
 impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
@@ -301,6 +378,7 @@ impl BuildPendingEnv<OutbeHeader> for OutbeNextBlockEnvAttributes {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 }
@@ -380,6 +458,10 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    compressed_tree_service: Option<Arc<CompressedTreeService>>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -396,6 +478,16 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .field(
+                "compressed_tree_service",
+                &self.compressed_tree_service.is_some(),
+            )
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
+            )
+            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
             .finish()
     }
 }
@@ -439,6 +531,33 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
+        }
+    }
+
+    /// Creates a config whose EVM factory installs typed, read-only Tribute and
+    /// Nod body readers into the precompile dispatch seam.
+    pub fn new_with_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: None,
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -457,6 +576,10 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -464,14 +587,22 @@ impl OutbeEvmConfig {
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         bridge: ConsensusExecutionBridge,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(chain_spec.clone(), OutbeEvmFactory::new()),
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
     }
 
@@ -493,12 +624,134 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
         }
+    }
+
+    /// Creates the provider-backed full-node configuration with the typed
+    /// runtime body readers required by production precompile execution.
+    ///
+    /// This is the no-bridge counterpart of the live node configuration: the
+    /// exact accounted-parent artifact is resolved from the header provider,
+    /// while Tribute and Nod bodies remain available through their read-only
+    /// runtime capabilities.
+    pub fn new_with_provider_and_runtime_body_readers(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
+        runtime_body_readers: RuntimeBodyReaders,
+    ) -> Self {
+        Self::install_consensus_chain_id(&chain_spec);
+        Self {
+            inner: EthEvmConfig::new_with_evm_factory(
+                chain_spec.clone(),
+                OutbeEvmFactory::with_runtime_body_readers(runtime_body_readers.clone()),
+            ),
+            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            bridge: None,
+            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
+            evm_signer: None,
+            runtime_body_readers: Some(runtime_body_readers),
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
+        }
+    }
+
+    /// Returns the typed runtime body readers installed for block execution.
+    #[must_use]
+    pub const fn runtime_body_readers(&self) -> Option<&RuntimeBodyReaders> {
+        self.runtime_body_readers.as_ref()
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
         self
+    }
+
+    /// Installs structural OCOMP lifecycle activation. The default remains
+    /// disabled until OCM-26 supplies the canonical fresh-devnet schedule.
+    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_lifecycle_activation(activation);
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+
+    /// Installs the immutable chain-manifest authority into every EVM created
+    /// by this configuration.
+    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_fork_install(install.clone());
+        self.ocomp_fork_install = Some(install);
+        self
+    }
+
+    #[must_use]
+    pub const fn ocomp_lifecycle_activation(&self) -> OcompLifecycleActivation {
+        self.ocomp_lifecycle_activation
+    }
+
+    #[must_use]
+    pub const fn ocomp_lifecycle_active_at(&self, block_number: u64) -> bool {
+        self.ocomp_lifecycle_activation.is_active_at(block_number)
+    }
+
+    /// Installs the explicitly owned CE tree service used by every block scope
+    /// and by candidate publication. ADR-008's unsharded stage is not activated
+    /// before ADR-009/010 benchmarking, so work accounting stays in the named
+    /// prebenchmark mode below rather than inventing network limits here.
+    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_compressed_tree_service(service.clone());
+        self.compressed_tree_service = Some(service);
+        self
+    }
+
+    fn with_ocomp_finality_authority(
+        self,
+        authority: Arc<dyn OcompFinalizedIntentAuthority>,
+    ) -> Self {
+        self.inner
+            .executor_factory
+            .evm_factory()
+            .install_ocomp_finality_authority(authority);
+        self
+    }
+
+    /// Returns the CE tree service shared by execution and payload cleanup.
+    #[must_use]
+    pub fn compressed_tree_service(&self) -> Option<Arc<CompressedTreeService>> {
+        self.compressed_tree_service.clone()
+    }
+
+    fn configure_compressed_entities_scope(
+        &self,
+        scope: &Arc<ExecutionScope>,
+        block_number: u64,
+        parent_hash: B256,
+    ) -> Result<(), String> {
+        if let Some(service) = &self.compressed_tree_service {
+            if block_number > 0 {
+                scope
+                    .configure_parent_tree_factory(
+                        service.clone(),
+                        ACTIVE_COMMITMENT_SCHEME,
+                        block_number - 1,
+                        parent_hash,
+                    )
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
     }
 
     pub fn evm_signer(&self) -> Option<&SharedOutbeEvmSigner> {
@@ -510,6 +763,7 @@ impl OutbeEvmConfig {
         &self,
         block_number: u64,
         chain_id: u64,
+        block_gas_limit: u64,
         parent_hash: B256,
         extra_data: &Bytes,
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
@@ -569,6 +823,9 @@ impl OutbeEvmConfig {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
         }
+        if self.ocomp_lifecycle_active_at(block_number) {
+            inputs.push(SystemTxInputV2::OcompLifecycleBegin);
+        }
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::CycleTick);
         }
@@ -589,16 +846,53 @@ impl OutbeEvmConfig {
         if block_number >= 1 {
             inputs.push(SystemTxInputV2::OracleSlashWindow);
         }
+        if block_number >= 1 {
+            inputs.push(SystemTxInputV2::HookEvents);
+        }
 
-        inputs
+        let encoded_inputs = inputs
             .into_iter()
-            .enumerate()
-            .map(|(ordinal, input)| {
+            .map(|input| {
                 let kind = input.kind();
                 let calldata = input.encode().map_err(|error| {
                     BlockExecutionError::Internal(
                         alloy_evm::block::InternalBlockExecutionError::Other(
                             format!("encode system tx input: {error}").into(),
+                        ),
+                    )
+                })?;
+                Ok((kind, calldata))
+            })
+            .collect::<Result<Vec<_>, BlockExecutionError>>()?;
+        let mut gas_plan_inputs = encoded_inputs.clone();
+        if self.ocomp_lifecycle_active_at(block_number) {
+            let terminal = SystemTxInputV2::OcompTerminalRequest;
+            gas_plan_inputs.push((
+                terminal.kind(),
+                terminal.encode().map_err(|error| {
+                    BlockExecutionError::Internal(
+                        alloy_evm::block::InternalBlockExecutionError::Other(
+                            format!("encode terminal system tx input: {error}").into(),
+                        ),
+                    )
+                })?,
+            ));
+        }
+        let gas_plan =
+            SystemTxVisibleGasPlan::new(block_gas_limit, &gas_plan_inputs).map_err(|error| {
+                BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!("plan visible system tx gas: {error}").into(),
+                ))
+            })?;
+
+        encoded_inputs
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (kind, calldata))| {
+                let gas_limit = gas_plan.gas_limit(ordinal).ok_or_else(|| {
+                    BlockExecutionError::Internal(
+                        alloy_evm::block::InternalBlockExecutionError::Other(
+                            format!("visible gas plan missing system tx ordinal {ordinal}").into(),
                         ),
                     )
                 })?;
@@ -636,7 +930,7 @@ impl OutbeEvmConfig {
                     }
                 }
 
-                let unsigned = build_unsigned_system_tx(
+                let unsigned = build_unsigned_system_tx_with_gas_limit(
                     kind,
                     ordinal.try_into().map_err(|_| {
                         BlockExecutionError::Internal(
@@ -648,6 +942,7 @@ impl OutbeEvmConfig {
                     block_number,
                     chain_id,
                     calldata,
+                    gas_limit,
                 )
                 .map_err(|error| {
                     BlockExecutionError::Internal(
@@ -666,6 +961,67 @@ impl OutbeEvmConfig {
                 Ok(Recovered::new_unchecked(signed, proposer))
             })
             .collect()
+    }
+
+    pub fn build_end_system_txs(
+        &self,
+        block_number: u64,
+        chain_id: u64,
+        begin_system_tx_count: usize,
+        proposer_evm_address: Option<Address>,
+    ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
+        if !self.ocomp_lifecycle_active_at(block_number) {
+            return Ok(Vec::new());
+        }
+
+        let signer = self.evm_signer.as_ref().ok_or_else(|| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                "missing EVM signer for proposer terminal system tx".into(),
+            ))
+        })?;
+        let proposer = proposer_evm_address.unwrap_or_else(|| signer.address());
+        if signer.address() != proposer {
+            return Err(BlockExecutionError::Internal(
+                alloy_evm::block::InternalBlockExecutionError::Other(
+                    format!(
+                        "configured EVM signer {} does not match proposer {proposer}",
+                        signer.address()
+                    )
+                    .into(),
+                ),
+            ));
+        }
+
+        let input = SystemTxInputV2::OcompTerminalRequest;
+        let calldata = input.encode().map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("encode terminal system tx input: {error}").into(),
+            ))
+        })?;
+        let ordinal = begin_system_tx_count.try_into().map_err(|_| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("terminal system tx ordinal {begin_system_tx_count} exceeds u8 range")
+                    .into(),
+            ))
+        })?;
+        let unsigned = build_unsigned_system_tx(
+            SystemTxKind::OcompTerminalRequest,
+            ordinal,
+            block_number,
+            chain_id,
+            calldata,
+        )
+        .map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("build terminal system tx: {error}").into(),
+            ))
+        })?;
+        let signed = signer.sign_unsigned(unsigned).map_err(|error| {
+            BlockExecutionError::Internal(alloy_evm::block::InternalBlockExecutionError::Other(
+                format!("sign terminal system tx: {error}").into(),
+            ))
+        })?;
+        Ok(vec![Recovered::new_unchecked(signed, proposer)])
     }
 
     /// build and sign a single Phase 1 (`CertifiedParentAccounting`)
@@ -752,30 +1108,7 @@ impl OutbeEvmConfig {
     }
 
     fn sanitize_next_block_extra_data(extra_data: Bytes) -> Bytes {
-        if extra_data.is_empty() {
-            return extra_data;
-        }
-
-        match decode_outbe_block_artifacts(extra_data.as_ref()) {
-            // `execution_summary` is recomputed by the executor
-            // on the next block and must be `None` here. Exact-parent
-            // finalization metadata now travels through payload attributes
-            // into the CertifiedParentAccounting system tx body, so header
-            // attestation tags are dropped. `timestamp_millis_part` is
-            // overwritten downstream by `context_for_next_block` from the
-            // next-block attributes, so we drop it here (default = 0).
-            Ok(artifacts) => encode_outbe_block_artifacts(&OutbeBlockArtifacts {
-                execution_summary: None,
-                consensus_header_artifact: artifacts.consensus_header_artifact,
-                timestamp_millis_part: 0,
-                // Preserve the proposer's gathered late-finalize credits across
-                // the next-block seed sanitize (like consensus_header_artifact);
-                // dropping them here would lose them on re-proposal/validation.
-                late_finalize_credits: artifacts.late_finalize_credits,
-            })
-            .unwrap_or_default(),
-            Err(_) => Bytes::new(),
-        }
+        sanitize_prefinal_outbe_block_artifacts(extra_data.as_ref()).unwrap_or_default()
     }
 }
 
@@ -786,7 +1119,10 @@ type SystemTxExpectations = (
     Option<Address>,
 );
 
-fn system_tx_expectations_for_block(block: &SealedBlock<OutbeBlock>) -> SystemTxExpectations {
+fn system_tx_expectations_for_block(
+    block: &SealedBlock<OutbeBlock>,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
+) -> SystemTxExpectations {
     let has_boundary_outcome =
         match decode_outbe_block_artifacts(block.header().extra_data().as_ref()) {
             Ok(artifacts) => matches!(
@@ -811,11 +1147,12 @@ fn system_tx_expectations_for_block(block: &SealedBlock<OutbeBlock>) -> SystemTx
     };
 
     let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
-    if let Err(error) = validate_active_system_tx_set(
+    if let Err(error) = validate_system_tx_set_for_activation(
         &layout,
         block.header().number(),
         has_boundary_outcome,
         has_tee_bootstrap,
+        ocomp_lifecycle_activation,
     ) {
         return (Vec::new(), Vec::new(), Some(error.to_string()), None);
     }
@@ -901,13 +1238,26 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         let parent_hash = ctx.inner.parent_hash;
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
         let expected_end_system_txs = ctx.expected_end_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
+        let mut system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let block_number = evm.block().number.saturating_to::<u64>();
+        let compressed_entities_scope = evm.execution_scope().clone();
+        if let Err(error) = self.configure_compressed_entities_scope(
+            &compressed_entities_scope,
+            block_number,
+            parent_hash,
+        ) {
+            system_layout_error.get_or_insert_with(|| {
+                format!("compressed-entity exact-parent scope configuration failed: {error}")
+            });
+        }
+        let execution_read_budget = ctx.execution_read_budget.clone();
 
         OutbeBlockExecutor::new(
             EthBlockExecutor::new(
@@ -932,7 +1282,12 @@ impl BlockExecutorFactory for OutbeEvmConfig {
             prebuilt_phase1_tx,
             parent_artifact_hint,
         )
+        .with_block_state_root(ctx.block_state_root)
+        .with_compressed_entities_scope(compressed_entities_scope)
+        .with_compressed_tree_service(self.compressed_tree_service.clone())
+        .with_runtime_body_readers(runtime_body_readers, execution_read_budget)
         .with_pending_tee_bootstrap(pending_tee_bootstrap)
+        .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number))
     }
 }
 
@@ -1003,7 +1358,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             expected_end_system_txs,
             system_layout_error,
             recovered_proposer,
-        ) = system_tx_expectations_for_block(block);
+        ) = system_tx_expectations_for_block(block, self.ocomp_lifecycle_activation);
 
         Ok(OutbeBlockExecutionCtx {
             inner: EthBlockExecutionCtx {
@@ -1021,6 +1376,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             },
             timestamp_millis_part: block.header().timestamp_millis_part(),
             block_hash: Some(block.hash()),
+            block_state_root: Some(block.header().state_root()),
             expected_begin_system_txs,
             expected_end_system_txs,
             system_layout_error,
@@ -1040,6 +1396,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             // Validator path: a `TeeBootstrap` in the body is read via
             // `expected_begin_system_txs`, not injected here.
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         })
     }
 
@@ -1063,6 +1420,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             },
             timestamp_millis_part: attributes.timestamp_millis_part,
             block_hash: None,
+            block_state_root: None,
             expected_begin_system_txs: Vec::new(),
             expected_end_system_txs: Vec::new(),
             system_layout_error: None,
@@ -1072,6 +1430,7 @@ impl ConfigureEvm for OutbeEvmConfig {
             prebuilt_phase1_tx: attributes.prebuilt_phase1_tx,
             parent_artifact_hint: attributes.parent_artifact_hint,
             pending_tee_bootstrap: attributes.pending_tee_bootstrap,
+            execution_read_budget: attributes.execution_read_budget,
         })
     }
 
@@ -1093,7 +1452,7 @@ impl ConfigureEvm for OutbeEvmConfig {
 
         let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
         let expected_end_system_txs = ctx.expected_end_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
+        let mut system_layout_error = ctx.system_layout_error.clone();
         let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
         let proposer_evm_address = ctx.proposer_evm_address;
         let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
@@ -1101,6 +1460,18 @@ impl ConfigureEvm for OutbeEvmConfig {
         let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
         let parent_artifact_hint = ctx.parent_artifact_hint;
         let pending_tee_bootstrap = ctx.pending_tee_bootstrap.clone();
+        let runtime_body_readers = evm.runtime_body_readers().cloned();
+        let block_number = evm.block().number.saturating_to::<u64>();
+        let compressed_entities_scope = evm.execution_scope().clone();
+        if let Err(error) = self.configure_compressed_entities_scope(
+            &compressed_entities_scope,
+            block_number,
+            parent_hash,
+        ) {
+            system_layout_error.get_or_insert_with(|| {
+                format!("compressed-entity exact-parent scope configuration failed: {error}")
+            });
+        }
 
         OutbeBlockBuilder::new(
             OutbeBlockExecutor::new(
@@ -1126,7 +1497,11 @@ impl ConfigureEvm for OutbeEvmConfig {
                 prebuilt_phase1_tx,
                 parent_artifact_hint,
             )
-            .with_pending_tee_bootstrap(pending_tee_bootstrap),
+            .with_compressed_entities_scope(compressed_entities_scope)
+            .with_compressed_tree_service(self.compressed_tree_service.clone())
+            .with_runtime_body_readers(runtime_body_readers, ctx.execution_read_budget.clone())
+            .with_pending_tee_bootstrap(pending_tee_bootstrap)
+            .with_ocomp_lifecycle_active(self.ocomp_lifecycle_active_at(block_number)),
             ctx,
             self.bridge.clone(),
             self.block_assembler(),
@@ -1151,7 +1526,9 @@ impl ConfigureEngineEvm<OutbeExecutionData> for OutbeEvmConfig {
         &self,
         payload: &'a OutbeExecutionData,
     ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
-        self.context_for_block(&payload.block)
+        let mut ctx = self.context_for_block(&payload.block)?;
+        ctx.execution_read_budget = payload.execution_read_budget.clone();
+        Ok(ctx)
     }
 
     fn tx_iterator_for_payload(
@@ -1181,6 +1558,16 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Required read-only Tribute and Nod body authority for live execution.
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    /// Explicit CE tree owner; mandatory for live execution.
+    pub compressed_tree_service: Option<Arc<CompressedTreeService>>,
+    /// Inert until the canonical OCM-26 devnet schedule is supplied.
+    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
+    /// Complete immutable authority installed at the activation height.
+    pub ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
+    /// Production finalized JobIntent proof authority supplied by the node.
+    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -1190,6 +1577,20 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
             .field(
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
+            )
+            .field("runtime_body_readers", &self.runtime_body_readers.is_some())
+            .field(
+                "compressed_tree_service",
+                &self.compressed_tree_service.is_some(),
+            )
+            .field(
+                "ocomp_lifecycle_activation",
+                &self.ocomp_lifecycle_activation,
+            )
+            .field("ocomp_fork_install", &self.ocomp_fork_install.is_some())
+            .field(
+                "ocomp_finality_authority",
+                &self.ocomp_finality_authority.is_some(),
             )
             .finish()
     }
@@ -1201,11 +1602,45 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_body_readers: None,
+            compressed_tree_service: None,
+            ocomp_lifecycle_activation: OcompLifecycleActivation::Disabled,
+            ocomp_fork_install: None,
+            ocomp_finality_authority: None,
         }
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
         self.evm_signer = Some(signer);
+        self
+    }
+
+    /// Installs the mandatory read-only Tribute and Nod body bundle.
+    pub fn with_runtime_body_readers(mut self, readers: RuntimeBodyReaders) -> Self {
+        self.runtime_body_readers = Some(readers);
+        self
+    }
+
+    pub fn with_compressed_tree_service(mut self, service: Arc<CompressedTreeService>) -> Self {
+        self.compressed_tree_service = Some(service);
+        self
+    }
+
+    pub fn with_ocomp_lifecycle_activation(mut self, activation: OcompLifecycleActivation) -> Self {
+        self.ocomp_lifecycle_activation = activation;
+        self
+    }
+
+    pub fn with_ocomp_fork_install(mut self, install: Arc<OcompForkInstallV1>) -> Self {
+        self.ocomp_fork_install = Some(install);
+        self
+    }
+
+    pub fn with_ocomp_finality_authority(
+        mut self,
+        authority: Arc<dyn OcompFinalizedIntentAuthority>,
+    ) -> Self {
+        self.ocomp_finality_authority = Some(authority);
         self
     }
 }
@@ -1215,11 +1650,44 @@ where
     Node: FullNodeTypes<
         Types: NodeTypes<ChainSpec = ChainSpec<OutbeHeader>, Primitives = OutbePrimitives>,
     >,
-    Node::Provider: HeaderProvider<Header = OutbeHeader> + Clone + Send + Sync + 'static,
+    Node::Provider: HeaderProvider<Header = OutbeHeader>
+        + BlockHashReader
+        + BlockIdReader
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        match (&self.ocomp_fork_install, self.ocomp_lifecycle_activation) {
+            (Some(install), OcompLifecycleActivation::AtBlock(height))
+                if install.activation_height == height => {}
+            (None, OcompLifecycleActivation::Disabled) => {}
+            (Some(_), OcompLifecycleActivation::Disabled) => {
+                return Err(eyre::eyre!(
+                    "OCOMP fork install requires an active lifecycle schedule"
+                ));
+            }
+            (None, OcompLifecycleActivation::AtBlock(_)) => {
+                return Err(eyre::eyre!(
+                    "active OCOMP lifecycle requires a chain-manifest fork install"
+                ));
+            }
+            (Some(install), OcompLifecycleActivation::AtBlock(height)) => {
+                return Err(eyre::eyre!(
+                    "OCOMP fork install height {} differs from lifecycle height {height}",
+                    install.activation_height
+                ));
+            }
+        }
+        let runtime_body_readers = self.runtime_body_readers.ok_or_else(|| {
+            eyre::eyre!("live Outbe EVM construction requires RuntimeBodyReaders")
+        })?;
+        let compressed_tree_service = self.compressed_tree_service.ok_or_else(|| {
+            eyre::eyre!("live Outbe EVM construction requires CompressedTreeService")
+        })?;
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -1234,17 +1702,30 @@ where
                         ctx.provider().clone(),
                         Some(summary_cache),
                     )),
+                    runtime_body_readers,
                 )
             }
-            None => OutbeEvmConfig::new_with_provider_only(
+            None => OutbeEvmConfig::new_with_provider_and_runtime_body_readers(
                 ctx.chain_spec(),
                 Arc::new(RethAccountedParentArtifactProvider::new(
                     ctx.provider().clone(),
                     None,
                 )),
+                runtime_body_readers,
             ),
         };
 
+        let mut config = config
+            .with_compressed_tree_service(compressed_tree_service)
+            .with_ocomp_lifecycle_activation(self.ocomp_lifecycle_activation);
+        if let Some(install) = self.ocomp_fork_install {
+            config = config.with_ocomp_fork_install(install);
+        }
+        if let Some(authority) = self.ocomp_finality_authority {
+            config = config.with_ocomp_finality_authority(Arc::new(
+                ProviderAnchoredOcompFinalityAuthority::new(ctx.provider().clone(), authority),
+            ));
+        }
         Ok(match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
             None => config,
@@ -1255,8 +1736,25 @@ where
 #[cfg(test)]
 mod tests {
     use std::ops::RangeBounds;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
+    use alloy_eips::BlockNumHash;
     use alloy_primitives::{Address, Bytes, B256, U256};
+    use outbe_metadosis::ocomp::activation::{
+        OcompFinalityAuthorityError, OcompFinalizedIntentAuthority,
+    };
+    use outbe_ocomp_protocol::{
+        common::{BoundedBytes, ProofBytes},
+        intent::{
+            CertifiedParentAccountingMetadataV2, ExpectedFinalizedIntentBindingV1,
+            FinalizedIntentProofV1, FinalizedIntentVerificationError, ParentProofKind,
+            VerifiedFinalizedIntentV1,
+        },
+        SchemaLimits,
+    };
     use outbe_primitives::{
         consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact, ReshareResult},
         reshare_artifact::{
@@ -1266,11 +1764,13 @@ mod tests {
         },
         OutbeHeader,
     };
+    use reth_chainspec::ChainInfo;
     use reth_ethereum::chainspec::ChainSpec;
     use reth_ethereum::{
         chainspec::MAINNET,
         primitives::{Header, SealedHeader},
     };
+    use reth_provider::{BlockHashReader, BlockIdReader, BlockNumReader, ProviderResult};
     #[test]
     fn new_with_bridge_installs_cache_summary_provider() {
         let bridge = ConsensusExecutionBridge::new();
@@ -1290,15 +1790,16 @@ mod tests {
 
         assert_eq!(resolved.summary, summary);
         assert_eq!(resolved.timestamp, 456);
+        assert_eq!(resolved.state_root, None);
     }
 
     use reth_evm::{ConfigureEvm, NextBlockEnvAttributes};
-    use reth_provider::{HeaderProvider, ProviderResult};
+    use reth_provider::HeaderProvider;
     use reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv;
 
     use super::{
         AccountedParentArtifactProvider, OutbeEvmConfig, OutbeNextBlockEnvAttributes,
-        RethAccountedParentArtifactProvider,
+        ProviderAnchoredOcompFinalityAuthority, RethAccountedParentArtifactProvider,
     };
 
     #[derive(Clone, Default)]
@@ -1395,6 +1896,7 @@ mod tests {
             prebuilt_phase1_tx: None,
             parent_artifact_hint: None,
             pending_tee_bootstrap: None,
+            execution_read_budget: None,
         }
     }
 
@@ -1531,6 +2033,7 @@ mod tests {
             consensus_header_artifact: None,
             timestamp_millis_part: 777,
             late_finalize_credits: Some(credits.clone()),
+            compressed_entities_root: None,
         })
         .expect("encode");
 
@@ -1564,7 +2067,8 @@ mod tests {
         let bridge = ConsensusExecutionBridge::new();
         let summary = test_summary();
         let block_hash = B256::repeat_byte(0x42);
-        bridge.record_execution_summary(7, block_hash, summary, 123);
+        let state_root = B256::repeat_byte(0x43);
+        bridge.record_execution_summary_with_state_root(7, block_hash, summary, 123, state_root);
         let provider = RethAccountedParentArtifactProvider::new(
             TestHeaderProvider::default(),
             Some(bridge.clone()),
@@ -1577,5 +2081,155 @@ mod tests {
 
         assert_eq!(resolved.summary, summary);
         assert_eq!(resolved.timestamp, 123);
+        assert_eq!(resolved.state_root, Some(state_root));
+    }
+
+    #[derive(Clone)]
+    struct FinalityAnchorProvider {
+        finalized: BlockNumHash,
+        canonical: B256,
+    }
+
+    impl BlockHashReader for FinalityAnchorProvider {
+        fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
+            Ok((number == 7).then_some(self.canonical))
+        }
+
+        fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
+            Ok((start..end)
+                .filter_map(|number| (number == 7).then_some(self.canonical))
+                .collect())
+        }
+    }
+
+    impl BlockNumReader for FinalityAnchorProvider {
+        fn chain_info(&self) -> ProviderResult<ChainInfo> {
+            Ok(ChainInfo {
+                best_hash: self.finalized.hash,
+                best_number: self.finalized.number,
+            })
+        }
+
+        fn best_block_number(&self) -> ProviderResult<u64> {
+            Ok(self.finalized.number)
+        }
+
+        fn last_block_number(&self) -> ProviderResult<u64> {
+            Ok(self.finalized.number)
+        }
+
+        fn block_number(&self, hash: B256) -> ProviderResult<Option<u64>> {
+            Ok((hash == self.canonical).then_some(7))
+        }
+    }
+
+    impl BlockIdReader for FinalityAnchorProvider {
+        fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(None)
+        }
+
+        fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(Some(self.finalized))
+        }
+
+        fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
+            Ok(Some(self.finalized))
+        }
+    }
+
+    struct CountingFinality {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl OcompFinalizedIntentAuthority for CountingFinality {
+        fn verify(
+            &self,
+            _proof: &FinalizedIntentProofV1,
+            _expected: ExpectedFinalizedIntentBindingV1,
+            _limits: &SchemaLimits,
+        ) -> Result<VerifiedFinalizedIntentV1, OcompFinalityAuthorityError> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            Err(FinalizedIntentVerificationError::WrongChain.into())
+        }
+    }
+
+    fn anchor_proof(block_number: u64, block_hash: B256) -> FinalizedIntentProofV1 {
+        FinalizedIntentProofV1 {
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            fork_id: B256::ZERO,
+            protocol_bundle_hash: B256::ZERO,
+            canonical_request_header_rlp: ProofBytes(Vec::new()),
+            parent_accounting: CertifiedParentAccountingMetadataV2 {
+                finalized_block_number: block_number,
+                finalized_block_hash: block_hash,
+                finalized_epoch: 0,
+                finalized_view: 0,
+                parent_view: 0,
+                ordered_committee: Vec::new(),
+                signer_bitmap: BoundedBytes(Vec::new()),
+                canonical_commonware_finalization_proof: ProofBytes(Vec::new()),
+                committee_set_hash: B256::ZERO,
+                vrf_material_version: 0,
+                vrf_group_public_key_hash: B256::ZERO,
+                proof_kind: ParentProofKind::Finalization,
+                missed_proposers: Vec::new(),
+            },
+            historical_committee_membership_proof: ProofBytes(Vec::new()),
+            canonical_job_intent: BoundedBytes(Vec::new()),
+            intent_account_proof: ProofBytes(Vec::new()),
+            intent_storage_proof: ProofBytes(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn production_finality_wrapper_requires_node_owned_canonical_finalized_anchor() {
+        let canonical = B256::repeat_byte(0x77);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let authority = ProviderAnchoredOcompFinalityAuthority::new(
+            FinalityAnchorProvider {
+                finalized: BlockNumHash::new(10, B256::repeat_byte(0xAA)),
+                canonical,
+            },
+            Arc::new(CountingFinality {
+                calls: calls.clone(),
+            }),
+        );
+        let expected = ExpectedFinalizedIntentBindingV1 {
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            fork_id: B256::ZERO,
+            protocol_bundle_hash: B256::ZERO,
+        };
+        let limits = outbe_metadosis::ocomp::schema::poc_schema_limits();
+
+        let side_chain = authority
+            .verify(&anchor_proof(7, B256::repeat_byte(0x88)), expected, &limits)
+            .unwrap_err();
+        assert!(matches!(
+            side_chain,
+            OcompFinalityAuthorityError::InvalidProof(
+                FinalizedIntentVerificationError::FinalizedHeaderMetadataMismatch
+            )
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let above_finalized = authority
+            .verify(&anchor_proof(11, canonical), expected, &limits)
+            .unwrap_err();
+        assert!(matches!(
+            above_finalized,
+            OcompFinalityAuthorityError::LocalAuthority(_)
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let delegated = authority
+            .verify(&anchor_proof(7, canonical), expected, &limits)
+            .unwrap_err();
+        assert!(matches!(
+            delegated,
+            OcompFinalityAuthorityError::InvalidProof(FinalizedIntentVerificationError::WrongChain)
+        ));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
     }
 }

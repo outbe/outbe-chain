@@ -6,9 +6,9 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {USDT} from "../../src/native/USDT.sol";
-import {USDT0} from "../../src/synthetic/USDT0.sol";
+import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
-import {WCOEN as SyntheticWCOEN} from "../../src/synthetic/WCOEN.sol";
+import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ERC7786TokenBridgeTest is Test {
@@ -23,7 +23,7 @@ contract ERC7786TokenBridgeTest is Test {
     MockERC7786Bridge internal outbeGateway;
 
     USDT internal usdt;
-    USDT0 internal usdt0;
+    BridgeableERC20Stable internal usdt0;
     ERC7786TokenBridge internal bnbUsdtBridge;
     ERC7786TokenBridge internal outbeUsdt0Bridge;
 
@@ -164,7 +164,7 @@ contract ERC7786TokenBridgeTest is Test {
 
     function _setUpUsdtRoute() internal {
         usdt = new USDT();
-        usdt0 = new USDT0("USDT0", "USDT0", 6, address(this));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, address(this));
 
         bnbUsdtBridge = new ERC7786TokenBridge(
             address(usdt), address(bnbGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock

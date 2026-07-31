@@ -1,0 +1,4 @@
+[Unit]
+Description=Outbe validator and optional Off-chain Computation siblings
+Wants=outbe-validator.service
+Wants=outbe-ocomp.target

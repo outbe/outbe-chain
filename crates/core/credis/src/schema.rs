@@ -40,6 +40,29 @@ pub struct Position {
 
     #[attribute(order = 7)]
     pub created_at: u64,
+
+    /// Original Credis amount (principal) in the issuance currency, before the
+    /// refinancing-rate markup. `total_anadosis_amount` holds principal + interest.
+    #[attribute(order = 9)]
+    pub credis_principal: U256,
+
+    /// Annualized refinancing rate (1e18 scaled) read from the Oracle and pinned
+    /// at issuance for the lifetime of this schedule.
+    #[attribute(order = 10)]
+    pub refinancing_rate: U256,
+
+    /// Issuance currency as an ISO 4217 numeric code (e.g., 840 = USD), derived
+    /// from the disbursed asset's `isoCode()` at issuance.
+    #[attribute(order = 11)]
+    pub issuance_currency: u16,
+
+    /// The pledger EOA sealed under the enclave state key (`nonce ‖ ct`, produced by
+    /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
+    /// EOA to `bundle_account`; the expiry sweep / payAnadosis recover the plaintext EOA
+    /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
+    /// cohort. Never a plaintext address on-chain.
+    #[attribute(order = 12)]
+    pub eoa_ct: Vec<u8>,
 }
 
 /// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.
@@ -102,9 +125,9 @@ pub struct CredisContract {
 
 impl CredisContract<'_> {
     /// position_id derivation: `keccak256(commitment || bundle_account)`.
-    pub fn position_id(commitment: U256, bundle_account: Address) -> U256 {
+    pub fn position_id(handle_id: U256, bundle_account: Address) -> U256 {
         let mut buf = [0u8; 52];
-        buf[0..32].copy_from_slice(&commitment.to_be_bytes::<32>());
+        buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
         buf[32..52].copy_from_slice(bundle_account.as_slice());
         U256::from_be_bytes(keccak256(buf).0)
     }

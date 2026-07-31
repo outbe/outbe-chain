@@ -32,10 +32,12 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             receipt_index: 0,
         },
         SystemTxPhase::LateFinalizeCredits { body_index: 0 },
+        SystemTxPhase::OcompLifecycleBegin { body_index: 0 },
         SystemTxPhase::CycleTick { body_index: 0 },
         SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
         SystemTxPhase::TeeBootstrapOptional { body_index: 0 },
         SystemTxPhase::OracleSlashWindow { body_index: 0 },
+        SystemTxPhase::HookEvents { body_index: 0 },
         SystemTxPhase::UserTxs,
     ];
     for variant in &variants {
@@ -44,14 +46,16 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         match variant {
             SystemTxPhase::Phase1Preexecuted { .. } => {}
             SystemTxPhase::LateFinalizeCredits { .. } => {}
+            SystemTxPhase::OcompLifecycleBegin { .. } => {}
             SystemTxPhase::CycleTick { .. } => {}
             SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
             SystemTxPhase::TeeBootstrapOptional { .. } => {}
             SystemTxPhase::OracleSlashWindow { .. } => {}
+            SystemTxPhase::HookEvents { .. } => {}
             SystemTxPhase::UserTxs => {}
         }
     }
-    assert_eq!(variants.len(), 7, "V2 SystemTxPhase contract: 7 variants");
+    assert_eq!(variants.len(), 9, "V2 SystemTxPhase contract: 9 variants");
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
@@ -123,7 +127,8 @@ proptest! {
                 SystemTxKind::CertifiedParentAccounting
                     | SystemTxKind::CycleTick
                     | SystemTxKind::BoundaryOutcome
-                    | SystemTxKind::OracleSlashWindow,
+                    | SystemTxKind::OracleSlashWindow
+                    | SystemTxKind::HookEvents,
             ));
         }
     }

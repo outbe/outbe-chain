@@ -6,7 +6,7 @@ Public EVM-compatible blockchain built on [Reth](https://github.com/paradigmxyz/
 ~2s blocks | Instant BFT finality | Built-in VRF | BLS hybrid signing | Full EVM
 ```
 
-No HTTP Engine API split: consensus and execution run in one process and talk through in-process Reth engine handles (`fork_choice_updated`, `new_payload`, payload builder). Validator lifecycle, staking, rewards, slashing, and business logic are stateful Rust precompiles; upgrades are hard-fork driven, with no proxy-admin governance.
+No HTTP Engine API split: consensus and execution run in one process and talk through in-process Reth engine handles (`fork_choice_updated`, `new_payload`, payload builder). Validator lifecycle, staking, rewards, slashing, voting, protocol updates, and business logic are stateful Rust precompiles; protocol updates are coordinated by validator vote plus binary rollout, with no proxy-admin model.
 
 ## Architecture
 
@@ -129,6 +129,41 @@ VRF seed (or the genesis round-robin exception), not Ethereum's default
 randomness. The txpool uses ZeroFee admission with deterministic priority
 classes.
 
+**L2 network registry.** The **L2Registry** precompile at
+`0x000000000000000000000000000000000000EE0E` (ABI:
+`contracts/precompiles/src/IL2Registry.sol`) records L2 networks keyed by
+`chain_id`: the L1 operator address that submits on behalf of the network, the
+network's BLS MinPk public key (48 bytes, the same variant as validator
+consensus keys), and a per-network `zk_enabled` flag. `registerNetwork` /
+`setZkEnabled` / `removeNetwork` are permissionless by design — any caller may
+invoke them. `TributeFactory.offerTribute` carries a `signature` field: when the
+offer caller is a registered L1 operator address and its network has
+`zk_enabled` set, the offer must include a valid BLS MinPk signature over
+`zkMerkleRoot` (signed under the `_OUTBE_L2_ZK_MERKLE_ROOT` namespace with the
+commonware `sign_message` recipe) or the call reverts; unregistered callers and
+zk-disabled networks pass empty bytes.
+
+**Stablecoin Factory V1.** Fresh devnet/testnet genesis includes the fixed Factory
+at `0x...EE0F`, the shared Policy Registry at `0x...EE10`, and the CREATE/CREATE2
+guard for the dynamic `0x53c0` address class. Every registered token uses the exact
+native marker `0xef` and starts with zero supply.
+
+An issuer submits a canonical proposal through Vote with the exact `10^24` base-unit
+bond. Only current `ACTIVE` validators vote. Approval creates the token and refunds
+the bond; expiry releases its reservations and burns the bond; a typed target
+execution error records proposal status `Error` and retains its bond and reservation
+for a future validator-approved transition outside V1. Public bonded proposals are
+capped at 16 globally and one per proposer inside Vote's 64-slot total.
+
+Tokens implement ERC-20, EIP-2612, Final ERC-7943 and fixed `bytes32` memo variants.
+Shared Policy membership batches are capped at 64. EIP-712 domains use version
+`"1"`. Operator tooling lives under `outbe-cli stablecoin`; no maintained SDK is
+promised. Factory admission is not evidence of backing, redeemability, price
+stability, issuer solvency, fee-asset eligibility or payment-lane eligibility.
+Existing chain state created without the reserved-class guard and mainnet deployment
+are outside V1. See
+`docs/plans/stablecoin-factory-v1-implementation-plan.md`.
+
 ## Stateful Runtime Module Contract
 
 Stateful runtime modules (validator set, staking, rewards, slashing, emission,
@@ -139,14 +174,94 @@ contract, not ad-hoc per-module APIs:
   proposer, and validator-set state, then wraps it in a `BlockRuntimeContext`
   carrying the current scoped `StorageHandle` (`outbe_primitives::block`).
 - Each module's block-boundary entrypoints implement `BlockLifecycle` on a
-  zero-sized marker type (`XxxLifecycle`); the executor calls them as
-  `<XxxLifecycle as BlockLifecycle>::begin_block(&ctx)` / `end_block(&ctx)`.
+  zero-sized marker type (`XxxLifecycle`). Ordinary modules use
+  `BlockRuntimeContext` directly; modules needing an additional least-authority
+  capability define one typed lifecycle context that wraps it. The executor
+  always calls the marker through `BlockLifecycle::begin_block` / `end_block`.
 - Lifecycle ordering is explicit in the executor and hard-fork governed — there
   is no runtime plugin registration and no positional `(timestamp, block_number)`
   block-boundary API.
 - Persistent state is reached only through the explicit scoped `StorageHandle`
   (`storage.contract::<T>()` / `ctx.contract::<T>()`), never implicit context or
   process globals; facades are short-lived and never escape the execution scope.
+
+## Governance (canon, meta-canon, OIP, GIP)
+
+The **Governance** precompile at `0x0000000000000000000000000000000000001018`
+(ABI: `contracts/precompiles/src/IGovernance.sol`) is the on-chain registry of
+the normative texts and improvement proposals. It is a first slice of the AI
+governance subsystem; the semantic membrane and agent decision loop land in later
+phases.
+
+**Objects**
+
+| Object | Shape | Mutation |
+|---|---|---|
+| **meta-canon** | one structured text, versioned, keccak-hashed | full overwrite; no status model |
+| **canon** | one structured text, versioned, keccak-hashed | full overwrite; no status model |
+| **OIP** (Outbe Improvement Proposal) | record: `author, status, blocks, text_hash, text` | submit / edit text / set status |
+| **GIP** (Governance Improvement Proposal) | same shape as OIP, separate map & id sequence | submit / edit text / set status |
+
+The canon/meta-canon each store only their **current** version plus a
+`version → hash` revision map (old texts are not retained). Proposal **status**
+follows `Draft → Approved | Rejected | Rework`, `Rework → Draft` (author
+resubmission), `Approved → Implemented`; `Rejected`/`Implemented` are terminal.
+Proposal text is editable only while `Draft` or `Rework`, and only by its author.
+
+**Write authorization (PoC scaffolding).** `updateCanon`, `updateMetaCanon`, and
+`setOip/GipStatus` are gated by an on-chain `authorities` set, seeded at genesis
+with the validator addresses (any single validator can write — the semi-closed
+club of the prototype). `submitOip`/`submitGip` and all reads are open. This gate
+is a stand-in for the not-yet-built decision pipeline (membrane → agents →
+negative-control window) and is retired when that lands.
+
+**Read** (view calls, e.g. via `cast`; `$G = 0x…1018`):
+
+```bash
+cast call $G "getCanon()(string,uint64,bytes32)"
+cast call $G "getMetaCanon()(string,uint64,bytes32)"
+cast call $G "getOip(uint256)((uint256,uint8,address,uint64,uint64,bytes32,string))" 1
+cast call $G "oipCount()(uint64)"
+# unified diff of a proposal's text vs a base (0 = canon, 1 = meta-canon)
+cast call $G "getGipDiff(uint256,uint8)(string)" 1 0
+cast call $G "isAuthority(address)(bool)" 0xVALIDATOR
+```
+
+**Write** (transactions):
+
+```bash
+# canon / meta-canon — authorities only, full overwrite (returns new version)
+cast send $G "updateCanon(string)(uint64)"      "$(cat canon.md)"
+cast send $G "updateMetaCanon(string)(uint64)"  "$(cat metacanon.md)"
+
+# proposals — anyone may submit (returns id); author edits text while Draft/Rework
+cast send $G "submitOip(string)(uint256)"  "$(cat my-oip.md)"
+cast send $G "updateOipText(uint256,string)" 1 "$(cat my-oip-v2.md)"
+cast send $G "submitGip(string)(uint256)"  "$(cat my-gip.md)"
+
+# status — authorities drive the lifecycle (Draft→Approved→Implemented, …);
+# the author alone may resubmit Rework→Draft
+cast send $G "setOipStatus(uint256,uint8)" 1 1   # → Approved
+cast send $G "setOipStatus(uint256,uint8)" 1 4   # → Implemented
+```
+
+Status codes: `0 Draft · 1 Approved · 2 Rejected · 3 Rework · 4 Implemented`.
+
+**Genesis seeding.** `scripts/seed_genesis.py` seeds the `authorities` set from
+`validators.json` and the initial canon/meta-canon texts from
+`scripts/canon/{canon.md,metacanon.md}` at version 1:
+
+```bash
+python3 scripts/seed_genesis.py \
+  --genesis genesis.json --seed scripts/seed-testnet.json \
+  --validators validators.json --canon-dir scripts/canon \
+  --output genesis-seeded.json
+```
+
+`--canon-dir` defaults to `scripts/canon`; if the files are absent the texts
+start empty and an authority performs the first `updateCanon` post-genesis.
+Proposal text is stored in-record via the storage DSL's `String`/`Bytes` record
+fields (`crates/blockchain/macros`), capped at 128 KiB per text.
 
 ## Emission Model
 
@@ -190,10 +305,34 @@ clears the share). Non-voting consensus followers may include `REGISTERED`,
 
 ## Upgrades
 
-Upgrades are coordinated by binary rollout / hard fork, not on-chain governance.
-The `ChainSpec` genesis hash is immutable at runtime; any change is hard-fork
-coordinated. Storage slot 0 is reserved for the storage schema version, which
-migrations increment rather than re-using retired slots.
+Protocol updates are proposed through the reusable vote module and scheduled by
+the update module after quorum. Operators still roll out binaries before the
+activation height; the on-chain vote decides when the protocol version becomes
+active.
+
+Operator flow:
+
+```bash
+UPDATE_ADDR=0x000000000000000000000000000000000000EE0B
+PAYLOAD='{"version":"1.2","activationHeight":12345,"info":"v1.2 rollout"}'
+
+outbe-cli --private-key "$VALIDATOR_KEY" vote propose \
+  --target-module "$UPDATE_ADDR" \
+  --payload "$PAYLOAD"
+
+outbe-cli --private-key "$VALIDATOR_KEY" vote cast --proposal-id 1 --yes
+outbe-cli vote status --proposal-id 1
+```
+
+Before consensus/RPC startup, the node checks the on-chain active protocol
+version. If the local binary protocol version is older than `active_version`, the
+node refuses to start and the operator must upgrade the binary.
+
+Handler details:
+
+- [`crates/system/vote/README.md`](crates/system/vote/README.md) — proposal/voting flow and target handlers.
+- [`crates/system/update/README.md`](crates/system/update/README.md) — active-version API, update target handler,
+  migration handlers, update precompile reads/events, and startup gate.
 
 ## Repository Layout
 
@@ -218,10 +357,18 @@ outbe-chain/
 
 Prerequisites: [`mise`](https://mise.jdx.dev) (provisions the Rust toolchain, Foundry, and cargo tools from `mise.toml`). Run `mise install` once, then `mise tasks` to list every task.
 
+To independently rebuild the five production Linux x86_64 ELF files from a clean commit,
+use `scripts/release/reproducible-build.sh`; the exact two-build procedure, manifest contract
+and current scope limits are documented in [Reproducible builds](docs/reproducible-builds.md).
+
 ```bash
 # 4-validator localnet
 mise run build-release
 mise run localnet-bootstrap     # BLS keys + genesis.json
+docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+docker exec outbe-local-mongodb mongosh --quiet --eval \
+  'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+export OUTBE_PROJECTION_MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
 mise run localnet-start
 mise run localnet-status        # all 4 nodes should advance past block 0
 
@@ -234,6 +381,51 @@ mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
 
+### Managed localnet stack
+
+For a ready-to-use local environment with four validators, mock TEE enclaves,
+and a transaction-capable MongoDB replica set, run:
+
+```bash
+mise run localnet-stack-start
+```
+
+This is general localnet infrastructure, not a Tribute-specific scenario. The
+task builds the required binaries, recreates a fresh chain under
+`/tmp/outbe-localnet-stack`, starts a persistent Docker volume for MongoDB,
+boots four validator nodes, and succeeds only after:
+
+- MongoDB elects a primary and completes a real transaction;
+- all four validator processes remain alive;
+- all four projection databases are initialized;
+- the primary RPC reaches block 1.
+
+The task prints RPC URLs, the MongoDB URI, database prefix, and data directory
+for use by any manual flow. Stop services while retaining chain and projection
+data, or remove everything, with:
+
+```bash
+mise run localnet-stack-stop
+mise run localnet-stack-clean
+```
+
+The shortest manual Tribute demonstration on top of this general stack is:
+
+```bash
+mise run localnet-stack-start
+mise run tribute-offer
+mise run tribute-show-mongo
+```
+
+The last command prints the matching Tribute document and index counts from all
+four validator projection databases.
+
+`localnet-stack-start` is intentionally fresh/destructive for its dedicated
+`/tmp/outbe-*` directory. To run another isolated stack, override all of
+`LOCALNET_STACK_DIR`, `LOCALNET_STACK_MONGO_NAME`,
+`LOCALNET_STACK_MONGO_PORT`, `LOCALNET_STACK_PORT_OFFSET`, and
+`LOCALNET_STACK_DATABASE_PREFIX`, using non-overlapping ports.
+
 ## CLI Tools
 
 ```bash
@@ -244,7 +436,75 @@ outbe-cli staking stake|unstake|claim         # staking flow
 outbe-cli rewards emission|history            # emission params (validator emission is paid in gems)
 ```
 
-Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`.
+Full nodes sync and serve RPC without consensus key material; validators additionally pass `--validator --consensus.signing-key <path>`. During the ADR-005 staged profile, a non-validator must use the certified-follower `--upstream` path. Plain EL-only sync is rejected because it has no exact finalized-parent projection barrier.
+
+### Required finalized offchain-data projection
+
+Every validator and full node materializes finalized Tribute and Nod bodies and indexes into
+MongoDB. In the ADR-005 pre-production profile, typed Mongo repositories are also the only runtime
+source for complete Tribute/Nod bodies; there is no EVM body fallback. This profile is hard-disabled
+outside the assigned Outbe devnet and testnet chain IDs and must not be activated on production or
+mainnet before ADR-006/ADR-007 are complete. Start the node with both MongoDB settings:
+
+```bash
+outbe-chain node \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --projection.mongodb-uri 'mongodb://127.0.0.1:27017/?replicaSet=rs0' \
+  --projection.mongodb-database outbe_projection \
+  --projection.start-block 1
+```
+
+`OUTBE_PROJECTION_MONGODB_URI` and `OUTBE_PROJECTION_MONGODB_DATABASE` are equivalent environment
+variables. The URI and database flags must be supplied together; omitting either stops node startup.
+The start block defaults to the first executable block, block 1. Each node projector exclusively owns
+one logical database; do not point multiple active nodes at the same database. MongoDB must be a
+transaction-capable replica set (including a single-node replica set) or sharded cluster.
+Execution uses `primary` read preference plus `majority` read and write concern; URI options that
+weaken this contract are rejected.
+The bundled Docker Compose uses a persistent MongoDB volume and fixed per-validator databases; run
+`docker compose down -v` before bootstrapping it with a different genesis.
+
+Before business execution becomes ready, startup validates the MongoDB connection, transaction
+capability, managed schema, chain/genesis/start-block identity, and the durable checkpoint against
+local Reth history. Mongo ahead of local Reth is rejected; Mongo behind remains non-ready until ExEx
+replays every retained finalized block. Proposal, verification, and certified-follower execution
+wait for the exact projected parent `(number, hash)` and never substitute a moving height or poll
+MongoDB on those hot paths.
+
+Mongo availability failures immediately close the local participation/business-readiness gate. The
+long-lived ExEx continues draining notifications, retries immediately and then once per second, and
+keeps both its durable checkpoint and Reth `FinishedHeight` unchanged. Recovery has one eight-second
+total deadline; expiry or deterministic corruption reports a structured terminal projection failure
+and requests graceful whole-node shutdown. A healthy but lagging projection only consumes the
+caller's existing proposal/verification budget and does not start the Mongo outage timer.
+
+`outbe_consensusStatus` includes the local projection state, exact checkpoint, local Reth finalized
+point, lag, readiness, outage duration, and structured failure class. Prometheus also exports
+`outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
+local operational signals, not consensus acknowledgements.
+
+### Required compressed-entity persistence barrier
+
+Compressed-entity execution uses the exact finalized parent root in EVM slot 1 and a separate CE
+MDBX materialization under `<datadir>/compressed_entities/smt`. Node startup requires
+`--engine.persistence-threshold 0`, `--engine.memory-block-buffer-target 0`, sequential Marshal
+delivery (`MAX_PENDING_ACKS=1`), and receipt/historical-state pruning disabled. These settings make
+every finalized block cross a real Reth persistence notification before the DB-only block/root
+check and atomic CE marker commit. Marshal is acknowledged only after that sequence succeeds;
+startup fails instead of weakening the barrier when the settings are incompatible.
+
+The CE environment is bound to chain ID, genesis hash, commitment scheme, fork-fixed shard count,
+CKB tree format, vendored revision, and local schema. A directory created for another shard count is
+rejected or rebuilt; it is never opened through a compatibility fallback. Speculative candidates
+remain in memory and never mutate MDBX. The EVM root is the consensus authority; the local marker and
+tree nodes are authenticated materialization and mismatches fail closed.
+
+Before validator or follower participation, startup compares the CE marker with the exact durable
+finalized checkpoint. An equal marker resumes, a behind marker replays every contiguous canonical
+receipt block, and ahead/conflict/gap states stop startup. At live finality, proposer candidates are
+accepted only after block assembly; validator imports without a candidate are reconstructed from
+durable canonical receipts after the same DB-only hash/root barrier.
 
 ## Documentation
 

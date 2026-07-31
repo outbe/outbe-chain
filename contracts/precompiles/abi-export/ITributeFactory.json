@@ -24,6 +24,11 @@
         "internalType": "uint16"
       },
       {
+        "name": "excludeFromIntexIssuance",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
         "name": "zkProof",
         "type": "bytes",
         "internalType": "bytes"
@@ -42,13 +47,18 @@
         "name": "zkMerkleRoot",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
       {
         "name": "tributeId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "nonpayable"

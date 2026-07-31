@@ -9,6 +9,7 @@ use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuanceParams {
     pub series_id: u32,
+    pub worldwide_day: u32,
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.
@@ -18,6 +19,10 @@ pub struct IssuanceParams {
     /// Auction winners: per-address mint recipients for ISSUANCE_INSTRUCTIONS.
     pub recipients: Vec<Address>,
     pub quantities: Vec<U256>,
+    /// Source chain of each winner (parallel to `recipients`); routes each mint to its chain.
+    pub recipient_chains: Vec<u32>,
+    /// Every target chain of the day's snapshot; each gets an ISSUANCE (empty recipients = create only).
+    pub snapshot_chains: Vec<u32>,
 }
 
 /// EVM storage layout: settlement bookkeeping (authorized_settler, settle_count,

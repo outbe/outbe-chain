@@ -17,10 +17,9 @@ contract EscrowAdapterOptionDTest is Test {
     address admin = address(1);
     address bridger = address(2);
     address auction = address(3);
-    address vault = address(4);
     address bidder1 = address(5);
 
-    uint32 seriesId1 = 1;
+    uint32 worldwideDay1 = 1;
     uint64 constant LOCK_AMOUNT = 1000 * 10 ** 6;
 
     function setUp() public {
@@ -29,7 +28,7 @@ contract EscrowAdapterOptionDTest is Test {
         paymentToken = new MockERC20("USD Coin", "USDC", 18);
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(paymentToken));
+        escrow.wire(auction, address(compact), address(paymentToken));
 
         compact.setResetPeriodSeconds(0);
 
@@ -42,7 +41,7 @@ contract EscrowAdapterOptionDTest is Test {
     ///      by the escrow in The Compact, not from a local mirror slot.
     function test_Wire_Rotation_RevertsOnLiveERC6909Balance() public {
         vm.prank(auction);
-        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         uint256 liveBalance = IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
         assertEq(liveBalance, LOCK_AMOUNT, "precondition: ERC6909 balance equals locked amount");
@@ -50,7 +49,7 @@ contract EscrowAdapterOptionDTest is Test {
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
     }
 
     /// @dev Fresh adapter (lockId == 0) must short-circuit the ERC6909 balance read in the
@@ -63,7 +62,7 @@ contract EscrowAdapterOptionDTest is Test {
 
         MockERC20 usdt = new MockERC20("Tether", "USDT", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), vault, address(usdt));
+        escrow.wire(auction, address(compact), address(usdt));
 
         assertEq(address(escrow.paymentToken()), address(usdt), "rotation must succeed despite poisoned balance");
     }
@@ -72,11 +71,11 @@ contract EscrowAdapterOptionDTest is Test {
     ///      live locks exist. Cross-checks the second branch of the `rotatingCompact` predicate.
     function test_Wire_RotateCompact_RevertsOnLiveBalance() public {
         vm.prank(auction);
-        escrow.lockFunds(seriesId1, bidder1, LOCK_AMOUNT);
+        escrow.lockFunds(worldwideDay1, bidder1, LOCK_AMOUNT);
 
         MockTheCompact compact2 = new MockTheCompact();
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, uint256(LOCK_AMOUNT)));
         vm.prank(admin);
-        escrow.wire(auction, address(compact2), vault, address(paymentToken));
+        escrow.wire(auction, address(compact2), address(paymentToken));
     }
 }

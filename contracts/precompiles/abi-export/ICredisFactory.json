@@ -7,11 +7,6 @@
         "name": "positionId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "reclaimCommitment",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -32,36 +27,14 @@
         "internalType": "address"
       },
       {
-        "name": "args",
-        "type": "tuple",
-        "internalType": "struct ICredisFactory.RequestArgs",
-        "components": [
-          {
-            "name": "merkleRoot",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nullifierHash",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "denomId",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "receiverBinding",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "proof",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
+        "name": "pledgeHandle",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "spendAuth",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "outputs": [

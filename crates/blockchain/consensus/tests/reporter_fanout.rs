@@ -2,7 +2,7 @@
 //!
 //! Verifies that `Activity::Certification(notarization)` is admitted by
 //! `OutbeReporter` (the Outbe-side branch of the `Reporters::from((outbe, marshal))`
-//! tempo-fanout) and persisted to the certified-parent proof store.
+//! fanout) and persisted to the certified-parent proof store.
 //! Marshal's mailbox drops `Activity::Certification` via its `_ => return;` arm
 //! (monorepo `consensus/src/marshal/core/mailbox.rs:396-410`), so the persistence
 //! observed here is what marshal would *not* have done.

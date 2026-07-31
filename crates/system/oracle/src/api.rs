@@ -11,7 +11,31 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     storage::StorageHandle,
+    time::{previous_date_key, timestamp_to_date_key},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum OcompAuctionEntryPriceSource {
+    LastClosedDayVwap = 1,
+    CurrentVwapFallback = 2,
+}
+
+/// Bounded Oracle projection captured before the terminal OCOMP request.
+///
+/// `oracle_state_version` reuses the authoritative monotonic snapshot stream
+/// index: every exchange-rate snapshot advances it, while the WWD and S-curve
+/// counters identify the exact derived collections read for this day.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OcompOraclePreAdmissionProjection {
+    pub profile_ready: bool,
+    pub auction_entry_price: U256,
+    pub auction_entry_price_source: OcompAuctionEntryPriceSource,
+    pub auction_entry_price_source_day: u32,
+    pub oracle_state_version: u64,
+    pub wwd_pair_entries: u32,
+    pub active_scurve_entries: u32,
+}
 
 /// Validates that `iso_code` is registered as a reference currency.
 ///
@@ -65,6 +89,65 @@ pub fn get_worldwide_day_vwap_for_pair_id(
 /// The pair whose WorldwideDay VWAP drives the GREEN/RED day-type decision.
 pub const DAY_TYPE_PAIR: (&str, &str) = ("COEN", "0xUSD");
 
+/// Selects the already-stored auction entry price and returns only O(1)
+/// authenticated collection counts. This path never invokes calculation or
+/// enumerates Oracle records.
+pub fn ocomp_pre_admission_projection(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    current_vwap: U256,
+    block_timestamp: u64,
+) -> Result<OcompOraclePreAdmissionProjection> {
+    let oracle = OracleContract::new(storage);
+    let profile_ready = oracle.ocomp_profile_ready.read()?;
+    let current_utc_day = timestamp_to_date_key(block_timestamp);
+    let last_closed_day = previous_date_key(current_utc_day);
+    let last_closed_vwap = profile_ready
+        .then(|| oracle.ocomp_day_type_vwap_by_utc_day.read(&last_closed_day))
+        .transpose()?
+        .filter(|value| !value.is_zero());
+    let (auction_entry_price, auction_entry_price_source, source_day) =
+        if let Some(vwap) = last_closed_vwap {
+            (
+                vwap,
+                OcompAuctionEntryPriceSource::LastClosedDayVwap,
+                last_closed_day,
+            )
+        } else {
+            (
+                current_vwap,
+                OcompAuctionEntryPriceSource::CurrentVwapFallback,
+                worldwide_day.value(),
+            )
+        };
+    let scurve_count = oracle.scurve_count.read()?;
+    let scurve_oldest = oracle.scurve_oldest_idx.read()?;
+    let active_scurve_entries = scurve_count.checked_sub(scurve_oldest).ok_or_else(|| {
+        PrecompileError::BodyReadCorruption(
+            "Oracle S-curve oldest index exceeds write count".into(),
+        )
+    })?;
+
+    Ok(OcompOraclePreAdmissionProjection {
+        profile_ready,
+        auction_entry_price,
+        auction_entry_price_source,
+        auction_entry_price_source_day: source_day,
+        oracle_state_version: oracle.ocomp_state_version.read()?,
+        wwd_pair_entries: oracle.worldwide_day_vwap_pair_count.read(&worldwide_day)?,
+        active_scurve_entries,
+    })
+}
+
+/// Initializes the fixed Oracle projection on the fresh-devnet OCOMP fork.
+///
+/// The fork handler is the sole production caller. The update is idempotent
+/// only when the configured pair and version already match exactly.
+pub fn initialize_fresh_ocomp_profile(storage: StorageHandle) -> Result<()> {
+    let mut oracle = OracleContract::new(storage);
+    oracle.initialize_fresh_ocomp_profile()
+}
+
 /// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or `None`
 /// when the pair is not registered or the day has no snapshot for it.
 ///
@@ -106,6 +189,18 @@ pub fn store_worldwide_day_vwap_snapshot(
     }
 }
 
+/// Finalized per-UTC-day VWAP for the [`DAY_TYPE_PAIR`] (`COEN/0xUSD`), or
+/// `None` when the pair is not registered or the day has no finalized value.
+pub fn day_type_pair_utc_vwap(storage: StorageHandle, utc_day: u32) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let (base, quote) = DAY_TYPE_PAIR;
+    let pair_id = oracle.get_pair_id(base, quote)?;
+    if pair_id == 0 {
+        return Ok(None);
+    }
+    oracle.get_utc_day_vwap_for_pair_id(utc_day, pair_id)
+}
+
 /// Returns the finalized VWAP for `pair_id` on the given UTC calendar day
 /// (`utc_day` is a yyyymmdd UTC date key, e.g. `20260625`), or `None` if the
 /// day is not finalized or had no oracle data for that pair. Distinguishing
@@ -134,4 +229,13 @@ pub fn get_exchange_rate(storage: StorageHandle, base: &str, quote: &str) -> Res
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let (rate, _, _) = oracle.get_exchange_rate(base, quote)?;
     Ok(rate)
+}
+
+/// Annualized refinancing rate (1e18 scaled) for an ISO 4217 code, read from the
+/// reference-currency collection. Reverts when the code is not a registered
+/// reference currency or carries no (non-zero) rate. Called by the Credis
+/// Factory at issuance to pin the Anadosis refinancing rate.
+pub fn get_refinancing_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.get_refinancing_rate(iso_code)
 }

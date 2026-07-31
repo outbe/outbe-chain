@@ -7,13 +7,18 @@
 //! all writes stay Rust-to-Rust.
 
 pub mod api;
+pub mod certified;
 pub mod errors;
 pub mod precompile;
 pub mod schema;
 pub(crate) mod state;
 
+pub use certified::{install_certified_contributor_root, CertifiedContributorRootV1};
 pub use errors::IntexError;
-pub use schema::{CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesRecord};
+pub use schema::{
+    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexCallTrigger,
+    IntexContract, IntexState, SeriesRecord,
+};
 
 #[cfg(test)]
 mod tests;

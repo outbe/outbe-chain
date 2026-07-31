@@ -10,19 +10,16 @@
 //! sub-call driver in [`crate::sub_call`].
 
 use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
+use outbe_compressed_entities::ExecutionScope;
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
-    AGENT_REWARD_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
-    DESIS_ADDRESS, FIDELITY_ADDRESS, GEM_ADDRESS, GEM_FACTORY_ADDRESS, GRATIS_ADDRESS,
-    GRATIS_FACTORY_ADDRESS, GRATIS_POOL_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
-    METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
-    PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS,
-    SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
-    TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_PROVIDER_ADDRESS, ZEROFEE_ADDRESS,
-    ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
@@ -33,186 +30,18 @@ use revm::{
     primitives::hardfork::SpecId,
     Database,
 };
+use std::sync::Arc;
 
 use crate::{
     gas::SubcallGasMeter,
-    storage::{CtxStorageProvider, ReentrancyStack},
+    precompile_routes,
+    storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
 };
 
-type DispatchFn = fn(
-    StorageHandle,
-    &[u8],
-    Address,
-    alloy_primitives::U256,
-) -> outbe_primitives::error::Result<Bytes>;
-
-/// Per-precompile base gas function. Charged by the registry layer
-/// before the dispatch body runs; `outbe_ctx_dispatch` debits
-/// `max(PRECOMPILE_BASE_GAS, base_gas_fn(data))` from `inputs.gas_limit`.
-///
-/// Most precompiles use [`default_base_gas`] (flat `PRECOMPILE_BASE_GAS`);
-/// computationally heavy stateless precompiles (Poseidon hash, zk
-/// proof verification) declare their own.
-type BaseGasFn = fn(&[u8]) -> u64;
-
-/// Default base-gas function — returns the flat `PRECOMPILE_BASE_GAS`.
-fn default_base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
-}
-
-/// Resolve outbe address to its dispatch entrypoint. Single source of truth
-/// for the registered outbe stateful-precompile table.
-fn outbe_dispatch_fn(address: &Address) -> Option<(&'static str, DispatchFn, BaseGasFn)> {
-    let entry: (&'static str, DispatchFn, BaseGasFn) = match *address {
-        a if a == GRATIS_ADDRESS => (
-            "gratis",
-            outbe_gratis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == GRATIS_FACTORY_ADDRESS => (
-            "gratisfactory",
-            outbe_gratisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == GRATIS_POOL_ADDRESS => (
-            "gratispool",
-            outbe_gratispool::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_ADDRESS => (
-            "promis",
-            outbe_promis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_FACTORY_ADDRESS => (
-            "promisfactory",
-            outbe_promisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == TRIBUTE_ADDRESS => (
-            "tribute",
-            outbe_tribute::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == NOD_ADDRESS => ("nod", outbe_nod::precompile::dispatch, default_base_gas),
-        a if a == NOD_FACTORY_ADDRESS => (
-            "nodfactory",
-            outbe_nodfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == GEM_ADDRESS => ("gem", outbe_gem::precompile::dispatch, default_base_gas),
-        a if a == GEM_FACTORY_ADDRESS => (
-            "gemfactory",
-            outbe_gemfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == INTEX_ADDRESS => ("intex", outbe_intex::precompile::dispatch, default_base_gas),
-        a if a == INTEX_FACTORY_ADDRESS => (
-            "intexfactory",
-            outbe_intexfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == DESIS_ADDRESS => ("desis", outbe_desis::precompile::dispatch, default_base_gas),
-        a if a == VAULT_PROVIDER_ADDRESS => (
-            "vaultprovider",
-            outbe_vaultprovider::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == CREDIS_ADDRESS => (
-            "credis",
-            outbe_credis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == CREDIS_FACTORY_ADDRESS => (
-            "credisfactory",
-            outbe_credisfactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == TRIBUTE_FACTORY_ADDRESS => (
-            "tributefactory",
-            outbe_tributefactory::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == VALIDATOR_SET_ADDRESS => (
-            "validatorset",
-            outbe_validatorset::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == SLASH_INDICATOR_ADDRESS => (
-            "slashindicator",
-            outbe_slashindicator::precompile::dispatch,
-            outbe_slashindicator::precompile::base_gas,
-        ),
-        a if a == STAKING_ADDRESS => (
-            "staking",
-            outbe_staking::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == REWARDS_ADDRESS => (
-            "rewards",
-            outbe_rewards::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == AGENT_REWARD_ADDRESS => (
-            "agentreward",
-            outbe_agentreward::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == METADOSIS_ADDRESS => (
-            "metadosis",
-            outbe_metadosis::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == FIDELITY_ADDRESS => (
-            "fidelity",
-            outbe_fidelity::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == PROMIS_LIMIT_ADDRESS => (
-            "promislimit",
-            outbe_promislimit::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == ORACLE_ADDRESS => (
-            "oracle",
-            outbe_oracle::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == ZEROFEE_ADDRESS => (
-            "zerofee",
-            outbe_zerofee::precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == OUTBE_SYSTEM_TX_ADDRESS => (
-            "outbe-system-tx",
-            crate::begin_block_precompile::dispatch,
-            default_base_gas,
-        ),
-        a if a == DEBUG_SUBCALL_PRECOMPILE_ADDRESS => (
-            "debug-subcall",
-            crate::debug_subcall::dispatch,
-            default_base_gas,
-        ),
-        a if a == ZKPROOF_POSEIDON_ADDRESS => (
-            "zkproof-poseidon",
-            outbe_zkproof::dispatch_poseidon,
-            outbe_zkproof::poseidon_base_gas,
-        ),
-        a if a == ZKPROOF_GROTH16_ADDRESS => (
-            "zkproof-groth16",
-            outbe_zkproof::dispatch_groth16,
-            outbe_zkproof::groth16_base_gas,
-        ),
-        a if a == TEE_REGISTRY_ADDRESS => (
-            "teeregistry",
-            outbe_teeregistry::precompile::dispatch,
-            default_base_gas,
-        ),
-        _ => return None,
-    };
-    Some(entry)
-}
-
+/// Shared marker retained in the sub-call context while q-forming apply
+/// accounting is migrated to the direct result-vote path.
+#[derive(Debug, Default)]
+pub struct OcompActivationBlockMeter;
 /// ABI-encode a revert reason as the Solidity-standard `Error(string)`
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
 fn encode_revert_reason(msg: String) -> Bytes {
@@ -267,47 +96,23 @@ pub fn map_outbe_precompile_result(
     }
 }
 
+fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, value: U256) -> bool {
+    address == outbe_ocomp_protocol::abi::METADOSIS_ADDRESS
+        && data.get(..4).is_some_and(|selector| {
+            selector == outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR
+        })
+        && !is_static
+        && value.is_zero()
+}
+
 /// Returns the list of outbe precompile addresses registered by
 /// [`extend_outbe_precompiles`].
 ///
-/// Single source of truth for tests that need to enumerate outbe addresses
-/// without re-typing the table. Keep in sync with the match arms in
-/// [`extend_outbe_precompiles`]; tests in
-/// `crates/blockchain/evm/tests/outbe_precompile_registration.rs` assert
-/// the two lists agree.
+/// Lookup and enumeration are generated from the same compact declaration in
+/// [`crate::precompile_routes`], so dispatch-recognized exact routes cannot be omitted
+/// from this list.
 pub fn outbe_precompile_addresses() -> &'static [Address] {
-    &[
-        GRATIS_ADDRESS,
-        GRATIS_FACTORY_ADDRESS,
-        GRATIS_POOL_ADDRESS,
-        PROMIS_ADDRESS,
-        PROMIS_FACTORY_ADDRESS,
-        TRIBUTE_ADDRESS,
-        NOD_ADDRESS,
-        NOD_FACTORY_ADDRESS,
-        GEM_ADDRESS,
-        GEM_FACTORY_ADDRESS,
-        INTEX_ADDRESS,
-        INTEX_FACTORY_ADDRESS,
-        DESIS_ADDRESS,
-        CREDIS_ADDRESS,
-        CREDIS_FACTORY_ADDRESS,
-        TRIBUTE_FACTORY_ADDRESS,
-        VALIDATOR_SET_ADDRESS,
-        SLASH_INDICATOR_ADDRESS,
-        STAKING_ADDRESS,
-        REWARDS_ADDRESS,
-        AGENT_REWARD_ADDRESS,
-        METADOSIS_ADDRESS,
-        FIDELITY_ADDRESS,
-        PROMIS_LIMIT_ADDRESS,
-        ORACLE_ADDRESS,
-        ZEROFEE_ADDRESS,
-        OUTBE_SYSTEM_TX_ADDRESS,
-        ZKPROOF_POSEIDON_ADDRESS,
-        ZKPROOF_GROTH16_ADDRESS,
-        TEE_REGISTRY_ADDRESS,
-    ]
+    precompile_routes::EXACT_ADDRESSES
 }
 
 /// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
@@ -320,14 +125,23 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 /// [`CtxStorageProvider`] borrowing that context, and dispatches the outbe
 /// precompile through a [`StorageHandle`]. Sub-call from precompile body
 /// reaches `sub_call::run` through the provider's `sub_call` method.
-pub fn extend_outbe_precompiles<DB>(precompiles: &mut PrecompilesMap, spec: SpecId)
-where
+/// Registers Outbe precompiles with an executor-owned compressed-entity scope.
+pub fn extend_outbe_precompiles<DB>(
+    precompiles: &mut PrecompilesMap,
+    spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_lifecycle_active: bool,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
+) where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let ocomp_activation_block_meter = Arc::new(OcompActivationBlockMeter);
     precompiles.set_ctx_dispatch_hook(
         // handles: claim every outbe address.
-        |addr: &Address| outbe_dispatch_fn(addr).is_some(),
+        |addr: &Address| precompile_routes::resolve(addr).is_some(),
         // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
         // `PrecompileProvider::run` in the fork's `precompiles.rs`).
         move |ctx_ptr, inputs| {
@@ -339,36 +153,75 @@ where
             // `Context<...>` the impl is specialised for (set at
             // `OutbeEvmFactory::create_evm<DB>` call site).
             let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
-            outbe_ctx_dispatch::<DB>(ctx, inputs, spec)
+            outbe_ctx_dispatch::<DB>(
+                ctx,
+                inputs,
+                OutbeDispatchRuntime {
+                    spec,
+                    runtime_body_readers: runtime_body_readers.as_ref(),
+                    execution_scope: &execution_scope,
+                    ocomp_finality_authority: ocomp_finality_authority.clone(),
+                    ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+                    ocomp_lifecycle_active,
+                    ocomp_fork_install: ocomp_fork_install.clone(),
+                },
+            )
         },
     );
+}
+
+/// Executor-owned runtime authorities carried into one Outbe dispatch.
+struct OutbeDispatchRuntime<'a> {
+    spec: SpecId,
+    runtime_body_readers: Option<&'a RuntimeBodyReaders>,
+    execution_scope: &'a Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
+    ocomp_fork_install: Option<Arc<OcompForkInstallV1>>,
 }
 
 /// Dispatch one outbe precompile call with full context access.
 fn outbe_ctx_dispatch<DB>(
     ctx: &mut EthEvmContext<DB>,
     inputs: &CallInputs,
-    spec: SpecId,
+    runtime: OutbeDispatchRuntime<'_>,
 ) -> Result<Option<InterpreterResult>, String>
 where
     DB: Database + Debug,
     DB::Error: Debug,
 {
+    let OutbeDispatchRuntime {
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_activation_block_meter,
+        ocomp_lifecycle_active,
+        ocomp_fork_install,
+    } = runtime;
+
+    use revm::context_interface::{Block as _, ContextTr};
+
     let address = inputs.bytecode_address;
-    let Some((_name, dispatch_fn, base_gas_fn)) = outbe_dispatch_fn(&address) else {
+    let Some(route) = precompile_routes::resolve(&address) else {
         return Ok(None);
     };
+    let block_number = ctx.block().number().saturating_to::<u64>();
 
-    // Pre-decode call data to evaluate the base-gas function over the
-    // exact bytes the dispatch body will see.
-    let data: Bytes = match &inputs.input {
-        revm::interpreter::CallInput::Bytes(b) => b.clone(),
-        revm::interpreter::CallInput::SharedBuffer(_) => Bytes::new(),
-    };
+    // Materialize the exact calldata before choosing the consensus gas charge.
+    // Contract -> precompile calls arrive as SharedBuffer and must pay the same
+    // activation charge as top-level Bytes calls.
+    let data: Bytes = inputs.input.bytes_local(ctx.local());
 
     // Per-precompile base gas, floored at PRECOMPILE_BASE_GAS so the
     // existing flat-cost contract still holds for default precompiles.
-    let base_gas = base_gas_fn(data.as_ref()).max(PRECOMPILE_BASE_GAS);
+    let is_active_result_vote_selector = ocomp_lifecycle_active
+        && address == METADOSIS_ADDRESS
+        && data.get(..4).is_some_and(|selector| {
+            selector == outbe_ocomp_protocol::abi::SUBMIT_LYSIS_RESULT_SELECTOR
+        });
+    let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
     if inputs.gas_limit < base_gas {
         let out = PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0);
         return Ok(Some(precompile_output_to_interpreter_result(
@@ -393,16 +246,19 @@ where
 
     let is_static = inputs.is_static;
     let caller = inputs.caller;
+    if caller == METADOSIS_ADDRESS && matches!(address, FIDELITY_ADDRESS | ORACLE_ADDRESS) {
+        let selector = data.get(..4).map(alloy_primitives::hex::encode);
+        tracing::warn!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=forbidden_calculation_entry block={block_number} \
+             target={address:#x} selector={}",
+            selector.as_deref().unwrap_or("missing")
+        );
+    }
     let value = match inputs.value {
         revm::interpreter::CallValue::Transfer(v) => v,
         revm::interpreter::CallValue::Apparent(v) => v,
     };
-    // revm hands contract -> precompile calls as `CallInput::SharedBuffer`
-    // (a range into the caller's shared memory) to skip an alloc. Use the
-    // upstream `bytes_local` helper so both variants materialize the actual calldata
-    use revm::context_interface::ContextTr;
-    let data: Bytes = inputs.input.bytes_local(ctx.local());
-
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
 
@@ -415,10 +271,85 @@ where
         "precompile dispatch entry"
     );
 
-    let mut provider =
-        CtxStorageProvider::new(ctx, gas_meter, is_static, address, ReentrancyStack, spec);
+    let mut provider = CtxStorageProvider::new(
+        ctx,
+        gas_meter,
+        CtxStorageProviderConfig {
+            is_static,
+            self_address: address,
+            reentrancy_stack: ReentrancyStack,
+            spec,
+            runtime_body_readers: runtime_body_readers.cloned(),
+            execution_scope: execution_scope.clone(),
+            ocomp_finality_authority: ocomp_finality_authority.clone(),
+            ocomp_activation_block_meter: ocomp_activation_block_meter.clone(),
+            ocomp_lifecycle_active,
+            lysis_activation_entitled: is_lysis_result_vote_call(
+                address,
+                data.as_ref(),
+                is_static,
+                value,
+            ) && ocomp_lifecycle_active,
+        },
+    );
     let storage = StorageHandle::new(&mut provider);
-    let result = dispatch_fn(storage, data.as_ref(), caller, value);
+    let result = if is_active_result_vote_selector {
+        outbe_metadosis::ocomp::vote::dispatch_public_result_vote(
+            storage,
+            execution_scope.as_ref(),
+            data.as_ref(),
+            value,
+            is_static,
+        )
+    } else if address == OUTBE_SYSTEM_TX_ADDRESS {
+        if let Some(readers) = runtime_body_readers {
+            crate::begin_block_precompile::dispatch_with_readers_and_ocomp_install(
+                storage,
+                execution_scope.as_ref(),
+                readers,
+                ocomp_fork_install.as_deref(),
+                data.as_ref(),
+                caller,
+                value,
+            )
+        } else {
+            route.dispatch(
+                storage,
+                execution_scope.as_ref(),
+                runtime_body_readers,
+                precompile_routes::RouteCall {
+                    callee: address,
+                    data: data.as_ref(),
+                    caller,
+                    value,
+                },
+            )
+        }
+    } else {
+        route.dispatch(
+            storage,
+            execution_scope.as_ref(),
+            runtime_body_readers,
+            precompile_routes::RouteCall {
+                callee: address,
+                data: data.as_ref(),
+                caller,
+                value,
+            },
+        )
+    };
+    if result.is_ok() && is_active_result_vote_selector {
+        tracing::info!(
+            target: "outbe::ocomp::trace",
+            "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
+        );
+    }
+
+    if let Some(readers) = runtime_body_readers {
+        if let Err(error) = &result {
+            readers.report_precompile_error(error);
+        }
+    }
 
     let storage_gas = gas_budget.saturating_sub(provider.gas.remaining());
     let actual_gas = base_gas + storage_gas;
@@ -460,14 +391,31 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     eth: EthPrecompiles,
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
     _db: PhantomData<fn() -> DB>,
 }
 
 impl<DB> OutbeSubCallPrecompiles<DB> {
-    pub(crate) fn new(spec: SpecId) -> Self {
+    pub(crate) fn new(
+        spec: SpecId,
+        runtime_body_readers: Option<RuntimeBodyReaders>,
+        execution_scope: Arc<ExecutionScope>,
+        ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+        ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
         Self {
             eth: EthPrecompiles::new(spec),
             spec,
+            runtime_body_readers,
+            execution_scope,
+            ocomp_finality_authority,
+            ocomp_activation_block_meter,
+            ocomp_lifecycle_active,
             _db: PhantomData,
         }
     }
@@ -496,7 +444,19 @@ where
         // Outbe stateful precompiles first. `outbe_ctx_dispatch` returns
         // `Ok(None)` for any non-outbe address, so this is a cheap no-op for
         // Ethereum precompiles and ordinary contract targets.
-        if let Some(result) = outbe_ctx_dispatch::<DB>(&mut **context, inputs, self.spec)? {
+        if let Some(result) = outbe_ctx_dispatch::<DB>(
+            &mut **context,
+            inputs,
+            OutbeDispatchRuntime {
+                spec: self.spec,
+                runtime_body_readers: self.runtime_body_readers.as_ref(),
+                execution_scope: &self.execution_scope,
+                ocomp_finality_authority: self.ocomp_finality_authority.clone(),
+                ocomp_activation_block_meter: self.ocomp_activation_block_meter.clone(),
+                ocomp_lifecycle_active: self.ocomp_lifecycle_active,
+                ocomp_fork_install: None,
+            },
+        )? {
             return Ok(Some(result));
         }
         // Standard Ethereum precompiles `0x01..0x0a`; `Ok(None)` here lets the
@@ -514,5 +474,48 @@ where
 
     fn contains(&self, address: &Address) -> bool {
         self.eth.contains(address)
+    }
+}
+
+#[cfg(test)]
+mod lysis_activation_entitlement_tests {
+    use super::is_lysis_result_vote_call;
+    use alloy_primitives::{Address, U256};
+    use outbe_ocomp_protocol::abi::{
+        GET_OFFCHAIN_JOB_SELECTOR, METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
+    };
+
+    #[test]
+    fn only_exact_non_static_value_free_metadosis_result_vote_is_entitled() {
+        assert!(is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            Address::repeat_byte(1),
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &GET_OFFCHAIN_JOB_SELECTOR,
+            false,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            true,
+            U256::ZERO,
+        ));
+        assert!(!is_lysis_result_vote_call(
+            METADOSIS_ADDRESS,
+            &SUBMIT_LYSIS_RESULT_SELECTOR,
+            false,
+            U256::from(1),
+        ));
     }
 }

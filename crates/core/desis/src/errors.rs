@@ -3,8 +3,8 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum DesisError {
-    #[error("invalid series id: {0}")]
-    InvalidSeriesId(u32),
+    #[error("invalid worldwide day: {0}")]
+    InvalidWorldwideDay(u32),
 
     #[error("invalid stage transition")]
     InvalidStageTransition,

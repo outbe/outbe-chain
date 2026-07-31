@@ -1,0 +1,5 @@
+error[E0599]: no method named `clone` found for struct `CertifiedLysisActivation<'frame>` in the current scope
+ --> tests/compile_fail/lysis_activation_not_clone.rs:4:24
+  |
+4 |     let _ = capability.clone();
+  |                        ^^^^^ method not found in `CertifiedLysisActivation<'_>`

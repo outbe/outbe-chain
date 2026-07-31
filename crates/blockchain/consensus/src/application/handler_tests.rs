@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, Bytes, B256};
+use alloy_rpc_types_engine::{PayloadStatus, PayloadStatusEnum};
 use commonware_actor::Feedback;
 use commonware_codec::Encode as _;
 use commonware_consensus::{
@@ -25,13 +26,17 @@ use commonware_utils::{
     vec::NonEmptyVec,
     N3f1, TryCollect as _,
 };
+use outbe_primitives::projection::{
+    projection_readiness, ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
+    ProjectionReadinessPublisher, ProjectionStatus,
+};
 use outbe_primitives::{consensus_metadata::CertifiedParentAccountingMetadata, OutbeHeader};
 use reth_ethereum::{primitives::SealedBlock, Block};
 use std::{
     io,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex as StdMutex,
     },
     time::Duration,
@@ -45,6 +50,7 @@ use crate::finalization::attestation::{
 use crate::finalization::util::build_signer_bitmap;
 use crate::hybrid::election::{HybridElectorConfigProvider, HybridRandom};
 use crate::hybrid::{HybridScheme, HybridSchemeProvider};
+use crate::ocomp_retention::{OcompRetentionHook, OcompRetentionHookError};
 use crate::validators::ValidatorSet;
 use crate::vrf_safety::VrfSafetyGate;
 
@@ -52,6 +58,19 @@ use super::{ApplicationShared, CommitteeProvider, ConsensusBlock, Digest};
 use crate::application::epoch_boundary::{
     resolve_epoch_boundary_parent, ApplicationEpochFence, EpochBoundaryParentError,
 };
+
+struct TestApplicationShared {
+    shared: ApplicationShared,
+    _projection_publisher: ProjectionReadinessPublisher,
+}
+
+impl std::ops::Deref for TestApplicationShared {
+    type Target = ApplicationShared;
+
+    fn deref(&self) -> &Self::Target {
+        &self.shared
+    }
+}
 
 static MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -449,13 +468,23 @@ async fn start_marshal_without_available_block(
 fn finalizer_test_shared(
     marshal_mailbox: crate::marshal_types::MarshalMailbox,
     provider: HybridSchemeProvider<MinSig>,
-) -> ApplicationShared {
+) -> TestApplicationShared {
     let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
     let engine: super::EngineHandle = super::EngineHandle::new(engine_tx);
     let payload_builder: super::PayloadBuilder = super::PayloadBuilder::noop();
     let (executor_tx, _executor_rx) = futures::channel::mpsc::unbounded();
     let finalization_view = crate::finalization::state::new_finalization_view(B256::ZERO, 0, None);
     let finalization_block_cache = crate::finalization::block_cache::BlockCache::new();
+    let baseline = ProjectionCheckpoint {
+        block_number: 0,
+        block_hash: B256::ZERO,
+    };
+    let (projection_publisher, projection_readiness) = projection_readiness(
+        baseline,
+        ProjectionStatus::Ready {
+            checkpoint: baseline,
+        },
+    );
 
     let elector_config_provider = HybridElectorConfigProvider::new();
     let committee_provider = CommitteeProvider::new();
@@ -469,7 +498,8 @@ fn finalizer_test_shared(
         marshal_mailbox.clone(),
     );
 
-    ApplicationShared {
+    let shared = ApplicationShared {
+        unix_time_source: Arc::new(super::SystemUnixTimeSource),
         engine,
         payload_builder,
         executor_mailbox: crate::executor::Mailbox::from_sender(executor_tx),
@@ -480,6 +510,7 @@ fn finalizer_test_shared(
             p2p_addresses: Vec::new(),
         },
         chain_id: outbe_primitives::chain::CHAIN_ID,
+        ocomp_lifecycle_activation: outbe_primitives::system_tx::OcompLifecycleActivation::Disabled,
         marshal_mailbox,
         certificate_scheme_provider: provider,
         elector_config_provider,
@@ -488,8 +519,8 @@ fn finalizer_test_shared(
         vrf_safety: VrfSafetyGate::new(4, 0, 10_000, 100),
         epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
         ancestry_readiness: AncestryReadiness::new(0, 0),
+        projection_readiness,
         payload_resolve_time: Duration::from_millis(1),
-        payload_return_time: Duration::from_millis(1),
         min_block_time: Duration::from_millis(1),
         proposer_evm_address: None,
         proposal_failure_log_limiter: Arc::new(crate::util::rate_limit::LogRateLimiter::new(
@@ -502,7 +533,201 @@ fn finalizer_test_shared(
         late_sig_store: crate::finalization::late_sig_store::shared(
             outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
         ),
+        ocomp_retention: Arc::new(crate::ocomp_retention::NoopOcompRetentionHook),
+    };
+    TestApplicationShared {
+        shared,
+        _projection_publisher: projection_publisher,
     }
+}
+
+#[test]
+fn projected_parent_gate_uses_existing_response_closure_as_its_budget() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        let baseline = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: B256::ZERO,
+        };
+        let (_publisher, readiness) =
+            projection_readiness(baseline, ProjectionStatus::CatchingUp { checkpoint: None });
+        let (mut response, receiver) = oneshot::channel::<bool>();
+        drop(receiver);
+
+        let outcome = super::wait_for_projected_parent(
+            readiness,
+            ProjectionCheckpoint {
+                block_number: 1,
+                block_hash: B256::repeat_byte(0x11),
+            },
+            response.closed(),
+        )
+        .await
+        .expect("a closed request budget must withhold instead of failing");
+
+        assert_eq!(outcome, super::ParentProjectionGate::Withhold);
+    });
+}
+
+#[test]
+fn projected_parent_gate_requires_the_exact_checkpoint() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        let required = ProjectionCheckpoint {
+            block_number: 1,
+            block_hash: B256::repeat_byte(0x11),
+        };
+        let baseline = ProjectionCheckpoint {
+            block_number: 0,
+            block_hash: B256::ZERO,
+        };
+        let (_publisher, ready) = projection_readiness(
+            baseline,
+            ProjectionStatus::Ready {
+                checkpoint: required,
+            },
+        );
+        assert_eq!(
+            super::wait_for_projected_parent(ready, required, std::future::pending())
+                .await
+                .expect("the exact projected parent must be ready"),
+            super::ParentProjectionGate::Ready
+        );
+
+        let ahead = ProjectionCheckpoint {
+            block_number: 2,
+            block_hash: B256::repeat_byte(0x22),
+        };
+        let (_publisher, ahead_readiness) =
+            projection_readiness(baseline, ProjectionStatus::Ready { checkpoint: ahead });
+        assert_eq!(
+            super::wait_for_projected_parent(ahead_readiness, required, std::future::pending())
+                .await
+                .expect("an ahead projection must withhold instead of voting"),
+            super::ParentProjectionGate::Withhold
+        );
+
+        let (_publisher, fatal_readiness) = projection_readiness(
+            baseline,
+            ProjectionStatus::Fatal {
+                checkpoint: None,
+                error: ProjectionFailure::new(
+                    ProjectionFailureClass::CheckpointMismatch,
+                    "test checkpoint mismatch",
+                ),
+            },
+        );
+        let error =
+            super::wait_for_projected_parent(fatal_readiness, required, std::future::pending())
+                .await
+                .expect_err("a fatal projection state must propagate to the existing error path");
+        assert!(error.to_string().contains("test checkpoint mismatch"));
+    });
+}
+
+struct ImportedBeforeRetentionHook {
+    imported: Arc<AtomicBool>,
+    prepared: Arc<AtomicBool>,
+}
+
+impl OcompRetentionHook for ImportedBeforeRetentionHook {
+    fn prepare_candidate(&self, _block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
+        if !self.imported.load(Ordering::SeqCst) {
+            return Err(OcompRetentionHookError::new(
+                "candidate execution was not imported before retention",
+            ));
+        }
+        self.prepared.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn reconcile_finalized(&self, _block: &ConsensusBlock) -> Result<(), OcompRetentionHookError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn locally_built_candidate_is_execution_visible_before_retention_ack() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        use reth_ethereum::node::api::BeaconEngineMessage;
+
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = super::EngineHandle::new(engine_tx);
+        let imported = Arc::new(AtomicBool::new(false));
+        let prepared = Arc::new(AtomicBool::new(false));
+        let hook = ImportedBeforeRetentionHook {
+            imported: imported.clone(),
+            prepared: prepared.clone(),
+        };
+        let block = consensus_block_with_number(0x71, 9);
+
+        let prepare = super::prepare_built_candidate(
+            &engine,
+            &hook,
+            &block,
+            outbe_primitives::projection::ExecutionReadBudget::new(),
+        );
+        let execution = async {
+            let message = engine_rx
+                .recv()
+                .await
+                .expect("candidate import reaches the execution engine");
+            let BeaconEngineMessage::NewPayload { payload, tx } = message else {
+                panic!("candidate preparation must use new_payload");
+            };
+            assert_eq!(
+                reth_node_builder::ExecutionPayload::block_hash(&payload),
+                block.block_hash()
+            );
+            imported.store(true, Ordering::SeqCst);
+            tx.send(Ok(PayloadStatus::new(
+                PayloadStatusEnum::Valid,
+                Some(block.block_hash()),
+            )))
+            .expect("execution status receiver remains live");
+        };
+
+        let (prepared_result, ()) = futures::join!(prepare, execution);
+        prepared_result.expect("VALID execution is followed by durable retention");
+        assert!(prepared.load(Ordering::SeqCst));
+    });
+}
+
+#[test]
+fn locally_built_candidate_is_not_retained_when_execution_is_not_ready() {
+    commonware_runtime::deterministic::Runner::default().start(|_| async move {
+        use reth_ethereum::node::api::BeaconEngineMessage;
+
+        let (engine_tx, mut engine_rx) = tokio::sync::mpsc::unbounded_channel();
+        let engine = super::EngineHandle::new(engine_tx);
+        let imported = Arc::new(AtomicBool::new(false));
+        let prepared = Arc::new(AtomicBool::new(false));
+        let hook = ImportedBeforeRetentionHook {
+            imported,
+            prepared: prepared.clone(),
+        };
+        let block = consensus_block_with_number(0x72, 10);
+
+        let prepare = super::prepare_built_candidate(
+            &engine,
+            &hook,
+            &block,
+            outbe_primitives::projection::ExecutionReadBudget::new(),
+        );
+        let execution = async {
+            let BeaconEngineMessage::NewPayload { tx, .. } = engine_rx
+                .recv()
+                .await
+                .expect("candidate import reaches the execution engine")
+            else {
+                panic!("candidate preparation must use new_payload");
+            };
+            tx.send(Ok(PayloadStatus::from_status(PayloadStatusEnum::Syncing)))
+                .expect("execution status receiver remains live");
+        };
+
+        let (prepared_result, ()) = futures::join!(prepare, execution);
+        assert!(prepared_result.is_err());
+        assert!(!prepared.load(Ordering::SeqCst));
+    });
 }
 
 /// bp-1 / BUG-A regression: opt3 dissemination. The proposer caches its block

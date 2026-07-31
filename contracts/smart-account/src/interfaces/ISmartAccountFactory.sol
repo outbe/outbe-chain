@@ -2,7 +2,10 @@
 pragma solidity ^0.8.30;
 
 /// @title ISmartAccountFactory
-/// @notice Interface for deploying Credis-configured Kernel v3.1 smart accounts
+/// @notice Interface for deploying Credis-configured Kernel v4 smart accounts.
+/// @dev The owner is modelled as a permission (SudoPolicy + ECDSASigner) rather than a plain root
+///      validator, because Kernel v4 cannot attach the BundleSpendProtectorHook to a root validator
+///      at init. See SmartAccountFactory for the install-package layout.
 interface ISmartAccountFactory {
     /// @notice Deploy (or return existing) Kernel smart account with Credis modules installed
     /// @param owner EOA owner of the smart account (controls via ECDSA)
@@ -39,8 +42,8 @@ interface ISmartAccountFactory {
     /// @notice ZeroDev KernelFactory address
     function kernelFactory() external view returns (address);
 
-    /// @notice ECDSAValidator singleton address
-    function ecdsaValidator() external view returns (address);
+    /// @notice SudoPolicy singleton address (always-pass policy backing the owner permission)
+    function sudoPolicy() external view returns (address);
 
     /// @notice BundleModulePlugin singleton address
     function bundleModulePlugin() external view returns (address);

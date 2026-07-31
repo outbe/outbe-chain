@@ -18,9 +18,102 @@ fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
-fn sample_params(series_id: u32) -> CreateSeriesParams {
+#[test]
+fn certified_contributor_generation_is_absent_before_activation() {
+    with_registry(|storage| {
+        assert_eq!(
+            api::certified_contributor_generation(&storage, 20_260_725).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn certified_contributor_generation_reads_fail_closed_on_residual_or_malformed_state() {
+    for corrupt in 0..6 {
+        with_registry(|storage| {
+            let series_id = 20_260_726 + corrupt;
+            let intex = crate::IntexContract::new(storage.clone());
+            match corrupt {
+                0 => intex
+                    .ocomp_contributor_root
+                    .write(&series_id, alloy_primitives::B256::repeat_byte(1))
+                    .unwrap(),
+                1 => intex
+                    .ocomp_contributor_metadata
+                    .write(&series_id, U256::from(1))
+                    .unwrap(),
+                2 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(2))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(1) << 96)
+                        .unwrap();
+                }
+                3 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(3))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(1))
+                        .unwrap();
+                    intex
+                        .ocomp_eligible_nominal_total
+                        .write(&series_id, U256::from(1))
+                        .unwrap();
+                }
+                4 => {
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(4))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(2))
+                        .unwrap();
+                }
+                5 => {
+                    api::create_series(&storage, sample_params(series_id)).unwrap();
+                    intex
+                        .ocomp_contributor_root
+                        .write(&series_id, alloy_primitives::B256::repeat_byte(5))
+                        .unwrap();
+                    intex
+                        .ocomp_contributor_metadata
+                        .write(&series_id, U256::from(3))
+                        .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert!(api::certified_contributor_generation(&storage, series_id).is_err());
+            assert!(api::ocomp_contributor_target_projection(&storage, series_id).is_err());
+        });
+    }
+}
+
+#[test]
+fn certified_contributor_installation_has_no_public_write_selector() {
+    let selector = alloy_primitives::keccak256(b"installCertifiedContributorRoot(bytes)");
+    let calldata = selector[..4].to_vec();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    let result = StorageHandle::enter(&mut provider, |storage| {
+        dispatch(storage, &calldata, Address::ZERO, U256::ZERO)
+    });
+    assert!(result.is_err());
+    assert!(provider.storage.is_empty());
+    assert!(provider.get_ordered_events().is_empty());
+}
+
+fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
-        series_id,
+        series_id: worldwide_day,
+        worldwide_day,
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(2_000u64),
@@ -44,7 +137,9 @@ fn sample_params(series_id: u32) -> CreateSeriesParams {
 #[test]
 fn create_then_read_round_trip() {
     with_registry(|s| {
-        api::create_series(&s, sample_params(7)).unwrap();
+        let mut p = sample_params(7);
+        p.worldwide_day = 20260101;
+        api::create_series(&s, p).unwrap();
 
         let r = api::read_series(&s, 7).unwrap();
         assert_eq!(r.series_id, 7);
@@ -64,6 +159,7 @@ fn create_then_read_round_trip() {
         assert_eq!(r.lifecycle_state().unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(r.called_at, 0);
+        assert_eq!(r.worldwide_day, 20260101);
         // The ledger stores the call period verbatim; defaulting is the
         // caller's job.
         assert_eq!(r.intex_call_period, CALL_PERIOD);
@@ -288,5 +384,128 @@ fn precompile_rejects_value() {
     with_registry(|s| {
         let call = IIntex::totalSeriesCall {}.abi_encode();
         assert!(dispatch(s.clone(), &call, Address::ZERO, U256::from(1)).is_err());
+    });
+}
+
+// ---------------------------------------------------------------------
+// Creator-reward: contributors
+// ---------------------------------------------------------------------
+
+fn addr(n: u8) -> Address {
+    Address::from([n; 20])
+}
+
+#[test]
+fn record_and_read_contributors() {
+    with_registry(|s| {
+        let contributors = vec![
+            (addr(1), U256::from(90u64)),
+            (addr(2), U256::from(110u64)),
+            (addr(3), U256::from(300u64)),
+        ];
+        api::record_contributors(&s, 20_260_401, &contributors).unwrap();
+
+        assert_eq!(api::contributor_count(&s, 20_260_401).unwrap(), 3);
+        assert_eq!(
+            api::contributor_total(&s, 20_260_401).unwrap(),
+            U256::from(500u64)
+        );
+        assert_eq!(
+            api::contributor_at(&s, 20_260_401, 0).unwrap(),
+            (addr(1), U256::from(90u64))
+        );
+        assert_eq!(
+            api::contributor_at(&s, 20_260_401, 2).unwrap(),
+            (addr(3), U256::from(300u64))
+        );
+        assert_eq!(
+            api::read_contributors(&s, 20_260_401).unwrap(),
+            contributors
+        );
+    });
+}
+
+#[test]
+fn contributors_empty_series_is_zero() {
+    with_registry(|s| {
+        assert_eq!(api::contributor_count(&s, 1).unwrap(), 0);
+        assert_eq!(api::contributor_total(&s, 1).unwrap(), U256::ZERO);
+        assert!(api::read_contributors(&s, 1).unwrap().is_empty());
+    });
+}
+
+// ---------------------------------------------------------------------
+// Creator-reward: paginated distribution progress + active set
+// ---------------------------------------------------------------------
+
+#[test]
+fn start_distribution_rejects_duplicate() {
+    with_registry(|s| {
+        api::record_contributors(&s, 7, &[(addr(1), U256::from(40u64))]).unwrap();
+        api::start_distribution(&s, 7, U256::from(1000u64), U256::from(40u64)).unwrap();
+        // A second open for the same series must not overwrite in-flight progress.
+        assert!(api::start_distribution(&s, 7, U256::from(500u64), U256::from(40u64)).is_err());
+    });
+}
+
+#[test]
+fn distribution_progress_lifecycle() {
+    with_registry(|s| {
+        api::record_contributors(
+            &s,
+            7,
+            &[(addr(1), U256::from(40u64)), (addr(2), U256::from(60u64))],
+        )
+        .unwrap();
+        api::start_distribution(&s, 7, U256::from(1000u64), U256::from(100u64)).unwrap();
+
+        let p = api::get_progress(&s, 7).unwrap().expect("progress exists");
+        assert_eq!(p.series_id, 7);
+        assert_eq!(p.amount, U256::from(1000u64));
+        assert_eq!(p.total_nominal, U256::from(100u64));
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.paid_so_far, U256::ZERO);
+        assert_eq!(p.active, 1);
+
+        // advance one chunk
+        let mut p2 = p.clone();
+        p2.cursor = 1;
+        p2.paid_so_far = U256::from(400u64);
+        api::save_progress(&s, &p2).unwrap();
+        let p3 = api::get_progress(&s, 7).unwrap().unwrap();
+        assert_eq!(p3.cursor, 1);
+        assert_eq!(p3.paid_so_far, U256::from(400u64));
+
+        // enrolled in the active set
+        assert_eq!(api::active_dist_count(&s).unwrap(), 1);
+        assert_eq!(api::active_dist_at(&s, 0).unwrap(), 7);
+
+        // finish: progress, contributors and active entry all gone
+        api::clear_distribution(&s, 7).unwrap();
+        assert_eq!(api::get_progress(&s, 7).unwrap(), None);
+        assert_eq!(api::contributor_count(&s, 7).unwrap(), 0);
+        assert_eq!(api::contributor_total(&s, 7).unwrap(), U256::ZERO);
+        assert_eq!(api::active_dist_count(&s).unwrap(), 0);
+    });
+}
+
+#[test]
+fn active_dist_set_swap_remove() {
+    with_registry(|s| {
+        for sid in [11u32, 22, 33] {
+            api::start_distribution(&s, sid, U256::from(1u64), U256::from(1u64)).unwrap();
+        }
+        assert_eq!(api::active_dist_count(&s).unwrap(), 3);
+
+        // remove the middle one; swap-remove moves the last into its slot.
+        api::clear_distribution(&s, 22).unwrap();
+        assert_eq!(api::active_dist_count(&s).unwrap(), 2);
+
+        let remaining: Vec<u32> = (0..api::active_dist_count(&s).unwrap())
+            .map(|i| api::active_dist_at(&s, i).unwrap())
+            .collect();
+        assert!(remaining.contains(&11));
+        assert!(remaining.contains(&33));
+        assert!(!remaining.contains(&22));
     });
 }

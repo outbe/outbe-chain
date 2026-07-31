@@ -6,6 +6,9 @@ interface ICredis {
 
     event AnadosisPaid(uint256 indexed positionId, uint32 anadosisNumber, uint256 anadosisAmount);
 
+    /// Emitted when an expired position's outstanding pledged collateral is burned.
+    event CollateralBurned(uint256 indexed positionId, address indexed bundleAccount, uint256 gratisBurned);
+
     struct Position {
         uint256 positionId;
         address asset;
@@ -16,6 +19,12 @@ interface ICredis {
         uint256 outstandingGratisAmount;
         uint32 nextAnadosisNumber;
         uint64 createdAt;
+        uint256 credisPrincipal;
+        uint256 refinancingRate;
+        uint16 issuanceCurrency;
+        // Pledger EOA ciphertext (not an address). The enclave recovers
+        // the plaintext EOA on-chain via a RevealOwner round-trip.
+        bytes eoaCiphertext;
     }
 
     struct Anadosis {

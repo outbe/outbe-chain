@@ -193,6 +193,12 @@ impl StorageKey for U256 {
     }
 }
 
+impl StorageKey for u8 {
+    fn key_bytes(&self) -> Vec<u8> {
+        vec![*self]
+    }
+}
+
 impl StorageKey for u64 {
     fn key_bytes(&self) -> Vec<u8> {
         self.to_be_bytes().to_vec()

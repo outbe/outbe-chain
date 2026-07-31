@@ -4,8 +4,15 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-/// Mint `amount` promis to `account`, record the Fidelity acquisition cohort,
-/// and emit `PromisMined`. See [`crate::runtime::mine`].
-pub fn mine(storage: StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
-    crate::runtime::mine(storage, account, amount)
+pub use outbe_promis::api::ModifyAuth;
+
+/// Mint `amount` promis to `account`, authorized by the account owner's Promis
+/// modify key.
+pub fn mint(
+    storage: StorageHandle<'_>,
+    account: Address,
+    amount: U256,
+    auth: ModifyAuth,
+) -> Result<()> {
+    crate::runtime::mint(storage, account, amount, auth)
 }

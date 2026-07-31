@@ -1,0 +1,12 @@
+Outbe 0.1.0 (3f5e77a3)
+Version: 0.1.0
+Commit SHA: 3f5e77a3265cfcd7a75b64b47fb2601a53347776
+Build Timestamp: 2026-07-21T15:06:00.000000000Z
+Build Features: default
+Build Profile: release (x86_64-unknown-linux-gnu)
+
+Reth Version: 2.2.0
+Commit SHA: 3f5e77a3265cfcd7a75b64b47fb2601a53347776
+Build Timestamp: 2026-07-21T15:06:00.000000000Z
+Build Features:
+Build Profile: release

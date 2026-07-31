@@ -27,11 +27,19 @@ pub enum PowError {
 /// The id is formatted as a 64-char lowercase hex string of its 32-byte
 /// big-endian representation, matching `format_gem_id` / `format_nod_id`.
 pub fn compute_pow_hash(id: U256, nonce: U256) -> Result<[u8; 32], PowError> {
+    compute_pow_hash_bytes(&id.to_be_bytes::<32>(), nonce)
+}
+
+/// SHA256 over `ascii(hex(id_bytes)) || nonce.to_be_bytes::<8>()`.
+///
+/// This is the canonical variant for fixed-width identifiers that are not
+/// representable as a `U256`, including ADR-006 `EntityId36` values.
+pub fn compute_pow_hash_bytes(id: &[u8], nonce: U256) -> Result<[u8; 32], PowError> {
     if nonce > U256::from(u64::MAX) {
         return Err(PowError::NonceExceedsUint64Range);
     }
     let nonce_bytes = nonce.to::<u64>().to_be_bytes();
-    let id_str = hex::encode(id.to_be_bytes::<32>());
+    let id_str = hex::encode(id);
     let mut data = Vec::with_capacity(id_str.len() + nonce_bytes.len());
     data.extend_from_slice(id_str.as_bytes());
     data.extend_from_slice(&nonce_bytes);
@@ -44,7 +52,12 @@ pub fn compute_pow_hash(id: U256, nonce: U256) -> Result<[u8; 32], PowError> {
 /// Validates that [`compute_pow_hash`] has [`POW_DIFFICULTY`] leading zero
 /// bytes.
 pub fn validate_pow(id: U256, nonce: U256) -> Result<(), PowError> {
-    let hash = compute_pow_hash(id, nonce)?;
+    validate_pow_bytes(&id.to_be_bytes::<32>(), nonce)
+}
+
+/// Validates PoW for an exact fixed-width identity byte string.
+pub fn validate_pow_bytes(id: &[u8], nonce: U256) -> Result<(), PowError> {
+    let hash = compute_pow_hash_bytes(id, nonce)?;
     for byte in &hash[..POW_DIFFICULTY] {
         if *byte != 0 {
             return Err(PowError::InsufficientProofOfWork);

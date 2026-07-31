@@ -2,19 +2,26 @@
 pragma solidity ^0.8.30;
 
 interface ITributeFactory {
-    // `zkProof`, `zkVerificationKey`, `zkPublicKey`, `zkMerkleRoot`, and
-    // `tributeOwnerL1` are ABI stubs reserved for the future ZK-verification path.
-    // Dispatch ignores them today; clients must pass well-formed bytes, but no
-    // verification runs. Do not remove from the ABI without a migration plan —
-    // the fields are part of the external contract surface.
+    // `zkProof` is the self-describing combined proof for the pinned
+    // `outbe.full_proof@1.0.0` circuit. It is mandatory for a registered L2
+    // operator with ZK verification enabled. `zkVerificationKey` and
+    // `zkPublicKey` remain ignored ABI placeholders: the circuit is pinned by
+    // the chain and the root-signing key comes from L2Registry.
+    //
+    // `signature` is the L2 committee's compressed BLS MinSig signature in G1
+    // (48 bytes) over the 32-byte `zkMerkleRoot`. L2Registry stores the
+    // corresponding compressed G2 group key (96 bytes). Unregistered callers
+    // and networks with ZK disabled may pass empty ZK fields.
     function offerTribute(
         bytes calldata cipherText,
         bytes calldata nonce,
         uint256 ephemeralPubkey,
         uint16 referenceCurrency,
+        bool excludeFromIntexIssuance,
         bytes calldata zkProof,
         bytes calldata zkVerificationKey,
         bytes calldata zkPublicKey,
-        bytes calldata zkMerkleRoot
-    ) external returns (uint256 tributeId);
+        bytes calldata zkMerkleRoot,
+        bytes calldata signature
+    ) external returns (bytes memory tributeId);
 }

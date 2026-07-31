@@ -1,29 +1,36 @@
-//! Deterministic begin-block system-transaction primitives.
+//! Deterministic begin/end-block system-transaction primitives.
 //!
-//! represents runtime system transactions as ordinary signed Ethereum
+//! Outbe represents runtime system transactions as ordinary signed Ethereum
 //! legacy transaction artifacts so standard `eth_*` RPC methods can expose their
 //! receipts and logs. The artifacts are consensus inputs only: execution uses
 //! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller, while the
 //! signed transaction authenticates the proposer and fixes receipt/tx ordering.
 //!
-//! Current scope is begin-zone-only. All active system txs run before user
-//! transactions in this order:
+//! Begin-zone system transactions run before user transactions in this order:
 //!
 //! 1. [`SystemTxKind::CertifiedParentAccounting`] for block `>= 2`.
 //! 2. [`SystemTxKind::LateFinalizeCredits`] for block `>= 2` (mandatory
 //!    inclusion-window phase: records late finalize credits and settles the
 //!    matured `N+K` fee escrow).
-//! 3. [`SystemTxKind::CycleTick`] for block `>= 1`.
-//! 4. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
+//! 3. [`SystemTxKind::OcompLifecycleBegin`] once the OCOMP lifecycle is active.
+//! 4. [`SystemTxKind::CycleTick`] for block `>= 1`.
+//! 5. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
 //!    (mandatory at block `1` under V2 for the genesis bootstrap).
-//! 5. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
+//! 6. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
+//! 7. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
+//! 8. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
+//!    whitelisted pre-exec hook logs; no lifecycle re-execution).
+//!
+//! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
+//! transaction. It follows every user transaction and the compressed-entity
+//! seal.
 //!
 //! ## V2 codec
 //!
 //! This module ships the V2 wire codec exclusively. V1 system-tx input bytes
 //! (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`) are rejected
-//! at every height. Selectors are `OSA3`/`OSC2`/`OSB2`/`OSO2` and the version
-//! byte is `2`. Greenfield rollout.
+//! at every height. OCOMP adds the `OSE2` and `OSR2` selectors without changing
+//! the V2 version byte. Greenfield rollout.
 //!
 //! The split helper below is structural-only: it rejects reserved-address
 //! transactions outside the contiguous system zones and rejects wrong-zone or
@@ -49,6 +56,9 @@ use crate::{
 };
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+pub use outbe_ocomp_protocol::abi::{
+    OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
+};
 
 /// Version byte immediately after the 4-byte kind selector in system-tx input.
 ///
@@ -68,6 +78,8 @@ pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = [b'O', b'S', b'O', b'2'];
 pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = [b'O', b'S', b'T', b'2'];
 /// Selector for [`SystemTxKind::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = [b'O', b'S', b'L', b'2'];
+/// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
+pub const HOOK_EVENTS_SELECTOR: [u8; 4] = [b'O', b'S', b'H', b'2'];
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
@@ -99,6 +111,33 @@ pub enum BodyZone {
     EndBlock,
 }
 
+/// Consensus activation of the PoC OCOMP system-transaction lifecycle.
+///
+/// The production default is disabled. OCM-26 is the only task that may arm
+/// the canonical devnet schedule; earlier tasks can exercise the exact fork
+/// boundary by passing an explicit activation to layout validation.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum OcompLifecycleActivation {
+    #[default]
+    Disabled,
+    AtBlock(u64),
+}
+
+impl OcompLifecycleActivation {
+    #[must_use]
+    pub const fn at_block(height: u64) -> Self {
+        Self::AtBlock(height)
+    }
+
+    #[must_use]
+    pub const fn is_active_at(self, block_number: u64) -> bool {
+        match self {
+            Self::Disabled => false,
+            Self::AtBlock(height) => block_number >= height,
+        }
+    }
+}
+
 /// begin_block system transaction kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SystemTxKind {
@@ -107,12 +146,20 @@ pub enum SystemTxKind {
     /// late-finalize credits within the `K`-block inclusion window and settles
     /// matured per-block fee escrows. Ordered immediately after Phase 1 (CPA).
     LateFinalizeCredits,
+    /// OCOMP begin-zone lifecycle slot. In the PoC this expires due jobs after
+    /// the reserved no-op barrier and before ordinary user transactions.
+    OcompLifecycleBegin,
     CycleTick,
     BoundaryOutcome,
     /// Phase 3b: one-time TEE registry bootstrap (present only in the bootstrap
     /// block; reads the same-block `CommitteeSnapshotStore` written by Phase 3a).
     TeeBootstrap,
     OracleSlashWindow,
+    /// Receipt container for whitelisted pre-exec hook events (`Vote`, `Update`, …).
+    HookEvents,
+    /// Sole end-zone system transaction. The executor seals compressed
+    /// entities before dispatching this terminal request slot.
+    OcompTerminalRequest,
 }
 
 impl SystemTxKind {
@@ -120,16 +167,28 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
             Self::LateFinalizeCredits => LATE_FINALIZE_CREDITS_SELECTOR,
+            Self::OcompLifecycleBegin => OCOMP_LIFECYCLE_BEGIN_SELECTOR,
             Self::CycleTick => CYCLE_TICK_SELECTOR,
             Self::BoundaryOutcome => BOUNDARY_OUTCOME_SELECTOR,
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
+            Self::HookEvents => HOOK_EVENTS_SELECTOR,
+            Self::OcompTerminalRequest => OCOMP_TERMINAL_REQUEST_SELECTOR,
         }
     }
 
     pub const fn body_zone(self) -> BodyZone {
-        // Current scope is begin-zone-only.
-        BodyZone::BeginBlock
+        match self {
+            Self::OcompTerminalRequest => BodyZone::EndBlock,
+            Self::CertifiedParentAccounting
+            | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::BoundaryOutcome
+            | Self::TeeBootstrap
+            | Self::OracleSlashWindow
+            | Self::HookEvents => BodyZone::BeginBlock,
+        }
     }
 
     /// Whether a non-success EVM result (`Revert` / `Halt`) executing this
@@ -156,9 +215,11 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting
             | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
             | Self::CycleTick
-            | Self::BoundaryOutcome => true,
-            Self::TeeBootstrap | Self::OracleSlashWindow => false,
+            | Self::BoundaryOutcome
+            | Self::OcompTerminalRequest => true,
+            Self::TeeBootstrap | Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
 
@@ -166,15 +227,28 @@ impl SystemTxKind {
         match self {
             Self::CertifiedParentAccounting => Some(0),
             Self::LateFinalizeCredits => Some(1),
-            Self::CycleTick => Some(2),
-            Self::BoundaryOutcome => Some(3),
-            Self::TeeBootstrap => Some(4),
-            Self::OracleSlashWindow => Some(5),
+            Self::OcompLifecycleBegin => Some(2),
+            Self::CycleTick => Some(3),
+            Self::BoundaryOutcome => Some(4),
+            Self::TeeBootstrap => Some(5),
+            Self::OracleSlashWindow => Some(6),
+            Self::HookEvents => Some(7),
+            Self::OcompTerminalRequest => None,
         }
     }
 
     pub const fn end_order(self) -> Option<u8> {
-        None
+        match self {
+            Self::OcompTerminalRequest => Some(0),
+            Self::CertifiedParentAccounting
+            | Self::LateFinalizeCredits
+            | Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::BoundaryOutcome
+            | Self::TeeBootstrap
+            | Self::OracleSlashWindow
+            | Self::HookEvents => None,
+        }
     }
 
     fn order_in(self, zone: BodyZone) -> Option<u8> {
@@ -202,6 +276,7 @@ pub enum SystemTxInputV2 {
     LateFinalizeCredits {
         artifact: LateFinalizeCreditsArtifact,
     },
+    OcompLifecycleBegin,
     CycleTick,
     BoundaryOutcome {
         artifact: DkgBoundaryArtifact,
@@ -210,6 +285,8 @@ pub enum SystemTxInputV2 {
         payload: TeeBootstrapPayload,
     },
     OracleSlashWindow,
+    HookEvents,
+    OcompTerminalRequest,
 }
 
 impl SystemTxInputV2 {
@@ -217,10 +294,13 @@ impl SystemTxInputV2 {
         match self {
             Self::CertifiedParentAccounting { .. } => SystemTxKind::CertifiedParentAccounting,
             Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
+            Self::OcompLifecycleBegin => SystemTxKind::OcompLifecycleBegin,
             Self::CycleTick => SystemTxKind::CycleTick,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
+            Self::HookEvents => SystemTxKind::HookEvents,
+            Self::OcompTerminalRequest => SystemTxKind::OcompTerminalRequest,
         }
     }
 
@@ -238,7 +318,11 @@ impl SystemTxInputV2 {
                         .as_ref(),
                 );
             }
-            Self::CycleTick | Self::OracleSlashWindow => {}
+            Self::OcompLifecycleBegin
+            | Self::CycleTick
+            | Self::OracleSlashWindow
+            | Self::HookEvents
+            | Self::OcompTerminalRequest => {}
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes — the mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -290,6 +374,15 @@ impl SystemTxInputV2 {
                     .map_err(SystemTxError::from_precompile)?
                     .unwrap_or_default(),
             }),
+            SystemTxKind::OcompLifecycleBegin => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::OcompLifecycleBegin)
+            }
             SystemTxKind::CycleTick => {
                 if !body.is_empty() {
                     return Err(SystemTxError::UnexpectedBody {
@@ -307,6 +400,24 @@ impl SystemTxInputV2 {
                     });
                 }
                 Ok(Self::OracleSlashWindow)
+            }
+            SystemTxKind::HookEvents => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::HookEvents)
+            }
+            SystemTxKind::OcompTerminalRequest => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::OcompTerminalRequest)
             }
             SystemTxKind::BoundaryOutcome => {
                 let Some(artifact) =
@@ -353,6 +464,9 @@ pub enum SystemTxPhase {
     /// Next expected begin-zone tx is the mandatory (blocks `>= 2`)
     /// `LateFinalizeCredits` phase, ordered immediately after Phase 1.
     LateFinalizeCredits { body_index: u8 },
+    /// OCOMP expiry/reset phase, present only once the PoC lifecycle fork is
+    /// active and ordered before `CycleTick`.
+    OcompLifecycleBegin { body_index: u8 },
     /// Next expected begin-zone tx is Phase 2 (`CycleTick`).
     CycleTick { body_index: u8 },
     /// Next expected begin-zone tx is the optional Phase 3
@@ -364,7 +478,10 @@ pub enum SystemTxPhase {
     TeeBootstrapOptional { body_index: u8 },
     /// Next expected begin-zone tx is Phase 4 (`OracleSlashWindow`).
     OracleSlashWindow { body_index: u8 },
-    /// All begin-zone system txs consumed; only user transactions remain.
+    /// Next expected begin-zone tx is the mandatory `HookEvents` receipt carrier.
+    HookEvents { body_index: u8 },
+    /// All begin-zone system txs consumed. User transactions may execute until
+    /// the optional end-zone transaction is consumed.
     UserTxs,
 }
 
@@ -377,6 +494,14 @@ impl SystemTxPhase {
     /// `tx_hash`; the executor overwrites the placeholder after the Phase 1
     /// preflight commits.
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
+        Self::initial_for_block_with_ocomp(block_number, genesis_bootstrap_block_number, false)
+    }
+
+    pub const fn initial_for_block_with_ocomp(
+        block_number: u64,
+        genesis_bootstrap_block_number: u64,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
         if block_number > genesis_bootstrap_block_number
             && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
         {
@@ -385,6 +510,8 @@ impl SystemTxPhase {
                 tx_hash: B256::ZERO,
                 receipt_index: 0,
             }
+        } else if block_number > 0 && ocomp_lifecycle_active {
+            Self::OcompLifecycleBegin { body_index: 0 }
         } else {
             Self::CycleTick { body_index: 0 }
         }
@@ -396,10 +523,12 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
             Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
+            Self::OcompLifecycleBegin { .. } => Some(SystemTxKind::OcompLifecycleBegin),
             Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
             Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
             Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
+            Self::HookEvents { .. } => Some(SystemTxKind::HookEvents),
             Self::UserTxs => None,
         }
     }
@@ -410,10 +539,12 @@ impl SystemTxPhase {
         match self {
             Self::Phase1Preexecuted { body_index, .. }
             | Self::LateFinalizeCredits { body_index }
+            | Self::OcompLifecycleBegin { body_index }
             | Self::CycleTick { body_index }
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
-            | Self::OracleSlashWindow { body_index } => Some(*body_index),
+            | Self::OracleSlashWindow { body_index }
+            | Self::HookEvents { body_index } => Some(*body_index),
             Self::UserTxs => None,
         }
     }
@@ -440,11 +571,31 @@ impl SystemTxPhase {
         has_boundary_outcome: bool,
         has_tee_bootstrap: bool,
     ) -> Self {
+        self.advance_after_commit_with_ocomp(has_boundary_outcome, has_tee_bootstrap, false)
+    }
+
+    pub const fn advance_after_commit_with_ocomp(
+        self,
+        has_boundary_outcome: bool,
+        has_tee_bootstrap: bool,
+        ocomp_lifecycle_active: bool,
+    ) -> Self {
         match self {
             Self::Phase1Preexecuted { body_index, .. } => Self::LateFinalizeCredits {
                 body_index: body_index + 1,
             },
-            Self::LateFinalizeCredits { body_index } => Self::CycleTick {
+            Self::LateFinalizeCredits { body_index } => {
+                if ocomp_lifecycle_active {
+                    Self::OcompLifecycleBegin {
+                        body_index: body_index + 1,
+                    }
+                } else {
+                    Self::CycleTick {
+                        body_index: body_index + 1,
+                    }
+                }
+            }
+            Self::OcompLifecycleBegin { body_index } => Self::CycleTick {
                 body_index: body_index + 1,
             },
             Self::CycleTick { body_index } => {
@@ -476,7 +627,10 @@ impl SystemTxPhase {
             Self::TeeBootstrapOptional { body_index } => Self::OracleSlashWindow {
                 body_index: body_index + 1,
             },
-            Self::OracleSlashWindow { .. } | Self::UserTxs => Self::UserTxs,
+            Self::OracleSlashWindow { body_index } => Self::HookEvents {
+                body_index: body_index + 1,
+            },
+            Self::HookEvents { .. } | Self::UserTxs => Self::UserTxs,
         }
     }
 }
@@ -550,6 +704,19 @@ pub enum SystemTxError {
     NonceOverflow { block_number: u64, ordinal: u8 },
     #[error("system tx visible gas overflow for calldata length {len}")]
     VisibleGasOverflow { len: usize },
+    #[error(
+        "system tx gas limit below intrinsic gas: gas_limit={gas_limit}, intrinsic={intrinsic_gas}"
+    )]
+    GasLimitBelowIntrinsic { gas_limit: u64, intrinsic_gas: u64 },
+    #[error(
+        "system tx intrinsic gas exceeds block gas limit: intrinsic={intrinsic_gas}, block_limit={block_gas_limit}"
+    )]
+    VisibleGasPlanExceedsBlock {
+        intrinsic_gas: u64,
+        block_gas_limit: u64,
+    },
+    #[error("system tx visible gas plan contains more than one CycleTick")]
+    DuplicateCycleTickGasBudget,
     #[error("system tx kind {kind:?} is in {actual:?} zone, expected {expected:?}")]
     SystemTxInWrongZone {
         kind: SystemTxKind,
@@ -569,10 +736,11 @@ pub enum SystemTxError {
     #[error("too many system txs in block: {actual} > {max}")]
     TooManySystemTxs { actual: usize, max: u8 },
     #[error(
-        "active system tx set mismatch: expected {expected:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
+        "active system tx set mismatch: expected begin {expected_begin:?}, expected end {expected_end:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
     )]
     ActiveSystemTxSetMismatch {
-        expected: Vec<SystemTxKind>,
+        expected_begin: Vec<SystemTxKind>,
+        expected_end: Vec<SystemTxKind>,
         actual_begin: Vec<SystemTxKind>,
         actual_end: Vec<SystemTxKind>,
     },
@@ -615,10 +783,13 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
     match selector {
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR => Ok(SystemTxKind::CertifiedParentAccounting),
         LATE_FINALIZE_CREDITS_SELECTOR => Ok(SystemTxKind::LateFinalizeCredits),
+        OCOMP_LIFECYCLE_BEGIN_SELECTOR => Ok(SystemTxKind::OcompLifecycleBegin),
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
+        HOOK_EVENTS_SELECTOR => Ok(SystemTxKind::HookEvents),
+        OCOMP_TERMINAL_REQUEST_SELECTOR => Ok(SystemTxKind::OcompTerminalRequest),
         other => Err(SystemTxError::UnknownSelector(other)),
     }
 }
@@ -667,7 +838,7 @@ pub fn system_tx_nonce(block_number: u64, ordinal: u8) -> Result<u64, SystemTxEr
 /// stored in the block body only needs to be valid as an Ethereum legacy
 /// envelope. Charging intrinsic calldata gas keeps system txs visible to
 /// generic replay/import tooling without exposing the 100M internal lane.
-pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError> {
+pub fn system_tx_intrinsic_gas(calldata: &[u8]) -> Result<u64, SystemTxError> {
     calldata
         .iter()
         .try_fold(SYSTEM_TX_VISIBLE_GAS_FLOOR, |gas, byte| {
@@ -683,12 +854,136 @@ pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError
         })
 }
 
+/// Backwards-compatible name for the intrinsic gas of a system envelope.
+pub fn system_tx_visible_gas_limit(calldata: &[u8]) -> Result<u64, SystemTxError> {
+    system_tx_intrinsic_gas(calldata)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SystemTxVisibleGasEntry {
+    intrinsic_gas: u64,
+    gas_limit: u64,
+}
+
+/// Deterministic visible-gas allocation for the complete begin-system zone.
+///
+/// Ordinary system envelopes receive exactly their intrinsic gas. `CycleTick`
+/// receives the remaining block gas as its compressed-entity execution budget,
+/// while preserving enough gas for every other mandatory system envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SystemTxVisibleGasPlan {
+    entries: Vec<SystemTxVisibleGasEntry>,
+    total_envelope_gas: u64,
+}
+
+impl SystemTxVisibleGasPlan {
+    pub fn new(
+        block_gas_limit: u64,
+        system_txs: &[(SystemTxKind, Bytes)],
+    ) -> Result<Self, SystemTxError> {
+        let mut entries = Vec::with_capacity(system_txs.len());
+        let mut intrinsic_total = 0u64;
+        let mut cycle_ordinal = None;
+
+        for (ordinal, (kind, calldata)) in system_txs.iter().enumerate() {
+            let actual = SystemTxInputV2::decode(calldata)?.kind();
+            if actual != *kind {
+                return Err(SystemTxError::CalldataKindMismatch {
+                    expected: *kind,
+                    actual,
+                });
+            }
+            if *kind == SystemTxKind::CycleTick && cycle_ordinal.replace(ordinal).is_some() {
+                return Err(SystemTxError::DuplicateCycleTickGasBudget);
+            }
+            let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
+            intrinsic_total = intrinsic_total.checked_add(intrinsic_gas).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
+                    intrinsic_gas: u64::MAX,
+                    block_gas_limit,
+                },
+            )?;
+            entries.push(SystemTxVisibleGasEntry {
+                intrinsic_gas,
+                gas_limit: intrinsic_gas,
+            });
+        }
+
+        let remainder = block_gas_limit.checked_sub(intrinsic_total).ok_or(
+            SystemTxError::VisibleGasPlanExceedsBlock {
+                intrinsic_gas: intrinsic_total,
+                block_gas_limit,
+            },
+        )?;
+        let total_envelope_gas = if let Some(ordinal) = cycle_ordinal {
+            let entry = entries
+                .get_mut(ordinal)
+                .ok_or(SystemTxError::DuplicateCycleTickGasBudget)?;
+            entry.gas_limit = entry.gas_limit.checked_add(remainder).ok_or(
+                SystemTxError::VisibleGasPlanExceedsBlock {
+                    intrinsic_gas: intrinsic_total,
+                    block_gas_limit,
+                },
+            )?;
+            block_gas_limit
+        } else {
+            intrinsic_total
+        };
+
+        Ok(Self {
+            entries,
+            total_envelope_gas,
+        })
+    }
+
+    #[must_use]
+    pub fn intrinsic_gas(&self, ordinal: usize) -> Option<u64> {
+        self.entries.get(ordinal).map(|entry| entry.intrinsic_gas)
+    }
+
+    #[must_use]
+    pub fn gas_limit(&self, ordinal: usize) -> Option<u64> {
+        self.entries.get(ordinal).map(|entry| entry.gas_limit)
+    }
+
+    #[must_use]
+    pub fn ce_gas_limit(&self, ordinal: usize) -> Option<u64> {
+        self.entries
+            .get(ordinal)
+            .map(|entry| entry.gas_limit - entry.intrinsic_gas)
+    }
+
+    #[must_use]
+    pub const fn total_envelope_gas(&self) -> u64 {
+        self.total_envelope_gas
+    }
+}
+
 pub fn build_unsigned_system_tx(
     kind: SystemTxKind,
     ordinal: u8,
     block_number: u64,
     chain_id: u64,
     calldata: Bytes,
+) -> Result<TxLegacy, SystemTxError> {
+    let gas_limit = system_tx_intrinsic_gas(calldata.as_ref())?;
+    build_unsigned_system_tx_with_gas_limit(
+        kind,
+        ordinal,
+        block_number,
+        chain_id,
+        calldata,
+        gas_limit,
+    )
+}
+
+pub fn build_unsigned_system_tx_with_gas_limit(
+    kind: SystemTxKind,
+    ordinal: u8,
+    block_number: u64,
+    chain_id: u64,
+    calldata: Bytes,
+    gas_limit: u64,
 ) -> Result<TxLegacy, SystemTxError> {
     let actual = SystemTxInputV2::decode(calldata.as_ref())?.kind();
     if actual != kind {
@@ -697,12 +992,19 @@ pub fn build_unsigned_system_tx(
             actual,
         });
     }
+    let intrinsic_gas = system_tx_intrinsic_gas(calldata.as_ref())?;
+    if gas_limit < intrinsic_gas {
+        return Err(SystemTxError::GasLimitBelowIntrinsic {
+            gas_limit,
+            intrinsic_gas,
+        });
+    }
 
     Ok(TxLegacy {
         chain_id: Some(chain_id),
         nonce: system_tx_nonce(block_number, ordinal)?,
         gas_price: 0,
-        gas_limit: system_tx_visible_gas_limit(calldata.as_ref())?,
+        gas_limit,
         to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
         value: U256::ZERO,
         input: calldata,
@@ -819,6 +1121,9 @@ pub fn split_system_layout<'a>(
 
     while prefix_end < txs.len() && is_reserved_system_tx(&txs[prefix_end]) {
         let kind = decode_system_tx_kind(&txs[prefix_end])?;
+        if kind.body_zone() == BodyZone::EndBlock {
+            break;
+        }
         ensure_system_tx_in_zone(kind, BodyZone::BeginBlock)?;
         ensure_monotonic(BodyZone::BeginBlock, previous_begin, kind)?;
         previous_begin = Some(kind);
@@ -864,18 +1169,39 @@ pub fn expected_begin_block_kinds(
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
 ) -> Vec<SystemTxKind> {
+    expected_begin_block_kinds_for_activation(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        OcompLifecycleActivation::Disabled,
+    )
+}
+
+pub fn expected_begin_block_kinds_for_activation(
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
+) -> Vec<SystemTxKind> {
     let mut expected = match block_number {
         0 => Vec::new(),
-        1 => vec![SystemTxKind::CycleTick],
-        _ => vec![
-            SystemTxKind::CertifiedParentAccounting,
-            // mandatory inclusion-window phase, ordered after Phase 1
-            // and before CycleTick for every block >= 2 (empty when nothing to
-            // credit; its body still drives the matured-window settlement).
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-        ],
+        1 => Vec::new(),
+        _ => {
+            vec![
+                SystemTxKind::CertifiedParentAccounting,
+                // mandatory inclusion-window phase, ordered after Phase 1
+                // and before CycleTick for every block >= 2 (empty when nothing to
+                // credit; its body still drives the matured-window settlement).
+                SystemTxKind::LateFinalizeCredits,
+            ]
+        }
     };
+    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
+        expected.push(SystemTxKind::OcompLifecycleBegin);
+    }
+    if block_number > 0 {
+        expected.push(SystemTxKind::CycleTick);
+    }
     if block_number > 0 && has_boundary_outcome {
         expected.push(SystemTxKind::BoundaryOutcome);
     }
@@ -884,8 +1210,20 @@ pub fn expected_begin_block_kinds(
     }
     if block_number > 0 {
         expected.push(SystemTxKind::OracleSlashWindow);
+        expected.push(SystemTxKind::HookEvents);
     }
     expected
+}
+
+pub fn expected_end_block_kinds(
+    block_number: u64,
+    ocomp_activation: OcompLifecycleActivation,
+) -> Vec<SystemTxKind> {
+    if block_number > 0 && ocomp_activation.is_active_at(block_number) {
+        vec![SystemTxKind::OcompTerminalRequest]
+    } else {
+        Vec::new()
+    }
 }
 
 pub fn validate_active_system_tx_set(
@@ -893,6 +1231,22 @@ pub fn validate_active_system_tx_set(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
+) -> Result<(), SystemTxError> {
+    validate_system_tx_set_for_activation(
+        layout,
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        OcompLifecycleActivation::Disabled,
+    )
+}
+
+pub fn validate_system_tx_set_for_activation(
+    layout: &SystemTxLayout<'_>,
+    block_number: u64,
+    has_boundary_outcome: bool,
+    has_tee_bootstrap: bool,
+    ocomp_activation: OcompLifecycleActivation,
 ) -> Result<(), SystemTxError> {
     let actual = layout.system_tx_count();
     if actual > usize::from(MAX_SYSTEM_TXS_PER_BLOCK) {
@@ -910,13 +1264,19 @@ pub fn validate_active_system_tx_set(
         return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
     }
 
-    let expected =
-        expected_begin_block_kinds(block_number, has_boundary_outcome, has_tee_bootstrap);
+    let expected_begin = expected_begin_block_kinds_for_activation(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        ocomp_activation,
+    );
+    let expected_end = expected_end_block_kinds(block_number, ocomp_activation);
     let actual_begin = layout.begin_block_kinds()?;
     let actual_end = layout.end_block_kinds()?;
-    if actual_begin != expected || !actual_end.is_empty() {
+    if actual_begin != expected_begin || actual_end != expected_end {
         return Err(SystemTxError::ActiveSystemTxSetMismatch {
-            expected,
+            expected_begin,
+            expected_end,
             actual_begin,
             actual_end,
         });
@@ -1063,6 +1423,7 @@ mod tests {
             SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
                 artifact: LateFinalizeCreditsArtifact::default(),
             },
+            SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
             SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
             SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
                 artifact: sample_boundary(),
@@ -1071,6 +1432,8 @@ mod tests {
                 payload: sample_tee_bootstrap(),
             },
             SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
+            SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
+            SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
         }
     }
 
@@ -1132,6 +1495,7 @@ mod tests {
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,
+            SystemTxKind::HookEvents,
         ] {
             let input = input_for(kind);
             let encoded = input.encode().expect("input encodes");
@@ -1160,6 +1524,63 @@ mod tests {
         assert_eq!(tx.to, TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS));
         assert_eq!(tx.value, U256::ZERO);
         assert_eq!(tx.input, input);
+    }
+
+    #[test]
+    fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
+        let inputs = [
+            input_for(SystemTxKind::CertifiedParentAccounting)
+                .encode()
+                .expect("CPA input encodes"),
+            input_for(SystemTxKind::CycleTick)
+                .encode()
+                .expect("CycleTick input encodes"),
+            input_for(SystemTxKind::HookEvents)
+                .encode()
+                .expect("HookEvents input encodes"),
+        ];
+        let entries = [
+            (SystemTxKind::CertifiedParentAccounting, inputs[0].clone()),
+            (SystemTxKind::CycleTick, inputs[1].clone()),
+            (SystemTxKind::HookEvents, inputs[2].clone()),
+        ];
+        let intrinsic_total = inputs
+            .iter()
+            .map(|input| system_tx_intrinsic_gas(input).expect("intrinsic gas computes"))
+            .sum::<u64>();
+        let block_gas_limit = intrinsic_total + 50_000;
+
+        let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
+            .expect("system gas plan fits the block");
+
+        assert_eq!(plan.gas_limit(0), Some(plan.intrinsic_gas(0).unwrap()));
+        assert_eq!(plan.ce_gas_limit(0), Some(0));
+        assert_eq!(plan.ce_gas_limit(1), Some(50_000));
+        assert_eq!(
+            plan.gas_limit(1),
+            Some(plan.intrinsic_gas(1).unwrap() + 50_000)
+        );
+        assert_eq!(plan.gas_limit(2), Some(plan.intrinsic_gas(2).unwrap()));
+        assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+    }
+
+    #[test]
+    fn visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit() {
+        let cycle = input_for(SystemTxKind::CycleTick)
+            .encode()
+            .expect("CycleTick input encodes");
+        let intrinsic = system_tx_intrinsic_gas(&cycle).expect("intrinsic gas computes");
+
+        let error = SystemTxVisibleGasPlan::new(intrinsic - 1, &[(SystemTxKind::CycleTick, cycle)])
+            .expect_err("system envelope cannot exceed the block gas limit");
+
+        assert_eq!(
+            error,
+            SystemTxError::VisibleGasPlanExceedsBlock {
+                intrinsic_gas: intrinsic,
+                block_gas_limit: intrinsic - 1,
+            }
+        );
     }
 
     #[test]
@@ -1524,6 +1945,7 @@ mod tests {
             system_tx(SystemTxKind::CycleTick, 0, 1),
             system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
             system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+            system_tx(SystemTxKind::HookEvents, 3, 1),
         ];
         let block1 = split_system_layout(&block1_txs).expect("layout");
         validate_active_system_tx_set(&block1, 1, true, false).expect("block 1 V2 ok");
@@ -1533,6 +1955,7 @@ mod tests {
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
             system_tx(SystemTxKind::CycleTick, 2, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
+            system_tx(SystemTxKind::HookEvents, 4, 2),
         ];
         let block2 = split_system_layout(&block2_txs).expect("layout");
         validate_active_system_tx_set(&block2, 2, false, false).expect("block 2 ok");
@@ -1543,6 +1966,7 @@ mod tests {
             system_tx(SystemTxKind::CycleTick, 2, 2),
             system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+            system_tx(SystemTxKind::HookEvents, 5, 2),
         ];
         let block2_with_boundary = split_system_layout(&block2_with_boundary_txs).expect("layout");
         validate_active_system_tx_set(&block2_with_boundary, 2, true, false)
@@ -1577,6 +2001,7 @@ mod tests {
         let block1_missing_cycle_tick_txs = vec![
             system_tx(SystemTxKind::BoundaryOutcome, 0, 1),
             system_tx(SystemTxKind::OracleSlashWindow, 1, 1),
+            system_tx(SystemTxKind::HookEvents, 2, 1),
         ];
         let block1_missing_cycle_tick =
             split_system_layout(&block1_missing_cycle_tick_txs).expect("layout");
@@ -1590,6 +2015,7 @@ mod tests {
         let block1_no_boundary_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
             system_tx(SystemTxKind::OracleSlashWindow, 1, 1),
+            system_tx(SystemTxKind::HookEvents, 2, 1),
         ];
         let block1_no_boundary = split_system_layout(&block1_no_boundary_txs).expect("layout");
         assert!(matches!(
@@ -1600,6 +2026,7 @@ mod tests {
         let missing_oracle_slash_window_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::CycleTick, 1, 2),
+            system_tx(SystemTxKind::HookEvents, 2, 2),
         ];
         let missing_oracle_slash_window =
             split_system_layout(&missing_oracle_slash_window_txs).expect("layout");
@@ -1612,6 +2039,7 @@ mod tests {
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::CycleTick, 1, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
+            system_tx(SystemTxKind::HookEvents, 3, 2),
         ];
         let missing_boundary = split_system_layout(&missing_boundary_txs).expect("layout");
         assert!(matches!(
@@ -1624,6 +2052,7 @@ mod tests {
             system_tx(SystemTxKind::CycleTick, 1, 2),
             system_tx(SystemTxKind::BoundaryOutcome, 2, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
+            system_tx(SystemTxKind::HookEvents, 4, 2),
         ];
         let unexpected_boundary = split_system_layout(&unexpected_boundary_txs).expect("layout");
         assert!(matches!(
@@ -1648,7 +2077,11 @@ mod tests {
                 "{kind:?} must fail the block on revert"
             );
         }
-        for kind in [SystemTxKind::TeeBootstrap, SystemTxKind::OracleSlashWindow] {
+        for kind in [
+            SystemTxKind::TeeBootstrap,
+            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::HookEvents,
+        ] {
             assert!(
                 !kind.revert_fails_block(),
                 "{kind:?} must keep the soft-receipt skip"
@@ -1667,6 +2100,7 @@ mod tests {
             system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
             system_tx(SystemTxKind::TeeBootstrap, 4, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
+            system_tx(SystemTxKind::HookEvents, 6, 2),
         ];
         let layout = split_system_layout(&txs).expect("layout");
         validate_active_system_tx_set(&layout, 2, true, true).expect("bootstrap block ok");
@@ -1684,6 +2118,7 @@ mod tests {
             system_tx(SystemTxKind::CycleTick, 2, 2),
             system_tx(SystemTxKind::TeeBootstrap, 3, 2),
             system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+            system_tx(SystemTxKind::HookEvents, 5, 2),
         ];
         let layout_no_bo = split_system_layout(&txs_no_bo).expect("layout");
         validate_active_system_tx_set(&layout_no_bo, 2, false, true).expect("bootstrap w/o bo ok");
@@ -1699,8 +2134,10 @@ mod tests {
         assert_eq!(tee, SystemTxPhase::TeeBootstrapOptional { body_index: 3 });
         let oracle = tee.advance_after_commit(true, true);
         assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 4 });
+        let hook_events = oracle.advance_after_commit(true, true);
+        assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 5 });
         assert_eq!(
-            oracle.advance_after_commit(true, true),
+            hook_events.advance_after_commit(true, true),
             SystemTxPhase::UserTxs
         );
 
@@ -1714,6 +2151,10 @@ mod tests {
         assert_eq!(
             SystemTxPhase::CycleTick { body_index: 1 }.advance_after_commit(false, false),
             SystemTxPhase::OracleSlashWindow { body_index: 2 }
+        );
+        assert_eq!(
+            SystemTxPhase::OracleSlashWindow { body_index: 2 }.advance_after_commit(false, false),
+            SystemTxPhase::HookEvents { body_index: 3 }
         );
     }
 
@@ -1793,6 +2234,10 @@ mod tests {
                 SystemTxPhase::OracleSlashWindow { body_index: 4 },
                 Some(SystemTxKind::OracleSlashWindow),
             ),
+            (
+                SystemTxPhase::HookEvents { body_index: 5 },
+                Some(SystemTxKind::HookEvents),
+            ),
             (SystemTxPhase::UserTxs, None),
         ];
         for (phase, expected) in cases {
@@ -1821,6 +2266,7 @@ mod tests {
                 Some(3),
             ),
             (SystemTxPhase::OracleSlashWindow { body_index: 4 }, Some(4)),
+            (SystemTxPhase::HookEvents { body_index: 5 }, Some(5)),
             (SystemTxPhase::UserTxs, None),
         ] {
             assert_eq!(phase.body_index(), expected, "phase={phase:?}");

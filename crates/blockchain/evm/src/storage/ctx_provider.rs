@@ -26,6 +26,7 @@
 use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;
+use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{PrecompileStorageProvider, SubCallError, SubCallInput, SubCallOutput},
@@ -40,9 +41,11 @@ use revm::{
     state::{AccountInfo, Bytecode},
     Database,
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::Arc};
 
-use crate::{gas::SubcallGasMeter, sub_call};
+use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_offchain_data::RuntimeBodyReaders;
 
 thread_local! {
     /// Per-thread reentrancy stack tracking which outbe precompile addresses
@@ -129,6 +132,73 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub reentrancy_stack: ReentrancyStack,
     /// EVM spec id, captured at provider construction time.
     pub spec: SpecId,
+    /// Least-authority off-chain body readers propagated to nested precompiles.
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    /// The same block-scoped lifecycle capability used by the outer EVM.
+    pub execution_scope: Arc<ExecutionScope>,
+    /// Production finalized-Intent authority propagated to nested precompile calls.
+    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    /// The same block-scoped activation meter used by the outer dispatcher.
+    pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    /// Whether the OCOMP measurement/final profile is active in this block.
+    pub ocomp_lifecycle_active: bool,
+    /// One-shot runtime lease state for the exact public Lysis activation call.
+    lysis_activation_lease: LysisActivationLease,
+}
+
+pub struct CtxStorageProviderConfig {
+    pub is_static: bool,
+    pub self_address: Address,
+    pub reentrancy_stack: ReentrancyStack,
+    pub spec: SpecId,
+    pub runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub execution_scope: Arc<ExecutionScope>,
+    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    pub ocomp_lifecycle_active: bool,
+    pub lysis_activation_entitled: bool,
+}
+
+#[derive(Debug)]
+struct LysisActivationLease {
+    entitled: bool,
+    attempted: bool,
+    active_call_id: Option<B256>,
+}
+
+impl LysisActivationLease {
+    const fn new(entitled: bool) -> Self {
+        Self {
+            entitled,
+            attempted: false,
+            active_call_id: None,
+        }
+    }
+
+    fn begin(&mut self, activation_call_id: B256) -> outbe_primitives::error::Result<()> {
+        if !self.entitled || self.attempted || self.active_call_id.is_some() {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "certified Lysis activation frame is not entitled for this EVM call".into(),
+            ));
+        }
+        self.attempted = true;
+        self.active_call_id = Some(activation_call_id);
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        activation_call_id: B256,
+        _completed: bool,
+    ) -> outbe_primitives::error::Result<()> {
+        if self.active_call_id != Some(activation_call_id) {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "certified Lysis activation frame identity mismatch".into(),
+            ));
+        }
+        self.active_call_id = None;
+        Ok(())
+    }
 }
 
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
@@ -136,18 +206,21 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     pub fn new(
         ctx: &'a mut EthEvmContext<DB>,
         gas: SubcallGasMeter,
-        is_static: bool,
-        self_address: Address,
-        reentrancy_stack: ReentrancyStack,
-        spec: SpecId,
+        config: CtxStorageProviderConfig,
     ) -> Self {
         Self {
             ctx,
             gas,
-            is_static,
-            self_address,
-            reentrancy_stack,
-            spec,
+            is_static: config.is_static,
+            self_address: config.self_address,
+            reentrancy_stack: config.reentrancy_stack,
+            spec: config.spec,
+            runtime_body_readers: config.runtime_body_readers,
+            execution_scope: config.execution_scope,
+            ocomp_finality_authority: config.ocomp_finality_authority,
+            ocomp_activation_block_meter: config.ocomp_activation_block_meter,
+            ocomp_lifecycle_active: config.ocomp_lifecycle_active,
+            lysis_activation_lease: LysisActivationLease::new(config.lysis_activation_entitled),
         }
     }
 
@@ -161,6 +234,22 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
 }
 
 impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<'a, DB> {
+    fn begin_lysis_activation_frame(
+        &mut self,
+        activation_call_id: B256,
+    ) -> outbe_primitives::error::Result<()> {
+        self.lysis_activation_lease.begin(activation_call_id)
+    }
+
+    fn finish_lysis_activation_frame(
+        &mut self,
+        activation_call_id: B256,
+        completed: bool,
+    ) -> outbe_primitives::error::Result<()> {
+        self.lysis_activation_lease
+            .finish(activation_call_id, completed)
+    }
+
     fn chain_id(&self) -> u64 {
         ContextTr::cfg(self.ctx).chain_id()
     }
@@ -324,12 +413,51 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        sub_call::run(
+        sub_call::run_with_ocomp_context(
             self.ctx,
             self.self_address,
             self.is_static,
             self.spec,
+            self.runtime_body_readers.clone(),
+            self.execution_scope.clone(),
+            self.ocomp_finality_authority.clone(),
+            self.ocomp_activation_block_meter.clone(),
+            self.ocomp_lifecycle_active,
             input,
         )
+    }
+}
+
+#[cfg(test)]
+mod lysis_activation_lease_tests {
+    use super::LysisActivationLease;
+    use alloy_primitives::B256;
+
+    #[test]
+    fn denied_call_cannot_open_activation_frame() {
+        let mut lease = LysisActivationLease::new(false);
+        assert!(lease.begin(B256::repeat_byte(1)).is_err());
+    }
+
+    #[test]
+    fn entitled_call_gets_one_exact_activation_frame() {
+        let call_id = B256::repeat_byte(2);
+        let mut lease = LysisActivationLease::new(true);
+
+        lease.begin(call_id).unwrap();
+        lease.finish(call_id, true).unwrap();
+
+        assert!(lease.begin(call_id).is_err());
+    }
+
+    #[test]
+    fn wrong_frame_identity_cannot_close_or_replace_active_frame() {
+        let call_id = B256::repeat_byte(3);
+        let mut lease = LysisActivationLease::new(true);
+        lease.begin(call_id).unwrap();
+
+        assert!(lease.finish(B256::repeat_byte(4), false).is_err());
+        lease.finish(call_id, false).unwrap();
+        assert!(lease.begin(call_id).is_err());
     }
 }

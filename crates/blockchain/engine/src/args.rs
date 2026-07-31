@@ -1,9 +1,173 @@
 //! Consensus CLI arguments.
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{fmt, net::SocketAddr, path::PathBuf};
+
+use alloy_primitives::B256;
+
+/// Complete required configuration for finalized offchain-data projection into MongoDB.
+#[derive(Clone, Eq, PartialEq)]
+pub struct OffchainDataArgs {
+    /// MongoDB connection string.
+    pub mongodb_uri: String,
+    /// Logical database exclusively owned by this node's projector.
+    pub mongodb_database: String,
+    /// First block projected when the managed database has no checkpoint.
+    pub start_block: u64,
+}
+
+/// Complete optional node-side OCOMP control-plane configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OcompNodeControlConfig {
+    pub supervisor_socket: PathBuf,
+    pub snapshot_exporter_socket: PathBuf,
+    pub supervisor_uid: u32,
+    pub snapshot_exporter_uid: u32,
+    pub protocol_bundle_hash: B256,
+    pub boot_nonce: B256,
+    pub session_generation: u64,
+    pub key_path: PathBuf,
+    pub validator_index: u8,
+}
+
+/// Local process-boundary settings. Omitted as a whole until OCOMP is enabled.
+#[derive(Clone, Debug, clap::Args)]
+pub struct OcompArgs {
+    /// Node UDS serving the fixed Supervisor capability set.
+    #[arg(long = "ocomp.supervisor-socket", value_name = "PATH")]
+    pub supervisor_socket: Option<PathBuf>,
+
+    /// Separate node UDS serving the fixed SnapshotExporter capability set.
+    #[arg(long = "ocomp.snapshot-exporter-socket", value_name = "PATH")]
+    pub snapshot_exporter_socket: Option<PathBuf>,
+
+    /// Effective UID accepted on the Supervisor UDS via SO_PEERCRED.
+    #[arg(long = "ocomp.supervisor-uid", value_name = "UID")]
+    pub supervisor_uid: Option<u32>,
+
+    /// Effective UID accepted on the SnapshotExporter UDS via SO_PEERCRED.
+    #[arg(long = "ocomp.snapshot-exporter-uid", value_name = "UID")]
+    pub snapshot_exporter_uid: Option<u32>,
+
+    /// Exact pinned OCOMP protocol bundle identity.
+    #[arg(long = "ocomp.protocol-bundle-hash", value_name = "B256")]
+    pub protocol_bundle_hash: Option<B256>,
+
+    /// Per-node process boot nonce bound into every local-control handshake.
+    #[arg(long = "ocomp.boot-nonce", value_name = "B256")]
+    pub boot_nonce: Option<B256>,
+
+    /// Monotonic local-control session generation for this node boot.
+    #[arg(long = "ocomp.session-generation", default_value_t = 1)]
+    pub session_generation: u64,
+
+    /// Node-owned result-signing key registered in the chain manifest.
+    #[arg(long = "ocomp.key", value_name = "PATH")]
+    pub key_path: Option<PathBuf>,
+
+    /// This node's exact index in the four-member OCOMP result committee.
+    #[arg(long = "ocomp.validator-index", value_name = "INDEX")]
+    pub validator_index: Option<u8>,
+}
+
+impl Default for OcompArgs {
+    fn default() -> Self {
+        Self {
+            supervisor_socket: None,
+            snapshot_exporter_socket: None,
+            supervisor_uid: None,
+            snapshot_exporter_uid: None,
+            protocol_bundle_hash: None,
+            boot_nonce: None,
+            session_generation: 1,
+            key_path: None,
+            validator_index: None,
+        }
+    }
+}
+
+impl OcompArgs {
+    /// Returns a complete fixed-role configuration or rejects a partial profile.
+    pub fn node_control(&self) -> eyre::Result<Option<OcompNodeControlConfig>> {
+        let configured = [
+            self.supervisor_socket.is_some(),
+            self.snapshot_exporter_socket.is_some(),
+            self.supervisor_uid.is_some(),
+            self.snapshot_exporter_uid.is_some(),
+            self.protocol_bundle_hash.is_some(),
+            self.boot_nonce.is_some(),
+            self.key_path.is_some(),
+            self.validator_index.is_some(),
+        ];
+        if configured.iter().all(|value| !value) {
+            return Ok(None);
+        }
+        if !configured.iter().all(|value| *value) {
+            eyre::bail!(
+                "OCOMP node control requires both role sockets, both peer UIDs, \
+                 --ocomp.protocol-bundle-hash, --ocomp.boot-nonce, --ocomp.key \
+                 and --ocomp.validator-index"
+            );
+        }
+        if self.session_generation == 0 {
+            eyre::bail!("--ocomp.session-generation must be greater than zero");
+        }
+
+        let supervisor_socket = self
+            .supervisor_socket
+            .clone()
+            .expect("complete profile checked above");
+        let snapshot_exporter_socket = self
+            .snapshot_exporter_socket
+            .clone()
+            .expect("complete profile checked above");
+        if supervisor_socket == snapshot_exporter_socket {
+            eyre::bail!("OCOMP Supervisor and SnapshotExporter require distinct sockets");
+        }
+        let protocol_bundle_hash = self
+            .protocol_bundle_hash
+            .expect("complete profile checked above");
+        let boot_nonce = self.boot_nonce.expect("complete profile checked above");
+        if protocol_bundle_hash.is_zero() {
+            eyre::bail!("--ocomp.protocol-bundle-hash must not be zero");
+        }
+        if boot_nonce.is_zero() {
+            eyre::bail!("--ocomp.boot-nonce must not be zero");
+        }
+
+        Ok(Some(OcompNodeControlConfig {
+            supervisor_socket,
+            snapshot_exporter_socket,
+            supervisor_uid: self.supervisor_uid.expect("complete profile checked above"),
+            snapshot_exporter_uid: self
+                .snapshot_exporter_uid
+                .expect("complete profile checked above"),
+            protocol_bundle_hash,
+            boot_nonce,
+            session_generation: self.session_generation,
+            key_path: self
+                .key_path
+                .clone()
+                .expect("complete profile checked above"),
+            validator_index: self
+                .validator_index
+                .expect("complete profile checked above"),
+        }))
+    }
+}
+
+impl fmt::Debug for OffchainDataArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OffchainDataArgs")
+            .field("mongodb_uri", &"<redacted>")
+            .field("mongodb_database", &self.mongodb_database)
+            .field("start_block", &self.start_block)
+            .finish()
+    }
+}
 
 /// CLI arguments for the Outbe consensus layer.
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Clone, clap::Args)]
 pub struct ConsensusArgs {
     /// Run as active consensus participant (validator).
     /// When false, runs as full node (sync + RPC only, no block production).
@@ -63,6 +227,11 @@ pub struct ConsensusArgs {
     #[arg(long = "testnet.force-dkg", default_value_t = false)]
     pub force_dkg: bool,
 
+    /// Signed proposer clock offset for deterministic local testnet scenarios.
+    /// Rejected on mainnet; normal nodes omit it and use the system clock.
+    #[arg(long = "testnet.unix-time-offset-secs", value_name = "SECONDS")]
+    pub testnet_unix_time_offset_secs: Option<i64>,
+
     /// Comma-separated list of bootstrap peers for P2P discovery.
     /// Format: `<hex_bls_pubkey>@<host:port>` (e.g. `aabb...ff@1.2.3.4:30400`).
     /// Used only as a bootstrap/discovery hint. Validator membership and target
@@ -78,13 +247,11 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.use-local-defaults", default_value_t = false)]
     pub use_local_defaults: bool,
 
-    /// Time (ms) to prepare proposal transactions before resolving payload.
-    /// Mirrors Tempo's `--consensus.time-to-prepare-proposal-transactions`.
+    /// Time (ms) to prepare proposal transactions before resolving the payload.
     #[arg(long = "consensus.payload-resolve-time-ms", default_value_t = 200)]
     pub payload_resolve_time_ms: u64,
 
-    /// Minimum time (ms) before sending a proposal (keeps block times stable).
-    /// Mirrors Tempo's `--consensus.minimum-time-before-propose`.
+    /// Minimum time (ms) before sending a proposal to keep block times stable.
     #[arg(long = "consensus.payload-return-time-ms", default_value_t = 450)]
     pub payload_return_time_ms: u64,
 
@@ -149,6 +316,64 @@ pub struct ConsensusArgs {
         requires = "upstream"
     )]
     pub upstream_nocertify: bool,
+
+    /// MongoDB URI for the required finalized offchain-data projection.
+    #[arg(
+        long = "projection.mongodb-uri",
+        env = "OUTBE_PROJECTION_MONGODB_URI",
+        value_name = "URI"
+    )]
+    pub projection_mongodb_uri: Option<String>,
+
+    /// Logical MongoDB database exclusively owned by this node's projector.
+    #[arg(
+        long = "projection.mongodb-database",
+        env = "OUTBE_PROJECTION_MONGODB_DATABASE",
+        value_name = "DATABASE"
+    )]
+    pub projection_mongodb_database: Option<String>,
+
+    /// First block to project into a new managed database.
+    #[arg(long = "projection.start-block", default_value_t = 1)]
+    pub projection_start_block: u64,
+
+    #[command(flatten)]
+    pub ocomp: OcompArgs,
+}
+
+impl fmt::Debug for ConsensusArgs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConsensusArgs")
+            .field("is_validator", &self.is_validator)
+            .field("listen_address", &self.listen_address)
+            .field("trust_el_head", &self.trust_el_head)
+            .field("force_dkg", &self.force_dkg)
+            .field(
+                "testnet_unix_time_offset_secs",
+                &self.testnet_unix_time_offset_secs,
+            )
+            .field("use_local_defaults", &self.use_local_defaults)
+            .field("worker_threads", &self.worker_threads)
+            .field("bls_key_backend", &self.bls_key_backend)
+            .field("bls_passphrase_configured", &self.bls_passphrase.is_some())
+            .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
+            .field("upstream_configured", &self.upstream.is_some())
+            .field(
+                "offchain_data_configured",
+                &self.projection_mongodb_uri.is_some(),
+            )
+            .field(
+                "projection_mongodb_database",
+                &self.projection_mongodb_database,
+            )
+            .field("projection_start_block", &self.projection_start_block)
+            .field(
+                "ocomp_control_configured",
+                &self.ocomp.supervisor_socket.is_some(),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl ConsensusArgs {
@@ -158,6 +383,8 @@ impl ConsensusArgs {
     /// - `--consensus.signing-key` without `--validator` → warning (ignored key)
     /// - `--bls-key-backend encrypted` without `--bls-passphrase` → error
     pub fn validate(&self) -> eyre::Result<()> {
+        self.offchain_data()?;
+        self.ocomp.node_control()?;
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
         // `conflicts_with` also enforces this on the CLI; this covers programmatic
@@ -215,6 +442,34 @@ impl ConsensusArgs {
         Ok(())
     }
 
+    /// Returns the complete required projection configuration.
+    pub fn offchain_data(&self) -> eyre::Result<OffchainDataArgs> {
+        match (
+            self.projection_mongodb_uri.as_ref(),
+            self.projection_mongodb_database.as_ref(),
+        ) {
+            (None, None) => Err(eyre::eyre!(
+                "MongoDB projection is required; provide --projection.mongodb-uri and --projection.mongodb-database"
+            )),
+            (Some(uri), Some(database)) => {
+                if uri.trim().is_empty() {
+                    eyre::bail!("--projection.mongodb-uri must not be empty");
+                }
+                if database.trim().is_empty() {
+                    eyre::bail!("--projection.mongodb-database must not be empty");
+                }
+                Ok(OffchainDataArgs {
+                    mongodb_uri: uri.clone(),
+                    mongodb_database: database.clone(),
+                    start_block: self.projection_start_block,
+                })
+            }
+            _ => Err(eyre::eyre!(
+                "--projection.mongodb-uri and --projection.mongodb-database must be provided together"
+            )),
+        }
+    }
+
     /// Effective validator EVM-key path.
     ///
     /// Returns `None` for full-node mode. In validator mode, an explicit
@@ -228,7 +483,9 @@ impl ConsensusArgs {
             return Ok(Some(path.clone()));
         }
         let Some(signing_key) = &self.signing_key else {
-            eyre::bail!("--validator requires --consensus.signing-key before deriving default --validator.evm-key")
+            return Err(eyre::eyre!(
+                "--validator requires --consensus.signing-key before deriving default --validator.evm-key"
+            ));
         };
         Ok(Some(
             signing_key
@@ -250,9 +507,9 @@ impl ConsensusArgs {
                 Ok(outbe_consensus::bls::KeyBackend::Encrypted(passphrase))
             }
             "os-level" => Ok(outbe_consensus::bls::KeyBackend::OsLevel),
-            other => eyre::bail!(
+            other => Err(eyre::eyre!(
                 "unknown BLS key backend: {other} (expected: plaintext, encrypted, os-level)"
-            ),
+            )),
         }
     }
 }
@@ -262,10 +519,18 @@ mod tests {
     use super::*;
     use clap::Parser;
 
-    #[derive(Debug, Parser)]
+    #[derive(Parser)]
     struct TestConsensusCli {
         #[command(flatten)]
         consensus: ConsensusArgs,
+    }
+
+    impl fmt::Debug for TestConsensusCli {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter
+                .debug_struct("TestConsensusCli")
+                .finish_non_exhaustive()
+        }
     }
 
     fn default_args() -> ConsensusArgs {
@@ -281,6 +546,7 @@ mod tests {
             keys_dir: None,
             trust_el_head: false,
             force_dkg: false,
+            testnet_unix_time_offset_secs: None,
             consensus_peers: vec![],
             use_local_defaults: false,
             payload_resolve_time_ms: 200,
@@ -292,12 +558,118 @@ mod tests {
             tee_bootstrap_timeout_secs: 60,
             upstream: None,
             upstream_nocertify: false,
+            projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
+            projection_mongodb_database: Some("outbe_projection".to_owned()),
+            projection_start_block: 1,
+            ocomp: OcompArgs::default(),
         }
     }
 
     #[test]
     fn test_full_node_without_key_ok() {
         assert!(default_args().validate().is_ok());
+    }
+
+    #[test]
+    fn ocomp_node_control_is_all_or_nothing_and_uses_distinct_role_sockets() {
+        let mut args = default_args();
+        args.ocomp.supervisor_socket = Some("/tmp/supervisor.sock".into());
+        assert!(args.validate().is_err());
+
+        args.ocomp.snapshot_exporter_socket = Some("/tmp/exporter.sock".into());
+        args.ocomp.supervisor_uid = Some(1001);
+        args.ocomp.snapshot_exporter_uid = Some(1002);
+        args.ocomp.protocol_bundle_hash = Some(B256::repeat_byte(0x11));
+        args.ocomp.boot_nonce = Some(B256::repeat_byte(0x22));
+        args.ocomp.key_path = Some("/tmp/ocomp-key.hex".into());
+        args.ocomp.validator_index = Some(2);
+        let config = args.ocomp.node_control().unwrap().unwrap();
+        assert_eq!(config.supervisor_uid, 1001);
+        assert_eq!(config.snapshot_exporter_uid, 1002);
+        assert_eq!(config.validator_index, 2);
+
+        args.ocomp.snapshot_exporter_socket = args.ocomp.supervisor_socket.clone();
+        assert!(args.ocomp.node_control().is_err());
+    }
+
+    #[test]
+    fn validator_and_full_node_require_complete_mongo_configuration() {
+        for is_validator in [false, true] {
+            let mut args = default_args();
+            args.is_validator = is_validator;
+            args.projection_mongodb_uri = None;
+            args.projection_mongodb_database = None;
+            let error = args.validate().unwrap_err().to_string();
+            assert!(error.contains("required"), "error: {error}");
+
+            args.projection_mongodb_uri = Some("mongodb://localhost:27017".to_owned());
+            let error = args.validate().unwrap_err().to_string();
+            assert!(
+                error.contains("must be provided together"),
+                "error: {error}"
+            );
+        }
+
+        let mut args = default_args();
+        args.projection_mongodb_uri = Some("mongodb://localhost:27017".to_owned());
+
+        args.projection_mongodb_database = Some("outbe_projection".to_owned());
+        args.projection_start_block = 42;
+        let config = args.offchain_data().unwrap();
+        assert_eq!(config.mongodb_uri, "mongodb://localhost:27017");
+        assert_eq!(config.mongodb_database, "outbe_projection");
+        assert_eq!(config.start_block, 42);
+    }
+
+    #[test]
+    fn cli_parses_projection_configuration() {
+        let cli = TestConsensusCli::try_parse_from([
+            "test",
+            "--projection.mongodb-uri",
+            "mongodb://mongo:27017/?replicaSet=rs0",
+            "--projection.mongodb-database",
+            "outbe_projection",
+            "--projection.start-block",
+            "17",
+        ])
+        .unwrap();
+        let config = cli.consensus.offchain_data().unwrap();
+        assert_eq!(config.start_block, 17);
+        assert_eq!(config.mongodb_database, "outbe_projection");
+    }
+
+    #[test]
+    fn projection_defaults_to_first_executable_block() {
+        let cli = TestConsensusCli::try_parse_from([
+            "test",
+            "--projection.mongodb-uri",
+            "mongodb://mongo:27017/?replicaSet=rs0",
+            "--projection.mongodb-database",
+            "outbe_projection",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.consensus.offchain_data().unwrap().start_block, 1);
+    }
+
+    #[test]
+    fn debug_output_redacts_operator_secrets() {
+        let mut args = default_args();
+        args.bls_passphrase = Some("bls-secret-value".to_owned());
+        args.upstream = Some("https://user:upstream-secret@example.test".to_owned());
+        args.projection_mongodb_uri =
+            Some("mongodb://user:mongo-secret@localhost:27017".to_owned());
+        args.projection_mongodb_database = Some("outbe_projection".to_owned());
+
+        let args_debug = format!("{args:?}");
+        let config_debug = format!("{:?}", args.offchain_data().unwrap());
+
+        for secret in ["bls-secret-value", "upstream-secret", "mongo-secret"] {
+            assert!(!args_debug.contains(secret));
+            assert!(!config_debug.contains(secret));
+        }
+        assert!(args_debug.contains("offchain_data_configured: true"));
+        assert!(config_debug.contains("mongodb_uri: \"<redacted>\""));
     }
 
     #[test]

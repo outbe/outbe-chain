@@ -30,6 +30,8 @@ fn sub_call_to_eoa_returns_success_empty() {
         CALLER,
         /* outer_is_static = */ false,
         SpecId::PRAGUE,
+        None,
+        std::sync::Arc::new(outbe_compressed_entities::ExecutionScope::new()),
         SubCallInput {
             target: EOA_TARGET,
             value: U256::ZERO,

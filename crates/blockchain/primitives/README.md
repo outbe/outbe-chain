@@ -200,13 +200,23 @@ Block lifecycle modules must implement `BlockLifecycle` and receive
 pub struct MyLifecycle;
 
 impl BlockLifecycle for MyLifecycle {
+    type EndBlockResult = ();
+
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         let mut module = ctx.contract::<MyContract>();
         module.process(ctx.block.timestamp)?;
         Ok(())
     }
+
+    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
+        Ok(())
+    }
 }
 ```
+
+Lifecycles without end-block output use `EndBlockResult = ()`. Lifecycles that
+seal or otherwise derive block-associated data return a typed value from
+`end_block`.
 
 `BlockContext` contains block metadata:
 

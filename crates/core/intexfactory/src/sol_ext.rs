@@ -8,7 +8,9 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IOriginRouter {
         struct IssuanceInstructionsParams {
+            uint32 dstChainId;
             uint32 seriesId;
+            uint32 worldwideDay;
             uint32 issuedIntexCount;
             uint128 promisLoadMinor;
             uint64 entryPriceMinor;
@@ -48,6 +50,7 @@ sol! {
 
         struct CreateSeriesParams {
             uint32 seriesId;
+            uint32 worldwideDay;
             uint16 issuanceCurrency;
             uint16 referenceCurrency;
             uint32 issuedIntexCount;

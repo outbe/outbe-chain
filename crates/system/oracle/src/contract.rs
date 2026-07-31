@@ -3,6 +3,7 @@ use outbe_common::WorldwideDay;
 use outbe_macros::contract;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes, StorageVec};
+pub use outbe_primitives::units::SCALE_1E18;
 
 /// EVM storage layout for the Oracle contract.
 ///
@@ -177,10 +178,19 @@ pub struct OracleContract {
     // finalized (yyyymmdd). 0 = nothing finalized yet. Backfill is contiguous,
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
-}
 
-/// 1e18 scale factor for fixed-point arithmetic.
-///
-/// Re-exported from [`outbe_primitives::units::SCALE_1E18`] so the oracle
-/// shares the canonical scale constant with the rest of the chain.
-pub use outbe_primitives::units::SCALE_1E18;
+    // Reference-currency refinancing rates
+    pub reference_refinancing_rate: Mapping<u16, U256>,
+
+    // === OCOMP PoC pre-admission projection ===
+    // These trailing fields are inert until the fresh-devnet fork handler sets
+    // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
+    // their exact historical state footprint.
+    pub ocomp_profile_ready: Slot<bool>,
+    pub ocomp_day_type_pair_id: Slot<u32>,
+    // Direct O(1) lookup for the single fork-fixed auction-entry pair. The
+    // canonical UTC-day finalizer is its only mutation owner.
+    pub ocomp_day_type_vwap_by_utc_day: Mapping<u32, U256>,
+    // Advances for every Oracle mutation visible to OCOMP pre-admission.
+    pub ocomp_state_version: Slot<u64>,
+}

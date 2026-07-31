@@ -95,20 +95,15 @@ fn validate_oracle_submit_vote_state(
     storage: StorageHandle,
     signer: Address,
 ) -> Result<Address, ZeroFeePolicyError> {
-    let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-    let validator = oracle
-        .resolve_validator_for_feeder(signer)
-        .map_err(|_| ZeroFeePolicyError::UnauthorizedSigner)?;
-
     let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-    let Some(record) = vs.get_validator(validator)? else {
-        return Err(ZeroFeePolicyError::UnauthorizedSigner);
-    };
+    let validator = vs
+        .resolve_validator_for_role(
+            signer,
+            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+        )?
+        .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
 
-    if record.status != outbe_validatorset::logic::status::ACTIVE || !record.has_bls_share {
-        return Err(ZeroFeePolicyError::UnauthorizedSigner);
-    }
-
+    let oracle = outbe_oracle::contract::OracleContract::new(vs.storage.clone());
     if oracle.vote_exists.read(&validator)? {
         return Err(ZeroFeePolicyError::AlreadyVoted);
     }
@@ -203,7 +198,7 @@ mod tests {
     fn delegated_feeder_passes_until_validator_votes() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.validator_count.write(1).unwrap();
             vs.address_to_index.write(&VALIDATOR, 1).unwrap();
             vs.index_to_address.write(&1, VALIDATOR).unwrap();
@@ -212,9 +207,14 @@ mod tests {
                 .unwrap();
             vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.feeder_delegation.write(&VALIDATOR, FEEDER).unwrap();
+            vs.set_delegate(
+                VALIDATOR,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+                FEEDER,
+            )
+            .unwrap();
 
+            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
             let input = vote_calldata();
             let tx = oracle_vote_tx(MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS, Some(0), input.as_ref());
             let candidate = crate::registry().classify(&tx).unwrap().unwrap();

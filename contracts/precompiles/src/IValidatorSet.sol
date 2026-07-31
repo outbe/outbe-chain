@@ -31,6 +31,12 @@ interface IValidatorSet {
     /// Emitted when DKG reshare updates the active consensus set.
     event ConsensusSetUpdated(uint32 activeCount);
 
+    /// Emitted when a validator assigns a role-scoped operational key.
+    event ValidatorDelegateSet(address indexed validator, uint8 indexed role, address indexed delegate);
+
+    /// Emitted when a validator revokes a role-scoped operational key.
+    event ValidatorDelegateRevoked(address indexed validator, uint8 indexed role, address indexed delegate);
+
     function getValidators() external view returns (address[] memory);
     function getActiveValidators() external view returns (address[] memory);
     function getActiveConsensusSet() external view returns (address[] memory);
@@ -77,6 +83,11 @@ interface IValidatorSet {
     function getEpochNumber() external view returns (uint256);
     function getEpochStartTimestamp() external view returns (uint64);
     function getEpochStartBlock() external view returns (uint64);
+    /// Stable role ids: 1 = ORACLE, 2 = OCOMP. Unknown ids revert.
+    function setDelegate(uint8 role, address delegate) external;
+    function revokeDelegate(uint8 role) external;
+    function getDelegate(address validator, uint8 role) external view returns (address);
+    function resolveValidator(uint8 role, address signer) external view returns (address);
     function registerValidator(address validatorAddress, bytes calldata consensusPubkey, bytes calldata blsSignature)
         external;
     function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;

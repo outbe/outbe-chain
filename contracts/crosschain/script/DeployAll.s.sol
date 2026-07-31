@@ -18,7 +18,8 @@ import {ConfigureBridge} from "./3_ConfigureBridge.s.sol";
 /// Required env: `DEPLOYER_PK` (= bridge owner), `CONTRACT_SALT`, `BRIDGE_OWNER`,
 ///   at least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 /// Optional: `CREATEX_ADDRESS` (reused if set), `ACTIVE_GATEWAY` ("lz" | "hyperlane"),
-///   `REMOTE_CHAIN_IDS` (csv; step 4 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for LayerZero.
+///   `REMOTE_CHAIN_IDS` (csv; step 4 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for LayerZero,
+///   `WIRE_LOOPBACK` (route the local chain through the loopback adapter).
 contract DeployAll is DeployCreateXDeterministic, DeployAdapters, DeployBridge, ConfigureBridge {
     function run() public override(DeployCreateXDeterministic, DeployAdapters, DeployBridge, ConfigureBridge) {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
@@ -45,6 +46,7 @@ contract DeployAll is DeployCreateXDeterministic, DeployAdapters, DeployBridge, 
         console2.log("[2/4] Deploy adapters...");
         address lz;
         address hl;
+        address lb;
         if (lzEndpoint != address(0)) {
             lz = deployLayerZeroAdapter(createX, salt, deployer, owner, lzEndpoint);
             console2.log("  LayerZeroGatewayAdapter:", lz);
@@ -52,6 +54,10 @@ contract DeployAll is DeployCreateXDeterministic, DeployAdapters, DeployBridge, 
         if (mailbox != address(0)) {
             hl = deployHyperlaneAdapter(createX, salt, deployer, owner, mailbox);
             console2.log("  HyperlaneGatewayAdapter:", hl);
+        }
+        if (vm.envOr("WIRE_LOOPBACK", false)) {
+            lb = deployLoopbackAdapter(createX, salt, deployer, owner);
+            console2.log("  LoopbackGatewayAdapter:", lb);
         }
 
         // 3. Deploy bridge with the active gateway
@@ -64,6 +70,7 @@ contract DeployAll is DeployCreateXDeterministic, DeployAdapters, DeployBridge, 
         // 4. Wire remotes (no-op when REMOTE_CHAIN_IDS is unset)
         console2.log("[4/4] Configure remotes...");
         configureBridge(bridge, lz, hl);
+        if (lb != address(0)) configureLoopback(bridge, lb);
 
         vm.stopBroadcast();
 

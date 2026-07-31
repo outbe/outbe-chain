@@ -52,6 +52,34 @@ pub fn dispatch(
             getBootstrapEndTime(_) => metadata::<IMetadosis::getBootstrapEndTimeCall>(|| {
                 metadosis.get_bootstrap_end_time()
             }),
+            getOffchainJob(c) => view(c, |c| {
+                crate::ocomp::views::get_offchain_job(metadosis.storage.clone(), c.intentId)
+                    .map(Bytes::from)
+            }),
+            getOffchainVoteAccountability(c) => view(c, |c| {
+                crate::ocomp::views::get_offchain_vote_accountability(
+                    metadosis.storage.clone(),
+                    c.jobId,
+                )
+                .map(Bytes::from)
+            }),
+            getActiveLysisGeneration(c) => view(c, |c| {
+                crate::ocomp::views::get_active_lysis_generation(
+                    metadosis.storage.clone(),
+                    c.wwd.into(),
+                )
+                .map(Bytes::from)
+            }),
+            getLysisTerminalReceipt(c) => view(c, |c| {
+                crate::ocomp::views::get_lysis_terminal_receipt(
+                    metadosis.storage.clone(),
+                    c.intentId,
+                )
+                .map(Bytes::from)
+            }),
+            submitLysisResult(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
+                "OCOMP result vote requires current-block execution context".into(),
+            )),
         }
     })
 }

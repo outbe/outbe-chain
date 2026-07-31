@@ -3,8 +3,8 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {WithdrawalLimitPolicy} from "src/WithdrawalLimitPolicy.sol";
-import {PackedUserOperation} from "@zerodev/kernel/interfaces/PackedUserOperation.sol";
-import {parseValidationData, ValidAfter, ValidUntil} from "@zerodev/kernel/types/Types.sol";
+import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {ValidationData, _parseValidationData} from "account-abstraction/core/Helpers.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 
@@ -111,6 +111,35 @@ contract WithdrawalLimitPolicyTest is Test {
         });
     }
 
+    /// @dev ERC-7579 batch execution element (matches solady LibERC7579 / Kernel batch decoding).
+    struct Execution {
+        address target;
+        uint256 value;
+        bytes callData;
+    }
+
+    /// @dev Builds a CALLTYPE_BATCH UserOp whose single sub-call is a transfer targeting `target`.
+    function _buildBatchUserOpTargeting(address target) internal view returns (PackedUserOperation memory) {
+        Execution[] memory execs = new Execution[](1);
+        execs[0] = Execution({
+            target: target, value: 0, callData: abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1))
+        });
+        bytes32 batchMode = bytes32(bytes1(0x01)); // CALLTYPE_BATCH
+        bytes memory callData = abi.encodeWithSelector(bytes4(0), batchMode, abi.encode(execs));
+
+        return PackedUserOperation({
+            sender: kernelAccount,
+            nonce: 0,
+            initCode: "",
+            callData: callData,
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: ""
+        });
+    }
+
     // -------------------------------------------------------------------------
     // Install / Uninstall
     // -------------------------------------------------------------------------
@@ -173,9 +202,9 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
 
-        (ValidAfter validAfter, ValidUntil validUntil,) = parseValidationData(result);
-        assertEq(ValidAfter.unwrap(validAfter), 0, "validAfter should be 0");
-        assertGt(ValidUntil.unwrap(validUntil), 0, "validUntil should be non-zero");
+        ValidationData memory vd = _parseValidationData(result);
+        assertEq(vd.validAfter, 0, "validAfter should be 0");
+        assertGt(vd.validUntil, 0, "validUntil should be non-zero");
     }
 
     function test_CheckUserOpPolicy_PassesAtLimit() public {
@@ -185,8 +214,8 @@ contract WithdrawalLimitPolicyTest is Test {
         vm.prank(kernelAccount);
         uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
 
-        (, ValidUntil validUntil,) = parseValidationData(result);
-        assertGt(ValidUntil.unwrap(validUntil), 0, "validUntil should be non-zero");
+        ValidationData memory vd = _parseValidationData(result);
+        assertGt(vd.validUntil, 0, "validUntil should be non-zero");
         (uint256 usedAfter,) = policy.states(DEFAULT_ID, kernelAccount);
         assertEq(usedAfter, DEFAULT_LIMIT, "usedAmount should equal limit");
     }
@@ -206,6 +235,90 @@ contract WithdrawalLimitPolicyTest is Test {
                 WithdrawalLimitPolicy.WithdrawalLimitExceeded.selector, DEFAULT_LIMIT + 1, DEFAULT_LIMIT
             )
         );
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-01: a UserOp whose ABI offset word is non-canonical must be rejected, not passed through.
+    ///      The fixed [68:100]/[100:] window shows a benign amount (1) while the real offset-followed
+    ///      data would move DEFAULT_LIMIT+1; Kernel.execute follows the offset, so passing through here
+    ///      would desync validation from execution. The policy must revert instead.
+    function test_W01_NonCanonicalOffset_Reverts() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        bytes memory transferCalldata = abi.encodeWithSelector(IERC20.transfer.selector, recipient, uint256(1));
+        bytes memory execCalldata = abi.encodePacked(address(token), uint256(0), transferCalldata);
+        // Hand-build callData with offset word = 96 (0x60) instead of the canonical 64 (0x40).
+        bytes memory callData = abi.encodePacked(
+            bytes4(0), // [0:4]   selector
+            bytes32(0), // [4:36]  ExecMode → CALLTYPE_SINGLE
+            uint256(96), // [36:68] non-canonical offset
+            uint256(execCalldata.length), // [68:100] length
+            execCalldata // [100:]  data
+        );
+
+        PackedUserOperation memory userOp = PackedUserOperation({
+            sender: kernelAccount,
+            nonce: 0,
+            initCode: "",
+            callData: callData,
+            accountGasLimits: bytes32(0),
+            preVerificationGas: 0,
+            gasFees: bytes32(0),
+            paymasterAndData: "",
+            signature: ""
+        });
+
+        vm.prank(kernelAccount);
+        vm.expectRevert(abi.encodeWithSelector(WithdrawalLimitPolicy.NonCanonicalOffset.selector, uint256(96)));
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-04: a standalone policy must fail-closed on a batch that targets the configured token,
+    ///      not pass it through — otherwise a batch bypasses the daily limit entirely when the policy
+    ///      is reused without a call-type-restricting sibling hook.
+    function test_W05_BatchTargetingConfiguredToken_Reverts() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        PackedUserOperation memory userOp = _buildBatchUserOpTargeting(address(token));
+        vm.prank(kernelAccount);
+        vm.expectRevert(
+            abi.encodeWithSelector(WithdrawalLimitPolicy.BatchTargetsConfiguredToken.selector, address(token))
+        );
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-04: a batch that touches no configured token is genuinely unrelated and still passes.
+    function test_W05_UnrelatedBatch_StillPasses() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+
+        PackedUserOperation memory userOp = _buildBatchUserOpTargeting(makeAddr("otherToken"));
+        vm.prank(kernelAccount);
+        uint256 result = policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+        assertEq(result, 0, "unrelated batch must pass through");
+    }
+
+    /// @dev T-06: metering a transfer emits LimitConsumed so monitoring can watch limit exhaustion.
+    function test_W07_LimitConsumedEmits() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+        (, uint48 windowEnd) = policy.states(DEFAULT_ID, kernelAccount); // unchanged (no reset this block)
+
+        PackedUserOperation memory userOp = _buildUserOp(address(token), recipient, 300e6);
+        vm.expectEmit(true, true, false, true, address(policy));
+        emit WithdrawalLimitPolicy.LimitConsumed(DEFAULT_ID, kernelAccount, 300e6, 300e6, windowEnd);
+        vm.prank(kernelAccount);
+        policy.checkUserOpPolicy(DEFAULT_ID, userOp);
+    }
+
+    /// @dev T-06: the first transfer after the window expires emits WindowReset with the new window.
+    function test_W07_WindowResetEmits() public {
+        _install(DEFAULT_ID, DEFAULT_LIMIT, DEFAULT_INTERVAL, address(token));
+        vm.warp(block.timestamp + DEFAULT_INTERVAL + 1);
+        uint48 expectedWindowEnd = uint48(block.timestamp) + DEFAULT_INTERVAL;
+
+        PackedUserOperation memory userOp = _buildUserOp(address(token), recipient, 100e6);
+        vm.expectEmit(true, true, false, true, address(policy));
+        emit WithdrawalLimitPolicy.WindowReset(DEFAULT_ID, kernelAccount, expectedWindowEnd);
+        vm.prank(kernelAccount);
         policy.checkUserOpPolicy(DEFAULT_ID, userOp);
     }
 

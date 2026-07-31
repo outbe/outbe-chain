@@ -330,6 +330,7 @@ pub fn dispatch(
             getReferenceCurrencies(_) => metadata::<IOracle::getReferenceCurrenciesCall>(|| {
                 oracle.reference_currencies.read_all()
             }),
+            getRefinancingRate(c) => view(c, |c| oracle.get_refinancing_rate(c.isoCode)),
             getNominalPrice(c) => view(c, |c| {
                 let pair_id = oracle.get_pair_id(&c.base, &c.quote)?;
                 if pair_id == 0 {
@@ -369,10 +370,10 @@ pub fn dispatch(
                             (hash, t.exchangeRate, t.volume)
                         })
                         .collect();
-                    oracle.submit_vote(sender, &tuples)?;
+                    let validator = oracle.submit_vote(sender, &tuples)?;
                     // Emit event after successful vote
                     let event = IOracle::VoteSubmitted {
-                        validator: sender,
+                        validator,
                         tupleCount: tuple_count,
                     };
                     let _ = oracle

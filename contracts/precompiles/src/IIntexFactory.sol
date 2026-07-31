@@ -14,12 +14,29 @@ interface IIntexFactory {
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
     function settle(uint32 seriesId, address intexHolder, uint256 amount) external;
 
-    /// @notice Burn settled Intexes and mint Promis, gated by off-chain proof
-    ///         of work. Caller is the holder. Returns the minted Promis amount.
-    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce) external returns (uint256 promisAmount);
+    /// @notice Burn settled Intexes and mint confidential Promis, gated by
+    ///         off-chain proof of work. Caller is the holder. Authorized by the
+    ///         holder's Promis modify key: `mac = HMAC(modifyKey, op-preimage)`
+    ///         where `opNonce` MUST equal the holder's current on-chain promis
+    ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
+    ///         bound amount is `promis_load_minor * amount`. Returns the minted
+    ///         Promis amount.
+    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+        external
+        returns (uint256 promisAmount);
 
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
     function setAuthorizedSettler(uint32 seriesId, address settler) external;
+
+    /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
+    ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
+    ///         Creators are paid, proportional to each owner's Tribute Nominal
+    ///         Amount, once every winning chain has routed its proceeds (or the
+    ///         fan-in deadline passes); the payout itself is drained over later
+    ///         blocks by the begin-block hook.
+    /// @param worldwideDay Worldwide day (yyyymmdd) whose creators receive the proceeds.
+    /// @param srcChainId Target chain the proceeds arrived from (for fan-in completeness).
+    function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice A new series was created from a cleared auction.
     event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
@@ -35,4 +52,12 @@ interface IIntexFactory {
 
     /// @notice The series was force-called (Qualified → Called).
     event SeriesCalled(uint32 indexed seriesId, uint32 calledAt);
+
+    /// @notice Auction proceeds for `seriesId` were fully paid out to
+    ///         `contributors` tribute owners, totalling `amount` native COEN.
+    event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
+
+    /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
+    ///         burned instead of being distributed.
+    event ProceedsBurned(uint32 indexed seriesId, uint256 amount);
 }

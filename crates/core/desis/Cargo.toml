@@ -7,14 +7,17 @@ publish.workspace = true
 
 [dependencies]
 outbe-macros.workspace = true
+outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-intexfactory.workspace = true
 outbe-promislimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+outbe-intex.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 
 [lints]

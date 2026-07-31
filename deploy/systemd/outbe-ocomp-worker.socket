@@ -1,0 +1,16 @@
+[Unit]
+Description=Outbe OCOMP one-unit worker activation socket
+PartOf=outbe-ocomp.target
+
+[Socket]
+ListenStream=/opt/outbe-chain/ocomp/run/worker.sock
+Accept=yes
+MaxConnections=4
+MaxConnectionsPerSource=4
+SocketUser=outbe-ocomp-supervisor
+SocketGroup=outbe-ocomp-worker-launch
+SocketMode=0660
+RemoveOnStop=yes
+
+[Install]
+WantedBy=outbe-ocomp.target

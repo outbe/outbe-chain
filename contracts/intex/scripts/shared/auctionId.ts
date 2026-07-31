@@ -1,37 +1,37 @@
-// Series ID Utilities
-// Functions for working with series identifiers.
+// Worldwide-day utilities
+// Functions for working with the auction worldwide day.
 //
 // Conventions
-// - seriesId: 8-digit numeric in yyyymmdd format (uint32 on-chain), e.g. 20250924.
-//   A plain TypeScript `number` is the sole key for every auction and series.
+// - worldwideDay: 8-digit numeric in yyyymmdd format (uint32 on-chain), e.g. 20250924.
+//   A plain TypeScript `number` keys every auction; the series id is derived from it.
 
 // =============================================================================
 // Parsing
 // =============================================================================
 
 /** Parse yyyymmdd format to ISO components */
-export function yyyymmddToIso(seriesId: string): { y: string; m: string; d: string } {
-  if (!/^\d{8}$/.test(seriesId)) {
-    throw new Error("series must be yyyymmdd, e.g. 20250924");
+export function yyyymmddToIso(worldwideDay: string): { y: string; m: string; d: string } {
+  if (!/^\d{8}$/.test(worldwideDay)) {
+    throw new Error("worldwide day must be yyyymmdd, e.g. 20250924");
   }
   return {
-    y: seriesId.slice(0, 4),
-    m: seriesId.slice(4, 6),
-    d: seriesId.slice(6, 8),
+    y: worldwideDay.slice(0, 4),
+    m: worldwideDay.slice(4, 6),
+    d: worldwideDay.slice(6, 8),
   };
 }
 
 // =============================================================================
-// Series ID Generation
+// Worldwide-day generation
 // =============================================================================
 
 /**
- * Normalize series ID to yyyymmdd format.
+ * Normalize a worldwide day to yyyymmdd format.
  * Returns today's date if not provided or invalid.
  */
-export function normalizeSeries(series?: string): string {
-  if (series && /^\d{8}$/.test(series)) {
-    return series;
+export function normalizeWorldwideDay(worldwideDay?: string): string {
+  if (worldwideDay && /^\d{8}$/.test(worldwideDay)) {
+    return worldwideDay;
   }
   const now = new Date();
   const y = String(now.getFullYear());
@@ -55,41 +55,41 @@ export function parseRange(rangeStr?: string): [number, number] | undefined {
 }
 
 /**
- * Convert seriesId (yyyymmdd) to UNIX timestamp at noon UTC.
+ * Convert a worldwide day (yyyymmdd) to UNIX timestamp at noon UTC.
  */
-export function seriesIdToNoonTimestamp(seriesId: string): bigint {
-  const { y, m, d } = yyyymmddToIso(seriesId);
+export function worldwideDayToNoonTimestamp(worldwideDay: string): bigint {
+  const { y, m, d } = yyyymmddToIso(worldwideDay);
   const date = new Date(`${y}-${m}-${d}T12:00:00Z`);
   return BigInt(Math.floor(date.getTime() / 1000));
 }
 
 /**
- * Convert seriesId string (yyyymmdd) to uint32 number.
+ * Convert a worldwide day string (yyyymmdd) to uint32 number.
  * Example: "20260212" -> 20260212
  */
-export function seriesIdToUint32(seriesId: string): number {
-  if (!/^\d{8}$/.test(seriesId)) {
-    throw new Error("series must be yyyymmdd, e.g. 20250924");
+export function worldwideDayToUint32(worldwideDay: string): number {
+  if (!/^\d{8}$/.test(worldwideDay)) {
+    throw new Error("worldwide day must be yyyymmdd, e.g. 20250924");
   }
-  return parseInt(seriesId, 10);
+  return parseInt(worldwideDay, 10);
 }
 
 /**
- * Convert uint32 seriesId to string format (yyyymmdd).
+ * Convert a uint32 worldwide day to string format (yyyymmdd).
  * Example: 20260212 -> "20260212"
  */
-export function uint32ToSeriesId(seriesId: number): string {
-  const str = String(seriesId).padStart(8, "0");
+export function uint32ToWorldwideDay(worldwideDay: number): string {
+  const str = String(worldwideDay).padStart(8, "0");
   if (str.length !== 8) {
-    throw new Error("seriesId must be a valid 8-digit number (yyyymmdd)");
+    throw new Error("worldwide day must be a valid 8-digit number (yyyymmdd)");
   }
   return str;
 }
 
 /**
- * Resolve a uint32 seriesId from an explicit series string or fall back to today.
- * Throws if an explicit series string is malformed.
+ * Resolve a uint32 worldwide day from an explicit yyyymmdd string or fall back to today.
+ * Throws if an explicit string is malformed.
  */
-export function resolveSeriesId(series?: string): number {
-  return seriesIdToUint32(normalizeSeries(series));
+export function resolveWorldwideDay(worldwideDay?: string): number {
+  return worldwideDayToUint32(normalizeWorldwideDay(worldwideDay));
 }

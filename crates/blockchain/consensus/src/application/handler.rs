@@ -5,7 +5,7 @@
 //! consensus with Reth's execution layer via `beacon_engine_handle` and
 //! `payload_builder_handle`.
 //!
-//! Block availability uses Commonware's marshal actor (Tempo-style):
+//! Block availability uses Commonware's marshal actor:
 //! - Proposer disseminates blocks via `buffered::Engine` (broadcast)
 //! - Non-proposers resolve blocks via `marshal::resolver` (on-demand P2P)
 //! - No ad-hoc block propagation channel or local cache admission
@@ -33,13 +33,55 @@ pub(crate) const GENESIS_ANCHOR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Poll interval used by the bounded waits in `handle_genesis` and the
 /// `stack.rs` pre-restart preconditions.
 pub(crate) const GENESIS_ANCHOR_POLL_INTERVAL: Duration = Duration::from_millis(50);
-fn unix_now_millis() -> eyre::Result<u64> {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
-        .as_millis()
-        .try_into()
-        .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+/// Explicit source of proposer wall-clock time.
+///
+/// Production injects [`SystemUnixTimeSource`]. Localnet tests may inject an
+/// [`OffsetUnixTimeSource`] through the explicitly testnet-scoped CLI option;
+/// consensus code never consults ambient process environment for logical time.
+pub trait UnixTimeSource: Send + Sync {
+    fn now_millis(&self) -> eyre::Result<u64>;
+}
+
+#[derive(Debug, Default)]
+pub struct SystemUnixTimeSource;
+
+impl UnixTimeSource for SystemUnixTimeSource {
+    fn now_millis(&self) -> eyre::Result<u64> {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| eyre::eyre!("system clock before UNIX_EPOCH: {e}"))?
+            .as_millis()
+            .try_into()
+            .map_err(|_| eyre::eyre!("system clock millis does not fit in u64"))
+    }
+}
+
+#[derive(Debug)]
+pub struct OffsetUnixTimeSource {
+    base: SystemUnixTimeSource,
+    offset_secs: i64,
+}
+
+impl OffsetUnixTimeSource {
+    #[must_use]
+    pub const fn new(offset_secs: i64) -> Self {
+        Self {
+            base: SystemUnixTimeSource,
+            offset_secs,
+        }
+    }
+}
+
+impl UnixTimeSource for OffsetUnixTimeSource {
+    fn now_millis(&self) -> eyre::Result<u64> {
+        apply_unix_time_offset_millis(self.base.now_millis()?, self.offset_secs)
+    }
+}
+
+fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre::Result<u64> {
+    let shifted = i128::from(now) + i128::from(offset_secs) * 1_000;
+    u64::try_from(shifted)
+        .map_err(|_| eyre::eyre!("Unix time offset {offset_secs} moves timestamp outside u64"))
 }
 
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
@@ -135,10 +177,14 @@ use commonware_utils::channel::oneshot;
 use futures::StreamExt;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
+    projection::{
+        ExecutionReadBudget, ProjectionCheckpoint, ProjectionReadinessHandle, WaitOutcome,
+    },
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, FinalizedParentAttestation,
         OutbeBlockArtifacts,
     },
+    system_tx::OcompLifecycleActivation,
     OutbeExecutionData, OutbePayloadAttributes, OutbePayloadTypes,
 };
 use reth_node_builder::{BuiltPayload as _, ConsensusEngineHandle};
@@ -158,6 +204,7 @@ use crate::{
         state::{FinalizationViewAccess, FinalizationViewHandle},
     },
     hybrid::{election::HybridElectorConfigProvider, HybridSchemeProvider},
+    ocomp_retention::{after_durable_candidate, OcompRetentionHook},
     validators::ValidatorSet,
     vrf_safety::VrfSafetyGate,
 };
@@ -193,7 +240,7 @@ use crate::finalization::util::extract_header_artifact_from_block;
 use crate::application::epoch_boundary::{self, ApplicationEpochFence, EpochBoundaryParentError};
 use crate::application::validation::{
     validate_context_parent_binding, validate_rewards_beneficiary,
-    validate_system_tx_leader_binding,
+    validate_system_tx_leader_binding_for_activation,
 };
 use crate::application::verify_resolution::{resolve_for_verify, VerifyResolveTarget};
 
@@ -203,6 +250,35 @@ enum ProposeOutcome {
     ParentProofUnavailable,
     EpochStale,
     BoundaryUnavailable,
+    ProjectionUnavailable,
+    RetentionUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParentProjectionGate {
+    Ready,
+    Withhold,
+}
+
+async fn wait_for_projected_parent<F>(
+    readiness: ProjectionReadinessHandle,
+    required: ProjectionCheckpoint,
+    budget_expired: F,
+) -> eyre::Result<ParentProjectionGate>
+where
+    F: std::future::Future<Output = ()>,
+{
+    match readiness.wait_for(required, budget_expired).await {
+        WaitOutcome::Ready => Ok(ParentProjectionGate::Ready),
+        WaitOutcome::BudgetExpired | WaitOutcome::ProjectionAhead => {
+            Ok(ParentProjectionGate::Withhold)
+        }
+        WaitOutcome::Fatal(failure) => Err(eyre::eyre!(
+            "projection readiness failed ({:?}): {}",
+            failure.class,
+            failure.message
+        )),
+    }
 }
 
 /// Pure min-block-time floor arithmetic: remaining pad = `min ⊖ elapsed`
@@ -291,6 +367,9 @@ pub struct ApplicationHandler {
 
 #[derive(Clone)]
 pub(crate) struct ApplicationShared {
+    /// Explicit proposer wall-clock source. Never derived from ambient env.
+    unix_time_source: Arc<dyn UnixTimeSource>,
+
     /// Engine handle for new_payload / fork_choice_updated.
     engine: EngineHandle,
 
@@ -310,6 +389,11 @@ pub(crate) struct ApplicationShared {
     /// Active EVM chain id used to rebuild deterministic system-tx envelopes
     /// during consensus prechecks before Engine status is trusted.
     chain_id: u64,
+
+    /// Immutable chain-manifest activation used by the pre-Engine consensus
+    /// system-transaction verifier. This must match the payload builder and
+    /// execution configuration so every validator expects the same layout at H.
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
 
     /// Marshal mailbox for digest-bound block resolution.
     pub(crate) marshal_mailbox: crate::marshal_types::MarshalMailbox,
@@ -341,16 +425,12 @@ pub(crate) struct ApplicationShared {
     /// consensus blocks into Reth.
     ancestry_readiness: AncestryReadiness,
 
+    /// Exact durable Mongo projection checkpoint used to gate every execution
+    /// read of a consensus parent.
+    projection_readiness: ProjectionReadinessHandle,
+
     /// Time to give the payload builder to execute transactions before resolving.
     payload_resolve_time: std::time::Duration,
-
-    /// Retained on the ctor surface for ABI stability
-    /// with `stack.rs`. The proposer no longer gates the parent-proof
-    /// lookup on this budget (the new selector is non-blocking); the field
-    /// will be removed in a follow-up cleanup once `stack.rs` no longer
-    /// supplies it.
-    #[allow(dead_code)]
-    payload_return_time: std::time::Duration,
 
     /// Proposer-side minimum block-time floor (liveness pacing only; never
     /// affects block contents or validation). Read in the `Message::Propose`
@@ -393,6 +473,10 @@ pub(crate) struct ApplicationShared {
     /// effort, process-local — the resulting artifact is re-verified by every
     /// validator, so it never affects determinism.
     late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+
+    /// Node-local durable OCOMP candidate retention. It may forfeit this
+    /// validator's proposal/vote but never changes block validity.
+    ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 /// Named dependencies for [`ApplicationHandler::new`].
@@ -402,6 +486,7 @@ pub(crate) struct ApplicationShared {
 /// test fixtures cannot transpose arguments — the wiring order lives in the type
 /// system rather than in a call-site convention.
 pub struct ApplicationDeps {
+    pub unix_time_source: Arc<dyn UnixTimeSource>,
     pub rx: futures::channel::mpsc::Receiver<Message>,
     pub engine: EngineHandle,
     pub payload_builder: PayloadBuilder,
@@ -409,6 +494,7 @@ pub struct ApplicationDeps {
     pub genesis_hash: B256,
     pub validators: ValidatorSet,
     pub chain_id: u64,
+    pub ocomp_lifecycle_activation: OcompLifecycleActivation,
     pub marshal_mailbox: crate::marshal_types::MarshalMailbox,
     pub certificate_scheme_provider: HybridSchemeProvider<MinSig>,
     pub elector_config_provider: HybridElectorConfigProvider<MinSig>,
@@ -417,15 +503,16 @@ pub struct ApplicationDeps {
     pub vrf_safety: VrfSafetyGate,
     pub epoch_fence: ApplicationEpochFence,
     pub ancestry_readiness: AncestryReadiness,
+    pub projection_readiness: ProjectionReadinessHandle,
     pub finalization_view: FinalizationViewHandle,
     pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
     pub payload_resolve_time: std::time::Duration,
-    pub payload_return_time: std::time::Duration,
     pub min_block_time: std::time::Duration,
     pub proposer_evm_address: Option<Address>,
     pub trust_el_head: bool,
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+    pub ocomp_retention: Arc<dyn OcompRetentionHook>,
 }
 
 impl ApplicationHandler {
@@ -440,6 +527,7 @@ impl ApplicationHandler {
     /// handle.
     pub fn new(deps: ApplicationDeps) -> Self {
         let ApplicationDeps {
+            unix_time_source,
             rx,
             engine,
             payload_builder,
@@ -447,6 +535,7 @@ impl ApplicationHandler {
             genesis_hash,
             validators,
             chain_id,
+            ocomp_lifecycle_activation,
             marshal_mailbox,
             certificate_scheme_provider,
             elector_config_provider,
@@ -455,25 +544,28 @@ impl ApplicationHandler {
             vrf_safety,
             epoch_fence,
             ancestry_readiness,
+            projection_readiness,
             finalization_view,
             block_cache,
             finalization_selector,
             payload_resolve_time,
-            payload_return_time,
             min_block_time,
             proposer_evm_address,
             trust_el_head,
             late_sig_store,
+            ocomp_retention,
         } = deps;
         Self {
             rx,
             shared: ApplicationShared {
+                unix_time_source,
                 engine,
                 payload_builder,
                 executor_mailbox,
                 genesis_hash,
                 validators,
                 chain_id,
+                ocomp_lifecycle_activation,
                 marshal_mailbox,
                 certificate_scheme_provider,
                 elector_config_provider,
@@ -482,8 +574,8 @@ impl ApplicationHandler {
                 vrf_safety,
                 epoch_fence,
                 ancestry_readiness,
+                projection_readiness,
                 payload_resolve_time,
-                payload_return_time,
                 min_block_time,
                 proposer_evm_address,
                 proposal_failure_log_limiter: Arc::new(
@@ -494,6 +586,7 @@ impl ApplicationHandler {
                 finalization_selector,
                 trust_el_head,
                 late_sig_store,
+                ocomp_retention,
             },
         }
     }
@@ -537,11 +630,27 @@ impl ApplicationHandler {
                         let shared = self.shared.clone();
                         move |ctx| async move {
                             let propose = *propose;
-                            let response = propose.response;
+                            let mut response = propose.response;
+                            let execution_read_budget = ExecutionReadBudget::new();
                             // Closure-level instant covering the whole build + marshal path,
                             // used only for proposer-side min-block-time pacing.
                             let propose_start = ctx.current();
-                            match shared.handle_propose(&ctx, propose.context).await {
+                            let handle = Box::pin(shared.handle_propose(
+                                &ctx,
+                                propose.context,
+                                propose_start,
+                                execution_read_budget.clone(),
+                            ));
+                            let cancelled = Box::pin(response.closed());
+                            let outcome = match futures::future::select(handle, cancelled).await {
+                                futures::future::Either::Left((outcome, _)) => outcome,
+                                futures::future::Either::Right(((), _)) => {
+                                    execution_read_budget.cancel();
+                                    debug!("view cancelled during proposal execution");
+                                    return;
+                                }
+                            };
+                            match outcome {
                                 Ok(ProposeOutcome::Proposed(digest)) => {
                                     // Proposer-side liveness pacing only: hold the already-sealed
                                     // digest until the min-block-time floor elapses, then hand it
@@ -571,6 +680,16 @@ impl ApplicationHandler {
                                         "proposal task completed without response: DKG boundary requirement unavailable"
                                     );
                                 }
+                                Ok(ProposeOutcome::ProjectionUnavailable) => {
+                                    debug!(
+                                        "proposal task completed without response: exact parent is not projected"
+                                    );
+                                }
+                                Ok(ProposeOutcome::RetentionUnavailable) => {
+                                    debug!(
+                                        "proposal task completed without response: OCOMP tentative pin is not durable"
+                                    );
+                                }
                                 Err(error) => {
                                     if let Some(suppressed_since_last) =
                                         shared.proposal_failure_log_limiter.check()
@@ -592,8 +711,15 @@ impl ApplicationHandler {
                         move |ctx| async move {
                             let verify = *verify;
                             let response = verify.response;
+                            let execution_read_budget = ExecutionReadBudget::new();
                             match shared
-                                .handle_verify(&ctx, verify.context, verify.payload, response)
+                                .handle_verify(
+                                    &ctx,
+                                    verify.context,
+                                    verify.payload,
+                                    response,
+                                    execution_read_budget,
+                                )
                                 .await
                             {
                                 Ok(()) => {}
@@ -625,6 +751,37 @@ enum PayloadVerification {
     /// The single-shot verify response channel closed while waiting; the caller
     /// returns without side effects.
     ChannelClosed,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum BuiltCandidatePreparationError {
+    #[error("locally built payload was not accepted by execution: {0}")]
+    Execution(String),
+    #[error("node-local OCOMP retention is unavailable: {0}")]
+    Retention(#[from] crate::ocomp_retention::OcompRetentionHookError),
+}
+
+/// Import a locally built candidate into Reth before its retention source reads
+/// receipts and exact post-state by block hash.
+async fn prepare_built_candidate(
+    engine: &EngineHandle,
+    retention: &dyn OcompRetentionHook,
+    block: &ConsensusBlock,
+    execution_read_budget: ExecutionReadBudget,
+) -> Result<(), BuiltCandidatePreparationError> {
+    let execution_data = OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()))
+        .with_execution_read_budget(execution_read_budget);
+    let status = engine
+        .new_payload(execution_data)
+        .await
+        .map_err(|error| BuiltCandidatePreparationError::Execution(error.to_string()))?;
+    if !status.is_valid() {
+        return Err(BuiltCandidatePreparationError::Execution(format!(
+            "{status:?}"
+        )));
+    }
+    retention.prepare_candidate(block)?;
+    Ok(())
 }
 
 impl ApplicationShared {
@@ -718,10 +875,9 @@ impl ApplicationShared {
         &self,
         clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
         context: super::ingress::SimplexContext,
+        propose_start: std::time::SystemTime,
+        execution_read_budget: ExecutionReadBudget,
     ) -> eyre::Result<ProposeOutcome> {
-        // Runtime-clock timestamp so the payload-build budget below tracks the same
-        // time source the proposer's sleep uses (works on the deterministic runtime).
-        let propose_start = clock.current();
         let (parent_view, parent) = context.parent;
         let parent_digest = Digest(parent.0);
         let round = context.round;
@@ -822,11 +978,26 @@ impl ApplicationShared {
             return Ok(ProposeOutcome::EpochStale);
         }
 
+        let required_parent = ProjectionCheckpoint {
+            block_number: parent_height.get(),
+            block_hash: parent_digest.0,
+        };
+        if wait_for_projected_parent(
+            self.projection_readiness.clone(),
+            required_parent,
+            std::future::pending(),
+        )
+        .await?
+            == ParentProjectionGate::Withhold
+        {
+            return Ok(ProposeOutcome::ProjectionUnavailable);
+        }
+
         if let Some(parent_block) = parent_block.as_ref() {
             // Step 2: Send parent to execution layer via new_payload.
-            let execution_data = OutbeExecutionData {
-                block: std::sync::Arc::new(parent_block.clone().into_inner()),
-            };
+            let execution_data =
+                OutbeExecutionData::new(std::sync::Arc::new(parent_block.clone().into_inner()))
+                    .with_execution_read_budget(execution_read_budget.clone());
 
             if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
                 warn!(
@@ -866,6 +1037,7 @@ impl ApplicationShared {
         // Uses FCU-based flow: canonicalize_and_build sends
         // FCU with payload attributes so the engine starts building a payload
         // on the correct canonical state with access to the txpool.
+        let candidate_execution_budget = execution_read_budget.clone();
         match self
             .build_block(
                 clock,
@@ -875,10 +1047,23 @@ impl ApplicationShared {
                 parent_block.clone(),
                 parent_proof_key,
                 propose_start,
+                execution_read_budget,
             )
             .await
         {
             Ok(BuildBlockOutcome::Built(digest, block)) => {
+                if let Err(error) = self
+                    .prepare_built_candidate(&block, candidate_execution_budget)
+                    .await
+                {
+                    warn!(
+                        %round,
+                        digest = %digest.0,
+                        %error,
+                        "withholding proposal because its execution-valid OCOMP source is not durable"
+                    );
+                    return Ok(ProposeOutcome::RetentionUnavailable);
+                }
                 // Cache the proposed block into marshal NOW, at propose time, so
                 // the proposer can always SERVE it on demand (verifiers pull via
                 // subscribe_by_digest) — independent of whether the later
@@ -914,6 +1099,20 @@ impl ApplicationShared {
             Ok(BuildBlockOutcome::BoundaryUnavailable) => Ok(ProposeOutcome::BoundaryUnavailable),
             Err(e) => Err(eyre::eyre!("failed to build block for proposal: {e}")),
         }
+    }
+
+    async fn prepare_built_candidate(
+        &self,
+        block: &ConsensusBlock,
+        execution_read_budget: ExecutionReadBudget,
+    ) -> Result<(), BuiltCandidatePreparationError> {
+        prepare_built_candidate(
+            &self.engine,
+            self.ocomp_retention.as_ref(),
+            block,
+            execution_read_budget,
+        )
+        .await
     }
 
     /// Canonicalize parent and build a block on top of it.
@@ -1047,7 +1246,7 @@ impl ApplicationShared {
         }
     }
 
-    /// Uses FCU-based flow (like tempo): sends fork_choice_updated with payload
+    /// Uses an FCU-based flow: sends fork_choice_updated with payload
     /// attributes through the executor actor, so the engine starts building
     /// a payload on the correct canonical state with txpool access.
     #[allow(clippy::too_many_arguments)]
@@ -1060,6 +1259,7 @@ impl ApplicationShared {
         parent_block: Option<ConsensusBlock>,
         parent_proof_key: Option<CertifiedParentProofKey>,
         propose_start: std::time::SystemTime,
+        execution_read_budget: ExecutionReadBudget,
     ) -> eyre::Result<BuildBlockOutcome> {
         let next_block_number = parent_height.get().saturating_add(1);
         if let Err(rejection) = self.epoch_fence.check(round, next_block_number) {
@@ -1084,7 +1284,7 @@ impl ApplicationShared {
         }
 
         let parent_timestamp_millis = self.finalization_view.timestamp_floor();
-        let now_millis = unix_now_millis()?;
+        let now_millis = self.unix_time_source.now_millis()?;
         // Clamp the proposed timestamp into the deterministic two-sided drift band
         // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
         // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
@@ -1215,8 +1415,8 @@ impl ApplicationShared {
 
         // Non-blocking direct-parent proof selection
         // (finalization first → certified-notarization → marshal-archive
-        // recovery → forfeit). The `payload_return_time` budget no longer gates
-        // the lookup — the selector returns synchronously. On a selection-store
+        // recovery → forfeit). The request budget does not gate this lookup —
+        // the selector returns synchronously. On a selection-store
         // miss the None branch recovers the parent's finalization from marshal's
         // durable archive (, `recover_parent_proof_from_marshal`); only if
         // that also misses does the slot forfeit deterministically with the
@@ -1283,6 +1483,7 @@ impl ApplicationShared {
                     // intentionally leave it at 0 here.
                     timestamp_millis_part: 0,
                     late_finalize_credits,
+                    compressed_entities_root: None,
                 })
                 .map_err(|e| eyre::eyre!(e.to_string()))?
             };
@@ -1295,7 +1496,8 @@ impl ApplicationShared {
             header_extra_data,
             parent_consensus_metadata,
             self.proposer_evm_address,
-        );
+        )
+        .with_execution_read_budget(execution_read_budget);
 
         if let Err(rejection) = self.epoch_fence.check(round, next_block_number) {
             debug!(
@@ -1376,11 +1578,13 @@ impl ApplicationShared {
         kind: &'static str,
         digest: Digest,
         execution_data: OutbeExecutionData,
-        response: &oneshot::Sender<bool>,
+        response: &mut oneshot::Sender<bool>,
+        execution_read_budget: &ExecutionReadBudget,
     ) -> eyre::Result<PayloadVerification> {
         let mut saw_syncing = false;
         loop {
             if response.is_closed() {
+                execution_read_budget.cancel();
                 debug!(
                     kind,
                     target = %digest.0,
@@ -1388,7 +1592,16 @@ impl ApplicationShared {
                 );
                 return Ok(PayloadVerification::ChannelClosed);
             }
-            match self.engine.new_payload(execution_data.clone()).await {
+            let execution = Box::pin(self.engine.new_payload(execution_data.clone()));
+            let cancelled = Box::pin(response.closed());
+            let status = match futures::future::select(execution, cancelled).await {
+                futures::future::Either::Left((status, _)) => status,
+                futures::future::Either::Right(((), _)) => {
+                    execution_read_budget.cancel();
+                    return Ok(PayloadVerification::ChannelClosed);
+                }
+            };
+            match status {
                 Ok(status) if status.is_valid() => {
                     debug!(kind, target = %digest.0, ?status, "payload accepted during verify");
                     return Ok(PayloadVerification::Valid { saw_syncing });
@@ -1430,7 +1643,8 @@ impl ApplicationShared {
         clock: &(impl commonware_runtime::Clock + commonware_runtime::Supervisor),
         context: super::ingress::SimplexContext,
         payload_digest: Digest,
-        response: oneshot::Sender<bool>,
+        mut response: oneshot::Sender<bool>,
+        execution_read_budget: ExecutionReadBudget,
     ) -> eyre::Result<()> {
         let round = context.round;
         let (parent_view, parent) = context.parent;
@@ -1589,12 +1803,13 @@ impl ApplicationShared {
             VERIFY_RESOLUTION_TIMEOUT,
             clock.child("ancestry"),
         );
-        if let Err(error) = validate_header_consensus_artifacts(
+        if let Err(error) = validate_header_consensus_artifacts_for_activation(
             &block,
             parent_block.as_ref(),
             round,
             &context.leader,
             self.chain_id,
+            self.ocomp_lifecycle_activation,
             ValidatorRole::from_proposer_evm_address(self.proposer_evm_address),
             &self.certificate_scheme_provider,
             &self.committee_provider,
@@ -1641,11 +1856,26 @@ impl ApplicationShared {
             return Ok(());
         }
 
+        let required_parent = ProjectionCheckpoint {
+            block_number: parent_block.as_ref().map_or(0, ConsensusBlock::number),
+            block_hash: parent_digest.0,
+        };
+        let projection_budget = execution_read_budget.clone();
+        if wait_for_projected_parent(self.projection_readiness.clone(), required_parent, async {
+            response.closed().await;
+            projection_budget.cancel();
+        })
+        .await?
+            == ParentProjectionGate::Withhold
+        {
+            return Ok(());
+        }
+
         if let Some(parent_block) = parent_block {
             let parent_height = Height::new(parent_block.number());
-            let execution_data = OutbeExecutionData {
-                block: std::sync::Arc::new(parent_block.clone().into_inner()),
-            };
+            let execution_data =
+                OutbeExecutionData::new(std::sync::Arc::new(parent_block.clone().into_inner()))
+                    .with_execution_read_budget(execution_read_budget.clone());
 
             let parent_saw_syncing =
                 if crate::test_faults::should_drop_new_payload_for_test(parent_height) {
@@ -1662,7 +1892,8 @@ impl ApplicationShared {
                             "parent",
                             parent_digest,
                             execution_data,
-                            &response,
+                            &mut response,
+                            &execution_read_budget,
                         )
                         .await?
                     {
@@ -1707,9 +1938,9 @@ impl ApplicationShared {
         }
 
         // Step 3: new_payload for proposed block.
-        let execution_data = OutbeExecutionData {
-            block: std::sync::Arc::new(block.clone().into_inner()),
-        };
+        let execution_data =
+            OutbeExecutionData::new(std::sync::Arc::new(block.clone().into_inner()))
+                .with_execution_read_budget(execution_read_budget.clone());
 
         let block_height = Height::new(block.number());
         let (valid, block_saw_syncing) =
@@ -1727,7 +1958,8 @@ impl ApplicationShared {
                         "block",
                         payload_digest,
                         execution_data,
-                        &response,
+                        &mut response,
+                        &execution_read_budget,
                     )
                     .await?
                 {
@@ -1762,7 +1994,24 @@ impl ApplicationShared {
             );
             return Ok(());
         }
-        if response.send(true).is_err() {
+        let positive_vote = match after_durable_candidate(
+            self.ocomp_retention.as_ref(),
+            &block,
+            || response.send(true),
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                warn!(
+                    %round,
+                    digest = %payload_digest.0,
+                    block_number = block.number(),
+                    %error,
+                    "withholding local positive vote because the OCOMP tentative pin is not durable"
+                );
+                return Ok(());
+            }
+        };
+        if positive_vote.is_err() {
             debug!(
                 digest = %payload_digest.0,
                 "verify response receiver dropped before execution-valid side effects"
@@ -1823,12 +2072,13 @@ impl ValidatorRole {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn validate_header_consensus_artifacts(
+async fn validate_header_consensus_artifacts_for_activation(
     block: &ConsensusBlock,
     parent_block: Option<&ConsensusBlock>,
     round: Round,
     proposer: &PublicKey,
     chain_id: u64,
+    ocomp_lifecycle_activation: OcompLifecycleActivation,
     role: ValidatorRole,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
     committee_provider: &CommitteeProvider,
@@ -1848,11 +2098,12 @@ async fn validate_header_consensus_artifacts(
         return Ok(());
     }
     validate_rewards_beneficiary(block)?;
-    validate_system_tx_leader_binding(
+    validate_system_tx_leader_binding_for_activation(
         block,
         round,
         proposer,
         chain_id,
+        ocomp_lifecycle_activation,
         certificate_scheme_provider,
         committee_provider,
     )?;
@@ -1934,15 +2185,58 @@ async fn validate_header_consensus_artifacts(
 }
 
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+async fn validate_header_consensus_artifacts(
+    block: &ConsensusBlock,
+    parent_block: Option<&ConsensusBlock>,
+    round: Round,
+    proposer: &PublicKey,
+    chain_id: u64,
+    role: ValidatorRole,
+    certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    committee_provider: &CommitteeProvider,
+    dkg_manager: &crate::dkg_manager::Mailbox,
+    ancestry: &impl AncestryReader,
+) -> Result<(), String> {
+    validate_header_consensus_artifacts_for_activation(
+        block,
+        parent_block,
+        round,
+        proposer,
+        chain_id,
+        OcompLifecycleActivation::Disabled,
+        role,
+        certificate_scheme_provider,
+        committee_provider,
+        dkg_manager,
+        ancestry,
+    )
+    .await
+}
+
+#[cfg(test)]
 #[path = "handler_tests.rs"]
 mod handler_tests;
 
 #[cfg(test)]
 mod clamp_tests {
-    use super::clamp_proposed_timestamp_millis;
+    use super::{apply_unix_time_offset_millis, clamp_proposed_timestamp_millis};
 
     const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
     const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
+
+    #[test]
+    fn injected_clock_offset_is_explicit_and_checked() {
+        assert_eq!(
+            apply_unix_time_offset_millis(1_000_000, 60).unwrap(),
+            1_060_000
+        );
+        assert_eq!(
+            apply_unix_time_offset_millis(1_000_000, -60).unwrap(),
+            940_000
+        );
+        assert!(apply_unix_time_offset_millis(0, -1).is_err());
+    }
 
     #[test]
     fn genesis_child_uses_wall_clock_not_band() {

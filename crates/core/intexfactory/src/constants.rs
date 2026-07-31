@@ -18,6 +18,16 @@ pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
 
+/// Max contributor payouts per `distribute` pass (pagination chunk size).
+/// Large series are drained across several blocks by the begin-block hook.
+pub const DIST_CHUNK_LIMIT: u32 = 200;
+
+/// Proceeds fan-in window: creators are paid once every winning chain has
+/// routed its proceeds, or this long after issuance — whichever comes first.
+/// A full day absorbs legitimate escrow-finalize retries so, in virtually all
+/// cases, creators receive a single payment.
+pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+
 /// Qualification maturity in days since issuance.
 pub const MATURITY_PERIOD_DAYS: u64 = 21;
 /// Derived seconds, for comparison against block timestamps.
@@ -25,6 +35,9 @@ pub const MATURITY_PERIOD_SECONDS: u64 = MATURITY_PERIOD_DAYS * 24 * 60 * 60;
 
 /// Reference-currency ISO for the qualifier oracle pair (COEN/0xUSD = 840).
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
+
+/// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
+pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
 
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;

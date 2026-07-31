@@ -53,11 +53,10 @@ interface EscrowWireArgs {
   escrowContract: string;
   intexAuctionContract: string;
   compactContract: string;
-  vaultProvider: string;
   paymentToken: string;
 }
 
-interface BNBBridgeWireArgs {
+interface TargetBridgeWireArgs {
   bridgeContract: string;
   intexAuctionContract: string;
   intexContract: string;
@@ -65,7 +64,7 @@ interface BNBBridgeWireArgs {
   nftBridgeContract: string;
 }
 
-interface OutbeBridgeWireArgs {
+interface OriginBridgeWireArgs {
   bridgeContract: string;
   desisContract: string;
   intexFactoryContract: string;
@@ -138,7 +137,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
   console.log(`  Escrow: ${args.escrowContract}`);
   console.log(`  Auction: ${args.intexAuctionContract}`);
   console.log(`  Compact: ${args.compactContract}`);
-  console.log(`  VaultProvider: ${args.vaultProvider}`);
   console.log(`  PaymentToken: ${args.paymentToken}`);
 
   const escrow = (await viem.getContractAt(
@@ -148,25 +146,22 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     read: {
       intexAuctionContract: () => Promise<`0x${string}`>;
       compact: () => Promise<`0x${string}`>;
-      vaultProvider: () => Promise<`0x${string}`>;
       paymentToken: () => Promise<`0x${string}`>;
     };
     write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const [currentAuction, currentCompact, currentVaultProvider, currentStable] = await Promise.all([
+  const [currentAuction, currentCompact, currentStable] = await Promise.all([
     escrow.read.intexAuctionContract(),
     escrow.read.compact(),
-    escrow.read.vaultProvider(),
     escrow.read.paymentToken(),
   ]);
 
   const allMatch =
     currentAuction.toLowerCase() === args.intexAuctionContract.toLowerCase() &&
     currentCompact.toLowerCase() === args.compactContract.toLowerCase() &&
-    currentVaultProvider.toLowerCase() === args.vaultProvider.toLowerCase() &&
     currentStable.toLowerCase() === args.paymentToken.toLowerCase();
 
   if (allMatch) {
@@ -178,7 +173,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     const changed = [
       currentAuction.toLowerCase() !== args.intexAuctionContract.toLowerCase() && "auction",
       currentCompact.toLowerCase() !== args.compactContract.toLowerCase() && "compact",
-      currentVaultProvider.toLowerCase() !== args.vaultProvider.toLowerCase() && "vaultProvider",
       currentStable.toLowerCase() !== args.paymentToken.toLowerCase() && "paymentToken",
     ].filter(Boolean);
     console.log(`🔄 Rewiring EscrowAdapter (changed: ${changed.join(", ")})`);
@@ -188,7 +182,6 @@ const escrowWireAction = async (args: EscrowWireArgs, hre: unknown) => {
     escrow.write.wire([
       args.intexAuctionContract as `0x${string}`,
       args.compactContract as `0x${string}`,
-      args.vaultProvider as `0x${string}`,
       args.paymentToken as `0x${string}`,
     ]),
   );
@@ -212,11 +205,6 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
     defaultValue: "",
   })
   .addOption({
-    name: "vaultProvider",
-    description: "outbe-vault VaultProvider address (router that EscrowAdapter calls depositLiquidity on)",
-    defaultValue: "",
-  })
-  .addOption({
     name: "paymentToken",
     description: "PaymentToken address",
     defaultValue: "",
@@ -227,7 +215,7 @@ const escrowWire = task("escrow-wire", "Wire EscrowAdapter to Auction and extern
 // TargetRouter Wire
 // ============================================================================
 
-const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
+const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) => {
   const auction = (args.intexAuctionContract ?? "").trim();
   const intex = (args.intexContract ?? "").trim();
   const escrow = (args.escrowContract ?? "").trim();
@@ -241,7 +229,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   if (empty.length > 0) {
     throw new Error(
       `TargetRouter wire requires non-empty addresses. Missing: ${empty.join(", ")}. ` +
-        `Post-deploy workflow uses load-addresses from @outbe/intex-contracts package - ensure package has Auction, IntexNFT1155, EscrowAdapter, IntexNFT1155Bridge.`
+        `The deploy workflow reads them from dist/addresses/<network>.json - ensure the deploy step captured IntexAuction, IntexNFT1155, EscrowAdapter, IntexNFT1155Bridge.`
     );
   }
 
@@ -308,7 +296,7 @@ const bnbBridgeWireAction = async (args: BNBBridgeWireArgs, hre: unknown) => {
   console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
 };
 
-const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
+const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
   .addOption({
     name: "bridgeContract",
     description: "TargetRouter contract address",
@@ -334,13 +322,13 @@ const bnbBridgeWire = task("bnb-bridge-wire", "Wire TargetRouter to Auction, Int
     description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
-  .setAction(lazy(bnbBridgeWireAction));
+  .setAction(lazy(targetBridgeWireAction));
 
 // ============================================================================
 // OriginRouter Wire
 // ============================================================================
 
-const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) => {
+const originBridgeWireAction = async (args: OriginBridgeWireArgs, hre: unknown) => {
   const viem = await getViemForWire(hre);
   
   console.log(`Wiring OriginRouter...`);
@@ -390,7 +378,7 @@ const outbeBridgeWireAction = async (args: OutbeBridgeWireArgs, hre: unknown) =>
   console.log(`✅ OriginRouter wired. Tx: ${txHash}`);
 };
 
-const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
+const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis + IntexFactory")
   .addOption({
     name: "bridgeContract",
     description: "OriginRouter contract address",
@@ -406,7 +394,7 @@ const outbeBridgeWire = task("outbe-bridge-wire", "Wire OriginRouter to Desis + 
     description: "IntexFactory contract address",
     defaultValue: "",
   })
-  .setAction(lazy(outbeBridgeWireAction));
+  .setAction(lazy(originBridgeWireAction));
 
 // ============================================================================
 // IntexNFT1155Bridge Wire (grant SYSTEM_RELAYER_ROLE)
@@ -588,9 +576,67 @@ const promisWire = task(
   .setAction(lazy(promisWireAction));
 
 // ============================================================================
+// Gem-parking Wire (grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile)
+// GemFactory.setup_factory calls intex.parkForGems, which is gated by GEM_ROLE.
+// ============================================================================
+
+interface GemWireArgs {
+  gemFactory: string;
+  intexContract: string;
+}
+
+const gemWireAction = async (args: GemWireArgs, hre: unknown) => {
+  const viem = await getViemForWire(hre);
+
+  console.log(`Granting GEM_ROLE on IntexNFT1155...`);
+  console.log(`  GemFactory: ${args.gemFactory}`);
+  console.log(`  IntexNFT1155: ${args.intexContract}`);
+
+  const intex = (await viem.getContractAt(
+    "IntexNFT1155",
+    args.intexContract as `0x${string}`
+  )) as {
+    read: {
+      GEM_ROLE: () => Promise<`0x${string}`>;
+      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
+    };
+    write: {
+      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+    };
+  };
+
+  const role = await intex.read.GEM_ROLE();
+  const hasGemRole = await intex.read.hasRole([role, args.gemFactory as `0x${string}`]);
+  if (hasGemRole) {
+    console.log(`✅ IntexNFT1155: GemFactory already has GEM_ROLE`);
+  } else {
+    const tx = await sendAndWait(viem, () =>
+      intex.write.grantRole([role, args.gemFactory as `0x${string}`]),
+    );
+    console.log(`✅ IntexNFT1155: GEM_ROLE granted to GemFactory. Tx: ${tx}`);
+  }
+};
+
+const gemWire = task(
+  "gem-wire",
+  "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables parkForGems burn path)"
+)
+  .addOption({
+    name: "gemFactory",
+    description: "GemFactory precompile address on Outbe",
+    defaultValue: "",
+  })
+  .addOption({
+    name: "intexContract",
+    description: "IntexNFT1155 contract address on Outbe",
+    defaultValue: "",
+  })
+  .setAction(lazy(gemWireAction));
+
+// ============================================================================
 // Precompile-caller Wire — grant roles to the EVM frames that initiate the
 // gated calls: the begin-block system caller (auction stage sends + qualify/call
-// mark sends) and the Desis precompile (inbound clearAuction issuance, where
+// mark sends) and the Desis precompile (clearing tick, where
 // createSeries + issuance-instructions run in-process).
 // ============================================================================
 
@@ -681,7 +727,7 @@ const systemGrantRolesAction = async (args: SystemGrantRolesArgs, hre: unknown) 
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, systemAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, systemAddress);
 
-  // Desis precompile frame (inbound clearAuction): issuance-instructions
+  // Desis precompile frame (clearing tick): issuance-instructions
   // (INTEX_FACTORY_ROLE) + createSeries (RELAYER_ROLE) run in-process here.
   await grantOnRouter("INTEX_FACTORY_ROLE", intexFactoryRole, desisAddress);
   await grantOnIntex("RELAYER_ROLE", relayerRole, desisAddress);
@@ -708,7 +754,7 @@ const systemGrantRoles = task(
   })
   .addOption({
     name: "desisContract",
-    description: "Desis precompile address (inbound clearAuction issuance frame)",
+    description: "Desis precompile address (clearing-tick issuance frame)",
     defaultValue: "",
   })
   .setAction(lazy(systemGrantRolesAction));
@@ -753,7 +799,7 @@ const intexFactoryAssertRelayerRoleAction = async (args: IntexFactoryAssertRelay
     };
   };
 
-  // createSeries runs in the inbound clearAuction frame (Desis precompile);
+  // createSeries runs in the Desis clearing-tick frame;
   // markQualified / markCalled run from begin-block (the system caller). Both
   // need RELAYER_ROLE.
   const role = await intex.read.RELAYER_ROLE();
@@ -870,13 +916,14 @@ const grantSystemRelayerRole = task(
 export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
-  bnbBridgeWire.build(),
+  targetBridgeWire.build(),
   nftBridgeWire.build(),
-  outbeBridgeWire.build(),
+  originBridgeWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),
   settlementGrantRoles.build(),
   promisWire.build(),
+  gemWire.build(),
   grantRelayerRole.build(),
   grantSystemRelayerRole.build(),
 ];

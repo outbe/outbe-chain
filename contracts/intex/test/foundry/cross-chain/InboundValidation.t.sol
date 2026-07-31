@@ -46,7 +46,7 @@ contract InboundValidationTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
@@ -86,18 +86,6 @@ contract InboundValidationTest is CrossChainTest {
             abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_MARK_CALLED, truncatedSeriesId);
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 5, 6)
-        );
-        _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
-    }
-
-    function test_TM_ShortStageReveal_RevertsInvalidPayloadLength() public {
-        // STAGE_REVEAL min length = 7. Send 6-byte packet (missing isGreenDay tail byte).
-        bytes memory packet =
-            abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL, uint32(1));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_AUCTION_STAGE_REVEAL, 6, 7
-            )
         );
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
@@ -175,7 +163,7 @@ contract InboundValidationTest is CrossChainTest {
     ///         `minLengthFor(MARK_CALLED)` returns 6, and our 2-byte packet trips `InvalidPayloadLength` before
     ///         the else-branch is reached. This pins the order: length is asserted before the msgType-set check.
     function test_OM_CodecKnownButHandlerUnknown_RevertsInvalidPayloadLength() public {
-        bytes memory packet = hex"010A"; // bodyVersion + MARK_CALLED (10): codec-known, OM doesn't accept
+        bytes memory packet = hex"0108"; // bodyVersion + MARK_CALLED (8): codec-known, OM doesn't accept
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 2, 6)
         );
@@ -248,20 +236,20 @@ contract InboundValidationTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
         fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin, BNB_CHAIN_ID);
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
         fresh.wire(newDesis, newFactory);

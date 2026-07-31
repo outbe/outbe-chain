@@ -1,26 +1,23 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 /**
  * @title EscrowAdapter Contract Interface
  * @author Outbe
  * @notice Public API, events, errors, and data types for escrow operations with The Compact.
  * @dev Integrates with The Compact protocol for locking bid funds and handles auction
- *      finalization. All escrow state is keyed by `seriesId` (uint32).
+ *      finalization. All escrow state is keyed by `worldwideDay` (uint32).
  */
 interface IEscrowAdapter {
     // --- Types ---
 
     /// @notice Lock status for a bid.
-    /// @dev `RefundClaimed` is reached only when a post-finalize `claimRefund` paid the bidder
-    ///      their refund portion but could not settle the vault portion in the same transaction
-    ///      (the vault deposit reverted). The vault portion stays in The Compact and is recoverable
-    ///      via the permissionless `settleVaultOwed`, which then advances the lock to `Finalized`.
     enum LockStatus {
         None,
         Locked,
-        Finalized,
-        RefundClaimed
+        Finalized
     }
 
     /// @notice Bid lock data stored per series per bidder.
@@ -47,7 +44,8 @@ interface IEscrowAdapter {
         address bidder;
         /// @notice Amount to refund to the bidder.
         uint128 refundedAmount;
-        /// @notice Amount paid out to the vault (winning portion).
+        /// @notice Winning portion: routed to the proceeds recipient at finalization, burned on
+        ///         the recovery paths (the series was already routed on Outbe by then).
         uint128 paidAmount;
     }
 
@@ -58,7 +56,7 @@ interface IEscrowAdapter {
         /// @notice Number of bid locks created for the series.
         uint32 lockCount;
         /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds).
-        /// @dev Drives the post-finalize 7-day window on `claimRefund`. 0 if never finalized.
+        /// @dev Drives the post-finalize window on `claimRefund`. 0 if never finalized.
         uint32 finalizedAt;
         /// @notice Whether the series escrow has been finalized.
         bool finalized;
@@ -78,48 +76,49 @@ interface IEscrowAdapter {
     // --- Events ---
 
     /// @notice Emitted when funds are locked for a bid during reveal.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose funds were locked.
     /// @param amount Amount of payment-token locked.
-    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event FundsLocked(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a commit-entry bond is locked at `commitBid`.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond was taken.
     /// @param amount Amount of payment-token bonded.
-    event CommitBondLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event CommitBondLocked(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a commit-entry bond is returned to its owner (reveal, cancel,
     ///         auction-side claim, or the escrow-local abandoned-bond claim).
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder the bond was returned to.
     /// @param amount Amount of payment-token returned.
-    event CommitBondReleased(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event CommitBondReleased(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
     /// @param receiveId Inbound bridge message that triggered the refund, or `bytes32(0)` for a
     ///        permissionless `claimRefund` (not bridge-triggered).
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
-    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
-    /// @notice Emitted when funds are paid out to the vault for a winning bid.
-    /// @param receiveId Inbound bridge message that triggered the payout.
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder whose winning portion was paid out.
-    /// @param amount Amount routed to the vault provider.
-    event FundsClaimed(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    /// @notice Emitted when an undistributable winning portion is burned (sent to the canonical
+    ///         dead address): `retryFinalize` residuals and post-finalize `claimRefund` remainders,
+    ///         where the series proceeds were already routed on Outbe.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param bidder Bidder whose winning portion was burned.
+    /// @param amount Amount of payment-token burned.
+    event ProceedsBurned(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a series escrow is finalized.
     /// @param receiveId Inbound bridge message that triggered finalization.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param totalRefunded Total refunded to bidders.
-    /// @param totalPaid Total paid out to the vault.
+    /// @param totalPaid Total winning portion routed to the proceeds recipient.
     /// @param bidsProcessed Number of bids processed.
     event AuctionEscrowFinalized(
         bytes32 indexed receiveId,
-        uint32 indexed seriesId,
+        uint32 indexed worldwideDay,
         uint128 totalRefunded,
         uint128 totalPaid,
         uint32 bidsProcessed
@@ -132,8 +131,6 @@ interface IEscrowAdapter {
     /// @param intexAuctionNew IntexAuction address after this wire.
     /// @param compactOld The Compact address before this wire.
     /// @param compactNew The Compact address after this wire.
-    /// @param vaultProviderOld Outbe-vault `VaultProvider` address before this wire.
-    /// @param vaultProviderNew Outbe-vault `VaultProvider` address after this wire.
     /// @param paymentTokenOld Active payment-token address before this wire.
     /// @param paymentTokenNew Active payment-token address after this wire.
     event Wired(
@@ -141,8 +138,6 @@ interface IEscrowAdapter {
         address intexAuctionNew,
         address compactOld,
         address compactNew,
-        address vaultProviderOld,
-        address vaultProviderNew,
         address paymentTokenOld,
         address paymentTokenNew
     );
@@ -151,46 +146,36 @@ interface IEscrowAdapter {
     ///         `Locked` status and can be recovered via `retryFinalize` (RELAYER) or `claimRefund`
     ///         (permissionless, after the post-finalize safety window).
     /// @param receiveId Inbound bridge message that triggered the failed finalization.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose finalization step failed.
     /// @param reason Raw revert data from the failed per-bidder finalization call.
-    event BidderRefundFailed(bytes32 indexed receiveId, uint32 indexed seriesId, address indexed bidder, bytes reason);
+    event BidderRefundFailed(
+        bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
+    );
 
     /// @notice Emitted on a successful `retryFinalize` call.
     /// @param receiveId Original inbound bridge message the relayer is retrying for.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose finalization was retried.
     /// @param refundedAmount Amount refunded to the bidder on retry.
-    /// @param paidAmount Amount paid out to the vault on retry.
+    /// @param paidAmount Winning portion burned on retry (the series was already routed).
     event BidderRetried(
         bytes32 indexed receiveId,
-        uint32 indexed seriesId,
+        uint32 indexed worldwideDay,
         address indexed bidder,
         uint128 refundedAmount,
         uint128 paidAmount
     );
 
-    /// @notice Emitted when a post-finalize `claimRefund` refunds the failed bidder their refund
-    ///         portion but cannot settle the vault portion in the same transaction (the vault
-    ///         deposit reverted). The lock is left in `RefundClaimed` and the payout portion stays
-    ///         in The Compact, recoverable via the permissionless `settleVaultOwed`.
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder whose vault portion could not be settled.
-    /// @param vaultOwed Payout portion left parked in The Compact.
-    event VaultOwedUnsettled(uint32 indexed seriesId, address indexed bidder, uint128 vaultOwed);
-
-    /// @notice Emitted when `settleVaultOwed` routes a previously-parked payout portion into the
-    ///         vault and advances the lock from `RefundClaimed` to `Finalized`.
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder whose parked vault portion was settled.
-    /// @param vaultOwed Payout portion deposited into the vault provider.
-    event VaultOwedSettled(uint32 indexed seriesId, address indexed bidder, uint128 vaultOwed);
-
     /// @notice Emitted when `finalizeAuction` settled zero bidders (every instruction failed). The
     ///         series is finalized but degenerate; bidders are recoverable only via `retryFinalize`.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsProcessed Number of instructions processed, all of which failed.
-    event FinalizationNoOp(uint32 indexed seriesId, uint32 bidsProcessed);
+    event FinalizationNoOp(uint32 indexed worldwideDay, uint32 bidsProcessed);
+
+    /// @notice Emitted when the finalized-proceeds recipient is configured.
+    /// @param recipient Address receiving each series' finalized proceeds.
+    event ProceedsRecipientSet(address recipient);
 
     // --- Errors ---
 
@@ -226,23 +211,20 @@ interface IEscrowAdapter {
     error LiveLocksOutstanding(uint256 outstanding);
     /// @notice Self-call helper invoked by an external caller (only `address(this)` is allowed).
     error NotSelf();
+    /// @notice Finalization produced proceeds but no recipient is configured.
+    error ProceedsRecipientNotSet();
     /// @notice `retryFinalize` invoked before the series was finalized at least once.
-    /// @param seriesId Series identifier.
-    error NotFinalizedYet(uint32 seriesId);
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    error NotFinalizedYet(uint32 worldwideDay);
     /// @notice `claimRefund` was called before the safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param now_ Current block timestamp.
     error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
     /// @notice Post-finalize `claimRefund` has no validated split (bidder omitted or mismatched).
-    ///         Reverts only until `ABANDON_DELAY`, after which the full principal is refundable.
-    /// @param seriesId Series identifier.
+    ///         Reverts only until `NO_SPLIT_REFUND_DELAY`, after which the full principal is refundable.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose split was never recorded.
-    error SplitNotRecorded(uint32 seriesId, address bidder);
-    /// @notice `settleVaultOwed` called for a lock that has no parked vault portion pending (the
-    ///         lock is not in `RefundClaimed` state).
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder whose lock was targeted.
-    error NoPendingVaultOwed(uint32 seriesId, address bidder);
+    error SplitNotRecorded(uint32 worldwideDay, address bidder);
     /// @notice `lockCommitBond` called while the bidder already holds a live bond for the series.
     error CommitBondAlreadyLocked();
     /// @notice No live commit bond exists for the series/bidder pair.
@@ -257,103 +239,102 @@ interface IEscrowAdapter {
     /// @notice Wire contract dependencies.
     /// @dev After the first wiring, rotating `_paymentToken` or `_compact` reverts with
     ///      `LiveLocksOutstanding` while any locked balance remains in The Compact.
-    /// @dev Deployment-order requirement (handled by the outbe-vault owner, not this contract):
-    ///      `VaultProvider.addVault(vaultV2)` + `addLiquiditySource(this, IntexBidPrice)` must
-    ///      land before our `wire(...)` and any subsequent `finalizeAuction()` paid-portion call.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
-    /// @param _vaultProvider Outbe-vault `VaultProvider` address (router for liquidity into the
-    ///        underlying `VaultV2`). Winner principal at finalization is routed through
-    ///        `vaultProvider.depositLiquidity(paymentToken, paidAmount)`.
     /// @param _paymentToken Active payment-token address.
-    function wire(address _intexAuction, address _compact, address _vaultProvider, address _paymentToken) external;
+    function wire(address _intexAuction, address _compact, address _paymentToken) external;
 
     // --- Auction Integration ---
 
     /// @notice Lock funds for a bid during the reveal stage. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock (`intexQuantity * intexBidPrice`).
-    function lockFunds(uint32 seriesId, address bidder, uint128 amount) external;
+    function lockFunds(uint32 worldwideDay, address bidder, uint128 amount) external;
 
     /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The bond is
     ///      held in The Compact under the same lock id as bid escrow.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address the bond is taken from (and later returned to).
     /// @param amount Bond amount (the series' `commitBondMinor`).
-    function lockCommitBond(uint32 seriesId, address bidder, uint128 amount) external;
+    function lockCommitBond(uint32 worldwideDay, address bidder, uint128 amount) external;
 
     /// @notice Return a live commit bond to its owner. Callable only by the IntexAuction contract
     ///         (reveal, cancel, and the auction-side stage-aware claim path).
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is returned.
-    function releaseCommitBond(uint32 seriesId, address bidder) external;
+    function releaseCommitBond(uint32 worldwideDay, address bidder) external;
+
+    /// @notice Active payment token used for bid escrow (WCOEN).
+    function paymentToken() external view returns (IERC20);
+
+    /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
+    function proceedsRecipient() external view returns (address);
+
+    /// @notice Set the recipient of finalized auction proceeds.
+    function setProceedsRecipient(address recipient) external;
 
     // --- Bridge Finalization ---
 
     /// @notice Finalize a series escrow with per-bidder refund/payout instructions.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.
     /// @param instructions Array of finalization instructions per bidder.
-    function finalizeAuction(uint32 seriesId, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
-        external;
+    /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to creators.
+    function finalizeAuction(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
+        external
+        returns (uint128 totalPaid);
 
     // --- Recovery ---
 
-    /// @notice Permissionless principal refund: when the relayer never finalizes, or — for a finalized
-    ///         series — once `ABANDON_DELAY` elapses for an omitted/mismatched `Locked` bidder. Pays the
-    ///         stored `bidder`, not `msg.sender`.
-    /// @param seriesId Series identifier.
+    /// @notice Permissionless refund: full principal when the relayer never finalizes
+    ///         (`UNFINALIZED_REFUND_DELAY`) or once `NO_SPLIT_REFUND_DELAY` elapses for an
+    ///         omitted/mismatched `Locked` bidder; the recorded refund portion — with the
+    ///         remainder burned — for a failed bidder with a validated split
+    ///         (`POST_FINALIZE_REFUND_DELAY`). Pays the stored `bidder`, not `msg.sender`.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
-    function claimRefund(uint32 seriesId, address bidder) external;
+    function claimRefund(uint32 worldwideDay, address bidder) external;
 
     /// @notice Per-bidder retry after `finalizeAuction` left a bidder in `BidderRefundFailed`.
     ///         Gated by `RELAYER_ROLE` (operational, not admin). Lets the relayer deliver the
     ///         correct refund/payout split for a failed bidder once the upstream issue is fixed.
-    /// @param seriesId Series identifier (must be already finalized).
+    /// @param worldwideDay Worldwide day (yyyymmdd) (must be already finalized).
     /// @param receiveId Original inbound bridge message id being retried; threaded into the emitted events.
     /// @param inst Finalization instruction for the single bidder being retried.
-    function retryFinalize(uint32 seriesId, bytes32 receiveId, FinalizationInstruction calldata inst) external;
-
-    /// @notice Permissionless settlement of a payout portion left parked by a post-finalize
-    ///         `claimRefund` (lock in `RefundClaimed`). Withdraws the parked amount from The Compact
-    ///         and deposits it into the vault provider, advancing the lock to `Finalized`. The
-    ///         amount and destination are fixed by stored lock state — the caller chooses only when.
-    /// @param seriesId Series identifier.
-    /// @param bidder Bidder whose parked vault portion is being settled.
-    function settleVaultOwed(uint32 seriesId, address bidder) external;
+    function retryFinalize(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction calldata inst) external;
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
     ///         bond was live). Time-based only — never consults the auction — and pays the stored
     ///         `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function claimAbandonedCommitBond(uint32 seriesId, address bidder) external;
+    function claimAbandonedCommitBond(uint32 worldwideDay, address bidder) external;
 
     // --- Views ---
 
     /// @notice Get bid lock information.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose lock is being read.
     /// @return lock The stored `BidLock` record for the series/bidder pair.
-    function getBidLock(uint32 seriesId, address bidder) external view returns (BidLock memory lock);
+    function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory lock);
 
     /// @notice Get commit bond information. A zero `amount` means no live bond.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Bidder address whose bond is being read.
     /// @return bond The stored `CommitBond` record for the series/bidder pair.
-    function getCommitBond(uint32 seriesId, address bidder) external view returns (CommitBond memory bond);
+    function getCommitBond(uint32 worldwideDay, address bidder) external view returns (CommitBond memory bond);
 
     /// @notice Get series escrow status.
-    /// @param seriesId Series identifier.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return hasLocks True if the series has at least one lock.
     /// @return isFinalized True if the series escrow is finalized.
     /// @return totalLocked Total payment-token currently locked for the series.
-    function getAuctionStatus(uint32 seriesId)
+    function getAuctionStatus(uint32 worldwideDay)
         external
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);

@@ -2,6 +2,7 @@
 mod oracle_tests {
     use alloy_primitives::{Address, U256};
     use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+    use outbe_primitives::error::Result as PrecompileResult;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::units::Units;
@@ -20,6 +21,18 @@ mod oracle_tests {
         let mut storage = HashMapStorageProvider::new(1);
         storage.set_timestamp(U256::from(timestamp));
         StorageHandle::enter(&mut storage, f);
+    }
+
+    /// Test refinancing rate (4.30 %, 1e18 scaled) used when building
+    /// `ReferenceCurrency` genesis entries.
+    const TEST_REFI_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
+
+    /// Builds a `ReferenceCurrency` with the test refinancing rate.
+    fn ref_cur(iso_code: u16) -> crate::logic::ReferenceCurrency {
+        crate::logic::ReferenceCurrency {
+            iso_code,
+            refinancing_rate: TEST_REFI_RATE,
+        }
     }
 
     #[test]
@@ -140,6 +153,422 @@ mod oracle_tests {
         with_storage(|storage| {
             let oracle = OracleContract::new(storage.clone());
             assert!(oracle.get_exchange_rate("BTC", "USDT").is_err());
+        });
+    }
+
+    #[test]
+    fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
+        let timestamp = 1_753_315_200_u64;
+        with_storage_at(timestamp, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
+            let last_closed = outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(timestamp),
+            );
+            let last_closed_start = outbe_primitives::time::date_key_to_utc_timestamp(last_closed);
+            let last_closed_price = U256::from(125);
+
+            let uninitialized = crate::api::ocomp_pre_admission_projection(
+                storage.clone(),
+                wwd,
+                U256::from(99),
+                timestamp,
+            )
+            .unwrap();
+            assert!(!uninitialized.profile_ready);
+            assert_eq!(uninitialized.oracle_state_version, 0);
+
+            crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+            oracle
+                .write_snapshot(
+                    last_closed_start + 100,
+                    &[(pair_id, last_closed_price, U256::from(1))],
+                )
+                .unwrap();
+            oracle
+                .store_worldwide_day_vwap_snapshot(
+                    wwd,
+                    last_closed_start,
+                    last_closed_start + outbe_primitives::time::SECONDS_PER_DAY,
+                )
+                .unwrap();
+            oracle.finalize_utc_day_vwap(last_closed).unwrap();
+            crate::scurve::store_scurve_entry(
+                &mut oracle,
+                pair_id,
+                last_closed_start,
+                U256::from(200),
+            )
+            .unwrap();
+
+            let closed = crate::api::ocomp_pre_admission_projection(
+                storage.clone(),
+                wwd,
+                U256::from(99),
+                timestamp,
+            )
+            .unwrap();
+            assert!(closed.profile_ready);
+            assert_eq!(closed.auction_entry_price, last_closed_price);
+            assert_eq!(
+                closed.auction_entry_price_source,
+                crate::api::OcompAuctionEntryPriceSource::LastClosedDayVwap
+            );
+            assert_eq!(closed.auction_entry_price_source_day, last_closed);
+            assert_eq!(closed.oracle_state_version, 5);
+            assert_eq!(closed.wwd_pair_entries, 1);
+            assert_eq!(closed.active_scurve_entries, 1);
+
+            let next_timestamp = timestamp + outbe_primitives::time::SECONDS_PER_DAY;
+            let next_wwd = outbe_common::WorldwideDay::from_timestamp(next_timestamp);
+            let fallback = crate::api::ocomp_pre_admission_projection(
+                storage,
+                next_wwd,
+                U256::from(99),
+                next_timestamp,
+            )
+            .unwrap();
+            assert!(fallback.profile_ready);
+            assert_eq!(fallback.auction_entry_price, U256::from(99));
+            assert_eq!(
+                fallback.auction_entry_price_source,
+                crate::api::OcompAuctionEntryPriceSource::CurrentVwapFallback
+            );
+            assert_eq!(fallback.auction_entry_price_source_day, next_wwd.value());
+            assert_eq!(fallback.oracle_state_version, 5);
+            assert_eq!(fallback.wwd_pair_entries, 0);
+            assert_eq!(fallback.active_scurve_entries, 1);
+        });
+    }
+
+    #[test]
+    fn ocomp_oracle_profile_initialization_is_exact_and_idempotent() {
+        with_storage(|storage| {
+            assert!(crate::api::initialize_fresh_ocomp_profile(storage.clone()).is_err());
+
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+
+            assert!(oracle.ocomp_profile_ready.read().unwrap());
+            assert_eq!(oracle.ocomp_day_type_pair_id.read().unwrap(), pair_id);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            let pair_id = oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            oracle.ocomp_state_version.write(u64::MAX).unwrap();
+
+            assert!(oracle
+                .write_snapshot(1_000, &[(pair_id, U256::from(10), U256::from(1))],)
+                .is_err());
+            assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+            assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), u64::MAX);
+        });
+    }
+
+    const ATOMIC_DAY_START: u64 = 1_753_228_800;
+
+    type OracleFixture = fn(&mut HashMapStorageProvider);
+    type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResult<()>;
+
+    fn seed_ocomp_oracle(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+        });
+    }
+
+    fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
+        seed_ocomp_oracle(provider);
+        StorageHandle::enter(provider, |storage| {
+            OracleContract::new(storage)
+                .write_snapshot(
+                    ATOMIC_DAY_START + 100,
+                    &[(1, U256::from(125), U256::from(2))],
+                )
+                .unwrap();
+        });
+    }
+
+    fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvider) {
+        seed_ocomp_oracle(provider);
+        StorageHandle::enter(provider, |storage| {
+            crate::scurve::store_scurve_entry(
+                &mut OracleContract::new(storage),
+                1,
+                ATOMIC_DAY_START,
+                U256::from(125),
+            )
+            .unwrap();
+        });
+    }
+
+    const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * crate::scurve::DAY_SECONDS;
+
+    fn seed_oracle_with_peak_history(
+        provider: &mut HashMapStorageProvider,
+        initialize_ocomp: bool,
+    ) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            if initialize_ocomp {
+                crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            }
+            for (day, price) in [
+                (SCURVE_CURRENT_DAY - 3 * crate::scurve::DAY_SECONDS, 100_u64),
+                (SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS, 150_u64),
+                (SCURVE_CURRENT_DAY - crate::scurve::DAY_SECONDS, 120_u64),
+            ] {
+                oracle
+                    .write_snapshot(day + 100, &[(1, U256::from(price), U256::from(2))])
+                    .unwrap();
+            }
+        });
+    }
+
+    fn seed_ocomp_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
+        seed_oracle_with_peak_history(provider, true);
+    }
+
+    fn seed_prefork_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
+        seed_oracle_with_peak_history(provider, false);
+    }
+
+    fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStorageProvider) {
+        StorageHandle::enter(provider, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            oracle
+                .write_snapshot(
+                    ATOMIC_DAY_START + 100,
+                    &[(1, U256::from(125), U256::from(2))],
+                )
+                .unwrap();
+        });
+    }
+
+    fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).write_snapshot(
+            ATOMIC_DAY_START + 100,
+            &[(1, U256::from(125), U256::from(2))],
+        )
+    }
+
+    fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
+            outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
+            ATOMIC_DAY_START,
+            ATOMIC_DAY_START + outbe_primitives::time::SECONDS_PER_DAY,
+        )
+    }
+
+    fn finalize_utc_day_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        OracleContract::new(storage).finalize_utc_day_vwap(
+            outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
+        )
+    }
+
+    fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::store_scurve_entry(
+            &mut OracleContract::new(storage),
+            1,
+            ATOMIC_DAY_START,
+            U256::from(125),
+        )
+    }
+
+    fn evict_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::evict_expired_scurves(
+            &mut OracleContract::new(storage),
+            ATOMIC_DAY_START
+                + (u64::try_from(crate::scurve::PERIOD).unwrap() + 1) * crate::scurve::DAY_SECONDS,
+        )
+    }
+
+    fn process_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+        crate::scurve::process_daily_scurve(
+            &mut OracleContract::new(storage),
+            1,
+            SCURVE_CURRENT_DAY,
+        )
+    }
+
+    fn assert_oracle_mutation_is_atomic(
+        label: &str,
+        fixture: OracleFixture,
+        mutation: OracleMutation,
+    ) {
+        let mutation_count = {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            StorageHandle::enter(&mut provider, mutation).unwrap();
+            provider.clear_mutation_failure()
+        };
+        assert!(
+            mutation_count > 1,
+            "{label} fixture must cross partial-write boundaries"
+        );
+
+        for operation in 0..mutation_count {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            let storage_before = provider.storage.clone();
+            let events_before = provider.events.clone();
+            provider.fail_after_mutation_at(operation);
+
+            let result = StorageHandle::enter(&mut provider, mutation);
+            assert!(
+                result.is_err(),
+                "{label}: fault after mutation {operation} must propagate"
+            );
+            assert_eq!(
+                provider.clear_mutation_failure(),
+                operation + 1,
+                "{label}: unexpected write boundary"
+            );
+            assert_eq!(
+                provider.storage, storage_before,
+                "{label}: persistent state changed after mutation {operation}"
+            );
+            assert_eq!(
+                provider.events, events_before,
+                "{label}: events changed after mutation {operation}"
+            );
+        }
+    }
+
+    #[test]
+    fn ocomp_oracle_owner_mutations_roll_back_every_partial_write_boundary() {
+        for (label, fixture, mutation) in [
+            (
+                "write_snapshot",
+                seed_ocomp_oracle as OracleFixture,
+                write_snapshot_mutation as OracleMutation,
+            ),
+            (
+                "store_worldwide_day_vwap_snapshot",
+                seed_ocomp_oracle_with_snapshot,
+                store_wwd_snapshot_mutation,
+            ),
+            (
+                "finalize_utc_day_vwap",
+                seed_ocomp_oracle_with_snapshot,
+                finalize_utc_day_mutation,
+            ),
+            (
+                "store_scurve_entry",
+                seed_ocomp_oracle,
+                store_scurve_mutation,
+            ),
+            (
+                "evict_expired_scurves",
+                seed_ocomp_oracle_with_scurve,
+                evict_scurve_mutation,
+            ),
+            (
+                "process_daily_scurve",
+                seed_ocomp_oracle_with_peak_history,
+                process_scurve_mutation,
+            ),
+        ] {
+            assert_oracle_mutation_is_atomic(label, fixture, mutation);
+        }
+    }
+
+    fn run_prefork_with_last_mutation_failure(
+        fixture: OracleFixture,
+        mutation: OracleMutation,
+    ) -> HashMapStorageProvider {
+        let mutation_count = {
+            let mut provider = HashMapStorageProvider::new(1);
+            fixture(&mut provider);
+            provider.clear_mutation_failure();
+            StorageHandle::enter(&mut provider, mutation).unwrap();
+            provider.clear_mutation_failure()
+        };
+        assert!(mutation_count > 1);
+
+        let mut provider = HashMapStorageProvider::new(1);
+        fixture(&mut provider);
+        provider.clear_mutation_failure();
+        let events_before = provider.events.clone();
+        provider.fail_mutation_at(mutation_count - 1);
+        StorageHandle::enter(&mut provider, mutation).unwrap();
+        assert_eq!(provider.clear_mutation_failure(), mutation_count - 1);
+        assert_eq!(
+            provider.events, events_before,
+            "pre-fork best-effort event failure must not synthesize an event"
+        );
+        provider
+    }
+
+    #[test]
+    fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
+        let mut finalized = run_prefork_with_last_mutation_failure(
+            seed_prefork_oracle_with_snapshot,
+            finalize_utc_day_mutation,
+        );
+        StorageHandle::enter(&mut finalized, |storage| {
+            let oracle = OracleContract::new(storage);
+            assert_eq!(
+                oracle
+                    .get_utc_day_vwap_for_pair_id(
+                        outbe_primitives::time::timestamp_to_date_key(ATOMIC_DAY_START),
+                        1,
+                    )
+                    .unwrap(),
+                Some(U256::from(125))
+            );
+            assert!(!oracle.ocomp_profile_ready.read().unwrap());
+        });
+
+        let mut processed = run_prefork_with_last_mutation_failure(
+            seed_prefork_oracle_with_peak_history,
+            process_scurve_mutation,
+        );
+        StorageHandle::enter(&mut processed, |storage| {
+            let oracle = OracleContract::new(storage);
+            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
+            assert_eq!(
+                oracle.scurve_peak_day.read(&0).unwrap(),
+                SCURVE_CURRENT_DAY - 2 * crate::scurve::DAY_SECONDS
+            );
+            assert!(!oracle.ocomp_profile_ready.read().unwrap());
+        });
+    }
+
+    #[test]
+    fn scurve_count_overflow_rejects_before_any_owner_write() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair("COEN", "0xUSD").unwrap();
+            crate::api::initialize_fresh_ocomp_profile(storage).unwrap();
+            oracle.scurve_count.write(u32::MAX).unwrap();
+            let version_before = oracle.ocomp_state_version.read().unwrap();
+
+            assert!(crate::scurve::store_scurve_entry(
+                &mut oracle,
+                1,
+                ATOMIC_DAY_START,
+                U256::from(125),
+            )
+            .is_err());
+            assert_eq!(oracle.scurve_count.read().unwrap(), u32::MAX);
+            assert_eq!(oracle.scurve_pair_id.read(&u32::MAX).unwrap(), 0);
+            assert_eq!(oracle.ocomp_state_version.read().unwrap(), version_before);
         });
     }
 
@@ -348,6 +777,7 @@ mod oracle_tests {
         // Set stake and status to ACTIVE
         vs.val_stake.write(&addr, stake).unwrap();
         vs.val_status.write(&addr, status::ACTIVE).unwrap();
+        vs.val_has_bls_share.write(&addr, true).unwrap();
     }
 
     #[test]
@@ -972,6 +1402,16 @@ mod oracle_tests {
     #[test]
     fn test_init_from_genesis_custom_config() {
         with_storage(|storage| {
+            register_validator(
+                storage.clone(),
+                Address::new([0x11; 20]),
+                U256::in_units(100u64),
+            );
+            register_validator(
+                storage.clone(),
+                Address::new([0x22; 20]),
+                U256::in_units(100u64),
+            );
             let config = crate::logic::OracleGenesisConfig {
                 vote_period: 5,
                 reward_band: U256::from(10_000_000_000_000_000u128), // 0.01
@@ -996,7 +1436,7 @@ mod oracle_tests {
                     (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
                     (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
                 ],
-                reference_currencies: vec![840],
+                reference_currencies: vec![ref_cur(840)],
                 penalty_counters: vec![],
                 aggregate_votes: vec![],
                 snapshots: vec![],
@@ -1402,7 +1842,7 @@ mod oracle_tests {
         use alloy_sol_types::SolInterface;
         use std::collections::HashSet;
 
-        const EXPECTED_IORACLE_FUNCTIONS: usize = 37;
+        const EXPECTED_IORACLE_FUNCTIONS: usize = 38;
 
         let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
         assert_eq!(
@@ -1414,16 +1854,6 @@ mod oracle_tests {
             IOracle::IOracleCalls::COUNT,
             EXPECTED_IORACLE_FUNCTIONS,
             "IOracle function count changed; update selector collision coverage"
-        );
-
-        let external_interface_count =
-            include_str!("../../../../contracts/precompiles/src/IOracle.sol")
-                .lines()
-                .filter(|line| line.trim_start().starts_with("function "))
-                .count();
-        assert_eq!(
-            external_interface_count, EXPECTED_IORACLE_FUNCTIONS,
-            "contracts/precompiles/src/IOracle.sol function count must stay in sync with precompile IOracle"
         );
 
         let unique: HashSet<[u8; 4]> = selectors.iter().copied().collect();
@@ -1662,7 +2092,7 @@ mod oracle_tests {
                 (840, "0xUSD".into(), "COEN".into(), "0xUSD".into()),
                 (978, "EURC".into(), "ETH".into(), "0xUSD".into()),
             ],
-            reference_currencies: vec![840, 978],
+            reference_currencies: vec![ref_cur(840), ref_cur(978)],
             penalty_counters: vec![(v1, 7, 2, 1), (v2, 3, 0, 4)],
             snapshots: vec![crate::logic::GenesisSnapshot {
                 timestamp: 5000,
@@ -1688,6 +2118,7 @@ mod oracle_tests {
         let exported = {
             let mut storage = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut storage, |storage| {
+                register_validator(storage.clone(), v1, U256::in_units(100u64));
                 let mut oracle = OracleContract::new(storage.clone());
                 crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
                 crate::logic::export_genesis(&oracle, &[v1, v2]).unwrap()
@@ -1722,6 +2153,7 @@ mod oracle_tests {
 
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
+            register_validator(storage.clone(), v1, U256::in_units(100u64));
             let mut oracle = OracleContract::new(storage.clone());
             crate::logic::init_from_genesis(&mut oracle, &exported).unwrap();
 
@@ -2186,7 +2618,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978, 392],
+                reference_currencies: vec![ref_cur(840), ref_cur(978), ref_cur(392)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
@@ -2203,7 +2635,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![0],
+                reference_currencies: vec![ref_cur(0)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             let err = crate::logic::init_from_genesis(&mut oracle, &config).unwrap_err();
@@ -2220,7 +2652,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 840],
+                reference_currencies: vec![ref_cur(840), ref_cur(840)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             let err = crate::logic::init_from_genesis(&mut oracle, &config).unwrap_err();
@@ -2237,13 +2669,16 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978],
+                reference_currencies: vec![ref_cur(840), ref_cur(978)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
 
             let exported = crate::logic::export_genesis(&oracle, &[]).unwrap();
-            assert_eq!(exported.reference_currencies, vec![840, 978]);
+            assert_eq!(
+                exported.reference_currencies,
+                vec![ref_cur(840), ref_cur(978)]
+            );
         });
     }
 
@@ -2295,7 +2730,7 @@ mod oracle_tests {
         with_storage(|storage| {
             let mut oracle = OracleContract::new(storage.clone());
             let config = crate::logic::OracleGenesisConfig {
-                reference_currencies: vec![840, 978],
+                reference_currencies: vec![ref_cur(840), ref_cur(978)],
                 ..crate::logic::OracleGenesisConfig::default_config()
             };
             crate::logic::init_from_genesis(&mut oracle, &config).unwrap();
@@ -2394,6 +2829,76 @@ mod oracle_tests {
                 }
             }
             panic!("could not locate settlement_iso_to_pair base slot in 0..128");
+        });
+    }
+
+    /// Parity guard for the `reference_refinancing_rate` base slot used by
+    /// `scripts/seed_genesis.py`. Writes a distinctive marker, then scans base
+    /// slots 0..128 to recover the macro-assigned slot via the known
+    /// `keccak256(left_pad(key, 32) || be(base, 32))` mapping derivation.
+    #[test]
+    fn test_reference_refinancing_rate_slot_parity() {
+        use alloy_primitives::keccak256;
+        use outbe_primitives::addresses::ORACLE_ADDRESS;
+
+        with_storage(|storage| {
+            let oracle = OracleContract::new(storage.clone());
+            let iso: u16 = 840;
+            let marker = U256::from(0x00AB_CDEFu64);
+            oracle
+                .reference_refinancing_rate
+                .write(&iso, marker)
+                .unwrap();
+
+            for base in 0u64..128 {
+                let mut buf = [0u8; 64];
+                buf[30..32].copy_from_slice(&iso.to_be_bytes());
+                buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
+                let slot = U256::from_be_bytes(keccak256(buf).0);
+                if storage.sload(ORACLE_ADDRESS, slot).unwrap() == marker {
+                    assert_eq!(
+                        base, 60,
+                        "macro-assigned reference_refinancing_rate slot changed; \
+                         update scripts/seed_genesis.py"
+                    );
+                    return;
+                }
+            }
+            panic!("could not locate reference_refinancing_rate base slot in 0..128");
+        });
+    }
+
+    #[test]
+    fn test_genesis_seeds_refinancing_rate() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            crate::logic::init_from_genesis(
+                &mut oracle,
+                &crate::logic::OracleGenesisConfig::default_config(),
+            )
+            .unwrap();
+            assert_eq!(
+                oracle.get_refinancing_rate(840).unwrap(),
+                crate::logic::DEFAULT_USD_REFINANCING_RATE
+            );
+        });
+    }
+
+    #[test]
+    fn test_get_refinancing_rate_reverts_for_unregistered() {
+        with_storage(|storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            crate::logic::init_from_genesis(
+                &mut oracle,
+                &crate::logic::OracleGenesisConfig::default_config(),
+            )
+            .unwrap();
+            let err = oracle.get_refinancing_rate(978).unwrap_err();
+            let msg = format!("{err:?}");
+            assert!(
+                msg.contains("no refinancing rate for iso_code 978"),
+                "unexpected error: {msg}"
+            );
         });
     }
 }

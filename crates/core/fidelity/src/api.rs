@@ -34,3 +34,10 @@ pub fn cohort_out(
 pub fn league(storage: StorageHandle<'_>, account: Address) -> Result<u16> {
     FidelityContract::new(storage).league(account)
 }
+
+/// Fidelity league for `account` at an explicit block time `timestamp` (seconds).
+/// Used by the OCOMP prepare phase to snapshot each owner's league at the exact
+/// evaluation time bound into the job intent. See [`FidelityContract::league_at`].
+pub fn league_at(storage: StorageHandle<'_>, account: Address, timestamp: u64) -> Result<u16> {
+    FidelityContract::new(storage).league_at(account, timestamp)
+}

@@ -30,6 +30,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 
 const ACCOUNTING_PROGRESS_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee04";
+const COMPRESSED_ENTITIES_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee0d";
 const VALIDATOR_SET_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee00";
 
 /// `0xef` marker bytecode, mirroring `MARKER_CODE` in `scripts/seed_genesis.py`
@@ -168,6 +169,34 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
     );
 }
 
+#[test]
+fn compressed_entities_genesis_binds_schema_and_empty_sealed_catalog_root() {
+    let (_tmp, genesis, _raw) = run_seed_genesis(
+        FIXTURE_GENESIS,
+        FIXTURE_SEED,
+        FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
+    );
+    let entry = alloc_entry(&genesis, COMPRESSED_ENTITIES_ADDRESS_HEX);
+    let storage = entry
+        .get("storage")
+        .and_then(Value::as_object)
+        .expect("EE0D entry has storage");
+    let slot0 = format!("0x{:064x}", 0);
+    let slot1 = format!("0x{:064x}", 1);
+    assert_eq!(storage[&slot0], format!("0x{:064x}", 3));
+    assert_eq!(
+        storage[&slot1],
+        format!(
+            "{:#066x}",
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(alloy_primitives::B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            )
+        )
+    );
+}
+
 /// `seed_genesis.py` does not write any direct-slot
 /// storage entry at `ValidatorSet` slots 31..40, matching the Rust schema in
 /// `crates/system/validatorset/src/schema.rs` (slots 31..39 are mappings
@@ -251,14 +280,15 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// binds the genesis seed list as the third source of truth so a precompile
 /// that is neither marked nor seeded fails loudly instead of silently pruning.
 ///
-/// The two STATELESS verifiers (`ZKPROOF_POSEIDON_ADDRESS`,
-/// `ZKPROOF_GROTH16_ADDRESS`) are skipped: they hold no EVM storage to
-/// preserve, exactly matching the `MARKER_EXEMPT` rationale in the executor's
-/// `marker_list_covers_stateful_precompiles` unit test.
+/// The two stateless verifiers and the storage-free debug adapter are skipped:
+/// they own no EVM storage to preserve, matching the `MARKER_EXEMPT` rationale
+/// in the executor's `marker_list_covers_stateful_precompiles` unit test.
 #[test]
 fn every_stateful_precompile_preserved_by_marker_or_genesis() {
     use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
-    use outbe_primitives::addresses::{ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS};
+    use outbe_primitives::addresses::{
+        DEBUG_SUBCALL_PRECOMPILE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+    };
 
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
@@ -266,14 +296,17 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
         FIXTURE_VALIDATORS_4_PUBLIC_ONLY,
     );
 
-    // Stateless verifiers have no storage to preserve, so neither the marker
-    // list nor genesis bytecode needs to cover them.
-    let stateless: [alloy_primitives::Address; 2] =
-        [ZKPROOF_POSEIDON_ADDRESS, ZKPROOF_GROTH16_ADDRESS];
+    // These routes own no storage, so neither runtime markers nor genesis code
+    // need to cover them.
+    let storage_free: [alloy_primitives::Address; 3] = [
+        ZKPROOF_POSEIDON_ADDRESS,
+        ZKPROOF_GROTH16_ADDRESS,
+        DEBUG_SUBCALL_PRECOMPILE_ADDRESS,
+    ];
 
     let mut checked = 0usize;
     for addr in outbe_evm::precompiles::outbe_precompile_addresses() {
-        if stateless.contains(addr) {
+        if storage_free.contains(addr) {
             continue;
         }
         checked += 1;
@@ -459,6 +492,7 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
         SystemTxKind::CycleTick,
         SystemTxKind::BoundaryOutcome,
         SystemTxKind::OracleSlashWindow,
+        SystemTxKind::HookEvents,
     ];
     assert_eq!(
         block1, expected_block1,

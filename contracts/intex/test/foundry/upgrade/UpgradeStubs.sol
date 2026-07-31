@@ -32,7 +32,7 @@ contract EscrowAdapterV2 is EscrowAdapter {
 }
 
 contract OriginRouterV2 is OriginRouter {
-    constructor(address lzEndpoint, uint32 bnbEid) OriginRouter(lzEndpoint, bnbEid) {}
+    constructor(address bridge_) OriginRouter(bridge_) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
@@ -75,9 +75,5 @@ contract IntexNFT1155V2Reinit is IntexNFT1155 {
 
     function initializeV2(uint256 flag) external reinitializer(2) {
         _v2().migratedFlag = flag;
-    }
-
-    function migratedFlag() external view returns (uint256) {
-        return _v2().migratedFlag;
     }
 }

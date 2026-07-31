@@ -9,6 +9,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -26,7 +27,6 @@ import {
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 interface IUpgradeProbe {
     function upgradeProbe() external pure returns (uint256);
@@ -75,6 +75,11 @@ contract UpgradeDrillTest is CrossChainTest {
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
     }
 
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155V2Reinit")) - 1)) & ~bytes32(uint256(0xff))
+    // Mirrors IntexNFT1155V2Reinit's private storage slot (UpgradeStubs.sol) so the migrated
+    // field can be read via vm.load without a dedicated getter on the stub.
+    bytes32 private constant _V2_REINIT_SLOT = 0xa6131e184e5aae318840a83507194e5ed64c56b50a1ac526e8c519cdd8bb2200;
+
     /// @dev Exercises the `upgradeToAndCall` init-data path: upgrade runs a `reinitializer(2)`
     ///      migration that sets a new v2 field, while pre-upgrade state survives.
     function test_Drill_IntexNFT1155_ReinitializerPath() public {
@@ -92,7 +97,8 @@ contract UpgradeDrillTest is CrossChainTest {
 
         bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
-        assertEq(IntexNFT1155V2Reinit(address(nft)).migratedFlag(), UPGRADE_PROBE, "reinitializer did not run");
+        uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
+        assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
         assertEq(nft.balanceOf(holder, 7), 3, "balance lost across reinit");
         assertEq(nft.totalSupply(7), 3, "supply lost across reinit");
     }
@@ -122,7 +128,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         auction.wire(escrow);
-        auction.auctionStart(20260614, schedule, params);
+        auction.auctionStart(20260614, IIntexAuction.WorldwideDayState.Green, schedule, params);
         vm.stopPrank();
         vm.prank(bidder);
         auction.commitBid(20260614, keccak256("commit"));
@@ -143,11 +149,10 @@ contract UpgradeDrillTest is CrossChainTest {
         EscrowAdapter escrow = DeployProxy.escrowAdapter(admin, admin);
         MockERC20 token = new MockERC20("Mock USD", "MUSD", 6);
         MockTheCompact compactMock = new MockTheCompact();
-        MockVaultProvider vault = new MockVaultProvider();
         address auction = makeAddr("auction");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compactMock), address(vault), address(token));
+        escrow.wire(auction, address(compactMock), address(token));
         uint96 allocatorId = escrow.allocatorId();
         bytes12 lockTag = escrow.lockTag();
 
@@ -164,25 +169,51 @@ contract UpgradeDrillTest is CrossChainTest {
     }
 
     function test_Drill_OriginRouter() public {
-        OriginRouter origin = DeployProxy.originRouter(address(bridge), admin, B_CHAIN_ID);
+        OriginRouter origin = DeployProxy.originRouter(address(bridge), admin);
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
+        uint32 day = 20260614;
 
         vm.startPrank(admin);
         origin.wire(address(desisMock), factory);
         origin.setRemoteMessenger(B_CHAIN_ID, remote);
+        origin.addTarget(B_CHAIN_ID);
         vm.stopPrank();
 
-        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge), B_CHAIN_ID);
+        // Freeze the day's target snapshot, then drop the peer so the clearing leg parks.
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = day;
+        p.dayState = 1;
+        vm.prank(address(desisMock));
+        origin.sendAuctionStageStart(p);
+        vm.prank(admin);
+        origin.setRemoteMessenger(B_CHAIN_ID, "");
+        vm.prank(address(desisMock));
+        origin.sendAuctionStageClearing(day);
+
+        OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
         origin.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(origin), address(newImpl));
         assertEq(origin.desis(), address(desisMock), "desis wiring lost");
         assertEq(origin.intexFactory(), factory, "factory wiring lost");
+        // Appended multi-target storage must survive the upgrade (tail-appended erc7201 fields).
+        assertTrue(origin.isTarget(B_CHAIN_ID), "target registry lost");
+        uint32[] memory snapshot = origin.targetsOf(day);
+        assertEq(snapshot.length, 1, "day snapshot lost");
+        assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
+        IOriginRouter.ParkedSend memory parked = origin.parkedSend(0);
+        assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
+        assertFalse(parked.sent, "parked send flag lost");
+
+        // The park queue stays functional: restore the peer and flush post-upgrade.
+        vm.prank(admin);
+        origin.setRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        assertEq(origin.BNB_CHAIN_ID(), B_CHAIN_ID, "immutable lost");
+        origin.flushPendingSend(0);
+        assertTrue(origin.parkedSend(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {

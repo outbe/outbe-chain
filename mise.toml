@@ -22,6 +22,7 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 
 # ── Release / versioning ────────────────────────────────────────────── #
 cocogitto = "7"                    # `cog` — conventional-commit check + auto-version bump
+duckdb = "latest"
 
 [env]
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
@@ -29,6 +30,9 @@ OUT_DIR            = "/tmp/outbe-testnet"
 VALIDATORS         = "4"
 OUTBE_CHAIN_BINARY = "./target/release/outbe-chain"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
+# The projection sink needs a transaction-capable Mongo; localnet-start brings up
+# a one-member rs0 replica set in Docker (scripts/localnet-mongo.sh) at this URI.
+OUTBE_PROJECTION_MONGODB_URI = "mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true"
 
 # ─── Build ──────────────────────────────────────────────────────────── #
 
@@ -110,6 +114,10 @@ run = [
   "cargo nextest run --workspace",
 ]
 
+[tasks.audit-consensus-deps]
+description = "Ensure consensus has no transitive dependency on the EVM"
+run = "bash scripts/check-consensus-deps.sh"
+
 [tasks.audit-full]
 description = "Full cycle: machete + deny + rustsec + udeps"
 depends = ["audit-machete", "audit-deny", "audit-rustsec", "audit-udeps"]
@@ -155,6 +163,11 @@ run = "cargo bench --workspace"
 [tasks.localnet-bootstrap]
 description = "Clean OUT_DIR and bootstrap a local validator set"
 run = """
+# Stop any localnet still running from a previous bootstrap FIRST. Bootstrap
+# wipes OUT_DIR (including pids/), so skipping this orphans the old node +
+# enclave processes — they keep holding the RPC/metrics/consensus ports and the
+# next `start` dies with "Address already in use". No-op when nothing is running.
+./scripts/run-testnet.sh stop "$OUT_DIR" 2>/dev/null || true
 if [ -z "${SEED_FILE:-}" ]; then
   ./scripts/bootstrap-testnet.sh "$VALIDATORS" "$OUT_DIR"
 else
@@ -163,8 +176,9 @@ fi
 """
 
 [tasks.localnet-start]
-description = "Start a bootstrapped localnet from OUT_DIR"
+description = "Start a bootstrapped localnet from OUT_DIR (brings up Docker MongoDB first)"
 run = """
+./scripts/localnet-mongo.sh start
 ./scripts/run-testnet.sh start "$OUT_DIR"
 ./scripts/run-testnet.sh status "$OUT_DIR"
 """
@@ -185,6 +199,20 @@ mise run localnet-bootstrap
 mise run localnet-start
 """
 
+[tasks.localnet-tee]
+description = "Build + bootstrap + start localnet with a per-validator mock TEE enclave (bare, no SGX/Docker)"
+run = """
+# Local TEE run: mock enclave (no SGX) as a bare host process (no Gramine/Docker).
+# Bare is required on Apple Silicon — the amd64 Gramine image dies under QEMU.
+export OUTBE_TEE_ENCLAVE=1
+export OUTBE_TEE_ENCLAVE_MOCK=1
+export OUTBE_TEE_ENCLAVE_BARE=1
+mise run build-release
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
+mise run localnet-bootstrap
+mise run localnet-start
+"""
+
 [tasks.localnet-restart]
 description = "Stop and start the bootstrapped localnet"
 run = """
@@ -193,28 +221,107 @@ mise run localnet-start
 """
 
 [tasks.localnet-clean]
-description = "Remove all validator-*/ and pids/ from OUT_DIR"
-run = './scripts/clean-testnet-data.sh "$OUT_DIR"'
+description = "Remove all validator-*/ and pids/ from OUT_DIR, and the Docker MongoDB"
+run = """
+./scripts/clean-testnet-data.sh "$OUT_DIR"
+./scripts/localnet-mongo.sh clean
+"""
 
 [tasks.localnet-smoke]
 description = "4-validator multi-node consensus smoke (bootstrap → lockstep height → stop)"
 run = './scripts/localnet-smoke.sh'
 
-# Full S1-S7 gramine-mock TEE e2e scenario suite. Builds the node + mock
-# enclave, then runs all five scenario scripts. Requires sudo + gramine + the
-# `outbe-tee-enclave-gramine` docker image (joiner enclave). Runnable on any box
-# with gramine-direct (no SGX hardware required for the mock); the real-SGX smoke
-# is `sgx-smoke`.
+[tasks.localnet-stack-start]
+description = "Start a fresh 4-validator localnet with mock TEE and managed MongoDB"
+run = "bash ./scripts/localnet-stack.sh start"
+
+[tasks.localnet-stack-stop]
+description = "Stop the managed localnet and MongoDB (keep chain data)"
+run = "bash ./scripts/localnet-stack.sh stop"
+
+[tasks.localnet-stack-clean]
+description = "Stop the managed localnet and MongoDB, then remove chain data"
+run = "bash ./scripts/localnet-stack.sh clean"
+
+[tasks.tribute-offer]
+description = "Create one encrypted Tribute on the running managed localnet"
+run = "bash ./scripts/tribute-demo-actions.sh offer"
+
+[tasks.tribute-show-mongo]
+description = "Show the Tribute from the most recent tribute-offer in every validator MongoDB projection"
+run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
+
+# Full Rust/Cucumber gramine-mock TEE e2e suite.
+# Builds the node, CLI, keygen, and mock enclave, then runs every feature.
+# Requires sudo + Docker; the `outbe-tee-enclave-gramine-test` image (joiner
+# enclave). Runnable on any box with gramine-direct (no SGX hardware required for
+# the mock); the real-SGX smoke is `sgx-smoke`.
 [tasks.e2e]
-description = "Run the S1-S7 gramine-mock TEE e2e scenario suite"
+description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
 cargo build -p outbe-chain --bin outbe-chain
+cargo build --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-for s in s1_s2_s6_s3_lifecycle s4_restart_active s5_dkg_failure s7a_downtime_slash s7b_stale_join; do
-  echo "=== e2e $s ==="
-  ./scripts/e2e/$s.sh || exit 1
-done
-echo "e2e: ALL SCENARIOS PASS"
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
+"""
+
+# Backward-compatible task name; `e2e` is now the canonical Rust harness task.
+[tasks.e2e-rust]
+description = "Alias for the Rust/Cucumber e2e suite"
+depends = ["e2e"]
+
+# ─── Off-chain Computation PoC ─────────────────────────────────────── #
+#
+# These names are the stable surfaces frozen by the OCOMP PoC plan. OCM-00
+# intentionally leaves future lanes fail-closed: only the named task-progress
+# command may pass while later stable IDs are still reported as MISSING.
+
+[tasks.ocomp-poc-task]
+description = "Run one OCOMP implementation task merge gate without claiming PoC closure"
+run = "cargo xtask ocomp task"
+
+[tasks.ocomp-poc-fast]
+description = "Run and independently verify the exact OCOMP fast lane"
+run = 'cargo xtask ocomp lane OCM-FAST "$@"'
+
+[tasks.ocomp-poc-integration]
+description = "Run and independently verify the exact OCOMP process/integration lane"
+run = 'cargo xtask ocomp lane OCM-INT "$@"'
+
+[tasks.ocomp-poc-public-path]
+description = "Run and independently verify the exact OCOMP public execution lane"
+run = 'cargo xtask ocomp lane OCM-PUBLIC "$@"'
+
+[tasks.ocomp-poc-capacity]
+description = "Run the complete immutable OCM-26 capacity and Final-arming gate"
+run = "cargo xtask ocomp task OCM-26"
+
+[tasks.ocomp-poc-e2e]
+description = "Run and independently verify the exact four-domain OCOMP E2E lane"
+run = 'cargo xtask ocomp lane OCM-E2E "$@"'
+
+[tasks.ocomp-poc-evidence-verify]
+description = "Independently verify one OCOMP run-manifest.json"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- verify "$@"'
+
+[tasks.ocomp-poc-closure]
+description = "Verify complete exact-artifact OCOMP PoC evidence; missing evidence is failure"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-e2e-evidence -- closure "$@"'
+
+[tasks.ocomp-poc-closure-run]
+description = "Execute all exact OCM-27 lanes once and retain the independently verified closure"
+run = 'cargo xtask ocomp closure "$@"'
+
+# The hardware lane must be distinct from `e2e`: the default suite intentionally
+# uses gramine-direct/mock so it runs on developer machines. This task builds the
+# real enclave binary and makes the harness request gramine-sgx containers.
+[tasks.e2e-sgx]
+description = "Run all Rust/Cucumber e2e features on real SGX hardware"
+run = """
+cargo build -p outbe-chain --bin outbe-chain
+cargo build --bin outbe-cli --bin outbe-keygen
+cargo build --release --bin outbe-tee-enclave
+OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
 """
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #
@@ -225,6 +332,38 @@ echo "e2e: ALL SCENARIOS PASS"
 [tasks.sgx-smoke]
 description = "Hardware SGX smoke (build + sign + run enclave under gramine-sgx)"
 run = "./scripts/sgx-smoke.sh"
+
+[tasks.release-sgx-prepare]
+description = "Prepare an unsigned deterministic testnet SGX bundle"
+run = 'cargo xtask release sgx prepare "$@"'
+
+[tasks.release-sgx-compare]
+description = "Compare two independently prepared unsigned SGX bundles"
+run = 'cargo xtask release sgx compare "$@"'
+
+[tasks.release-sgx-sign]
+description = "Sign an unsigned SGX bundle with an explicitly supplied testnet key"
+run = 'cargo xtask release sgx sign "$@"'
+
+[tasks.release-sgx-verify]
+description = "Verify a pre-signed testnet SGX bundle and its SIGSTRUCT"
+run = 'cargo xtask release sgx verify "$@"'
+
+[tasks.release-sgx-archive]
+description = "Archive a verified signed testnet SGX bundle deterministically"
+run = 'cargo xtask release sgx archive "$@"'
+
+[tasks.release-sgx-image]
+description = "Build an immutable OCI image from a verified signed SGX bundle"
+run = 'cargo xtask release sgx image "$@"'
+
+[tasks.release-sgx-manifest]
+description = "Assemble the verified testnet ReleaseManifest from exact SGX release evidence"
+run = 'cargo xtask release sgx manifest "$@"'
+
+[tasks.release-sgx-hardware-e2e]
+description = "Run Rust/Gherkin acceptance against an exact published testnet SGX image digest"
+run = 'cargo run --locked -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- "$@"'
 
 # Tribute-offer enclave throughput. Two layers:
 #  1) criterion micro-bench: pure in-enclave CPU cost per offer;

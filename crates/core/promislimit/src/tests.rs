@@ -45,6 +45,40 @@ fn test_add_to_total_unallocated() {
 }
 
 #[test]
+fn checked_carry_over_credit_returns_the_committed_delta() {
+    with_contract(|c| {
+        c.add_to_total_unallocated(U256::from(40u64)).unwrap();
+
+        let delta = c
+            .checked_add_carry_over(U256::from(2u64))
+            .expect("carry-over credit");
+
+        assert_eq!(delta.before, U256::from(40u64));
+        assert_eq!(delta.credited, U256::from(2u64));
+        assert_eq!(delta.after, U256::from(42u64));
+        assert_eq!(c.get_total_unallocated().unwrap(), U256::from(42u64));
+    });
+}
+
+#[test]
+fn checked_carry_over_take_clears_the_accumulator_exactly_once() {
+    with_contract(|c| {
+        c.checked_add_carry_over(U256::from(42u64)).unwrap();
+
+        let first = c.checked_take_carry_over().expect("first take");
+        assert_eq!(first.before, U256::from(42u64));
+        assert_eq!(first.taken, U256::from(42u64));
+        assert_eq!(first.after, U256::ZERO);
+        assert_eq!(c.get_total_unallocated().unwrap(), U256::ZERO);
+
+        let second = c.checked_take_carry_over().expect("empty take");
+        assert_eq!(second.before, U256::ZERO);
+        assert_eq!(second.taken, U256::ZERO);
+        assert_eq!(second.after, U256::ZERO);
+    });
+}
+
+#[test]
 fn test_set_overwrites_previous() {
     with_contract(|c| {
         c.set_total_unallocated(U256::from(500u64)).unwrap();
@@ -68,9 +102,9 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
 fn test_add_to_total_unallocated_rejects_overflow() {
     with_contract(|c| {
         let near_max = U256::MAX - U256::from(10u64);
-        c.add_to_total_unallocated(near_max).unwrap();
+        c.checked_add_carry_over(near_max).unwrap();
 
-        let err = c.add_to_total_unallocated(U256::from(100u64)).unwrap_err();
+        let err = c.checked_add_carry_over(U256::from(100u64)).unwrap_err();
         assert!(err.to_string().contains("overflow"));
 
         assert_eq!(c.get_total_unallocated().unwrap(), near_max);

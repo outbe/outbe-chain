@@ -67,13 +67,11 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         emit RemoteBridgeRegistered(domain, recipient);
     }
 
-    function quoteSend(
-        uint32 destinationDomain,
-        address to,
-        uint256 amount,
-        bytes calldata extraData,
-        uint256 gasLimit
-    ) external view returns (uint256) {
+    function quoteSend(uint32 destinationDomain, address to, uint256 amount, bytes calldata extraData, uint256 gasLimit)
+        external
+        view
+        returns (uint256)
+    {
         _requireRecipient(to);
         return IGatewayQuote(address(bridge))
             .quote(

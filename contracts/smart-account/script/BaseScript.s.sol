@@ -8,7 +8,7 @@ contract BaseScript is Script {
     // Salt configuration - change this to deploy to different addresses
     // Using the same salt across different chains will result in the same addresses
     // To deploy to different addresses, use: SALT_VERSION = "v1.0.1", "v2.0.0", etc.
-    string public constant SALT_VERSION = "v3.0.1";
+    string public constant SALT_VERSION = "v4.0.0";
 
     // Note: CREATE2_FACTORY (0x4e59b44847b379578588920cA78FbF26c0B4956C) is inherited from Script
     // and used when always_use_create_2_factory = true in foundry.toml

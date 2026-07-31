@@ -7,9 +7,14 @@
 
 use alloy_primitives::{Address, B256, U256};
 use jsonrpsee::core::RpcResult;
+use outbe_compressed_entities::{
+    CeDomain, CompressedTreeService, PointReadRequestV1, PointReadResultV1, SelectedHeaderV1,
+};
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
+    projection::{ProjectionReadinessHandle, ProjectionStatus},
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -19,13 +24,29 @@ use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
     BlockNumReader, HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
 };
+use reth_provider::BlockIdReader;
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
-    ParticipationInfo, Phase1VerificationMode, SlashConfig, SlashInfo, SyncStatusInfo,
-    ValidatorDetailInfo, ValidatorInfo,
+    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
+    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, ProjectionHealth,
+    ProjectionStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo,
+    ValidatorInfo,
 };
+
+fn read_effective_slash_config(
+    storage: StorageHandle<'_>,
+) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
+    let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
+    Ok(SlashConfig {
+        proposer_misdemeanor_threshold: si.proposer_misdemeanor_threshold()?,
+        proposer_felony_threshold: si.proposer_felony_threshold()?,
+        voter_misdemeanor_threshold: si.voter_misdemeanor_threshold()?,
+        voter_felony_threshold: si.voter_felony_threshold()?,
+        slash_amount_percent: si.slash_amount_percent()?,
+        evidence_reward_percent: si.evidence_reward_percent()?,
+    })
+}
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
 struct RethStateReader<'a> {
@@ -44,7 +65,7 @@ impl StorageReader for RethStateReader<'_> {
 }
 
 /// RPC handler for the `outbe_*` namespace.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     bridge: Option<ConsensusExecutionBridge>,
@@ -53,44 +74,159 @@ pub struct OutbeApiHandler<P> {
     /// followers) but must report itself as a non-validator / TrustedFinality
     /// node. This flag, NOT `bridge.is_some()`, drives validator-status fields.
     is_validator: bool,
+    projection_readiness: ProjectionReadinessHandle,
+    point_reads: Option<PointReadRuntime>,
+}
+
+#[derive(Clone)]
+struct PointReadRuntime {
+    tree: Arc<CompressedTreeService>,
+    bodies: RuntimeBodyReaders,
+    chain_id: u64,
+}
+
+impl std::fmt::Debug for PointReadRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PointReadRuntime")
+            .field("chain_id", &self.chain_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P> std::fmt::Debug for OutbeApiHandler<P> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OutbeApiHandler")
+            .field("is_validator", &self.is_validator)
+            .field("point_reads", &self.point_reads)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge; plain EL full node).
-    pub fn new(provider: Arc<P>) -> Self {
+    pub fn new(provider: Arc<P>, projection_readiness: ProjectionReadinessHandle) -> Self {
         Self {
             provider,
             bridge: None,
             is_validator: false,
+            projection_readiness,
+            point_reads: None,
         }
     }
 
     /// Create a validator handler with full access to the consensus bridge.
-    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: true,
+            projection_readiness,
+            point_reads: None,
         }
     }
 
     /// Create a `--upstream` follower handler: it holds the bridge so it can
     /// serve `outbe_getFinalization` (chaining followers), but reports itself as
     /// a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_follower_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        projection_readiness: ProjectionReadinessHandle,
+    ) -> Self {
         Self {
             provider,
             bridge: Some(bridge),
             is_validator: false,
+            projection_readiness,
+            point_reads: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_point_reads(
+        mut self,
+        tree: Arc<CompressedTreeService>,
+        bodies: RuntimeBodyReaders,
+        chain_id: u64,
+    ) -> Self {
+        self.point_reads = Some(PointReadRuntime {
+            tree,
+            bodies,
+            chain_id,
+        });
+        self
     }
 }
 
 impl<P> OutbeApiHandler<P>
 where
-    P: StateProviderFactory + 'static,
+    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync + 'static,
 {
+    async fn serve_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        let Some(runtime) = self.point_reads.clone() else {
+            return Ok(PointReadResultV1::Unavailable);
+        };
+        let provider = Arc::clone(&self.provider);
+        tokio::task::spawn_blocking(move || {
+            runtime.tree.serve_point_read_v1(
+                runtime.chain_id,
+                request,
+                |height, expected_hash| {
+                    let finalized = provider.finalized_block_num_hash().ok().flatten()?;
+                    if finalized.number < height {
+                        return None;
+                    }
+                    provider
+                        .sealed_header(height)
+                        .ok()
+                        .flatten()
+                        .filter(|header| header.hash() == expected_hash)
+                        .map(|header| SelectedHeaderV1 {
+                            block_number: height,
+                            block_hash: expected_hash,
+                            extra_data: header.header().inner.extra_data.to_vec(),
+                        })
+                },
+                |domain, raw_id| match domain {
+                    CeDomain::Tribute => match runtime.bodies.tribute().get_stored_body(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodItem => match runtime.bodies.nod().get_stored_item(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                    CeDomain::NodBucket => match runtime.bodies.nod().get_stored_bucket(raw_id) {
+                        Ok(Some(body)) => Some(body.encode()),
+                        Ok(None) | Err(_) => {
+                            runtime.bodies.report_unavailable();
+                            None
+                        }
+                    },
+                },
+            )
+        })
+        .await
+        .map_err(|error| internal_err(format!("point-read worker failed: {error}")))?
+        .map_err(|error| invalid_params(error.to_string()))
+    }
+
     /// Read precompile state at the latest block using a closure.
     fn with_latest_state<R>(
         &self,
@@ -115,10 +251,101 @@ where
     P: StateProviderFactory
         + HeaderProvider<Header = OutbeHeader>
         + BlockNumReader
+        + BlockIdReader
         + Send
         + Sync
         + 'static,
 {
+    async fn get_compressed_entity(
+        &self,
+        request: PointReadRequestV1,
+    ) -> RpcResult<PointReadResultV1> {
+        self.serve_compressed_entity(request).await
+    }
+
+    async fn derive_keys(
+        &self,
+        ledger: outbe_tee::protocol::Ledger,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+
+        // Prove the caller controls `account` before the enclave derives its
+        // (secret) modify key: recover the EIP-191 personal_sign signer over
+        // `"outbe/<ledger>/derive-keys/v1" || account || ephemeralPubkey` and require
+        // it to equal `account`.
+        let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
+            invalid_params_err(format!(
+                "signature must be 65 bytes (r||s||v), got {}",
+                signature.len()
+            ))
+        })?;
+        // Fast reject: recover the signer here so an unauthorized request is dropped
+        // before the enclave round-trip. This is defense-in-depth only — the enclave
+        // re-verifies the same signature, because a compromised host could bypass this
+        // check and reach the enclave transport directly (see DeriveAccountKeys arm).
+        let prehash = outbe_tee::protocol::eip191_hash(
+            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
+        );
+        let recovered = outbe_primitives::tee_bootstrap::recover_signer(&prehash, &sig65)
+            .map_err(|e| invalid_params_err(format!("signature recovery failed: {e}")))?;
+        if recovered != account {
+            return Err(invalid_params_err(format!(
+                "signature signer {recovered} does not control account {account}"
+            )));
+        }
+
+        // Off-chain key delivery via the process-global enclave client (no state).
+        // Thread `owner_sig` through so the enclave enforces ownership in its own
+        // trust domain, not ours.
+        let response = outbe_tee::try_with_enclave(|client| {
+            client.request(&EnclaveRequest::DeriveAccountKeys {
+                ledger,
+                account,
+                requester_ephemeral_pubkey: ephemeral_pubkey.0,
+                owner_sig: sig65.to_vec(),
+            })
+        })
+        .ok_or_else(|| internal_err("tee enclave not configured".to_string()))?
+        .map_err(|e| internal_err(format!("enclave DeriveAccountKeys failed: {e}")))?;
+        match response {
+            EnclaveResponse::AccountKeysSealed {
+                sealed,
+                nonce,
+                enclave_ephemeral_pubkey,
+                ..
+            } => Ok(GratisKeysSealed {
+                sealed: sealed.into(),
+                nonce: nonce.to_vec().into(),
+                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
+            }),
+            EnclaveResponse::Error { message } => {
+                Err(internal_err(format!("enclave error: {message}")))
+            }
+            other => Err(internal_err(format!(
+                "unexpected enclave response: {other:?}"
+            ))),
+        }
+    }
+
+    async fn derive_gratis_keys(
+        &self,
+        account: Address,
+        ephemeral_pubkey: B256,
+        signature: alloy_primitives::Bytes,
+    ) -> RpcResult<GratisKeysSealed> {
+        // Deprecated alias — the Gratis ledger of the unified `deriveKeys`.
+        self.derive_keys(
+            outbe_tee::protocol::Ledger::Gratis,
+            account,
+            ephemeral_pubkey,
+            signature,
+        )
+        .await
+    }
+
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
             let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -211,6 +438,14 @@ where
             .as_ref()
             .map(|b| b.consensus_status())
             .unwrap_or_default();
+        let projection = projection_status_info(
+            self.projection_readiness.current(),
+            self.provider
+                .finalized_block_num_hash()
+                .ok()
+                .flatten()
+                .map(|block| (block.number, block.hash)),
+        );
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -230,6 +465,7 @@ where
             } else {
                 Phase1VerificationMode::TrustedFinality
             },
+            projection,
         })
     }
 
@@ -264,16 +500,7 @@ where
     }
 
     async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
-        self.with_latest_state(|storage| {
-            let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-            Ok(SlashConfig {
-                proposer_misdemeanor_threshold: si.config_proposer_misdemeanor_threshold.read()?,
-                proposer_felony_threshold: si.config_proposer_felony_threshold.read()?,
-                voter_misdemeanor_threshold: si.config_voter_misdemeanor_threshold.read()?,
-                slash_amount_percent: si.config_slash_amount_percent.read()?,
-                evidence_reward_percent: si.config_evidence_reward_percent.read()?,
-            })
-        })
+        self.with_latest_state(read_effective_slash_config)
     }
 
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
@@ -334,6 +561,55 @@ where
     }
 }
 
+fn projection_status_info(
+    status: ProjectionStatus,
+    reth_finalized: Option<(u64, B256)>,
+) -> ProjectionStatusInfo {
+    let (state, checkpoint, ready, unavailable_for_millis, last_failure_class) = match status {
+        ProjectionStatus::Starting => (ProjectionHealth::Starting, None, false, None, None),
+        ProjectionStatus::CatchingUp { checkpoint } => {
+            (ProjectionHealth::CatchingUp, checkpoint, false, None, None)
+        }
+        ProjectionStatus::Ready { checkpoint } => {
+            (ProjectionHealth::Ready, Some(checkpoint), true, None, None)
+        }
+        ProjectionStatus::MongoUnavailable { checkpoint, since } => (
+            ProjectionHealth::MongoUnavailable,
+            checkpoint,
+            false,
+            Some(u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            Some("Unavailable".to_owned()),
+        ),
+        ProjectionStatus::Fatal { checkpoint, error } => (
+            ProjectionHealth::Fatal,
+            checkpoint,
+            false,
+            None,
+            Some(format!("{:?}", error.class)),
+        ),
+    };
+    let checkpoint_number = checkpoint.map(|value| value.block_number);
+    let checkpoint_hash = checkpoint.map(|value| value.block_hash);
+    let reth_finalized_number = reth_finalized.map(|value| value.0);
+    let reth_finalized_hash = reth_finalized.map(|value| value.1);
+    let lag_blocks = checkpoint_number.zip(reth_finalized_number).map(
+        |(checkpoint_number, reth_finalized_number)| {
+            reth_finalized_number.saturating_sub(checkpoint_number)
+        },
+    );
+    ProjectionStatusInfo {
+        state,
+        checkpoint_number,
+        checkpoint_hash,
+        reth_finalized_number,
+        reth_finalized_hash,
+        lag_blocks,
+        ready,
+        unavailable_for_millis,
+        last_failure_class,
+    }
+}
+
 /// Create an internal JSON-RPC error.
 fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
@@ -341,4 +617,37 @@ fn internal_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
         msg,
         None::<()>,
     )
+}
+
+fn invalid_params(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+    jsonrpsee::types::ErrorObject::owned(
+        jsonrpsee::types::error::INVALID_PARAMS_CODE,
+        msg,
+        None::<()>,
+    )
+}
+
+fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
+    invalid_params(msg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_effective_slash_config;
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn slash_config_rpc_reports_runtime_defaults_for_zero_storage() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let config = StorageHandle::enter(&mut provider, |storage| {
+            read_effective_slash_config(storage).expect("read effective slash config")
+        });
+
+        assert_eq!(config.proposer_misdemeanor_threshold, 50);
+        assert_eq!(config.proposer_felony_threshold, 150);
+        assert_eq!(config.voter_misdemeanor_threshold, 150);
+        assert_eq!(config.voter_felony_threshold, 500);
+        assert_eq!(config.slash_amount_percent, 5);
+        assert_eq!(config.evidence_reward_percent, 10);
+    }
 }

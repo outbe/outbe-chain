@@ -20,6 +20,10 @@ contract MockTheCompact {
 
     mapping(address owner => mapping(address operator => bool)) public isOperator;
 
+    // ============ Forced withdrawal (allocator-independent escape) ============
+
+    mapping(address owner => mapping(uint256 id => uint256)) public forcedWithdrawalEnabledAt;
+
     // ============ Nonce tracking (for claim) ============
 
     mapping(uint256 => bool) public nonceConsumed;
@@ -66,6 +70,37 @@ contract MockTheCompact {
         require(balanceOf[from][id] >= amount, "MockTheCompact: insufficient balance");
         balanceOf[from][id] -= amount;
         balanceOf[to][id] += amount;
+        return true;
+    }
+
+    function transfer(address to, uint256 id, uint256 amount) external returns (bool) {
+        require(balanceOf[msg.sender][id] >= amount, "MockTheCompact: insufficient balance");
+        balanceOf[msg.sender][id] -= amount;
+        balanceOf[to][id] += amount;
+        return true;
+    }
+
+    // ============ Forced withdrawal (bypasses allocator and operator checks) ============
+
+    /// @dev ponytail: no reset-period timer; arms immediately. The property under test is that
+    ///      forced withdrawal can only touch the caller's own free balance, not escrow-held collateral.
+    function enableForcedWithdrawal(uint256 id) external returns (uint256 withdrawableAt) {
+        withdrawableAt = block.timestamp;
+        forcedWithdrawalEnabledAt[msg.sender][id] = withdrawableAt;
+    }
+
+    function forcedWithdrawal(uint256 id, address recipient, uint256 amount) external returns (bool) {
+        require(forcedWithdrawalEnabledAt[msg.sender][id] != 0, "MockTheCompact: forced withdrawal not enabled");
+        require(balanceOf[msg.sender][id] >= amount, "MockTheCompact: insufficient balance");
+        balanceOf[msg.sender][id] -= amount;
+
+        address token = address(uint160(id));
+        if (token == address(0)) {
+            (bool success,) = recipient.call{value: amount}("");
+            require(success, "MockTheCompact: ETH transfer failed");
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
         return true;
     }
 

@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
 use revm::context::journaled_state::JournalCheckpoint;
 use revm::state::{AccountInfo, Bytecode};
 use std::collections::{BTreeMap, HashMap};
@@ -13,12 +13,14 @@ use crate::storage::{
 
 /// In-memory storage provider for unit testing.
 ///
-/// No gas tracking — all gas operations are no-ops.
+/// Gas is unlimited by default; tests may install a limit and inspect exact
+/// deductions to exercise deterministic out-of-gas behavior.
 pub struct HashMapStorageProvider {
     pub storage: HashMap<(Address, U256), U256>,
     transient: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     pub events: HashMap<Address, Vec<LogData>>,
+    ordered_events: Vec<Log>,
     /// canonical-history fixture used by `canonical_block_hash`.
     /// Tests seed this directly via `set_canonical_block_hash`; an unset
     /// entry yields `Ok(None)` (block outside retention / unknown).
@@ -28,6 +30,12 @@ pub struct HashMapStorageProvider {
     beneficiary: Address,
     block_number: u64,
     is_static: bool,
+    gas_limit: Option<u64>,
+    gas_used: u64,
+    mutation_failure_at: Option<usize>,
+    mutation_failure_address: Option<Address>,
+    mutation_failure_after: bool,
+    mutation_operations: usize,
     snapshots: Vec<Snapshot>,
     /// When true, `sub_call` returns `SubCallOutput::default_success()`
     /// instead of the trait default `Err(SubCallError::NotAvailable)`. Tests
@@ -37,12 +45,19 @@ pub struct HashMapStorageProvider {
     /// Per-address return data stubs. Entries registered via
     /// [`Self::stub_sub_call_at`] take priority over `sub_call_stub`.
     sub_call_stubs: HashMap<Address, Bytes>,
+    /// Per-address-and-selector return data stubs. These take priority over
+    /// address-wide stubs so tests can model contracts with multiple views.
+    sub_call_selector_stubs: HashMap<(Address, [u8; 4]), Bytes>,
+    lysis_activation_entitled: bool,
+    lysis_activation_attempted: bool,
+    lysis_activation_call_id: Option<B256>,
 }
 
 struct Snapshot {
     storage: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
+    ordered_events: Vec<Log>,
 }
 
 impl HashMapStorageProvider {
@@ -53,16 +68,40 @@ impl HashMapStorageProvider {
             transient: HashMap::new(),
             accounts: HashMap::new(),
             events: HashMap::new(),
+            ordered_events: Vec::new(),
             canonical_block_hashes: BTreeMap::new(),
             chain_id,
             timestamp: U256::ZERO,
             beneficiary: Address::ZERO,
             block_number: 0,
             is_static: false,
+            gas_limit: None,
+            gas_used: 0,
+            mutation_failure_at: None,
+            mutation_failure_address: None,
+            mutation_failure_after: false,
+            mutation_operations: 0,
             snapshots: Vec::new(),
             sub_call_stub: false,
             sub_call_stubs: HashMap::new(),
+            sub_call_selector_stubs: HashMap::new(),
+            lysis_activation_entitled: false,
+            lysis_activation_attempted: false,
+            lysis_activation_call_id: None,
         }
+    }
+
+    /// Grants one production-shaped certified Lysis activation lease.
+    ///
+    /// Tests must opt in once per simulated EVM call. The capability cursor
+    /// and every owner mutation remain the production implementations.
+    pub fn enable_lysis_activation_frame(&mut self) {
+        assert!(
+            self.lysis_activation_call_id.is_none(),
+            "cannot reset an active Lysis activation lease"
+        );
+        self.lysis_activation_entitled = true;
+        self.lysis_activation_attempted = false;
     }
 
     /// Opts the provider into stubbing `sub_call`: every dispatched sub-call
@@ -71,7 +110,7 @@ impl HashMapStorageProvider {
     ///
     /// Use only in tests whose runtime now issues Rust → Solidity sub-calls
     /// (e.g. credisfactory `request_credis` / `pay_anadosis` calling
-    /// `IVaultProvider` and `IERC20`) but do not assert vault/EVM state on the
+    /// `IVaultRouter` and `IERC20`) but do not assert vault/EVM state on the
     /// child frame.
     pub fn enable_sub_call_stub(&mut self) {
         self.sub_call_stub = true;
@@ -87,6 +126,17 @@ impl HashMapStorageProvider {
         self.sub_call_stubs.insert(address, returndata);
     }
 
+    /// Register fixed returndata for one function selector at `address`.
+    pub fn stub_sub_call_at_selector(
+        &mut self,
+        address: Address,
+        selector: [u8; 4],
+        returndata: Bytes,
+    ) {
+        self.sub_call_selector_stubs
+            .insert((address, selector), returndata);
+    }
+
     // Test helper methods
 
     pub fn get_account_info(&self, address: Address) -> Option<&AccountInfo> {
@@ -96,6 +146,11 @@ impl HashMapStorageProvider {
     pub fn get_events(&self, address: Address) -> &Vec<LogData> {
         static EMPTY: Vec<LogData> = Vec::new();
         self.events.get(&address).unwrap_or(&EMPTY)
+    }
+
+    /// Returns emitted logs in their canonical cross-address order.
+    pub fn get_ordered_events(&self) -> &[Log] {
+        &self.ordered_events
     }
 
     pub fn set_nonce(&mut self, address: Address, nonce: u64) {
@@ -137,10 +192,88 @@ impl HashMapStorageProvider {
 
     pub fn clear_events(&mut self, address: Address) {
         self.events.remove(&address);
+        self.ordered_events.retain(|event| event.address != address);
     }
 
     pub fn set_static(&mut self, is_static: bool) {
         self.is_static = is_static;
+    }
+
+    /// Enables deterministic explicit-gas testing. Storage reads/writes stay
+    /// unmetered in this lightweight provider; calls to `deduct_gas` consume
+    /// this budget exactly like the production gas tracker.
+    pub fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.gas_limit = Some(gas_limit);
+        self.gas_used = 0;
+    }
+
+    /// Injects a deterministic failure immediately before the zero-based
+    /// persistent-write/event operation selected by `operation`.
+    pub fn fail_mutation_at(&mut self, operation: usize) {
+        self.mutation_failure_at = Some(operation);
+        self.mutation_failure_address = None;
+        self.mutation_failure_after = false;
+        self.mutation_operations = 0;
+    }
+
+    /// Injects a deterministic failure before the first persistent mutation
+    /// owned by `address`.
+    ///
+    /// This keeps activation rollback tests coupled to owner boundaries rather
+    /// than to incidental storage-operation ordinals.
+    pub fn fail_mutation_at_address(&mut self, address: Address) {
+        self.mutation_failure_at = None;
+        self.mutation_failure_address = Some(address);
+        self.mutation_failure_after = false;
+        self.mutation_operations = 0;
+    }
+
+    /// Injects a deterministic failure immediately after the zero-based
+    /// persistent-write/event operation selected by `operation` has been
+    /// applied. The caller's journal checkpoint must restore that write.
+    pub fn fail_after_mutation_at(&mut self, operation: usize) {
+        self.mutation_failure_at = Some(operation);
+        self.mutation_failure_address = None;
+        self.mutation_failure_after = true;
+        self.mutation_operations = 0;
+    }
+
+    /// Disables mutation failure injection and returns the number of
+    /// persistent-write/event operations observed since the last reset.
+    pub fn clear_mutation_failure(&mut self) -> usize {
+        self.mutation_failure_at = None;
+        self.mutation_failure_address = None;
+        self.mutation_failure_after = false;
+        std::mem::take(&mut self.mutation_operations)
+    }
+
+    fn before_mutation(&mut self, address: Address) -> Result<()> {
+        if self.mutation_failure_address == Some(address) {
+            return Err(PrecompileError::Storage(format!(
+                "injected storage mutation failure for owner {address}"
+            )));
+        }
+        if !self.mutation_failure_after
+            && self.mutation_failure_at == Some(self.mutation_operations)
+        {
+            return Err(PrecompileError::Storage(format!(
+                "injected storage mutation failure before operation {}",
+                self.mutation_operations
+            )));
+        }
+        Ok(())
+    }
+
+    fn after_mutation(&mut self) -> Result<()> {
+        let operation = self.mutation_operations;
+        self.mutation_operations = self.mutation_operations.saturating_add(1);
+        if self.mutation_failure_after && self.mutation_failure_at == Some(operation) {
+            Err(PrecompileError::Storage(format!(
+                "injected storage mutation failure after operation {operation}"
+            )))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn enter<R>(&mut self, f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -149,6 +282,34 @@ impl HashMapStorageProvider {
 }
 
 impl PrecompileStorageProvider for HashMapStorageProvider {
+    fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
+        if !self.lysis_activation_entitled
+            || self.lysis_activation_attempted
+            || self.lysis_activation_call_id.is_some()
+        {
+            return Err(PrecompileError::Fatal(
+                "test provider has no certified Lysis activation lease".into(),
+            ));
+        }
+        self.lysis_activation_attempted = true;
+        self.lysis_activation_call_id = Some(activation_call_id);
+        Ok(())
+    }
+
+    fn finish_lysis_activation_frame(
+        &mut self,
+        activation_call_id: B256,
+        _completed: bool,
+    ) -> Result<()> {
+        if self.lysis_activation_call_id.take() != Some(activation_call_id) {
+            return Err(PrecompileError::Fatal(
+                "test provider Lysis activation lease identity mismatch".into(),
+            ));
+        }
+        self.lysis_activation_entitled = false;
+        Ok(())
+    }
+
     fn chain_id(&self) -> u64 {
         self.chain_id
     }
@@ -201,8 +362,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.before_mutation(address)?;
         self.storage.insert((address, key), value);
-        Ok(())
+        self.after_mutation()
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
@@ -211,18 +373,34 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        self.before_mutation(address)?;
+        self.ordered_events.push(Log {
+            address,
+            data: event.clone(),
+        });
         self.events.entry(address).or_default().push(event);
-        Ok(())
+        self.after_mutation()
     }
 
-    fn deduct_gas(&mut self, _gas: u64) -> Result<()> {
+    fn deduct_gas(&mut self, gas: u64) -> Result<()> {
+        let Some(limit) = self.gas_limit else {
+            return Ok(());
+        };
+        let next = self
+            .gas_used
+            .checked_add(gas)
+            .ok_or(PrecompileError::OutOfGas)?;
+        if next > limit {
+            return Err(PrecompileError::OutOfGas);
+        }
+        self.gas_used = next;
         Ok(())
     }
 
     fn refund_gas(&mut self, _gas: i64) {}
 
     fn gas_used(&self) -> u64 {
-        0
+        self.gas_used
     }
 
     fn gas_refunded(&self) -> i64 {
@@ -239,6 +417,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             storage: self.storage.clone(),
             accounts: self.accounts.clone(),
             events: self.events.clone(),
+            ordered_events: self.ordered_events.clone(),
         });
         JournalCheckpoint {
             log_i: 0,
@@ -256,6 +435,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             self.storage = snapshot.storage;
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
+            self.ordered_events = snapshot.ordered_events;
         }
     }
 
@@ -288,6 +468,24 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
+        if let Some(selector) = input
+            .calldata
+            .get(..4)
+            .and_then(|bytes| bytes.try_into().ok())
+        {
+            if let Some(returndata) = self
+                .sub_call_selector_stubs
+                .get(&(input.target, selector))
+                .cloned()
+            {
+                return Ok(SubCallOutput {
+                    status: SubCallStatus::Success,
+                    returndata,
+                    gas_used: 0,
+                    gas_refunded: 0,
+                });
+            }
+        }
         if let Some(returndata) = self.sub_call_stubs.get(&input.target).cloned() {
             return Ok(SubCallOutput {
                 status: SubCallStatus::Success,

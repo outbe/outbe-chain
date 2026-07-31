@@ -1,9 +1,12 @@
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use outbe_gem::{api as gem_api, GemContract, GemState};
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
+use outbe_promisfactory::api::ModifyAuth;
+use outbe_tee::protocol::PromisOp;
+use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_key, modify_mac};
 
 use crate::constants::PARK_PERIOD_SECONDS;
 use crate::runtime;
@@ -12,6 +15,33 @@ use crate::schema::{FactoryRecord, GemFactoryContract, GemTypes};
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
+
+/// A no-op authorization for mine paths that reject before reaching the (enclave)
+/// Promis mint (ownership/state/PoW failures).
+fn no_auth() -> ModifyAuth {
+    ModifyAuth {
+        mac: [0u8; 32],
+        op_nonce: 0,
+    }
+}
+
+/// The Promis modify authorization for `account`'s first mint of `amount`. Requires
+/// the in-process Promis enclave to be installed (chain id 1 matches the harness).
+fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
+    let sk = outbe_promis::enclave_client::test_enclave::state_key();
+    let mk = derive_modify_key(&sk, account).unwrap();
+    ModifyAuth {
+        mac: modify_mac(
+            &mk,
+            account,
+            PromisOp::Mint,
+            amount,
+            nonce,
+            B256::from(U256::from(1u64)),
+        ),
+        op_nonce: nonce,
+    }
+}
 
 fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(1);
@@ -217,7 +247,7 @@ fn settle_wallet_reverts_without_deployed_vault() {
         // the stablecoin asset. HashMapStorageProvider doesn't resolve
         // sub-call targets, so the staticcall fails — proving the integration
         // path is wired. Real vault interaction is covered by integration
-        // tests once a deployed VaultProvider becomes available.
+        // tests once a deployed VaultRouter becomes available.
         let res = runtime::settle_gem(storage, ALICE, gem_id);
         assert!(res.is_err());
     });
@@ -263,6 +293,7 @@ fn settle_rejects_non_qualified_state() {
 
 #[test]
 fn mine_gem_promis_full_genesis_flow() {
+    outbe_promis::enclave_client::test_enclave::install();
     let rate = U256::from(2u64) * one_e18();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * one_e18();
@@ -275,16 +306,22 @@ fn mine_gem_promis_full_genesis_flow() {
 
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
-        let minted = runtime::mine_gem_promis(storage, ALICE, gem_id, nonce).unwrap();
+        let minted =
+            runtime::mine_gem_promis(storage, ALICE, gem_id, nonce, promis_auth(ALICE, load, 0))
+                .unwrap();
         assert_eq!(minted, load);
 
         let gem = GemContract::new(storage.clone());
         assert!(gem.get_gem(gem_id).unwrap().is_none());
         assert_eq!(gem.total_supply().unwrap(), 0);
 
-        let promis = outbe_promis::Promis::new(storage.clone());
-        assert_eq!(promis.balance_of(ALICE).unwrap(), load);
+        // Promis is confidential: decrypt the ciphertext balance with the view key.
+        let sk = outbe_promis::enclave_client::test_enclave::state_key();
+        let vk = derive_view_key(&sk, ALICE).unwrap();
+        let blob = outbe_promis::api::balance_ct(storage.clone(), ALICE).unwrap();
+        assert_eq!(decrypt_balance(&vk, ALICE, &blob).unwrap(), load);
     });
+    outbe_promis::enclave_client::test_enclave::uninstall();
 }
 
 // TODO(reserve-config): the paid `settle_gem` path (Reserve vault deposit)
@@ -307,7 +344,7 @@ fn mine_gem_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled — mine should reject before PoW.
-        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, U256::ZERO);
+        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, U256::ZERO, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
@@ -326,7 +363,7 @@ fn mine_gem_promis_rejects_non_owner() {
         )
         .unwrap();
         // mine_gem_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_gem_promis(storage, BOB, gem_id, U256::ZERO);
+        let res = runtime::mine_gem_promis(storage, BOB, gem_id, U256::ZERO, no_auth());
         assert!(err_msg(res).contains("not gem owner"));
     });
 }
@@ -364,6 +401,7 @@ fn seed_and_setup(
         storage,
         outbe_intex::CreateSeriesParams {
             series_id: SOURCE_INTEX_ID,
+            worldwide_day: 0,
             issued_intex_count: count,
             promis_load_minor: promis_load,
             entry_price_minor: entry,

@@ -6,6 +6,7 @@ import {Scope} from "the-compact/src/types/Scope.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {Router} from "../src/router/Router.sol";
+import {BaseRouter} from "../src/router/BaseRouter.sol";
 import {Auction} from "../src/Auction.sol";
 import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
@@ -210,6 +211,27 @@ contract RouterE2E is BaseTest {
         assertEq(originRouter.orderStatus(orderId), originRouter.SETTLED(), "order settled on origin");
     }
 
+    /// @dev The claim takes custody of the winner's collateral, so it needs a live operator grant.
+    ///      A winner without one must forfeit the auction rather than leave the order unclaimable.
+    function test_claimOrder_revokedOperator_restartsAuction() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+
+        _doFullAuction(vegeta, orderId, amount, order.orderData);
+
+        vm.prank(vegeta);
+        destCompact.setOperator(address(destEscrow), false);
+
+        destinationRouter.claimOrder(orderId, order.orderData);
+
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.UNKNOWN(), "order not claimed");
+        assertEq(auction.getQuoteCount(orderId), 0, "auction restarted with quotes cleared");
+
+        // The order is still claimable by a solver whose collateral can be taken into custody.
+        _doFullAuction(kakaroto, orderId, amount, order.orderData);
+        destinationRouter.claimOrder(orderId, order.orderData);
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "claimed by other");
+    }
+
     function test_open_refund() public {
         (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
 
@@ -234,6 +256,44 @@ contract RouterE2E is BaseTest {
             "origin lock released"
         );
         assertEq(afterRefund[balanceId[kakaroto]], beforeRefund[balanceId[kakaroto]] + amount, "user refunded");
+    }
+
+    /// @dev An oversized inbound batch must be rejected up front so it cannot make delivery
+    ///      un-executable (gas) rather than being processed.
+    function test_receiveMessage_RevertWhen_BatchTooLarge() public {
+        uint256 n = destinationRouter.MAX_BATCH() + 1;
+        bytes32[] memory orderIds = new bytes32[](n);
+        bytes[] memory fillerData = new bytes[](n);
+        bytes memory payload = RouterMessage.encodeSettle(orderIds, fillerData);
+        bytes memory sender = _interop(origin, address(originRouter));
+
+        vm.prank(address(destBridge));
+        vm.expectRevert(abi.encodeWithSelector(Router.BatchTooLarge.selector, n));
+        destinationRouter.receiveMessage(bytes32(0), sender, payload);
+    }
+
+    /// @dev A same-chain settle forwards no bridge fee, so attached native value would be trapped;
+    ///      the dispatch must reject it instead.
+    function test_settle_RevertWhen_SameChainCarriesValue() public {
+        // originDomain == destination => the same-chain dispatch branch.
+        OrderData memory orderData = _prepareOrderData();
+        orderData.originDomain = destination;
+        orderData.destinationDomain = destination;
+        bytes memory originData = OrderEncoder.encode(orderData);
+        bytes32 orderId = OrderEncoder.id(orderData);
+
+        _doFullAuction(vegeta, orderId, amount, originData);
+        destinationRouter.claimOrder(orderId, originData);
+
+        vm.startPrank(vegeta);
+        outputToken.approve(address(destinationRouter), amount);
+        destinationRouter.fill(orderId, originData, abi.encode(TypeCasts.addressToBytes32(vegeta)));
+
+        bytes32[] memory orderIds = new bytes32[](1);
+        orderIds[0] = orderId;
+        vm.expectRevert(BaseRouter.UnexpectedNativeValue.selector);
+        destinationRouter.settle{value: 1}(orderIds);
+        vm.stopPrank();
     }
 
     function test_RevertWhen_ReceiveFromNonBridge() public {

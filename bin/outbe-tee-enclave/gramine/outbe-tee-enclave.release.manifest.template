@@ -1,0 +1,36 @@
+# Production-shaped Outbe SGX manifest. It is rendered and signed during the
+# protected release job; runtime hosts never modify or re-sign it.
+
+libos.entrypoint = "{{ install_root }}/bin/outbe-tee-enclave"
+
+loader.log_level = "error"
+loader.insecure__use_cmdline_argv = true
+loader.env.LD_LIBRARY_PATH = "/lib"
+
+sys.enable_sigterm_injection = true
+
+fs.mounts = [
+  { uri = "file:{{ install_root }}/gramine/runtime/glibc", path = "/lib" },
+  { uri = "file:{{ install_root }}/bin/outbe-tee-enclave", path = "{{ install_root }}/bin/outbe-tee-enclave" },
+  { uri = "file:/var/lib/outbe/tee/", path = "/var/lib/outbe/tee/" },
+]
+
+sgx.debug = false
+sgx.edmm_enable = false
+sgx.max_threads = {{ max_threads }}
+
+# DCAP remains an explicit deferred testnet gate. This still provides genuine
+# SGX execution, local measurements and EGETKEY sealing, but not remote proof.
+sgx.remote_attestation = "none"
+sgx.isvprodid = {{ isv_prod_id }}
+sgx.isvsvn = {{ isv_svn }}
+
+sgx.trusted_files = [
+  "file:{{ install_root }}/gramine/libpal.so",
+  "file:{{ install_root }}/bin/outbe-tee-enclave",
+  "file:{{ install_root }}/gramine/runtime/glibc/",
+]
+
+sgx.allowed_files = [
+  "file:/var/lib/outbe/tee/",
+]

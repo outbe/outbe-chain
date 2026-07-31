@@ -1,11 +1,11 @@
 //! Type aliases for the Commonware marshal actor integration.
 //!
-//! Follows the same pattern as Tempo's `alias.rs`, parameterized
-//! for outbe-chain's block type and scheme provider.
+//! These aliases parameterize Commonware marshal for outbe-chain's block type
+//! and scheme provider.
 //!
 //! The certificate scheme is `HybridScheme<MinSig>` — matching the Simplex
 //! engine. This allows marshal to be wired as a Simplex reporter and receive
-//! finalization events directly, enabling the tempo-style recovery path.
+//! finalization events directly, enabling finalization-driven recovery.
 
 use commonware_consensus::marshal;
 use commonware_consensus::simplex::types::Finalization as SimplexFinalization;

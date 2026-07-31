@@ -33,13 +33,13 @@ interface ISolverEscrow {
     /// @notice Returns true if solver has sufficient available (unlocked) collateral
     function hasMinCollateral(address solver, address token, uint256 outputAmount) external view returns (bool);
 
-    /// @notice Lock solver collateral for a claimed order
+    /// @notice Lock solver collateral for a claimed order, moving it into escrow custody
     function lockCollateral(bytes32 orderId, address solver, address token, uint256 amount) external;
 
-    /// @notice Unlock solver collateral after successful fill
+    /// @notice Unlock solver collateral after successful fill, returning custody to the solver
     function unlockCollateral(bytes32 orderId) external;
 
-    /// @notice Slash locked collateral (funds go to this escrow contract)
+    /// @notice Slash locked collateral into the escrow's slashed pool
     function slashCollateral(bytes32 orderId) external;
 
     /// @notice Collateral basis points (e.g. 1000 = 10%)

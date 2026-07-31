@@ -3,98 +3,6 @@
   "abi": [
     {
       "type": "function",
-      "name": "quoteSendBidsBatch",
-      "inputs": [
-        {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct ITargetRouter.BidsBatchParams",
-          "components": [
-            {
-              "name": "seriesId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "bidderAddresses",
-              "type": "address[]",
-              "internalType": "address[]"
-            },
-            {
-              "name": "intexQuantities",
-              "type": "uint16[]",
-              "internalType": "uint16[]"
-            },
-            {
-              "name": "intexBidRates",
-              "type": "uint32[]",
-              "internalType": "uint32[]"
-            },
-            {
-              "name": "timestamps",
-              "type": "uint32[]",
-              "internalType": "uint32[]"
-            }
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "fee",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "sendBidsBatch",
-      "inputs": [
-        {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct ITargetRouter.BidsBatchParams",
-          "components": [
-            {
-              "name": "seriesId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "bidderAddresses",
-              "type": "address[]",
-              "internalType": "address[]"
-            },
-            {
-              "name": "intexQuantities",
-              "type": "uint16[]",
-              "internalType": "uint16[]"
-            },
-            {
-              "name": "intexBidRates",
-              "type": "uint32[]",
-              "internalType": "uint32[]"
-            },
-            {
-              "name": "timestamps",
-              "type": "uint32[]",
-              "internalType": "uint32[]"
-            }
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "sendId",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "payable"
-    },
-    {
-      "type": "function",
       "name": "setRemoteMessenger",
       "inputs": [
         {
@@ -168,7 +76,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -199,7 +107,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -224,7 +132,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -240,6 +148,37 @@
     },
     {
       "type": "event",
+      "name": "BidsDoneSent",
+      "inputs": [
+        {
+          "name": "sendId",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "totalBatches",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalBids",
+          "type": "uint32",
+          "indexed": false,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "BidsRelayDeferred",
       "inputs": [
         {
@@ -249,7 +188,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -274,7 +213,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -466,6 +405,94 @@
     },
     {
       "type": "event",
+      "name": "ProceedsRouteDeferred",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProceedsRouteFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProceedsRouteSet",
+      "inputs": [
+        {
+          "name": "tokenBridge",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        },
+        {
+          "name": "originRouter",
+          "type": "address",
+          "indexed": false,
+          "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "ProceedsRouted",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "amount",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "RefundInstructionsReceived",
       "inputs": [
         {
@@ -475,7 +502,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "seriesId",
+          "name": "worldwideDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -499,16 +526,6 @@
           "internalType": "uint256"
         }
       ]
-    },
-    {
-      "type": "error",
-      "name": "ArrayLengthMismatch",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "EmptyArray",
-      "inputs": []
     },
     {
       "type": "error",
@@ -566,8 +583,35 @@
     },
     {
       "type": "error",
+      "name": "NoSuchPendingProceedsRoute",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NotSelf",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "TooManyBidsBatches",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "totalBatches",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
     },
     {
       "type": "error",

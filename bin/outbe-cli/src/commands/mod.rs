@@ -4,10 +4,12 @@ pub mod monitor;
 pub mod oracle;
 pub mod rewards;
 pub mod slash;
+pub mod stablecoin;
 pub mod staking;
 pub mod tee;
 pub mod tribute;
 pub mod validator;
+pub mod vote;
 pub mod zerofee;
 
 use crate::tx::TxSigner;

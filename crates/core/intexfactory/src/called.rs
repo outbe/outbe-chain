@@ -1,24 +1,26 @@
 //! Daily Called scan: force-calls a Qualified series once its COEN VWAP exceeded
 //! the call trigger on `threshold_days` of the last `window_days`. Candidates
-//! come from the call-trigger bin index; counts are recomputed from oracle VWAP
-//! history each run. Driven by the Cycle daily trigger.
+//! come from the call-trigger bin index; counts are recomputed each run from the
+//! Oracle's finalized per-UTC-day VWAPs, which the Oracle begin-block hook
+//! closes before the CycleTick that drives this scan. Driven by the Cycle daily
+//! trigger.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_common::WorldwideDay;
 use outbe_oracle::contract::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
     math::{constants::MAX_BIN_ID, tree_math},
     storage::StorageHandle,
+    time::{previous_date_key, timestamp_to_date_key},
 };
 
 use outbe_intex::IntexState;
 
-use crate::constants::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
 use crate::schema::IntexFactoryContract;
-use crate::sol_ext::{IIntexNFT1155, IOriginRouter};
+use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called.
@@ -35,15 +37,25 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    // Most recent completed day (finalized VWAP).
-    let today = WorldwideDay::from_timestamp(ctx.block.timestamp).previous_date_key();
-    let vwap_today = match oracle.get_worldwide_day_vwap_for_pair_id(today, pair_id)? {
+    // Most recent fully-closed UTC day (finalized VWAP).
+    let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
+
+    // The Oracle begin-block hook finalizes that day earlier in this same
+    // block; a lagging watermark means the ordering broke — skip loudly
+    // instead of misreading an unfinalized day as empty.
+    let finalized = oracle.utc_day_vwap_last_finalized.read()?;
+    if finalized < last_closed_day {
+        tracing::warn!(target: "outbe::intexfactory", last_closed_day, finalized, "call scan: utc-day VWAP not finalized yet, skipping run");
+        return Ok(0);
+    }
+
+    let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair_id(last_closed_day, pair_id)? {
         Some(v) if !v.is_zero() => v,
         _ => return Ok(0),
     };
 
     // Deterministic out-of-range VWAP: skip this daily scan instead of halting the block.
-    let v_bin = match IntexFactoryContract::price_to_bin(vwap_today) {
+    let v_bin = match IntexFactoryContract::price_to_bin(last_closed_vwap) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(target: "outbe::intexfactory", error = ?e, "call scan: vwap out of range, skipping run");
@@ -81,7 +93,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                     &oracle,
                     series_id,
                     pair_id,
-                    today,
+                    last_closed_day,
                     ctx.block.timestamp,
                 )
             });
@@ -116,7 +128,7 @@ pub(crate) fn try_call(
     oracle: &OracleContract,
     series_id: u32,
     pair_id: u32,
-    today: WorldwideDay,
+    last_closed_day: u32,
     now_ts: u64,
 ) -> Result<bool> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
@@ -134,19 +146,19 @@ pub(crate) fn try_call(
     }
 
     // Breach-days (VWAP > trigger) within the window, not before issuance.
-    let issued_wwd = WorldwideDay::from_timestamp(u64::from(series.issued_at));
+    let issued_day = timestamp_to_date_key(u64::from(series.issued_at));
     let mut breaches: u32 = 0;
-    let mut day = today;
+    let mut day = last_closed_day;
     for _ in 0..window {
-        if day < issued_wwd {
+        if day < issued_day {
             break;
         }
-        if let Some(v) = oracle.get_worldwide_day_vwap_for_pair_id(day, pair_id)? {
+        if let Some(v) = oracle.get_utc_day_vwap_for_pair_id(day, pair_id)? {
             if v > trigger {
                 breaches += 1;
             }
         }
-        day = day.previous_date_key();
+        day = previous_date_key(day);
     }
     if breaches < threshold {
         return Ok(false);
@@ -156,7 +168,6 @@ pub(crate) fn try_call(
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    mark_nft_called(storage, series_id)?;
     factory.remove_qualified(series_id, trigger)?;
 
     // Notify the target chain of the Called transition via ERC-7786; best-effort.
@@ -180,19 +191,6 @@ fn notify_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkCalledCall {
-            seriesId: series_id,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    Ok(())
-}
-
-fn mark_nft_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
-    storage.call(
-        INTEX_NFT1155_ADDRESS,
-        U256::ZERO,
-        IIntexNFT1155::markCalledCall {
             seriesId: series_id,
         }
         .abi_encode()

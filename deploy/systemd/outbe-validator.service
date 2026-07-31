@@ -11,6 +11,8 @@ EnvironmentFile=/etc/outbe-chain/outbe-validator.env
 ExecStart=/usr/local/bin/outbe-chain node \
     --datadir=${DATADIR} \
     --chain=${CHAIN_FILE} \
+    --engine.persistence-threshold=0 \
+    --engine.memory-block-buffer-target=0 \
     --http \
     --http.addr=${HTTP_ADDR} \
     --http.port=${HTTP_PORT} \

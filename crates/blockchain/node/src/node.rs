@@ -7,10 +7,13 @@ use crate::{
     consensus::OutbeConsensusBuilder, engine::OutbeEngineValidatorBuilder,
     payload_builder::OutbePayloadBuilder,
 };
+use outbe_compressed_entities::CompressedTreeService;
 use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
+use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::{
-    consensus::ConsensusExecutionBridge, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
-    OutbeTxEnvelope,
+    consensus::ConsensusExecutionBridge, system_tx::OcompLifecycleActivation, OutbeHeader,
+    OutbePayloadTypes, OutbePrimitives, OutbeTxEnvelope,
 };
 use outbe_txpool::OutbePoolBuilder;
 use reth_chainspec::{ChainSpec, EthChainSpec};
@@ -31,12 +34,18 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 /// Uses standard Ethereum primitives, chain spec, storage, and engine types.
 /// Customizes only the executor (stateful precompiles) and consensus
 /// (increased extra_data size for participation bitmap).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct OutbeNode {
     /// Optional bridge to pass consensus data to the block executor.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer for proposer-side system tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Mandatory typed read-only body capabilities for execution.
+    pub runtime_body_readers: RuntimeBodyReaders,
+    /// Explicit CE tree owner shared with execution and finalized persistence.
+    pub compressed_tree_service: std::sync::Arc<CompressedTreeService>,
+    /// Immutable consensus binding loaded from the selected chain manifest.
+    pub ocomp_fork_install: Option<std::sync::Arc<OcompForkInstallV1>>,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -47,27 +56,54 @@ impl std::fmt::Debug for OutbeNode {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_body_readers", &"configured")
+            .field("compressed_tree_service", &"configured")
+            .field(
+                "ocomp_fork_activation_height",
+                &self
+                    .ocomp_fork_install
+                    .as_ref()
+                    .map(|install| install.activation_height),
+            )
             .finish()
     }
 }
 
 impl OutbeNode {
     /// Creates a new node with a consensus bridge.
-    pub fn with_bridge(bridge: ConsensusExecutionBridge) -> Self {
+    pub fn with_bridge(
+        bridge: ConsensusExecutionBridge,
+        runtime_body_readers: RuntimeBodyReaders,
+        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
+    ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_body_readers,
+            compressed_tree_service,
+            ocomp_fork_install: None,
         }
     }
 
     pub fn with_bridge_and_evm_signer(
         bridge: ConsensusExecutionBridge,
         evm_signer: SharedOutbeEvmSigner,
+        runtime_body_readers: RuntimeBodyReaders,
+        compressed_tree_service: std::sync::Arc<CompressedTreeService>,
     ) -> Self {
         Self {
             bridge: Some(bridge),
             evm_signer: Some(evm_signer),
+            runtime_body_readers,
+            compressed_tree_service,
+            ocomp_fork_install: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_ocomp_fork_install(mut self, install: std::sync::Arc<OcompForkInstallV1>) -> Self {
+        self.ocomp_fork_install = Some(install);
+        self
     }
 }
 
@@ -100,6 +136,12 @@ where
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
+        let ocomp_activation = self
+            .ocomp_fork_install
+            .as_ref()
+            .map_or(OcompLifecycleActivation::Disabled, |install| {
+                OcompLifecycleActivation::at_block(install.activation_height)
+            });
         let executor = match &self.bridge {
             Some(bridge) => OutbeExecutorBuilder::with_bridge(bridge.clone()),
             None => OutbeExecutorBuilder::default(),
@@ -108,14 +150,27 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
+        let executor = executor
+            .with_runtime_body_readers(self.runtime_body_readers.clone())
+            .with_compressed_tree_service(self.compressed_tree_service.clone())
+            .with_ocomp_lifecycle_activation(ocomp_activation)
+            .with_ocomp_finality_authority(std::sync::Arc::new(
+                crate::ocomp::finality::ProductionOcompFinalizedIntentAuthority,
+            ));
+        let executor = match &self.ocomp_fork_install {
+            Some(install) => executor.with_ocomp_fork_install(install.clone()),
+            None => executor,
+        };
 
         ComponentsBuilder::default()
             .node_types::<N>()
-            .pool(OutbePoolBuilder)
+            .pool(OutbePoolBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation))
             .executor(executor)
             .payload(BasicPayloadServiceBuilder::new(OutbePayloadBuilderBuilder))
             .network(EthereumNetworkBuilder::default())
-            .consensus(OutbeConsensusBuilder::default())
+            .consensus(
+                OutbeConsensusBuilder::default().with_ocomp_lifecycle_activation(ocomp_activation),
+            )
     }
 
     fn add_ons(&self) -> Self::AddOns {

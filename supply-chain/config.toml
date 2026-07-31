@@ -2893,6 +2893,10 @@ criteria = "safe-to-deploy"
 version = "0.3.8"
 criteria = "safe-to-deploy"
 
+[[exemptions.similar]]
+version = "2.7.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.simple_asn1]]
 version = "0.6.4"
 criteria = "safe-to-deploy"

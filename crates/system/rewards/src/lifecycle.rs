@@ -22,6 +22,9 @@ use crate::runtime;
 pub struct RewardsLifecycle;
 
 impl BlockLifecycle for RewardsLifecycle {
+    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
+    type EndBlockResult = ();
+
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         // Lock in `genesis_utc_day` from block 0's timestamp on the very
         // first invocation of this lifecycle on a fresh chain.
@@ -29,6 +32,10 @@ impl BlockLifecycle for RewardsLifecycle {
         // non-zero. This is the single source of truth for the
         // closed-form daily-emission curve in `crate::emission`.
         let _genesis = runtime::ensure_genesis_anchor(ctx)?;
+        Ok(())
+    }
+
+    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
         Ok(())
     }
 }

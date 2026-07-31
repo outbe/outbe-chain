@@ -39,7 +39,10 @@ use outbe_primitives::reshare_artifact::{
     encode_consensus_header_artifact, ConsensusHeaderArtifact,
 };
 use outbe_primitives::signer::OutbeEvmSigner;
-use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2};
+use outbe_primitives::system_tx::{
+    build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas,
+    SystemTxInputV2, SystemTxVisibleGasPlan,
+};
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block, TransactionSigned};
 
@@ -363,6 +366,9 @@ pub(crate) fn block_with_system_inputs(
     block.header.parent_hash = parent_hash;
     block.header.extra_data = extra_data;
     for (ordinal, input) in inputs.into_iter().enumerate() {
+        block.header.gas_limit +=
+            system_tx_intrinsic_gas(input.encode().expect("input encodes").as_ref())
+                .expect("system tx intrinsic gas computes");
         block.body.transactions.push(sign_system_input(
             signer,
             input,
@@ -375,11 +381,58 @@ pub(crate) fn block_with_system_inputs(
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
 }
 
+pub(crate) fn block_with_gas_planned_system_inputs(
+    signer: &OutbeEvmSigner,
+    block_number: u64,
+    parent_hash: B256,
+    extra_data: Bytes,
+    inputs: Vec<SystemTxInputV2>,
+    chain_id: u64,
+    block_gas_limit: u64,
+) -> ConsensusBlock {
+    let encoded_inputs = inputs
+        .into_iter()
+        .map(|input| {
+            let kind = input.kind();
+            let calldata = input.encode().expect("input encodes");
+            (kind, calldata)
+        })
+        .collect::<Vec<_>>();
+    let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
+        .expect("visible gas plan builds");
+
+    let mut block = Block::default();
+    block.header.number = block_number;
+    block.header.parent_hash = parent_hash;
+    block.header.extra_data = extra_data;
+    block.header.gas_limit = block_gas_limit;
+    for (ordinal, (kind, calldata)) in encoded_inputs.into_iter().enumerate() {
+        let unsigned = build_unsigned_system_tx_with_gas_limit(
+            kind,
+            ordinal.try_into().expect("test ordinal fits"),
+            block_number,
+            chain_id,
+            calldata,
+            gas_plan
+                .gas_limit(ordinal)
+                .expect("gas plan covers every system tx"),
+        )
+        .expect("system tx builds");
+        block
+            .body
+            .transactions
+            .push(signer.sign_unsigned(unsigned).expect("system tx signs"));
+    }
+    let block = block.map_header(OutbeHeader::new);
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
 pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
     // block 1 mandatorily carries a BoundaryOutcome under V2,
     // so the minimum-shape "block with system txs" test fixture moved to
     // block 2 where the canonical layout is
-    // `[CertifiedParentAccounting, CycleTick, OracleSlashWindow]`.
+    // `[CertifiedParentAccounting, LateFinalizeCredits, CycleTick,
+    // OracleSlashWindow, HookEvents]`.
     let parent_hash = B256::ZERO;
     block_with_system_inputs(
         signer,
@@ -395,6 +448,7 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
             },
             SystemTxInputV2::CycleTick,
             SystemTxInputV2::OracleSlashWindow,
+            SystemTxInputV2::HookEvents,
         ],
         outbe_primitives::chain::CHAIN_ID,
     )

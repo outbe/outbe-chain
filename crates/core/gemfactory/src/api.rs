@@ -49,6 +49,7 @@ pub fn mine_gem_promis(
     caller: Address,
     gem_id: U256,
     nonce: U256,
+    auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
-    runtime::mine_gem_promis(storage, caller, gem_id, nonce)
+    runtime::mine_gem_promis(storage, caller, gem_id, nonce, auth)
 }

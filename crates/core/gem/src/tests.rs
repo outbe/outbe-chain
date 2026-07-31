@@ -300,6 +300,26 @@ fn precompile_balance_and_owner_views() {
     });
 }
 
+/// Pins the flat `GemContract` storage layout that `scripts/seed_genesis.py`
+/// (`seed_gems`) depends on to genesis-seed a Settled gem. If the schema field
+/// order or `GemData` field count changes, these slots shift and the Python
+/// seeder must be updated in lockstep — this test is the tripwire.
+#[test]
+fn gem_storage_layout_matches_genesis_seeder() {
+    use outbe_primitives::storage::dsl::StorageRecord;
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
+        assert_eq!(gem.total_supply.slot(), U256::from(0u64));
+        assert_eq!(gem.gem_items.base_slot(), U256::from(1u64));
+        // GemData record spans 12 slots (owner@+0 .. called_at@+11), so the
+        // schema fields after gem_items start at 1 + 12 = 13.
+        assert_eq!(<crate::schema::GemData as StorageRecord>::SLOTS, 12);
+        assert_eq!(gem.owner_gem_counts.base_slot(), U256::from(13u64));
+        assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(14u64));
+        // all_gem_ids (List) occupies slot 15.
+        assert_eq!(gem.gem_index.base_slot(), U256::from(16u64));
+    });
+}
 /// Build a 30-day window (newest-first) with `breach_days` entries above the
 /// gem's call threshold, the rest at zero.
 fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(WorldwideDay, Option<U256>)> {

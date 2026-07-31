@@ -6,12 +6,6 @@ pub const GRATIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// Gratis factory precompile address.
 pub const GRATIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002003");
 
-/// Gratis shielded-pool precompile address (Tornado-style commitment pool).
-///
-/// Owns the per-denomination Merkle tree of commitments + per-denomination
-/// nullifier set + recent-roots window backing shielded Gratis pledges.
-pub const GRATIS_POOL_ADDRESS: Address = address!("0x0000000000000000000000000000000000002004");
-
 /// Promis token precompile address.
 pub const PROMIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001337");
 
@@ -191,6 +185,61 @@ pub const ZEROFEE_ADDRESS: Address = address!("0x0000000000000000000000000000000
 /// handler through `StorageHandle::contract`, not via the public ABI.
 pub const TEE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0A");
 
+/// On-chain upgrade governance precompile address.
+///
+/// Hosts proposal/vote state and the active protocol version. Callable
+/// dispatch is registered at `UPDATE_ADDRESS`; lifecycle activation is wired later.
+pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
+
+/// Generic on-chain vote precompile address.
+///
+/// Hosts reusable proposal/voting state. Callable dispatch is registered
+/// at `VOTE_ADDRESS`.
+pub const VOTE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0C");
+
+/// System-owned compressed-entity state account.
+///
+/// This address has no public mutating precompile. Trusted Tribute/Nod runtime
+/// paths use it through the internal compressed-entities module.
+pub const COMPRESSED_ENTITIES_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE0D");
+
+/// L2 network registry precompile (storage-backed).
+///
+/// Records registered L2 networks keyed by `chain_id`: the L1 operator address
+/// that submits on behalf of the network, the network's BLS MinPk public key
+/// (48 bytes, same variant as validator consensus keys), and a per-network
+/// `zk_enabled` flag. When the flag is set, `TributeFactory.offerTribute`
+/// requires a valid BLS signature over `zkMerkleRoot` from the caller's
+/// registered network key. All mutating methods are permissionless by design.
+pub const L2_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0E");
+
+/// Stablecoin Factory precompile address.
+///
+/// The public EVM surface is read-only. Creation is available only through the
+/// compile-time Vote target adapter.
+pub const STABLECOIN_FACTORY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE0F");
+
+/// Shared stablecoin Policy Registry precompile address.
+pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE10");
+
+/// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
+pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
+
+/// Exact marker bytecode installed at stablecoin fixed and dynamic precompile accounts.
+///
+/// The nonempty legacy byte preserves state under EIP-161 and supports introspection;
+/// native Rust dispatch, not this byte, implements the account.
+pub const STABLECOIN_MARKER_CODE: [u8; 1] = [0xef];
+
+/// Returns whether an address belongs to the reserved dynamic stablecoin class.
+pub const fn is_stablecoin_address(address: Address) -> bool {
+    address.0 .0[0] == STABLECOIN_ADDRESS_PREFIX[0]
+        && address.0 .0[1] == STABLECOIN_ADDRESS_PREFIX[1]
+}
+
 /// System address used for system-only calls (block hooks).
 pub const SYSTEM_ADDRESS: Address = Address::ZERO;
 
@@ -256,6 +305,12 @@ pub const DEBUG_SUBCALL_PRECOMPILE_ADDRESS: Address =
 /// (bid ingestion, reveal, clearing, issuance handoff to IntexFactory).
 pub const DESIS_ADDRESS: Address = address!("0x0000000000000000000000000000000000001016");
 
-/// VaultProvider precompile address. Reserve liquidity router: registers
+/// VaultRouter precompile address. Reserve liquidity router: registers
 /// ERC-4626 vaults per asset.
-pub const VAULT_PROVIDER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
+pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
+
+/// Governance precompile address. On-chain registry of the normative texts
+/// (meta-canon, canon) and improvement proposals (OIP, GIP): read/update the
+/// texts, submit/read/update proposals, drive the proposal status model, and
+/// diff a proposal against the canon/meta-canon.
+pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");

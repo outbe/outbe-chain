@@ -19,6 +19,9 @@
 use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, B256, U256};
 use core::fmt::Debug;
+use outbe_compressed_entities::ExecutionScope;
+use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 use revm::{
     context::Evm,
@@ -34,8 +37,9 @@ use revm::{
     state::Bytecode,
     Database,
 };
+use std::sync::Arc;
 
-/// Run a single sub-call to completion and return its result.
+/// Runs a sub-call with the executor-owned compressed-entity lifecycle scope.
 ///
 /// `outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
@@ -44,6 +48,39 @@ pub fn run<DB>(
     self_address: Address,
     outer_is_static: bool,
     spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    input: SubCallInput,
+) -> std::result::Result<SubCallOutput, SubCallError>
+where
+    DB: Database + Debug,
+    DB::Error: Debug,
+{
+    run_with_ocomp_context(
+        ctx,
+        self_address,
+        outer_is_static,
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        None,
+        Arc::new(crate::precompiles::OcompActivationBlockMeter),
+        false,
+        input,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_with_ocomp_context<DB>(
+    ctx: &mut EthEvmContext<DB>,
+    self_address: Address,
+    outer_is_static: bool,
+    spec: SpecId,
+    runtime_body_readers: Option<RuntimeBodyReaders>,
+    execution_scope: Arc<ExecutionScope>,
+    ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    ocomp_activation_block_meter: Arc<crate::precompiles::OcompActivationBlockMeter>,
+    ocomp_lifecycle_active: bool,
     input: SubCallInput,
 ) -> std::result::Result<SubCallOutput, SubCallError>
 where
@@ -92,9 +129,17 @@ where
     // Construct fresh borrow-mode Evm wrapping &mut ctx.
     // CTX = &mut EthEvmContext<DB> impls ContextTr via #[auto_impl(&mut, Box)]
     // on the trait.
-    let instructions =
+    let mut instructions =
         EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(spec);
-    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(spec);
+    crate::create_guard::install(&mut instructions);
+    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
+        spec,
+        runtime_body_readers,
+        execution_scope,
+        ocomp_finality_authority,
+        ocomp_activation_block_meter,
+        ocomp_lifecycle_active,
+    );
     #[allow(clippy::type_complexity)]
     let mut evm: Evm<
         &mut EthEvmContext<DB>,

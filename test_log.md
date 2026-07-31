@@ -1,0 +1,171 @@
+# E2E expansion test log
+
+This log records the evidence gathered while turning `docs/flows` into executable
+end-to-end coverage. Commands are run from the repository root unless noted.
+
+## 2026-07-17 — baseline and documentation contract
+
+### Repository baseline
+
+- Committed pre-existing localnet/E2E work as `1b499db` (`test(e2e): consolidate localnet scenarios in Rust harness`).
+- Committed the ADR/PFS catalog as `f973076` (`docs(architecture): organize ADR and protocol flow catalogs`).
+- `git pull --rebase`: PASS — branch was already up to date; no conflicts.
+- Runtime-generated `data/` is intentionally untracked and excluded from commits.
+
+### PFS format decision
+
+- Reviewed the official Cucumber Gherkin reference and SEI quality-attribute
+  scenario format.
+- Adopted a combined `Acceptance contract`: Source, Trigger, Environment,
+  Canonical inputs, System under test, Expected response, Response measures and
+  Failure guarantee.
+- Added that contract to PFS-001 through PFS-006 and `docs/flows/template.md`.
+- Verification pending: Markdown/link/identifier checks after acceptance examples
+  and automation mappings are complete.
+
+### Initial automation inventory
+
+- Live-node harness already contains Tribute projection/absence, Update lifecycle,
+  validator lifecycle, restart, DKG failure, stale join and downtime scenarios.
+- In-process suite already contains `wwd_lysis_nod_gratis.rs`,
+  `governance_lifecycle.rs` and `update_flow_spec.rs`.
+- Next: map every PFS matrix row to assertions actually present in those tests,
+  then implement the highest-value uncovered vertical slice at the strongest
+  feasible level.
+
+### PFS-001 tracer bullet
+
+- Added stable live-node tags `@pfs-001-01`, `@pfs-001-02` and `@pfs-001-03`
+  to the already evidenced Tribute projection/proof scenarios.
+- Added `@pfs-001-05`: submit a second encrypted offer for the same owner/day,
+  require a reverted receipt, unchanged `totalSupply == 1`, and exactly one
+  unchanged primary/owner/day projection on every validator.
+- `cargo fmt --all -- --check`: initially RED — one rustfmt line wrap.
+- `cargo fmt --all`: PASS — applied canonical formatting.
+- `cargo test -p outbe-e2e-harness --no-run`: PASS — harness library and binary
+  test targets compile.
+- Live-node execution remains pending until the scenario-classification pass is
+  complete, so related scenarios can be run together once rather than rebuilding
+  the localnet repeatedly.
+
+### PFS-005/PFS-006 mapping and in-process edge case
+
+- Added stable live-node tags for the evidenced Update, validator join/stale
+  join/DKG/restart/downtime scenarios. Partial assertions remain marked partial in
+  the PFS matrix (for example, ZeroFee downtime proves liveness but not slashing).
+- Added in-process `duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome`.
+- Targeted duplicate-ballot test: PASS (1 passed).
+- First full `cargo test -p outbe-e2e`: RED — 14 passed, 1 failed.
+  `executor_runs_vote_before_update` omitted the mandatory compressed-entity
+  genesis schema/root and failed before exercising hook order.
+- Fixture correction: seed the protocol empty sealed root and schema slots before
+  invoking the production pre-execution hook chain.
+- Corrected `cargo test -p outbe-e2e`: PASS — 17 integration tests total
+  (governance 1, Update 15, WWD/Lysis/Nod/Gratis 1).
+
+### PFS-002/PFS-003/PFS-004 feasibility
+
+- PFS-002 has an in-process cross-module WWD→Lysis→Nod→Gratis happy path, but no
+  live finality/persistence/proof fixture.
+- PFS-003 has an in-process pledge→Credis→10 repayments→reclaim path. Its proof
+  verifier and Solidity vault/token subcalls are explicitly stubbed, so it is
+  partial rather than production-interface coverage.
+- PFS-004 has Rust runtime tests and Foundry bridge tests, but no fixture composes
+  the Rust modules with deployed ERC-1155, vault and paired bridge adapters. Its
+  full-flow scenarios remain documentation-only with per-row blockers.
+- `cargo test -p outbe-credisfactory tests::e2e`: PASS — 8/8, including the
+  ten-installment happy path and request/payment validation edges.
+
+### Live-node Tribute verification
+
+- Targeted `@pfs-001-05` on four validators with mock TEE and managed Mongo:
+  PASS — 1 scenario, 6/6 steps.
+- Full `tribute_projection.feature` on the same topology: PASS — 4/4 scenarios,
+  19/19 steps.
+- Harness removed both isolated run directories and managed containers after
+  completion.
+
+### Harness and documentation audit
+
+- Every PFS-001 through PFS-006 contains all eight required acceptance-contract
+  fields; no missing field was reported by the repository check.
+- Added the PFS traceability-tag table and partial-coverage warning to the harness
+  README; updated `docs/flows/index.md` with verification-level selection and the
+  actual PFS-002/003/004/005 status.
+- First sandboxed `cargo test -p outbe-e2e-harness`: environment-induced RED —
+  loopback bind is denied in the restricted network namespace, so the scanning
+  allocator exhausted the range. No source change was made for this result.
+- Repeated with loopback access: PASS — 21/21 library tests; binary/doc tests PASS.
+- Final matrix audit found and replaced every remaining bare scenario `GAP` with
+  either existing evidence or a precise missing seam/policy. The template retains
+  its intentional `GAP` placeholder for newly authored flows.
+
+### Repository-wide E2E inventory follow-up
+
+- Found the previously orphaned `e2e/zerofee-e2e.sh` live four-validator flow.
+  Added PFS-007, `mise run e2e-zerofee`, harness README discovery text and a
+  non-advisory nightly job. The script proves Pectra readiness, EIP-7702
+  delegation, eight sponsored transactions, quota soft-failure, paid fallback
+  and CLI authorization output; replay and restart persistence remain explicit
+  documentation-only scenarios.
+- Added PFS-008 for the existing follower composite and mapped its cold follower,
+  chained follower, validator recovery and warm-promotion assertions.
+- Added missing Credis validation and Update ordering/error scenarios to their
+  PFS matrices. Split unsupported-version activation from registered migration
+  handler failure instead of treating them as one case.
+- Corrected Tribute terminology: the executable case submits a second logical
+  offer for the same owner/day. Byte-identical encrypted-envelope replay is now
+  a separate uncovered PFS-001 requirement.
+- Added `docs/flows/e2e-inventory.md`, classifying live multi-node, in-process
+  cross-module and Foundry contract evidence. Contract or in-process tests are
+  no longer implicitly presented as live-network proof.
+- Expanded every PFS scenario row to record its own canonical inputs, trigger,
+  outputs/postconditions and verification boundary.
+- `cargo test -p outbe-e2e-harness --no-run`: PASS after the feature wording and
+  state-field rename.
+- `cargo fmt --all -- --check`, `git diff --check`, Gherkin matrix-column audit
+  and `bash -n e2e/zerofee-e2e.sh`: PASS.
+
+### ZeroFee Rust migration and real-SGX startup hardening
+
+- Superseded the interim shell integration above: migrated PFS-007-01 through
+  PFS-007-06 into `crates/testing/e2e-harness/features/zerofee.feature` and
+  deleted `e2e/zerofee-e2e.sh` plus its separate mise/CI entrypoints.
+- The Rust World now signs the EIP-7702 authorization and transactions natively
+  with Alloy, then asserts the marker/schema/views, exact delegation designator,
+  eight successful zero-debit sponsorships, mined soft failure 110, paid
+  fallback, counter/event invariants and product CLI authorization JSON.
+- Initial live runs identified an admission distinction: a 100-wei fee cap was
+  accepted by RPC but remained parked relative to base fee. Retaining zero
+  priority fee while using a 1-gwei fee cap preserves sponsored execution and
+  produces timely inclusion.
+- Focused live run on four tee-less validators: PASS — 1 scenario, 12/12 steps;
+  the harness removed its isolated network and MongoDB afterward.
+- The SGX nightly job previously called the mock-only `mise run e2e`, despite
+  running on an SGX-labelled host. Added `mise run e2e-sgx`, which builds the
+  real enclave, selects `--tee real`, and is now the nightly job's entrypoint.
+- Reduced `sgx.max_threads` from 64 to 16. Four validators now reserve at most
+  64 rather than 256 SGX thread slots; the server's normal concurrent connection
+  count remains comfortably below the per-enclave limit.
+- Added `OUTBE_TEE_IO_TIMEOUT_SECS`; the real-SGX E2E lane uses 120 seconds to
+  tolerate EPC paging while all other environments retain the 30-second default.
+- Targeted timeout parsing and SGX manifest resource-budget tests: PASS.
+- `cargo test -p outbe-e2e-harness --no-run`, `cargo fmt --all -- --check` and
+  `git diff --check`: PASS.
+- Hardware SGX is available on this host. `mise run sgx-smoke` executes under
+  `gramine-sgx` and derives both MRSIGNER and MRENCLAVE EGETKEY sealing keys.
+  The DCAP probe correctly reports AESM error 12 because this machine's PCK/PCCS
+  is not provisioned; quote provisioning is independent of local SGX execution.
+- Four consecutive focused `mise run e2e-sgx` ZeroFee runs passed on four real
+  SGX validators: 1 scenario and 12/12 steps each. Across 16 enclave starts no
+  DKG timeout or `EAGAIN` occurred, and every run cleaned up its network.
+- The real-SGX stale-join run started the four-validator committee and a fifth
+  hardware enclave successfully, then stalled on a separate consensus invariant:
+  the joiner received a finalized certificate with unverifiable VRF material
+  version 0. This is not an SGX resource/startup failure and needs its own fix.
+- Reclassified Linux `EAGAIN` correctly at the transport boundary: with
+  `SO_RCVTIMEO`, an enclave response exceeding the configured timeout is exposed
+  as `WouldBlock`/OS error 11. The client now reports the exact quote, Noise or
+  encrypted request/response phase and timeout duration instead of the ambiguous
+  `io error: Resource temporarily unavailable` message.
+- TEE client phase/timeout tests: PASS — 9/9 focused client tests.

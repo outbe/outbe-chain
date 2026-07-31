@@ -6,6 +6,211 @@ use crate::schema::TributeFactoryContract;
 
 const CHAIN_ID: u64 = 1;
 
+mod l2_zk_gate {
+    use alloy_primitives::{Address, Bytes, U256};
+    use outbe_compressed_entities::{
+        EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
+        QueryRef, StoredBody,
+    };
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_primitives::error::PrecompileError;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+
+    use crate::runtime::OfferTributeInput;
+    use crate::schema::TributeFactoryContract;
+
+    /// The zk gate runs before any finalized-parent read, so an inert source
+    /// is enough for these tests.
+    struct NoParentBodies;
+
+    impl ParentBodySource for NoParentBodies {
+        fn get(
+            &self,
+            _entity: EntityRef,
+        ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
+            Ok(None)
+        }
+
+        fn list(
+            &self,
+            _query: QueryRef,
+            _request: IdPageRequest,
+        ) -> core::result::Result<IdPage, ParentBodySourceError> {
+            Ok(IdPage {
+                ids: Vec::new(),
+                next_after: None,
+            })
+        }
+    }
+
+    const L2_CHAIN_ID: u64 = 4242;
+
+    fn caller() -> Address {
+        Address::repeat_byte(0x77)
+    }
+
+    fn offer(zk_merkle_root: &[u8], signature: &[u8]) -> OfferTributeInput {
+        OfferTributeInput {
+            caller: caller(),
+            cipher_text: Bytes::new(),
+            nonce: Bytes::new(),
+            ephemeral_pubkey: U256::ZERO,
+            reference_currency: 840,
+            exclude_from_intex_issuance: false,
+            zk_proof: Bytes::new(),
+            zk_merkle_root: Bytes::copy_from_slice(zk_merkle_root),
+            signature: Bytes::copy_from_slice(signature),
+        }
+    }
+
+    fn dummy_full_proof(root: [u8; 32]) -> Bytes {
+        let mut proof = Vec::with_capacity(outbe_zkproof::FULL_PROOF_COMBINED_LEN);
+        proof.extend_from_slice(&4u32.to_be_bytes());
+        proof.extend_from_slice(&[0x01; 32]);
+        proof.extend_from_slice(&[0x02; 32]);
+        proof.extend_from_slice(&[0x03; 32]);
+        proof.extend_from_slice(&root);
+        proof.resize(outbe_zkproof::FULL_PROOF_COMBINED_LEN, 0);
+        proof.into()
+    }
+
+    fn revert_message(err: PrecompileError) -> String {
+        match err {
+            PrecompileError::Revert(msg) => msg,
+            other => panic!("expected revert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn offer_rejects_invalid_l2_signature_when_zk_enabled() {
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self, sign_message},
+            variant::MinSig,
+        };
+
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
+        let root = [0x04; 32];
+
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut registry = L2RegistryContract::new(storage.clone());
+            registry
+                .register_network(L2_CHAIN_ID, caller(), &public)
+                .unwrap();
+            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
+
+            let scope = ExecutionScope::new();
+            let mut factory = TributeFactoryContract::new(storage.clone());
+
+            // Enabled + missing signature: the gate rejects before any
+            // oracle/metadosis/enclave work.
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, offer(&root, &[]))
+                .unwrap_err();
+            assert!(revert_message(err).contains("invalid BLS signature"));
+
+            // Enabled + valid signature: the gate passes and the offer
+            // proceeds to the next stage (no OFFERING day in this fixture).
+            let good_sig = sign_message::<MinSig>(
+                &private,
+                outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+                &root,
+            )
+            .encode()
+            .to_vec();
+            let mut valid_gate = offer(&root, &good_sig);
+            valid_gate.zk_proof = dummy_full_proof(root);
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, valid_gate)
+                .unwrap_err();
+            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+        });
+    }
+
+    #[test]
+    fn enabled_network_requires_proof_and_matching_public_root() {
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self, sign_message},
+            variant::MinSig,
+        };
+
+        let (private, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
+        let root = [0x04; 32];
+        let signature = sign_message::<MinSig>(
+            &private,
+            outbe_l2registry::api::ZK_MERKLE_ROOT_NAMESPACE,
+            &root,
+        )
+        .encode()
+        .to_vec();
+
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut registry = L2RegistryContract::new(storage.clone());
+            registry
+                .register_network(L2_CHAIN_ID, caller(), &public)
+                .unwrap();
+            registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap();
+            let scope = ExecutionScope::new();
+
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let missing = factory
+                .offer_tribute(&scope, &NoParentBodies, offer(&root, &signature))
+                .unwrap_err();
+            assert!(revert_message(missing).contains("zkProof is required"));
+
+            let mut wrong_root = offer(&root, &signature);
+            wrong_root.zk_proof = dummy_full_proof([0x24; 32]);
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let mismatch = factory
+                .offer_tribute(&scope, &NoParentBodies, wrong_root)
+                .unwrap_err();
+            assert!(revert_message(mismatch).contains("merkle_root"));
+        });
+    }
+
+    #[test]
+    fn offer_skips_signature_check_for_unregistered_and_disabled() {
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{
+            ops::{self},
+            variant::MinSig,
+        };
+
+        let (_, public) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+        let public = public.encode().to_vec();
+
+        let mut storage = HashMapStorageProvider::new(super::CHAIN_ID);
+        StorageHandle::enter(&mut storage, |storage| {
+            let scope = ExecutionScope::new();
+
+            // Unregistered caller with empty zk fields sails past the gate.
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
+                .unwrap_err();
+            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+
+            // Registered but zk disabled: still no signature requirement.
+            let mut registry = L2RegistryContract::new(storage.clone());
+            registry
+                .register_network(L2_CHAIN_ID, caller(), &public)
+                .unwrap();
+            let mut factory = TributeFactoryContract::new(storage.clone());
+            let err = factory
+                .offer_tribute(&scope, &NoParentBodies, offer(&[], &[]))
+                .unwrap_err();
+            assert!(revert_message(err).contains("no worldwide day is OFFERING"));
+        });
+    }
+}
+
 #[test]
 fn test_validate_agent_reward_both_empty() {
     assert!(validate_agent_reward_addresses(&[], &[]).is_ok());

@@ -34,11 +34,16 @@ contract Router is BaseRouter, IERC7786Recipient {
     /// @notice ERC-7930 interoperable address of the matching Router on a given domain (domain == chainId).
     mapping(uint32 domain => bytes recipient) public remoteRouters;
 
+    /// @notice Maximum orders processed per inbound message; bounds the loop's gas so an oversized
+    ///         batch cannot make delivery un-executable.
+    uint256 public constant MAX_BATCH = 100;
+
     event RemoteRouterRegistered(uint32 indexed domain, bytes recipient);
 
     error InvalidBridge();
     error UnauthorizedBridge(address caller);
     error RemoteRouterNotSet(uint32 domain);
+    error BatchTooLarge(uint256 length);
 
     constructor(address _bridge, address _owner, address _compact, bytes12 _lockTag, address _escrow, address _auction)
         Ownable(_owner)
@@ -98,6 +103,7 @@ contract Router is BaseRouter, IERC7786Recipient {
         bytes32 messageSender = TypeCasts.addressToBytes32(srcRouter);
 
         (bool isSettle, bytes32[] memory orderIds, bytes[] memory ordersFillerData) = RouterMessage.decode(payload);
+        if (orderIds.length > MAX_BATCH) revert BatchTooLarge(orderIds.length);
         for (uint256 i = 0; i < orderIds.length; i++) {
             if (isSettle) {
                 _handleSettleOrder(originDomain, messageSender, orderIds[i], abi.decode(ordersFillerData[i], (bytes32)));

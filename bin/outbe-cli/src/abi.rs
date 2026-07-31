@@ -3,6 +3,8 @@
 use alloy_primitives::{address, Address};
 use alloy_sol_types::sol;
 
+pub use outbe_primitives::addresses::VOTE_ADDRESS;
+
 // Precompile contract addresses
 pub const VALIDATOR_SET_ADDR: Address = address!("0x000000000000000000000000000000000000EE00");
 pub const SLASH_INDICATOR_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
@@ -50,6 +52,10 @@ sol! {
         function getEpochNumber() external view returns (uint256);
         function getEpochStartTimestamp() external view returns (uint64);
         function getEpochStartBlock() external view returns (uint64);
+        function setDelegate(uint8 role, address delegate) external;
+        function revokeDelegate(uint8 role) external;
+        function getDelegate(address validator, uint8 role) external view returns (address);
+        function resolveValidator(uint8 role, address signer) external view returns (address);
         function registerValidator(address validatorAddress, bytes calldata consensusPubkey, bytes calldata blsSignature) external;
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
@@ -124,10 +130,12 @@ sol! {
             bytes nonce,
             uint256 ephemeralPubkey,
             uint16 referenceCurrency,
+            bool excludeFromIntexIssuance,
             bytes zkProof,
             bytes zkVerificationKey,
             bytes zkPublicKey,
-            bytes zkMerkleRoot
+            bytes zkMerkleRoot,
+            bytes signature
         ) external returns (uint256 tributeId);
     }
 
@@ -182,7 +190,7 @@ sol! {
             uint256 nodId,
             uint256 nonce,
             address asset,
-            address vaultProvider
+            address vaultRouter
         ) external returns (uint256);
         function nodData(uint256 nodId) external view returns (
             uint256 nodId,
@@ -256,6 +264,21 @@ sol! {
         function delegateFeederConsent(address feeder) external;
     }
 }
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../contracts/precompiles/src/IUpdate.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../contracts/precompiles/src/IVote.sol"
+);
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
+);
 
 pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
 

@@ -1,11 +1,15 @@
 /target
 *.swp
 *.swo
+*.pyc
+__pycache__/
 .DS_Store
+piolium
 
 # Ruler-generated local tool output.
 .codex/
 .claude/
+.cursor/
 
 # Pi project-local packages (if using pi install -l)
 .serena
@@ -17,5 +21,10 @@
 
 # codegraph index (local code-intelligence cache)
 /.codegraph
+
+# Barretenberg CRS downloaded/generated for local proving and verification.
+/.bb-crs/
 /contracts/account-abstraction/lib/kernel/broadcast
 /.ruler
+
+target-docker/

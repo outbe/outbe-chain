@@ -8,22 +8,17 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
-import {IVaultProvider} from "@contracts/vendor/outbe-vault/interfaces/IVaultProvider.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockERC20} from "@test-mocks/MockERC20.sol";
-import {MockSettlementVault} from "@test-mocks/MockSettlementVault.sol";
-import {MockVaultProvider} from "@test-mocks/MockVaultProvider.sol";
 
 /// @dev Commit-bond lifecycle through the real IntexAuction + EscrowAdapter pair:
-///      commit takes the bond, reveal/cancel return it, a green-day no-reveal waits out
-///      `COMMIT_BOND_LOCK_PERIOD`, and a red day releases immediately.
+///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
+///      `UNREVEALED_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
     IntexAuction auction;
     EscrowAdapter escrow;
     MockTheCompact compact;
     MockERC20 paymentToken;
-    MockSettlementVault mockVault;
-    MockVaultProvider provider;
 
     address admin = address(1);
     address bridger = address(2);
@@ -33,7 +28,7 @@ contract IntexAuctionBondTest is Test {
     address iba1;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 seriesId,address bidder,uint16 quantity,uint32 bidRate)");
+        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
 
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
     uint64 internal constant ENTRY_PRICE = 1e13;
@@ -47,7 +42,7 @@ contract IntexAuctionBondTest is Test {
     uint32 constant REVEAL_OFFSET = 200;
     uint32 constant ISSUANCE_OFFSET = 300;
 
-    uint32 seriesId = 20260706;
+    uint32 worldwideDay = 20260706;
     uint256 startTs;
 
     function setUp() public {
@@ -57,15 +52,11 @@ contract IntexAuctionBondTest is Test {
         escrow = DeployProxy.escrowAdapter(admin, bridger);
         compact = new MockTheCompact();
         paymentToken = new MockERC20("Wrapped COEN", "WCOEN", 18);
-        mockVault = new MockSettlementVault(address(paymentToken), "Mock Vault WCOEN", "mvWCOEN", 18);
-        provider = new MockVaultProvider();
-        provider.addVault(mockVault);
-        provider.addLiquiditySource(address(escrow), IVaultProvider.LiquiditySource.IntexBidPrice);
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
         auction.wire(address(escrow));
-        escrow.wire(address(auction), address(compact), address(provider), address(paymentToken));
+        escrow.wire(address(auction), address(compact), address(paymentToken));
         vm.stopPrank();
         compact.setResetPeriodSeconds(0);
 
@@ -75,7 +66,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(seriesId, _schedule(), _params(BOND));
+        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(BOND));
     }
 
     // --- Helpers ---
@@ -104,7 +95,7 @@ contract IntexAuctionBondTest is Test {
     }
 
     function _signature() internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, seriesId, iba1, QTY, RATE));
+        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, iba1, QTY, RATE));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -121,12 +112,10 @@ contract IntexAuctionBondTest is Test {
 
     function _commit() internal {
         vm.prank(iba1);
-        auction.commitBid(seriesId, keccak256(_signature()));
+        auction.commitBid(worldwideDay, keccak256(_signature()));
     }
 
     function _enterRevealStage() internal {
-        vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, true);
         vm.warp(startTs + COMMIT_OFFSET + 1);
     }
 
@@ -141,7 +130,7 @@ contract IntexAuctionBondTest is Test {
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - BOND, "bidder debited the bond");
         assertEq(_liveCompactBalance(), BOND, "bond custodied in The Compact");
-        IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(seriesId, iba1);
+        IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(worldwideDay, iba1);
         assertEq(bond.amount, BOND, "bond recorded");
     }
 
@@ -151,13 +140,13 @@ contract IntexAuctionBondTest is Test {
 
         vm.prank(iba1);
         vm.expectRevert();
-        auction.commitBid(seriesId, keccak256(_signature()));
+        auction.commitBid(worldwideDay, keccak256(_signature()));
     }
 
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
-        uint32 freeSeries = seriesId + 1;
+        uint32 freeSeries = worldwideDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, _schedule(), _params(0));
+        auction.auctionStart(freeSeries, IIntexAuction.WorldwideDayState.Green, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
@@ -173,14 +162,14 @@ contract IntexAuctionBondTest is Test {
     function test_CancelCommit_ReturnsBondAndAllowsRecommit() public {
         _commit();
         vm.prank(iba1);
-        auction.cancelCommit(seriesId);
+        auction.cancelCommit(worldwideDay);
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned in full");
-        assertEq(escrow.getCommitBond(seriesId, iba1).amount, 0, "bond deleted");
+        assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
 
         // The freed slot re-locks a fresh bond on re-commit.
         _commit();
-        assertEq(escrow.getCommitBond(seriesId, iba1).amount, BOND, "re-committed bond");
+        assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, BOND, "re-committed bond");
     }
 
     function test_RevealBid_ReturnsBondAndLocksEscrow() public {
@@ -188,12 +177,12 @@ contract IntexAuctionBondTest is Test {
         _enterRevealStage();
 
         vm.prank(iba1);
-        auction.revealBid(seriesId, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
 
         // Bond came back, the bid escrow went out — net position is just the bid lock.
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - LOCK_AMOUNT, "net = bid lock only");
-        assertEq(escrow.getCommitBond(seriesId, iba1).amount, 0, "bond deleted");
-        assertEq(escrow.getBidLock(seriesId, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
+        assertEq(escrow.getCommitBond(worldwideDay, iba1).amount, 0, "bond deleted");
+        assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
         assertEq(_liveCompactBalance(), LOCK_AMOUNT, "Compact holds only the bid lock");
     }
 
@@ -208,74 +197,65 @@ contract IntexAuctionBondTest is Test {
 
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(seriesId, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
 
         assertEq(paymentToken.balanceOf(iba1), BOND - LOCK_AMOUNT, "bond funded the bid");
-        assertEq(escrow.getBidLock(seriesId, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
+        assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
     }
 
     // --- claimCommitBond ---
 
-    function test_ClaimCommitBond_RedDay_ReleasesImmediately() public {
-        _commit();
+    function test_ClaimCommitBond_RedDay_SkipsTimeGate() public {
+        uint32 redSeries = worldwideDay + 7;
         vm.prank(bridger);
-        auction.startRevealingBidsStage(seriesId, false); // red day -> Cancelled
+        auction.auctionStart(redSeries, IIntexAuction.WorldwideDayState.Red, _schedule(), _params(BOND));
 
+        // Cancelled short-circuits the penalty window; with no bond the escrow reverts NotFound
+        // instead of CommitBondNotYetClaimable.
         vm.prank(outsider);
-        auction.claimCommitBond(seriesId, iba1);
-        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned on red day");
+        vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
+        auction.claimCommitBond(redSeries, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {
         _commit();
         _enterRevealStage();
 
-        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD();
+        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD();
         vm.warp(claimableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
             abi.encodeWithSelector(IIntexAuction.CommitBondNotYetClaimable.selector, claimableAt, claimableAt - 1)
         );
-        auction.claimCommitBond(seriesId, iba1);
+        auction.claimCommitBond(worldwideDay, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_ReleasesAfterWindow() public {
         _commit();
         _enterRevealStage();
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
-        auction.claimCommitBond(seriesId, iba1);
+        auction.claimCommitBond(worldwideDay, iba1);
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned after the penalty window");
         assertEq(paymentToken.balanceOf(outsider), 0, "caller gets nothing");
-    }
-
-    /// @dev A never-signalled auction (worldwide-day state stays Unknown) still frees the bond
-    ///      once the wall-clock window passes — no relayer required.
-    function test_ClaimCommitBond_UnknownDay_ReleasesAfterWindow() public {
-        _commit();
-
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
-        vm.prank(outsider);
-        auction.claimCommitBond(seriesId, iba1);
-        assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond recovered from a dead auction");
     }
 
     function test_ClaimCommitBond_RevertsForRevealedBidder() public {
         _commit();
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(seriesId, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
 
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.COMMIT_BOND_LOCK_PERIOD());
+        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
         vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(seriesId, iba1);
+        auction.claimCommitBond(worldwideDay, iba1);
     }
 
     function test_ClaimCommitBond_RevertsOnUnknownSeries() public {
         vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
-        auction.claimCommitBond(seriesId + 42, iba1);
+        auction.claimCommitBond(worldwideDay + 42, iba1);
     }
 }

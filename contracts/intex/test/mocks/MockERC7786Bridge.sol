@@ -14,10 +14,16 @@ import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
 contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
 
+    /// @dev ERC-7786 attribute selector for the per-message destination gas limit.
+    bytes4 private constant _GAS_LIMIT_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
+
     /// @dev Fee returned by {quote} (and thus required as msg.value on {sendMessage} when relay-funding is off).
     uint256 public fee;
     /// @dev When true, {sendMessage} delivers immediately; when false, delivery is manual via {deliverLast}.
     bool public autoDeliver = true;
+    /// @dev When true, auto-delivery forwards exactly the executionGasLimit attribute as the call gas, so a
+    ///      handler that needs more than its IntexGas budget out-of-gases instead of borrowing test gas.
+    bool public enforceGasAttribute;
 
     // --- last-send capture (for assertions) ---
     bytes public lastSender;
@@ -37,6 +43,10 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
 
     function setAutoDeliver(bool on) external {
         autoDeliver = on;
+    }
+
+    function setEnforceGasAttribute(bool on) external {
+        enforceGasAttribute = on;
     }
 
     function getLastAttributes() external view returns (bytes[] memory) {
@@ -73,7 +83,25 @@ contract MockERC7786Bridge is IERC7786GatewaySource, IGatewayQuote {
         sendId = keccak256(abi.encode(address(this), ++_nonce));
         lastSendId = sendId;
 
-        if (autoDeliver) _deliver(sender, recipient, payload);
+        if (autoDeliver) {
+            (, address target) = recipient.parseEvmV1Calldata();
+            bytes32 receiveId = keccak256(abi.encode(sender, payload));
+            uint256 gasLimit = enforceGasAttribute ? _gasAttribute(attributes) : 0;
+            bytes4 result = gasLimit == 0
+                ? IERC7786Recipient(target).receiveMessage(receiveId, sender, payload)
+                : IERC7786Recipient(target).receiveMessage{gas: gasLimit}(receiveId, sender, payload);
+            if (result != IERC7786Recipient.receiveMessage.selector) revert DeliveryReturnedInvalidValue(result);
+        }
+    }
+
+    /// @dev The executionGasLimit attribute value, or 0 when absent.
+    function _gasAttribute(bytes[] calldata attributes) private pure returns (uint256) {
+        for (uint256 i = 0; i < attributes.length; i++) {
+            if (bytes4(attributes[i]) == _GAS_LIMIT_SELECTOR) {
+                return abi.decode(attributes[i][4:], (uint256));
+            }
+        }
+        return 0;
     }
 
     /// @dev Re-delivers the most recent message (as the same source), simulating a transport redelivery.

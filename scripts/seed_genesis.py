@@ -23,7 +23,6 @@ import argparse
 import ipaddress
 import json
 import os
-import sys
 
 # --- Keccak256 ---
 
@@ -127,13 +126,13 @@ def _pure_python_keccak256(data: bytes) -> bytes:
 
 
 try:
-    from Crypto.Hash import keccak as _keccak_mod
+    from Crypto.Hash import keccak as _keccak_mod  # pyright: ignore[reportMissingImports]
 
     def keccak256(data: bytes) -> bytes:
         return _keccak_mod.new(data=data, digest_bits=256).digest()
 except ImportError:
     try:
-        import sha3
+        import sha3  # pyright: ignore[reportMissingImports]
 
         def keccak256(data: bytes) -> bytes:
             return sha3.keccak_256(data).digest()
@@ -162,14 +161,22 @@ MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
 INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
-# Factory precompiles seeded as default VaultProvider liquidity sources. Mirror
+# Factory precompiles seeded as default VaultRouter liquidity sources. Mirror
 # the Rust constants in `outbe_primitives::addresses`.
 NOD_FACTORY_ADDRESS = "0000000000000000000000000000000000001007"
 GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
-# VaultProvider precompile. Genesis seeds the owner (slot 0) and the default
-# liquidity source/target registry (see `seed_vault_provider`). Mirrors the Rust
-# constant `outbe_primitives::addresses::VAULT_PROVIDER_ADDRESS`.
-VAULT_PROVIDER_ADDRESS = "0000000000000000000000000000000000001017"
+# VaultRouter precompile. Genesis seeds the owner (slot 0) and the default
+# liquidity source/target registry (see `seed_vault_router`). Mirrors the Rust
+# constant `outbe_primitives::addresses::VAULT_ROUTER_ADDRESS`.
+VAULT_ROUTER_ADDRESS = "0000000000000000000000000000000000001017"
+# Gem NFT token precompile. Genesis can seed Settled gems (see `seed_gems`) so a
+# demo account has a mineable gem to convert Gem -> Promis -> Gratis; Gratis and
+# Promis are TEE-encrypted and can no longer be plaintext-seeded at genesis.
+GEM_ADDRESS = "0000000000000000000000000000000000001013"
+# Governance precompile. Genesis seeds the authorities set (validator addresses,
+# the PoC write-gate) and the canon / meta-canon texts at version 1. Mirrors the
+# Rust constant `outbe_primitives::addresses::GOVERNANCE_ADDRESS`.
+GOVERNANCE_ADDRESS = "0000000000000000000000000000000000001018"
 VALIDATOR_SET_ADDRESS = "000000000000000000000000000000000000ee00"
 SLASH_INDICATOR_ADDRESS = "000000000000000000000000000000000000ee01"
 STAKING_ADDRESS = "000000000000000000000000000000000000ee02"
@@ -187,6 +194,13 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
+# Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
+# Catalog, so slot 1 is non-zero even though no collection exists at genesis.
+COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 3
+COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
+    "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
+)
 # TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config; the rest of the
 # registry is written by the block-1 `TeeBootstrap` system tx. The account is
@@ -194,6 +208,12 @@ ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
 # policy is seeded it also gets genesis marker bytecode so slot 2 survives to
 # block 1. Mirrors `outbe_primitives::addresses::TEE_REGISTRY_ADDRESS`.
 TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
+# Stablecoin Factory/Policy fixed accounts and the dynamic-token address class.
+# These mirror outbe_primitives::addresses and are reserved from genesis even
+# before production dispatch activates.
+STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
+STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
 MIN_STAKE = 100_000 * 10**18
@@ -211,12 +231,14 @@ INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
 
 ALL_PRECOMPILE_ADDRESSES = [
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
-    NOD_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
+    NOD_ADDRESS, GEM_ADDRESS, METADOSIS_ADDRESS, TRIBUTE_FACTORY_ADDRESS, AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS, EMISSION_LIMIT_ADDRESS, PROMIS_LIMIT_ADDRESS,
-    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS,
+    CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
+    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
+    STABLECOIN_POLICY_REGISTRY_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
-    ZEROFEE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
 ]
 
 # Protocol-owned balance accumulators without precompile dispatch. They are
@@ -257,6 +279,70 @@ def address_bytes(addr_hex: str) -> bytes:
     addr = addr_hex.lower().replace("0x", "")
     assert len(addr) == 40, f"invalid address length: {addr_hex}"
     return bytes.fromhex(addr)
+
+
+def validate_stablecoin_namespace_alloc(
+    alloc: dict, *, require_reserved_markers: bool
+) -> None:
+    """Reject genesis state that collides with the Stablecoin V1 namespace.
+
+    The two fixed accounts may contain only the exact marker and zero-valued
+    account metadata. Every dynamic-class allocation is forbidden, including a
+    balance-only account, because CREATE/CREATE2 reservation starts at genesis.
+    """
+    normalized = {}
+    for raw_address, account in alloc.items():
+        normalized_address = address_bytes(raw_address).hex()
+        if normalized_address in normalized:
+            raise ValueError(
+                "duplicate genesis alloc address after normalization: "
+                f"{raw_address} and {normalized[normalized_address][0]}"
+            )
+        if not isinstance(account, dict):
+            raise ValueError(f"genesis alloc {raw_address} must be an object")
+        normalized[normalized_address] = (raw_address, account)
+
+        if normalized_address.startswith(STABLECOIN_ADDRESS_PREFIX):
+            raise ValueError(
+                f"genesis alloc {raw_address} collides with reserved stablecoin "
+                f"prefix 0x{STABLECOIN_ADDRESS_PREFIX}"
+            )
+
+    for address in (
+        STABLECOIN_FACTORY_ADDRESS,
+        STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    ):
+        item = normalized.get(address)
+        if item is None:
+            if require_reserved_markers:
+                raise ValueError(f"missing stablecoin reserved account 0x{address}")
+            continue
+        raw_address, account = item
+        code = account.get("code")
+        if code is not None and str(code).lower() != MARKER_CODE:
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} has conflicting code"
+            )
+        if require_reserved_markers and str(code).lower() != MARKER_CODE:
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} is missing marker code"
+            )
+        if account.get("storage"):
+            raise ValueError(
+                f"stablecoin reserved account {raw_address} has conflicting storage"
+            )
+        for field in ("balance", "nonce"):
+            value = account.get(field, "0x0")
+            try:
+                nonzero = int(str(value), 0) != 0
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    f"stablecoin reserved account {raw_address} has invalid {field}"
+                ) from error
+            if nonzero:
+                raise ValueError(
+                    f"stablecoin reserved account {raw_address} has nonzero {field}"
+                )
 
 
 def u32_bytes(val: int) -> bytes:
@@ -551,33 +637,96 @@ def pair_hash(base: str, quote: str) -> bytes:
 
 # --- Seeders ---
 
-def seed_gratis(storage: StorageBuilder, balances: dict):
-    """
-    Gratis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances (available)
-      slot 2: mapping(address => U256) pledged_balances (not seeded here)
-    """
-    total = 0
-    for addr, amount_str in balances.items():
-        amount = parse_int(amount_str)
-        total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+# Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
+# genesis-seeded — `add_gem` parks Issued gems in a bin-tree index this seeder
+# does not reproduce, and `mineGemPromis` requires state == Settled.
+GEM_STATE_SETTLED = 2
+# Default gem type when unspecified (GemTypes::Wallet). Not validated by
+# `mineGemPromis`, so any agent class works.
+GEM_TYPE_WALLET = 3
 
 
-def seed_promis(storage: StorageBuilder, balances: dict):
+def gem_id_gen(owner: str, gem_load: int, index: int) -> bytes:
+    """Genesis gem id = keccak256("gem" ++ owner_20B ++ gem_load_be32 ++ index_be8).
+
+    Mirrors the shape of `GemContract::generate_gem_id` (which uses the issuing
+    block number); `index` disambiguates multiple genesis gems for one owner.
+    The demo scripts never need to predict this — they discover the id via
+    `IGem.tokenOfOwnerByIndex(owner, 0)`.
     """
-    Promis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances
+    buf = b"gem" + address_bytes(owner) + to_be32(gem_load) + u64_bytes(index)
+    return keccak256(buf)
+
+
+def gem_owner_index_key(owner: str, index: int) -> bytes:
+    """keccak256(owner_20B ++ index_be4) — matches GemContract::owner_index_key."""
+    return keccak256(address_bytes(owner) + u32_bytes(index))
+
+
+def seed_gems(storage: StorageBuilder, gems: list):
+    """Seed Settled gems into the flat `GemContract` storage at GEM_ADDRESS.
+
+    Reproduces exactly what `GemContract::add_gem` writes for a Settled gem, so a
+    seeded gem is fully mineable (`mineGemPromis` -> confidential Promis) and
+    burns cleanly. Layout pinned by the `gem_storage_layout_matches_genesis_seeder`
+    test in `crates/core/gem/src/tests.rs`:
+
+      slot 0:      total_supply (u64)
+      slots 1-12:  gem_items Map<U256, GemData> record fields keyed by gem_id:
+                     1 owner              2 gem_type           3 gem_load
+                     4 entry_price        5 cost_amount        6 floor_price
+                     7 issuance_currency  8 reference_currency 9 state
+                     10 issued_at         11 call_threshold    12 called_at
+      slot 13:     owner_gem_counts Map<Address, u32>
+      slot 14:     owner_gem_ids    Map<B256, U256>  (key = owner_index_key)
+      slot 15:     all_gem_ids      List<U256>  (len @ slot 15, data @ keccak(15)+i)
+      slot 16:     gem_index        Map<U256, u32>
+
+    Settled gems are NOT parked in the unqualified bin-tree index (slots 17+) nor
+    the callable-gem index, so those slots are intentionally left empty (add_gem
+    only indexes Issued gems; the callable index only holds Qualified/Called).
     """
-    total = 0
-    for addr, amount_str in balances.items():
-        amount = parse_int(amount_str)
-        total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+    owner_counts: dict[str, int] = {}
+    for i, gem in enumerate(gems):
+        owner = gem["owner"]
+        gem_load = parse_int(gem["gem_load"])
+        state = parse_int(gem.get("state", GEM_STATE_SETTLED))
+        if state != GEM_STATE_SETTLED:
+            raise ValueError(
+                f"seed_gems only supports Settled gems (state={GEM_STATE_SETTLED}); "
+                f"got state={state}"
+            )
+        gem_id = gem_id_gen(owner, gem_load, i)
+
+        # gem_items record (slots 1-12, keyed by gem_id).
+        storage.set_mapping(1, gem_id, address_as_u256(owner))
+        storage.set_mapping(2, gem_id, parse_int(gem.get("gem_type", GEM_TYPE_WALLET)))
+        storage.set_mapping(3, gem_id, gem_load)
+        storage.set_mapping(4, gem_id, parse_int(gem.get("entry_price", "0")))
+        storage.set_mapping(5, gem_id, parse_int(gem.get("cost_amount", "0")))
+        storage.set_mapping(6, gem_id, parse_int(gem.get("floor_price", "0")))
+        storage.set_mapping(7, gem_id, parse_int(gem.get("issuance_currency", 840)))
+        storage.set_mapping(8, gem_id, parse_int(gem.get("reference_currency", 840)))
+        storage.set_mapping(9, gem_id, state)
+        storage.set_mapping(10, gem_id, parse_int(gem.get("issued_at", 0)))
+        storage.set_mapping(11, gem_id, parse_int(gem.get("call_threshold", "0")))
+        storage.set_mapping(12, gem_id, parse_int(gem.get("called_at", 0)))
+
+        # owner_gem_ids index (slot 14) + swap-and-pop counter (slot 13 below).
+        oi = owner_counts.get(owner.lower(), 0)
+        storage.set_mapping(14, gem_owner_index_key(owner, oi), int.from_bytes(gem_id, "big"))
+        owner_counts[owner.lower()] = oi + 1
+
+        # all_gem_ids List element i (slot 15 data region) + gem_index (slot 16).
+        storage.set_raw_slot(data_slot(15) + i, int.from_bytes(gem_id, "big"))
+        storage.set_mapping(16, gem_id, i)
+
+    for owner, count in owner_counts.items():
+        storage.set_mapping(13, address_bytes(owner), count)
+
+    # total_supply (slot 0) and all_gem_ids length (slot 15).
+    storage.set_slot(0, len(gems))
+    storage.set_slot(15, len(gems))
 
 
 def seed_coen(alloc: dict, balances: dict):
@@ -682,18 +831,18 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     `initialized == true && !is_sealed`, and a directly-seeded OFFERING worldwide
     day never ran the metadosis `unseal_day` that normally initializes it.
 
-    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 8
+    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 1
     (storage_schema cumulative offsets: `total_supply`@0 = 1 slot, then
-    `tributes: Map<_, TributeData>` reserves `TributeData::SLOTS` = 7 slots
-    (1..7), so `day_totals` lands at slot 8). Within the `DayTotals` record the
+    `day_totals` lands at slot 1; Tribute bodies no longer occupy EVM storage).
+    Within the `DayTotals` record the
     field offset is the cumulative slot index by `#[attribute(order)]`:
     `initialized`@0, `tribute_count`@1, `tribute_nominal_amount`@2,
     `is_sealed`@3 (its `order = 4` only sorts; the gap at 3 is not reserved).
-    So `day_totals[wwd].initialized` is `Mapping(base_slot=8).get(wwd)`; writing
+    So `day_totals[wwd].initialized` is `Mapping(base_slot=1).get(wwd)`; writing
     1 makes the record exist + initialized, with `is_sealed` left at its `false`
-    default (slot 11)."""
+    default."""
     for wwd in days:
-        storage.set_mapping(8, u32_bytes(wwd), 1)
+        storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
 def nod_id_gen(owner: str, worldwide_day: int, index: int) -> bytes:
@@ -841,19 +990,19 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         storage.set_slot(0, bootstrap_end)
 
 
-# VaultProvider default liquidity registry seeded at genesis. The discriminant
-# values MUST match the IVaultProvider.LiquiditySource / LiquidityTarget enum
-# ordering (see contracts/precompiles/src/IVaultProvider.sol).
-#   LiquiditySource: Unknown=0 NodCostPrice=1 IntexStrikePrice=2
-#                    CredisAnadosis=3 IntexBidPrice=4 GemSettle=5
-#   LiquidityTarget: Unknown=0 Credis=1
-VAULT_PROVIDER_LIQUIDITY_SOURCES = [
-    (NOD_FACTORY_ADDRESS, 1),     # NodCostPrice
-    (INTEX_FACTORY_ADDRESS, 2),   # IntexStrikePrice
-    (CREDIS_FACTORY_ADDRESS, 3),  # CredisAnadosis
-    (GEM_FACTORY_ADDRESS, 5),     # GemSettle
+# VaultRouter default liquidity registry seeded at genesis. The discriminant
+# values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
+# (see contracts/precompiles/src/IVaultRouter.sol).
+#   StablesSource: Unknown=0 NodCostAmount=1 IntexCostAmount=2
+#                  CredisCostAmount=3 GemCostAmount=4
+#   StablesTarget: Unknown=0 Credis=1
+VAULT_ROUTER_LIQUIDITY_SOURCES = [
+    (NOD_FACTORY_ADDRESS, 1),     # NodCostAmount
+    (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
+    (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
+    (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
 ]
-VAULT_PROVIDER_LIQUIDITY_TARGETS = [
+VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis
 ]
 
@@ -884,9 +1033,9 @@ def _seed_address_set_with_types(
     storage.set_slot(set_base, len(entries))
 
 
-def seed_vault_provider(storage: StorageBuilder, owner_address: str):
+def seed_vault_router(storage: StorageBuilder, owner_address: str):
     """
-    VaultProvider storage layout (see crates/core/vaultprovider/src/schema.rs):
+    VaultRouter storage layout (see crates/core/vaultrouter/src/schema.rs):
       slot 0:      owner (admin)
       slots 1-2:   assets (Set) — written at runtime by addVault
       slot 3:      asset_vaults (Map) — written at runtime by addVault
@@ -896,8 +1045,8 @@ def seed_vault_provider(storage: StorageBuilder, owner_address: str):
       slot 9:      liquidity_target_types (Map<Address, u8>)
 
     Genesis sets the owner and pre-registers the default liquidity source/target
-    registry for the factory precompiles, so the Solidity depositLiquidity /
-    withdrawLiquidity ABI path is gated and configured out of the box. The
+    registry for the factory precompiles, so the Solidity deposit / withdraw
+    ABI path is gated and configured out of the box. The
     reserve vault itself is still registered post-deploy via `addVault`; the
     in-process api callers bypass this registry and declare their discriminant
     directly. Owner mirrors the ValidatorSet owner pattern (slot 0).
@@ -908,13 +1057,13 @@ def seed_vault_provider(storage: StorageBuilder, owner_address: str):
         storage,
         set_base=4,
         type_map_slot=6,
-        entries=VAULT_PROVIDER_LIQUIDITY_SOURCES,
+        entries=VAULT_ROUTER_LIQUIDITY_SOURCES,
     )
     _seed_address_set_with_types(
         storage,
         set_base=7,
         type_map_slot=9,
-        entries=VAULT_PROVIDER_LIQUIDITY_TARGETS,
+        entries=VAULT_ROUTER_LIQUIDITY_TARGETS,
     )
 
 
@@ -1101,6 +1250,72 @@ def seed_accounting_progress(storage: StorageBuilder):
     storage.set_slot(0, 0)
 
 
+def seed_compressed_entities(storage: StorageBuilder):
+    """Seed EVM schema V2 and ADR-010's authoritative empty sealed root."""
+    storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
+    storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
+
+
+def seed_governance(storage: StorageBuilder, validators: list, canon_dir: str | None):
+    """
+    Governance storage layout. All seeded fields are one slot each and precede
+    the two record maps in the schema, so their slot indices are stable no matter
+    how the Oip/Gip record types grow (a `Map<K, Record>` reserves
+    `Record::SLOTS` contiguous base slots). The Rust-side
+    `storage_layout_matches_seeder` test pins these indices.
+
+      slot 0:  meta_canon text        (StorageBytes; long data at keccak256(0))
+      slot 1:  meta_canon_version     (u64)
+      slot 2:  meta_canon_hash        (B256 = keccak256(text))
+      slot 3:  meta_canon_revisions   Map<u64, B256>
+      slot 4:  canon text             (StorageBytes; long data at keccak256(4))
+      slot 5:  canon_version          (u64)
+      slot 6:  canon_hash             (B256)
+      slot 7:  canon_revisions        Map<u64, B256>
+      slot 8:  next_oip_id            (u64, default 0 — not seeded)
+      slot 9:  next_gip_id            (u64, default 0 — not seeded)
+      slot 10: authorities            Map<Address, bool>  (PoC write-gate)
+      slot 11: oips                   Map<U256, Oip>   (not seeded; empty)
+      slot 17: gips                   Map<U256, Gip>   (not seeded; empty)
+
+    Authorities are seeded with every genesis validator address — with an empty
+    authorities set nobody could ever write the canon, so this is mandatory. The
+    canon / meta-canon texts are seeded from `canon_dir/{metacanon.md,canon.md}`
+    at version 1 when present; when absent the texts stay empty and any authority
+    performs the first `updateCanon` post-genesis (version 0 -> 1).
+
+    Returns `(n_authorities, meta_seeded, canon_seeded)`.
+    """
+    n_auth = 0
+    for v in validators:
+        storage.set_mapping(10, address_bytes(v["address"]), 1)  # bool true
+        n_auth += 1
+
+    def _seed_text(text_slot: int, version_slot: int, hash_slot: int,
+                   revisions_base: int, data: bytes):
+        write_storage_bytes(storage, text_slot, data)
+        storage.set_slot(version_slot, 1)
+        h = keccak256(data)
+        storage.set_raw_slot_hex(hash_slot, "0x" + h.hex())
+        storage.set_mapping_b256(revisions_base, u64_bytes(1), h)
+
+    meta_seeded = False
+    canon_seeded = False
+    if canon_dir and os.path.isdir(canon_dir):
+        meta_path = os.path.join(canon_dir, "metacanon.md")
+        canon_path = os.path.join(canon_dir, "canon.md")
+        if os.path.isfile(meta_path):
+            with open(meta_path, "rb") as f:
+                _seed_text(0, 1, 2, 3, f.read())
+            meta_seeded = True
+        if os.path.isfile(canon_path):
+            with open(canon_path, "rb") as f:
+                _seed_text(4, 5, 6, 7, f.read())
+            canon_seeded = True
+
+    return n_auth, meta_seeded, canon_seeded
+
+
 def seed_oracle(storage: StorageBuilder, config: dict):
     """
     Oracle storage layout:
@@ -1232,15 +1447,27 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55): hard-coded protocol default [840] = USD.
-    # Stored as a StorageVec<u16>: length at slot 55, data at keccak256(55) + index.
-    # Slot is verified by the `test_reference_currencies_slot_parity` test in
-    # `crates/system/oracle/src/tests.rs`; keep this constant in sync with the
-    # macro-assigned layout if `OracleContract` field order changes.
-    reference_currencies = [840]
+    # Reference currencies (slot 55) with their annualized refinancing rate
+    # (slot 60, mapping(iso_code => rate) 1e18 scaled). Default: USD (840) at the
+    # current SOFR (~4.30 %). The refinancing rate is read by the Credis Factory
+    # at issuance; the live data feed is out of scope (governance-updated).
+    # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
+    # data at keccak256(55) + index. Both slots are verified by the
+    # `test_reference_currencies_slot_parity` / `test_reference_refinancing_rate_slot_parity`
+    # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
+    # with the macro-assigned layout if `OracleContract` field order changes.
+    DEFAULT_USD_REFINANCING_RATE = 36_300_000_000_000_000  # 3.63% at 1e18 scale
+    reference_currencies = config.get(
+        "reference_currencies",
+        [{"iso_code": 840, "refinancing_rate": DEFAULT_USD_REFINANCING_RATE}],
+    )
     storage.set_slot(55, len(reference_currencies))
-    for i, iso_code in enumerate(reference_currencies):
+    for i, entry in enumerate(reference_currencies):
+        iso_code = parse_int(entry["iso_code"])
+        rate = parse_int(entry.get("refinancing_rate", DEFAULT_USD_REFINANCING_RATE))
         storage.set_raw_slot(data_slot(55) + i, iso_code)
+        # reference_refinancing_rate: mapping(iso_code => rate) at slot 60.
+        storage.set_mapping(60, u32_bytes(iso_code), rate)
 
 
 # --- External contracts ---
@@ -1351,6 +1578,13 @@ def main():
              "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
     )
     parser.add_argument(
+        "--canon-dir",
+        help="Directory holding metacanon.md and canon.md to seed into the "
+             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
+             "When absent, the canon texts start empty and an authority sets them "
+             "post-genesis.",
+    )
+    parser.add_argument(
         "--worldwide-day",
         type=int,
         help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
@@ -1381,6 +1615,7 @@ def main():
             raise ValueError("validators.json must contain a JSON array")
 
     alloc = genesis.setdefault("alloc", {})
+    validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=False)
 
     # Ensure all precompile addresses have marker bytecode
     for addr in ALL_PRECOMPILE_ADDRESSES:
@@ -1435,16 +1670,16 @@ def main():
         )
         alloc[VALIDATOR_SET_ADDRESS].setdefault("storage", {}).update(validator_storage.entries)
 
-        # VaultProvider owner: validator0 by default (overridable via
-        # seed["vault_provider"]["owner"]). The owner can later register vaults
+        # VaultRouter owner: validator0 by default (overridable via
+        # seed["vault_router"]["owner"]). The owner can later register vaults
         # and liquidity sources/targets on the precompile.
-        vault_owner = seed.get("vault_provider", {}).get("owner", validators[0]["address"])
-        vault_provider_storage = StorageBuilder()
-        seed_vault_provider(vault_provider_storage, vault_owner)
-        alloc[VAULT_PROVIDER_ADDRESS].setdefault("storage", {}).update(
-            vault_provider_storage.entries
+        vault_owner = seed.get("vault_router", {}).get("owner", validators[0]["address"])
+        vault_router_storage = StorageBuilder()
+        seed_vault_router(vault_router_storage, vault_owner)
+        alloc[VAULT_ROUTER_ADDRESS].setdefault("storage", {}).update(
+            vault_router_storage.entries
         )
-        print(f"  VaultProvider: owner={vault_owner}, slot 0 seeded")
+        print(f"  VaultRouter: owner={vault_owner}, slot 0 seeded")
 
         staking_storage = StorageBuilder()
         total_staked = seed_staking(
@@ -1472,6 +1707,27 @@ def main():
         )
         print(f"  Rewards: {len(rewards_storage.entries)} storage entries")
 
+    # Governance: seed the authorities write-gate (validator addresses) and the
+    # canon / meta-canon texts. Authorities are mandatory — an empty set means no
+    # address can ever write the canon. Canon texts default to <script-dir>/canon.
+    canon_dir = args.canon_dir or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "canon"
+    )
+    governance_storage = StorageBuilder()
+    n_auth, meta_seeded, canon_seeded = seed_governance(
+        governance_storage, validators, canon_dir
+    )
+    if governance_storage.entries:
+        alloc[GOVERNANCE_ADDRESS].setdefault("storage", {}).update(
+            governance_storage.entries
+        )
+    print(
+        f"  Governance: {n_auth} authorities, "
+        f"meta-canon={'seeded' if meta_seeded else 'empty'}, "
+        f"canon={'seeded' if canon_seeded else 'empty'}, "
+        f"{len(governance_storage.entries)} storage entries"
+    )
+
     # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded — independent
     # of validator count — because the executor needs the marker bytecode +
     # an explicit slot 0 = 0 word to record `last_accounted_block_number`
@@ -1484,6 +1740,16 @@ def main():
     print(
         f"  AccountingProgress: slot 0 = 0, "
         f"{len(accounting_storage.entries)} storage entries"
+    )
+
+    compressed_entities_storage = StorageBuilder()
+    seed_compressed_entities(compressed_entities_storage)
+    alloc[COMPRESSED_ENTITIES_ADDRESS].setdefault("storage", {}).update(
+        compressed_entities_storage.entries
+    )
+    print(
+        "  CompressedEntities: slot 0 = 3, "
+        "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README
@@ -1504,23 +1770,29 @@ def main():
     # config.teePolicy, but only when `tee_policy` is present in the seed config.
     seed_tee_policy(genesis, alloc, seed)
 
-    # Seed Gratis
-    if "gratis_balances" in seed:
-        gratis_storage = StorageBuilder()
-        seed_gratis(gratis_storage, seed["gratis_balances"])
-        entry = alloc[GRATIS_ADDRESS]
-        entry.setdefault("storage", {}).update(gratis_storage.entries)
-        print(f"  Gratis: {len(seed['gratis_balances'])} balances, "
-              f"{len(gratis_storage.entries)} storage entries")
+    # Gratis and Promis are TEE-encrypted at rest: per-account balances are
+    # ciphertext keyed off enclave state keys, so they can NOT be plaintext-seeded
+    # at genesis. (The old flat writes were dead — worse, they set total_supply to
+    # a non-zero value with no backing encrypted balances.) A demo account instead
+    # gets a Settled gem (see below) and mines Gem -> Promis -> Gratis through the
+    # enclave. Fail loudly if a stale seed still carries these keys.
+    for _encrypted_key in ("gratis_balances", "promis_balances"):
+        if _encrypted_key in seed:
+            raise ValueError(
+                f"{_encrypted_key} is no longer supported: this token is TEE-encrypted "
+                f"and cannot be plaintext-seeded at genesis. Seed a `gems` entry instead "
+                f"and mine Gem -> Promis -> Gratis "
+                f"(see examples/credis-flow/src/0-setup-gratis.ts)."
+            )
 
-    # Seed Promis
-    if "promis_balances" in seed:
-        promis_storage = StorageBuilder()
-        seed_promis(promis_storage, seed["promis_balances"])
-        entry = alloc[PROMIS_ADDRESS]
-        entry.setdefault("storage", {}).update(promis_storage.entries)
-        print(f"  Promis: {len(seed['promis_balances'])} balances, "
-              f"{len(promis_storage.entries)} storage entries")
+    # Seed Gems (Settled) so a demo account can mine Gem -> Promis -> Gratis.
+    if "gems" in seed:
+        gem_storage = StorageBuilder()
+        seed_gems(gem_storage, seed["gems"])
+        entry = alloc[GEM_ADDRESS]
+        entry.setdefault("storage", {}).update(gem_storage.entries)
+        print(f"  Gem: {len(seed['gems'])} settled gems, "
+              f"{len(gem_storage.entries)} storage entries")
 
     # Seed Tributes
     if "tributes" in seed:
@@ -1595,6 +1867,8 @@ def main():
     # carry a real balance keep it (setdefault is a no-op for them).
     for account in alloc.values():
         account.setdefault("balance", "0x0")
+
+    validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=True)
 
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)

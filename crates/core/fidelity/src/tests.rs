@@ -68,6 +68,41 @@ fn deposits_keep_efficiency_one() {
 }
 
 #[test]
+fn owner_cohorts_are_unbounded() {
+    with_contract(|contract| {
+        // Accumulate well past the former 64-cohort ceiling — there is no cap.
+        for offset in 0..100 {
+            contract
+                .cohort_in(ALICE, U256::from(1), T0 + offset)
+                .unwrap();
+        }
+        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 100);
+    });
+}
+
+#[test]
+fn partial_sale_past_the_former_cap_is_not_rolled_back() {
+    with_contract(|contract| {
+        for offset in 0..64 {
+            contract
+                .cohort_in(ALICE, U256::from(2), T0 + offset)
+                .unwrap();
+        }
+
+        // Full consume → 63 active, 1 sold (total 64).
+        contract.cohort_out(ALICE, U256::from(2), T0 + 100).unwrap();
+        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 64);
+
+        // A partial split adds a sold cohort (total 65) — formerly rejected by the
+        // cap, now succeeds and is not rolled back.
+        contract.cohort_out(ALICE, U256::from(1), T0 + 101).unwrap();
+        assert_eq!(contract.active_count.read(&ALICE).unwrap(), 63);
+        assert_eq!(contract.sold_count.read(&ALICE).unwrap(), 2);
+        assert_eq!(contract.owner_cohort_count(ALICE).unwrap(), 65);
+    });
+}
+
+#[test]
 fn partial_sale_splits_boundary_cohort() {
     with_contract(|c| {
         c.cohort_in(ALICE, u(100), T0).unwrap();

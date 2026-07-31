@@ -148,7 +148,46 @@ pub struct EnclaveClient {
 /// the connection but never responds surfaces as a timeout error instead of hanging
 /// the caller (e.g. node startup) forever. Generous — every real enclave op (quote,
 /// Noise handshake, seal, offer-batch decrypt) completes well within this.
-const ENCLAVE_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const DEFAULT_ENCLAVE_IO_TIMEOUT_SECS: u64 = 30;
+
+/// Hardware SGX can spend substantially longer than gramine-direct servicing a
+/// request while EPC pages are reclaimed. The default remains fail-fast for
+/// production/dev, while SGX stress/E2E runners may raise the bound explicitly.
+fn enclave_io_timeout() -> std::time::Duration {
+    static TIMEOUT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *TIMEOUT.get_or_init(|| {
+        let value = std::env::var("OUTBE_TEE_IO_TIMEOUT_SECS").ok();
+        let seconds = timeout_seconds_from(value.as_deref());
+        std::time::Duration::from_secs(seconds)
+    })
+}
+
+fn timeout_seconds_from(value: Option<&str>) -> u64 {
+    value
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_ENCLAVE_IO_TIMEOUT_SECS)
+}
+
+fn with_io_phase<T>(
+    result: Result<T, TransportError>,
+    operation: &'static str,
+) -> Result<T, TransportError> {
+    result.map_err(|error| match error {
+        TransportError::Io(source)
+            if matches!(
+                source.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
+            TransportError::IoTimeout {
+                operation,
+                timeout_secs: enclave_io_timeout().as_secs(),
+            }
+        }
+        other => other,
+    })
+}
 
 impl EnclaveClient {
     /// Connect to the enclave over a Unix domain socket (native sidecar), then
@@ -156,8 +195,8 @@ impl EnclaveClient {
     /// Noise-IK handshake.
     pub fn connect(path: &Path, policy: &QuotePolicy) -> Result<Self, TransportError> {
         let stream = UnixStream::connect(path)?;
-        stream.set_read_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
-        stream.set_write_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
         Self::from_transport(Transport::Unix(stream), policy)
     }
 
@@ -166,8 +205,8 @@ impl EnclaveClient {
     pub fn connect_tcp(addr: &str, policy: &QuotePolicy) -> Result<Self, TransportError> {
         let stream = TcpStream::connect(addr)?;
         let _ = stream.set_nodelay(true);
-        stream.set_read_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
-        stream.set_write_timeout(Some(ENCLAVE_IO_TIMEOUT))?;
+        stream.set_read_timeout(Some(enclave_io_timeout()))?;
+        stream.set_write_timeout(Some(enclave_io_timeout()))?;
         Self::from_transport(Transport::Tcp(stream), policy)
     }
 
@@ -220,11 +259,17 @@ impl EnclaveClient {
     fn from_transport(mut stream: Transport, policy: &QuotePolicy) -> Result<Self, TransportError> {
         // 1. GetQuote (cleartext, pre-handshake) with a fresh nonce.
         let nonce: [u8; 32] = rand::random();
-        write_frame(
-            &mut stream,
-            &encode_request(&EnclaveRequest::GetQuote { nonce })?,
+        with_io_phase(
+            write_frame(
+                &mut stream,
+                &encode_request(&EnclaveRequest::GetQuote { nonce })?,
+            ),
+            "quote request write",
         )?;
-        let quote = decode_response(&read_frame(&mut stream)?)?;
+        let quote = decode_response(&with_io_phase(
+            read_frame(&mut stream),
+            "quote response read",
+        )?)?;
         let enclave_static = verify_quote(&quote, policy)?;
         let identity = quote_identity(&quote)?;
 
@@ -247,9 +292,12 @@ impl EnclaveClient {
         let n = handshake
             .write_message(&[], &mut buf)
             .map_err(|e| TransportError::Handshake(e.to_string()))?;
-        write_frame(&mut stream, &buf[..n])?;
+        with_io_phase(
+            write_frame(&mut stream, &buf[..n]),
+            "Noise handshake request write",
+        )?;
 
-        let msg2 = read_frame(&mut stream)?;
+        let msg2 = with_io_phase(read_frame(&mut stream), "Noise handshake response read")?;
         handshake
             .read_message(&msg2, &mut buf)
             .map_err(|e| TransportError::Handshake(e.to_string()))?;
@@ -279,9 +327,15 @@ impl EnclaveClient {
             .noise
             .write_message(&plain, &mut ct)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
-        write_frame(&mut self.stream, &ct[..n])?;
+        with_io_phase(
+            write_frame(&mut self.stream, &ct[..n]),
+            "encrypted enclave request write",
+        )?;
 
-        let resp_ct = read_frame(&mut self.stream)?;
+        let resp_ct = with_io_phase(
+            read_frame(&mut self.stream),
+            "encrypted enclave response read",
+        )?;
         let mut pt = vec![0u8; resp_ct.len()];
         let n = self
             .noise
@@ -484,9 +538,77 @@ pub fn verify_tribute_offer_attestation(
         .map_err(|e| TransportError::TributeOfferAttestation(format!("signature invalid: {e}")))
 }
 
+/// Verify a Gratis-op attestation tag — an Ed25519 signature over
+/// [`crate::protocol::gratis_op_attestation_preimage`] — against the enclave's
+/// pinned attestation key. Same verify-then-discard semantics as
+/// [`verify_tribute_offer_attestation`]: the tag proves the encrypted-state
+/// transition was computed inside the attested enclave and is never persisted.
+pub fn verify_gratis_op_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::GratisOpResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(attestation_pub)
+        .map_err(|e| TransportError::GratisOpAttestation(format!("bad attestation key: {e}")))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::GratisOpAttestation(format!("bad tag length {}", tag.len()))
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    let preimage = crate::protocol::gratis_op_attestation_preimage(inputs_canonical_hash, result);
+    vk.verify_strict(&preimage, &sig)
+        .map_err(|e| TransportError::GratisOpAttestation(format!("signature invalid: {e}")))
+}
+
+/// Verify a Promis-op attestation tag — the [`verify_gratis_op_attestation`]
+/// analogue over [`crate::protocol::promis_op_attestation_preimage`]. Same
+/// verify-then-discard semantics; the tag proves the encrypted-balance transition
+/// was computed inside the attested enclave and is never persisted.
+pub fn verify_promis_op_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::PromisOpResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(attestation_pub)
+        .map_err(|e| TransportError::PromisOpAttestation(format!("bad attestation key: {e}")))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::PromisOpAttestation(format!("bad tag length {}", tag.len()))
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    let preimage = crate::protocol::promis_op_attestation_preimage(inputs_canonical_hash, result);
+    vk.verify_strict(&preimage, &sig)
+        .map_err(|e| TransportError::PromisOpAttestation(format!("signature invalid: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enclave_timeout_is_bounded_and_configurable_for_sgx() {
+        assert_eq!(timeout_seconds_from(None), 30);
+        assert_eq!(timeout_seconds_from(Some("120")), 120);
+        assert_eq!(timeout_seconds_from(Some("0")), 30);
+        assert_eq!(timeout_seconds_from(Some("invalid")), 30);
+    }
+
+    #[test]
+    fn socket_eagain_is_reported_as_a_phase_timeout() {
+        let error = TransportError::Io(std::io::Error::from(std::io::ErrorKind::WouldBlock));
+        let mapped = with_io_phase::<()>(Err(error), "DKG response read").unwrap_err();
+        assert!(matches!(
+            mapped,
+            TransportError::IoTimeout {
+                operation: "DKG response read",
+                timeout_secs: 30
+            }
+        ));
+    }
     use crate::quote::MIN_QUOTE_LEN;
 
     const RB: usize = 48; // report-body offset inside the quote
@@ -603,10 +725,12 @@ mod tests {
             issuance_currency: 1,
             nominal_amount_minor: U256::from(2_000u64),
             reference_currency: 2,
+            exclude_from_intex_issuance: false,
             tribute_price_minor: U256::from(3u64),
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],
+            zk_expected_hashes: None,
             status: TributeOfferStatus::Created,
         }];
         let hash = B256::repeat_byte(0xAB);

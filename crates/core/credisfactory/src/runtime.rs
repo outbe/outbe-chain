@@ -1,22 +1,18 @@
 //! Orchestration logic for the credisfactory precompile.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::{AnadosisResult, CredisContract};
-use outbe_gratispool::api as pool;
-use outbe_gratispool::constants::DenomAmount;
-use outbe_gratispool::SpendArgs;
-use outbe_oracle::api::get_exchange_rate;
-use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_oracle::api::{get_exchange_rate, get_refinancing_rate};
+use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
-use crate::schema::CredisFactoryContract;
-use crate::sol_ext::IERC20;
+use crate::sol_ext::{IReferenceCurrency, IERC20};
 
 /// Native token base symbol used for the COEN/USD oracle pair lookup.
 pub const NATIVE_TOKEN: &str = "COEN";
@@ -35,17 +31,20 @@ fn decimals_diff() -> U256 {
 // request_credis
 // ---------------------------------------------------------------------------
 
-/// Verifies a pledge-commitment spend proof through the
-///   gratispool, opens a credis position bound to `bundleAccount`, persists
-///   the position's `denom_id`, and delivers the stablecoin loan via the
-///   vault sub-call.
-/// Returns `(position_id, amount_stables)`.
+/// Consumes a confidential Gratis pledge (identified by `pledge_handle` +
+/// `spend_auth`, which binds it to `bundle_account`), crediting the collateral into
+/// the pledger's own confidential pledged ledger, opens a credis position bound to
+/// `bundleAccount`, stores the sealed pledger EOA on the position for the later
+/// per-installment release / expiry burn, and delivers the stablecoin loan via the
+/// vault sub-call. The pledger EOA is never in calldata: the enclave recovers it from
+/// the ticket and returns it sealed (`eoa_ct`). Returns `(position_id, amount_stables)`.
 pub fn request_credis(
     storage: StorageHandle<'_>,
     _caller: Address,
     asset: Address,
     bundle_account: Address,
-    args: SpendArgs,
+    pledge_handle: B256,
+    spend_auth: [u8; 32],
 ) -> Result<(U256, U256)> {
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
@@ -53,12 +52,6 @@ pub fn request_credis(
     if bundle_account.is_zero() {
         return Err(CredisFactoryError::InvalidBundleAccount.into());
     }
-
-    // Validate the supplied denomination up front.
-    let denom = DenomAmount::try_from(args.denom_id)?;
-    denom
-        .anadosis_denomination()
-        .ok_or(CredisFactoryError::DenomNotCredisEligible)?;
 
     // Block timestamp is read from the execution frame rather than threaded in
     // by the caller.
@@ -72,44 +65,46 @@ pub fn request_credis(
         }
     }
 
-    // Verify the pledge proof, mark the nullifier spent, and learn the
-    // gratis amount from the pool's denomination ladder. Receiver binding is
-    // recomputed against `bundle_account` (the action_tag is
-    // ACTION_REQUEST_CREDIS inside the pool runtime). The context nonce is
-    // unused now that reclaim happens per-installment in `pay_anadosis`, so it
-    // is pinned to zero; the proof still binds `bundle_account` as the target,
-    // so a mempool copy cannot redirect the loan.
-    let gratis_amount =
-        pool::verify_and_spend_for_credis(storage.clone(), bundle_account, U256::ZERO, &args)?;
+    // Consume the pledge ticket (the enclave verifies `spend_auth` binds it to
+    // `bundle_account`, so a mempool copy cannot redirect the loan). The collateral
+    // moves into the EOA's OWN pledged ledger and the ticket is deleted. The enclave
+    // reads the pledger EOA from the ticket and returns it sealed (`eoa_ct`) so it is
+    // stored on the position as ciphertext, never plaintext.
+    let (gratis_amount, eoa_ct) = outbe_gratis::api::consume_pledge(
+        storage.clone(),
+        pledge_handle,
+        bundle_account,
+        spend_auth,
+    )?;
 
     let amount_stables = convert_gratis_to_stables(storage.clone(), gratis_amount)?;
 
-    // Open the credis position. The `commitment` argument to
-    // `create_position` is what builds the position_id; we use the proof's
-    // `nullifier_hash` because it is globally unique (the pool already
-    // enforces nullifier uniqueness).
+    // Derive the issuance currency from the disbursed asset (it self-reports its
+    // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin the matching
+    // refinancing rate read from the Oracle's reference-currency collection.
+    let issuance_currency = read_iso_code(&storage, asset)?;
+    let refinancing_rate = get_refinancing_rate(storage.clone(), issuance_currency)?;
+
+    // Open the credis position, storing the sealed pledger EOA so the anadosis release
+    // and the expiry-burn sweep can address the right confidential pledged ledger. The
+    // `handle_id` argument to `create_position` builds the position_id; we use the
+    // globally-unique pledge handle.
+    let handle_id = U256::from_be_bytes(pledge_handle.0);
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.create_position(
-        args.nullifier_hash,
+        handle_id,
         bundle_account,
+        eoa_ct,
         asset,
+        issuance_currency,
+        refinancing_rate,
         amount_stables,
         gratis_amount,
         current_time,
     )?;
 
-    // Persist the position's denomination so `pay_anadosis` can derive the
-    // anadosis (one-decade-down) denomination for each installment's reclaim
-    // insert.
-    {
-        let factory = CredisFactoryContract::new(storage.clone());
-        factory
-            .position_denom
-            .write(&position_id, denom.id() as u32)?;
-    }
-
     // Withdraw the matching stablecoin from the vault to the smart account.
-    outbe_vaultprovider::api::withdraw_liquidity(&storage, asset, amount_stables, bundle_account)?;
+    outbe_vaultrouter::api::withdraw(&storage, asset, amount_stables, bundle_account)?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,
@@ -126,22 +121,21 @@ pub fn request_credis(
 // pay_anadosis
 // ---------------------------------------------------------------------------
 
-/// Advances the credis position by one anadosis installment and inserts the
-/// caller-supplied `reclaim_commitment` into the gratispool at the anadosis
-/// (one-decade-down) denomination.
-///
-/// The `reclaim_commitment` MUST have been computed with the **anadosis
-/// denomination id** (see [`DenomAmount::anadosis_denomination`]); the runtime
-/// stores it opaquely and cannot verify the preimage, so a note built against
-/// the wrong denomination inserts successfully but is permanently unspendable.
+/// Advances the credis position by one anadosis installment and releases that
+/// installment's share of collateral from the pledger's OWN confidential pledged
+/// ledger back to its balance. The pledger EOA is stored sealed on the position and
+/// recovered here through the enclave (`reveal_owner`), so the release reaches the
+/// rightful pledger without the EOA ever appearing on-chain. The paid installment (the
+/// ERC20 → vault deposit below) is the authorization for the release — no separate
+/// proof is required.
 pub fn pay_anadosis(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
-    reclaim_commitment: U256,
 ) -> Result<AnadosisResult> {
-    // Read-only validation pass before any mutation.
-    {
+    // Read-only validation pass before any mutation; recover the pledger EOA from the
+    // position's sealed `eoa_ct` via a RevealOwner enclave round-trip.
+    let eoa_account = {
         let credis_ro = CredisContract::new(storage.clone());
         let position = credis_ro.get_position(position_id)?;
         let next = credis_ro
@@ -157,12 +151,8 @@ pub fn pay_anadosis(
         if caller != position.bundle_account {
             return Err(CredisFactoryError::UnauthorizedCaller.into());
         }
-        // Checked after authorization so an unauthorized caller still sees the
-        // `bundleAccount` error regardless of the reclaim value.
-        if reclaim_commitment.is_zero() {
-            return Err(CredisFactoryError::InvalidReclaimCommitment.into());
-        }
-    }
+        outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)?
+    };
 
     let current_time = storage.timestamp()?.to::<u64>();
     let mut credis = CredisContract::new(storage.clone());
@@ -184,31 +174,73 @@ pub fn pay_anadosis(
 
     // 2) Approve the vault to spend that exact amount.
     let approve = IERC20::approveCall {
-        spender: VAULT_PROVIDER_ADDRESS,
+        spender: VAULT_ROUTER_ADDRESS,
         amount,
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
     // 3) Vault pulls and deposits into the reserve vault via its Solidity ABI.
-    outbe_vaultprovider::api::deposit_liquidity(&storage, asset, amount)?;
+    outbe_vaultrouter::api::deposit(&storage, asset, amount)?;
 
-    // 4) Append this installment's reclaim note so the pledger can unpledge
-    //    1/10 of the collateral immediately.
-    let factory = CredisFactoryContract::new(storage.clone());
-    let credis_denom = factory.position_denom.read(&position_id)?;
-    let denom = DenomAmount::try_from(credis_denom)?;
-    let anadosis_denom = denom
-        .anadosis_denomination()
-        .ok_or(CredisFactoryError::DenomNotCredisEligible)?;
-    pool::add_commitment(storage.clone(), anadosis_denom, reclaim_commitment)?;
+    // 4) Release this installment's share of collateral from the pledger's own
+    //    pledged ledger back to its liquid Gratis balance.
+    outbe_gratis::api::release_to_eoa(storage.clone(), eoa_account, result.gratis_amount)?;
 
     Ok(result)
+}
+
+/// Burns the outstanding pledged collateral of an expired credis position, drops the
+/// pledger's fidelity cohort by the burned amount, and deposits the equivalent value
+/// into the Promis Reserve.
+pub fn expire_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
+    let now = storage.timestamp()?.to::<u64>();
+    let position = CredisContract::new(storage.clone()).get_position(position_id)?;
+
+    if now < CredisContract::expires_at(&position) {
+        return Err(CredisFactoryError::NotExpired.into());
+    }
+    if position.outstanding_anadosis_amount.is_zero() {
+        return Err(CredisFactoryError::NothingOutstanding.into());
+    }
+
+    // Recover the pledger EOA from the position's sealed `eoa_ct` through the enclave so
+    // the burn / fidelity drop address the right confidential ledgers (reveal once, use
+    // for both).
+    let eoa = outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct)?;
+
+    // Burn the still-locked collateral from the pledger's own pledged ledger.
+    let burned = position.outstanding_gratis_amount;
+    outbe_gratis::api::burn_pledged(storage.clone(), eoa, burned)?;
+
+    // Fidelity drops by the burned collateral (records a LIFO sale cohort).
+    outbe_fidelity::api::cohort_out(storage.clone(), eoa, burned, now)?;
+
+    // The equivalent value is deposited 1:1 into the Promis Reserve.
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .add_to_total_unallocated(burned)?;
+
+    // Close the position (zero outstanding balances, emit CollateralBurned).
+    CredisContract::new(storage.clone()).expire_position(position_id)?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Oracle conversion (gratis 10^18 → stablecoin 10^6)
 // ---------------------------------------------------------------------------
+
+/// Reads the disbursed asset's ISO 4217 currency code via a static
+/// `IReferenceCurrency.isoCode()` sub-call. Mirrors the `staticcall` +
+/// `abi_decode_returns` pattern used by intexfactory's ERC20 reads.
+fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| CredisFactoryError::AssetIsoUndecodable.into())
+}
 
 /// Cosmos formula: `amountStables = gratisAmount * rateInt18 / (decimalsDiff * precision)`.
 fn convert_gratis_to_stables(storage: StorageHandle<'_>, gratis_amount: U256) -> Result<U256> {

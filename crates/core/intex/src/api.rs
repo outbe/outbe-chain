@@ -5,16 +5,36 @@
 //! (`markQualified` / `markCalled`). There is no precompile dispatch for writes
 //! and access is Rust-to-Rust only, so no trusted-caller checks are needed.
 //!
-//! The registry is a thin ledger: the only thing it validates is the
-//! `issued_at` existence sentinel. Business validation (caps, defaults, zero
-//! economic parameters) belongs to the caller (IntexFactory).
+//! The legacy registry remains a thin ledger whose record validation is the
+//! `issued_at` existence sentinel. Once a certified contributor generation is
+//! installed, its series identity is closed to legacy contributor writes so
+//! the two storage models cannot become competing authorities. Independent
+//! series creation remains valid because activation may precede auction
+//! completion. Other business validation (caps, defaults, zero economic
+//! parameters) belongs to the caller (IntexFactory).
 
-use alloy_primitives::U256;
-use outbe_primitives::error::Result;
+use alloy_primitives::{Address, U256};
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::IntexError;
-use crate::schema::{CreateSeriesParams, IntexContract, IntexState, SeriesRecord};
+use crate::schema::{
+    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexContract,
+    IntexState, SeriesRecord,
+};
+
+/// Immutable contributor target state consumed by OCOMP JobIntent assembly.
+///
+/// An absent legacy series starts at version 0 and an existing legacy series
+/// at version 1. A certified root installation advances that exact version
+/// once; the version is active output authority, not reservation state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OcompContributorTargetProjection {
+    pub series_id: u32,
+    pub expected_series_version: u64,
+    pub contributor_count: u32,
+    pub contributor_total: U256,
+}
 
 /// Create a new Intex series record. Always born in `Issued`. Rejects a
 /// duplicate `series_id` (via the record-level create) and a zero `issued_at`
@@ -41,6 +61,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         intex_call_period: params.call_trigger.intex_call_period,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
+        worldwide_day: params.worldwide_day,
     };
     registry.create_series_record(&record)
 }
@@ -94,6 +115,64 @@ pub fn series_exists(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool
     IntexContract::new(storage.clone()).series_exists(series_id)
 }
 
+/// Reads the exact create-only contributor target state for one series.
+pub fn ocomp_contributor_target_projection(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<OcompContributorTargetProjection> {
+    let registry = IntexContract::new(storage.clone());
+    let exists = registry.series_exists(series_id)?;
+    let legacy_count = registry.read_contributor_count(series_id)?;
+    let legacy_total = registry.read_contributor_total(series_id)?;
+    if (legacy_count == 0) != legacy_total.is_zero() {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex legacy contributor aggregate is malformed".into(),
+        ));
+    }
+    let certified = registry.ocomp_certified_contributor_generation(series_id)?;
+    if certified.is_some() && (legacy_count != 0 || !legacy_total.is_zero()) {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex series has conflicting legacy and certified contributor authority".into(),
+        ));
+    }
+    if !exists && certified.is_none() && (legacy_count != 0 || !legacy_total.is_zero()) {
+        return Err(outbe_primitives::error::PrecompileError::Fatal(
+            "Intex absent series has residual contributor state".into(),
+        ));
+    }
+
+    let base_version = u64::from(exists);
+    let (expected_series_version, contributor_count, contributor_total) = match certified {
+        Some(certified) => {
+            if certified.series_version < base_version {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "Intex certified contributor version precedes the series ledger".into(),
+                ));
+            }
+            (
+                certified.series_version,
+                certified.contributor_count,
+                certified.eligible_nominal_total,
+            )
+        }
+        None => (base_version, legacy_count, legacy_total),
+    };
+    Ok(OcompContributorTargetProjection {
+        series_id,
+        expected_series_version,
+        contributor_count,
+        contributor_total,
+    })
+}
+
+/// Reads the constant-size certified contributor proof authority for a series.
+pub fn certified_contributor_generation(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<Option<CertifiedContributorGenerationProjection>> {
+    IntexContract::new(storage.clone()).ocomp_certified_contributor_generation(series_id)
+}
+
 /// Number of series ever created (for dense enumeration).
 pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
     IntexContract::new(storage.clone()).read_total_series()
@@ -102,4 +181,249 @@ pub fn total_series(storage: &StorageHandle<'_>) -> Result<u64> {
 /// `series_id` at a dense enumeration index.
 pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<u32> {
     IntexContract::new(storage.clone()).read_series_id_at(index)
+}
+
+// -------------------------------------------------------------------------
+// Creator-reward: contributors + paginated distribution
+// -------------------------------------------------------------------------
+
+/// Record the (pre-deduplicated) legacy contributor list for a series. Called
+/// once per series by legacy Lysis, before the tributes are burned. Each entry
+/// is `(tribute owner, Σ nominal_amount_minor)`. A certified generation closes
+/// this path for that exact series identity.
+pub fn record_contributors(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    contributors: &[(Address, U256)],
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    if registry
+        .ocomp_certified_contributor_generation(series_id)?
+        .is_some()
+    {
+        return Err(PrecompileError::Revert(
+            "legacy contributors cannot replace certified contributor authority".into(),
+        ));
+    }
+    registry.write_contributors(series_id, contributors)
+}
+
+/// Number of contributors recorded for a series (0 if none).
+pub fn contributor_count(storage: &StorageHandle<'_>, series_id: u32) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_contributor_count(series_id)
+}
+
+/// Σ of all contributor nominals for a series (the proportionality denominator).
+pub fn contributor_total(storage: &StorageHandle<'_>, series_id: u32) -> Result<U256> {
+    IntexContract::new(storage.clone()).read_contributor_total(series_id)
+}
+
+/// `(owner, nominal)` of the contributor at a dense index.
+pub fn contributor_at(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    index: u32,
+) -> Result<(Address, U256)> {
+    IntexContract::new(storage.clone()).read_contributor_at(series_id, index)
+}
+
+/// Full contributor list for a series.
+pub fn read_contributors(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+) -> Result<Vec<(Address, U256)>> {
+    let registry = IntexContract::new(storage.clone());
+    let count = registry.read_contributor_count(series_id)?;
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        out.push(registry.read_contributor_at(series_id, i)?);
+    }
+    Ok(out)
+}
+
+/// Open a paginated distribution for a series: create the progress record
+/// (cursor 0, nothing paid yet) and enroll the series in the active set the
+/// begin-block hook drains.
+pub fn start_distribution(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    amount: U256,
+    total_nominal: U256,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.create_dist_progress(&DistProgress {
+        series_id,
+        amount,
+        total_nominal,
+        paid_so_far: U256::ZERO,
+        cursor: 0,
+        active: 1,
+    })?;
+    registry.push_active_dist(series_id)
+}
+
+/// In-flight distribution progress for a series; `None` when none is open.
+pub fn get_progress(storage: &StorageHandle<'_>, series_id: u32) -> Result<Option<DistProgress>> {
+    IntexContract::new(storage.clone()).get_dist_progress(series_id)
+}
+
+/// Persist an updated progress record (advanced cursor / paid total).
+pub fn save_progress(storage: &StorageHandle<'_>, progress: &DistProgress) -> Result<()> {
+    IntexContract::new(storage.clone()).update_dist_progress(progress)
+}
+
+/// Finish a distribution: drop the progress record, the active-set entry, and
+/// the (now spent) contributor list.
+pub fn clear_distribution(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.delete_dist_progress(series_id)?;
+    registry.remove_active_dist(series_id)?;
+    registry.clear_contributors(series_id)
+}
+
+/// End one distribution round without touching the contributor map: drop the
+/// progress record and the active-set entry only. Used by the multi-chain
+/// proceeds flow, which decides separately whether to retain the map for a
+/// later top-up ([`finalize_proceeds`]) or clear it.
+pub fn finish_distribution_round(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.delete_dist_progress(series_id)?;
+    registry.remove_active_dist(series_id)
+}
+
+/// Number of in-flight distributions (for the begin-block drain).
+pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_active_dist_count()
+}
+
+/// `series_id` of the active distribution at a dense index.
+pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+    IntexContract::new(storage.clone()).read_active_dist_at(index)
+}
+
+// -------------------------------------------------------------------------
+// Creator-reward: multi-chain proceeds fan-in aggregation
+// -------------------------------------------------------------------------
+
+/// Arm proceeds fan-in for a series: mark the winning chains expected (deduped),
+/// set the fan-in `deadline`, and enroll the series in the awaiting-proceeds set
+/// the begin-block sweep watches. Called once at issuance.
+pub fn arm_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    winning_chains: &[u32],
+    deadline: u64,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut expected: u32 = 0;
+    for &chain in winning_chains {
+        let key = IntexContract::proceeds_chain_key(series_id, chain);
+        if registry.proceeds_expected.read(&key)? == 0 {
+            registry.proceeds_expected.write(&key, 1u8)?;
+            expected += 1;
+        }
+    }
+    registry
+        .proceeds_expected_count
+        .write(&series_id, expected)?;
+    registry.proceeds_deadline.write(&series_id, deadline)?;
+    registry.push_awaiting_proceeds(series_id)
+}
+
+/// Credit a chain's proceeds into the series pot; counts the chain toward the
+/// fan-in once (dedup), so a chain routing its proceeds in parts is idempotent
+/// for completeness while still summing every amount.
+pub fn credit_proceeds(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    src_chain_id: u32,
+    amount: U256,
+) -> Result<()> {
+    let registry = IntexContract::new(storage.clone());
+    let pot = registry.proceeds_pot.read(&series_id)?;
+    registry.proceeds_pot.write(&series_id, pot + amount)?;
+
+    let expected_key = IntexContract::proceeds_chain_key(series_id, src_chain_id);
+    let arrived_key = expected_key;
+    if registry.proceeds_expected.read(&expected_key)? != 0
+        && registry.proceeds_arrived.read(&arrived_key)? == 0
+    {
+        registry.proceeds_arrived.write(&arrived_key, 1u8)?;
+        let arrived = registry.proceeds_arrived_count.read(&series_id)?;
+        registry
+            .proceeds_arrived_count
+            .write(&series_id, arrived + 1)?;
+    }
+    Ok(())
+}
+
+/// Every expected winning chain has routed its proceeds.
+pub fn proceeds_ready(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
+    let registry = IntexContract::new(storage.clone());
+    let expected = registry.proceeds_expected_count.read(&series_id)?;
+    Ok(expected > 0 && registry.proceeds_arrived_count.read(&series_id)? == expected)
+}
+
+/// Fan-in deadline for a series (0 if never armed).
+pub fn proceeds_deadline(storage: &StorageHandle<'_>, series_id: u32) -> Result<u64> {
+    IntexContract::new(storage.clone())
+        .proceeds_deadline
+        .read(&series_id)
+}
+
+/// Read and clear the accumulated pot (handed to a distribution round).
+pub fn take_proceeds_pot(storage: &StorageHandle<'_>, series_id: u32) -> Result<U256> {
+    let registry = IntexContract::new(storage.clone());
+    let pot = registry.proceeds_pot.read(&series_id)?;
+    registry.proceeds_pot.write(&series_id, U256::ZERO)?;
+    Ok(pot)
+}
+
+/// Mark whether the current distribution round should finalize the series on
+/// completion (all expected chains in) or retain its map for a later top-up.
+pub fn set_proceeds_finalize_on_done(
+    storage: &StorageHandle<'_>,
+    series_id: u32,
+    finalize: bool,
+) -> Result<()> {
+    IntexContract::new(storage.clone())
+        .proceeds_finalize_on_done
+        .write(&series_id, u8::from(finalize))
+}
+
+/// Whether the in-flight round finalizes the series on completion.
+pub fn proceeds_finalize_on_done(storage: &StorageHandle<'_>, series_id: u32) -> Result<bool> {
+    Ok(IntexContract::new(storage.clone())
+        .proceeds_finalize_on_done
+        .read(&series_id)?
+        != 0)
+}
+
+/// Finalize proceeds aggregation for a series: clear the pot/deadline/counters,
+/// drop it from the awaiting set, and clear the (now spent) contributor map.
+/// The per-(series, chain) flags are left as harmless dead entries — a series id
+/// (the worldwide day) never recurs.
+pub fn finalize_proceeds(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    registry.proceeds_pot.clear(&series_id)?;
+    registry.proceeds_deadline.clear(&series_id)?;
+    registry.proceeds_expected_count.clear(&series_id)?;
+    registry.proceeds_arrived_count.clear(&series_id)?;
+    registry.proceeds_finalize_on_done.clear(&series_id)?;
+    registry.remove_awaiting_proceeds(series_id)?;
+    registry.clear_contributors(series_id)
+}
+
+/// Number of series awaiting proceeds fan-in (for the begin-block deadline sweep).
+pub fn awaiting_proceeds_count(storage: &StorageHandle<'_>) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .awaiting_proceeds_count
+        .read()
+}
+
+/// `series_id` awaiting proceeds at a dense index.
+pub fn awaiting_proceeds_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .awaiting_proceeds_at
+        .read(&index)
 }

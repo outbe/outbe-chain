@@ -1,0 +1,540 @@
+# Off-chain PoC process and artifact topology
+
+Status: **UPDATED ON 2026-07-28**
+
+The node/supervisor/exporter/worker/CAS process boundary remains valid. The PoC
+does not claim host isolation and has no relay role: validators use public
+result-vote transactions, and quorum apply occurs in normal block execution.
+
+This decision fixes the smallest local topology that demonstrates real process,
+resource and artifact failure boundaries for the PoC. It is subordinate to:
+
+- the [PoC scope](../off-chain-poc.md);
+- the [protocol-byte freeze](off-chain-poc-protocol-freeze.md);
+- the [finalized input/export decision](off-chain-poc-finalized-input-export.md);
+- `ADR-S-OCM-001` and `ADR-S-OCM-002`.
+
+It does not add a production launch broker, remote workers, a generic program
+runtime or a second off-chain program.
+
+## 1. Decision in one view
+
+One validator administrative domain in the PoC harness is:
+
+```text
+                         public chain traffic
+                                  |
+                                  v
+  +---------------------------------------------------------------+
+  | outbe-chain child process                                     |
+  | consensus/finality, Job FSM, OCOMP signer and sign-once       |
+  | bounded OcompControlV1 AF_UNIX endpoints                      |
+  +--------------------------+------------------------------------+
+                             | session-bound OcompControlV1
+                 +-----------+------------------+
+                 |                              |
+                 v                              v
+  +-----------------------------+  +------------------------------+
+  | snapshot-exporter child     |  | supervisor child             |
+  | CE exact RO + Mongo reads   |  | cursor/plan/schedule/reduce  |
+  +---------------+-------------+  +---------------+--------------+
+                  | verified objects               | CAS objects
+                  +---------------+----------------+
+                                  v
+  +---------------------------------------------------------------+
+  | validator-local filesystem CAS                               |
+  | digest-addressed objects with bounded PoC profile             |
+  | correctness is re-established from bytes, digests and roots   |
+  +--------------------------+------------------------------------+
+                             | exact object references
+                             v
+  +---------------------------------------------------------------+
+  | Supervisor's fixed PoC launcher, maximum four live children   |
+  | one production worker process -> exactly one immutable UnitId |
+  +---------------------------------------------------------------+
+```
+
+There is no CAS daemon. Each validator domain has a distinct bounded CAS
+directory. Adding a daemon would add a process, protocol and recovery surface
+without adding authority or correctness.
+
+## 2. Smallest code/package shape
+
+Exactly two new workspace packages are justified:
+
+| Package | Contents | Why it is separate |
+|---|---|---|
+| `crates/system/ocomp-protocol` / `outbe-ocomp-protocol` | OCB1 schemas/codecs, IDs/hashes, bounded local control frames and pure verifiers | both the node and compute binary need the exact bytes; it must not depend on node, databases, process launch, HTTP or Lysis storage |
+| `bin/outbe-ocomp` / `outbe-ocomp` | a library plus one executable with `supervisor`, `snapshot-exporter` and `worker` subcommands | all three roles share codecs, CAS verification and diagnostics, while separate process handles, configured paths and protocol capabilities define the PoC boundary |
+
+Node-owned `OcompControl`, retention and attestation code remains in the
+existing node/system ownership selected by later lifecycle tasks. Pure Lysis V1
+semantics remains in `crates/core/lysis`; it is not copied into a process crate.
+The E2E process owner remains `crates/testing/e2e-harness`.
+
+Using one executable for three roles is not an authority shortcut:
+
+- a worker receives only its inherited control socket and exact object refs;
+- an exporter cannot call supervisor or attestation methods;
+- a supervisor cannot call exporter-only proof methods or access the OCOMP key;
+- none of these roles receives a node database or validator-key capability
+  through the local protocol.
+
+Invoking another subcommand therefore does not grant that role's capabilities.
+Startup fails closed if the inherited descriptor, peer/session identity,
+configured path or role does not match. OS-enforced pathname and identity
+isolation is deferred to MVP.
+
+Not selected:
+
+- one crate per process;
+- a generic `ProgramRegistry`, `TaskAdapter` or executor plugin API;
+- linking exporter/worker code into `outbe-chain`;
+- a separate CAS service;
+- a production worker launch broker;
+- direct `Command` execution of caller-selected paths.
+
+## 3. Process ownership and lifecycle
+
+### 3.1 PoC process ownership
+
+The Rust E2E harness owns each node, Supervisor and SnapshotExporter child
+process and records worker child lifetimes. For the production computation
+path, Supervisor creates and owns each one-unit worker child through its fixed
+PoC adapter. The harness may directly launch the same production worker
+entrypoint only for a narrow process-boundary test. Processes may share the
+harness Unix identity; the PoC makes no claim that local UID separation
+protects against root or a compromised host.
+
+The node still owns consensus state, the OCOMP key and sign-once journal.
+Supervisor and SnapshotExporter communicate through bounded AF_UNIX control
+sessions, and the harness never receives a path/query/key or precomputed result
+injection capability.
+
+### 3.2 Worker lifecycle
+
+For each admitted immutable work unit, Supervisor creates a connected AF_UNIX
+socket pair and starts the production `outbe-ocomp worker` child with one
+inherited descriptor. The bounded harness topology permits at most four live
+workers per validator domain. This limit is test orchestration, not consensus
+weight and not an operating-system security boundary.
+
+The supervisor:
+
+1. selects an already frozen `UnitSpecV1` from the complete parent-job plan;
+2. opens one connection to the fixed socket;
+3. completes the worker handshake;
+4. sends exactly one bounded `RunUnitV1`;
+5. waits for one result reference or a bounded failure;
+6. closes the connection.
+
+The worker:
+
+1. verifies the connecting supervisor UID with `SO_PEERCRED`;
+2. binds its invocation to the first valid `UnitId`;
+3. verifies bundle, `JobId`, attempt, `PlanHash`, plan membership and all CAS
+   object references;
+4. executes exactly that unit;
+5. writes exactly one staged `UnitArtifactV1`;
+6. returns its digest/length/status and exits.
+
+The queue contains only a bounded window of ready unit ordinals. Canonical
+`UnitSpecV1` values are derived lazily from `PlanCommitmentV1`; the supervisor
+never materializes every unit. Completing a full shard never terminates
+discovery: the next authenticated Tribute starts the next shard and its ordinal
+is reached normally. A supervisor may use successive worker invocations for
+arbitrarily many units, but each invocation receives exactly one immutable
+unit.
+
+The primary catalog is streamed from the manifest-committed Tribute chunk
+references, not from a second full Tribute vector. Each primary `UnitSpecV1`
+binds the exact chunk semantic digest/count/byte limit; its half-open ID range is
+the current chunk's first key through the next chunk's first key.
+
+A second run request, different `UnitId`, arbitrary path, executable, shell
+command or resource override is rejected. Connection loss cancels the result,
+and the supervisor applies the bounded unit deadline.
+
+The worker launch shape is fixed in the Rust harness. No polkit rule, D-Bus
+activation, privileged helper or production launch broker is part of the PoC.
+
+## 4. Local control planes
+
+There are two distinct local APIs:
+
+1. node `OcompControlV1`, used only by supervisor/exporter;
+2. `WorkerControlV1`, used only between supervisor and one worker invocation.
+
+Neither carries bulk objects. Semantic objects carried inside either API are
+complete OCB1 bytes and are decoded with the frozen production codec.
+
+### 4.1 Common bounded frame
+
+Both APIs use an AF_UNIX stream with this local operational frame:
+
+```text
+u32_be frame_len                 bytes following this field
+4 bytes magic                    "OCL1" or "OWR1"
+u16_be control_version           exactly 1
+u16_be message_kind
+u64_be session_generation        0 only during Hello/HelloAck
+u64_be request_id                0 for Hello; strictly increasing thereafter
+u32_be body_len
+body_len bytes canonical body
+```
+
+`frame_len` must equal `28 + body_len`. The receiver reads only the first four
+bytes, rejects a value above its advertised cap, and only then allocates.
+Unknown magic/version/kind, zero or replayed request IDs, stale generation,
+truncation, extra bytes and a cap+1 body close the session. No resynchronization
+is attempted after a malformed frame.
+
+This frame is local operational transport, not a fork/consensus object. It may
+be versioned independently, but it cannot reinterpret OCB1 bytes or accept a
+job without one exact common `ProtocolBundleHash`.
+
+The generated deployment limits manifest fixes:
+
+- maximum frame bytes per message kind;
+- maximum vector/count value per message kind;
+- maximum two concurrent node-control sessions: one supervisor and one
+  exporter;
+- one outstanding request per session in PoC;
+- request and idle timeouts.
+
+The generator derives message caps from maximum production encodings plus the
+fixed frame. A zero, unbounded or environment-only limit fails the deployment
+gate.
+
+### 4.2 Node method registry and capability ACL
+
+The local method registry is:
+
+| Kind | Message | Allowed peer |
+|---:|---|---|
+| `0x0001` | `HelloV1` | supervisor, exporter |
+| `0x0002` | `HelloAckV1` | node |
+| `0x0010` | `ListFinalizedJobsV1` | supervisor |
+| `0x0011` | `GetJobSpecV1` | supervisor |
+| `0x0012` | `OpenSnapshotLeaseV1` | supervisor |
+| `0x0013` | `RenewSnapshotLeaseV1` | exporter |
+| `0x0014` | `ListSnapshotHandoffsV1` | exporter |
+| `0x0015` | `GetSnapshotHandoffV1` | exporter |
+| `0x0016` | `BuildFinalizedIntentProofV1` | exporter |
+| `0x0017` | `BuildLysisOpeningsV1` | exporter |
+| `0x0018` | `CommitSnapshotExportV1` | exporter |
+| `0x0019` | `RequestAttestationV1` | supervisor |
+| `0x001a` | `GetOcompHealthV1` | supervisor, exporter |
+| `0x7ffe` | `ResponseV1` | node |
+| `0x7fff` | `ErrorV1` | either direction |
+
+The `Build*` methods are the typed proof source selected in decision ticket #5.
+`CommitSnapshotExportV1` implements its compare-and-set `record_exported`
+transition; it accepts only the current `JobId`, lease generation, manifest
+hash, exact byte/count totals and export certificate hash.
+
+`HelloV1` and `HelloAckV1` carry the fields already required by the PoC:
+chain/genesis, boot/session nonce, supported control versions, exact supported
+bundle hashes, capability bits, receive limits, peer identity and selected
+session generation. Capability bits are intersected with the fixed
+peer-UID role; a caller cannot self-assign capabilities.
+
+Every job method includes the session generation and exact bundle/`JobId`.
+`RequestAttestationV1` includes constant-size `LysisResultV1`; it never accepts
+a digest-only or generic signing request. Bulk result chunks remain outside the
+node control plane.
+
+`ErrorV1` contains only:
+
+```text
+rejected_kind: u16
+error_code: u16
+retryable: bool
+```
+
+The closed error set is `MALFORMED`, `LIMIT_EXCEEDED`, `UNAUTHORIZED`,
+`STALE_SESSION`, `NO_COMMON_BUNDLE`, `NOT_FOUND`, `CONFLICT`, `BUSY`,
+`SOURCE_UNAVAILABLE` and `INTERNAL_OCOMP_UNAVAILABLE`. Error text remains local
+structured logging and cannot create an unbounded response.
+
+### 4.3 Worker method registry
+
+The worker API has only:
+
+| Kind | Message |
+|---:|---|
+| `0x0001` | `WorkerHelloV1` |
+| `0x0002` | `WorkerHelloAckV1` |
+| `0x0010` | `RunUnitV1` |
+| `0x7ffe` | `UnitFinishedV1` |
+| `0x7fff` | `WorkerErrorV1` |
+
+`RunUnitV1` contains no path and no executable:
+
+```text
+protocol_bundle_hash
+JobId
+attempt
+PlanHash
+unit_index
+canonical UnitSpecV1 OCB1 bytes
+unit_membership_siblings (bottom-up B256 list, at most 32)
+canonical PlanCommitmentV1 bytes
+transport reference to InputManifestV1
+strictly ordered input object transport references
+```
+
+A primary unit is accepted only when the canonical `UnitSpecV1` leaf, exact
+`unit_index`, `primary_work_unit_count` and bottom-up sibling list reconstruct
+`PlanCommitmentV1.primary_work_unit_root`. A one-unit plan has an empty sibling
+list; even the maximum `u32` population needs at most 32 siblings. Secondary
+units use deterministic derivation from their exact producer UnitIds instead
+of this primary-catalog witness.
+
+A transport reference is local-only:
+
+```text
+CasObjectRefV1 {
+  transport_digest: B256,
+  encoded_bytes: u64,
+  expected_ocb1_kind: Option<u16>
+}
+```
+
+The worker recomputes constant-size `PlanHash`, derives the selected
+`UnitSpecV1` from its ordinal (or verifies its catalog membership), then
+recomputes `UnitId` and validates input semantic roots/counts. It never reads a
+complete plan file and cannot use a plan or input supplied only in the request
+as authority.
+
+`UnitFinishedV1` returns `UnitId`, status, exact staged byte count and transport
+digest. A success does not make the artifact trusted: the supervisor opens the
+staged file, verifies it from the same descriptor, adopts it into CAS and then
+runs the normal reducer/verifier.
+
+## 5. CAS and scratch layout
+
+### 5.1 Two independent storage budgets
+
+The node OCOMP key/pin/sign-once state and compute artifacts do not share an
+unbounded filesystem budget with the chain database:
+
+```text
+/var/lib/outbe/ocomp-v1/              node-owned OCOMP project quota
+  retention-journal/
+  sign-once/
+  key/
+
+/var/lib/outbe-ocomp/                 separate compute mount/project quota
+  cas-v1/
+  exporter-v1/
+  supervisor-v1/
+  worker-inbox-v1/
+```
+
+Filling either budget disables only local export/computation/signing. The chain
+database retains reserved free space and continues consensus/execution.
+
+The PoC deployment generator emits both exact quota values. It computes the
+compute reservation from one admitted job's maximum source, plan,
+intermediate, result, inbox and scratch bytes plus already retained terminal
+objects. Admission reserves the complete bound before opening a snapshot lease.
+If the current quota cannot cover it, that validator abstains. Local quotas may
+be lower than consensus maxima but can never make a larger object eligible.
+
+### 5.2 Exact object paths
+
+For `TransportDigestV1 = keccak256(exact stored bytes)`, the only object path is:
+
+```text
+cas-v1/objects/<lowercase first two digest hex>/<lowercase remaining 62 hex>
+```
+
+There is no extension, alternate case, semantic-name alias or caller-provided
+path. Local administrative files are outside `objects/`:
+
+```text
+cas-v1/staging/exporter/
+cas-v1/staging/supervisor/
+cas-v1/refs/<JobId lowercase hex>/<attempt decimal>/
+cas-v1/quarantine/
+exporter-v1/journal/
+supervisor-v1/journal/
+worker-inbox-v1/<UnitId lowercase hex>.ocb1
+```
+
+`refs/` records reachability/retention only. It is never input authority.
+Deleting or mutating it can cause local loss/abstention but cannot forge a
+root, result or signature.
+
+### 5.3 Publish and read rules
+
+CAS publish is:
+
+1. create a same-filesystem role staging file with `O_CREAT|O_EXCL`;
+2. stream bytes once while counting and computing `TransportDigestV1`;
+3. reject a generated byte/count cap before further growth;
+4. `fsync` the staging file;
+5. atomically install it at the digest path with no replacement;
+6. `fsync` the parent directory;
+7. if the object already exists, open that object and verify its exact length
+   and digest instead of overwriting it.
+
+CAS read is:
+
+1. derive the path solely from an already bounded digest;
+2. open read-only without following symlinks;
+3. `fstat` and reject a non-regular file or wrong length;
+4. hash and decode from that same descriptor;
+5. check end-of-file and an unchanged final `fstat`;
+6. verify semantic digest/root/count before use.
+
+Filesystem mode is defense in depth, not the guarantee that data stayed
+unchanged. A compromised writer can damage its validator's CAS; exact bytes,
+transport digest and authenticated semantic roots detect that damage, so the
+domain abstains instead of signing.
+
+Exporter and supervisor may atomically publish verified CAS objects. Worker
+processes see `objects/` read-only and write only one derived
+`worker-inbox-v1/<UnitId>.ocb1` staging file. The supervisor verifies and adopts
+that file; a worker never directly installs an authoritative object.
+
+PoC uses `compression=NONE`; there is no alternate compressed object.
+
+### 5.4 Retention and cleanup
+
+The one-job PoC adapter uses a deterministic local mark/sweep:
+
+1. input, plan, unit and result object refs stay live while the job is
+   nonterminal;
+2. terminal finality records `release_after_finalized_height`;
+3. source/evidence refs remain live for the frozen 64-finalized-block window;
+4. after that height, a bounded sweep removes unreferenced objects;
+5. a failure or crash during cleanup is retried and cannot make an object live
+   again;
+6. cleanup has its own I/O budget and is never performed by the node.
+
+Crash-safe multi-job GC, remote CAS and custody repair are BoundedMVP work.
+Quota exhaustion before safe release causes local abstention; it never permits
+early deletion or changes chain state.
+
+## 6. Resource and filesystem confinement
+
+The PoC proves bounded protocol behavior, not host isolation. Schema/frame
+ceilings, the four-worker harness cap, CAS quotas encoded in the test profile
+and bounded deadlines prevent an individual test job from becoming unbounded.
+They do not protect against root, a malicious host or an operator changing the
+launcher.
+
+Production CPU/memory/I/O enforcement, distinct service identities,
+read-only mounts, namespaces, Landlock/seccomp and a service manager belong to
+MVP deployment hardening. None is a PoC closure prerequisite and retained PoC
+evidence must not claim those properties.
+
+## 7. Failure semantics
+
+| Failure | Required local outcome | Consensus outcome |
+|---|---|---|
+| supervisor absent/crashed/incompatible | no worker requests or attestation; restart cursor from journal | blocks and finality continue; `ocomp_ready=false` |
+| exporter absent/crashed | lease expires or export remains incomplete; validator abstains | unchanged |
+| worker crash/timeout/mutation | reject staged bytes; retry same `UnitId` within deadline | unchanged |
+| fifth concurrent worker request | harness-owned launcher refuses it | unchanged |
+| unauthorized UDS peer | reject before method/body work | unchanged |
+| malformed or cap+1 frame | reject before body allocation/crypto | unchanged |
+| CAS object changed | transport/semantic verification fails; quarantine/abstain | unchanged |
+| compute CAS/inbox quota full | admission or write fails locally | unchanged |
+| node OCOMP journal quota full | no new OCOMP signature/pin acknowledgement | normal consensus except the local vote rule already selected for a required pin |
+| no common bundle | close only OCOMP session | node remains consensus-ready |
+| vote submission delayed | supervisor retries the exact signed transaction bytes | unchanged until inclusion or deadline |
+
+No failure invokes synchronous/on-chain Lysis and no compute service may
+request node shutdown.
+
+## 8. Harness and production-like test entrypoints
+
+The existing Rust E2E harness remains the sole owner of test subprocesses. It
+is extended with typed guards for:
+
+- four node processes;
+- four exporter processes;
+- four supervisor processes;
+- worker child processes and every spawned one-unit worker;
+- four independent CAS volumes/directories and their fault controls.
+
+The Supervisor always connects to the real worker socket and sends the real
+`WorkerControlV1`; the harness cannot inject a unit executor or result. The
+Supervisor's fixed PoC adapter starts the exact production `outbe-ocomp worker`
+entrypoint with an inherited connected socket. A narrow harness-owned boundary
+test may perform the same fixed launch, but may not emulate worker logic, CAS,
+result bytes or limits.
+
+`ScenarioEvidence` must be extended later to record:
+
+- executable hashes and exact role arguments;
+- process IDs and start/stop/crash timestamps;
+- socket inode/path/mode and observed peer credentials;
+- CAS identity and role-visible protocol operations;
+- node finality heights before and after process faults;
+- frame, object and configured CAS-cap boundary outcomes.
+
+## 9. Blocking acceptance for this decision
+
+The implementation plan may schedule ticket #7 only against these exact
+boundaries. Ticket #6 implementation is complete only when planned tests prove:
+
+1. one package/executable supplies all compute roles while protocol method
+   authorization enforces the role matrix;
+2. node starts and finalizes with every OCOMP unit stopped;
+3. stopping/killing supervisor, exporter or worker cannot stop a node;
+4. up to four worker connections create distinct child processes and the
+   configured concurrency cap is enforced;
+5. every worker invocation accepts one exact admitted `UnitId` and exits;
+6. worker receives no node/key/CE/Mongo capability through the control
+   protocol and cannot publish an authoritative CAS object directly;
+7. exporter cannot attest and supervisor cannot call exporter-only proof
+   methods;
+8. wrong peer, stale session, replayed counter, wrong bundle and cap+1 frame
+   are rejected before privileged work;
+9. CAS same-bytes publish is idempotent, different/corrupt bytes reject, and
+   readers verify from one descriptor;
+10. filling compute storage leaves node storage and finality usable;
+11. retained evidence proves the exact process, binary and socket identities,
+    CAS identity, cap outcomes and continuing finalized heights.
+
+Planned command surfaces, to be made real by later tasks, are:
+
+```text
+cargo test -p outbe-ocomp-protocol --test local_control_vectors
+cargo test -p outbe-ocomp --test cas_atomicity
+cargo test -p outbe-ocomp --test worker_one_unit
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tags @ocomp-process-boundary
+```
+
+These commands are specifications for implementation planning, not claims that
+the tests or units already exist.
+
+## 10. PoC-to-BoundedMVP seam
+
+BoundedMVP may replace only local adapters:
+
+| PoC adapter | BoundedMVP evolution |
+|---|---|
+| Supervisor-owned fixed one-unit worker adapter | production service manager or audited launch broker with aggregate lease accounting |
+| local UDS transport | same logical API over hardened UDS or authenticated mTLS |
+| filesystem CAS | hardened/recoverable local or remote content store |
+| single-user PoC process ownership | production identities, namespaces, Landlock/seccomp and custody policy |
+| one-job mark/sweep | crash-safe multi-job GC and capacity reservation |
+
+`JobId`, `UnitId`, `PlanHash`, OCB1 semantic bytes, input authority,
+deterministic execution, one signer per validator domain, `ResultDigest`,
+certificate and certified activation do not change.
+
+## 11. Why no grilling was needed
+
+The Supervisor's PoC worker adapter starts the production worker entrypoint once
+per immutable unit and enforces the frozen concurrency cap.
+Selection of a production service manager, OS identities and host sandbox is
+explicitly deferred to MVP deployment hardening.
+
+No ubiquitous-language term changed, and this decision introduces no new
+consensus or generic-framework concept.

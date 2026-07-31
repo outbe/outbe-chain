@@ -2,13 +2,13 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_oracle::contract::OracleContract;
-use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, VAULT_PROVIDER_ADDRESS};
+use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
 use outbe_common::pow;
-use outbe_vaultprovider::api::IVaultProvider;
+use outbe_vaultrouter::api::IVaultRouter;
 
 use outbe_gem::GEM_CALL_PERIOD_SECONDS;
 
@@ -259,7 +259,7 @@ pub fn settle_gem(storage: &StorageHandle<'_>, caller: Address, gem_id: U256) ->
 
 fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) -> Result<()> {
     // Resolve the stablecoin asset address dynamically by querying the
-    // VaultProvider's `assetAt(0)`. v1 assumes a single registered asset.
+    // VaultRouter's `assetAt(0)`. v1 assumes a single registered asset.
     let asset = read_reserve_asset(storage)?;
 
     let transfer = IERC20::transferFromCall {
@@ -271,30 +271,30 @@ fn deposit_to_vault(storage: &StorageHandle<'_>, caller: Address, amount: U256) 
     storage.call(asset, U256::ZERO, transfer.into())?;
 
     let approve = IERC20::approveCall {
-        spender: VAULT_PROVIDER_ADDRESS,
+        spender: VAULT_ROUTER_ADDRESS,
         amount,
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
-    // Deposit into the reserve vault via the provider's Solidity ABI.
-    outbe_vaultprovider::api::deposit_liquidity(storage, asset, amount)?;
+    // Deposit into the reserve vault via the router's Solidity ABI.
+    outbe_vaultrouter::api::deposit(storage, asset, amount)?;
 
     Ok(())
 }
 
 // TODO the stablecoin address should be somehow resolved here or at user level
-/// Reads `assetAt(0)` from the vaultprovider via its in-process api and returns
+/// Reads `assetAt(0)` from the vaultrouter via its in-process api and returns
 /// the resolved stablecoin asset. Reverts with `InvalidAsset` if the vault
 /// returns the zero address (mis-configured registry).
 fn read_reserve_asset(storage: &StorageHandle<'_>) -> Result<Address> {
     let ret = storage.staticcall(
-        VAULT_PROVIDER_ADDRESS,
-        IVaultProvider::assetAtCall { index: U256::ZERO }
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetAtCall { index: U256::ZERO }
             .abi_encode()
             .into(),
     )?;
-    let asset = IVaultProvider::assetAtCall::abi_decode_returns(&ret)
+    let asset = IVaultRouter::assetAtCall::abi_decode_returns(&ret)
         .map_err(|_| GemFactoryError::InvalidAsset)?;
     if asset.is_zero() {
         return Err(GemFactoryError::InvalidAsset.into());
@@ -307,6 +307,7 @@ pub fn mine_gem_promis(
     caller: Address,
     gem_id: U256,
     nonce: U256,
+    auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
     if item.owner != caller {
@@ -320,7 +321,10 @@ pub fn mine_gem_promis(
 
     gem_api::burn(storage, gem_id)?;
 
-    outbe_promisfactory::api::mine(storage.clone(), caller, item.gem_load)?;
+    // The Promis is confidential: the mint runs inside the enclave, authorized by
+    // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
+    // minted amount (`item.gem_load`), so the client precomputes it.
+    outbe_promisfactory::api::mint(storage.clone(), caller, item.gem_load, auth)?;
 
     emit_event(
         storage,

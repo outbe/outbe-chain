@@ -2,12 +2,34 @@
 pragma solidity ^0.8.30;
 
 interface INod {
+    event NodBodyStored(
+        bytes nodId,
+        uint32 commitmentSchemeVersion,
+        uint32 schemaVersion,
+        bytes32 previousCommitment,
+        bytes32 newCommitment,
+        bytes canonicalPayload
+    );
+
+    event NodBodyDeleted(bytes nodId, bytes32 previousCommitment);
+
+    event NodBucketBodyStored(
+        bytes bucketId,
+        uint32 commitmentSchemeVersion,
+        uint32 schemaVersion,
+        bytes32 previousCommitment,
+        bytes32 newCommitment,
+        bytes canonicalPayload
+    );
+
+    event NodBucketBodyDeleted(bytes bucketId, bytes32 previousCommitment);
+
     event NodBucketQualified(
         bytes32 indexed bucketKey, uint256 worldwideDay, uint256 floorPriceMinor, bool isQualified
     );
 
     struct NodData {
-        uint256 nodId;
+        bytes nodId;
         address owner;
         uint32 worldwideDay;
         uint16 leagueId;
@@ -21,26 +43,46 @@ interface INod {
         uint64 issuedAt;
     }
 
+    /// Finalized on-chain commitment to one activated OCOMP Nod generation.
+    ///
+    /// Individual Nod bodies remain in content-addressed storage and are
+    /// accepted only with a Merkle proof against `nodRoot`.
+    struct CertifiedGenerationData {
+        bool exists;
+        uint32 worldwideDay;
+        uint64 generation;
+        bytes32 nodRoot;
+        bytes32 bucketRoot;
+        bytes32 outputManifestRoot;
+        uint32 tributeCount;
+        uint32 nodCount;
+        uint32 bucketCount;
+        uint256 nodAmountTotal;
+        uint256 nodGratisConsumed;
+        uint64 issuedAt;
+    }
+
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
-    // ERC-721
+    // Identity and ownership reads (36-byte entity IDs)
     function balanceOf(address owner) external view returns (uint256 balance);
-    function ownerOf(uint256 nodId) external view returns (address);
+    function ownerOf(bytes calldata nodId) external view returns (address);
 
-    // ERC-721-metadata
+    // Metadata reads
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
-    function tokenURI(uint256 nodId) external view returns (string memory);
+    function tokenURI(bytes calldata nodId) external view returns (string memory);
 
-    // ERC-721-enumerable
+    // Enumeration reads
     function totalSupply() external view returns (uint256);
-    function tokenByIndex(uint256 index) external view returns (uint256);
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    function tokenByIndex(uint256 index) external view returns (bytes memory);
+    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (bytes memory);
 
     // outbe-specific
-    function nodData(uint256 nodId) external view returns (NodData memory);
-
-    // backward compatibility
-    function tokens(address owner) external view returns (uint256[] memory);
+    function nodData(bytes calldata nodId) external view returns (NodData memory);
+    function certifiedGeneration(uint32 worldwideDay)
+        external
+        view
+        returns (CertifiedGenerationData memory);
 }
