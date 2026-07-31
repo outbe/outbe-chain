@@ -10,8 +10,12 @@ Audited implementation commits:
 - `fd1598c1eb59c07eb4fe049659f9cf0c17626875` (stateful syscall isolation);
 - `8dcebae477a63493d99753ab177b0e24d3cb873d` (QVL-scoped syscall trace).
 
-Status: `PASS` for the narrow feasibility gate. I1 is not complete; I2–I9
-remain stopped behind the full I1 checkpoint.
+Status: `PASS` for the narrow feasibility gate. Full I1 remains incomplete,
+but I2–I8 are not stopped behind an unavailable accepted Processor capture.
+The 2026-07-31 testing-gate amendment in the authoritative decision map,
+engineering evidence and implementation plan supersedes that earlier
+sequencing: I1 uses immutable real-corpus replay, while accepted live hardware
+is a fail-not-skip I9 production-activation gate.
 
 ## Scope proved
 
@@ -124,10 +128,11 @@ finding for this feasibility scope.
 - pinned Intel root, FMSPC/PCE ID and evaluation-number checks;
 - separate Platform and QE status matrix with authenticated advisories;
 - stable consensus verdict/reject ordering and gas precharge;
-- a real accepted Processor-CA intent-bound fixture, current large-CRL
-  coverage and synthetic Intel Platform-CA parser/policy vectors;
+- a real intent-bound Processor-CA corpus replayed through pinned QVL with its
+  authentic strict-policy result, current large-CRL coverage and synthetic
+  Intel Platform-CA parser/policy vectors;
 - byte-stable vectors and bounded performance evidence.
 
-Real SGX device execution, including a real registered multi-package
-Platform-CA fixture, is intentionally retained as the fail-not-skip I9 release
-gate rather than misrepresented by Gramine Direct or synthetic evidence.
+Fresh accepted Processor-CA execution and a real registered multi-package
+Platform-CA fixture are intentionally retained as fail-not-skip I9 release
+gates rather than misrepresented by Gramine Direct or synthetic evidence.

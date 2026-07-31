@@ -67,8 +67,8 @@ production behavior.
 
 **Outcome:** the consensus-facing
 `verify_dcap_evidence(evidence, policy, block_timestamp)` boundary returns a
-stable Outbe verdict backed by pinned native Intel QVL executing inside the
-Outbe Gramine enclave, with no local host inputs.
+stable Outbe verdict or reject code backed by pinned native Intel QVL executing
+inside the Outbe Gramine enclave, with no local host inputs.
 
 **Includes:**
 
@@ -76,8 +76,9 @@ Outbe Gramine enclave, with no local host inputs.
   `fd1598c`, with QVL-scoped tracing in `8dcebae`): Intel DCAP QVL
   `1.26.100.1-noble1`, its native dependencies and the
   `x86_64-unknown-linux-gnu` target are exact-pinned, and a real Processor-CA
-  quote verifies through the public adapter both natively and under Gramine
-  Direct using submitted collateral and explicit consensus time;
+  quote reaches a cryptographically verified native-QVL result both natively
+  and under Gramine Direct using submitted collateral and explicit consensus
+  time; the public adapter preserves its authentic strict-policy rejection;
 - exact-pinned native QVL and required dependency artifacts, integrity-pinned
   as Gramine trusted files;
 - canonical DER/signed-JSON to native collateral adapter with no QPL/PCCS
@@ -108,10 +109,16 @@ and malformed-reference tests cover those reachable results.
 
 Capture remains outside the production command surface: quote generation uses
 a separate required-feature enclave executable, while QPL/PCCS collateral
-acquisition is host-side fixture tooling only. I1 remains open until a second
-real intent-bound Processor-CA capture from a host with an allowed Platform
-status supplies the accepted positive vector. This external hardware
-requirement does not authorize a broader status matrix or synthetic positive.
+acquisition is host-side fixture tooling only. The immutable real corpus is
+replayed in ordinary CI through the public verifier and pinned native QVL at a
+fixed historical consensus timestamp, without SGX hardware, network or live
+collateral fetch. Its authentic `ConfigurationAndSWHardeningNeeded` result is
+preserved; no fake verifier turns it into an accepted verdict.
+
+A second real intent-bound Processor-CA capture from a host with an allowed
+Platform status remains mandatory, but it is I9 release evidence rather than
+an I1 implementation blocker. This relocation does not authorize a broader
+status matrix or synthetic positive.
 
 Toolchain staging is intentionally separate from container delivery:
 `release/project-toolchain-v1.json` is the single exact version pin and is
@@ -123,11 +130,17 @@ before the production enclave is built with `native-dcap`.
 
 **Acceptance:**
 
-- a real Processor-CA positive/negative cryptographic corpus bound to
-  `RegistrationIntentV1::report_data()`;
+- a real Processor-CA cryptographic corpus bound to
+  `RegistrationIntentV1::report_data()` reaches its authentic strict-policy
+  result through the public verifier and pinned native QVL;
+- immutable real-corpus replay, tamper and time-boundary tests run offline at a
+  fixed historical consensus timestamp on every supported x86_64 CI build;
 - synthetic Intel Platform-CA parser/policy vectors cover CA classification,
   Platform/QE status mapping and every stable rejection branch, but are never
   represented as real hardware evidence;
+- synthetic statuses are limited to private pure policy tests; no fake QVL,
+  runtime verifier injection or production-selectable test feature can return
+  a positive result from the public verifier;
 - upstream trailing-byte cases reject;
 - time boundary and strict status matrix pass;
 - no environment, filesystem, network, wall clock, optional verifier or
@@ -138,6 +151,22 @@ before the production enclave is built with `native-dcap`.
   mismatched QVL or dependency fails closed;
 - no second pure-Rust production verifier or live collateral-fetch path enters
   the consensus dependency tree.
+
+**Hardware-free downstream test boundary (I2–I8):**
+
+- a private `#[cfg(test)]` capability starts strictly after
+  `verify_dcap_evidence` and accepts only a typed pre-verified `DcapVerdictV1`;
+  it cannot parse evidence, replace QVL or make the public verifier accept;
+- registry, lease, finalized-view, Noise-session and bootstrap state-machine
+  tests may use that capability to exercise accepted downstream transitions;
+- the capability is absent from non-test compilation and from every production
+  Cargo feature/target; its outputs are synthetic state-machine inputs, never
+  real hardware evidence or a DCAP end-to-end result;
+- real corpus replay continues to exercise the public verifier's cryptographic
+  and negative-policy path in ordinary CI;
+- every I3/I4/I8 acceptance below that requires an accepted public-verifier
+  result is finally closed by I9's real `DcapRequired` hardware job, not by the
+  private capability.
 
 ## I2 — Initialize an enclave once and restrict quote generation to NodeHost
 
@@ -185,6 +214,10 @@ intent-bound evidence and create exactly one active leased binding.
   unattested evidence and strict-status negatives reject;
 - the view reports a validator without an active binding as not ready;
   consensus/execution enforcement consumes this view in its separate plan.
+- hardware-free I3 tests drive the post-verifier registry boundary with the
+  private typed capability and separately replay real policy-negative evidence;
+- an accepted real public-verifier-to-active-binding validator flow is an I9
+  release E2E gate and is not claimed by the synthetic downstream test.
 
 ## I4 — Register a full-node enclave through the same policy
 
@@ -204,6 +237,8 @@ semantics as a validator.
 - full-node registration, duplicate replay and rejection vectors match
   validator semantics;
 - there is no weaker full-node/unattested path.
+- an accepted real full-node `DcapRequired` registration is closed by I9; I4's
+  hardware-free accepted-path test begins only after the verifier boundary.
 
 ## I5 — Renew, expire and supersede an attested binding
 
@@ -284,7 +319,10 @@ before committing bootstrap state.
 
 **Acceptance:**
 
-- 32-validator production fixture fits gas, RLP and wall-time budgets;
+- a 32-validator production-shaped downstream fixture fits gas, RLP and
+  wall-time budgets through the private post-verifier capability;
+- the same accepted block-1 flow through real public DCAP verification is an I9
+  release E2E gate and is not claimed by the production-shaped fixture;
 - missing/invalid evidence or committee mismatch makes block 1 invalid;
 - dense vector charges `309,931,488` OST3 precharge at the 896-KiB logical
   evidence cap and leaves the documented bootstrap headroom;
@@ -300,14 +338,37 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - separate `DcapRequired` and `GramineDirectDev` chain specs/genesis;
 - A0 activation of V1 selectors, schema, gas and policy schedule;
 - real SGX quote generation, canonical collateral packaging, registration,
-  finalized lookup and Noise handshake in CI;
+  finalized lookup and Noise handshake in the release hardware job;
+- a fresh accepted Processor-CA capture for the exact release enclave and
+  policy, plus accepted registered multi-package Platform-CA evidence;
+- an exact production binary/feature allowlist that excludes test tooling;
 - release dependency/root checks and forbidden fail-open symbol scans.
+
+For I9, `fresh` means that the release job first freezes the candidate enclave
+ELF/SGX manifest and measurement, chain/genesis and exact active policy bytes;
+then chooses a new one-use non-zero `binding_id` for the canonical registration
+intent, captures a quote whose `REPORT_DATA` commits that intent, acquires
+collateral after the release run begins, and verifies it at the release-gate
+consensus timestamp while every collateral component is current. Saved
+historical replay cannot satisfy this definition.
 
 **Acceptance:**
 
 - real SGX/DCAP job is fail-not-skip;
 - real Processor and real registered multi-package Platform x86_64
-  verdict/benchmark matrix passes;
+  verdict/benchmark matrix passes for the exact release artifacts and active
+  policy; absence of either accepted result blocks production activation;
+- a missing hardware runner fails the release gate rather than skipping it,
+  while ordinary I1-I8 CI remains hardware-free through immutable replay;
+- the production bundle contains only allowlisted targets and the exact
+  production feature set: enclave package `outbe-tee-enclave`, binary
+  `outbe-tee-enclave`, and application feature `native-dcap`; capture, mock,
+  trace and any future fake-verifier surface is absent, and neither
+  `--all-features` nor `--all-targets` is used;
+- the I9 activation change updates
+  `release/reproducible-elf-build-v1.json` from its staged empty feature list to
+  exactly `["native-dcap"]`; before that activation the empty list remains an
+  explicit pending state, not a production DCAP claim;
 - the slowest supported validator keeps full-block execution inside the
   consensus timing budget;
 - missing or mismatched QVL/native dependencies, collateral or SGX

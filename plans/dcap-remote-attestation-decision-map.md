@@ -357,9 +357,14 @@ attestation?
 - Every block-1 enclave carries complete evidence and passes the same QVL.
 - Committee signatures bind bootstrap facts but do not authenticate enclave
   code.
+- Ordinary CI replays immutable real quote/collateral corpora through the same
+  pinned QVL at a fixed historical consensus timestamp; replay needs neither
+  SGX quote-generation hardware nor live PCS/PCCS access.
 - Production release requires a fail-not-skip real SGX/DCAP end-to-end gate.
 - Saved canonical quote/collateral vectors are required for deterministic
   regression tests.
+- Live hardware is required to capture a new corpus when the signed binding or
+  verifier contract changes and to qualify a release, not once per test case.
 
 ## #12: What are the lease constants and collateral-outage policy?
 
@@ -614,11 +619,16 @@ The production native adapter and Outbe wrapper:
 
 Implementation/release acceptance evidence:
 
-- a real Processor-CA positive/negative quote/collateral corpus bound to the
-  canonical Outbe registration intent;
+- for I1, a real Processor-CA quote/collateral corpus bound to the canonical
+  Outbe registration intent, replayed through the public verifier and pinned
+  native QVL with its authentic Platform/QE result preserved;
 - official Intel synthetic Platform-CA vectors for deterministic parser and
   policy coverage, clearly labelled as synthetic and never accepted as
   hardware evidence;
+- for I9, a fresh real accepted Processor-CA capture for the exact release
+  enclave/policy plus a real accepted registered multi-package Platform-CA
+  capture; either missing hardware result blocks production activation rather
+  than ordinary implementation CI;
 - deterministic time-boundary results;
 - canonical DER and signed-JSON behavior;
 - exact native artifact and Intel-root pinning;
@@ -627,6 +637,30 @@ Implementation/release acceptance evidence:
 - no live PCCS/QPL collateral substitution, optional verifier or fail-open
   fallback;
 - byte-stable verdict vectors across supported x86_64 validator builds.
+
+No fake QVL result may make the public verifier return an accepted verdict.
+Synthetic statuses are confined to private pure policy tests and never count
+as real evidence. Accepted downstream registry, lease, session and bootstrap
+transitions in hardware-free I3–I8 tests use a private `#[cfg(test)]` capability
+strictly after the verifier boundary; it accepts only typed pre-verified
+`DcapVerdictV1`, cannot parse evidence or replace QVL, and is absent from
+non-test compilation. Those tests are not DCAP end-to-end positives. I9 closes
+the corresponding real `DcapRequired` validator, full-node and block-1 flows.
+
+Production packaging uses exactly enclave package `outbe-tee-enclave`, binary
+`outbe-tee-enclave` and application feature `native-dcap`; it never uses
+`--all-features` or `--all-targets`. Capture, mock, trace and test-only targets
+or features are absent. The I9 activation commit must update the currently
+staged empty feature list in `release/reproducible-elf-build-v1.json` to exactly
+`["native-dcap"]`; until then it is explicitly not a production DCAP build.
+
+For the I9 Processor gate, `fresh` means the release job freezes the exact
+candidate ELF/SGX manifest and measurement, chain/genesis and active policy
+bytes before capture; then selects a new one-use non-zero `binding_id`, captures
+a quote whose `REPORT_DATA` commits that canonical intent, obtains collateral
+after the release run starts, and verifies at the release-gate consensus
+timestamp while every component is current. Historical replay cannot satisfy
+this release gate.
 
 A real Intel-rooted Platform-CA type-5 quote cannot be derived from a
 Processor-CA quote or safely rebound to a different `REPORT_DATA`: either
