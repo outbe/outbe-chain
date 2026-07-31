@@ -189,8 +189,7 @@ impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransaction
             return Err(LocalVotePreparationErrorV1::EmptyCanonicalResult);
         }
         if gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-            || max_fee_per_gas < outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
-            || max_fee_per_gas > MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS
+            || !(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS).contains(&max_fee_per_gas)
         {
             return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
         }

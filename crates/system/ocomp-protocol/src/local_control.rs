@@ -731,7 +731,6 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
     Some((name, uid))
 }
 
-#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 #[cfg(target_os = "linux")]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
