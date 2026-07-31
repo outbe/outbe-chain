@@ -93,10 +93,12 @@ inside the Outbe Gramine enclave, with no local host inputs.
 The feasibility gate does not complete I1. Canonical grammar, signed-document
 time enforcement, final Outbe policy mapping and stable consensus verdict
 vectors remain in this item. I1 proves the native cryptographic path with a
-real Processor-CA quote. Platform-CA grammar and policy behavior use the
-official Intel parser/test vectors; a real Intel-rooted Platform-CA quote
-requires registered multi-package SGX hardware and is a fail-not-skip I9
-release gate.
+real Processor-CA quote. Platform-CA grammar uses Intel's v1.26 `PlatformPEM`
+parser vector. Private pure Platform/QE policy tests start from the exact Intel
+QVL 1.26 raw SGX result ABI; Intel's dynamically generated, self-signed
+Platform-CA verification tests are topology provenance only, never public
+Outbe evidence. A real Intel-rooted Platform-CA quote requires registered
+multi-package SGX hardware and is a fail-not-skip I9 release gate.
 
 **I1 checkpoint (2026-07-31):** a real Processor-CA negative corpus is now
 bound to canonical `RegistrationIntentV1::report_data()`. It exercises the
@@ -110,10 +112,17 @@ and malformed-reference tests cover those reachable results.
 Capture remains outside the production command surface: quote generation uses
 a separate required-feature enclave executable, while QPL/PCCS collateral
 acquisition is host-side fixture tooling only. The immutable real corpus is
-replayed in ordinary CI through the public verifier and pinned native QVL at a
-fixed historical consensus timestamp, without SGX hardware, network or live
-collateral fetch. Its authentic `ConfigurationAndSWHardeningNeeded` result is
-preserved; no fake verifier turns it into an accepted verdict.
+replayed by the mandatory `.github/workflows/ci.yml` `dcap-replay` x86_64 job
+through the public verifier and pinned native QVL at a fixed historical
+consensus timestamp, without SGX hardware, QPL/PCCS, network or live collateral
+fetch. `scripts/release/test_dcap_replay_ci.sh` is the identical local entry
+point. Its authentic `ConfigurationAndSWHardeningNeeded` result is preserved;
+no fake verifier turns it into an accepted verdict. The complete
+compiler-observed Intel QVL header closure is digest-verified and staged into
+an isolated include tree; the C adapter compile-time asserts all nine SGX
+result values before the independent Rust status matrix executes.
+Full criterion-by-criterion evidence is recorded in
+`plans/checkpoints/I1-deterministic-verifier-closure.md`.
 
 A second real intent-bound Processor-CA capture from a host with an allowed
 Platform status remains mandatory, but it is I9 release evidence rather than
@@ -135,9 +144,10 @@ before the production enclave is built with `native-dcap`.
   result through the public verifier and pinned native QVL;
 - immutable real-corpus replay, tamper and time-boundary tests run offline at a
   fixed historical consensus timestamp on every supported x86_64 CI build;
-- synthetic Intel Platform-CA parser/policy vectors cover CA classification,
+- the official Intel Platform-CA parser vector covers CA classification, while
+  exact Intel QVL 1.26 raw SGX status ABI vectors drive private pure
   Platform/QE status mapping and every stable rejection branch, but are never
-  represented as real hardware evidence;
+  represented as real hardware evidence or passed to the public verifier;
 - synthetic statuses are limited to private pure policy tests; no fake QVL,
   runtime verifier injection or production-selectable test feature can return
   a positive result from the public verifier;
@@ -341,6 +351,10 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
   finalized lookup and Noise handshake in the release hardware job;
 - a fresh accepted Processor-CA capture for the exact release enclave and
   policy, plus accepted registered multi-package Platform-CA evidence;
+- fresh actual Processor, Platform and root CRL provenance and cap checks;
+- a published minimum supported x86_64 validator CPU/core/memory/EPC profile
+  and exact-release `gramine-sgx` QVL/full-block benchmark matrix on that
+  profile;
 - an exact production binary/feature allowlist that excludes test tooling;
 - release dependency/root checks and forbidden fail-open symbol scans.
 
@@ -358,6 +372,12 @@ historical replay cannot satisfy this definition.
 - real Processor and real registered multi-package Platform x86_64
   verdict/benchmark matrix passes for the exact release artifacts and active
   policy; absence of either accepted result blocks production activation;
+- fresh actual Processor, Platform and root CRLs record issuer/type, validity
+  dates, byte size and SHA-256 and fit the protocol caps; the release benchmark
+  uses the largest actual matching collateral bundle available from PCS;
+- no undefined "large real CRL" is fabricated or required: synthetic
+  cap-minus-one/cap/cap-plus-one vectors remain deterministic DoS/capacity
+  evidence only and never count as Intel hardware evidence;
 - a missing hardware runner fails the release gate rather than skipping it,
   while ordinary I1-I8 CI remains hardware-free through immutable replay;
 - the production bundle contains only allowlisted targets and the exact
@@ -369,8 +389,10 @@ historical replay cannot satisfy this definition.
   `release/reproducible-elf-build-v1.json` from its staged empty feature list to
   exactly `["native-dcap"]`; before that activation the empty list remains an
   explicit pending state, not a production DCAP claim;
-- the slowest supported validator keeps full-block execution inside the
-  consensus timing budget;
+- exact-release `gramine-sgx` valid, invalid-early, invalid-late and dense
+  32-validator benchmarks run on the published minimum supported x86_64
+  validator profile, and its full-block execution remains inside the consensus
+  timing budget;
 - missing or mismatched QVL/native dependencies, collateral or SGX
   support, including an unsupported architecture, is deterministic rejection;
 - pre-A0/legacy chain behavior remains covered and intentional.

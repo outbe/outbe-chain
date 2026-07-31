@@ -30,6 +30,27 @@ pub enum NativeQvlStatus {
     ConfigurationAndSWHardeningNeeded,
 }
 
+/// SGX results from Intel `sgx_qve_header.h` SHA-256
+/// `f8994fcb1b56ed938adbf923146b5fed8c3e8d5d7d6827f45342db0a23e56677`,
+/// installed by exact-pinned `libsgx-headers 2.29.100.1-noble1` and paired by
+/// the release contract with `libsgx-dcap-quote-verify 1.26.100.1-noble1`.
+///
+/// This test-only vector is shared with the Outbe Platform/QE policy matrix so
+/// every policy case starts from the exact native ABI value. TDX-only results
+/// remain outside the SGX V1 vocabulary and fail closed in `from_raw`.
+#[cfg(test)]
+pub(crate) const SGX_QVL_STATUS_VECTORS: [(u32, NativeQvlStatus); 9] = [
+    (0x0000, NativeQvlStatus::UpToDate),
+    (0xA001, NativeQvlStatus::ConfigurationNeeded),
+    (0xA002, NativeQvlStatus::OutOfDate),
+    (0xA003, NativeQvlStatus::OutOfDateAndConfigurationNeeded),
+    (0xA004, NativeQvlStatus::InvalidSignature),
+    (0xA005, NativeQvlStatus::Revoked),
+    (0xA006, NativeQvlStatus::Unspecified),
+    (0xA007, NativeQvlStatus::SWHardeningNeeded),
+    (0xA008, NativeQvlStatus::ConfigurationAndSWHardeningNeeded),
+];
+
 impl NativeQvlStatus {
     fn from_raw(value: u32) -> Result<Self, NativeQvlError> {
         match value {
@@ -357,4 +378,64 @@ fn nonempty_len(bytes: &[u8]) -> Result<u32, NativeQvlError> {
 
 fn len_u32(bytes: &[u8]) -> Result<u32, NativeQvlError> {
     u32::try_from(bytes.len()).map_err(|_| NativeQvlError::InvalidInput)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_raw_result() -> RawResult {
+        RawResult {
+            supplemental_major_version: 3,
+            supplemental_minor_version: 0,
+            earliest_issue_date: 100,
+            latest_issue_date: 200,
+            earliest_expiration_date: 300,
+            ..RawResult::default()
+        }
+    }
+
+    #[test]
+    fn pinned_intel_qvl_sgx_status_abi_is_converted_for_platform_and_qe() {
+        for (raw, expected) in SGX_QVL_STATUS_VECTORS {
+            assert_eq!(NativeQvlStatus::from_raw(raw), Ok(expected));
+
+            let mut platform_output = valid_raw_result();
+            platform_output.aggregate_status = raw;
+            assert_eq!(
+                convert_output(platform_output).unwrap().aggregate_status,
+                expected
+            );
+
+            let mut qe_output = valid_raw_result();
+            qe_output.qe_status = raw;
+            assert_eq!(
+                convert_output(qe_output).unwrap().supplemental.qe_status,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn non_sgx_qvl_status_values_fail_closed() {
+        for raw in [0xA009, 0xA00A, 0xA0FF, u32::MAX] {
+            assert_eq!(
+                NativeQvlStatus::from_raw(raw),
+                Err(NativeQvlError::UnsupportedResult)
+            );
+        }
+
+        let mut platform_output = valid_raw_result();
+        platform_output.aggregate_status = 0xA009;
+        assert_eq!(
+            convert_output(platform_output),
+            Err(NativeQvlError::UnsupportedResult)
+        );
+        let mut qe_output = valid_raw_result();
+        qe_output.qe_status = 0xA00A;
+        assert_eq!(
+            convert_output(qe_output),
+            Err(NativeQvlError::UnsupportedResult)
+        );
+    }
 }

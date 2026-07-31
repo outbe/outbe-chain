@@ -241,6 +241,72 @@ fn intent_bound_real_processor_quote_reaches_strict_platform_status_policy() {
 }
 
 #[test]
+fn intent_bound_real_processor_reject_code_is_byte_stable() {
+    let (policy, evidence) = intent_bound_negative_capture();
+    let reject =
+        verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_NEGATIVE_CAPTURE_TIME).unwrap_err();
+    let expected = hex::decode(
+        include_str!(
+        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/strict-policy-reject-code-v1.hex"
+    )
+        .trim(),
+    )
+    .unwrap();
+    let actual = reject.code().to_be_bytes();
+
+    assert_eq!(actual.as_slice(), expected.as_slice());
+}
+
+#[test]
+fn noncanonical_evidence_rejects_at_the_public_boundary() {
+    let policy = policy();
+    let mut evidence = evidence(&policy);
+    evidence.components.clear();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::EvidenceNonCanonical)
+    );
+}
+
+#[test]
+fn noncanonical_policy_rejects_at_the_public_boundary() {
+    let valid_policy = policy();
+    let evidence = evidence(&valid_policy);
+    let mut invalid_policy = valid_policy;
+    invalid_policy.policy_version = 0;
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &invalid_policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::PolicyNonCanonical)
+    );
+}
+
+#[test]
+fn cross_chain_intent_rejects_before_quote_verification() {
+    let policy = policy();
+    let mut evidence = evidence(&policy);
+    evidence.intent.chain_id[0] ^= 0xff;
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, 1_751_000_000),
+        Err(DcapRejectCodeV1::PolicyBindingMismatch)
+    );
+}
+
+#[test]
+fn timestamp_outside_the_native_qvl_range_rejects_before_quote_verification() {
+    let policy = policy();
+    let evidence = evidence(&policy);
+    let out_of_range = i64::MAX as u64 + 1;
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, out_of_range),
+        Err(DcapRejectCodeV1::TimestampInvalid)
+    );
+}
+
+#[test]
 fn intent_bound_real_processor_quote_uses_all_collateral_expiration_boundary() {
     let (policy, evidence) = intent_bound_negative_capture();
 

@@ -587,12 +587,16 @@ protocol/release activation, never a node-local choice.
 The selected feasibility matrix is Intel DCAP QVL
 `1.26.100.1-noble1` on `x86_64-unknown-linux-gnu` with Gramine `1.9`.
 The inactive artifact contract is
-`release/dcap-native-qvl-v1.json`; it pins QVL, `libstdc++` and `libgcc_s` by
-exact package version, byte size and SHA-256. Commits `c679649`, `bc96db2`,
-`d5ab89e`, `fd1598c` and `8dcebae` prove the real Processor-CA fixture through
-the public Rust adapter both natively and under the checked-in Gramine Direct
-harness. This closes package selection only; full I1 policy verification and
-the fail-not-skip I9 SGX release gate remain open.
+`release/dcap-native-qvl-v1.json`; it pins QVL, `libstdc++`, `libgcc_s` and the
+complete compiler-observed Intel include closure by exact package version,
+byte size and SHA-256. The C adapter compiles from the staged verified include
+tree and asserts the SGX result enum values against those headers.
+Commits `c679649`, `bc96db2`, `d5ab89e`, `fd1598c` and `8dcebae` prove the real
+Processor-CA fixture through the public Rust adapter both natively and under
+the checked-in Gramine Direct harness. Package selection is closed; the full
+I1 policy/CI closure is recorded in
+`plans/checkpoints/I1-deterministic-verifier-closure.md`. The fail-not-skip I9
+SGX release gate remains open.
 
 The previously investigated exact-pinned `dcap-qvl = 0.5.2` Ring profile is
 retained only as prototype and differential-test evidence. It is not a second
@@ -622,8 +626,10 @@ Implementation/release acceptance evidence:
 - for I1, a real Processor-CA quote/collateral corpus bound to the canonical
   Outbe registration intent, replayed through the public verifier and pinned
   native QVL with its authentic Platform/QE result preserved;
-- official Intel synthetic Platform-CA vectors for deterministic parser and
-  policy coverage, clearly labelled as synthetic and never accepted as
+- the official Intel v1.26 Platform-CA parser vector for deterministic CA
+  classification, plus exact Intel QVL 1.26 raw SGX status ABI vectors for
+  private Outbe Platform/QE policy and stable rejection coverage; all are
+  clearly labelled as synthetic/test evidence and never accepted as
   hardware evidence;
 - for I9, a fresh real accepted Processor-CA capture for the exact release
   enclave/policy plus a real accepted registered multi-package Platform-CA
@@ -719,9 +725,15 @@ For 32 participants at the evidence cap and 64 rules, OST3 precharge is
 `169,075,992` gas for the other mandatory block-1 work.
 
 Secret Network's opaque host-call pricing and permissive section allocation are
-not suitable precedent. Processor/Platform, large-CRL, cap-boundary and
-slowest-supported-x86_64-validator benchmarks remain mandatory release tests
-under I1/I8/I9, not open design questions.
+not suitable precedent. I1 owns deterministic cap boundaries, pre-allocation,
+checked gas arithmetic and real Processor QVL correctness; I8 owns the bounded
+32-participant state transition. I9 owns empirical exact-release
+`gramine-sgx`, full-block timing and fresh actual Processor/Platform/root CRL
+capacity on the published minimum supported validator profile.
+
+Intel controls the signed CRL population. There is no undefined "large real
+CRL" requirement and synthetic cap-boundary inputs are never represented as
+Intel hardware evidence.
 
 ## #19: Deferred continuity rule
 

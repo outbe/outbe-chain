@@ -17,9 +17,11 @@ fixture without invalidating its signatures.
 No real Intel-rooted type-5 Platform-CA quote with its complete collateral
 bundle was found in Secret Network or the inspected official Intel
 repositories. Intel's public Platform-CA coverage consists of a real PCK
-certificate parser vector and synthetic verification vectors. A real
-Platform-CA quote requires a registered multi-package SGX platform; a
-single-package Processor-CA host cannot generate one.
+certificate parser vector and test code that dynamically generates an
+ephemeral self-signed Platform-CA verification chain. It is not a reusable
+Intel-rooted evidence fixture. A real Platform-CA quote requires a registered
+multi-package SGX platform; a single-package Processor-CA host cannot generate
+one.
 
 ## Decision
 
@@ -28,8 +30,11 @@ The owner selected the minimal split:
 - I1 requires a real Processor-CA cryptographic corpus generated from
   `RegistrationIntentV1::report_data()`, replayed through the public verifier
   and pinned QVL with its authentic strict-policy result preserved.
-- I1 uses official Intel synthetic Platform-CA vectors for exact grammar, CA
-  classification, Platform/QE policy and stable rejection coverage.
+- I1 uses the official Intel v1.26 Platform-CA parser vector for exact grammar
+  and CA classification. Exact raw SGX values from Intel's pinned QVL 1.26 ABI
+  drive private pure Platform/QE policy and stable rejection tests.
+- Intel's dynamically generated self-signed verification topology is provenance
+  only and is never passed to Outbe's public verifier.
 - Synthetic Platform evidence is labelled as such and never counted as a
   native-QVL positive or real-hardware result.
 - I9 requires a fresh accepted Processor-CA capture for the exact release

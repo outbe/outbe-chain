@@ -80,6 +80,24 @@ _Static_assert(offsetof(struct outbe_qvl_result_v1, qe_status) == 520,
                "unexpected Outbe result QE-status offset");
 _Static_assert(sizeof(sgx_ql_qv_supplemental_t) == 672,
                "unexpected Intel QVL supplemental ABI");
+_Static_assert(SGX_QL_QV_RESULT_OK == 0x0000,
+               "unexpected Intel QVL OK value");
+_Static_assert(SGX_QL_QV_RESULT_CONFIG_NEEDED == 0xA001,
+               "unexpected Intel QVL CONFIG_NEEDED value");
+_Static_assert(SGX_QL_QV_RESULT_OUT_OF_DATE == 0xA002,
+               "unexpected Intel QVL OUT_OF_DATE value");
+_Static_assert(SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED == 0xA003,
+               "unexpected Intel QVL OUT_OF_DATE_CONFIG_NEEDED value");
+_Static_assert(SGX_QL_QV_RESULT_INVALID_SIGNATURE == 0xA004,
+               "unexpected Intel QVL INVALID_SIGNATURE value");
+_Static_assert(SGX_QL_QV_RESULT_REVOKED == 0xA005,
+               "unexpected Intel QVL REVOKED value");
+_Static_assert(SGX_QL_QV_RESULT_UNSPECIFIED == 0xA006,
+               "unexpected Intel QVL UNSPECIFIED value");
+_Static_assert(SGX_QL_QV_RESULT_SW_HARDENING_NEEDED == 0xA007,
+               "unexpected Intel QVL SW_HARDENING_NEEDED value");
+_Static_assert(SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED == 0xA008,
+               "unexpected Intel QVL CONFIG_AND_SW_HARDENING_NEEDED value");
 
 enum outbe_qvl_wrapper_status {
     OUTBE_QVL_WRAPPER_OK = 0,

@@ -52,9 +52,19 @@ The narrow I1 feasibility gate passed in commits `c679649`, `bc96db2`,
   `libgcc_s.so.1`, SHA-256
   `d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb`.
 
-`release/dcap-native-qvl-v1.json` records the inactive exact artifact contract,
-and `scripts/release/verify_dcap_native_qvl.py` fails closed on a missing,
-changed or boundary-incompatible artifact.
+The compiler-generated dependency closure for `native/qvl_wrapper.c` contains
+11 Intel headers from exact-pinned `libsgx-dcap-quote-verify-dev` and
+`libsgx-headers`. `release/dcap-native-qvl-v1.json` records every path, package
+version, byte size and SHA-256. The build reads and verifies those bytes, stages
+them into an isolated `OUT_DIR` include tree and places that tree before system
+include paths. The pinned headers cannot introduce an unverified transitive
+Intel include. The C adapter `_Static_assert`s all nine SGX QVL result enum
+values against the staged `sgx_qve_header.h`; Rust tests then convert
+independent raw literals through the production mapping.
+
+`release/dcap-native-qvl-v1.json` records the inactive exact artifact and build
+input contract, and `scripts/release/verify_dcap_native_qvl.py` fails closed on
+a missing, changed or boundary-incompatible artifact or include input.
 
 The real Processor-CA fixture passed five public-interface tests both natively
 and under Gramine Direct: valid cryptographic verification, tampered quote,
@@ -192,9 +202,13 @@ QPL/PCCS is used only by the host-side corpus capture script and is absent from
 V1 keeps implementation regression evidence separate from production-release
 hardware evidence:
 
-- every ordinary CI run executes parser/policy vectors and replays immutable
-  real quote/collateral bytes through the public verifier and pinned native QVL
-  at a fixed historical consensus timestamp;
+- the mandatory `.github/workflows/ci.yml` `dcap-replay` job installs exact
+  versions from `release/project-toolchain-v1.json`, verifies the pinned Intel
+  apt key and native artifact/header digests, and does not install QPL/PCCS;
+- after an explicit Cargo dependency fetch, that job invokes
+  `scripts/release/test_dcap_replay_ci.sh` with Cargo offline: parser/policy
+  vectors and immutable real quote/collateral bytes run through the public
+  verifier and pinned native QVL at a fixed historical consensus timestamp;
 - the saved timestamp proves deterministic historical verification only;
   production still supplies its current consensus timestamp, so expired
   collateral rejects normally;
@@ -234,11 +248,14 @@ activation evidence.
 
 No ready Intel-rooted type-5 Platform-CA quote plus complete collateral bundle
 exists in the inspected Secret Network or official Intel fixture corpora.
-Intel publishes a real Platform-CA PCK parser vector and synthetic
-Platform-CA verification vectors, but not hardware evidence usable for a
-positive native-QVL test. Because Platform CA applies to registered
+Intel publishes a real Platform-CA PCK parser vector. Its v1.26 verification
+tests dynamically generate an ephemeral self-signed Platform-CA chain and
+quote, but do not publish reusable Intel-rooted hardware evidence for a
+positive native-QVL test. Outbe therefore uses the parser vector for CA
+classification and exact raw SGX values from the pinned Intel 1.26 QVL ABI for
+private status-policy tests. Because Platform CA applies to registered
 multi-package SGX platforms, the current single-package capture host cannot
-produce it.
+produce real Platform-CA evidence.
 
 The earlier pure-Rust prototype treated both endpoints as inclusive. The
 selected native QVL 1.26 behavior is different: it returned
@@ -350,33 +367,48 @@ At the 896-KiB evidence cap and 64 rules:
   block for the other four mandatory system transactions.
 
 Batch-local collateral deduplication reduces encoded bytes only. Verification
-gas is charged for every participant's logical evidence dimensions. I1 and I9
-must benchmark the pinned enclave-resident native QVL path; if it cannot
-satisfy the documented block budgets, implementation stops on that evidence
+gas is charged for every participant's logical evidence dimensions. I1 proves
+the deterministic caps, allocation ordering, checked arithmetic and exact gas
+formula; hardware-free Gramine Direct timing is not production SGX capacity
+evidence. I9 must benchmark the exact-release enclave-resident native QVL and
+full block path on the published minimum supported validator profile. If that
+path cannot satisfy the documented block budgets, production activation stops
 instead of silently changing the schedule or weakening verification.
 
-## Release evidence still required by implementation
+## Implementation evidence split
 
-These are acceptance criteria of the implementation tasks, not open product
-decisions:
+The following ownership is fixed rather than left as an open product decision.
 
-- for I1, the real intent-bound Processor-CA corpus reaches its authentic QVL
-  and strict-policy result under offline replay, alongside official Intel
-  synthetic Platform-CA parser/policy vectors;
-- for I9, a fresh real accepted Processor-CA fixture for the exact release
+I1 deterministic correctness evidence:
+
+- the real intent-bound Processor-CA corpus reaches its authentic QVL and
+  strict-policy result under offline replay;
+- the official Intel v1.26 Platform-CA parser vector and exact Intel QVL 1.26
+  raw SGX status ABI vectors are used only by private Outbe policy tests;
+- cap-minus-one/cap/cap-plus-one, allocation-before-decode and checked gas
+  arithmetic tests pass; synthetic cap vectors are never hardware evidence;
+- byte-stable verdicts, host-verdict rejection, evidence tamper and
+  missing-native-stack rejection pass on supported x86_64 CI builds.
+
+I9 empirical production-release evidence:
+
+- a fresh real accepted Processor-CA fixture for the exact release
   enclave/policy and a real accepted Platform-CA SGX fixture captured on a
-  registered multi-package platform; either absence is a release failure, not
-  a skipped test;
-- current PCS fixtures with large real CRLs;
-- cap-minus-one/cap/cap-plus-one and allocation-before-decode tests;
-- byte-stable verdict vectors across supported x86_64 validator builds;
-- signed Gramine release-manifest pins for the already selected QVL/native
-  dependency artifacts;
-- host-verdict rejection, evidence tamper and missing-native-stack rejection
-  vectors;
-- valid, invalid-early, invalid-late and dense 32-validator benchmarks on the
-  slowest supported x86_64 validator class;
-- fail-not-skip SGX/DCAP end-to-end release CI.
+  registered multi-package platform; either absence is a release failure;
+- fresh actual Processor, Platform and root CRLs are recorded with issuer/type,
+  validity dates, byte size and SHA-256 and checked against the protocol caps;
+  the release benchmark uses the largest actual matching collateral bundle;
+- exact-release `gramine-sgx` valid, invalid-early, invalid-late and dense
+  32-validator benchmarks run on the published minimum supported x86_64
+  validator profile and keep full-block execution inside its timing budget;
+- the signed Gramine release manifest pins the selected QVL/native dependency
+  artifacts, and SGX/DCAP end-to-end release CI is fail-not-skip.
+
+The 2026-07-31 observed Intel CRLs were 1,002 bytes for Processor, 3,354 bytes
+for Platform and 294 bytes for the root. Intel controls the signed revocation
+population, so V1 has no fabricated or undefined "large real CRL" threshold.
+If Intel later publishes a materially larger valid CRL, it is retained as a
+regression fixture without changing the evidence classification above.
 
 ARM TEE and aarch64 are not production targets for V1 and therefore do not
 carry fixture, verdict or release-gate requirements.

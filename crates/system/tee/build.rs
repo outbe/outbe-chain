@@ -55,6 +55,54 @@ fn main() {
         required_packages.insert(package);
     }
 
+    let verified_intel_include_dir = PathBuf::from(
+        std::env::var_os("OUT_DIR").expect("Cargo must set OUT_DIR for native-QVL build"),
+    )
+    .join("verified-intel-qvl-include-v1");
+    std::fs::create_dir_all(&verified_intel_include_dir)
+        .expect("create verified Intel QVL include directory");
+    let mut verified_include_names = BTreeSet::new();
+    let build_inputs = qvl_manifest["build_inputs"]
+        .as_array()
+        .expect("native-QVL manifest must declare build_inputs");
+    for build_input in build_inputs {
+        let package = build_input["package"]
+            .as_str()
+            .expect("native-QVL build-input package must be a string");
+        let manifest_version = build_input["package_version"]
+            .as_str()
+            .expect("native-QVL build-input package version must be a string");
+        assert_eq!(
+            manifest_version,
+            pinned_package_version(package_pins, package),
+            "native-QVL build-input version must match the project toolchain pin: {package}"
+        );
+        required_packages.insert(package);
+
+        let path = build_input["path"]
+            .as_str()
+            .expect("native-QVL build-input path must be a string");
+        let expected_size = build_input["size"]
+            .as_u64()
+            .expect("native-QVL build-input size must be an unsigned integer");
+        let expected_sha256 = build_input["sha256"]
+            .as_str()
+            .expect("native-QVL build-input SHA-256 must be a string");
+        let payload = read_verified_artifact(path, expected_size, expected_sha256);
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("native-QVL build-input path must have a UTF-8 file name");
+        assert!(
+            verified_include_names.insert(file_name),
+            "duplicate native-QVL build-input file name: {file_name}"
+        );
+        std::fs::write(verified_intel_include_dir.join(file_name), payload).unwrap_or_else(
+            |error| panic!("stage verified native-QVL build input {file_name}: {error}"),
+        );
+        println!("cargo:rerun-if-changed={path}");
+    }
+
     let artifacts = qvl_manifest["artifacts"]
         .as_array()
         .expect("native-QVL manifest must declare artifacts");
@@ -82,7 +130,7 @@ fn main() {
         let expected_sha256 = artifact["sha256"]
             .as_str()
             .expect("native-QVL artifact SHA-256 must be a string");
-        verify_artifact(path, expected_size, expected_sha256);
+        drop(read_verified_artifact(path, expected_size, expected_sha256));
         println!("cargo:rerun-if-changed={path}");
         if artifact["role"].as_str() == Some("qvl") {
             qvl_library_dir = Path::new(path).parent().map(Path::to_path_buf);
@@ -94,7 +142,8 @@ fn main() {
 
     println!("cargo:rerun-if-changed=native/qvl_wrapper.c");
     let mut c = cc::Build::new();
-    c.file("native/qvl_wrapper.c")
+    c.include(&verified_intel_include_dir)
+        .file("native/qvl_wrapper.c")
         .flag_if_supported("-std=c11")
         .warnings_into_errors(true);
     if std::env::var_os("CARGO_FEATURE_NATIVE_DCAP_TEST_TRACE").is_some() {
@@ -136,7 +185,7 @@ fn verify_package(package: &str, expected_version: &str) {
     );
 }
 
-fn verify_artifact(path: &str, expected_size: u64, expected_sha256: &str) {
+fn read_verified_artifact(path: &str, expected_size: u64, expected_sha256: &str) -> Vec<u8> {
     assert!(
         Path::new(path).is_absolute(),
         "native-QVL artifact path must be absolute"
@@ -156,4 +205,5 @@ fn verify_artifact(path: &str, expected_size: u64, expected_sha256: &str) {
         digest, expected_sha256,
         "native-QVL artifact SHA-256 mismatch: {path}"
     );
+    payload
 }

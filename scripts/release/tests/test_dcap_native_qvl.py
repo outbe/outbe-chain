@@ -46,18 +46,34 @@ class NativeQvlManifestTests(unittest.TestCase):
             artifact["size"] = len(payload)
             artifact["sha256"] = hashlib.sha256(payload).hexdigest()
             self.artifacts.append(artifact)
+        header_payload = b"pinned-sgx-qve-header"
+        header_path = "/native/sgx_qve_header.h"
+        header_target = self.root / header_path.removeprefix("/")
+        header_target.write_bytes(header_payload)
+        self.build_inputs = [
+            {
+                **verifier.EXPECTED_BUILD_INPUTS[0],
+                "path": header_path,
+                "size": len(header_payload),
+                "sha256": hashlib.sha256(header_payload).hexdigest(),
+            }
+        ]
         self.manifest = {
             "schema_version": 1,
             "status": verifier.EXPECTED_STATUS,
             "target": "x86_64-unknown-linux-gnu",
             "gramine_version": "1.9",
             "intel_dcap": dict(verifier.EXPECTED_DCAP),
+            "build_inputs": self.build_inputs,
             "artifacts": self.artifacts,
         }
 
     def verify_synthetic_manifest(self, manifest=None) -> None:
-        with mock.patch.object(
-            verifier, "EXPECTED_ARTIFACTS", tuple(self.artifacts)
+        with (
+            mock.patch.object(verifier, "EXPECTED_ARTIFACTS", tuple(self.artifacts)),
+            mock.patch.object(
+                verifier, "EXPECTED_BUILD_INPUTS", tuple(self.build_inputs)
+            ),
         ):
             verifier.verify_manifest(manifest or self.manifest, self.root)
 
@@ -77,13 +93,34 @@ class NativeQvlManifestTests(unittest.TestCase):
             verifier.expected_artifacts(pin)[1]["package_version"],
             "test-cxx-version",
         )
+        build_inputs = verifier.expected_build_inputs(pin)
+        self.assertEqual(
+            build_inputs[0]["package_version"],
+            pin["system_packages"]["libsgx-dcap-quote-verify-dev"],
+        )
+        self.assertEqual(
+            build_inputs[1]["package_version"],
+            pin["system_packages"]["libsgx-headers"],
+        )
+
+    def test_changed_qvl_header_fails_closed(self) -> None:
+        (self.root / "native/sgx_qve_header.h").write_bytes(b"substituted")
+        with self.assertRaisesRegex(ValueError, "build input size mismatch"):
+            self.verify_synthetic_manifest()
+
+    def test_missing_qvl_header_contract_fails_closed(self) -> None:
+        changed = copy.deepcopy(self.manifest)
+        changed["build_inputs"] = []
+        with self.assertRaisesRegex(ValueError, "build input metadata"):
+            self.verify_synthetic_manifest(changed)
 
     def test_verified_artifacts_install_under_exact_contract_names(self) -> None:
         destination = self.root / "bundle-qvl"
-        with mock.patch.object(
-            verifier,
-            "EXPECTED_ARTIFACTS",
-            tuple(self.artifacts),
+        with (
+            mock.patch.object(verifier, "EXPECTED_ARTIFACTS", tuple(self.artifacts)),
+            mock.patch.object(
+                verifier, "EXPECTED_BUILD_INPUTS", tuple(self.build_inputs)
+            ),
         ):
             verifier.install_verified_artifacts(
                 self.manifest,
@@ -112,10 +149,9 @@ class NativeQvlManifestTests(unittest.TestCase):
         (destination / "uncontracted.so").write_bytes(b"host substitution")
 
         with (
+            mock.patch.object(verifier, "EXPECTED_ARTIFACTS", tuple(self.artifacts)),
             mock.patch.object(
-                verifier,
-                "EXPECTED_ARTIFACTS",
-                tuple(self.artifacts),
+                verifier, "EXPECTED_BUILD_INPUTS", tuple(self.build_inputs)
             ),
             self.assertRaisesRegex(ValueError, "destination must be empty"),
         ):

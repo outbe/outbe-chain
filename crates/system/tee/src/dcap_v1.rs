@@ -986,7 +986,7 @@ mod tests {
     use outbe_primitives::tee_attestation_v1::PlatformTcbStatusSetV1;
 
     use super::*;
-    use crate::native_qvl::{NativeQvlStatus, NativeQvlSupplemental};
+    use crate::native_qvl::{NativeQvlStatus, NativeQvlSupplemental, SGX_QVL_STATUS_VECTORS};
 
     fn supplemental() -> NativeQvlSupplemental {
         NativeQvlSupplemental {
@@ -1070,17 +1070,7 @@ mod tests {
 
     #[test]
     fn platform_status_matrix_is_exact() {
-        let statuses = [
-            NativeQvlStatus::UpToDate,
-            NativeQvlStatus::ConfigurationNeeded,
-            NativeQvlStatus::OutOfDate,
-            NativeQvlStatus::OutOfDateAndConfigurationNeeded,
-            NativeQvlStatus::InvalidSignature,
-            NativeQvlStatus::Revoked,
-            NativeQvlStatus::Unspecified,
-            NativeQvlStatus::SWHardeningNeeded,
-            NativeQvlStatus::ConfigurationAndSWHardeningNeeded,
-        ];
+        let statuses = SGX_QVL_STATUS_VECTORS.map(|(_, status)| status);
         for accepted in [
             PlatformTcbStatusSetV1::UpToDateOnly,
             PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
@@ -1101,17 +1091,7 @@ mod tests {
 
     #[test]
     fn qe_status_matrix_accepts_only_up_to_date() {
-        let statuses = [
-            NativeQvlStatus::UpToDate,
-            NativeQvlStatus::ConfigurationNeeded,
-            NativeQvlStatus::OutOfDate,
-            NativeQvlStatus::OutOfDateAndConfigurationNeeded,
-            NativeQvlStatus::InvalidSignature,
-            NativeQvlStatus::Revoked,
-            NativeQvlStatus::Unspecified,
-            NativeQvlStatus::SWHardeningNeeded,
-            NativeQvlStatus::ConfigurationAndSWHardeningNeeded,
-        ];
+        let statuses = SGX_QVL_STATUS_VECTORS.map(|(_, status)| status);
         for status in statuses {
             let expected = if status == NativeQvlStatus::UpToDate {
                 Ok(())
@@ -1120,6 +1100,27 @@ mod tests {
             };
             assert_eq!(validate_qe_status(status), expected);
         }
+    }
+
+    #[test]
+    fn native_errors_map_to_stable_reject_codes_exhaustively() {
+        assert_eq!(
+            [
+                NativeQvlError::InvalidInput,
+                NativeQvlError::UnsupportedAbi,
+                NativeQvlError::VerificationFailed,
+                NativeQvlError::UnsupportedResult,
+                NativeQvlError::MalformedSupplemental,
+            ]
+            .map(map_native_error),
+            [
+                DcapRejectCodeV1::CollateralNonCanonical,
+                DcapRejectCodeV1::NativeVerifierUnavailable,
+                DcapRejectCodeV1::NativeVerificationFailed,
+                DcapRejectCodeV1::NativeOutputMalformed,
+                DcapRejectCodeV1::NativeOutputMalformed,
+            ]
+        );
     }
 
     #[test]

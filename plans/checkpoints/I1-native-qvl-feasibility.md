@@ -10,12 +10,14 @@ Audited implementation commits:
 - `fd1598c1eb59c07eb4fe049659f9cf0c17626875` (stateful syscall isolation);
 - `8dcebae477a63493d99753ab177b0e24d3cb873d` (QVL-scoped syscall trace).
 
-Status: `PASS` for the narrow feasibility gate. Full I1 remains incomplete,
-but I2–I8 are not stopped behind an unavailable accepted Processor capture.
-The 2026-07-31 testing-gate amendment in the authoritative decision map,
-engineering evidence and implementation plan supersedes that earlier
-sequencing: I1 uses immutable real-corpus replay, while accepted live hardware
-is a fail-not-skip I9 production-activation gate.
+Status: `PASS` for the narrow feasibility gate. Full I1 was still incomplete at
+this checkpoint, but I2–I8 were not stopped behind an unavailable accepted
+Processor capture. The later criterion-by-criterion I1 closure is recorded in
+`plans/checkpoints/I1-deterministic-verifier-closure.md`. The 2026-07-31
+testing-gate amendment in the authoritative decision map, engineering evidence
+and implementation plan supersedes the earlier sequencing: I1 uses immutable
+real-corpus replay, while accepted live hardware is a fail-not-skip I9
+production-activation gate.
 
 ## Scope proved
 
@@ -44,14 +46,18 @@ The inactive contract `release/dcap-native-qvl-v1.json` records:
 
 | Role | Package version | SHA-256 |
 |---|---|---|
+| Intel QVL include closure (11 build inputs) | `libsgx-dcap-quote-verify-dev 1.26.100.1-noble1`; `libsgx-headers 2.29.100.1-noble1` | per-file SHA-256 in `release/dcap-native-qvl-v1.json` |
 | QVL | `libsgx-dcap-quote-verify 1.26.100.1-noble1` | `4745bc5b46cbdc17a78119ae2db08f54b86ff9077c5ab480f378741396365aef` |
 | C++ runtime | `libstdc++6 14.2.0-4ubuntu2~24.04.1` | `1fd75fe70354a416d75aef22bcae68c47bd25d20e2d0568c30b1a9838cf62f11` |
 | GCC runtime | `libgcc-s1 14.2.0-4ubuntu2~24.04.1` | `d93224d2b0dab4247598be683adca02f5cf00586f99c187579cd7e92058fb7cb` |
 
-`scripts/release/verify_dcap_native_qvl.py` verified the installed artifacts
-and exact installed package/header versions. Its five tests prove exact
-success, changed-artifact rejection, status rejection, package/build-ID
-rejection and QvE/QPL boundary rejection.
+`scripts/release/verify_dcap_native_qvl.py` verifies the installed artifacts,
+all 11 compiler-observed Intel header inputs and exact installed package
+versions. Its ten tests prove exact success, changed/missing input rejection,
+status rejection, package/build-ID rejection and QvE/QPL boundary rejection.
+The build stages only verified header bytes into an isolated include tree; the
+C adapter then independently `_Static_assert`s all nine SGX result values
+before Rust conversion tests execute.
 
 ## Executed evidence
 
@@ -129,9 +135,15 @@ finding for this feasibility scope.
 - separate Platform and QE status matrix with authenticated advisories;
 - stable consensus verdict/reject ordering and gas precharge;
 - a real intent-bound Processor-CA corpus replayed through pinned QVL with its
-  authentic strict-policy result, current large-CRL coverage and synthetic
-  Intel Platform-CA parser/policy vectors;
-- byte-stable vectors and bounded performance evidence.
+  authentic strict-policy result and actual signed collateral, alongside the
+  Intel v1.26 Platform-CA parser vector and exact raw SGX status ABI policy
+  vectors;
+- byte-stable vectors, cap-minus-one/cap/cap-plus-one behavior, pre-allocation
+  bounds and checked gas arithmetic.
+
+Empirical exact-release `gramine-sgx` performance, full-block timing and fresh
+actual Processor/Platform/root CRL capacity are mandatory fail-not-skip I9
+evidence. I1 does not require or fabricate an undefined "large real CRL".
 
 Fresh accepted Processor-CA execution and a real registered multi-package
 Platform-CA fixture are intentionally retained as fail-not-skip I9 release

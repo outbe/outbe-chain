@@ -31,11 +31,16 @@ return stable reject code `PlatformTcbRejected` (`0x0501`), and verification
 at `1787808799` must return `CollateralExpired` (`0x0305`). The status must not
 be reclassified to make this corpus positive.
 
+`strict-policy-reject-code-v1.hex` stores the two canonical big-endian reject
+bytes `05 01`. The public-verifier replay test compares the real result to these
+checked-in bytes rather than only comparing Rust enum values.
+
 `capture-provenance.json` records the exact QVL/QPL/QCNL package versions,
 artifact hashes, source collateral ABI, and normalized component hashes. No
 PCS subscription key, PCCS credential, host verdict, or network response is
 stored in this fixture.
 
-`SHA256SUMS` covers every immutable fixture input. This corpus closes the real
-intent-bound negative case only. A separate real intent-bound Processor-CA
-capture with an accepted status remains mandatory before I1 can close.
+`SHA256SUMS` covers every immutable fixture input and the expected stable result.
+This corpus closes the real intent-bound negative I1 case only. A fresh real
+intent-bound Processor-CA capture with an accepted status remains mandatory at
+the fail-not-skip I9 release gate, not for ordinary hardware-free I1 replay.
