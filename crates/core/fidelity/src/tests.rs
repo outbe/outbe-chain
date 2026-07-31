@@ -234,7 +234,13 @@ fn precompile_dispatch_query_auth_and_metadata() {
                 signature: Bytes::from(forged),
             })
             .abi_encode();
-        assert!(dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).is_err());
+        // ...and surfaced as a Revert carrying the reason (not an opaque Fatal,
+        // which eth_call drops as data-less "missing revert data").
+        let err = dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).unwrap_err();
+        assert!(
+            matches!(err, outbe_primitives::error::PrecompileError::Revert(_)),
+            "query failure must surface as Revert, got {err:?}"
+        );
 
         // Plaintext metadata needs no authorization.
         let min_call =

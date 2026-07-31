@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::math::{DECIMALS, MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::FidelityContract;
@@ -28,11 +28,13 @@ pub fn dispatch(
                 contract
                     .query_index_now(c.account, c.expiry, c.signature.to_vec())
                     .map(|r| r.rcfi)
+                    .map_err(surface_query_error)
             }),
             getFidelityIndexAt(c) => view(c, |c| {
                 contract
                     .query_index_at(c.account, c.timestamp, c.expiry, c.signature.to_vec())
                     .map(|r| r.rcfi)
+                    .map_err(surface_query_error)
             }),
             decimals(_) => metadata::<IFidelity::decimalsCall>(|| Ok(DECIMALS)),
             maxFidelityIndexAt(c) => view(c, |c| contract.max_rcfi_at(c.timestamp)),
@@ -40,4 +42,17 @@ pub fn dispatch(
             maxLeague(_) => metadata::<IFidelity::maxLeagueCall>(|| Ok(MAX_LEAGUE)),
         }
     })
+}
+
+/// The owner-authorized index query is a read-only `eth_call`, so its failures
+/// (bad or wrong-signer signature, wrong chain, expired auth, enclave sidecar
+/// unavailable / DKG incomplete) are user-facing, not node-fatal. Surface the
+/// reason as a `Revert` so it reaches the caller as `Error(string)`; the enclave
+/// client returns these as `Fatal`, which `eth_call` would otherwise drop as
+/// data-less "missing revert data". Already-`Revert` errors pass through.
+fn surface_query_error(e: PrecompileError) -> PrecompileError {
+    match e {
+        PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => e,
+        other => PrecompileError::Revert(other.to_string()),
+    }
 }
