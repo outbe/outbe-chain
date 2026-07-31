@@ -283,11 +283,11 @@ bodies.
 The executor bounded-decodes and structurally verifies the canonical result,
 then reconstructs `ResultDigest`. The inner OCOMP signature binds the
 chain/genesis/fork, bundle, job, attempt, committee, key epoch, result purpose
-and that exact digest. The outer EVM
-transaction uses the validator's EVM identity through a restricted node-owned
-signing seam; the Supervisor never receives either private key. A dedicated
-ZeroFee hook, constrained like Oracle's existing hook to the exact selector,
-zero value, bounded envelope and eligible validator, waives the native fee.
+and that exact digest. The outer EVM transaction uses the Supervisor's
+role-delegated OCOMP EVM key. The node never receives that private key and the
+Supervisor never receives the node's attestation key. A dedicated ZeroFee hook,
+constrained like Oracle's existing hook to the exact selector, zero value,
+bounded envelope and eligible represented validator, waives the native fee.
 ZeroFee performs no JobIntent, finality, window, digest, quorum or slashing
 validation. Those checks belong exclusively to the OCOMP on-chain module.
 
@@ -297,7 +297,7 @@ is empty and the window is open, and stops at finality or window close.
 For the PoC it reads the validator account nonce from canonical `latest` state,
 uses the frozen bounded gas envelope and never calls `eth_estimateGas` or asks
 RPC to execute a `pending` block. Its single-writer vote journal preserves the
-exact node-signed transaction bytes and nonce for rebroadcast; an exact retry
+exact locally signed transaction bytes and nonce for rebroadcast; an exact retry
 does not reconstruct or re-sign the envelope.
 Consensus verifies protocol eligibility and the OCOMP signature before
 recording the vote. No distinguished relay, collector or off-chain certificate
@@ -390,7 +390,7 @@ Three votes over different result bytes do not form quorum evidence.
 | OCOMP key custody | node attestation gate plus ADR-S-KEY-001 backend |
 | signer eligibility/weight | job-pinned result committee snapshot |
 | vote submission/rebroadcast | validator-domain `OffchainLysis Supervisor` |
-| EVM transport signature | restricted node-owned validator EVM signing seam |
+| EVM transport signature | Supervisor-owned role-delegated OCOMP EVM key |
 | vote fee waiver | exact-selector validator-only ZeroFee hook |
 | vote inclusion | ordinary public transaction path |
 | vote eligibility/signature validity | every node while executing the vote transaction |

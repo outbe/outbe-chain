@@ -73,12 +73,24 @@ enum OcompCommand {
         /// Exact four-validator public bootstrap manifest.
         #[arg(long)]
         validators: PathBuf,
+        /// Directory containing validator-N/ocomp-registration-v1.ocb1 for a real committee.
+        #[arg(long)]
+        registrations_dir: Option<PathBuf>,
+        /// Frozen release artifact directory whose exact protocol semantics are being deployed.
+        #[arg(long)]
+        release_artifacts_dir: Option<PathBuf>,
         /// Directory containing the complete generated final artifact set.
         #[arg(long)]
         output_dir: PathBuf,
         /// Fail if the existing output differs from deterministic generation.
         #[arg(long)]
         check: bool,
+    },
+    /// Print the chain-bound validator identity hashes used by OCOMP registration.
+    ValidatorIdentities {
+        /// Exact four-validator public bootstrap manifest.
+        #[arg(long)]
+        validators: PathBuf,
     },
     /// Generate or check the OCOMP V1 object/domain/list registry.
     Registry {
@@ -268,6 +280,8 @@ fn main() -> Result<()> {
                 capacity,
                 base_genesis,
                 validators,
+                registrations_dir,
+                release_artifacts_dir,
                 output_dir,
                 check,
             } => {
@@ -276,9 +290,21 @@ fn main() -> Result<()> {
                     &capacity,
                     &base_genesis,
                     &validators,
+                    ocomp::finalize::FinalArtifactOverrides {
+                        registrations_dir: registrations_dir.as_deref(),
+                        release_artifacts_dir: release_artifacts_dir.as_deref(),
+                    },
                     &output_dir,
                     check,
                 )?;
+            }
+            OcompCommand::ValidatorIdentities { validators } => {
+                for (index, identity) in ocomp::finalize::validator_identities(&validators)?
+                    .into_iter()
+                    .enumerate()
+                {
+                    println!("{index}={identity:#x}");
+                }
             }
             OcompCommand::Registry { check } => {
                 ocomp::registry::run(&repo_root, check)?;

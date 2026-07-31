@@ -173,6 +173,7 @@ states, partial effects and missing production evidence under the exact heading
 |---|---|---|---|
 | [ADR-S-CYC-001](system/ADR-S-CYC-001-deterministic-cycle-scheduling.md) | Deterministic Cycle scheduling | cycle | Proposed |
 | [ADR-S-VAL-001](system/ADR-S-VAL-001-validator-registry-and-committee-eligibility.md) | Validator identity/lifecycle/eligibility | validatorset | Proposed |
+| [ADR-S-VAL-002](system/ADR-S-VAL-002-role-scoped-validator-operational-keys.md) | Role-scoped validator operational keys | validatorset, Oracle, OCOMP, ZeroFee | Accepted |
 | [ADR-S-STK-001](system/ADR-S-STK-001-bonded-stake-and-unbonding-ledger.md) | Bonded stake and unbonding | staking | Proposed |
 | [ADR-S-RWD-001](system/ADR-S-RWD-001-finalized-participation-and-reward-settlement.md) | Participation and validator rewards | rewards | Proposed |
 | [ADR-S-SLS-001](system/ADR-S-SLS-001-offense-evidence-and-slashing.md) | Offense evidence and slashing | slashindicator | Proposed |

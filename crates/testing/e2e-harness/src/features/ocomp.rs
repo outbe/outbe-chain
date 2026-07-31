@@ -184,6 +184,10 @@ fn launch_prepared_ocomp(
     let identity = expected_identity;
     world
         .ocomp
+        .install_ocomp_delegate_bindings()
+        .expect("install distinct role-scoped OCOMP transaction signers");
+    world
+        .ocomp
         .start_validator_roles(identity)
         .expect("start all production node-facing OCOMP roles");
     if activate_workers {
@@ -196,6 +200,14 @@ fn launch_prepared_ocomp(
                 });
         }
     }
+}
+
+#[then("every OCOMP transaction signer is distinct and scoped only to the OCOMP role")]
+fn every_ocomp_transaction_signer_is_role_scoped(world: &mut World) {
+    world
+        .ocomp
+        .verify_ocomp_delegate_bindings()
+        .expect("verify distinct role-scoped OCOMP transaction signers");
 }
 
 fn wait_for_finalized_ocomp_activation(world: &mut World) {
@@ -559,7 +571,7 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
         .state
         .ocomp_held_late_vote_raw
         .take()
-        .expect("node-signed held vote transaction");
+        .expect("locally signed held vote transaction");
     let expected_hash = world
         .state
         .ocomp_held_late_vote_hash
@@ -573,7 +585,7 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
             .parse::<B256>()
             .expect("public transaction hash"),
         expected_hash,
-        "public RPC changed the node-signed held transaction identity"
+        "public RPC changed the locally signed held transaction identity"
     );
     let receipt_timeout = Instant::now() + Duration::from_secs(60);
     let receipt = loop {

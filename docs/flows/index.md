@@ -77,6 +77,7 @@ seam or unresolved policy named explicitly.
 | [PFS-008](008-follower-sync-recovery-and-warm-promotion.md) | Followers synchronize, validators recover and warm data is promoted safely | ADR-B-NOD-001, ADR-B-CNS-001 through ADR-B-CNS-003, ADR-B-OPS-001; ADR-S-VAL-001, ADR-S-STK-001 | Draft | Live upstream-loss and restart-safe promotion scenarios implemented |
 | [PFS-009](009-multichain-auction-day.md) | A worldwide day is auctioned across chains and creators are paid | ADR-S-CYC-001; ADR-C-MET-001, ADR-C-LYS-001, ADR-C-DES-001, ADR-C-INX-001 through ADR-C-INX-007, ADR-C-PRM-003; ADR-B-XCH-001 | Draft | Partial: in-process green/red/gate scenarios; live transport walk manual |
 | [PFS-010](010-stablecoin-factory-lifecycle.md) | Validator-approved stablecoin identity and ledger state survive conflict rejection and committee restart | ADR-B-CNS-003, ADR-B-EVM-002 through ADR-B-EVM-005, ADR-B-TST-001; ADR-S-GOV-002; ADR-C-TOK-003 through ADR-C-TOK-005 | Draft | Live PFS-010-01 through -04; in-process PFS-010-05 through -08 |
+| [PFS-011](011-validator-operational-key-delegation.md) | Role-scoped service keys submit Oracle and OCOMP transactions without general validator authority | ADR-S-VAL-001, ADR-S-VAL-002, ADR-S-ORC-001 through ADR-S-ORC-002, ADR-S-FEE-001, ADR-S-OCM-003 through ADR-S-OCM-004 | Draft | PFS-011-01 harness scenario implemented but not run; unit coverage for isolation, collision, rotation and revoke |
 
 ## Relationship to test documentation
 

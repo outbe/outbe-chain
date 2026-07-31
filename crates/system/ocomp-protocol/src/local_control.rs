@@ -39,7 +39,6 @@ impl ControlRole {
                     | method_bit(NodeMessageKind::GetJobSpec as u16)
                     | method_bit(NodeMessageKind::OpenSnapshotLease as u16)
                     | method_bit(NodeMessageKind::RequestAttestation as u16)
-                    | method_bit(NodeMessageKind::PrepareVoteTransaction as u16)
                     | method_bit(NodeMessageKind::GetOcompHealth as u16)
             }
             (Self::SnapshotExporter, ControlMagic::Node) => {
@@ -681,17 +680,7 @@ pub fn poc_schema_limits() -> SchemaLimits {
 }
 
 pub fn effective_uid() -> Result<u32, ControlError> {
-    let status = fs::read_to_string("/proc/self/status")?;
-    let uid_line = status
-        .lines()
-        .find(|line| line.starts_with("Uid:"))
-        .ok_or(ControlError::EffectiveUidUnavailable)?;
-    uid_line
-        .split_ascii_whitespace()
-        .nth(2)
-        .ok_or(ControlError::EffectiveUidUnavailable)?
-        .parse()
-        .map_err(|_| ControlError::EffectiveUidUnavailable)
+    Ok(rustix::process::geteuid().as_raw())
 }
 
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
@@ -742,6 +731,7 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
     Some((name, uid))
 }
 
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 #[cfg(target_os = "linux")]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
@@ -774,6 +764,20 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
         uid: credentials.uid,
         gid: credentials.gid,
     })
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+#[allow(unsafe_code)]
+fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
+    let mut uid = 0;
+    let mut gid = 0;
+    // SAFETY: `uid` and `gid` are valid writable objects and
+    // `stream.as_raw_fd()` remains open for this non-owning query.
+    let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) };
+    if result != 0 {
+        return Err(ControlError::Io(std::io::Error::last_os_error()));
+    }
+    Ok(PeerCredentials { pid: 0, uid, gid })
 }
 
 /// macOS/BSD fallback: `SO_PEERCRED` is Linux-only; `getpeereid` returns the

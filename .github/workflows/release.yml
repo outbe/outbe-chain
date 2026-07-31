@@ -23,8 +23,13 @@ permissions:
   security-events: write
 
 jobs:
+  # Immutable testnet tags (vX.Y.Z-testnet.N) are released by
+  # .github/workflows/testnet-release.yml, which owns the reproducible ELF build,
+  # the signed SGX bundle and the GitHub release itself. goreleaser must not
+  # create that release first, or the SGX pipeline's finalize step aborts on an
+  # already-existing tag.
   goreleaser:
-    if: "!contains(github.ref_name, '-rc')"
+    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.')"
     runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v6
@@ -43,3 +48,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_PAT: ${{ secrets.GH_PAT }}
+
+  # Pushing vX.Y.Z-testnet.N starts the protected SGX release. It is dispatched
+  # rather than triggered directly because testnet-release.yml must run with
+  # `refs/heads/main` as its workflow ref: the Sigstore certificate identity it
+  # signs and re-verifies is pinned to that ref in xtask/src/release/sgx.rs and
+  # release/release-manifest-v1.schema.json. The dispatched run checks out the
+  # tag itself and re-verifies the signed tag object before it signs anything.
+  dispatch-testnet-release:
+    name: dispatch protected SGX release
+    if: contains(github.ref_name, '-testnet.')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dispatch testnet-release.yml for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-testnet\.[0-9]+$ ]] || {
+            echo "not an immutable testnet tag: ${RELEASE_TAG}" >&2
+            exit 2
+          }
+          gh workflow run testnet-release.yml \
+            --ref main \
+            --field release_tag="${RELEASE_TAG}"

@@ -101,7 +101,7 @@ fn systemd_analyze_accepts_the_fixed_ocomp_topology() {
         )
         .expect("offline target fixture");
     }
-    let binary = root.path().join("usr/local/bin/outbe-ocomp");
+    let binary = root.path().join("opt/outbe-chain/outbe-ocomp");
     fs::create_dir_all(binary.parent().expect("binary parent")).expect("binary directory");
     fs::write(&binary, b"OCOMP systemd verification executable fixture\n").expect("binary fixture");
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).expect("binary fixture mode");
@@ -168,21 +168,21 @@ fn parsed_unit_graph_keeps_node_lifecycle_outside_ocomp() {
     );
     assert_eq!(
         values(&worker, "Service", "BindReadOnlyPaths"),
-        vec!["/var/lib/outbe-ocomp/cas-v1/objects"]
+        vec!["/opt/outbe-chain/ocomp/data/cas-v1/objects"]
     );
     assert_eq!(
         values(&worker, "Service", "ReadWritePaths"),
-        vec!["/var/lib/outbe-ocomp/worker-inbox-v1"]
+        vec!["/opt/outbe-chain/ocomp/data/worker-inbox-v1"]
     );
 
     let exporter = parse_unit(&unit_dir().join("outbe-ocomp-snapshot-exporter.service"));
     assert!(values(&exporter, "Service", "ReadWritePaths")
-        .contains(&"/var/lib/outbe-ocomp/cas-v1/objects"));
+        .contains(&"/opt/outbe-chain/ocomp/data/cas-v1/objects"));
     let supervisor = parse_unit(&unit_dir().join("outbe-ocomp-supervisor.service"));
     assert!(values(&supervisor, "Service", "ReadWritePaths")
-        .contains(&"/var/lib/outbe-ocomp/cas-v1/objects"));
+        .contains(&"/opt/outbe-chain/ocomp/data/cas-v1/objects"));
     assert!(values(&supervisor, "Service", "ReadWritePaths")
-        .contains(&"/var/lib/outbe-ocomp/worker-inbox-v1"));
+        .contains(&"/opt/outbe-chain/ocomp/data/worker-inbox-v1"));
 }
 
 #[test]
@@ -205,11 +205,11 @@ fn role_configuration_provisions_narrow_cross_process_artifact_access() {
     }
 
     let expected_directories = [
-        ("/var/lib/outbe-ocomp/cas-v1/objects", "0770"),
-        ("/var/lib/outbe-ocomp/cas-v1/refs", "0770"),
-        ("/var/lib/outbe-ocomp/exporter-v1", "0750"),
-        ("/var/lib/outbe-ocomp/supervisor-v1", "0700"),
-        ("/var/lib/outbe-ocomp/worker-inbox-v1", "0770"),
+        ("/opt/outbe-chain/ocomp/data/cas-v1/objects", "0770"),
+        ("/opt/outbe-chain/ocomp/data/cas-v1/refs", "0770"),
+        ("/opt/outbe-chain/ocomp/data/exporter-v1", "0750"),
+        ("/opt/outbe-chain/ocomp/data/supervisor-v1", "0700"),
+        ("/opt/outbe-chain/ocomp/data/worker-inbox-v1", "0770"),
     ];
     let tmpfiles = parse_records(&unit_dir().join("outbe-ocomp.tmpfiles"));
     for (path, mode) in expected_directories {
@@ -241,23 +241,23 @@ fn role_configuration_provisions_narrow_cross_process_artifact_access() {
     let supervisor = parse_unit(&unit_dir().join("outbe-ocomp-supervisor.service"));
     assert_eq!(
         values(&supervisor, "Service", "ReadOnlyPaths"),
-        vec!["/var/lib/outbe-ocomp/exporter-v1"]
+        vec!["/opt/outbe-chain/ocomp/data/exporter-v1"]
     );
     assert_eq!(
         values(&supervisor, "Service", "EnvironmentFile"),
-        vec!["/etc/outbe/outbe-ocomp.env"]
+        vec!["/opt/outbe-chain/ocomp.env"]
     );
     let worker = parse_unit(&unit_dir().join("outbe-ocomp-worker@.service"));
     assert_eq!(
         values(&worker, "Service", "EnvironmentFile"),
-        vec!["/etc/outbe/outbe-ocomp.env"]
+        vec!["/opt/outbe-chain/ocomp.env"]
     );
     let exporter = parse_unit(&unit_dir().join("outbe-ocomp-snapshot-exporter.service"));
     assert_eq!(
         values(&exporter, "Service", "EnvironmentFile"),
         vec![
-            "/etc/outbe/outbe-ocomp.env",
-            "/etc/outbe/outbe-ocomp-export.env"
+            "/opt/outbe-chain/ocomp.env",
+            "/opt/outbe-chain/ocomp-export.env"
         ],
         "only snapshot-exporter receives Mongo projection credentials"
     );

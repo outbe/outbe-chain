@@ -39,6 +39,14 @@
       "name": "outbe-tee-enclave",
       "package": "outbe-tee-enclave",
       "role": "tee-enclave"
+    },
+    {
+      "classification": "production",
+      "features": [],
+      "install_profiles": ["validator"],
+      "name": "outbe-ocomp",
+      "package": "outbe-ocomp",
+      "role": "operator-sidecar"
     }
   ],
   "builder": {

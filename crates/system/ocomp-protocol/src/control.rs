@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 
 use crate::{
     common::BoundedBytes,
@@ -54,7 +54,6 @@ pub enum NodeMessageKind {
     RequestAttestation = 0x0019,
     GetOcompHealth = 0x001a,
     CheckProjectionContainment = 0x001b,
-    PrepareVoteTransaction = 0x001c,
     Response = 0x7ffe,
     Error = 0x7fff,
 }
@@ -435,22 +434,7 @@ wire_struct! {
 }
 
 wire_struct! {
-    /// Restricted request for the node-owned validator EVM signer.
-    ///
-    /// The caller supplies the complete result again rather than arbitrary
-    /// calldata. The node reproduces the exact sign-once vote and constructs the
-    /// fixed zero-fee transaction envelope itself.
-    pub struct PrepareVoteTransactionV1 {
-        pub canonical_result: BoundedBytes,
-        pub nonce: u64,
-        pub max_fee_per_gas: U256,
-        pub gas_limit: u64,
-    }
-    validate = validate_prepare_vote_transaction;
-}
-
-wire_struct! {
-    /// Deterministic EIP-1559 transaction produced by the restricted node seam.
+    /// Deterministic EIP-1559 transaction produced by the local OCOMP signer.
     pub struct PreparedVoteTransactionV1 {
         pub canonical_vote: BoundedBytes,
         pub raw_transaction: BoundedBytes,
@@ -643,7 +627,6 @@ impl_control_body_codec!(CommitSnapshotExportV1);
 impl_control_body_codec!(SnapshotExportCommittedV1);
 impl_control_body_codec!(RequestAttestationV1);
 impl_control_body_codec!(AttestationResponseV1);
-impl_control_body_codec!(PrepareVoteTransactionV1);
 impl_control_body_codec!(PreparedVoteTransactionV1);
 
 impl RunUnitV1 {
@@ -946,20 +929,6 @@ fn validate_attestation_response(
         !response.canonical_vote.0.is_empty()
             && response.canonical_vote.0.len() <= limits.max_control_body_bytes,
         "attestation result vote control cap",
-    )
-}
-
-fn validate_prepare_vote_transaction(
-    request: &PrepareVoteTransactionV1,
-    limits: &SchemaLimits,
-) -> Result<(), ProtocolError> {
-    request.canonical_result.validate(limits)?;
-    require(
-        !request.canonical_result.0.is_empty()
-            && request.canonical_result.0.len() <= limits.max_control_body_bytes
-            && !request.max_fee_per_gas.is_zero()
-            && request.gas_limit != 0,
-        "prepared vote transaction request",
     )
 }
 

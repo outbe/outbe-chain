@@ -8128,6 +8128,7 @@ dependencies = [
  "reth-storage-api",
  "reth-trie",
  "revm",
+ "rustix",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
