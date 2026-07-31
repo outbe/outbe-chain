@@ -24,6 +24,7 @@ use outbe_desis::{
     precompile::{dispatch as desis_dispatch, IDesis},
     AuctionStage, DesisContract,
 };
+use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_intexfactory::precompile::{dispatch as intexfactory_dispatch, IIntexFactory};
 use outbe_metadosis::{
     constants::{
@@ -458,6 +459,7 @@ struct ScenarioOutcome {
 
 /// Green day clears with bids from two chains and pays the creator; red cancels.
 fn run_green_red_auction() -> ScenarioOutcome {
+    fidelity_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let mut bodies = BodyProjectionHarness::new();
     provider.enable_sub_call_stub();
@@ -699,6 +701,7 @@ fn test_runtime_e2e_auction_green_clears_red_cancels() {
 /// A silent chain is excluded once the fan-in deadline passes.
 #[test]
 fn test_runtime_e2e_auction_gate_deadline_skips_silent_chain() {
+    fidelity_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enable_sub_call_stub();
     provider.stub_sub_call_at(

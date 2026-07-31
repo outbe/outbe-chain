@@ -141,6 +141,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
     let owner = Address::repeat_byte(0x31);
     let nominal = U256::in_units(100_u64);
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
 
@@ -226,6 +227,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     let gratis_allocation = total_nominal / U256::from(10u64);
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
 
@@ -656,6 +658,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
 
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
     let (result, pure_result) = StorageHandle::enter(&mut storage, |s| {
@@ -984,6 +987,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     let eight_percent_load = nominal * U256::from(8u64) / U256::from(100u64);
 
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
     let result = StorageHandle::enter(&mut storage, |s| {
@@ -1072,6 +1076,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
     let wwd = WorldwideDay::new(20260526);
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
 
@@ -1166,6 +1171,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
     let wwd = WorldwideDay::new(20260526);
     let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
     let mut storage = HashMapStorageProvider::new(1);
+    outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
     let bodies = TestBodyRepository::new();
 

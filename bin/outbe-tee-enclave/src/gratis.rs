@@ -278,9 +278,21 @@ fn base_result() -> GratisOpResult {
         eoa_ct: Vec::new(),
         event_amount: U256::ZERO,
         next_op_nonce: 0,
+        fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
     }
+}
+
+/// A fresh `Rejected` result carrying only the diagnostic inputs hash. Used by
+/// the dispatch when the co-located Fidelity section fails AFTER the Gratis op
+/// itself succeeded: the whole combined op must reject, and no ciphertext from
+/// the successful half may leak into the rejected result.
+pub fn rejected_result(reason: String, inputs_canonical_hash: B256) -> GratisOpResult {
+    let mut r = base_result();
+    r.status = GratisOpStatus::Rejected { reason };
+    r.inputs_canonical_hash = inputs_canonical_hash;
+    r
 }
 
 fn reject(reason: impl Into<String>) -> GratisOpResult {
@@ -601,6 +613,7 @@ mod tests {
             pledge_handle: None,
             bundle_account: None,
             spend_auth: None,
+            fidelity: None,
         }
     }
 

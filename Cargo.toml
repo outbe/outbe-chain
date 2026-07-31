@@ -48,6 +48,7 @@ members = [
     "crates/core/credis",
     "crates/core/credisfactory",
     "crates/core/fidelity",
+    "crates/core/fidelity-math",
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/tributefactory",
@@ -141,6 +142,7 @@ outbe-agentreward = { path = "crates/core/agentreward" }
 outbe-credis = { path = "crates/core/credis" }
 outbe-credisfactory = { path = "crates/core/credisfactory" }
 outbe-fidelity = { path = "crates/core/fidelity" }
+outbe-fidelity-math = { path = "crates/core/fidelity-math" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }

@@ -731,8 +731,8 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
     Some((name, uid))
 }
 
-#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
+#[cfg(target_os = "linux")]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
     let mut credentials = libc::ucred {
         pid: 0,
@@ -765,8 +765,8 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
     })
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
 #[allow(unsafe_code)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
     let mut uid = 0;
     let mut gid = 0;

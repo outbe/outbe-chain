@@ -24,6 +24,7 @@ const CHAIN_ID: u64 = 1;
 
 fn with_contract<R>(f: impl FnOnce(&mut MetadosisContract) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut storage, |storage| {
         let mut contract = MetadosisContract::new(storage.clone());
         f(&mut contract)
@@ -32,6 +33,7 @@ fn with_contract<R>(f: impl FnOnce(&mut MetadosisContract) -> R) -> R {
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 

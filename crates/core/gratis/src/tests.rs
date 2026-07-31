@@ -7,7 +7,7 @@ use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_tee::protocol::{GratisOp, ModifyAuth};
+use outbe_tee::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
     decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
     pledge_secret, spend_auth_mac,
@@ -363,4 +363,37 @@ fn precompile_balance_of_returns_ciphertext() {
         U256::from(777u64)
     );
     test_enclave::uninstall();
+}
+
+#[test]
+fn folded_fidelity_section_failure_reverts_the_whole_op() {
+    with_env(|storage| {
+        let amount = U256::from(1_000u64);
+        // A folded mint whose fidelity section carries an UNDECRYPTABLE cohort
+        // blob. The gratis mint half would succeed, but the enclave rejects the
+        // WHOLE op when the section fails — so nothing is committed.
+        let bad_section = FidelityOpSection {
+            op: FidelityCohortOp::In,
+            timestamp: 1_000_000,
+            first_qualified_start: 0,
+            current_blob: vec![0xAB; 56], // valid length, garbage ciphertext/tag
+        };
+        let err = api::mint_with_fidelity(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+            bad_section,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("fidelity section failed"),
+            "expected a fidelity-section rejection, got: {err}"
+        );
+
+        // Atomic revert: no gratis state was written (balance, supply, op_nonce).
+        assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
+        assert_eq!(api::total_supply(storage.clone()).unwrap(), U256::ZERO);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
+    });
 }

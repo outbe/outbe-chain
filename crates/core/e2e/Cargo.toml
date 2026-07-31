@@ -37,6 +37,9 @@ alloy-sol-types.workspace = true
 [dev-dependencies]
 serde_json.workspace = true
 tempfile.workspace = true
+# Fidelity leagues/cohorts are enclave-computed; drive them via the in-process
+# engine in the WWD lifecycle e2e scenarios (metadosis snapshot, gratis mint).
+outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 
 [lints]
 workspace = true
