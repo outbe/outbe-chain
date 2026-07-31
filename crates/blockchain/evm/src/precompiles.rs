@@ -25,7 +25,7 @@ use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::StorageHandle;
 use revm::{
     handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
-    interpreter::{CallInputs, InterpreterResult},
+    interpreter::{CallInputs, CallScheme, InterpreterResult},
     precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult},
     primitives::hardfork::SpecId,
     Database,
@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use crate::{
     gas::SubcallGasMeter,
-    precompile_routes,
+    precompile_routes::{self, ValuePolicy},
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
 };
 
@@ -46,6 +46,47 @@ pub struct OcompActivationBlockMeter;
 /// (selector `0x08c379a0` followed by `abi.encode(reason)`).
 fn encode_revert_reason(msg: String) -> Bytes {
     Bytes::from(Revert::from(msg).abi_encode())
+}
+
+/// Classification of a call's native value at the precompile boundary.
+#[derive(Debug, PartialEq, Eq)]
+enum BoundaryValue {
+    /// Value revm has already moved into the precompile account, safe to credit.
+    Credited(U256),
+    /// Value that must not reach dispatch, with the reason to revert with.
+    Rejected(&'static str),
+}
+
+/// Decide how much native value a precompile call may credit.
+///
+/// Only a non-delegated frame reaches this: dispatch refuses `DELEGATECALL` and
+/// `CALLCODE` outright, so revm has already moved any `CallValue::Transfer` into
+/// the account whose storage dispatch is about to mutate.
+///
+/// The `CallValue::Apparent` arm is therefore unreachable. It is not a fallback
+/// for the delegated-frame guard and must not be read as one: `CALLCODE` carries
+/// a `Transfer`, so removing that guard would leave this function crediting a
+/// self-transfer that moved nothing. The guard is the only thing standing there.
+///
+/// A route that declares `ValuePolicy::Reject` then refuses any credited amount,
+/// so a call that would strand funds at a precompile stops before touching state.
+fn classify_boundary_value(
+    policy: ValuePolicy,
+    value: &revm::interpreter::CallValue,
+) -> BoundaryValue {
+    let credited = match *value {
+        revm::interpreter::CallValue::Transfer(v) | revm::interpreter::CallValue::Apparent(v) => v,
+    };
+    if credited.is_zero() {
+        return BoundaryValue::Credited(U256::ZERO);
+    }
+    if matches!(*value, revm::interpreter::CallValue::Apparent(_)) {
+        return BoundaryValue::Rejected("outbe precompile: apparent value is not a transfer");
+    }
+    if policy == ValuePolicy::Reject {
+        return BoundaryValue::Rejected("outbe precompile: non-payable address called with value");
+    }
+    BoundaryValue::Credited(credited)
 }
 
 /// Translate the outbe-level [`outbe_primitives::error::PrecompileError`] (the
@@ -230,6 +271,34 @@ where
         )));
     }
 
+    // A precompile's state is keyed by its own address, so a `DELEGATECALL` or
+    // `CALLCODE` frame cannot give it the borrowed-code semantics those opcodes
+    // promise: dispatch would read and write the precompile's own storage while
+    // `caller` stays the frame's inherited caller. Any contract could then take
+    // caller-authenticated actions — unstaking, voting, spending — as whoever
+    // called it. Refuse the frame instead of executing it under a caller it does
+    // not belong to.
+    //
+    // Matching the scheme rather than comparing addresses states the rule the
+    // opcodes define; the address divergence those two produce is a consequence
+    // of it, and one that a self-referential frame would not exhibit.
+    if matches!(
+        inputs.scheme,
+        CallScheme::DelegateCall | CallScheme::CallCode
+    ) {
+        let out = PrecompileOutput::revert(
+            base_gas,
+            encode_revert_reason(
+                "outbe precompile: delegated call frame cannot execute a precompile".to_string(),
+            ),
+            0,
+        );
+        return Ok(Some(precompile_output_to_interpreter_result(
+            out,
+            inputs.gas_limit,
+        )));
+    }
+
     // Reentrancy guard: refuse re-entry into the same outbe address on the
     // active thread's call chain.
     let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
@@ -255,9 +324,16 @@ where
             selector.as_deref().unwrap_or("missing")
         );
     }
-    let value = match inputs.value {
-        revm::interpreter::CallValue::Transfer(v) => v,
-        revm::interpreter::CallValue::Apparent(v) => v,
+    let value = match classify_boundary_value(route.value_policy(), &inputs.value) {
+        BoundaryValue::Credited(v) => v,
+        BoundaryValue::Rejected(reason) => {
+            let out =
+                PrecompileOutput::revert(base_gas, encode_revert_reason(reason.to_string()), 0);
+            return Ok(Some(precompile_output_to_interpreter_result(
+                out,
+                inputs.gas_limit,
+            )));
+        }
     };
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
@@ -474,6 +550,109 @@ where
 
     fn contains(&self, address: &Address) -> bool {
         self.eth.contains(address)
+    }
+}
+
+#[cfg(test)]
+mod boundary_value_tests {
+    use super::{classify_boundary_value, BoundaryValue::Credited, BoundaryValue::Rejected};
+    use crate::precompile_routes::{self, ValuePolicy};
+    use alloy_primitives::{Address, U256};
+    use outbe_primitives::addresses::{
+        DESIS_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+    };
+    use revm::interpreter::CallValue;
+
+    const PAYABLE: [Address; 3] = [STAKING_ADDRESS, INTEX_FACTORY_ADDRESS, VOTE_ADDRESS];
+
+    fn policy(address: Address) -> ValuePolicy {
+        precompile_routes::resolve(&address)
+            .expect("address must be a routed precompile")
+            .value_policy()
+    }
+
+    /// Apparent value names an amount that was never transferred. Delegated
+    /// frames are refused before this point, so the arm is defensive.
+    #[test]
+    fn apparent_value_is_never_credited() {
+        for address in PAYABLE {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Apparent(U256::from(7u64))),
+                Rejected("outbe precompile: apparent value is not a transfer"),
+            );
+        }
+    }
+
+    #[test]
+    fn zero_value_dispatches_whatever_the_policy() {
+        for address in [GRATIS_ADDRESS, DESIS_ADDRESS, STAKING_ADDRESS] {
+            for value in [
+                CallValue::Transfer(U256::ZERO),
+                CallValue::Apparent(U256::ZERO),
+            ] {
+                assert_eq!(
+                    classify_boundary_value(policy(address), &value),
+                    Credited(U256::ZERO),
+                );
+            }
+        }
+    }
+
+    /// `staking.stake`, `intexfactory.distribute` and `vote.createProposal` are
+    /// the payable selectors, so their addresses must still receive funded calls.
+    #[test]
+    fn transferred_value_is_credited_to_payable_routes() {
+        let amount = U256::from(5u64);
+        for address in PAYABLE {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Transfer(amount)),
+                Credited(amount),
+            );
+        }
+    }
+
+    /// Desis dropped its payable `clearAuction`, so value sent there now has no
+    /// accounting path and must not strand at the address.
+    #[test]
+    fn transferred_value_to_a_reject_route_is_refused() {
+        let amount = U256::from(5u64);
+        for address in [GRATIS_ADDRESS, DESIS_ADDRESS] {
+            assert_eq!(
+                classify_boundary_value(policy(address), &CallValue::Transfer(amount)),
+                Rejected("outbe precompile: non-payable address called with value"),
+            );
+        }
+    }
+
+    /// Reserving the stablecoin address class must not make native value
+    /// unspendable there; the class dispatch decides which addresses may keep it.
+    #[test]
+    fn the_stablecoin_class_permits_value() {
+        let token: Address = "0x53c0000000000000000000000000000000000001"
+            .parse()
+            .expect("valid stablecoin class address");
+        let amount = U256::from(5u64);
+        assert_eq!(policy(token), ValuePolicy::Payable);
+        assert_eq!(
+            classify_boundary_value(policy(token), &CallValue::Transfer(amount)),
+            Credited(amount),
+        );
+    }
+
+    /// Pins which exact routes declare `Payable`. This catches an edit to the
+    /// route table. A module that grows a payable selector without publishing it
+    /// has that selector's funded calls refused — by the route before dispatch
+    /// and again by the module — so the omission shows up as its own broken
+    /// entrypoint rather than as stranded value.
+    #[test]
+    fn only_staking_intex_factory_and_vote_accept_value_among_exact_routes() {
+        for address in precompile_routes::EXACT_ADDRESSES {
+            assert_eq!(
+                policy(*address) == ValuePolicy::Payable,
+                PAYABLE.contains(address),
+                "unexpected value policy for {address:#x}"
+            );
+        }
     }
 }
 

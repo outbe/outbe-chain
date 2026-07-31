@@ -132,14 +132,25 @@ fn generate(mut input: ItemImpl) -> syn::Result<TokenStream2> {
     let calls_ident = format_ident!("__{}AbiCalls", contract_name);
 
     let interface_decl = build_sol_interface(&interface_ident, &methods, input.span())?;
+    let any_payable = methods.iter().any(|m| m.kind == MethodKind::Payable);
     let arms = methods
         .iter()
         .map(build_match_arm)
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let any_payable = methods.iter().any(|m| m.kind == MethodKind::Payable);
+    // With no payable method the whole contract refuses value up front. Once one
+    // method is payable the boundary credits value to this address, so the
+    // contract refuses it for every selector it has not published instead —
+    // dropping the check would let every other selector silently accept value it
+    // has no accounting for.
     let reject_value = if any_payable {
-        quote! {}
+        quote! {
+            ::outbe_primitives::dispatch::reject_value_unless_payable(
+                data,
+                self::PAYABLE_SELECTORS,
+                &value,
+            )?;
+        }
     } else {
         quote! { ::outbe_primitives::dispatch::reject_value(&value)?; }
     };
@@ -221,6 +232,7 @@ fn build_match_arm(m: &DispatchMethod) -> syn::Result<TokenStream2> {
             quote! {
                 #variant(c) => ::outbe_primitives::dispatch::mutate_void_payable(
                     c,
+                    self::PAYABLE_SELECTORS,
                     caller,
                     value,
                     |sender, c, v| contract.#rust_name(sender, v, #(#field_accesses),*),

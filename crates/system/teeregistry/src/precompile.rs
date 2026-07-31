@@ -9,6 +9,11 @@ use outbe_primitives::error::Result;
 
 use crate::schema::TeeRegistry;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol! {
     /// Emitted by `registerEnclave` on a TEE-bootstrapped chain: the resident
     /// tribute offer key DETERMINISTICALLY sealed to the registrant's enclave X25519

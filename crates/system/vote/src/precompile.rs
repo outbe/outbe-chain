@@ -1,9 +1,11 @@
 //! ABI surface and EVM dispatch for the Vote precompile.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolInterface;
+use alloy_sol_types::{SolCall, SolInterface};
 
-use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{
+    dispatch_call, mutate, mutate_void, reject_value_unless_payable, view,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -18,6 +20,11 @@ use crate::state::{ProposalInfo, ProposalStatus, VoteTally};
 
 pub use crate::abi::IVote;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IVote::createProposalCall::SELECTOR];
+
 /// Dispatches an ABI-encoded call to the Vote precompile.
 pub fn dispatch_with_handlers(
     storage: StorageHandle<'_>,
@@ -26,6 +33,9 @@ pub fn dispatch_with_handlers(
     value: U256,
     registry: &VoteTargetRegistry,
 ) -> Result<Bytes> {
+    // Vote is a payable route, so the boundary credits value to this address;
+    // every selector the module has not published refuses it here.
+    reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(data, IVote::IVoteCalls::abi_decode, |call| {
         dispatch_vote_call(storage, call, caller, value, registry)
     })
@@ -40,9 +50,6 @@ fn dispatch_vote_call(
 ) -> Result<Bytes> {
     let mut governance = Vote::new(storage.clone());
     use IVote::IVoteCalls::*;
-    if !matches!(&call, createProposal(_)) {
-        reject_value(&value)?;
-    }
     match call {
         createProposal(c) => mutate(c, caller, |sender, c| {
             let block_number = storage.block_number()?;

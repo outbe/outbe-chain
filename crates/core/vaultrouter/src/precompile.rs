@@ -20,6 +20,16 @@ use crate::crosschain;
 use crate::runtime;
 use crate::schema::VaultRouterContract;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+///
+/// Empty because only `dispatch_local` is wired. The crosschain extension
+/// declares three payable selectors in its interface and forwards their value on
+/// as a bridge fee; enabling it behind the gate below means listing them here
+/// and flipping this address to a payable route in the same change.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],

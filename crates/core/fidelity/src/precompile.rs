@@ -7,6 +7,11 @@ use crate::math::DECIMALS;
 use crate::runtime::{MAX_LEAGUE, MIN_LEAGUE};
 use crate::schema::FidelityContract;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol!("../../../contracts/precompiles/src/IFidelity.sol");
 
 /// Dispatches an ABI-encoded call to the Fidelity precompile.
