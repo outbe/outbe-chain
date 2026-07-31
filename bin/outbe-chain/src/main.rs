@@ -6,6 +6,8 @@
 //! Also provides the `dkg` subcommand for bootstrapping BLS threshold key material.
 
 use clap::Parser;
+use commonware_codec::Encode as _;
+use commonware_cryptography::Signer as _;
 use commonware_runtime::Runner as _;
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
@@ -482,33 +484,15 @@ fn run_node() -> eyre::Result<()> {
                 .is_some_and(|config| config.segments.storage_history.is_some()),
         })?;
 
-        // If a TEE enclave sidecar is configured, connect + attest it and install
-        // the global offer-decryption client. Offers route through the enclave on
-        // every node (validators and full nodes execute offer txs), so a node
-        // started with `--tee-enclave-socket` requires a healthy, attested enclave
-        // (fail-fast). When unset, offerTribute() uses the in-process TEE stub.
-        if let Some(socket) = args.tee_enclave_socket.clone() {
-            // Build the host connect policy from the genesis `teePolicy` —
-            // strict (DCAP signature + measurement allowlist) when a policy is
-            // configured (hardware), dev-accept for an unattested gramine-direct
-            // enclave. Same source the consensus DKG/bootstrap connect sites use.
-            let tee_policy =
-                outbe_engine::stack::tee_policy_from_chain_spec(builder.config().chain.as_ref())?;
-            let connect_policy =
-                outbe_engine::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
-            outbe_tributefactory::init_enclave_client(&socket, &connect_policy)
-                .wrap_err("TEE enclave connect/attest failed")?;
-            // init_enclave_client logs the REAL attestation status (hardware vs
-            // unattested) derived from the enclave's quote. Under gramine-sgx this
-            // is genuine SGX confidentiality; under gramine-direct/bare it is an
-            // unattested sidecar (process isolation + Noise-IK, not enclave memory
-            // encryption) accepted only by the dev policy.
-            info!(
-                socket = %socket.display(),
-                "TEE enclave sidecar connected — offers decrypt in the enclave process (attestation status logged above)",
-            );
-        }
-
+        let node_data_dir = builder
+            .config()
+            .datadir
+            .clone()
+            .resolve_datadir(reth_ethereum::chainspec::EthChainSpec::chain(
+                builder.config().chain.as_ref(),
+            ))
+            .data_dir()
+            .to_path_buf();
         let evm_signer = if args.is_validator {
             let evm_key_path = args
                 .effective_validator_evm_key()?
@@ -529,6 +513,64 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
+
+        // If a TEE enclave sidecar is configured, connect + attest it and install
+        // the global offer-decryption client. Offers route through the enclave on
+        // every node (validators and full nodes execute offer txs), so a node
+        // started with `--tee-enclave-socket` requires a healthy, attested enclave
+        // (fail-fast). When unset, offerTribute() uses the in-process TEE stub.
+        if let Some(socket) = args.tee_enclave_socket.clone() {
+            if args.is_validator {
+                let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
+                    eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
+                })?;
+                let bls_key = outbe_engine::validators::load_signing_key(
+                    signing_key_path,
+                    &args.key_backend()?,
+                )?;
+                let consensus_bls_public: [u8; 48] = bls_key
+                    .public_key()
+                    .encode()
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| eyre::eyre!("validator BLS public key is not 48 bytes"))?;
+                let signer = evm_signer.as_ref().ok_or_else(|| {
+                    eyre::eyre!("validator EVM signer unavailable during TEE initialization")
+                })?;
+                let endpoint = socket
+                    .to_str()
+                    .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?;
+                let client = outbe_tee::connect_or_initialize_validator_enclave(
+                    endpoint,
+                    &node_data_dir,
+                    outbe_tee::ValidatorNodeHostIdentityV1 {
+                        chain_id: builder.config().chain.chain().id(),
+                        genesis_hash: builder.config().chain.genesis_hash(),
+                        validator: signer.address(),
+                        consensus_bls_public,
+                    },
+                    |hash| signer.sign_hash(&hash).map_err(|error| error.to_string()),
+                )
+                .wrap_err("validator NodeHost enclave initialization failed")?;
+                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
+            } else {
+                // Full-node production NodeHost identity is the I4 slice. Until
+                // then, preserve the existing development/mock connection path.
+                let tee_policy = outbe_engine::stack::tee_policy_from_chain_spec(
+                    builder.config().chain.as_ref(),
+                )?;
+                let connect_policy =
+                    outbe_engine::tee_bootstrap::quote_policy_from_tee_policy(&tee_policy);
+                outbe_tributefactory::init_enclave_client(&socket, &connect_policy)
+                    .wrap_err("TEE enclave connect/attest failed")?;
+            }
+            info!(
+                socket = %socket.display(),
+                validator_node_host = args.is_validator,
+                "TEE enclave sidecar connected",
+            );
+        }
+
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
         let projection_config = OffchainDataProjectionConfig {
@@ -538,10 +580,11 @@ fn run_node() -> eyre::Result<()> {
             mongodb_uri: offchain_data.mongodb_uri,
             mongodb_database: offchain_data.mongodb_database,
         };
-        let prepared_projection =
-            tokio::task::spawn_blocking(move || prepare_offchain_data_projection(projection_config))
-                .await
-                .wrap_err("offchain-data startup validation worker failed")??;
+        let prepared_projection = tokio::task::spawn_blocking(move || {
+            prepare_offchain_data_projection(projection_config)
+        })
+        .await
+        .wrap_err("offchain-data startup validation worker failed")??;
         let runtime_body_readers = prepared_projection.runtime_body_readers();
         let proof_body_readers = runtime_body_readers.clone();
         let proof_chain_id = builder.config().chain.chain().id();
@@ -602,8 +645,7 @@ fn run_node() -> eyre::Result<()> {
             Some(install) => outbe_node.with_ocomp_fork_install(install),
             None => outbe_node,
         };
-        let (projection_exit_tx, mut projection_exit_rx) =
-            tokio::sync::mpsc::unbounded_channel();
+        let (projection_exit_tx, mut projection_exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
 
         let NodeHandle {
@@ -687,15 +729,17 @@ fn run_node() -> eyre::Result<()> {
         let durable_ce_state: Arc<dyn DurableCeState> = durable_ce_adapter.clone();
         let canonical_ce_replay: Arc<dyn CanonicalCeReplaySource> = durable_ce_adapter;
         let finalized_ce_tree: Arc<dyn FinalizedCeTree> = compressed_tree_service.clone();
-        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> = Arc::new(
-            RethCeFinalizer::new(durable_ce_state, finalized_ce_tree),
-        );
+        let finalized_ce_committer: Arc<dyn FinalizedCeCommitter> =
+            Arc::new(RethCeFinalizer::new(durable_ce_state, finalized_ce_tree));
         let startup_ce_tree: Arc<dyn StartupCeTree> = compressed_tree_service.clone();
         let ce_startup_recovery: Arc<dyn CeStartupRecovery> = Arc::new(
             CeStartupRecoveryCoordinator::new(canonical_ce_replay, startup_ce_tree),
         );
 
-        outbe_engine::validators::check_binary_version_compatibility(&node.provider, outbe_evm::handlers::update::registry())?;
+        outbe_engine::validators::check_binary_version_compatibility(
+            &node.provider,
+            outbe_evm::handlers::update::registry(),
+        )?;
 
         if args.is_validator || args.upstream.is_some() {
             if args.upstream.is_some() {

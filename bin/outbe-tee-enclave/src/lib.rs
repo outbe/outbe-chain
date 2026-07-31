@@ -22,6 +22,7 @@
 pub mod compute;
 pub mod confidential;
 pub mod crypto;
+pub mod dcap_verifier;
 pub mod dkg;
 pub mod errors;
 pub mod gramine;

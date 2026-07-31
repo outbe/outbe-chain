@@ -1,6 +1,7 @@
 #![cfg(feature = "tee-attestation-v1")]
 
 use alloy_primitives::B256;
+use ed25519_dalek::Signer as _;
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -181,6 +182,32 @@ fn registration_intent_rejects_same_chain_id_with_another_genesis() {
 }
 
 #[test]
+fn registration_intent_requires_node_and_enclave_pop_over_the_same_hash() {
+    let node_key = SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
+    let public = node_key.verifying_key().to_encoded_point(false);
+    let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+    let mut intent = validator_intent(B256::repeat_byte(0x11));
+    intent.node_id = NodeIdV1::Validator {
+        address: address_hash.as_slice()[12..].try_into().unwrap(),
+        bls_minpk_public: [0x32; 48],
+    };
+
+    let enclave_key = ed25519_dalek::SigningKey::from_bytes(&[0x64; 32]);
+    intent.attestation_ed25519 = enclave_key.verifying_key().to_bytes();
+    let intent_hash = intent.intent_hash().unwrap();
+    let node_signature = recoverable_signature(&node_key, intent_hash);
+    let enclave_signature = enclave_key.sign(intent_hash.as_slice()).to_bytes();
+
+    assert!(intent.verify_node_signature(&node_signature));
+    assert!(intent.verify_enclave_signature(&enclave_signature));
+
+    let mut conflicting = intent;
+    conflicting.binding_id = B256::repeat_byte(0x43);
+    assert!(!conflicting.verify_node_signature(&node_signature));
+    assert!(!conflicting.verify_enclave_signature(&enclave_signature));
+}
+
+#[test]
 fn registration_intent_roundtrips_and_rejects_unknown_or_trailing_data() {
     let intent = validator_intent(B256::repeat_byte(0x11));
     let encoded = intent.encode_canonical().unwrap();
@@ -324,6 +351,10 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
     let evidence_len = MAX_ATTESTATION_EVIDENCE_BYTES;
     let input_len = evidence_len + MAX_EVIDENCE_CALL_FRAMING_BYTES;
 
+    assert!(
+        gas.register_storage_gas_allowance() <= gas.register_fixed,
+        "storage allowance must remain inside the normative fixed registration term"
+    );
     assert_eq!(
         gas.qvl_dcap(evidence_len, MAX_ACTIVE_MEASUREMENT_RULES)
             .unwrap(),

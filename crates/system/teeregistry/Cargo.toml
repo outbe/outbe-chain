@@ -9,8 +9,16 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tee.workspace = true
+outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+
+[features]
+default = []
+tee-attestation-v1 = []
+
+[dev-dependencies]
+ed25519-dalek.workspace = true
 
 [lints]
 workspace = true

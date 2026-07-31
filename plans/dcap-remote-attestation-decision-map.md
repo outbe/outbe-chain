@@ -720,6 +720,13 @@ The exact QVL charge is
 is checked `u64`; batch deduplication never removes per-participant logical QVL
 work.
 
+The `600,000` fixed registration term includes a `300,000` gas allowance for
+production warm-SLOAD/SSTORE-reset charges. The allowance has no independent
+consensus constant: it is exactly one half of the canonical, schedule-hashed
+`register_fixed` field. The dispatcher precharges the remainder and storage
+consumes the allowance, so `28,768,784` is inclusive of storage rather than a
+protocol-only subtotal.
+
 For 32 participants at the evidence cap and 64 rules, OST3 precharge is
 `309,931,488`, maximum intrinsic gas is `20,992,520`, and combined OST3 leaves
 `169,075,992` gas for the other mandatory block-1 work.

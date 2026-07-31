@@ -243,6 +243,10 @@ intent-bound evidence and create exactly one active leased binding.
 - an accepted real public-verifier-to-active-binding validator flow is an I9
   release E2E gate and is not claimed by the synthetic downstream test.
 
+I3 is closed for the inactive validator route, including the focused
+enclave-resident bounded Noise verifier and real validator NodeHost startup.
+See `plans/checkpoints/I3-validator-registration.md`.
+
 ## I4 — Register a full-node enclave through the same policy
 
 **Outcome:** a full node binds its persistent Reth P2P key to one attested

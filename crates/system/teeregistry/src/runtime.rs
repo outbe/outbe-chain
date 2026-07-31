@@ -10,7 +10,7 @@ const TEE_KEYS_HASH_DOMAIN: &[u8] = b"outbe/tee/keys/v1";
 
 /// `keccak256(domain ‖ validator ‖ recipient ‖ attestation ‖ noise ‖ mrenclave ‖
 /// mrsigner ‖ isv_svn_be)` — binds all of a validator's enclave key material.
-fn compute_keys_hash(
+pub(crate) fn compute_keys_hash(
     validator: Address,
     recipient_x25519: B256,
     attestation_pub: B256,

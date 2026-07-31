@@ -262,9 +262,11 @@ enum CommandClass {
 
 fn command_class(request: &EnclaveRequest) -> CommandClass {
     match request {
-        EnclaveRequest::GetPublicKeys | EnclaveRequest::GenerateDcapQuote { .. } => {
-            CommandClass::Initialized
-        }
+        EnclaveRequest::GetPublicKeys
+        | EnclaveRequest::GenerateDcapQuote { .. }
+        | EnclaveRequest::BeginDcapVerificationV1 { .. }
+        | EnclaveRequest::DcapVerificationChunkV1 { .. }
+        | EnclaveRequest::FinishDcapVerificationV1 { .. } => CommandClass::Initialized,
         EnclaveRequest::DkgOpen { .. }
         | EnclaveRequest::DkgStartDealer { .. }
         | EnclaveRequest::DkgPlayerIngest { .. }

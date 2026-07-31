@@ -105,6 +105,18 @@ mod tests {
     }
 
     #[test]
+    fn maximum_dcap_chunk_round_trips_below_the_frame_cap() {
+        let req = EnclaveRequest::DcapVerificationChunkV1 {
+            request_hash: alloy_primitives::B256::repeat_byte(0x51),
+            offset: 0,
+            bytes: vec![0x52; crate::dcap_protocol::MAX_DCAP_VERIFICATION_CHUNK_BYTES],
+        };
+        let plaintext = encode_request(&req).unwrap();
+        assert!(plaintext.len() + 64 <= MAX_FRAME_LEN);
+        assert_eq!(decode_request(&plaintext).unwrap(), req);
+    }
+
+    #[test]
     fn frame_rejects_oversize() {
         let big = vec![0u8; MAX_FRAME_LEN + 1];
         let mut buf = Vec::new();

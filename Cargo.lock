@@ -7232,7 +7232,9 @@ name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "commonware-codec",
  "commonware-consensus",
+ "commonware-cryptography",
  "commonware-runtime",
  "commonware-storage",
  "commonware-utils",
@@ -7245,6 +7247,7 @@ dependencies = [
  "outbe-ocomp-protocol",
  "outbe-primitives",
  "outbe-rpc",
+ "outbe-tee",
  "outbe-tributefactory",
  "outbe-zkproof",
  "reqwest 0.12.28",
@@ -8188,6 +8191,7 @@ dependencies = [
  "bytes",
  "commonware-cryptography",
  "commonware-p2p",
+ "ed25519-dalek",
  "hex",
  "k256 0.13.4",
  "outbe-ocomp-protocol",
@@ -8481,9 +8485,11 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
+ "outbe-validatorset",
 ]
 
 [[package]]

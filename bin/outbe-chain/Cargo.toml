@@ -24,6 +24,7 @@ outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-primitives.workspace = true
 outbe-tributefactory.workspace = true
+outbe-tee.workspace = true
 outbe-zkproof.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }
@@ -33,6 +34,8 @@ reth-node-builder.workspace = true
 reth-node-core.workspace = true
 reth-rpc-server-types.workspace = true
 
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
 commonware-runtime.workspace = true
 
 clap.workspace = true

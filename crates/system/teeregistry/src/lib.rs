@@ -10,9 +10,16 @@
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
+pub mod v1;
+#[cfg(feature = "tee-attestation-v1")]
+pub mod v1_precompile;
 
 pub use runtime::{TeeBootstrapData, TeeRegistration};
 pub use schema::TeeRegistry;
+pub use v1::{V1RegistrationOutcome, ValidatorEnclaveBindingV1};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, feature = "tee-attestation-v1"))]
+mod v1_tests;

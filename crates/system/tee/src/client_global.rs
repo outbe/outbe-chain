@@ -16,6 +16,7 @@
 use std::sync::{Mutex, OnceLock};
 
 use crate::client::{AuthorizedEnclaveClient, EnclaveClient};
+use crate::dcap_protocol::DcapVerificationOutcomeV1;
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
 
@@ -70,6 +71,29 @@ pub fn try_with_enclave<R>(f: impl FnOnce(&mut RuntimeEnclaveClient) -> R) -> Op
     let mutex = ENCLAVE_CLIENT.get()?;
     let mut client = mutex.lock().ok()?;
     Some(f(&mut client))
+}
+
+/// Invoke the full verifier only through a production NodeHost-authorized
+/// Gramine enclave. Missing/poisoned/development clients are local fatal inputs
+/// to the consensus caller, never deterministic evidence rejection.
+pub fn verify_dcap_evidence_v1(
+    evidence: &[u8],
+    policy: &[u8],
+    block_timestamp: u64,
+) -> Result<DcapVerificationOutcomeV1, TransportError> {
+    let Some(result) = try_with_enclave(|client| match client {
+        RuntimeEnclaveClient::Production(client) => {
+            client.verify_dcap_evidence_v1(evidence, policy, block_timestamp)
+        }
+        RuntimeEnclaveClient::Development(_) => Err(TransportError::DcapVerification(
+            "development enclave client cannot verify consensus DCAP evidence".into(),
+        )),
+    }) else {
+        return Err(TransportError::DcapVerification(
+            "production enclave client is not configured or its lock is poisoned".into(),
+        ));
+    };
+    result
 }
 
 /// DETERMINISTICALLY seal the resident tribute offer key to `recipient_x25519` via

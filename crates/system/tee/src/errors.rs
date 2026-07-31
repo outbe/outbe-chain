@@ -38,6 +38,9 @@ pub enum TransportError {
     #[error("promis-op attestation signature invalid: {0}")]
     PromisOpAttestation(String),
 
+    #[error("DCAP verification channel invalid: {0}")]
+    DcapVerification(String),
+
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
 

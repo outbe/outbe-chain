@@ -454,6 +454,50 @@ impl RegistrationIntentV1 {
         ))
     }
 
+    /// Verify the node proof of possession over this exact registration
+    /// authorization. The transaction sender is deliberately not consulted:
+    /// it is only a permissionless relay.
+    pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
+        let Ok(hash) = self.intent_hash() else {
+            return false;
+        };
+        match &self.node_id {
+            NodeIdV1::Validator { address, .. } => {
+                crate::tee_bootstrap::recover_signer(&hash, signature)
+                    .map(|recovered| recovered.as_slice() == address)
+                    .unwrap_or(false)
+            }
+            NodeIdV1::FullNode { reth_p2p_public } => {
+                crate::tee_bootstrap::recover_signer_public_key(&hash, signature)
+                    .map(|recovered| &recovered == reth_p2p_public)
+                    .unwrap_or(false)
+            }
+        }
+    }
+
+    /// Verify that the quote-bound enclave attestation key signed the same
+    /// canonical authorization as the node identity.
+    pub fn verify_enclave_signature(&self, signature: &[u8; 64]) -> bool {
+        let Ok(hash) = self.intent_hash() else {
+            return false;
+        };
+        ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, self.attestation_ed25519)
+            .verify(hash.as_slice(), signature)
+            .is_ok()
+    }
+
+    /// Derive the stable enclave identity from the three persistent public
+    /// keys carried by this intent. Registry code uses this instead of trusting
+    /// a caller-selected `enclave_id` as the one-to-one reverse-map key.
+    pub fn derived_enclave_id(&self) -> Result<B256, CodecError> {
+        self.validate()?;
+        let mut keys = [0u8; 96];
+        keys[..32].copy_from_slice(&self.recipient_x25519);
+        keys[32..64].copy_from_slice(&self.attestation_ed25519);
+        keys[64..].copy_from_slice(&self.noise_responder_x25519);
+        Ok(domain_hash(ENCLAVE_ID_DOMAIN_V1, &keys))
+    }
+
     pub fn report_policy_hash(&self) -> B256 {
         let mut canonical = [0u8; 96];
         canonical[..32].copy_from_slice(self.genesis_hash.as_slice());
@@ -1325,6 +1369,13 @@ impl TeeRegistryGasScheduleV1 {
             view_fixed: 100_000,
             view_output_byte: 4,
         }
+    }
+
+    /// Hash-committed portion of `register_fixed` reserved for production
+    /// warm-SLOAD and SSTORE-reset charges. No independent consensus constant
+    /// exists: changing the allowance requires changing the canonical schedule.
+    pub const fn register_storage_gas_allowance(&self) -> u64 {
+        self.register_fixed / 2
     }
 
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {

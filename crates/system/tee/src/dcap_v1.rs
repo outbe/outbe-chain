@@ -22,6 +22,9 @@ use serde::{
 use serde_json::value::RawValue;
 use sha2::{Digest as _, Sha256};
 
+pub use crate::dcap_protocol::{
+    DcapPckCaV1, DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerdictV1,
+};
 use crate::native_qvl::{
     verify_quote_native, NativeDcapCollateral, NativeQvlError, NativeQvlStatus,
     NativeQvlSupplemental,
@@ -33,107 +36,6 @@ const QUOTE_SIGNATURE_BYTES: usize = 64;
 const ATTESTATION_PUBLIC_KEY_BYTES: usize = 64;
 const QE_REPORT_BYTES: usize = 384;
 const QE_REPORT_SIGNATURE_BYTES: usize = 64;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum DcapPckCaV1 {
-    Processor = 0x01,
-    Platform = 0x02,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum DcapPlatformTcbStatusV1 {
-    UpToDate = 0x01,
-    SWHardeningNeeded = 0x02,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DcapVerdictV1 {
-    pub mrenclave: B256,
-    pub mrsigner: B256,
-    pub isv_prod_id: u16,
-    pub isv_svn: u16,
-    pub pck_ca: DcapPckCaV1,
-    pub fmspc: [u8; 6],
-    pub pce_id: u16,
-    pub platform_tcb_status: DcapPlatformTcbStatusV1,
-    pub advisory_ids: Vec<String>,
-    pub tcb_evaluation_data_number: u32,
-    pub qe_tcb_evaluation_data_number: u32,
-    pub collateral_valid_until: u64,
-}
-
-impl DcapVerdictV1 {
-    pub fn encode_canonical(&self) -> Result<Vec<u8>, DcapRejectCodeV1> {
-        let advisory_count = u16::try_from(self.advisory_ids.len())
-            .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
-        let mut encoded = Vec::new();
-        encoded.push(1);
-        encoded.extend_from_slice(self.mrenclave.as_slice());
-        encoded.extend_from_slice(self.mrsigner.as_slice());
-        encoded.extend_from_slice(&self.isv_prod_id.to_be_bytes());
-        encoded.extend_from_slice(&self.isv_svn.to_be_bytes());
-        encoded.push(self.pck_ca as u8);
-        encoded.extend_from_slice(&self.fmspc);
-        encoded.extend_from_slice(&self.pce_id.to_be_bytes());
-        encoded.push(self.platform_tcb_status as u8);
-        encoded.extend_from_slice(&self.tcb_evaluation_data_number.to_be_bytes());
-        encoded.extend_from_slice(&self.qe_tcb_evaluation_data_number.to_be_bytes());
-        encoded.extend_from_slice(&self.collateral_valid_until.to_be_bytes());
-        encoded.extend_from_slice(&advisory_count.to_be_bytes());
-        for advisory in &self.advisory_ids {
-            if advisory.is_empty()
-                || !advisory
-                    .bytes()
-                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'-')
-            {
-                return Err(DcapRejectCodeV1::NativeOutputMalformed);
-            }
-            let len = u16::try_from(advisory.len())
-                .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
-            encoded.extend_from_slice(&len.to_be_bytes());
-            encoded.extend_from_slice(advisory.as_bytes());
-        }
-        Ok(encoded)
-    }
-}
-
-/// Stable consensus-visible rejection codes.
-///
-/// Numeric values are grouped in verification order. Native error strings,
-/// addresses and implementation-specific result values never cross this
-/// interface.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u16)]
-pub enum DcapRejectCodeV1 {
-    EvidenceNonCanonical = 0x0101,
-    PolicyNonCanonical = 0x0102,
-    PolicyBindingMismatch = 0x0103,
-    TimestampInvalid = 0x0104,
-    QuoteMalformed = 0x0201,
-    QuoteProfileMismatch = 0x0202,
-    QuoteCertificationDataMismatch = 0x0203,
-    ReportDataMismatch = 0x0204,
-    CollateralNonCanonical = 0x0301,
-    IntelRootMismatch = 0x0302,
-    PlatformIdentityMismatch = 0x0303,
-    CollateralNotYetValid = 0x0304,
-    CollateralExpired = 0x0305,
-    NativeVerifierUnavailable = 0x0401,
-    NativeVerificationFailed = 0x0402,
-    NativeOutputMalformed = 0x0403,
-    PlatformTcbRejected = 0x0501,
-    QeTcbRejected = 0x0502,
-    TcbEvaluationNumberTooLow = 0x0503,
-    MeasurementRejected = 0x0601,
-}
-
-impl DcapRejectCodeV1 {
-    pub const fn code(self) -> u16 {
-        self as u16
-    }
-}
 
 /// Verify one canonical DCAP evidence value using only consensus inputs.
 pub fn verify_dcap_evidence(

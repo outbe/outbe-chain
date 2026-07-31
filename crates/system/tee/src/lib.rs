@@ -13,6 +13,7 @@ pub mod bootstrap;
 pub mod client;
 pub mod client_global;
 pub mod codec;
+pub mod dcap_protocol;
 #[cfg(feature = "native-dcap")]
 pub mod dcap_v1;
 pub mod endorsement;
@@ -20,6 +21,7 @@ pub mod errors;
 pub mod handoff;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
+pub mod node_host;
 pub mod protocol;
 pub mod quote;
 pub mod tee_dkg;
@@ -28,17 +30,18 @@ pub use bootstrap::{build_unsigned_bootstrap, BootstrapParams, EnclaveRegistrati
 pub use client::{
     verify_gratis_op_attestation, verify_peer_quote, verify_promis_op_attestation,
     verify_tribute_offer_attestation, AttestedPeerKeys, AuthorizedEnclaveClient, EnclaveClient,
-    EnclaveInitializationChallenge, NodeHostNoiseKey, QuotePolicy,
+    EnclaveInitializationChallenge, GeneratedDcapQuoteV1, NodeHostNoiseKey, QuotePolicy,
 };
 pub use client_global::{
     install_authorized_enclave_client, install_enclave_client, is_enclave_configured,
-    seal_offer_key_for_registry, try_with_enclave, RuntimeEnclaveClient,
+    seal_offer_key_for_registry, try_with_enclave, verify_dcap_evidence_v1, RuntimeEnclaveClient,
 };
 pub use errors::TransportError;
 pub use handoff::{
     answer_handoff_request, run_handoff_as_newcomer, HandoffEvent, HandoffGossip,
     HandoffWireMessage,
 };
+pub use node_host::{connect_or_initialize_validator_enclave, ValidatorNodeHostIdentityV1};
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 
 /// Noise pattern for the node <-> enclave channel: **IK** (the responder/enclave

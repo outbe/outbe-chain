@@ -370,6 +370,24 @@ pub enum EnclaveRequest {
     /// NodeHost session and only when the intent matches the sealed identity.
     GenerateDcapQuote { intent: Vec<u8> },
 
+    /// Start one bounded, request-committed DCAP verification upload. Evidence
+    /// and policy bytes follow in strictly sequential chunks on this same
+    /// authenticated Noise session.
+    BeginDcapVerificationV1 {
+        request_hash: B256,
+        evidence_len: u32,
+        policy_len: u32,
+        block_timestamp: u64,
+    },
+    /// Append the next exact byte range to the active verification upload.
+    DcapVerificationChunkV1 {
+        request_hash: B256,
+        offset: u32,
+        bytes: Vec<u8>,
+    },
+    /// Finish the exact upload and run the full enclave-resident verifier.
+    FinishDcapVerificationV1 { request_hash: B256 },
+
     /// Open a TEE DKG ceremony session inside the enclave. Each `participants[i]`
     /// bundles a BLS identity, its announced X25519 share-encryption key, and the
     /// owner's signature binding the two — so the untrusted host cannot mis-pair or
@@ -634,6 +652,23 @@ pub enum EnclaveResponse {
     DcapQuote {
         intent: Vec<u8>,
         quote_body: Vec<u8>,
+        /// Ed25519 proof of possession by the persistent quote-bound
+        /// attestation key over `RegistrationIntentV1::intent_hash()`.
+        enclave_signature: Vec<u8>,
+    },
+    DcapVerificationStartedV1 {
+        request_hash: B256,
+    },
+    DcapVerificationChunkAcceptedV1 {
+        request_hash: B256,
+        next_offset: u32,
+    },
+    /// Canonical accepted verdict or stable reject code, authenticated by the
+    /// persistent quote-bound Ed25519 key over the exact request commitment.
+    DcapVerificationFinishedV1 {
+        request_hash: B256,
+        outcome: Vec<u8>,
+        attestation_tag: Vec<u8>,
     },
     Handshake {
         noise_msg: Vec<u8>,
