@@ -13,6 +13,8 @@ use serde::Deserialize;
 const QUOTE: &[u8] = include_bytes!("fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
 const COLLATERAL_WRAPPER: &str =
     include_str!("fixtures/intel-dcap-1.26/sgx-processor-collateral-wrapper.json");
+const INTENT_BOUND_NEGATIVE_CAPTURE_TIME: u64 = 1_785_491_440;
+const INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT: u64 = 1_787_808_799;
 const PEM_CERTIFICATE_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
 
 #[derive(Deserialize)]
@@ -163,6 +165,101 @@ fn evidence_with_synthetic_intent_binding(policy: &TeePolicyV1) -> DcapEvidenceV
     let mut evidence = evidence(policy);
     evidence.quote[368..432].copy_from_slice(&evidence.intent.report_data().unwrap());
     evidence
+}
+
+fn intent_bound_negative_capture() -> (TeePolicyV1, DcapEvidenceV1) {
+    let policy = TeePolicyV1::decode_canonical(include_bytes!(
+        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/policy.bin"
+    ))
+    .unwrap();
+    let intent = RegistrationIntentV1::decode_canonical(include_bytes!(
+        "fixtures/intel-dcap-1.26-intent-bound-processor-negative/intent.bin"
+    ))
+    .unwrap();
+    let components = [
+        (
+            DcapCollateralKind::PckCertificateChain,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck-certificate-chain.pem0").as_slice(),
+        ),
+        (
+            DcapCollateralKind::PckCrl,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck.crl.der").as_slice(),
+        ),
+        (
+            DcapCollateralKind::PckCrlIssuerChain,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/pck-crl-issuer-chain.pem").as_slice(),
+        ),
+        (
+            DcapCollateralKind::RootCaCrl,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/root-ca.crl.der").as_slice(),
+        ),
+        (
+            DcapCollateralKind::TcbInfo,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/tcb-info.json").as_slice(),
+        ),
+        (
+            DcapCollateralKind::TcbInfoIssuerChain,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/tcb-info-issuer-chain.pem").as_slice(),
+        ),
+        (
+            DcapCollateralKind::QeIdentity,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/qe-identity.json").as_slice(),
+        ),
+        (
+            DcapCollateralKind::QeIdentityIssuerChain,
+            include_bytes!("fixtures/intel-dcap-1.26-intent-bound-processor-negative/qe-identity-issuer-chain.pem").as_slice(),
+        ),
+    ];
+
+    (
+        policy,
+        DcapEvidenceV1 {
+            intent,
+            quote: include_bytes!(
+                "fixtures/intel-dcap-1.26-intent-bound-processor-negative/quote.bin"
+            )
+            .to_vec(),
+            components: components
+                .into_iter()
+                .map(|(kind, bytes)| DcapCollateralComponentV1 {
+                    kind,
+                    bytes: bytes.to_vec(),
+                })
+                .collect(),
+        },
+    )
+}
+
+#[test]
+fn intent_bound_real_processor_quote_reaches_strict_platform_status_policy() {
+    let (policy, evidence) = intent_bound_negative_capture();
+
+    assert_eq!(
+        verify_dcap_evidence(&evidence, &policy, INTENT_BOUND_NEGATIVE_CAPTURE_TIME),
+        Err(DcapRejectCodeV1::PlatformTcbRejected)
+    );
+}
+
+#[test]
+fn intent_bound_real_processor_quote_uses_all_collateral_expiration_boundary() {
+    let (policy, evidence) = intent_bound_negative_capture();
+
+    assert_eq!(
+        verify_dcap_evidence(
+            &evidence,
+            &policy,
+            INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT - 1,
+        ),
+        Err(DcapRejectCodeV1::PlatformTcbRejected)
+    );
+    assert_eq!(
+        verify_dcap_evidence(
+            &evidence,
+            &policy,
+            INTENT_BOUND_NEGATIVE_COLLATERAL_EXPIRES_AT,
+        ),
+        Err(DcapRejectCodeV1::CollateralExpired)
+    );
 }
 
 #[test]

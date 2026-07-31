@@ -24,6 +24,7 @@ use sha2::{Digest as _, Sha256};
 
 use crate::native_qvl::{
     verify_quote_native, NativeDcapCollateral, NativeQvlError, NativeQvlStatus,
+    NativeQvlSupplemental,
 };
 
 const QUOTE_AUTHENTICATION_DATA_LENGTH_OFFSET: usize = 432;
@@ -233,23 +234,24 @@ pub fn verify_dcap_evidence(
         i64::try_from(block_timestamp).map_err(|_| DcapRejectCodeV1::TimestampInvalid)?,
     )
     .map_err(map_native_error)?;
-    if native_verdict.collateral_expired {
-        return Err(DcapRejectCodeV1::CollateralExpired);
-    }
     let signed_pce_id = u16::from_be_bytes(tcb_info.pce_id);
-    if native_verdict.supplemental.tee_type != policy.tee_type
-        || native_verdict.supplemental.pce_id != signed_pce_id
-        || native_verdict.supplemental.tcb_evaluation_data_number
-            != tcb_info.tcb_evaluation_data_number
-        || native_verdict.supplemental.qe_tcb_evaluation_data_number
-            != qe_identity.tcb_evaluation_data_number
-        || native_verdict.supplemental.latest_issue_date
-            != i64::try_from(issue_floor).map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?
-        || native_verdict.supplemental.earliest_expiration_date
-            != i64::try_from(expiration_ceiling)
-                .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?
+    let collateral_window = reconcile_native_supplemental(
+        &native_verdict.supplemental,
+        SignedCollateralClaims {
+            tee_type: policy.tee_type,
+            pce_id: signed_pce_id,
+            issue_floor,
+            expiration_ceiling,
+            platform_tcb_evaluation_data_number: tcb_info.tcb_evaluation_data_number,
+            qe_tcb_evaluation_data_number: qe_identity.tcb_evaluation_data_number,
+        },
+    )?;
+    if block_timestamp < collateral_window.issue_floor {
+        return Err(DcapRejectCodeV1::CollateralNotYetValid);
+    }
+    if native_verdict.collateral_expired || block_timestamp >= collateral_window.expiration_ceiling
     {
-        return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        return Err(DcapRejectCodeV1::CollateralExpired);
     }
     validate_qe_status(native_verdict.supplemental.qe_status)?;
     let platform_tcb_status = map_platform_status(
@@ -269,7 +271,50 @@ pub fn verify_dcap_evidence(
         advisory_ids: native_verdict.supplemental.advisory_ids,
         tcb_evaluation_data_number: tcb_info.tcb_evaluation_data_number,
         qe_tcb_evaluation_data_number: qe_identity.tcb_evaluation_data_number,
-        collateral_valid_until: expiration_ceiling,
+        collateral_valid_until: collateral_window.expiration_ceiling,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct SignedCollateralClaims {
+    tee_type: u32,
+    pce_id: u16,
+    issue_floor: u64,
+    expiration_ceiling: u64,
+    platform_tcb_evaluation_data_number: u32,
+    qe_tcb_evaluation_data_number: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CollateralWindow {
+    issue_floor: u64,
+    expiration_ceiling: u64,
+}
+
+fn reconcile_native_supplemental(
+    supplemental: &NativeQvlSupplemental,
+    signed: SignedCollateralClaims,
+) -> Result<CollateralWindow, DcapRejectCodeV1> {
+    let issue_floor = u64::try_from(supplemental.latest_issue_date)
+        .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
+    let expiration_ceiling = u64::try_from(supplemental.earliest_expiration_date)
+        .map_err(|_| DcapRejectCodeV1::NativeOutputMalformed)?;
+    let expected_tcb_evaluation_reference = signed
+        .platform_tcb_evaluation_data_number
+        .min(signed.qe_tcb_evaluation_data_number);
+    if supplemental.tee_type != signed.tee_type
+        || supplemental.pce_id != signed.pce_id
+        || supplemental.tcb_evaluation_data_number != expected_tcb_evaluation_reference
+        || (supplemental.qe_tcb_evaluation_data_number != 0
+            && supplemental.qe_tcb_evaluation_data_number != signed.qe_tcb_evaluation_data_number)
+        || issue_floor < signed.issue_floor
+        || expiration_ceiling > signed.expiration_ceiling
+    {
+        return Err(DcapRejectCodeV1::NativeOutputMalformed);
+    }
+    Ok(CollateralWindow {
+        issue_floor,
+        expiration_ceiling,
     })
 }
 
@@ -941,7 +986,87 @@ mod tests {
     use outbe_primitives::tee_attestation_v1::PlatformTcbStatusSetV1;
 
     use super::*;
-    use crate::native_qvl::NativeQvlStatus;
+    use crate::native_qvl::{NativeQvlStatus, NativeQvlSupplemental};
+
+    fn supplemental() -> NativeQvlSupplemental {
+        NativeQvlSupplemental {
+            major_version: 3,
+            minor_version: 0,
+            earliest_issue_date: 100,
+            latest_issue_date: 200,
+            earliest_expiration_date: 300,
+            tcb_evaluation_data_number: 19,
+            pce_id: 7,
+            tee_type: 0,
+            sgx_type: 0,
+            dynamic_platform: 0,
+            cached_keys: 0,
+            smt_enabled: 0,
+            advisory_ids: Vec::new(),
+            qe_status: NativeQvlStatus::UpToDate,
+            qe_tcb_evaluation_data_number: 0,
+        }
+    }
+
+    fn signed_collateral_claims() -> SignedCollateralClaims {
+        SignedCollateralClaims {
+            tee_type: 0,
+            pce_id: 7,
+            issue_floor: 190,
+            expiration_ceiling: 310,
+            platform_tcb_evaluation_data_number: 20,
+            qe_tcb_evaluation_data_number: 19,
+        }
+    }
+
+    #[test]
+    fn supplemental_reconciliation_uses_lower_evaluation_reference_and_all_collateral_time() {
+        assert_eq!(
+            reconcile_native_supplemental(&supplemental(), signed_collateral_claims()),
+            Ok(CollateralWindow {
+                issue_floor: 200,
+                expiration_ceiling: 300,
+            })
+        );
+    }
+
+    #[test]
+    fn supplemental_reconciliation_rejects_wrong_combined_evaluation_reference() {
+        let mut supplemental = supplemental();
+        supplemental.tcb_evaluation_data_number = 20;
+
+        assert_eq!(
+            reconcile_native_supplemental(&supplemental, signed_collateral_claims()),
+            Err(DcapRejectCodeV1::NativeOutputMalformed)
+        );
+    }
+
+    #[test]
+    fn supplemental_reconciliation_rejects_wrong_nonzero_qe_evaluation_reference() {
+        let mut supplemental = supplemental();
+        supplemental.qe_tcb_evaluation_data_number = 18;
+
+        assert_eq!(
+            reconcile_native_supplemental(&supplemental, signed_collateral_claims()),
+            Err(DcapRejectCodeV1::NativeOutputMalformed)
+        );
+    }
+
+    #[test]
+    fn supplemental_reconciliation_requires_all_collateral_window_to_be_narrower() {
+        let claims = signed_collateral_claims();
+        let mut issue_before_signed_documents = supplemental();
+        issue_before_signed_documents.latest_issue_date = 189;
+        let mut expiry_after_signed_documents = supplemental();
+        expiry_after_signed_documents.earliest_expiration_date = 311;
+
+        for supplemental in [issue_before_signed_documents, expiry_after_signed_documents] {
+            assert_eq!(
+                reconcile_native_supplemental(&supplemental, claims),
+                Err(DcapRejectCodeV1::NativeOutputMalformed)
+            );
+        }
+    }
 
     #[test]
     fn platform_status_matrix_is_exact() {

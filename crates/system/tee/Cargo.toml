@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "outbe-dcap-fixture"
+path = "src/bin/outbe-dcap-fixture.rs"
+required-features = ["dcap-fixture-tool"]
+
 [dependencies]
 alloy-primitives = { workspace = true, features = ["serde"] }
 outbe-primitives.workspace = true
@@ -42,6 +47,9 @@ native-dcap = [
 # Test-only syscall-boundary markers around native QVL calls. The production
 # enclave crate does not forward this feature.
 native-dcap-test-trace = ["native-dcap"]
+# Host-only real-fixture preparation/assembly binary. This is not linked into
+# the consensus library or the production enclave binary.
+dcap-fixture-tool = ["native-dcap"]
 
 [dev-dependencies]
 k256.workspace = true

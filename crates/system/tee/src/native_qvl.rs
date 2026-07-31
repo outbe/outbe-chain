@@ -56,6 +56,7 @@ pub struct NativeQvlSupplemental {
     pub earliest_issue_date: i64,
     pub latest_issue_date: i64,
     pub earliest_expiration_date: i64,
+    /// Intel `tcb_eval_ref_num`: the lower Platform/QE evaluation reference.
     pub tcb_evaluation_data_number: u32,
     pub pce_id: u16,
     pub tee_type: u32,
@@ -65,6 +66,7 @@ pub struct NativeQvlSupplemental {
     pub smt_enabled: i32,
     pub advisory_ids: Vec<String>,
     pub qe_status: NativeQvlStatus,
+    /// Intel `qe_iden_tcb_eval_ref_num`; pinned QVL 1.26 may report zero.
     pub qe_tcb_evaluation_data_number: u32,
 }
 
@@ -89,7 +91,7 @@ impl std::fmt::Debug for NativeQvlVerdict {
                 ),
             )
             .field(
-                "tcb_evaluation_data_number",
+                "tcb_evaluation_reference_number",
                 &self.supplemental.tcb_evaluation_data_number,
             )
             .field("pce_id", &self.supplemental.pce_id)

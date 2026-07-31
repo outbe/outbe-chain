@@ -13,6 +13,9 @@ mock = []
 # Production DCAP verifier feasibility path. This forwards the exact-pinned
 # native QVL feature into the enclave crate without enabling it in dev builds.
 native-dcap = ["outbe-tee/native-dcap"]
+# Hardware-fixture capture exists only in the separate required-feature binary
+# below. The production `outbe-tee-enclave` target never routes capture commands.
+dcap-fixture-capture = ["outbe-primitives/tee-attestation-v1"]
 
 [lib]
 name = "outbe_tee_enclave"
@@ -21,6 +24,14 @@ path = "src/lib.rs"
 [[bin]]
 name = "outbe-tee-enclave"
 path = "src/main.rs"
+
+# Capture-only SGX executable. Release packaging never includes this target;
+# separating it keeps arbitrary intent-driven quote generation out of the
+# production enclave ELF even in builds that enable this feature.
+[[bin]]
+name = "outbe-dcap-capture-enclave"
+path = "src/bin/outbe-dcap-capture-enclave.rs"
+required-features = ["dcap-fixture-capture"]
 
 # Dev/CI mock enclave. `required-features = ["mock"]` guarantees it is only built
 # with `--features mock`; the production binary above links no mock key material.

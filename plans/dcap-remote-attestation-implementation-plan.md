@@ -97,6 +97,22 @@ official Intel parser/test vectors; a real Intel-rooted Platform-CA quote
 requires registered multi-package SGX hardware and is a fail-not-skip I9
 release gate.
 
+**I1 checkpoint (2026-07-31):** a real Processor-CA negative corpus is now
+bound to canonical `RegistrationIntentV1::report_data()`. It exercises the
+public verifier and is rejected as `PlatformTcbRejected` because the rented
+capture host returns `ConfigurationAndSWHardeningNeeded`; policy is not
+weakened. The QVL 1.26 supplemental-data reconciliation now uses the combined
+Platform/QE evaluation reference, accepts a zero unavailable QE-specific
+reference, and enforces the native all-collateral time window. Exact-expiration
+and malformed-reference tests cover those reachable results.
+
+Capture remains outside the production command surface: quote generation uses
+a separate required-feature enclave executable, while QPL/PCCS collateral
+acquisition is host-side fixture tooling only. I1 remains open until a second
+real intent-bound Processor-CA capture from a host with an allowed Platform
+status supplies the accepted positive vector. This external hardware
+requirement does not authorize a broader status matrix or synthetic positive.
+
 Toolchain staging is intentionally separate from container delivery:
 `release/project-toolchain-v1.json` is the single exact version pin and is
 bound into ELF and SGX release inputs, while its activation remains

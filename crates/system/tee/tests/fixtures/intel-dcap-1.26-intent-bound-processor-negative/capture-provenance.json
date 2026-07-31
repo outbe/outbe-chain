@@ -1,0 +1,69 @@
+{
+  "collateral_abi": {
+    "allocation_size": 15301,
+    "major_version": 3,
+    "minor_version": 0,
+    "normalized_minor_version": 1,
+    "tee_type": 0
+  },
+  "components": {
+    "pck-certificate-chain.pem0": {
+      "sha256": "88016ea8aebc1245a98913f418b19f1b08ec8a9e4e2450256000104629d263d9",
+      "size": 3548
+    },
+    "pck-crl-issuer-chain.pem": {
+      "sha256": "f419747cc7ff058bd55b2228ae7eca6d9ccbf4260aaf5c612e6411b996d337ee",
+      "size": 1908
+    },
+    "pck.crl.der": {
+      "sha256": "be4a7a21daed46f3fbcadffc5e90c18d64a7a56fc39f784586a33512a74cfb90",
+      "size": 1002
+    },
+    "qe-identity-issuer-chain.pem": {
+      "sha256": "c550544e4442d9be583a5eddd48df8ba0149ddeef40efd3737ebe0f885dc3711",
+      "size": 1892
+    },
+    "qe-identity.json": {
+      "sha256": "ca1c8de12b5ad98f7eb30a4cec29debdab1a8fa01daa253da50fb287cdb2b3e0",
+      "size": 1380
+    },
+    "root-ca.crl.der": {
+      "sha256": "c114be5d5ca7aab2d37817eca55aa8a2353853809904ff3695b31c26bcb7465b",
+      "size": 294
+    },
+    "tcb-info-issuer-chain.pem": {
+      "sha256": "c550544e4442d9be583a5eddd48df8ba0149ddeef40efd3737ebe0f885dc3711",
+      "size": 1892
+    },
+    "tcb-info.json": {
+      "sha256": "cdc7abf40909ef1dc5507987f34196c99b9a35d928a00e5f07e4a33d1166c2e6",
+      "size": 5510
+    }
+  },
+  "qcnl": {
+    "package": "libsgx-dcap-default-qpl",
+    "package_version": "1.26.100.1-noble1",
+    "path": "/usr/lib/x86_64-linux-gnu/libsgx_default_qcnl_wrapper.so.1.13.110.0",
+    "sha256": "d744ab62cfd8c442b5c0773a8566a860c0b0e3d223e284b6690f13f30bb6b9df",
+    "size": 4505920
+  },
+  "qpl": {
+    "package": "libsgx-dcap-default-qpl",
+    "package_version": "1.26.100.1-noble1",
+    "path": "/usr/lib/x86_64-linux-gnu/libdcap_quoteprov.so.1.13.110.0",
+    "sha256": "62afb31f437a26b82bc8f5ad862e37fe086b00daeab71eebb25a9e92c776c2c1",
+    "size": 3964120
+  },
+  "quote": {
+    "path": "quote.bin",
+    "sha256": "f7626ab64e0c2d182984390e9bab26d20f7b96af10dab20b43e6559edc118b1d",
+    "size": 4600
+  },
+  "qvl": {
+    "package": "libsgx-dcap-quote-verify",
+    "package_version": "1.26.100.1-noble1",
+    "path": "/usr/lib/x86_64-linux-gnu/libsgx_dcap_quoteverify.so.1.13.103.0",
+    "sha256": "4745bc5b46cbdc17a78119ae2db08f54b86ff9077c5ab480f378741396365aef",
+    "size": 5322424
+  }
+}
