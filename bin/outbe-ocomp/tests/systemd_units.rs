@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 fn unit_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/systemd")
 }
 
+#[cfg(target_os = "linux")]
 fn ocomp_units() -> Vec<PathBuf> {
     [
         "outbe-ocomp.slice",
@@ -69,6 +72,9 @@ fn parse_records(path: &Path) -> Vec<Vec<String>> {
         .collect()
 }
 
+// systemd-analyze exists only on the OCM Linux lane; the unit-content
+// assertions below stay cross-platform.
+#[cfg(target_os = "linux")]
 #[test]
 fn systemd_analyze_accepts_the_fixed_ocomp_topology() {
     let root = tempfile::tempdir().expect("systemd verify root");

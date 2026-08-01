@@ -400,7 +400,10 @@ fn ocm_dis_001_production_supervisor_discovers_finalized_jobs_exactly_once() {
         uid,
         identity,
     ));
-    assert!(first.contains("OCM_DIS_OUTCOME=DISCOVERED:1:100"));
+    assert!(
+        first.contains("OCM_DIS_OUTCOME=DISCOVERED:1:100"),
+        "got: {first}"
+    );
     assert!(server.readiness().is_ready());
     let journal_path = discovery_root.join("discovery.v1");
     let first_journal = fs::read(&journal_path).expect("durable discovery journal");

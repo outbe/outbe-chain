@@ -273,6 +273,10 @@ impl OcompControlServer {
         while !shutdown.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    // BSD sockets inherit the listener's non-blocking flag on
+                    // accept (unlike Linux); the per-session protocol below is
+                    // strictly blocking.
+                    stream.set_nonblocking(false)?;
                     if let Err(error) = self.serve_connection_for_role(stream, peer_role) {
                         if !matches!(
                             error,

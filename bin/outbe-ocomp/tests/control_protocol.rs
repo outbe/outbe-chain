@@ -211,13 +211,18 @@ fn ocm_ctl_001_wrong_uid_bundle_role_and_method_fail_closed() {
     let limits = poc_schema_limits();
     let uid = effective_uid().expect("effective uid");
 
-    let (_, wrong_uid_server) = connected_pair();
+    // Keep the client half alive: macOS `getpeereid` fails with ENOTCONN once
+    // the peer end is closed, unlike Linux's cached SO_PEERCRED.
+    let (_wrong_uid_client, wrong_uid_server) = connected_pair();
     let error = ControlServerSession::accept(
         wrong_uid_server,
         ServerPolicy::worker(uid.saturating_add(1), identity(0x61), 9, limits),
     )
     .expect_err("wrong uid rejected from SO_PEERCRED");
-    assert!(matches!(error, ControlError::UnauthorizedPeer { .. }));
+    assert!(
+        matches!(error, ControlError::UnauthorizedPeer { .. }),
+        "got: {error:?}"
+    );
 
     let (wrong_server_client, _wrong_server) = connected_pair();
     let error = ControlClientSession::connect(

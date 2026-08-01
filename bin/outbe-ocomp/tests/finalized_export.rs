@@ -396,7 +396,7 @@ fn exact_read_only_export_view_closes_root_count_and_each_commitment() {
             .parse::<usize>()
             .expect("Fidelity slot count is usize")
             > expected_subjects.owners.len(),
-        "Fidelity opening includes authenticated count and detail slots"
+        "Fidelity opening includes authenticated count and detail slots; stdout={stdout:?}"
     );
     assert!(
         fields

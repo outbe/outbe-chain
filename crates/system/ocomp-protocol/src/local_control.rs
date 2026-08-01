@@ -1,6 +1,5 @@
 //! Bounded local control sessions shared by the four fixed OCOMP roles.
 
-use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
@@ -684,23 +683,94 @@ pub fn effective_uid() -> Result<u32, ControlError> {
     Ok(rustix::process::geteuid().as_raw())
 }
 
+#[allow(unsafe_code)]
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, uid)| (name == user).then_some(uid))
-        .ok_or_else(|| ControlError::UnknownUser(user.to_owned()))
+    // `getpwnam_r` resolves through NSS, covering both `/etc/passwd` and
+    // directory-service users (macOS local accounts are not in the passwd
+    // file). Reentrant variant with a grow-on-ERANGE buffer.
+    let name =
+        std::ffi::CString::new(user).map_err(|_| ControlError::UnknownUser(user.to_owned()))?;
+    let mut buffer = vec![0_u8; 1024];
+    loop {
+        // SAFETY: `libc::passwd` is a plain-old-data C struct for which the
+        // all-zero bit pattern is a valid (if meaningless) value; every field
+        // is overwritten by the reentrant lookup before use.
+        let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `name` is a valid NUL-terminated string, and `passwd`,
+        // `buffer`, and `result` are valid writable objects for the exact
+        // sizes supplied; `getpwnam_r` only writes within them.
+        let code = unsafe {
+            libc::getpwnam_r(
+                name.as_ptr(),
+                &raw mut passwd,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &raw mut result,
+            )
+        };
+        if code == libc::ERANGE {
+            if buffer.len() >= 1 << 20 {
+                return Err(ControlError::UnknownUser(user.to_owned()));
+            }
+            buffer.resize(buffer.len() * 2, 0);
+            continue;
+        }
+        if code != 0 {
+            return Err(ControlError::Io(std::io::Error::from_raw_os_error(code)));
+        }
+        if result.is_null() {
+            return Err(ControlError::UnknownUser(user.to_owned()));
+        }
+        return Ok(passwd.pw_uid);
+    }
 }
 
+#[allow(unsafe_code)]
 pub fn effective_user_name() -> Result<String, ControlError> {
     let uid = effective_uid()?;
-    let passwd = fs::read_to_string("/etc/passwd")?;
-    passwd
-        .lines()
-        .filter_map(parse_passwd_entry)
-        .find_map(|(name, candidate)| (candidate == uid).then_some(name.to_owned()))
-        .ok_or_else(|| ControlError::UnknownUser(format!("uid:{uid}")))
+    // `getpwuid_r` resolves through NSS, covering both `/etc/passwd` and
+    // directory-service users (macOS local accounts are not in the passwd
+    // file). Reentrant variant with a grow-on-ERANGE buffer.
+    let mut buffer = vec![0_u8; 1024];
+    loop {
+        // SAFETY: `libc::passwd` is a plain-old-data C struct for which the
+        // all-zero bit pattern is a valid (if meaningless) value; every field
+        // is overwritten by the reentrant lookup before use.
+        let mut passwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = std::ptr::null_mut();
+        // SAFETY: `passwd`, `buffer`, and `result` are valid writable objects
+        // for the exact sizes supplied; `getpwuid_r` only writes within them.
+        let code = unsafe {
+            libc::getpwuid_r(
+                uid,
+                &raw mut passwd,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &raw mut result,
+            )
+        };
+        if code == libc::ERANGE {
+            if buffer.len() >= 1 << 20 {
+                return Err(ControlError::UnknownUser(format!("uid:{uid}")));
+            }
+            buffer.resize(buffer.len() * 2, 0);
+            continue;
+        }
+        if code != 0 {
+            return Err(ControlError::Io(std::io::Error::from_raw_os_error(code)));
+        }
+        if result.is_null() {
+            return Err(ControlError::UnknownUser(format!("uid:{uid}")));
+        }
+        // SAFETY: a non-null `result` points at `passwd`, whose `pw_name` is a
+        // NUL-terminated string inside `buffer`.
+        let name = unsafe { std::ffi::CStr::from_ptr(passwd.pw_name) };
+        return name
+            .to_str()
+            .map(ToOwned::to_owned)
+            .map_err(|_| ControlError::UnknownUser(format!("uid:{uid}")));
+    }
 }
 
 pub fn require_effective_user(user: &str) -> Result<u32, ControlError> {
@@ -722,14 +792,6 @@ fn require_effective_uid_for(expected: u32, user: String) -> Result<u32, Control
         });
     }
     Ok(actual)
-}
-
-fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
-    let mut fields = line.split(':');
-    let name = fields.next()?;
-    fields.next()?;
-    let uid = fields.next()?.parse().ok()?;
-    Some((name, uid))
 }
 
 #[cfg(target_os = "linux")]
