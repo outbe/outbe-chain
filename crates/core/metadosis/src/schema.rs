@@ -2,7 +2,7 @@ use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay as WorldwideDayKey;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
-use outbe_primitives::storage::types::{Mapping, StorageBytes, StorageVec};
+use outbe_primitives::storage::types::{Mapping, StorageBytes};
 
 /// EVM base slot of `MetadosisContract::ocomp_job_records`.
 ///
@@ -280,10 +280,14 @@ pub struct MetadosisContract {
         outbe_primitives::storage::types::StorageBytes,
     >,
 
-    /// Append-only terminal IntentIds. Reaching the profile cap rejects the
-    /// transition; records are never silently evicted.
+    /// Per-WorldwideDay terminal IntentIds in canonical attempt order, keyed
+    /// by `keccak(OUTBE_OCOMP_TERMINAL_INDEX_V1 ‖ wwd_be ‖ index_be)` (see
+    /// `ocomp::terminal_index`). Bounded by the frozen profile's
+    /// `max_terminal_job_records` **for that day only**; entries are immutable
+    /// once written and deleted together with the day on retirement. Must stay
+    /// a 1-slot field: every later base slot depends on this position.
     #[attribute(order = 11)]
-    pub ocomp_terminal_intents: outbe_primitives::storage::types::StorageVec<B256>,
+    pub ocomp_terminal_intents: outbe_primitives::storage::types::Mapping<B256, B256>,
 
     /// Canonical per-WWD FSM snapshots. A WWD has one exact READY or live
     /// state, while the global indexes below select bounded work without
@@ -371,4 +375,10 @@ pub struct MetadosisContract {
     #[attribute(order = 24)]
     pub day_limit_formation_receipts:
         outbe_primitives::storage::dsl::Map<WorldwideDayKey, DayLimitFormationReceiptState>,
+
+    /// Per-WorldwideDay terminal record count: the sole authority for the
+    /// length of the sparse `ocomp_terminal_intents` index above. Appended so
+    /// pre-existing base slots stay fixed.
+    #[attribute(order = 25)]
+    pub ocomp_terminal_counts: Mapping<WorldwideDayKey, u16>,
 }

@@ -337,7 +337,16 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP terminal index/count mismatch"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // Lockstep: the persisted index and the FSM snapshot are written
+            // separately; the day's indexed count must equal the FSM's
+            // pre-transition terminal count before this push extends either.
+            let indexed_terminal = self.terminal_intent_count(wwd)?;
+            if indexed_terminal != before_terminal {
+                return Err(fatal(
+                    "OCOMP terminal index diverged from the FSM terminal count",
+                ));
+            }
+            if indexed_terminal >= fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
             let projection = state.projection();
@@ -358,7 +367,7 @@ impl MetadosisContract<'_> {
                 completed_binding: None,
             });
             self.write_ocomp_job_record(live_intent_id, &record, schema_limits)?;
-            self.ocomp_terminal_intents.push(live_intent_id)?;
+            self.push_terminal_intent(wwd, live_intent_id, fsm_limits.max_terminal_records)?;
 
             if projection.terminal_records == fsm_limits.max_terminal_records {
                 if !matches!(
@@ -491,7 +500,14 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP conflict terminal index/count mismatch"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // Lockstep with the persisted per-day index; see `expire_ocomp_job`.
+            let indexed_terminal = self.terminal_intent_count(wwd)?;
+            if indexed_terminal != before_terminal {
+                return Err(fatal(
+                    "OCOMP terminal index diverged from the FSM terminal count",
+                ));
+            }
+            if indexed_terminal >= fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
 
@@ -510,7 +526,7 @@ impl MetadosisContract<'_> {
                 completed_binding: Some(completed_binding),
             });
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
-            self.ocomp_terminal_intents.push(intent_id)?;
+            self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
 
             commit_outer_transition(self, wwd, outer_transition, at_height)?;
             let ready_key = ReadyIndexKey::from_projection(projection)?;
@@ -574,7 +590,15 @@ impl MetadosisContract<'_> {
             {
                 return Err(fatal("OCOMP completion job already has a quorum"));
             }
-            if self.ocomp_terminal_intents.len()? >= u32::from(fsm_limits.max_terminal_records) {
+            // Lockstep with the persisted per-day index; see `expire_ocomp_job`.
+            let wwd = WorldwideDay::new(record.intent.wwd);
+            let indexed_terminal = self.terminal_intent_count(wwd)?;
+            if indexed_terminal != projection.terminal_records {
+                return Err(fatal(
+                    "OCOMP terminal index diverged from the FSM terminal count",
+                ));
+            }
+            if indexed_terminal >= fsm_limits.max_terminal_records {
                 return Err(fatal("OCOMP terminal record cap exhausted"));
             }
 
@@ -609,7 +633,6 @@ impl MetadosisContract<'_> {
                 ));
             }
 
-            let wwd = WorldwideDay::new(record.intent.wwd);
             if self.active_lysis_generation(wwd, schema_limits)?.is_some() {
                 return Err(fatal("active Lysis generation cannot be overwritten"));
             }
@@ -670,7 +693,7 @@ impl MetadosisContract<'_> {
                 completed_binding: Some(completed_binding.clone()),
             });
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
-            self.ocomp_terminal_intents.push(intent_id)?;
+            self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
             commit_outer_transition(self, wwd, outer_transition, activated_at_height)?;
             self.remove_live_scheduler(intent_id)?;
             self.ocomp_fsm_states.get_bytes(&wwd).clear()?;

@@ -17,9 +17,12 @@ pub mod schema;
 mod snapshot;
 pub mod state;
 mod store;
+mod terminal_index;
 mod transitions;
 pub mod views;
 pub mod vote;
 
 pub(crate) use index::ResponseDeadlineKey;
 pub(crate) use profile::poc_schema_limits;
+#[cfg(test)]
+pub(crate) use terminal_index::terminal_entry_key;

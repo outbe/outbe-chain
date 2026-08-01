@@ -9,7 +9,7 @@ use outbe_primitives::{
 };
 
 use crate::{
-    constants::{MAX_ACTIVE_WWDS, MAX_RETAINED_WWDS},
+    constants::{MAX_ACTIVE_WWDS, MAX_RECORDS_KEPT, MAX_RETAINED_WWDS},
     ocomp::state::DayPhase,
     ocomp::{poc_schema_limits, ResponseDeadlineKey},
     schema::{day_type, status, terminal_outcome, MetadosisContract},
@@ -249,6 +249,12 @@ fn load_index_membership(
         return Err(fatal(format!(
             "Metadosis active WWD population {} exceeds derived cap {MAX_ACTIVE_WWDS}",
             active_set.len()
+        )));
+    }
+    if closed_set.len() > MAX_RECORDS_KEPT {
+        return Err(fatal(format!(
+            "Metadosis closed WWD population {} exceeds retention cap {MAX_RECORDS_KEPT}",
+            closed_set.len()
         )));
     }
     if let Some(overlap) = active_set.intersection(&closed_set).next() {

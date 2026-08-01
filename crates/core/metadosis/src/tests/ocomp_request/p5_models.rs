@@ -26,7 +26,8 @@ use proptest::{
 };
 
 use super::{
-    poc_schema_limits, prepare_request_fixture, prepare_request_fixture_with_day_type, IMetadosis,
+    poc_schema_limits, prepare_request_fixture, prepare_request_fixture_with_day_type,
+    prepare_two_ready_days_fixture, DayPhase, IMetadosis,
 };
 use crate::{
     api, commands,
@@ -448,6 +449,9 @@ fn prepare_expiring_production_fixture(
         assert_eq!(projection.terminal_records, 364);
         assert_eq!(projection.pending_nonce, 364);
         assert_eq!(projection.live_intent_id, Some(seeded));
+        // The near-cap history charges only this day's own budget; this pin is
+        // what distinguishes the per-day cap from the former global index.
+        assert_eq!(metadosis.terminal_intent_count(fixture.wwd).unwrap(), 364);
         crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage)
             .expect("seeded pre-state passes production aggregate validation");
         seeded
@@ -1445,6 +1449,251 @@ fn production_response_window_close_and_final_expiry_roll_back_every_mutation_th
         );
         assert_exhausted_production_state(&mut provider, &fixture, carry_over_before);
     }
+}
+
+fn finalized_open_and_deadline(
+    provider: &mut HashMapStorageProvider,
+    intent_id: B256,
+) -> (u64, u64) {
+    StorageHandle::enter(provider, |storage| {
+        let encoded = api::get_offchain_job(storage, intent_id).expect("finalized public job");
+        let record = OcompJobRecordV1::decode_canonical(&encoded, &poc_schema_limits())
+            .expect("finalized public job decodes");
+        let finalized = record.finalized.expect("finality binding");
+        (finalized.open_height, finalized.deadline_height)
+    })
+}
+
+fn drive_day_to_voting_open(
+    provider: &mut HashMapStorageProvider,
+    scope: &outbe_compressed_entities::ExecutionScope,
+    expected_wwd: outbe_common::WorldwideDay,
+    request_block: u64,
+    request_time: u64,
+    finality_hashes: (B256, B256),
+) -> (B256, u64) {
+    runtime_command(
+        provider,
+        MetadosisMutationPurposeTag::OcompLifecycle,
+        request_block,
+        request_time,
+        |ctx| commands::run_ocomp_terminal_request(ctx, scope),
+    )
+    .expect("production terminal request");
+    let intent_id = public_intent(provider, expected_wwd);
+
+    let finality_height = request_block + 2;
+    let certified = MetadosisCertifiedFinalityBinding::new(
+        chain::CHAIN_ID,
+        finality_height,
+        request_block,
+        finality_hashes.0,
+        finality_hashes.1,
+    );
+    assert!(runtime_command(
+        provider,
+        MetadosisMutationPurposeTag::CertifiedFinality,
+        finality_height,
+        request_time + 1,
+        |ctx| commands::record_certified_parent_finality(ctx, &certified),
+    )
+    .expect("production certified finality"));
+
+    let (open_height, deadline_height) = finalized_open_and_deadline(provider, intent_id);
+    runtime_command(
+        provider,
+        MetadosisMutationPurposeTag::OcompLifecycle,
+        open_height,
+        request_time + 2,
+        commands::run_ocomp_lifecycle_begin,
+    )
+    .expect("production voting open");
+    (intent_id, deadline_height)
+}
+
+fn seed_near_cap_history(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_common::WorldwideDay,
+    live_intent_id: B256,
+) {
+    StorageHandle::enter(provider, |storage| {
+        let limits = poc_schema_limits();
+        let fsm_limits = crate::ocomp::state::JobFsmLimits {
+            max_terminal_records: 365,
+        };
+        let mut metadosis = crate::schema::MetadosisContract::new(storage.clone());
+        metadosis
+            .fixture_seed_ocomp_terminal_history(
+                live_intent_id,
+                fsm_limits.max_terminal_records - 1,
+                &limits,
+                fsm_limits,
+            )
+            .expect("canonical near-cap terminal history");
+        assert_eq!(
+            metadosis.terminal_intent_count(wwd).unwrap(),
+            364,
+            "seeded history must charge only its own day's budget"
+        );
+    });
+}
+
+/// THE per-day-cap regression: with one day's terminal budget fully spent, a
+/// fresh day's first terminal event must still be accepted. On the pre-fix
+/// global index this fails inside `expire_ocomp_job` with
+/// `"OCOMP terminal record cap exhausted"`.
+#[test]
+fn terminal_cap_is_per_worldwide_day_not_global() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let limits = poc_schema_limits();
+    let fsm_limits = crate::ocomp::state::JobFsmLimits {
+        max_terminal_records: 365,
+    };
+
+    // First day: request -> finality -> voting open -> near-cap history ->
+    // final expiry. The day fails gracefully and owns its entire 365 budget.
+    let (first_intent, _) = drive_day_to_voting_open(
+        &mut provider,
+        &fixture.scope,
+        fixture.first_wwd,
+        fixture.block_number,
+        fixture.block_time,
+        (B256::repeat_byte(0x46), B256::repeat_byte(0x98)),
+    );
+    seed_near_cap_history(&mut provider, fixture.first_wwd, first_intent);
+    let (_, first_deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let projection = crate::schema::MetadosisContract::new(storage)
+            .ocomp_fsm_state(fixture.first_wwd, &limits, fsm_limits)
+            .unwrap()
+            .projection();
+        (
+            projection.live_intent_id.expect("seeded live intent"),
+            projection.deadline_height.expect("seeded live deadline"),
+        )
+    });
+    runtime_command(
+        &mut provider,
+        MetadosisMutationPurposeTag::OcompLifecycle,
+        first_deadline,
+        fixture.block_time + 3,
+        commands::run_ocomp_lifecycle_begin,
+    )
+    .expect("first-day final expiry fails the day gracefully, not the block");
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = crate::schema::MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis.terminal_intent_count(fixture.first_wwd).unwrap(),
+            365
+        );
+        let projection = api::worldwide_day(storage, fixture.first_wwd)
+            .unwrap()
+            .expect("exhausted first day persists");
+        assert_eq!(projection.status, WwdStatus::Failed);
+        assert_eq!(projection.membership, WwdMembership::Closed);
+    });
+
+    // Later day: the first day's exhausted budget must not leak into it.
+    let later_request_block = first_deadline + 1;
+    let (later_intent, later_deadline) = drive_day_to_voting_open(
+        &mut provider,
+        &fixture.scope,
+        fixture.later_wwd,
+        later_request_block,
+        fixture.block_time + 4,
+        (B256::repeat_byte(0x47), B256::repeat_byte(0x99)),
+    );
+    runtime_command(
+        &mut provider,
+        MetadosisMutationPurposeTag::OcompLifecycle,
+        later_deadline,
+        fixture.block_time + 7,
+        commands::run_ocomp_lifecycle_begin,
+    )
+    .expect("a fresh day's first expiry must not be blocked by another day's exhausted budget");
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = crate::schema::MetadosisContract::new(storage.clone());
+        assert_eq!(
+            metadosis.terminal_intent_count(fixture.later_wwd).unwrap(),
+            1
+        );
+        assert_eq!(
+            metadosis.terminal_intent_count(fixture.first_wwd).unwrap(),
+            365
+        );
+        let state = metadosis
+            .ocomp_fsm_state(fixture.later_wwd, &limits, fsm_limits)
+            .expect("later day's FSM stays readable");
+        let projection = state.projection();
+        assert_eq!(projection.terminal_records, 1);
+        assert_eq!(projection.phase, DayPhase::Ready);
+        assert_eq!(
+            metadosis
+                .latest_terminal_job_record(fixture.later_wwd, &limits)
+                .unwrap()
+                .expect("later day's own terminal evidence")
+                .0,
+            later_intent
+        );
+        crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage)
+            .expect("post-exhaustion two-day state passes production aggregate validation");
+    });
+}
+
+/// Two concurrently live days each own an independent 365-record budget: their
+/// combined history (728 records) is impossible under a global index.
+#[test]
+fn two_concurrent_live_days_do_not_share_terminal_budget() {
+    let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    let fixture = prepare_two_ready_days_fixture(&mut provider, true);
+    let limits = poc_schema_limits();
+    let fsm_limits = crate::ocomp::state::JobFsmLimits {
+        max_terminal_records: 365,
+    };
+
+    let (first_intent, _) = drive_day_to_voting_open(
+        &mut provider,
+        &fixture.scope,
+        fixture.first_wwd,
+        fixture.block_number,
+        fixture.block_time,
+        (B256::repeat_byte(0x46), B256::repeat_byte(0x98)),
+    );
+    let (later_intent, _) = drive_day_to_voting_open(
+        &mut provider,
+        &fixture.scope,
+        fixture.later_wwd,
+        // Stay well inside the first day's response window (open + 64 blocks):
+        // the begin-zone enforces exact response-deadline heights.
+        fixture.block_number + 5,
+        fixture.block_time + 4,
+        (B256::repeat_byte(0x47), B256::repeat_byte(0x99)),
+    );
+
+    seed_near_cap_history(&mut provider, fixture.first_wwd, first_intent);
+    seed_near_cap_history(&mut provider, fixture.later_wwd, later_intent);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = crate::schema::MetadosisContract::new(storage);
+        assert_eq!(
+            metadosis.terminal_intent_count(fixture.first_wwd).unwrap(),
+            364
+        );
+        assert_eq!(
+            metadosis.terminal_intent_count(fixture.later_wwd).unwrap(),
+            364
+        );
+        for wwd in [fixture.first_wwd, fixture.later_wwd] {
+            let projection = metadosis
+                .ocomp_fsm_state(wwd, &limits, fsm_limits)
+                .expect("each day's FSM stays readable at combined 728 records")
+                .projection();
+            assert_eq!(projection.terminal_records, 364);
+            assert_eq!(projection.phase, DayPhase::OffchainPending);
+        }
+    });
 }
 
 fn runner(test_name: &'static str, seed: &[u8; 32]) -> TestRunner {

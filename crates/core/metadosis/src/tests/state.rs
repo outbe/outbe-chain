@@ -466,6 +466,13 @@ fn test_storage_dsl_layout_slots() {
             m.day_limit_formation_receipts.base_slot(),
             U256::from(55u64)
         );
+        // The terminal-intents field changed shape (StorageVec -> sparse
+        // Mapping) but both are 1-slot fields: its base slot and every later
+        // base slot must stay fixed, so the pinned layout hash is unchanged.
+        assert_eq!(m.ocomp_terminal_intents.base_slot(), U256::from(24u64));
+        // Appended per-day terminal count lands after the last pre-existing
+        // field (day-limit receipts occupy 55..=61).
+        assert_eq!(m.ocomp_terminal_counts.base_slot(), U256::from(62u64));
         assert_eq!(
             alloy_primitives::keccak256(crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL),
             crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH

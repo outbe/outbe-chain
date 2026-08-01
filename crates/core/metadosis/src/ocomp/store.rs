@@ -122,21 +122,22 @@ impl MetadosisContract<'_> {
         wwd: WorldwideDay,
         limits: &SchemaLimits,
     ) -> Result<Option<(B256, OcompJobRecordV1)>> {
-        let mut index = self.ocomp_terminal_intents.len()?;
-        while index > 0 {
-            index -= 1;
-            let intent_id = self
-                .ocomp_terminal_intents
-                .get(index)?
-                .ok_or_else(|| fatal("OCOMP terminal index is sparse"))?;
-            let record = self
-                .ocomp_job_record(intent_id, limits)?
-                .ok_or_else(|| fatal("OCOMP terminal index points to a missing job"))?;
-            if record.intent.wwd == wwd.value() {
-                return Ok(Some((intent_id, record)));
-            }
+        let count = self.terminal_intent_count(wwd)?;
+        let Some(last) = count.checked_sub(1) else {
+            return Ok(None);
+        };
+        let intent_id = self
+            .terminal_intent_at(wwd, last)?
+            .ok_or_else(|| fatal("OCOMP terminal index is sparse below its recorded count"))?;
+        let record = self
+            .ocomp_job_record(intent_id, limits)?
+            .ok_or_else(|| fatal("OCOMP terminal index points to a missing job"))?;
+        if record.intent.wwd != wwd.value() {
+            return Err(fatal(
+                "OCOMP terminal index entry belongs to another WorldwideDay",
+            ));
         }
-        Ok(None)
+        Ok(Some((intent_id, record)))
     }
 
     pub(crate) fn ocomp_fsm_state(
@@ -154,11 +155,7 @@ impl MetadosisContract<'_> {
             return Err(fatal("OCOMP WWD FSM storage key mismatch"));
         }
 
-        let terminal_count = self.ocomp_terminal_intents.len()?;
-        if terminal_count > u32::from(fsm_limits.max_terminal_records) {
-            return Err(fatal("OCOMP terminal index exceeds profile cap"));
-        }
-        let terminal_ids = self.ocomp_terminal_intents.read_all()?;
+        let terminal_ids = self.terminal_intents_for(wwd, fsm_limits.max_terminal_records)?;
         let mut terminal_attempts = Vec::new();
         terminal_attempts
             .try_reserve_exact(terminal_ids.len())
@@ -168,7 +165,9 @@ impl MetadosisContract<'_> {
                 .ocomp_job_record(intent_id, schema_limits)?
                 .ok_or_else(|| fatal("OCOMP terminal index points to a missing job"))?;
             if record.intent.wwd != wwd.value() {
-                continue;
+                return Err(fatal(
+                    "OCOMP terminal index entry belongs to another WorldwideDay",
+                ));
             }
             let terminal = record
                 .terminal
@@ -184,6 +183,22 @@ impl MetadosisContract<'_> {
                     if terminal.completed_binding.is_some() =>
                 {
                     RetryTerminalOutcome::Conflicted
+                }
+                // Completion clears the day's FSM in the same transition, so a
+                // completed entry surfacing through a live FSM read means the
+                // day's FSM was recreated after completion.
+                (OcompJobStatus::Completed, OcompTerminalOutcome::Completed) => {
+                    return Err(fatal("completed OCOMP WorldwideDay retains a live FSM"));
+                }
+                (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => {
+                    return Err(fatal(
+                        "OCOMP expired terminal entry has an inconsistent status/binding",
+                    ));
+                }
+                (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => {
+                    return Err(fatal(
+                        "OCOMP conflicted terminal entry has an inconsistent status/binding",
+                    ));
                 }
                 _ => return Err(fatal("OCOMP terminal index points to a non-retry job")),
             };

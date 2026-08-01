@@ -30,7 +30,7 @@ pub fn fresh_devnet_sentinel_is_pristine(
         && contract.ocomp_scheduler.is_empty()?
         && contract.ocomp_ready_index.is_empty()?
         && contract.ocomp_response_deadline_index.is_empty()?
-        && contract.ocomp_terminal_intents.is_empty()?
+        && contract.terminal_intent_count(sentinel_day)? == 0
         && contract
             .ocomp_fsm_states
             .get_bytes(&sentinel_day)

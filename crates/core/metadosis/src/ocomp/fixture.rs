@@ -32,10 +32,7 @@ impl MetadosisContract<'_> {
     ) -> Result<B256> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            if terminal_records == 0
-                || terminal_records >= fsm_limits.max_terminal_records
-                || self.ocomp_terminal_intents.len()? != 0
-            {
+            if terminal_records == 0 || terminal_records >= fsm_limits.max_terminal_records {
                 return Err(fatal("invalid OCOMP terminal-history fixture request"));
             }
 
@@ -56,6 +53,10 @@ impl MetadosisContract<'_> {
                 .ok_or_else(|| fatal("terminal-history fixture live job is missing"))?;
             if base_record.status != OcompJobStatus::VotingOpen || base_record.terminal.is_some() {
                 return Err(fatal("terminal-history fixture requires a voting-open job"));
+            }
+            let wwd = outbe_common::WorldwideDay::new(base_record.intent.wwd);
+            if self.terminal_intent_count(wwd)? != 0 {
+                return Err(fatal("invalid OCOMP terminal-history fixture request"));
             }
             let base_finalized = base_record
                 .finalized
@@ -120,7 +121,7 @@ impl MetadosisContract<'_> {
                     },
                     schema_limits,
                 )?;
-                self.ocomp_terminal_intents.push(intent_id)?;
+                self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
                 attempts.push(TerminalAttempt {
                     intent_id,
                     pending_nonce,

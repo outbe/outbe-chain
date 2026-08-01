@@ -226,6 +226,9 @@ impl MetadosisContract<'_> {
 
     fn delete_worldwide_day_raw(&mut self, wwd_key: WorldwideDayKey) -> Result<()> {
         (|| {
+            // The day's terminal-evidence index dies with the day; without
+            // this, retired days would leak index entries forever.
+            self.delete_terminal_index(wwd_key)?;
             if self.worldwide_day_terminal_receipts.get(wwd_key)?.is_some() {
                 self.worldwide_day_terminal_receipts.delete(wwd_key)?;
             }

@@ -252,7 +252,7 @@ fn assert_no_ocomp_job(storage: &StorageHandle, wwd: outbe_common::WorldwideDay)
         .get_bytes(&wwd)
         .is_empty()
         .unwrap());
-    assert!(metadosis.ocomp_terminal_intents.is_empty().unwrap());
+    assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
     assert!(metadosis
         .request_budget_receipt(wwd, &limits)
         .unwrap()

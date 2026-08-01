@@ -856,3 +856,158 @@ fn canonical_storage_reads_fail_closed_when_the_declared_byte_cap_overflows() {
         }
     });
 }
+
+#[test]
+fn terminal_index_push_rejects_zero_overwrite_and_exact_cap() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270401);
+        let cap = 3_u16;
+
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::ZERO, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        for index in 0..cap {
+            metadosis
+                .push_terminal_intent(wwd, B256::repeat_byte(0x10 + index as u8), cap)
+                .unwrap();
+            assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), index + 1);
+        }
+
+        // The day is exactly at its cap: the next push must be refused.
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x77), cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        // An occupied position must never be overwritten, even if the count
+        // word is corrupted backwards.
+        metadosis.ocomp_terminal_counts.write(&wwd, 1).unwrap();
+        assert!(matches!(
+            metadosis.push_terminal_intent(wwd, B256::repeat_byte(0x78), cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn terminal_index_round_trips_and_fails_closed_on_sparse_or_over_cap_counts() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270402);
+        let cap = 365_u16;
+
+        assert_eq!(
+            metadosis.terminal_intents_for(wwd, cap).unwrap(),
+            Vec::<B256>::new()
+        );
+
+        let mut expected = Vec::new();
+        for index in 0..cap {
+            let id = crate::ocomp::terminal_entry_key(wwd, index);
+            metadosis.push_terminal_intent(wwd, id, cap).unwrap();
+            expected.push(id);
+            if matches!(index + 1, 1 | 364 | 365) {
+                assert_eq!(
+                    metadosis.terminal_intents_for(wwd, cap).unwrap(),
+                    expected[..usize::from(index + 1)]
+                );
+            }
+        }
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), cap);
+
+        // A count above the per-day cap fails closed on read.
+        metadosis
+            .ocomp_terminal_counts
+            .write(&wwd, cap + 1)
+            .unwrap();
+        assert!(matches!(
+            metadosis.terminal_intents_for(wwd, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        // A count pointing past the last occupied position fails closed.
+        let sparse = WorldwideDay::new(20270403);
+        metadosis
+            .push_terminal_intent(sparse, B256::repeat_byte(0x31), cap)
+            .unwrap();
+        metadosis.ocomp_terminal_counts.write(&sparse, 2).unwrap();
+        assert!(matches!(
+            metadosis.terminal_intents_for(sparse, cap),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn terminal_index_keys_are_domain_separated() {
+    let day_a = WorldwideDay::new(20270404);
+    let day_b = WorldwideDay::new(20270405);
+    assert_ne!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        crate::ocomp::terminal_entry_key(day_b, 0)
+    );
+    assert_ne!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        crate::ocomp::terminal_entry_key(day_a, 1)
+    );
+    // Byte-for-byte pin of the key derivation: a silent change to the domain
+    // string, field widths, or endianness must fail this assertion.
+    assert_eq!(
+        crate::ocomp::terminal_entry_key(day_a, 0),
+        alloy_primitives::keccak256({
+            let mut preimage = Vec::new();
+            preimage.extend_from_slice(b"OUTBE_OCOMP_TERMINAL_INDEX_V1");
+            preimage.extend_from_slice(&20270404_u32.to_be_bytes());
+            preimage.extend_from_slice(&0_u16.to_be_bytes());
+            preimage
+        })
+    );
+}
+
+#[test]
+fn terminal_index_is_deleted_with_its_worldwide_day() {
+    with_storage(|storage| {
+        let mut metadosis = MetadosisContract::new(storage);
+        let wwd = WorldwideDay::new(20270406);
+        let cap = 4_u16;
+        for index in 0..cap {
+            metadosis
+                .push_terminal_intent(wwd, B256::repeat_byte(0x40 + index as u8), cap)
+                .unwrap();
+        }
+
+        metadosis.delete_terminal_index(wwd).unwrap();
+
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 0);
+        for index in 0..cap {
+            assert_eq!(metadosis.terminal_intent_at(wwd, index).unwrap(), None);
+        }
+        // The vacated positions accept a fresh history.
+        metadosis
+            .push_terminal_intent(wwd, B256::repeat_byte(0x50), cap)
+            .unwrap();
+        assert_eq!(metadosis.terminal_intent_count(wwd).unwrap(), 1);
+    });
+}
+
+#[test]
+fn aggregate_rejects_closed_wwd_population_above_max_records_kept() {
+    with_storage(|storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        for offset in 0..=u32::try_from(crate::constants::MAX_RECORDS_KEPT).unwrap() {
+            metadosis
+                .closed_wwd
+                .push_back(WorldwideDay::new(20000101 + offset))
+                .unwrap();
+        }
+        let error = crate::aggregate::ValidatedWwdAggregate::load_and_validate(storage)
+            .expect_err("closed population above the retention cap must fail closed");
+        assert!(
+            error.to_string().contains("exceeds retention cap"),
+            "unexpected error: {error}"
+        );
+    });
+}
