@@ -39,6 +39,25 @@ sol! {
         uint64 validUntil,
         uint64 bindingVersion
     );
+
+    #[derive(Debug)]
+    event EnclaveRenewedV1(
+        bytes32 indexed nodeIdHash,
+        bytes32 indexed enclaveId,
+        bytes32 indexed bindingId,
+        uint64 validUntil,
+        uint64 registrationVersion,
+        uint64 renewalNonce
+    );
+
+    #[derive(Debug)]
+    event EnclaveBindingReplacedV1(
+        bytes32 indexed nodeIdHash,
+        bytes32 indexed enclaveId,
+        bytes32 indexed bindingId,
+        uint64 validUntil,
+        uint64 bindingVersion
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +78,7 @@ pub struct NodeEnclaveBindingV1 {
     pub registration_version: u64,
     pub renewal_nonce: u64,
     pub transition_nonce: u64,
+    pub lease_started_at: u64,
     pub valid_until: u64,
     pub collateral_valid_until: u64,
     pub recipient_x25519: B256,
@@ -70,6 +90,7 @@ pub struct NodeEnclaveBindingV1 {
     pub isv_svn: u16,
     pub platform_tcb_status: u8,
     pub verdict_hash: B256,
+    pub node_host_authorization_hash: B256,
 }
 
 impl TeeRegistry<'_> {
@@ -281,6 +302,7 @@ impl TeeRegistry<'_> {
             registration_version: self.v1_node_registration_version.read(&node_id_hash)?,
             renewal_nonce: self.v1_node_renewal_nonce.read(&node_id_hash)?,
             transition_nonce: self.v1_node_transition_nonce.read(&node_id_hash)?,
+            lease_started_at: self.v1_node_lease_started_at.read(&node_id_hash)?,
             valid_until: self.v1_node_valid_until.read(&node_id_hash)?,
             collateral_valid_until: self.v1_node_collateral_valid_until.read(&node_id_hash)?,
             recipient_x25519: self.v1_node_recipient_x25519.read(&node_id_hash)?,
@@ -292,6 +314,9 @@ impl TeeRegistry<'_> {
             isv_svn,
             platform_tcb_status,
             verdict_hash: self.v1_node_verdict_hash.read(&node_id_hash)?,
+            node_host_authorization_hash: self
+                .v1_node_host_authorization_hash
+                .read(&node_id_hash)?,
         }))
     }
 }
@@ -314,8 +339,87 @@ impl TeeRegistry<'_> {
         )
     }
 
+    pub fn renew_enclave_v1(
+        &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.active_policy_v1()?;
+        self.renew_enclave_with_active_policy_v1(
+            evidence,
+            node_signature,
+            enclave_signature,
+            &policy,
+        )
+    }
+
+    pub fn replace_enclave_binding_v1(
+        &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.active_policy_v1()?;
+        self.replace_enclave_binding_with_active_policy_v1(
+            evidence,
+            node_signature,
+            enclave_signature,
+            &policy,
+        )
+    }
+
     pub(crate) fn register_enclave_with_active_policy_v1(
         &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+    ) -> Result<V1RegistrationOutcome> {
+        self.apply_evidence_mutation_with_active_policy_v1(
+            AttestationOperationV1::RegisterEnclave,
+            evidence,
+            node_signature,
+            enclave_signature,
+            policy,
+        )
+    }
+
+    pub(crate) fn renew_enclave_with_active_policy_v1(
+        &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+    ) -> Result<V1RegistrationOutcome> {
+        self.apply_evidence_mutation_with_active_policy_v1(
+            AttestationOperationV1::RenewEnclave,
+            evidence,
+            node_signature,
+            enclave_signature,
+            policy,
+        )
+    }
+
+    pub(crate) fn replace_enclave_binding_with_active_policy_v1(
+        &mut self,
+        evidence: &[u8],
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+    ) -> Result<V1RegistrationOutcome> {
+        self.apply_evidence_mutation_with_active_policy_v1(
+            AttestationOperationV1::ReplaceEnclaveBinding,
+            evidence,
+            node_signature,
+            enclave_signature,
+            policy,
+        )
+    }
+
+    fn apply_evidence_mutation_with_active_policy_v1(
+        &mut self,
+        expected_operation: AttestationOperationV1,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -359,7 +463,8 @@ impl TeeRegistry<'_> {
                 "enclave accepted non-DCAP evidence for node registration".into(),
             ));
         };
-        self.apply_verified_registration_v1(
+        self.apply_verified_mutation_v1(
+            expected_operation,
             &evidence.intent,
             node_signature,
             enclave_signature,
@@ -369,8 +474,9 @@ impl TeeRegistry<'_> {
         )
     }
 
-    fn apply_verified_registration_v1(
+    fn apply_verified_mutation_v1(
         &mut self,
+        expected_operation: AttestationOperationV1,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -387,11 +493,11 @@ impl TeeRegistry<'_> {
                 self.storage.genesis_hash()?,
             )
             .map_err(|error| revert_codec("registration intent chain mismatch", error))?;
-        if intent.operation != AttestationOperationV1::RegisterEnclave
+        if intent.operation != expected_operation
             || intent.attestation_mode != AttestationMode::DcapRequired
         {
             return Err(PrecompileError::Revert(
-                "registration intent is not a DCAP node registration".into(),
+                "attestation intent operation does not match the DCAP registry mutator".into(),
             ));
         }
         let policy_hash = policy
@@ -468,41 +574,7 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        if intent.binding_version != 1
-            || intent.registration_version != 0
-            || intent.renewal_nonce != 0
-            || intent.transition_nonce != 0
-        {
-            return Err(PrecompileError::Revert(
-                "initial registration versions and nonces are not canonical".into(),
-            ));
-        }
         let now = consensus_timestamp(&self.storage)?;
-        let lease = intent
-            .requested_valid_until
-            .checked_sub(now)
-            .ok_or_else(|| {
-                PrecompileError::Revert("registration lease is already expired".into())
-            })?;
-        if lease < policy.minimum_lease || lease > policy.maximum_lease {
-            return Err(PrecompileError::Revert(
-                "registration lease is outside active policy bounds".into(),
-            ));
-        }
-        let collateral_limit = verdict
-            .collateral_valid_until
-            .checked_sub(policy.collateral_margin)
-            .ok_or_else(|| {
-                PrecompileError::Revert(
-                    "verified collateral leaves no mandatory safety margin".into(),
-                )
-            })?;
-        if intent.requested_valid_until > collateral_limit {
-            return Err(PrecompileError::Revert(
-                "registration lease exceeds verified collateral validity".into(),
-            ));
-        }
-
         let node_id_hash = intent
             .node_id
             .node_id_hash()
@@ -510,17 +582,11 @@ impl TeeRegistry<'_> {
         let intent_hash = intent
             .intent_hash()
             .map_err(|error| revert_codec("registration intent is invalid", error))?;
-
         let current_intent_hash = self.v1_node_intent_hash.read(&node_id_hash)?;
-        if !current_intent_hash.is_zero() {
-            if current_intent_hash != intent_hash {
-                return Err(PrecompileError::Revert(
-                    "node already has a different enclave binding".into(),
-                ));
-            }
+        if !current_intent_hash.is_zero() && current_intent_hash == intent_hash {
             if self.v1_node_evidence_hash.read(&node_id_hash)? != evidence_hash {
                 return Err(PrecompileError::Revert(
-                    "node registration is not an exact evidence replay".into(),
+                    "registry mutation is not an exact evidence replay".into(),
                 ));
             }
             if self.v1_node_binding_id.read(&node_id_hash)? != intent.binding_id
@@ -533,6 +599,108 @@ impl TeeRegistry<'_> {
             return Ok(V1RegistrationOutcome::Idempotent);
         }
 
+        let current = self.node_enclave_binding_v1(node_id_hash)?;
+        match expected_operation {
+            AttestationOperationV1::RegisterEnclave => {
+                if intent.binding_version != 1
+                    || intent.registration_version != 0
+                    || intent.renewal_nonce != 0
+                    || intent.transition_nonce != 0
+                {
+                    return Err(PrecompileError::Revert(
+                        "initial registration versions and nonces are not canonical".into(),
+                    ));
+                }
+            }
+            AttestationOperationV1::RenewEnclave => {
+                let current = current.as_ref().ok_or_else(|| {
+                    PrecompileError::Revert("cannot renew a missing enclave binding".into())
+                })?;
+                if intent.enclave_profile as u64 != self.v1_node_profile.read(&node_id_hash)? {
+                    return Err(PrecompileError::Revert(
+                        "renewal changes the registered enclave profile".into(),
+                    ));
+                }
+                ensure_continuous_binding(current, intent, verdict)?;
+                if intent.binding_version != current.binding_version
+                    || intent.registration_version
+                        != next_counter(current.registration_version, "registration version")?
+                    || intent.renewal_nonce != next_counter(current.renewal_nonce, "renewal nonce")?
+                    || intent.transition_nonce != current.transition_nonce
+                {
+                    return Err(PrecompileError::Revert(
+                        "renewal does not carry the exact next renewal version and nonce".into(),
+                    ));
+                }
+                ensure_final_third_or_expired(current, now)?;
+            }
+            AttestationOperationV1::ReplaceEnclaveBinding => {
+                let current = current.as_ref().ok_or_else(|| {
+                    PrecompileError::Revert("cannot replace a missing enclave binding".into())
+                })?;
+                if intent.enclave_profile as u64 != self.v1_node_profile.read(&node_id_hash)?
+                    || B256::from(intent.node_host_authorization_hash)
+                        != current.node_host_authorization_hash
+                {
+                    return Err(PrecompileError::Revert(
+                        "replacement changes the node profile or persistent NodeHost authorization"
+                            .into(),
+                    ));
+                }
+                if intent.enclave_id == current.enclave_id
+                    || intent.binding_id == current.binding_id
+                {
+                    return Err(PrecompileError::Revert(
+                        "replacement must use a fresh enclave and binding id".into(),
+                    ));
+                }
+                if intent.binding_version
+                    != next_counter(current.binding_version, "binding version")?
+                    || intent.registration_version
+                        != next_counter(current.registration_version, "registration version")?
+                    || intent.renewal_nonce != current.renewal_nonce
+                    || intent.transition_nonce != current.transition_nonce
+                {
+                    return Err(PrecompileError::Revert(
+                        "replacement does not carry the exact next binding version".into(),
+                    ));
+                }
+            }
+            AttestationOperationV1::TransitionEnclaveMeasurement => {
+                return Err(PrecompileError::Revert(
+                    "measurement transition is owned by I7 and is not active".into(),
+                ));
+            }
+        }
+
+        let lease = intent
+            .requested_valid_until
+            .checked_sub(now)
+            .ok_or_else(|| PrecompileError::Revert("requested lease is already expired".into()))?;
+        if lease < policy.minimum_lease || lease > policy.maximum_lease {
+            return Err(PrecompileError::Revert(
+                "requested lease is outside active policy bounds".into(),
+            ));
+        }
+        let collateral_limit = verdict
+            .collateral_valid_until
+            .checked_sub(policy.collateral_margin)
+            .ok_or_else(|| {
+                PrecompileError::Revert(
+                    "verified collateral leaves no mandatory safety margin".into(),
+                )
+            })?;
+        if intent.requested_valid_until > collateral_limit {
+            return Err(PrecompileError::Revert(
+                "requested lease exceeds verified collateral validity".into(),
+            ));
+        }
+        if expected_operation == AttestationOperationV1::RegisterEnclave && current.is_some() {
+            return Err(PrecompileError::Revert(
+                "node already has a different enclave binding".into(),
+            ));
+        }
+
         if let Some(validator) = validator {
             let validator_node_hash = self.validator_v1_node_hash.read(&validator)?;
             if !validator_node_hash.is_zero() && validator_node_hash != node_id_hash {
@@ -542,16 +710,35 @@ impl TeeRegistry<'_> {
             }
         }
         let enclave_owner = self.v1_enclave_node_hash.read(&intent.enclave_id)?;
-        if !enclave_owner.is_zero() && enclave_owner != node_id_hash {
-            return Err(PrecompileError::Revert(
-                "enclave is already bound to another node".into(),
-            ));
-        }
         let binding_owner = self.v1_binding_node_hash.read(&intent.binding_id)?;
-        if !binding_owner.is_zero() && binding_owner != node_id_hash {
-            return Err(PrecompileError::Revert(
-                "binding id has already been used by another node".into(),
-            ));
+        match expected_operation {
+            AttestationOperationV1::RegisterEnclave => {
+                if !enclave_owner.is_zero() {
+                    return Err(PrecompileError::Revert(
+                        "enclave is already bound to another node".into(),
+                    ));
+                }
+                if !binding_owner.is_zero() {
+                    return Err(PrecompileError::Revert(
+                        "binding id has already been used by another node".into(),
+                    ));
+                }
+            }
+            AttestationOperationV1::RenewEnclave => {
+                if enclave_owner != node_id_hash || binding_owner != node_id_hash {
+                    return Err(PrecompileError::Fatal(
+                        "stored V1 renewal reverse ownership is inconsistent".into(),
+                    ));
+                }
+            }
+            AttestationOperationV1::ReplaceEnclaveBinding => {
+                if !enclave_owner.is_zero() || !binding_owner.is_zero() {
+                    return Err(PrecompileError::Revert(
+                        "replacement enclave or binding id has already been used".into(),
+                    ));
+                }
+            }
+            AttestationOperationV1::TransitionEnclaveMeasurement => unreachable!(),
         }
 
         let verdict_bytes = verdict.encode_canonical().map_err(|code| {
@@ -591,6 +778,7 @@ impl TeeRegistry<'_> {
             .write(&node_id_hash, intent.renewal_nonce)?;
         self.v1_node_transition_nonce
             .write(&node_id_hash, intent.transition_nonce)?;
+        self.v1_node_lease_started_at.write(&node_id_hash, now)?;
         self.v1_node_valid_until
             .write(&node_id_hash, intent.requested_valid_until)?;
         self.v1_node_collateral_valid_until
@@ -613,6 +801,10 @@ impl TeeRegistry<'_> {
             .write(&node_id_hash, verdict.platform_tcb_status as u64)?;
         self.v1_node_verdict_hash
             .write(&node_id_hash, verdict_hash)?;
+        self.v1_node_host_authorization_hash.write(
+            &node_id_hash,
+            B256::from(intent.node_host_authorization_hash),
+        )?;
 
         if let Some(validator) = validator {
             let first_registration = self.recipient_x25519.read(&validator)?.is_zero();
@@ -646,13 +838,33 @@ impl TeeRegistry<'_> {
             }
         }
 
-        self.emit(EnclaveRegisteredV1 {
-            nodeIdHash: node_id_hash,
-            enclaveId: intent.enclave_id,
-            bindingId: intent.binding_id,
-            validUntil: intent.requested_valid_until,
-            bindingVersion: intent.binding_version,
-        })?;
+        match expected_operation {
+            AttestationOperationV1::RegisterEnclave => self.emit(EnclaveRegisteredV1 {
+                nodeIdHash: node_id_hash,
+                enclaveId: intent.enclave_id,
+                bindingId: intent.binding_id,
+                validUntil: intent.requested_valid_until,
+                bindingVersion: intent.binding_version,
+            })?,
+            AttestationOperationV1::RenewEnclave => self.emit(EnclaveRenewedV1 {
+                nodeIdHash: node_id_hash,
+                enclaveId: intent.enclave_id,
+                bindingId: intent.binding_id,
+                validUntil: intent.requested_valid_until,
+                registrationVersion: intent.registration_version,
+                renewalNonce: intent.renewal_nonce,
+            })?,
+            AttestationOperationV1::ReplaceEnclaveBinding => {
+                self.emit(EnclaveBindingReplacedV1 {
+                    nodeIdHash: node_id_hash,
+                    enclaveId: intent.enclave_id,
+                    bindingId: intent.binding_id,
+                    validUntil: intent.requested_valid_until,
+                    bindingVersion: intent.binding_version,
+                })?
+            }
+            AttestationOperationV1::TransitionEnclaveMeasurement => unreachable!(),
+        }
         Ok(V1RegistrationOutcome::Created)
     }
 
@@ -665,7 +877,8 @@ impl TeeRegistry<'_> {
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
-        self.apply_verified_registration_v1(
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::RegisterEnclave,
             intent,
             node_signature,
             enclave_signature,
@@ -684,7 +897,8 @@ impl TeeRegistry<'_> {
         policy: &TeePolicyV1,
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
-        self.apply_verified_registration_v1(
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::RegisterEnclave,
             intent,
             node_signature,
             enclave_signature,
@@ -693,6 +907,142 @@ impl TeeRegistry<'_> {
             capability.evidence_hash,
         )
     }
+
+    #[cfg(test)]
+    pub(crate) fn renew_enclave_after_verifier_for_test(
+        &mut self,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.active_policy_v1()?;
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::RenewEnclave,
+            intent,
+            node_signature,
+            enclave_signature,
+            &policy,
+            &capability.verdict,
+            capability.evidence_hash,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renew_enclave_after_verifier_with_active_policy_for_test(
+        &mut self,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::RenewEnclave,
+            intent,
+            node_signature,
+            enclave_signature,
+            policy,
+            &capability.verdict,
+            capability.evidence_hash,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_enclave_binding_after_verifier_for_test(
+        &mut self,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.active_policy_v1()?;
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::ReplaceEnclaveBinding,
+            intent,
+            node_signature,
+            enclave_signature,
+            &policy,
+            &capability.verdict,
+            capability.evidence_hash,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn replace_enclave_binding_after_verifier_with_active_policy_for_test(
+        &mut self,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        policy: &TeePolicyV1,
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::ReplaceEnclaveBinding,
+            intent,
+            node_signature,
+            enclave_signature,
+            policy,
+            &capability.verdict,
+            capability.evidence_hash,
+        )
+    }
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn ensure_continuous_binding(
+    current: &NodeEnclaveBindingV1,
+    intent: &RegistrationIntentV1,
+    verdict: &DcapVerdictV1,
+) -> Result<()> {
+    if intent.enclave_id != current.enclave_id
+        || intent.binding_id != current.binding_id
+        || B256::from(intent.recipient_x25519) != current.recipient_x25519
+        || B256::from(intent.attestation_ed25519) != current.attestation_ed25519
+        || B256::from(intent.noise_responder_x25519) != current.noise_responder_x25519
+        || B256::from(intent.node_host_authorization_hash) != current.node_host_authorization_hash
+    {
+        return Err(PrecompileError::Revert(
+            "renewal targets a superseded or different enclave identity".into(),
+        ));
+    }
+    if verdict.mrenclave != current.mrenclave
+        || verdict.mrsigner != current.mrsigner
+        || verdict.isv_prod_id != current.isv_prod_id
+        || verdict.isv_svn != current.isv_svn
+    {
+        return Err(PrecompileError::Revert(
+            "renewal cannot replace the admitted enclave measurement".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn next_counter(current: u64, name: &'static str) -> Result<u64> {
+    current
+        .checked_add(1)
+        .ok_or_else(|| PrecompileError::Revert(format!("{name} is exhausted")))
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn ensure_final_third_or_expired(current: &NodeEnclaveBindingV1, now: u64) -> Result<()> {
+    if now >= current.valid_until {
+        return Ok(());
+    }
+    if current.lease_started_at >= current.valid_until || now < current.lease_started_at {
+        return Err(PrecompileError::Fatal(
+            "stored V1 lease interval is inconsistent".into(),
+        ));
+    }
+    let elapsed = u128::from(now - current.lease_started_at);
+    let duration = u128::from(current.valid_until - current.lease_started_at);
+    if elapsed * 3 < duration * 2 {
+        return Err(PrecompileError::Revert(
+            "renewal is not open before the final third of the current lease".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Test-only typed capability that begins strictly after public QVL verification.

@@ -1,6 +1,6 @@
 #![cfg(feature = "tee-attestation-v1")]
 
-use alloy_primitives::B256;
+use alloy_primitives::{b256, B256};
 use ed25519_dalek::Signer as _;
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
@@ -87,7 +87,7 @@ fn intent_for_manifest(manifest: &EnclaveInitializationManifestV1) -> Registrati
         recipient_x25519: manifest.recipient_x25519,
         attestation_ed25519: manifest.attestation_ed25519,
         noise_responder_x25519: manifest.noise_responder_x25519,
-        node_host_authorization_hash: manifest.authorization_hash().unwrap(),
+        node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
     }
 }
 
@@ -112,6 +112,41 @@ fn initialization_manifest_is_canonical_node_signed_and_intent_bound() {
         EnclaveInitializationManifestV1::decode_canonical(&trailing).unwrap_err(),
         CodecError::TrailingBytes(1)
     );
+}
+
+#[test]
+fn node_host_authorization_survives_fresh_enclave_initialization() {
+    let validator_key = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
+    let original = validator_initialization_manifest(&validator_key);
+    let mut replacement = original.clone();
+    replacement.initialization_challenge = [0x43; 32];
+    replacement.recipient_x25519 = [0x61; 32];
+    replacement.attestation_ed25519 = [0x62; 32];
+    replacement.noise_responder_x25519 = [0x63; 32];
+
+    assert_ne!(
+        original.authorization_hash().unwrap(),
+        replacement.authorization_hash().unwrap()
+    );
+    assert_eq!(
+        original.node_host_authorization_hash().unwrap(),
+        replacement.node_host_authorization_hash().unwrap()
+    );
+    assert_eq!(
+        original.node_host_authorization_hash().unwrap(),
+        b256!("7e9282a26adfb0a997e6c8afbfc453204b98ff499250dec01dc8097164fddb94")
+    );
+    let mut another_node_host = original.clone();
+    another_node_host.node_host_noise_x25519 = [0x44; 32];
+    assert_ne!(
+        original.node_host_authorization_hash().unwrap(),
+        another_node_host.node_host_authorization_hash().unwrap()
+    );
+
+    let mut intent = intent_for_manifest(&replacement);
+    intent.operation = AttestationOperationV1::ReplaceEnclaveBinding;
+    intent.node_host_authorization_hash = original.node_host_authorization_hash().unwrap();
+    replacement.validate_intent_binding(&intent).unwrap();
 }
 
 #[test]
@@ -367,6 +402,14 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
         gas.register_storage_gas_allowance() <= gas.register_fixed,
         "storage allowance must remain inside the normative fixed registration term"
     );
+    for kind in [
+        RegistryMutatorV1::RegisterEnclave,
+        RegistryMutatorV1::RenewEnclave,
+        RegistryMutatorV1::TransitionEnclaveMeasurement,
+        RegistryMutatorV1::ReplaceEnclaveBinding,
+    ] {
+        assert!(gas.mutator_storage_gas_allowance(kind) <= 450_000);
+    }
     assert_eq!(
         gas.qvl_dcap(evidence_len, MAX_ACTIVE_MEASUREMENT_RULES)
             .unwrap(),
@@ -382,6 +425,17 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
         )
         .unwrap(),
         28_768_784
+    );
+    assert_eq!(
+        gas.maximum_transaction_gas(
+            RegistryMutatorV1::RenewEnclave,
+            input_len,
+            evidence_len,
+            MAX_ACTIVE_MEASUREMENT_RULES,
+            AttestationMode::DcapRequired,
+        )
+        .unwrap(),
+        28_668_784
     );
     assert_eq!(
         gas.maximum_transaction_gas(

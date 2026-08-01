@@ -172,7 +172,7 @@ impl InitializationState {
                 .map_err(|error| error.to_string())?,
             node_host_authorization_hash: stored
                 .manifest
-                .authorization_hash()
+                .node_host_authorization_hash()
                 .map_err(|error| error.to_string())?,
             sealed_loaded: stored.loaded_from_seal,
         })
@@ -516,7 +516,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_report_data_is_exact_for_initial_and_renewal_intents() {
+    fn quote_report_data_is_exact_for_initial_renewal_and_replacement_intents() {
         let root = tempfile::tempdir().unwrap();
         let boot = Arc::new(EnclaveBootConfig::new(
             [0x10; 32],
@@ -535,6 +535,7 @@ mod tests {
         for operation in [
             AttestationOperationV1::RegisterEnclave,
             AttestationOperationV1::RenewEnclave,
+            AttestationOperationV1::ReplaceEnclaveBinding,
         ] {
             let intent = RegistrationIntentV1 {
                 chain_id: manifest.chain_id,
@@ -547,15 +548,19 @@ mod tests {
                 node_id: manifest.node_id.clone(),
                 enclave_id: manifest.enclave_id().unwrap(),
                 binding_id: B256::repeat_byte(0x42),
-                binding_version: 1,
-                registration_version: 0,
+                binding_version: 1 + u64::from(
+                    operation == AttestationOperationV1::ReplaceEnclaveBinding,
+                ),
+                registration_version: u64::from(
+                    operation != AttestationOperationV1::RegisterEnclave,
+                ),
                 renewal_nonce: u64::from(operation == AttestationOperationV1::RenewEnclave),
                 transition_nonce: 0,
                 requested_valid_until: 7_200,
                 recipient_x25519: manifest.recipient_x25519,
                 attestation_ed25519: manifest.attestation_ed25519,
                 noise_responder_x25519: manifest.noise_responder_x25519,
-                node_host_authorization_hash: manifest.authorization_hash().unwrap(),
+                node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
             };
             assert_eq!(
                 state
@@ -571,6 +576,113 @@ mod tests {
                 .unwrap_err()
                 .contains("requires DcapRequired"));
         }
+    }
+
+    #[test]
+    fn fresh_enclave_quotes_replacement_under_the_same_node_host_authority() {
+        let first_root = tempfile::tempdir().unwrap();
+        let replacement_root = tempfile::tempdir().unwrap();
+        let first_keys = EnclaveKeys::new([7; 32], Some([1; 32])).unwrap();
+        let replacement_keys = EnclaveKeys::new([8; 32], Some([2; 32])).unwrap();
+        let first_state = InitializationState::production_with_challenge(
+            Arc::new(EnclaveBootConfig::new(
+                [0x10; 32],
+                first_root.path().to_path_buf(),
+                0,
+            )),
+            &first_keys,
+            [0x41; 32],
+        )
+        .unwrap();
+        let replacement_state = InitializationState::production_with_challenge(
+            Arc::new(EnclaveBootConfig::new(
+                [0x10; 32],
+                replacement_root.path().to_path_buf(),
+                0,
+            )),
+            &replacement_keys,
+            [0x43; 32],
+        )
+        .unwrap();
+        let (first_manifest, first_signature) = signed_manifest(&first_keys, [0x41; 32]);
+        let (replacement_manifest, replacement_signature) =
+            signed_manifest(&replacement_keys, [0x43; 32]);
+
+        let first_pending = first_state
+            .prepare(
+                &first_manifest.encode_canonical().unwrap(),
+                &first_signature,
+                &first_keys,
+            )
+            .unwrap();
+        first_state.commit(first_pending, &first_keys).unwrap();
+        let replacement_pending = replacement_state
+            .prepare(
+                &replacement_manifest.encode_canonical().unwrap(),
+                &replacement_signature,
+                &replacement_keys,
+            )
+            .unwrap();
+        replacement_state
+            .commit(replacement_pending, &replacement_keys)
+            .unwrap();
+
+        assert_ne!(
+            first_manifest.authorization_hash().unwrap(),
+            replacement_manifest.authorization_hash().unwrap()
+        );
+        assert_ne!(
+            first_manifest.enclave_id().unwrap(),
+            replacement_manifest.enclave_id().unwrap()
+        );
+        assert_eq!(
+            first_manifest.node_host_authorization_hash().unwrap(),
+            replacement_manifest.node_host_authorization_hash().unwrap()
+        );
+        assert!(matches!(
+            replacement_state.initialized_response().unwrap(),
+            EnclaveResponse::Initialized {
+                enclave_id,
+                node_host_authorization_hash,
+                sealed_loaded: false,
+            } if enclave_id == replacement_manifest.enclave_id().unwrap()
+                && node_host_authorization_hash
+                    == first_manifest.node_host_authorization_hash().unwrap()
+        ));
+
+        let intent = RegistrationIntentV1 {
+            chain_id: replacement_manifest.chain_id,
+            genesis_hash: replacement_manifest.genesis_hash,
+            operation: AttestationOperationV1::ReplaceEnclaveBinding,
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash: B256::repeat_byte(0x21),
+            enclave_profile: replacement_manifest.enclave_profile,
+            node_id: replacement_manifest.node_id.clone(),
+            enclave_id: replacement_manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x44),
+            binding_version: 2,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 7_200,
+            recipient_x25519: replacement_manifest.recipient_x25519,
+            attestation_ed25519: replacement_manifest.attestation_ed25519,
+            noise_responder_x25519: replacement_manifest.noise_responder_x25519,
+            node_host_authorization_hash: first_manifest.node_host_authorization_hash().unwrap(),
+        };
+        assert_eq!(
+            replacement_state
+                .quote_report_data(&intent.encode_canonical().unwrap())
+                .unwrap(),
+            intent.report_data().unwrap()
+        );
+
+        let mut wrong_node_host = intent;
+        wrong_node_host.node_host_authorization_hash = B256::repeat_byte(0x99);
+        assert!(replacement_state
+            .quote_report_data(&wrong_node_host.encode_canonical().unwrap())
+            .unwrap_err()
+            .contains("does not match initialized enclave"));
     }
 
     #[test]

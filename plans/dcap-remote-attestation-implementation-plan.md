@@ -193,6 +193,14 @@ only its persistent `NodeHost` Noise initiator can request later quotes.
   decode;
 - removal of the public production `GetQuote` behavior after initialization.
 
+The exact full-manifest `authorization_hash()` remains the node-signed,
+write-once initialization/sealing commitment and includes the initialization
+challenge plus all three enclave public keys. The separate domain-separated
+`node_host_authorization_hash()` commits only to protocol version, chain,
+genesis, profile, canonical node identity and the persistent `NodeHost` Noise
+public key. That stable authority may therefore be preserved across a fresh
+enclave initialization without weakening the exact manifest signature.
+
 **Acceptance:**
 
 - replayed/conflicting initialization rejects;
@@ -284,6 +292,19 @@ stops authorizing new work at expiry.
 - idempotent exact replay, expired-current renewal and superseded rejection;
 - bounded replacement of a binding without any claim that an already delivered
   offer key was erased or revoked.
+- a durable candidate-B lifecycle for both profiles: active manifest A remains
+  the normal startup target while B is initialized with fresh enclave keys and
+  the same stable `NodeHost` authority;
+- canonical write-once replacement evidence plus node/enclave proofs of
+  possession, with exact replay idempotency and conflicting replay rejection;
+- atomic A-to-B promotion only after an opaque capability binds the exact
+  finalized replacement intent and candidate manifest. I5 consumes that
+  capability; I6 is the first production issuer.
+
+I5 does not hot-swap a live client, deliver or migrate the permanent offer key,
+claim that candidate B is consensus-ready, or add recovery/governance paths.
+Before finalized promotion, restart and ordinary NodeHost startup continue to
+select A. B remains only a keyless attestation candidate.
 
 **Acceptance:**
 
@@ -293,6 +314,14 @@ stops authorizing new work at expiry.
 - governance changes do not retroactively shorten an existing lease;
 - all evidence-bearing mutators fit the 30-million steady block at their
   normative caps.
+- A and B have different full manifest/enclave identities but one exact stable
+  `NodeHost` authority, and the intent quoted by B reaches Registry replacement
+  byte-for-byte unchanged;
+- crash/restart before candidate initialization, after durable submission,
+  immediately before manifest rename and immediately after rename is
+  deterministic, fail-closed and never auto-promotes A to B;
+- promotion rejects any finalized authorization for another intent or
+  candidate, while exact completed promotion is idempotent.
 
 ## I6 — Admit remote Noise sessions only from finalized active state
 
@@ -306,6 +335,9 @@ responder key of an active, unexpired registration.
   finalized storage proof;
 - fresh Noise proof of possession and session deadline capped by lease expiry;
 - explicit RPC-trust mode when no finalized anchor is supplied.
+- production construction of the opaque finalized replacement authorization
+  consumed by I5, binding the exact active Registry replacement intent and
+  candidate manifest hash.
 
 **Acceptance:**
 
@@ -370,7 +402,8 @@ determinism, capacity and x86_64 SGX real-hardware evidence passes.
 - separate `DcapRequired` and `GramineDirectDev` chain specs/genesis;
 - A0 activation of V1 selectors, schema, gas and policy schedule;
 - real SGX quote generation, canonical collateral packaging, registration,
-  finalized lookup and Noise handshake in the release hardware job;
+  renewal, candidate replacement, finalized lookup and Noise handshake in the
+  release hardware job;
 - a fresh accepted Processor-CA capture for the exact release enclave and
   policy, plus accepted registered multi-package Platform-CA evidence;
 - fresh actual Processor, Platform and root CRL provenance and cap checks;

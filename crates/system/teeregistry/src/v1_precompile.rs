@@ -33,6 +33,7 @@ sol! {
         uint64 registrationVersion;
         uint64 renewalNonce;
         uint64 transitionNonce;
+        uint64 leaseStartedAt;
         uint64 validUntil;
         uint64 collateralValidUntil;
         bytes32 recipientX25519;
@@ -44,10 +45,23 @@ sol! {
         uint16 isvSvn;
         uint8 platformTcbStatus;
         bytes32 verdictHash;
+        bytes32 nodeHostAuthorizationHash;
     }
 
     interface ITeeRegistryV1 {
         function registerEnclave(
+            bytes calldata evidence,
+            bytes calldata nodeSignature,
+            bytes calldata enclaveSignature
+        ) external returns (bool);
+
+        function renewEnclave(
+            bytes calldata evidence,
+            bytes calldata nodeSignature,
+            bytes calldata enclaveSignature
+        ) external returns (bool);
+
+        function replaceEnclaveBinding(
             bytes calldata evidence,
             bytes calldata nodeSignature,
             bytes calldata enclaveSignature
@@ -83,21 +97,33 @@ pub fn dispatch(
 ) -> Result<Bytes> {
     reject_value(&value)?;
 
-    let register_preflight =
-        if data.get(..4) == Some(ITeeRegistryV1::registerEnclaveCall::SELECTOR.as_slice()) {
-            if storage.is_static()? {
-                return Err(PrecompileError::WriteProtection);
-            }
-            Some(preflight_register_call(data)?)
-        } else {
-            None
-        };
+    let mutator = match data.get(..4) {
+        Some(selector) if selector == ITeeRegistryV1::registerEnclaveCall::SELECTOR => {
+            Some(RegistryMutatorV1::RegisterEnclave)
+        }
+        Some(selector) if selector == ITeeRegistryV1::renewEnclaveCall::SELECTOR => {
+            Some(RegistryMutatorV1::RenewEnclave)
+        }
+        Some(selector) if selector == ITeeRegistryV1::replaceEnclaveBindingCall::SELECTOR => {
+            Some(RegistryMutatorV1::ReplaceEnclaveBinding)
+        }
+        _ => None,
+    };
+    let mutation_preflight = if mutator.is_some() {
+        if storage.is_static()? {
+            return Err(PrecompileError::WriteProtection);
+        }
+        Some(preflight_evidence_mutator_call(data)?)
+    } else {
+        None
+    };
 
-    let active_policy = if let Some(preflight) = register_preflight {
+    let active_policy = if let (Some(kind), Some(preflight)) = (mutator, mutation_preflight) {
         let registry = TeeRegistry::new(storage.clone());
         let policy = registry.active_policy_v1()?;
-        deduct_register_protocol_gas(
+        deduct_mutator_protocol_gas(
             &storage,
+            kind,
             data.len(),
             preflight.evidence.len(),
             policy.measurement_rules.len(),
@@ -118,7 +144,7 @@ pub fn dispatch(
                     let policy = active_policy.as_ref().ok_or_else(|| {
                         PrecompileError::Fatal("V1 registration preflight was bypassed".into())
                     })?;
-                    let preflight = register_preflight.ok_or_else(|| {
+                    let preflight = mutation_preflight.ok_or_else(|| {
                         PrecompileError::Fatal("V1 registration preflight was bypassed".into())
                     })?;
                     let node_signature: [u8; 65] =
@@ -137,6 +163,62 @@ pub fn dispatch(
                     )?;
                     Ok(Bytes::from(
                         ITeeRegistryV1::registerEnclaveCall::abi_encode_returns(&matches!(
+                            outcome,
+                            V1RegistrationOutcome::Created
+                        )),
+                    ))
+                }
+                renewEnclave(_) => {
+                    let policy = active_policy.as_ref().ok_or_else(|| {
+                        PrecompileError::Fatal("V1 renewal preflight was bypassed".into())
+                    })?;
+                    let preflight = mutation_preflight.ok_or_else(|| {
+                        PrecompileError::Fatal("V1 renewal preflight was bypassed".into())
+                    })?;
+                    let node_signature: [u8; 65] =
+                        preflight.node_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight node signature mismatch".into())
+                        })?;
+                    let enclave_signature: [u8; 64] =
+                        preflight.enclave_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight enclave signature mismatch".into())
+                        })?;
+                    let outcome = registry.renew_enclave_with_active_policy_v1(
+                        preflight.evidence,
+                        &node_signature,
+                        &enclave_signature,
+                        policy,
+                    )?;
+                    Ok(Bytes::from(
+                        ITeeRegistryV1::renewEnclaveCall::abi_encode_returns(&matches!(
+                            outcome,
+                            V1RegistrationOutcome::Created
+                        )),
+                    ))
+                }
+                replaceEnclaveBinding(_) => {
+                    let policy = active_policy.as_ref().ok_or_else(|| {
+                        PrecompileError::Fatal("V1 replacement preflight was bypassed".into())
+                    })?;
+                    let preflight = mutation_preflight.ok_or_else(|| {
+                        PrecompileError::Fatal("V1 replacement preflight was bypassed".into())
+                    })?;
+                    let node_signature: [u8; 65] =
+                        preflight.node_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight node signature mismatch".into())
+                        })?;
+                    let enclave_signature: [u8; 64] =
+                        preflight.enclave_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight enclave signature mismatch".into())
+                        })?;
+                    let outcome = registry.replace_enclave_binding_with_active_policy_v1(
+                        preflight.evidence,
+                        &node_signature,
+                        &enclave_signature,
+                        policy,
+                    )?;
+                    Ok(Bytes::from(
+                        ITeeRegistryV1::replaceEnclaveBindingCall::abi_encode_returns(&matches!(
                             outcome,
                             V1RegistrationOutcome::Created
                         )),
@@ -166,8 +248,9 @@ pub fn dispatch(
     )
 }
 
-fn deduct_register_protocol_gas(
+fn deduct_mutator_protocol_gas(
     storage: &StorageHandle<'_>,
+    kind: RegistryMutatorV1,
     input_len: usize,
     evidence_len: usize,
     active_rule_count: usize,
@@ -175,14 +258,14 @@ fn deduct_register_protocol_gas(
     let schedule = TeeRegistryGasScheduleV1::normative();
     let maximum_transaction_gas = schedule
         .maximum_transaction_gas(
-            RegistryMutatorV1::RegisterEnclave,
+            kind,
             input_len,
             evidence_len,
             active_rule_count,
             AttestationMode::DcapRequired,
         )
         .map_err(|error| {
-            PrecompileError::Revert(format!("invalid V1 registration gas dimensions: {error}"))
+            PrecompileError::Revert(format!("invalid V1 registry gas dimensions: {error}"))
         })?;
     let intrinsic = schedule
         .maximum_calldata_intrinsic_gas(input_len)
@@ -192,9 +275,9 @@ fn deduct_register_protocol_gas(
     let protocol = maximum_transaction_gas
         .checked_sub(intrinsic)
         .ok_or_else(|| PrecompileError::Fatal("V1 protocol gas underflow".into()))?;
-    let storage_allowance = schedule.register_storage_gas_allowance();
+    let storage_allowance = schedule.mutator_storage_gas_allowance(kind);
     let prepaid_protocol = protocol.checked_sub(storage_allowance).ok_or_else(|| {
-        PrecompileError::Fatal("V1 register storage allowance exceeds fixed gas".into())
+        PrecompileError::Fatal("V1 mutator storage allowance exceeds fixed gas".into())
     })?;
     let dispatch_charge = prepaid_protocol
         .checked_sub(PRECOMPILE_BASE_GAS)
@@ -215,7 +298,7 @@ struct RegisterPreflight<'a> {
 /// arguments. Signature lengths, aggregate evidence cap, call-framing cap,
 /// offsets, zero padding and trailing bytes reject before policy allocation or
 /// native QVL execution.
-fn preflight_register_call(data: &[u8]) -> Result<RegisterPreflight<'_>> {
+fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPreflight<'_>> {
     const HEAD_WORDS: usize = 3;
     const HEAD_LEN: usize = HEAD_WORDS * 32;
 
@@ -290,10 +373,60 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
-    let preflight = preflight_register_call(data)?;
+    dispatch_mutator_after_verifier_for_test(
+        storage,
+        data,
+        intent,
+        RegistryMutatorV1::RegisterEnclave,
+        capability,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn dispatch_renew_after_verifier_for_test(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    capability: crate::v1::PostVerifierDcapCapabilityV1,
+) -> Result<V1RegistrationOutcome> {
+    dispatch_mutator_after_verifier_for_test(
+        storage,
+        data,
+        intent,
+        RegistryMutatorV1::RenewEnclave,
+        capability,
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn dispatch_replace_after_verifier_for_test(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    capability: crate::v1::PostVerifierDcapCapabilityV1,
+) -> Result<V1RegistrationOutcome> {
+    dispatch_mutator_after_verifier_for_test(
+        storage,
+        data,
+        intent,
+        RegistryMutatorV1::ReplaceEnclaveBinding,
+        capability,
+    )
+}
+
+#[cfg(test)]
+fn dispatch_mutator_after_verifier_for_test(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    kind: RegistryMutatorV1,
+    capability: crate::v1::PostVerifierDcapCapabilityV1,
+) -> Result<V1RegistrationOutcome> {
+    let preflight = preflight_evidence_mutator_call(data)?;
     let policy = TeeRegistry::new(storage.clone()).active_policy_v1()?;
-    deduct_register_protocol_gas(
+    deduct_mutator_protocol_gas(
         &storage,
+        kind,
         data.len(),
         preflight.evidence.len(),
         policy.measurement_rules.len(),
@@ -306,13 +439,36 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
         .enclave_signature
         .try_into()
         .map_err(|_| PrecompileError::Fatal("preflight enclave signature mismatch".into()))?;
-    TeeRegistry::new(storage).register_enclave_after_verifier_with_active_policy_for_test(
-        intent,
-        &node_signature,
-        &enclave_signature,
-        &policy,
-        capability,
-    )
+    let mut registry = TeeRegistry::new(storage);
+    match kind {
+        RegistryMutatorV1::RegisterEnclave => registry
+            .register_enclave_after_verifier_with_active_policy_for_test(
+                intent,
+                &node_signature,
+                &enclave_signature,
+                &policy,
+                capability,
+            ),
+        RegistryMutatorV1::RenewEnclave => registry
+            .renew_enclave_after_verifier_with_active_policy_for_test(
+                intent,
+                &node_signature,
+                &enclave_signature,
+                &policy,
+                capability,
+            ),
+        RegistryMutatorV1::ReplaceEnclaveBinding => registry
+            .replace_enclave_binding_after_verifier_with_active_policy_for_test(
+                intent,
+                &node_signature,
+                &enclave_signature,
+                &policy,
+                capability,
+            ),
+        RegistryMutatorV1::TransitionEnclaveMeasurement => Err(PrecompileError::Fatal(
+            "I8 measurement transition cannot enter the I5 test dispatcher".into(),
+        )),
+    }
 }
 
 fn dynamic_bytes(args: &[u8], offset: usize) -> Result<(&[u8], usize)> {
@@ -380,6 +536,7 @@ fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1Vi
             registrationVersion: 0,
             renewalNonce: 0,
             transitionNonce: 0,
+            leaseStartedAt: 0,
             validUntil: 0,
             collateralValidUntil: 0,
             recipientX25519: B256::ZERO,
@@ -391,6 +548,7 @@ fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1Vi
             isvSvn: 0,
             platformTcbStatus: 0,
             verdictHash: B256::ZERO,
+            nodeHostAuthorizationHash: B256::ZERO,
         };
     };
     NodeEnclaveBindingV1View {
@@ -405,6 +563,7 @@ fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1Vi
         registrationVersion: binding.registration_version,
         renewalNonce: binding.renewal_nonce,
         transitionNonce: binding.transition_nonce,
+        leaseStartedAt: binding.lease_started_at,
         validUntil: binding.valid_until,
         collateralValidUntil: binding.collateral_valid_until,
         recipientX25519: binding.recipient_x25519,
@@ -416,6 +575,7 @@ fn binding_view(binding: Option<NodeEnclaveBindingV1>) -> NodeEnclaveBindingV1Vi
         isvSvn: binding.isv_svn,
         platformTcbStatus: binding.platform_tcb_status,
         verdictHash: binding.verdict_hash,
+        nodeHostAuthorizationHash: binding.node_host_authorization_hash,
     }
 }
 
@@ -485,24 +645,57 @@ mod tests {
         .abi_encode()
     }
 
+    fn mutator_call(
+        kind: RegistryMutatorV1,
+        evidence: Vec<u8>,
+        node_len: usize,
+        enclave_len: usize,
+    ) -> Vec<u8> {
+        let node_signature = Bytes::from(vec![0x51; node_len]);
+        let enclave_signature = Bytes::from(vec![0x52; enclave_len]);
+        match kind {
+            RegistryMutatorV1::RegisterEnclave => ITeeRegistryV1::registerEnclaveCall {
+                evidence: Bytes::from(evidence),
+                nodeSignature: node_signature,
+                enclaveSignature: enclave_signature,
+            }
+            .abi_encode(),
+            RegistryMutatorV1::RenewEnclave => ITeeRegistryV1::renewEnclaveCall {
+                evidence: Bytes::from(evidence),
+                nodeSignature: node_signature,
+                enclaveSignature: enclave_signature,
+            }
+            .abi_encode(),
+            RegistryMutatorV1::ReplaceEnclaveBinding => ITeeRegistryV1::replaceEnclaveBindingCall {
+                evidence: Bytes::from(evidence),
+                nodeSignature: node_signature,
+                enclaveSignature: enclave_signature,
+            }
+            .abi_encode(),
+            RegistryMutatorV1::TransitionEnclaveMeasurement => {
+                panic!("I8 mutator is not exposed by the I5 ABI")
+            }
+        }
+    }
+
     #[test]
     fn canonical_register_preflight_is_borrowed_and_rejects_noncanonical_framing() {
         let encoded = call(vec![1, 2, 3], 65, 64);
         assert_eq!(
-            preflight_register_call(&encoded).unwrap().evidence,
+            preflight_evidence_mutator_call(&encoded).unwrap().evidence,
             [1, 2, 3]
         );
 
         let mut wrong_offset = encoded.clone();
         wrong_offset[35] = 0x80;
-        assert!(preflight_register_call(&wrong_offset).is_err());
+        assert!(preflight_evidence_mutator_call(&wrong_offset).is_err());
 
         let mut nonzero_padding = encoded;
         let evidence_value_start = 4 + 96 + 32;
         nonzero_padding[evidence_value_start + 3] = 1;
-        assert!(preflight_register_call(&nonzero_padding).is_err());
-        assert!(preflight_register_call(&call(vec![1], 64, 64)).is_err());
-        assert!(preflight_register_call(&call(vec![1], 65, 63)).is_err());
+        assert!(preflight_evidence_mutator_call(&nonzero_padding).is_err());
+        assert!(preflight_evidence_mutator_call(&call(vec![1], 64, 64)).is_err());
+        assert!(preflight_evidence_mutator_call(&call(vec![1], 65, 63)).is_err());
     }
 
     #[test]
@@ -571,6 +764,46 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_verifier_never_mutates_or_fails_open_for_renewal_or_replacement() {
+        for kind in [
+            RegistryMutatorV1::RenewEnclave,
+            RegistryMutatorV1::ReplaceEnclaveBinding,
+        ] {
+            let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+            provider.set_block_number(1);
+            provider
+                .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&policy()))
+                .unwrap();
+            provider.enable_production_storage_gas_metering();
+            provider.set_gas_limit(u64::MAX);
+
+            let input = mutator_call(kind, vec![1, 1, 0, 0, 0, 0], 65, 64);
+            let schedule = TeeRegistryGasScheduleV1::normative();
+            let total = schedule
+                .maximum_transaction_gas(kind, input.len(), 6, 1, AttestationMode::DcapRequired)
+                .unwrap();
+            let intrinsic = schedule
+                .maximum_calldata_intrinsic_gas(input.len())
+                .unwrap();
+            let allowance = schedule.mutator_storage_gas_allowance(kind);
+
+            let result = provider
+                .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0xA1), U256::ZERO));
+            assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+            let (reads, writes) = provider.metered_storage_operations();
+            assert!(reads > 0);
+            assert_eq!(writes, 0, "verifier outage must not extend registry state");
+            let storage_gas = reads * 100;
+            assert_eq!(
+                intrinsic + PRECOMPILE_BASE_GAS + provider.gas_used(),
+                total - allowance + storage_gas
+            );
+            assert!(storage_gas <= allowance);
+            assert!(intrinsic + PRECOMPILE_BASE_GAS + provider.gas_used() <= total);
+        }
+    }
+
+    #[test]
     fn cap_plus_one_rejects_before_policy_read_or_gas_charge() {
         let input = call(vec![0; MAX_ATTESTATION_EVIDENCE_BYTES + 1], 65, 64);
         let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
@@ -605,7 +838,7 @@ mod tests {
         let binding = NodeEnclaveBindingV1View::abi_decode(&encoded).unwrap();
         assert!(!binding.exists);
         assert_eq!(binding.nodeIdHash, B256::ZERO);
-        assert_eq!(encoded.len(), 22 * 32);
+        assert_eq!(encoded.len(), 24 * 32);
 
         let p2p_signing = k256::ecdsa::SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
         let encoded_public = p2p_signing.verifying_key().to_encoded_point(true);

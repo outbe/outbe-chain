@@ -238,11 +238,51 @@ pub fn serve_connection<S: Read + Write>(
 /// configuration (chain_id / tee-dir / isv_svn); when `Some`, the sealing path
 /// persists the offer secret + threshold share after Seam F.
 pub fn serve_connection_with<S: Read + Write>(
+    stream: S,
+    keys: &EnclaveKeys,
+    offer_key: &SharedTributeOfferKey,
+    boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
+) -> Result<(), TransportError> {
+    serve_connection_with_quote_generator(
+        stream,
+        keys,
+        offer_key,
+        boot,
+        initialization,
+        crate::gramine::dcap_quote,
+    )
+}
+
+/// Explicit hardware-free lifecycle harness. The synthetic quote only carries
+/// the requested REPORT_DATA through the normal candidate transport path; it is
+/// never a QVL-positive or hardware-evidence seam. The production binary is
+/// built without `mock`, so this entrypoint and generator are absent from it.
+#[cfg(feature = "mock")]
+pub fn serve_connection_with_synthetic_dcap<S: Read + Write>(
+    stream: S,
+    keys: &EnclaveKeys,
+    offer_key: &SharedTributeOfferKey,
+    boot: Option<&EnclaveBootConfig>,
+    initialization: &InitializationState,
+) -> Result<(), TransportError> {
+    serve_connection_with_quote_generator(
+        stream,
+        keys,
+        offer_key,
+        boot,
+        initialization,
+        synthetic_dcap_quote,
+    )
+}
+
+fn serve_connection_with_quote_generator<S: Read + Write>(
     mut stream: S,
     keys: &EnclaveKeys,
     offer_key: &SharedTributeOfferKey,
     boot: Option<&EnclaveBootConfig>,
     initialization: &InitializationState,
+    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 ) -> Result<(), TransportError> {
     // 1. Minimal cleartext preamble. Production never emits a quote here.
     let first = decode_request(&read_frame(&mut stream)?)?;
@@ -419,6 +459,7 @@ pub fn serve_connection_with<S: Read + Write>(
                 boot.map(|b| b.chain_id)
                     .unwrap_or(alloy_primitives::B256::ZERO),
                 Some(initialization),
+                quote_generator,
             ),
         };
 
@@ -449,7 +490,15 @@ pub fn dispatch(
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
 ) -> EnclaveResponse {
-    dispatch_with_initialization(req, keys, dkg, offer_key, chain_id, None)
+    dispatch_with_initialization(
+        req,
+        keys,
+        dkg,
+        offer_key,
+        chain_id,
+        None,
+        crate::gramine::dcap_quote,
+    )
 }
 
 fn dispatch_with_initialization(
@@ -459,6 +508,7 @@ fn dispatch_with_initialization(
     offer_key: &SharedTributeOfferKey,
     chain_id: alloy_primitives::B256,
     initialization: Option<&InitializationState>,
+    quote_generator: fn(&[u8; 64]) -> Result<Vec<u8>, String>,
 ) -> EnclaveResponse {
     match req {
         EnclaveRequest::GetQuote { .. }
@@ -495,7 +545,7 @@ fn dispatch_with_initialization(
             };
             let result = (|| -> Result<(Vec<u8>, Vec<u8>), String> {
                 let report_data = initialization.quote_report_data(&intent)?;
-                let quote = crate::gramine::dcap_quote(&report_data)?;
+                let quote = quote_generator(&report_data)?;
                 let quote_body = validate_generated_quote_binding(report_data, quote)?;
                 let enclave_signature = keys.sign_attestation(&report_data[..32]);
                 Ok((quote_body, enclave_signature.to_vec()))
@@ -871,6 +921,17 @@ fn dispatch_with_initialization(
             }
         }
     }
+}
+
+#[cfg(feature = "mock")]
+fn synthetic_dcap_quote(report_data: &[u8; 64]) -> Result<Vec<u8>, String> {
+    let mut quote = vec![0_u8; outbe_tee::quote::MIN_QUOTE_LEN];
+    let report_data_offset = quote
+        .len()
+        .checked_sub(report_data.len())
+        .ok_or_else(|| "synthetic quote REPORT_DATA offset underflow".to_string())?;
+    quote[report_data_offset..].copy_from_slice(report_data);
+    Ok(quote)
 }
 
 fn dispatch_dkg_open(
@@ -2204,17 +2265,410 @@ mod tests {
     }
 
     #[test]
+    fn validator_replacement_candidate_keeps_the_committed_enclave_active() {
+        use alloy_primitives::{Address, U256};
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_primitives::tee_attestation_v1::{
+            AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
+            DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
+            EnclaveInitializationManifestV1, RegistrationIntentV1,
+        };
+        use outbe_tee::{
+            connect_or_initialize_validator_enclave, persist_replacement_candidate_submission,
+            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let socket_a = root.path().join("enclave-a.sock");
+        let socket_b = root.path().join("enclave-b.sock");
+        let endpoint_a = socket_a.to_str().unwrap().to_string();
+        let endpoint_b = socket_b.to_str().unwrap().to_string();
+        let chain_id = 18_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x13);
+
+        let boot_a = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-a-state"),
+            0,
+        ));
+        let boot_b = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("enclave-b-state"),
+            0,
+        ));
+        std::fs::create_dir(&boot_a.tee_dir).unwrap();
+        std::fs::create_dir(&boot_b.tee_dir).unwrap();
+        let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
+        let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
+        let initialization_a =
+            Arc::new(InitializationState::production(boot_a.clone(), &keys_a).unwrap());
+        let initialization_b =
+            Arc::new(InitializationState::production(boot_b.clone(), &keys_b).unwrap());
+
+        let listener_a = UnixListener::bind(&socket_a).unwrap();
+        let server_keys_a = keys_a.clone();
+        let server_a = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..3 {
+                let (stream, _) = listener_a.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys_a,
+                    &offer_key,
+                    Some(&boot_a),
+                    &initialization_a,
+                )
+                .unwrap();
+            }
+        });
+        let listener_b = UnixListener::bind(&socket_b).unwrap();
+        let server_keys_b = keys_b.clone();
+        let server_b = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..3 {
+                let (stream, _) = listener_b.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &server_keys_b,
+                    &offer_key,
+                    Some(&boot_b),
+                    &initialization_b,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let validator = Address::from_slice(&hash[12..]);
+        let identity = ValidatorNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            validator,
+            consensus_bls_public: [0x33; 48],
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+
+        drop(
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+                .unwrap(),
+        );
+        let candidate = prepare_validator_enclave_replacement_candidate(
+            &endpoint_b,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        let active_bytes = std::fs::read(
+            node_data_dir
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+        )
+        .unwrap();
+        let active = EnclaveInitializationManifestV1::decode_canonical(&active_bytes).unwrap();
+        assert_ne!(
+            active.enclave_id().unwrap(),
+            candidate.manifest().enclave_id().unwrap()
+        );
+        assert_eq!(
+            active.node_host_authorization_hash().unwrap(),
+            candidate.manifest().node_host_authorization_hash().unwrap()
+        );
+        let candidate_manifest = candidate.manifest().clone();
+        let candidate_path = node_data_dir
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .join(outbe_tee::node_host::NODE_HOST_REPLACEMENT_CANDIDATE_V1);
+        let candidate_bytes = std::fs::read(&candidate_path).unwrap();
+        drop(candidate);
+        let resumed = prepare_validator_enclave_replacement_candidate(
+            &endpoint_b,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        assert_eq!(resumed.manifest(), &candidate_manifest);
+        assert_eq!(std::fs::read(&candidate_path).unwrap(), candidate_bytes);
+        drop(resumed);
+
+        let intent = RegistrationIntentV1 {
+            chain_id: candidate_manifest.chain_id,
+            genesis_hash: candidate_manifest.genesis_hash,
+            operation: AttestationOperationV1::ReplaceEnclaveBinding,
+            attestation_mode: AttestationMode::DcapRequired,
+            policy_hash: B256::repeat_byte(0x21),
+            enclave_profile: candidate_manifest.enclave_profile,
+            node_id: candidate_manifest.node_id.clone(),
+            enclave_id: candidate_manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x45),
+            binding_version: 2,
+            registration_version: 1,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            requested_valid_until: 20_000,
+            recipient_x25519: candidate_manifest.recipient_x25519,
+            attestation_ed25519: candidate_manifest.attestation_ed25519,
+            noise_responder_x25519: candidate_manifest.noise_responder_x25519,
+            node_host_authorization_hash: candidate_manifest
+                .node_host_authorization_hash()
+                .unwrap(),
+        };
+        candidate_manifest.validate_intent_binding(&intent).unwrap();
+        let intent_hash = intent.intent_hash().unwrap();
+        let node_signature = sign(intent_hash).unwrap();
+        let enclave_signature = keys_b.sign_attestation(intent_hash.as_slice());
+        let components = (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect();
+        let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+            intent,
+            quote: vec![0x51],
+            components,
+        });
+        let submission = persist_replacement_candidate_submission(
+            &node_data_dir,
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        assert_eq!(
+            persist_replacement_candidate_submission(
+                &node_data_dir,
+                &evidence,
+                &node_signature,
+                &enclave_signature,
+            )
+            .unwrap(),
+            submission
+        );
+        let mut conflicting = evidence;
+        let AttestationEvidenceV1::Dcap(conflicting_dcap) = &mut conflicting else {
+            unreachable!();
+        };
+        conflicting_dcap.quote[0] ^= 1;
+        assert!(persist_replacement_candidate_submission(
+            &node_data_dir,
+            &conflicting,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts with the durable replacement submission"));
+
+        let mut active_client =
+            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+                .unwrap();
+        assert!(matches!(
+            active_client
+                .request(&EnclaveRequest::GetPublicKeys)
+                .unwrap(),
+            EnclaveResponse::PublicKeys { .. }
+        ));
+        drop(active_client);
+        server_a.join().unwrap();
+        server_b.join().unwrap();
+    }
+
+    #[test]
+    fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
+        use alloy_primitives::{Address, U256};
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        use outbe_tee::{
+            connect_or_initialize_validator_enclave,
+            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+        };
+
+        let root = tempfile::tempdir().unwrap();
+        let active_socket = root.path().join("active.sock");
+        let candidate_socket = root.path().join("candidate.sock");
+        let active_endpoint = active_socket.to_str().unwrap().to_string();
+        let candidate_endpoint = candidate_socket.to_str().unwrap().to_string();
+        let chain_id = 20_u64;
+        let chain_id_word = U256::from(chain_id).to_be_bytes();
+        let genesis_hash = B256::repeat_byte(0x15);
+        let active_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("active-state"),
+            0,
+        ));
+        let candidate_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("candidate-state"),
+            0,
+        ));
+        std::fs::create_dir(&active_boot.tee_dir).unwrap();
+        std::fs::create_dir(&candidate_boot.tee_dir).unwrap();
+        let active_keys = Arc::new(EnclaveKeys::new([0x79; 32], Some([0x79; 32])).unwrap());
+        let candidate_keys = Arc::new(EnclaveKeys::new([0x7a; 32], Some([0x7a; 32])).unwrap());
+        let active_initialization =
+            Arc::new(InitializationState::production(active_boot.clone(), &active_keys).unwrap());
+        let candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
+
+        let active_listener = UnixListener::bind(&active_socket).unwrap();
+        let active_server_keys = active_keys.clone();
+        let active_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            for _ in 0..2 {
+                let (stream, _) = active_listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &active_server_keys,
+                    &offer_key,
+                    Some(&active_boot),
+                    &active_initialization,
+                )
+                .unwrap();
+            }
+        });
+
+        let signing = k256::ecdsa::SigningKey::from_bytes((&[0x64; 32]).into()).unwrap();
+        let public = signing.verifying_key().to_encoded_point(false);
+        let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
+        let identity = ValidatorNodeHostIdentityV1 {
+            chain_id,
+            genesis_hash,
+            validator: Address::from_slice(&address_hash[12..]),
+            consensus_bls_public: [0x34; 48],
+        };
+        let sign = |hash: B256| {
+            let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
+                .sign_prehash(hash.as_slice())
+                .map_err(|error| error.to_string())?;
+            let mut bytes = [0_u8; 65];
+            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+            bytes[64] = recovery.to_byte();
+            Ok(bytes)
+        };
+        let node_data_dir = root.path().join("node-data");
+        std::fs::create_dir(&node_data_dir).unwrap();
+        drop(
+            connect_or_initialize_validator_enclave(
+                &active_endpoint,
+                &node_data_dir,
+                identity,
+                &sign,
+            )
+            .unwrap(),
+        );
+        active_server.join().unwrap();
+
+        let first_listener = UnixListener::bind(&candidate_socket).unwrap();
+        let first_server_keys = candidate_keys.clone();
+        let first_boot = candidate_boot.clone();
+        let first_initialization = candidate_initialization.clone();
+        let first_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let (stream, _) = first_listener.accept().unwrap();
+            serve_connection_with(
+                stream,
+                &first_server_keys,
+                &offer_key,
+                Some(&first_boot),
+                &first_initialization,
+            )
+            .unwrap();
+        });
+        assert!(prepare_validator_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .is_err());
+        first_server.join().unwrap();
+        std::fs::remove_file(&candidate_socket).unwrap();
+        drop(candidate_initialization);
+        let restarted_candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
+
+        let retry_listener = UnixListener::bind(&candidate_socket).unwrap();
+        retry_listener.set_nonblocking(true).unwrap();
+        let retry_server_keys = candidate_keys.clone();
+        let retry_server = std::thread::spawn(move || {
+            let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut accepted = 0;
+            while accepted < 3 && std::time::Instant::now() < deadline {
+                match retry_listener.accept() {
+                    Ok((stream, _)) => {
+                        let result = serve_connection_with(
+                            stream,
+                            &retry_server_keys,
+                            &offer_key,
+                            Some(&candidate_boot),
+                            &restarted_candidate_initialization,
+                        );
+                        if let Err(error) = result {
+                            assert!(
+                                error.to_string().contains("enclave is not initialized")
+                                    || error.to_string().contains("challenge mismatch"),
+                                "unexpected candidate retry error: {error}"
+                            );
+                        }
+                        accepted += 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("candidate retry listener failed: {error}"),
+                }
+            }
+            accepted
+        });
+        let retry = prepare_validator_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        );
+        match retry {
+            Ok(candidate) => drop(candidate),
+            Err(error) => {
+                let accepted = retry_server.join().unwrap();
+                panic!("candidate retry failed after {accepted} connections: {error}");
+            }
+        }
+        assert_eq!(retry_server.join().unwrap(), 3);
+    }
+
+    #[test]
     fn full_node_host_state_uses_exact_reth_p2p_identity_and_reconnects() {
         use alloy_primitives::U256;
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
         use outbe_primitives::tee_attestation_v1::{
             EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
         };
-        use outbe_tee::{connect_or_initialize_full_node_enclave, FullNodeNodeHostIdentityV1};
+        use outbe_tee::{
+            connect_or_initialize_full_node_enclave,
+            prepare_full_node_enclave_replacement_candidate, FullNodeNodeHostIdentityV1,
+        };
 
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("enclave.sock");
         let endpoint = socket.to_str().unwrap().to_string();
+        let candidate_socket = root.path().join("candidate-enclave.sock");
+        let candidate_endpoint = candidate_socket.to_str().unwrap().to_string();
         let chain_id = 17_u64;
         let chain_id_word = U256::from(chain_id).to_be_bytes();
         let genesis_hash = B256::repeat_byte(0x12);
@@ -2227,6 +2681,16 @@ mod tests {
         let keys = Arc::new(EnclaveKeys::new([0x75; 32], Some([0x75; 32])).unwrap());
         let initialization =
             Arc::new(InitializationState::production(boot.clone(), &keys).unwrap());
+        let candidate_boot = Arc::new(EnclaveBootConfig::new(
+            chain_id_word,
+            root.path().join("candidate-enclave-state"),
+            0,
+        ));
+        std::fs::create_dir(&candidate_boot.tee_dir).unwrap();
+        let candidate_keys = Arc::new(EnclaveKeys::new([0x78; 32], Some([0x78; 32])).unwrap());
+        let candidate_initialization = Arc::new(
+            InitializationState::production(candidate_boot.clone(), &candidate_keys).unwrap(),
+        );
         let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
         let listener = UnixListener::bind(&socket).unwrap();
         let server_keys = keys.clone();
@@ -2240,6 +2704,22 @@ mod tests {
                     &offer_key,
                     Some(&boot),
                     &server_initialization,
+                )
+                .unwrap();
+            }
+        });
+        let candidate_offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let candidate_listener = UnixListener::bind(&candidate_socket).unwrap();
+        let candidate_server_keys = candidate_keys.clone();
+        let candidate_server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (stream, _) = candidate_listener.accept().unwrap();
+                serve_connection_with(
+                    stream,
+                    &candidate_server_keys,
+                    &candidate_offer_key,
+                    Some(&candidate_boot),
+                    &candidate_initialization,
                 )
                 .unwrap();
             }
@@ -2286,7 +2766,25 @@ mod tests {
             EnclaveResponse::PublicKeys { .. }
         ));
         drop(reconnected);
+        let candidate = prepare_full_node_enclave_replacement_candidate(
+            &candidate_endpoint,
+            &node_data_dir,
+            identity,
+            &sign,
+        )
+        .unwrap();
+        assert_eq!(
+            candidate.manifest().enclave_profile,
+            EnclaveProfile::FullNode
+        );
+        assert_eq!(
+            candidate.manifest().node_id,
+            NodeIdV1::FullNode { reth_p2p_public }
+        );
+        let candidate_manifest = candidate.manifest().clone();
+        drop(candidate);
         server.join().unwrap();
+        candidate_server.join().unwrap();
 
         let manifest_bytes = std::fs::read(
             node_data_dir
@@ -2297,5 +2795,13 @@ mod tests {
         let manifest = EnclaveInitializationManifestV1::decode_canonical(&manifest_bytes).unwrap();
         assert_eq!(manifest.enclave_profile, EnclaveProfile::FullNode);
         assert_eq!(manifest.node_id, NodeIdV1::FullNode { reth_p2p_public });
+        assert_ne!(
+            manifest.enclave_id().unwrap(),
+            candidate_manifest.enclave_id().unwrap()
+        );
+        assert_eq!(
+            manifest.node_host_authorization_hash().unwrap(),
+            candidate_manifest.node_host_authorization_hash().unwrap()
+        );
     }
 }

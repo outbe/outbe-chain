@@ -222,8 +222,14 @@ hardware evidence:
   `#[cfg(test)]` capability strictly after the verifier boundary; it accepts a
   typed pre-verified `DcapVerdictV1`, cannot parse evidence or replace QVL, is
   absent from non-test compilation and never counts as DCAP E2E evidence;
+- I5 candidate-lifecycle tests use real NodeHost/enclave keys, real UDS Noise
+  sessions, canonical evidence bytes and real proofs of possession. Their
+  accepted Registry mutation still begins strictly after that private typed
+  verifier capability, so these are reachable lifecycle tests rather than
+  Intel-hardware acceptance evidence;
 - I9 alone requires fresh accepted Processor-CA evidence for the exact release
-  enclave/policy and accepted registered multi-package Platform-CA evidence.
+  enclave/policy, including the A-to-B replacement path, and accepted registered
+  multi-package Platform-CA evidence.
 
 For I9, `fresh` means the release job freezes the candidate enclave ELF/SGX
 manifest and measurement, chain/genesis and exact active policy bytes before

@@ -8490,7 +8490,9 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-validatorset",
+ "tempfile",
 ]
 
 [[package]]

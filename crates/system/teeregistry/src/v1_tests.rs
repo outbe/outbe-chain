@@ -7,9 +7,9 @@ use outbe_primitives::{
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider, StorageHandle},
     tee_attestation_v1::{
-        AttestationMode, AttestationOperationV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
-        QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, TeeMeasurementRuleV1, TeePolicyV1,
-        TeeRegistryGasScheduleV1,
+        AttestationMode, AttestationOperationV1, EnclaveInitializationManifestV1, EnclaveProfile,
+        NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1,
+        TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
     },
 };
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerdictV1};
@@ -18,12 +18,27 @@ use outbe_validatorset::contract::ValidatorSet;
 use crate::{
     schema::TeeRegistry,
     v1::{PostVerifierDcapCapabilityV1, V1RegistrationOutcome},
-    v1_precompile::dispatch_register_after_verifier_for_test,
+    v1_precompile::{
+        dispatch_register_after_verifier_for_test, dispatch_renew_after_verifier_for_test,
+        dispatch_replace_after_verifier_for_test,
+    },
 };
 
 sol! {
     interface IRegisterEnclaveV1Test {
         function registerEnclave(
+            bytes calldata evidence,
+            bytes calldata nodeSignature,
+            bytes calldata enclaveSignature
+        ) external returns (bool);
+
+        function renewEnclave(
+            bytes calldata evidence,
+            bytes calldata nodeSignature,
+            bytes calldata enclaveSignature
+        ) external returns (bool);
+
+        function replaceEnclaveBinding(
             bytes calldata evidence,
             bytes calldata nodeSignature,
             bytes calldata enclaveSignature
@@ -36,6 +51,7 @@ const NOW: u64 = 10_000;
 const MRENCLAVE: B256 = B256::repeat_byte(0x81);
 const MRSIGNER: B256 = B256::repeat_byte(0x82);
 const CONSENSUS_KEY: [u8; 48] = [0x32; 48];
+const NODE_HOST_NOISE_X25519: [u8; 32] = [0xa5; 32];
 
 fn policy(genesis_hash: B256, statuses: PlatformTcbStatusSetV1) -> TeePolicyV1 {
     TeePolicyV1 {
@@ -103,6 +119,29 @@ fn register_validator(
         .expect("genesis-owner validator registration");
 }
 
+fn initialization_manifest_for_intent(
+    intent: &RegistrationIntentV1,
+    challenge: [u8; 32],
+) -> EnclaveInitializationManifestV1 {
+    EnclaveInitializationManifestV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        enclave_profile: intent.enclave_profile,
+        node_id: intent.node_id.clone(),
+        initialization_challenge: challenge,
+        node_host_noise_x25519: NODE_HOST_NOISE_X25519,
+        recipient_x25519: intent.recipient_x25519,
+        attestation_ed25519: intent.attestation_ed25519,
+        noise_responder_x25519: intent.noise_responder_x25519,
+    }
+}
+
+fn bind_reachable_node_host_authorization(intent: &mut RegistrationIntentV1, challenge: [u8; 32]) {
+    let manifest = initialization_manifest_for_intent(intent, challenge);
+    intent.node_host_authorization_hash = manifest.node_host_authorization_hash().unwrap();
+    manifest.validate_intent_binding(intent).unwrap();
+}
+
 fn registration_intent(
     policy: &TeePolicyV1,
     node_signer: &OutbeEvmSigner,
@@ -132,9 +171,10 @@ fn registration_intent(
         recipient_x25519: [key_seed; 32],
         attestation_ed25519: enclave_signer.verifying_key().to_bytes(),
         noise_responder_x25519: [key_seed.wrapping_add(1); 32],
-        node_host_authorization_hash: B256::repeat_byte(key_seed.wrapping_add(2)),
+        node_host_authorization_hash: B256::repeat_byte(1),
     };
     intent.enclave_id = intent.derived_enclave_id().unwrap();
+    bind_reachable_node_host_authorization(&mut intent, [0xa6; 32]);
     intent
 }
 
@@ -166,9 +206,10 @@ fn full_node_registration_intent(
         recipient_x25519: [key_seed; 32],
         attestation_ed25519: enclave_signer.verifying_key().to_bytes(),
         noise_responder_x25519: [key_seed.wrapping_add(1); 32],
-        node_host_authorization_hash: B256::repeat_byte(key_seed.wrapping_add(2)),
+        node_host_authorization_hash: B256::repeat_byte(1),
     };
     intent.enclave_id = intent.derived_enclave_id().unwrap();
+    bind_reachable_node_host_authorization(&mut intent, [0xa6; 32]);
     intent
 }
 
@@ -224,6 +265,44 @@ fn verdict(status: DcapPlatformTcbStatusV1) -> DcapVerdictV1 {
         qe_tcb_evaluation_data_number: 17,
         collateral_valid_until: NOW + 7_200,
     }
+}
+
+fn renewal_intent(
+    current: &RegistrationIntentV1,
+    requested_valid_until: u64,
+) -> RegistrationIntentV1 {
+    let mut intent = current.clone();
+    intent.operation = AttestationOperationV1::RenewEnclave;
+    intent.registration_version += 1;
+    intent.renewal_nonce += 1;
+    intent.requested_valid_until = requested_valid_until;
+    intent
+}
+
+fn replacement_intent(
+    current: &RegistrationIntentV1,
+    enclave_signer: &ed25519_dalek::SigningKey,
+    binding_seed: u8,
+    key_seed: u8,
+    requested_valid_until: u64,
+) -> RegistrationIntentV1 {
+    let mut intent = current.clone();
+    intent.operation = AttestationOperationV1::ReplaceEnclaveBinding;
+    intent.binding_id = B256::repeat_byte(binding_seed);
+    intent.binding_version += 1;
+    intent.registration_version += 1;
+    intent.requested_valid_until = requested_valid_until;
+    intent.recipient_x25519 = [key_seed; 32];
+    intent.attestation_ed25519 = enclave_signer.verifying_key().to_bytes();
+    intent.noise_responder_x25519 = [key_seed.wrapping_add(1); 32];
+    intent.enclave_id = intent.derived_enclave_id().unwrap();
+    let manifest = initialization_manifest_for_intent(&intent, [0xa7; 32]);
+    assert_eq!(
+        manifest.node_host_authorization_hash().unwrap(),
+        current.node_host_authorization_hash
+    );
+    manifest.validate_intent_binding(&intent).unwrap();
+    intent
 }
 
 fn revert_message(error: PrecompileError) -> String {
@@ -402,7 +481,7 @@ fn proposer_validator_and_follower_apply_identical_full_state_verdict_and_gas() 
     let expected_operations = proposer.metered_storage_operations();
     let (reads, writes) = expected_operations;
     assert!(reads > 0);
-    assert_eq!(writes, 32, "fresh V1 binding storage schema drifted");
+    assert_eq!(writes, 34, "fresh V1 binding storage schema drifted");
     let storage_gas = reads * 100 + writes * 5_000;
     assert!(storage_gas <= storage_allowance);
     assert_eq!(
@@ -484,7 +563,7 @@ fn full_node_proposer_validator_and_follower_apply_identical_abi_state_and_gas()
     let (reads, writes) = expected_operations;
     assert!(reads > 0);
     assert_eq!(
-        writes, 23,
+        writes, 25,
         "fresh FullNode V1 binding storage schema drifted"
     );
     let storage_gas = reads * 100 + writes * 5_000;
@@ -699,6 +778,74 @@ fn full_node_binding_is_idempotent_expires_and_rejects_validator_credentials() {
             .len(),
         1
     );
+}
+
+#[test]
+fn full_node_renewal_and_replacement_follow_the_shared_lease_lifecycle() {
+    let genesis_hash = B256::repeat_byte(0x25);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x7B; 32]).into()).unwrap();
+    let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7C; 32]);
+    let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7D; 32]);
+    let initial =
+        full_node_registration_intent(&active_policy, &node_signer, &old_enclave, 0x6D, 0x6E);
+    let renewal = renewal_intent(&initial, NOW + 6_000);
+    let replacement = replacement_intent(&renewal, &new_enclave, 0x6F, 0x70, NOW + 6_000);
+    let (initial_node, initial_enclave) =
+        full_node_signatures(&initial, &node_signer, &old_enclave);
+    let (renewal_node, renewal_enclave) =
+        full_node_signatures(&renewal, &node_signer, &old_enclave);
+    let (replacement_node, replacement_enclave) =
+        full_node_signatures(&replacement, &node_signer, &new_enclave);
+    let p2p_public = full_node_public(&initial);
+    let mut accepted = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    accepted.collateral_valid_until = NOW + 12_000;
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node,
+                &initial_enclave,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + 2_400))
+            .unwrap();
+        registry
+            .renew_enclave_after_verifier_for_test(
+                &renewal,
+                &renewal_node,
+                &renewal_enclave,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+        registry
+            .replace_enclave_binding_after_verifier_for_test(
+                &replacement,
+                &replacement_node,
+                &replacement_enclave,
+                PostVerifierDcapCapabilityV1::new(accepted),
+            )
+            .unwrap();
+
+        let binding = registry
+            .full_node_enclave_binding_v1(p2p_public)
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.enclave_id, replacement.enclave_id);
+        assert_eq!(binding.binding_version, 2);
+        assert_eq!(binding.registration_version, 2);
+        assert_eq!(binding.renewal_nonce, 1);
+        assert!(registry.is_full_node_enclave_ready_v1(p2p_public).unwrap());
+    });
 }
 
 #[test]
@@ -995,4 +1142,769 @@ fn initial_policy_is_state_authority_and_is_write_once() {
         )
         .contains("chain identity mismatch"));
     });
+}
+
+#[test]
+fn an_existing_lease_is_not_retroactively_filtered_by_the_policy_anchor() {
+    let genesis_hash = B256::repeat_byte(0x26);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x7E; 32]).unwrap();
+    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x7F; 32]);
+    let intent = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &enclave_signer,
+        0x71,
+        0x72,
+    );
+    let (node_signature, enclave_signature) = signatures(&intent, &node_signer, &enclave_signer);
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage);
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &intent,
+                &node_signature,
+                &enclave_signature,
+                PostVerifierDcapCapabilityV1::new(verdict(DcapPlatformTcbStatusV1::UpToDate)),
+            )
+            .unwrap();
+        let admitted_policy_hash = active_policy.policy_hash().unwrap();
+        registry
+            .active_v1_policy_hash
+            .write(B256::repeat_byte(0xEE))
+            .unwrap();
+
+        assert!(registry
+            .is_validator_enclave_ready_v1(node_signer.address())
+            .unwrap());
+        assert_eq!(
+            registry
+                .validator_enclave_binding_v1(node_signer.address())
+                .unwrap()
+                .unwrap()
+                .policy_hash,
+            admitted_policy_hash
+        );
+    });
+}
+
+#[test]
+fn renewal_opens_in_final_third_accepts_expired_current_and_is_exactly_idempotent() {
+    let genesis_hash = B256::repeat_byte(0x21);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x71; 32]).unwrap();
+    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x72; 32]);
+    let initial = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &enclave_signer,
+        0x61,
+        0x62,
+    );
+    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &enclave_signer);
+    let renewal = renewal_intent(&initial, NOW + 6_000);
+    let (renewal_node, renewal_enclave) = signatures(&renewal, &node_signer, &enclave_signer);
+    let mut fresh_verdict = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    fresh_verdict.collateral_valid_until = NOW + 12_000;
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node,
+                &initial_enclave,
+                PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+            )
+            .unwrap();
+
+        storage
+            .set_block_timestamp(U256::from(NOW + 2_399))
+            .unwrap();
+        assert!(revert_message(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &renewal,
+                    &renewal_node,
+                    &renewal_enclave,
+                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+                )
+                .unwrap_err()
+        )
+        .contains("final third"));
+
+        storage
+            .set_block_timestamp(U256::from(NOW + 2_400))
+            .unwrap();
+        assert_eq!(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &renewal,
+                    &renewal_node,
+                    &renewal_enclave,
+                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Created
+        );
+        assert_eq!(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &renewal,
+                    &renewal_node,
+                    &renewal_enclave,
+                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Idempotent
+        );
+        assert!(revert_message(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &renewal,
+                    &renewal_node,
+                    &renewal_enclave,
+                    PostVerifierDcapCapabilityV1::with_evidence_hash(
+                        fresh_verdict.clone(),
+                        B256::repeat_byte(0xED),
+                    ),
+                )
+                .unwrap_err()
+        )
+        .contains("exact evidence replay"));
+        let binding = registry
+            .validator_enclave_binding_v1(node_signer.address())
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.registration_version, 1);
+        assert_eq!(binding.renewal_nonce, 1);
+        assert_eq!(binding.lease_started_at, NOW + 2_400);
+        assert_eq!(binding.valid_until, NOW + 6_000);
+
+        let mut stale = renewal.clone();
+        stale.registration_version = 0;
+        stale.renewal_nonce = 0;
+        let (stale_node, stale_enclave) = signatures(&stale, &node_signer, &enclave_signer);
+        assert!(revert_message(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &stale,
+                    &stale_node,
+                    &stale_enclave,
+                    PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+                )
+                .unwrap_err()
+        )
+        .contains("next renewal"));
+    });
+
+    let mut expired_provider = storage(genesis_hash);
+    StorageHandle::enter(&mut expired_provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node,
+                &initial_enclave,
+                PostVerifierDcapCapabilityV1::new(fresh_verdict.clone()),
+            )
+            .unwrap();
+        storage
+            .set_block_timestamp(U256::from(initial.requested_valid_until))
+            .unwrap();
+        let expired_renewal = renewal_intent(&initial, NOW + 7_200);
+        let (node_signature, enclave_signature) =
+            signatures(&expired_renewal, &node_signer, &enclave_signer);
+        assert_eq!(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &expired_renewal,
+                    &node_signature,
+                    &enclave_signature,
+                    PostVerifierDcapCapabilityV1::new(fresh_verdict),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Created
+        );
+        assert!(registry
+            .is_validator_enclave_ready_v1(node_signer.address())
+            .unwrap());
+    });
+}
+
+#[test]
+fn renewal_rejects_collateral_margin_underflow_without_extending_state() {
+    let genesis_hash = B256::repeat_byte(0x22);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x73; 32]).unwrap();
+    let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x74; 32]);
+    let initial = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &enclave_signer,
+        0x63,
+        0x64,
+    );
+    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &enclave_signer);
+    let renewal = renewal_intent(&initial, NOW + 6_000);
+    let (renewal_node, renewal_enclave) = signatures(&renewal, &node_signer, &enclave_signer);
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        let mut initial_verdict = verdict(DcapPlatformTcbStatusV1::UpToDate);
+        initial_verdict.collateral_valid_until = NOW + 12_000;
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node,
+                &initial_enclave,
+                PostVerifierDcapCapabilityV1::new(initial_verdict),
+            )
+            .unwrap();
+        storage
+            .set_block_timestamp(U256::from(NOW + 2_400))
+            .unwrap();
+        let before = registry
+            .validator_enclave_binding_v1(node_signer.address())
+            .unwrap()
+            .unwrap();
+        let mut underflow = verdict(DcapPlatformTcbStatusV1::UpToDate);
+        underflow.collateral_valid_until = active_policy.collateral_margin - 1;
+        assert!(revert_message(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &renewal,
+                    &renewal_node,
+                    &renewal_enclave,
+                    PostVerifierDcapCapabilityV1::new(underflow),
+                )
+                .unwrap_err()
+        )
+        .contains("safety margin"));
+        assert_eq!(
+            registry
+                .validator_enclave_binding_v1(node_signer.address())
+                .unwrap()
+                .unwrap(),
+            before
+        );
+    });
+}
+
+#[test]
+fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
+    use std::{
+        os::unix::net::UnixListener,
+        sync::{Arc, OnceLock},
+    };
+
+    use outbe_primitives::tee_attestation_v1::{
+        AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
+    };
+    use outbe_tee::{
+        connect_or_initialize_validator_enclave, load_replacement_candidate_submission,
+        persist_replacement_candidate_submission, prepare_validator_enclave_replacement_candidate,
+        ValidatorNodeHostIdentityV1,
+    };
+    use outbe_tee_enclave::{
+        initialization::InitializationState,
+        keys::EnclaveKeys,
+        seal::EnclaveBootConfig,
+        transport::{
+            serve_connection_with, serve_connection_with_synthetic_dcap, SharedTributeOfferKey,
+        },
+    };
+
+    let genesis_hash = B256::repeat_byte(0x23);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x75; 32]).unwrap();
+    let identity = ValidatorNodeHostIdentityV1 {
+        chain_id: CHAIN_ID,
+        genesis_hash,
+        validator: node_signer.address(),
+        consensus_bls_public: CONSENSUS_KEY,
+    };
+    let sign = |hash: B256| {
+        node_signer
+            .sign_hash(&hash)
+            .map_err(|error| error.to_string())
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let socket_a = root.path().join("active-enclave.sock");
+    let socket_b = root.path().join("candidate-enclave.sock");
+    let endpoint_a = socket_a.to_str().unwrap().to_owned();
+    let endpoint_b = socket_b.to_str().unwrap().to_owned();
+    let boot_a = Arc::new(EnclaveBootConfig::new(
+        active_policy.chain_id,
+        root.path().join("active-enclave-state"),
+        0,
+    ));
+    let boot_b = Arc::new(EnclaveBootConfig::new(
+        active_policy.chain_id,
+        root.path().join("candidate-enclave-state"),
+        0,
+    ));
+    std::fs::create_dir(&boot_a.tee_dir).unwrap();
+    std::fs::create_dir(&boot_b.tee_dir).unwrap();
+    let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
+    let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
+    let initialization_a =
+        Arc::new(InitializationState::production(boot_a.clone(), &keys_a).unwrap());
+    let initialization_b =
+        Arc::new(InitializationState::production(boot_b.clone(), &keys_b).unwrap());
+
+    let listener_a = UnixListener::bind(&socket_a).unwrap();
+    let server_keys_a = keys_a.clone();
+    let server_a = std::thread::spawn(move || {
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        for _ in 0..2 {
+            let (stream, _) = listener_a.accept().unwrap();
+            serve_connection_with(
+                stream,
+                &server_keys_a,
+                &offer_key,
+                Some(&boot_a),
+                &initialization_a,
+            )
+            .unwrap();
+        }
+    });
+    let listener_b = UnixListener::bind(&socket_b).unwrap();
+    let server_keys_b = keys_b.clone();
+    let server_b = std::thread::spawn(move || {
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        for _ in 0..2 {
+            let (stream, _) = listener_b.accept().unwrap();
+            serve_connection_with_synthetic_dcap(
+                stream,
+                &server_keys_b,
+                &offer_key,
+                Some(&boot_b),
+                &initialization_b,
+            )
+            .unwrap();
+        }
+    });
+
+    let node_data_dir = root.path().join("node-data");
+    std::fs::create_dir(&node_data_dir).unwrap();
+    drop(
+        connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, &sign)
+            .unwrap(),
+    );
+    let active_manifest_bytes = std::fs::read(
+        node_data_dir
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+    )
+    .unwrap();
+    let active_manifest =
+        EnclaveInitializationManifestV1::decode_canonical(&active_manifest_bytes).unwrap();
+    let initial = RegistrationIntentV1 {
+        chain_id: active_manifest.chain_id,
+        genesis_hash: active_manifest.genesis_hash,
+        operation: AttestationOperationV1::RegisterEnclave,
+        attestation_mode: AttestationMode::DcapRequired,
+        policy_hash: active_policy.policy_hash().unwrap(),
+        enclave_profile: active_manifest.enclave_profile,
+        node_id: active_manifest.node_id.clone(),
+        enclave_id: active_manifest.enclave_id().unwrap(),
+        binding_id: B256::repeat_byte(0x66),
+        binding_version: 1,
+        registration_version: 0,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        requested_valid_until: NOW + 3_600,
+        recipient_x25519: active_manifest.recipient_x25519,
+        attestation_ed25519: active_manifest.attestation_ed25519,
+        noise_responder_x25519: active_manifest.noise_responder_x25519,
+        node_host_authorization_hash: active_manifest.node_host_authorization_hash().unwrap(),
+    };
+    active_manifest.validate_intent_binding(&initial).unwrap();
+    let initial_hash = initial.intent_hash().unwrap();
+    let initial_node_signature = node_signer.sign_hash(&initial_hash).unwrap();
+    let initial_enclave_signature = keys_a.sign_attestation(initial_hash.as_slice());
+
+    let mut candidate = prepare_validator_enclave_replacement_candidate(
+        &endpoint_b,
+        &node_data_dir,
+        identity,
+        &sign,
+    )
+    .unwrap();
+    let candidate_manifest = candidate.manifest().clone();
+    let mut replacement = initial.clone();
+    replacement.operation = AttestationOperationV1::ReplaceEnclaveBinding;
+    replacement.enclave_id = candidate_manifest.enclave_id().unwrap();
+    replacement.binding_id = B256::repeat_byte(0x68);
+    replacement.binding_version = 2;
+    replacement.registration_version = 1;
+    replacement.requested_valid_until = NOW + 3_600;
+    replacement.recipient_x25519 = candidate_manifest.recipient_x25519;
+    replacement.attestation_ed25519 = candidate_manifest.attestation_ed25519;
+    replacement.noise_responder_x25519 = candidate_manifest.noise_responder_x25519;
+    replacement.node_host_authorization_hash =
+        candidate_manifest.node_host_authorization_hash().unwrap();
+    candidate_manifest
+        .validate_intent_binding(&replacement)
+        .unwrap();
+    assert_eq!(
+        replacement.node_host_authorization_hash,
+        initial.node_host_authorization_hash
+    );
+
+    let generated = candidate.generate_dcap_quote(&replacement).unwrap();
+    let replacement_hash = replacement.intent_hash().unwrap();
+    let replacement_node_signature = node_signer.sign_hash(&replacement_hash).unwrap();
+    let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+        intent: replacement.clone(),
+        quote: generated.quote_body.clone(),
+        components: (1_u8..=8)
+            .map(|kind| DcapCollateralComponentV1 {
+                kind: DcapCollateralKind::try_from(kind).unwrap(),
+                bytes: vec![kind],
+            })
+            .collect(),
+    });
+    let exact_evidence = evidence.encode_canonical().unwrap();
+    let submission = persist_replacement_candidate_submission(
+        &node_data_dir,
+        &evidence,
+        &replacement_node_signature,
+        &generated.enclave_signature,
+    )
+    .unwrap();
+    assert_eq!(submission.evidence(), exact_evidence);
+    assert_eq!(
+        load_replacement_candidate_submission(&node_data_dir)
+            .unwrap()
+            .unwrap(),
+        submission
+    );
+    let AttestationEvidenceV1::Dcap(submitted) =
+        AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap()
+    else {
+        unreachable!();
+    };
+    assert_eq!(
+        submitted.intent.encode_canonical().unwrap(),
+        replacement.encode_canonical().unwrap()
+    );
+    assert_eq!(submitted.quote, generated.quote_body);
+
+    let mut accepted = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    accepted.collateral_valid_until = NOW + 12_000;
+    let mut provider = storage(genesis_hash);
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node_signature,
+                &initial_enclave_signature,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            registry
+                .replace_enclave_binding_after_verifier_for_test(
+                    &submitted.intent,
+                    submission.node_signature(),
+                    submission.enclave_signature(),
+                    PostVerifierDcapCapabilityV1::new(accepted),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Created
+        );
+        let binding = registry
+            .validator_enclave_binding_v1(node_signer.address())
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.enclave_id, candidate_manifest.enclave_id().unwrap());
+        assert_eq!(binding.binding_id, replacement.binding_id);
+        assert_eq!(binding.binding_version, replacement.binding_version);
+        assert_eq!(
+            binding.registration_version,
+            replacement.registration_version
+        );
+    });
+
+    drop(candidate);
+    server_a.join().unwrap();
+    server_b.join().unwrap();
+}
+
+#[test]
+fn replacement_candidate_intent_reaches_registry_unchanged_and_never_reuses_consumed_ids() {
+    let genesis_hash = B256::repeat_byte(0x23);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x75; 32]).unwrap();
+    let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x76; 32]);
+    let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
+    let initial = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &old_enclave,
+        0x65,
+        0x66,
+    );
+    let replacement = replacement_intent(&initial, &new_enclave, 0x67, 0x68, NOW + 3_600);
+    let active_manifest = initialization_manifest_for_intent(&initial, [0xa6; 32]);
+    let candidate_manifest = initialization_manifest_for_intent(&replacement, [0xa7; 32]);
+    assert_ne!(
+        active_manifest.authorization_hash().unwrap(),
+        candidate_manifest.authorization_hash().unwrap()
+    );
+    assert_eq!(
+        active_manifest.node_host_authorization_hash().unwrap(),
+        candidate_manifest.node_host_authorization_hash().unwrap()
+    );
+    candidate_manifest
+        .validate_intent_binding(&replacement)
+        .unwrap();
+    let candidate_intent_bytes = replacement.encode_canonical().unwrap();
+    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &old_enclave);
+    let (replacement_node, replacement_enclave) =
+        signatures(&replacement, &node_signer, &new_enclave);
+    let mut accepted = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    accepted.collateral_valid_until = NOW + 12_000;
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+        let mut registry = TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&active_policy).unwrap();
+        registry
+            .register_enclave_after_verifier_for_test(
+                &initial,
+                &initial_node,
+                &initial_enclave,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+        assert_eq!(
+            registry
+                .replace_enclave_binding_after_verifier_for_test(
+                    &replacement,
+                    &replacement_node,
+                    &replacement_enclave,
+                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Created
+        );
+        assert_eq!(
+            registry
+                .replace_enclave_binding_after_verifier_for_test(
+                    &replacement,
+                    &replacement_node,
+                    &replacement_enclave,
+                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                )
+                .unwrap(),
+            V1RegistrationOutcome::Idempotent
+        );
+        let binding = registry
+            .validator_enclave_binding_v1(node_signer.address())
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.enclave_id, replacement.enclave_id);
+        assert_eq!(binding.binding_id, replacement.binding_id);
+        assert_eq!(binding.binding_version, 2);
+        assert_eq!(binding.registration_version, 1);
+        assert_eq!(
+            replacement.encode_canonical().unwrap(),
+            candidate_intent_bytes
+        );
+
+        let old_renewal = renewal_intent(&initial, NOW + 6_000);
+        let (old_node, old_enclave_signature) =
+            signatures(&old_renewal, &node_signer, &old_enclave);
+        storage
+            .set_block_timestamp(U256::from(NOW + 2_400))
+            .unwrap();
+        assert!(revert_message(
+            registry
+                .renew_enclave_after_verifier_for_test(
+                    &old_renewal,
+                    &old_node,
+                    &old_enclave_signature,
+                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                )
+                .unwrap_err()
+        )
+        .contains("superseded"));
+
+        let current = replacement.clone();
+        let attempted_reuse = replacement_intent(&current, &old_enclave, 0x65, 0x66, NOW + 6_000);
+        let (reuse_node, reuse_enclave) = signatures(&attempted_reuse, &node_signer, &old_enclave);
+        assert!(revert_message(
+            registry
+                .replace_enclave_binding_after_verifier_for_test(
+                    &attempted_reuse,
+                    &reuse_node,
+                    &reuse_enclave,
+                    PostVerifierDcapCapabilityV1::new(accepted),
+                )
+                .unwrap_err()
+        )
+        .contains("already been used"));
+    });
+}
+
+#[test]
+fn renew_and_replace_abi_are_replica_deterministic_and_fit_normative_gas() {
+    let genesis_hash = B256::repeat_byte(0x24);
+    let active_policy = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrSWHardeningNeeded,
+    );
+    let node_signer = OutbeEvmSigner::from_secret_bytes([0x78; 32]).unwrap();
+    let old_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x79; 32]);
+    let new_enclave = ed25519_dalek::SigningKey::from_bytes(&[0x7A; 32]);
+    let initial = registration_intent(
+        &active_policy,
+        &node_signer,
+        CONSENSUS_KEY,
+        &old_enclave,
+        0x69,
+        0x6A,
+    );
+    let renewal = renewal_intent(&initial, NOW + 6_000);
+    let replacement = replacement_intent(&renewal, &new_enclave, 0x6B, 0x6C, NOW + 6_000);
+    let (initial_node, initial_enclave) = signatures(&initial, &node_signer, &old_enclave);
+    let (renewal_node, renewal_enclave) = signatures(&renewal, &node_signer, &old_enclave);
+    let (replacement_node, replacement_enclave) =
+        signatures(&replacement, &node_signer, &new_enclave);
+    let evidence = vec![0xA7; 4_096];
+    let renewal_call = IRegisterEnclaveV1Test::renewEnclaveCall {
+        evidence: evidence.clone().into(),
+        nodeSignature: renewal_node.to_vec().into(),
+        enclaveSignature: renewal_enclave.to_vec().into(),
+    }
+    .abi_encode();
+    let replacement_call = IRegisterEnclaveV1Test::replaceEnclaveBindingCall {
+        evidence: evidence.clone().into(),
+        nodeSignature: replacement_node.to_vec().into(),
+        enclaveSignature: replacement_enclave.to_vec().into(),
+    }
+    .abi_encode();
+    let mut accepted = verdict(DcapPlatformTcbStatusV1::UpToDate);
+    accepted.collateral_valid_until = NOW + 12_000;
+
+    let execute = || {
+        let mut provider = storage(genesis_hash);
+        StorageHandle::enter(&mut provider, |storage| {
+            register_validator(storage.clone(), &node_signer, CONSENSUS_KEY);
+            let mut registry = TeeRegistry::new(storage.clone());
+            registry.install_initial_policy_v1(&active_policy).unwrap();
+            registry
+                .register_enclave_after_verifier_for_test(
+                    &initial,
+                    &initial_node,
+                    &initial_enclave,
+                    PostVerifierDcapCapabilityV1::new(accepted.clone()),
+                )
+                .unwrap();
+            storage
+                .set_block_timestamp(U256::from(NOW + 2_400))
+                .unwrap();
+        });
+        provider.enable_production_storage_gas_metering();
+        provider.set_gas_limit(u64::MAX);
+        StorageHandle::enter(&mut provider, |storage| {
+            dispatch_renew_after_verifier_for_test(
+                storage.clone(),
+                &renewal_call,
+                &renewal,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+            dispatch_replace_after_verifier_for_test(
+                storage,
+                &replacement_call,
+                &replacement,
+                PostVerifierDcapCapabilityV1::new(accepted.clone()),
+            )
+            .unwrap();
+        });
+        provider
+    };
+    let proposer = execute();
+    let validator = execute();
+    let follower = execute();
+    for replica in [&validator, &follower] {
+        assert_eq!(replica.storage, proposer.storage);
+        assert_eq!(replica.get_ordered_events(), proposer.get_ordered_events());
+        assert_eq!(
+            replica.metered_storage_operations(),
+            proposer.metered_storage_operations()
+        );
+        assert_eq!(replica.gas_used(), proposer.gas_used());
+    }
+
+    let schedule = TeeRegistryGasScheduleV1::normative();
+    let mut maximum_total = 0_u64;
+    let mut intrinsic_total = 0_u64;
+    let mut allowance_total = 0_u64;
+    for (kind, call) in [
+        (RegistryMutatorV1::RenewEnclave, &renewal_call),
+        (RegistryMutatorV1::ReplaceEnclaveBinding, &replacement_call),
+    ] {
+        let maximum = schedule
+            .maximum_transaction_gas(
+                kind,
+                call.len(),
+                evidence.len(),
+                active_policy.measurement_rules.len(),
+                AttestationMode::DcapRequired,
+            )
+            .unwrap();
+        assert!(maximum < 30_000_000);
+        maximum_total += maximum;
+        intrinsic_total += schedule.maximum_calldata_intrinsic_gas(call.len()).unwrap();
+        allowance_total += schedule.mutator_storage_gas_allowance(kind);
+    }
+    let (reads, writes) = proposer.metered_storage_operations();
+    let storage_gas = reads * 100 + writes * 5_000;
+    assert!(storage_gas <= allowance_total);
+    assert_eq!(
+        intrinsic_total + 2 * 200 + proposer.gas_used(),
+        maximum_total - allowance_total + storage_gas
+    );
+    assert!(intrinsic_total + 2 * 200 + proposer.gas_used() <= maximum_total);
 }

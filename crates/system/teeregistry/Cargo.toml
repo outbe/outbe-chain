@@ -20,6 +20,8 @@ tee-attestation-v1 = []
 [dev-dependencies]
 ed25519-dalek.workspace = true
 k256.workspace = true
+outbe-tee-enclave = { workspace = true, features = ["mock"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

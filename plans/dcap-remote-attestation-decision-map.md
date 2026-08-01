@@ -250,8 +250,14 @@ Can a quote be replayed for another chain, node, operation, or lease?
   intent.
 - `REPORT_DATA` binds the canonical intent: chain, genesis, operation, node
   identity, profile, enclave keys, policy, version/nonces, and requested lease.
-- The remaining commitment binds the genesis, active policy, and the single
-  `NodeHost` authorization. V1 has no role-key set.
+- The exact full initialization-manifest hash remains node-signed and includes
+  the one-use challenge plus all enclave keys. It is never reused for a fresh
+  enclave.
+- The intent's separate domain-separated `NodeHost` authorization binds protocol
+  version, chain, genesis, profile, canonical node identity and the one
+  persistent `NodeHost` Noise public key. It deliberately excludes the
+  challenge and enclave keys so a replacement can preserve host authority while
+  receiving a fresh enclave identity. V1 has no role-key set.
 - There is no unbound-attestation mode.
 - A quote may be cached or retried only for the exact same intent hash.
 - Monotonic on-chain version/nonces and exact idempotent replay provide
@@ -304,6 +310,18 @@ Is attestation a permanent record or a renewable authorization?
 - Renewal requires the exact next version/nonce and a fresh intent-bound quote.
 - Exact current replay is idempotent; old or conflicting replay rejects.
 - An expired current identity may renew; a superseded identity cannot.
+- Replacement stages a fresh candidate B under the same persistent `NodeHost`
+  authority while committed A remains the only normal startup target. The host
+  creates the canonical replacement intent; B quotes and signs that exact intent,
+  and Registry
+  supersession makes the old enclave/binding IDs permanently consumed.
+- Candidate state and exact submission bytes are owner-only, bounded and durable.
+  Restart may resume the same enclave identity but may not silently substitute
+  another B or auto-promote it.
+- Local receipt, RPC or an operator flag cannot promote B. Atomic promotion
+  requires an opaque authorization for the exact finalized replacement intent
+  and candidate manifest; its production construction belongs to I6.
+- Candidate B receives no offer key and no consensus-readiness claim in I5.
 - There is no standalone API that pretends to erase a secret already delivered
   to an enclave.
 

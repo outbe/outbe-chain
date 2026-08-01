@@ -17,6 +17,7 @@ pub const REGISTRATION_INTENT_DOMAIN_V1: &[u8] = b"outbe/tee/registration-intent
 pub const ATTESTATION_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/attestation-evidence/v1";
 pub const ENCLAVE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/enclave-id/v1";
 pub const INITIALIZATION_MANIFEST_DOMAIN_V1: &[u8] = b"outbe/tee/initialization-manifest/v1";
+pub const NODE_HOST_AUTHORIZATION_DOMAIN_V1: &[u8] = b"outbe/tee/node-host-authorization/v1";
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
 
 pub const MAX_QUOTE_BYTES: usize = 16 * 1024;
@@ -235,9 +236,9 @@ impl NodeIdV1 {
     }
 }
 
-/// The single node authorization an enclave accepts before sealing its V1
-/// identity. The node signature is carried separately so the canonical hash is
-/// stable and can be reused as `RegistrationIntentV1::node_host_authorization_hash`.
+/// The single exact initialization manifest an enclave accepts before sealing
+/// its V1 identity. The node signature is carried separately from this canonical
+/// payload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnclaveInitializationManifestV1 {
     pub chain_id: [u8; 32],
@@ -294,6 +295,22 @@ impl EnclaveInitializationManifestV1 {
         ))
     }
 
+    /// Stable authority shared by successive enclave initializations for one
+    /// node. Fresh initialization challenges and enclave keys are deliberately
+    /// excluded; changing the persistent NodeHost key or node identity changes
+    /// this commitment.
+    pub fn node_host_authorization_hash(&self) -> Result<B256, CodecError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(176);
+        out.push(PROTOCOL_VERSION_V1);
+        out.extend_from_slice(&self.chain_id);
+        out.extend_from_slice(self.genesis_hash.as_slice());
+        out.push(self.enclave_profile as u8);
+        self.node_id.encode_into(&mut out);
+        out.extend_from_slice(&self.node_host_noise_x25519);
+        Ok(domain_hash(NODE_HOST_AUTHORIZATION_DOMAIN_V1, &out))
+    }
+
     /// Stable enclave identity derived from the three persistent public keys
     /// committed by every registration and renewal intent.
     pub fn enclave_id(&self) -> Result<B256, CodecError> {
@@ -340,7 +357,7 @@ impl EnclaveInitializationManifestV1 {
             || intent.recipient_x25519 != self.recipient_x25519
             || intent.attestation_ed25519 != self.attestation_ed25519
             || intent.noise_responder_x25519 != self.noise_responder_x25519
-            || intent.node_host_authorization_hash != self.authorization_hash()?
+            || intent.node_host_authorization_hash != self.node_host_authorization_hash()?
         {
             return Err(CodecError::NonCanonical(
                 "registration intent does not match initialized enclave",
@@ -1378,6 +1395,19 @@ impl TeeRegistryGasScheduleV1 {
     /// exists: changing the allowance requires changing the canonical schedule.
     pub const fn register_storage_gas_allowance(&self) -> u64 {
         self.register_fixed / 2
+    }
+
+    /// Hash-committed storage allowance for each evidence-bearing registry
+    /// mutation. It remains part of the corresponding fixed charge.
+    pub const fn mutator_storage_gas_allowance(&self, kind: RegistryMutatorV1) -> u64 {
+        match kind {
+            RegistryMutatorV1::RegisterEnclave => self.register_fixed / 2,
+            RegistryMutatorV1::RenewEnclave => self.renew_fixed / 2,
+            RegistryMutatorV1::TransitionEnclaveMeasurement => {
+                self.measurement_transition_fixed / 2
+            }
+            RegistryMutatorV1::ReplaceEnclaveBinding => self.profile_replacement_fixed / 2,
+        }
     }
 
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {

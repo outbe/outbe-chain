@@ -43,7 +43,11 @@ pub use handoff::{
 };
 pub use node_host::{
     connect_or_initialize_full_node_enclave, connect_or_initialize_validator_enclave,
-    FullNodeNodeHostIdentityV1, ValidatorNodeHostIdentityV1,
+    load_replacement_candidate_submission, persist_replacement_candidate_submission,
+    prepare_full_node_enclave_replacement_candidate,
+    prepare_validator_enclave_replacement_candidate, promote_replacement_candidate,
+    FinalizedReplacementAuthorizationV1, FullNodeNodeHostIdentityV1, ReplacementCandidateEnclaveV1,
+    ReplacementCandidateSubmissionV1, ValidatorNodeHostIdentityV1,
 };
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 

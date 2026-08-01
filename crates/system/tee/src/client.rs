@@ -556,8 +556,8 @@ impl AuthorizedEnclaveClient {
         let expected_enclave_id = manifest
             .enclave_id()
             .map_err(|error| TransportError::Codec(error.to_string()))?;
-        let expected_authorization_hash = manifest
-            .authorization_hash()
+        let expected_node_host_authorization_hash = manifest
+            .node_host_authorization_hash()
             .map_err(|error| TransportError::Codec(error.to_string()))?;
         match response {
             EnclaveResponse::Initialized {
@@ -565,7 +565,7 @@ impl AuthorizedEnclaveClient {
                 node_host_authorization_hash,
                 sealed_loaded: false,
             } if enclave_id == expected_enclave_id
-                && node_host_authorization_hash == expected_authorization_hash =>
+                && node_host_authorization_hash == expected_node_host_authorization_hash =>
             {
                 Ok(client)
             }

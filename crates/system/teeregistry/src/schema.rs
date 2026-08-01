@@ -6,7 +6,7 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 ///
 /// Global scalars (slots 0..=8) hold the legacy bootstrap result that clients
 /// and verifiers read. Legacy per-validator maps occupy slots 9..=18. Inactive
-/// V1 policy and leased-binding state is appended at slots 19..=45. The layout
+/// V1 policy and leased-binding state is appended at slots 19..=47. The layout
 /// is append-only; new fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
@@ -203,4 +203,12 @@ pub struct TeeRegistry {
     /// slot 45: hash of the installed canonical V1 active policy.
     #[attribute(order = 45)]
     pub active_v1_policy_hash: outbe_primitives::storage::dsl::Value<B256>,
+
+    /// slot 46: consensus timestamp at which the current lease began.
+    #[attribute(order = 46)]
+    pub v1_node_lease_started_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    /// slot 47: persistent single-NodeHost authorization committed by the quote.
+    #[attribute(order = 47)]
+    pub v1_node_host_authorization_hash: outbe_primitives::storage::dsl::Map<B256, B256>,
 }
