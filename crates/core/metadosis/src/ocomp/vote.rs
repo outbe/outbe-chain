@@ -30,6 +30,7 @@ const REJECT_MALFORMED_ENCODING: u16 = 1;
 const REJECT_LIMIT_EXCEEDED: u16 = 2;
 const REJECT_CALL_MODE: u16 = 3;
 const REJECT_PROTOCOL_VOTE: u16 = 4;
+pub(crate) const REJECT_LIFECYCLE_INACTIVE: u16 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecordedResultVoteV1 {
@@ -123,7 +124,7 @@ fn map_vote_transition_error(error: PrecompileError) -> PrecompileError {
     }
 }
 
-fn vote_reject(code: u16) -> PrecompileError {
+pub(crate) fn vote_reject(code: u16) -> PrecompileError {
     let mut encoded = Vec::with_capacity(36);
     encoded.extend_from_slice(&OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
     encoded.extend_from_slice(&U256::from(code).to_be_bytes::<32>());

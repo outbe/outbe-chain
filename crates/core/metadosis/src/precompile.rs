@@ -170,8 +170,15 @@ pub fn dispatch(
                 )
                 .map(Bytes::from)
             }),
-            submitLysisResult(_) => Err(outbe_primitives::error::PrecompileError::Fatal(
-                "OCOMP result vote requires current-block execution context".into(),
+            // Reachable from arbitrary calldata whenever the OCOMP lifecycle is
+            // inactive: the EVM dispatcher routes this selector to
+            // `commands::submit_verified_result_vote` only while
+            // `ocomp_lifecycle_active` is true, so with the lifecycle active this
+            // arm is structurally unreachable. Caller-supplied ingress must
+            // revert, never `Fatal` — a `Fatal` here aborts the whole payload
+            // build for a transaction any external account can submit.
+            submitLysisResult(_) => Err(crate::ocomp::vote::vote_reject(
+                crate::ocomp::vote::REJECT_LIFECYCLE_INACTIVE,
             )),
         }
     })

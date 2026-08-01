@@ -630,7 +630,8 @@ where
 #[cfg(test)]
 mod lysis_activation_entitlement_tests {
     use super::{
-        is_lysis_result_vote_call, metadosis_mutation_entitlements, MetadosisMutationCall,
+        is_lysis_result_vote_call, map_outbe_precompile_result, metadosis_mutation_entitlements,
+        MetadosisMutationCall,
     };
     use alloy_primitives::{Address, Bytes, B256, U256};
     use outbe_ocomp_protocol::abi::{
@@ -732,6 +733,39 @@ mod lysis_activation_entitlement_tests {
             Purpose::CycleLifecycle,
             metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
         ))
+    }
+
+    #[test]
+    fn inactive_lysis_selector_does_not_abort_block_execution() {
+        use alloy_sol_types::SolCall;
+        use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
+        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+        use outbe_primitives::storage::StorageHandle;
+
+        let call = outbe_metadosis::precompile::IMetadosis::submitLysisResultCall {
+            resultVoteV1: Bytes::from(vec![0_u8; 8]),
+        };
+        let mut provider = HashMapStorageProvider::new(TEST_CHAIN_ID);
+        let result = StorageHandle::enter(&mut provider, |storage| {
+            outbe_metadosis::precompile::dispatch(
+                storage,
+                &call.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            )
+        });
+
+        // With the OCOMP lifecycle inactive, the selector reaches the view
+        // dispatcher. The mapped outcome must be an ordinary revert output —
+        // an `Err` here becomes a revm `Fatal` that aborts the whole payload
+        // build for a transaction any external account can submit.
+        let output = map_outbe_precompile_result(result, PRECOMPILE_BASE_GAS)
+            .expect("inactive lysis vote must map to a revert, not a block-aborting error");
+        assert!(output.is_revert());
+        let mut expected = Vec::with_capacity(36);
+        expected.extend_from_slice(&outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR);
+        expected.extend_from_slice(&U256::from(5_u64).to_be_bytes::<32>());
+        assert_eq!(output.bytes, Bytes::from(expected));
     }
 
     #[test]

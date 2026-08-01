@@ -70,9 +70,15 @@ impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
         let message = value.to_string();
         match value {
-            // No current variant has a production caller-controlled ingress.
-            // They all describe persisted-state, cross-module, fixture, or
-            // private transition invariant failures.
+            // No `MetadosisError` variant has a production caller-controlled
+            // ingress: they all describe persisted-state, cross-module,
+            // fixture, or private transition invariant failures.
+            //
+            // Crate-wide rule: a `precompile.rs` dispatch arm reachable from
+            // arbitrary calldata must never return `Fatal`; `Fatal` is reserved
+            // for persisted-state corruption. Caller-supplied bytes map to
+            // `Revert`/`RevertBytes` (see `precompile.rs` `getWorldwideDaysByStatus`),
+            // persisted tags map to `Fatal` (see `precompile.rs` `getWorldwideDay`).
             MetadosisError::UnknownWorldwideDayType
             | MetadosisError::VwapMustBeNonZero
             | MetadosisError::InvalidOcompBudgetSplit { .. }

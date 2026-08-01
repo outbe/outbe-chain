@@ -184,6 +184,7 @@ fn run_begin_block(storage: StorageHandle, block_number: u64, timestamp: u64) {
 mod capacity;
 mod league_snapshot;
 mod lifecycle;
+mod lysis_ingress;
 mod ocomp_budget;
 mod ocomp_request;
 mod ocomp_semantic_migrations;
