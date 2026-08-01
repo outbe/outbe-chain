@@ -238,6 +238,12 @@ pub struct FixtureState {
     pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
     pub ocomp_restart_replay_verified: Option<bool>,
+    /// Public pre-activation `submitLysisResult` outcome: inclusion evidence
+    /// that the selector reverts (never aborts payload building) while the
+    /// OCOMP lifecycle is inactive.
+    pub metadosis_inactive_lysis_vote_hash: Option<String>,
+    pub metadosis_inactive_lysis_vote_block: Option<u64>,
+    pub metadosis_inactive_lysis_reject_code: Option<u64>,
 
     // ---- L2Registry zk-gate scenarios (PFS-001-10 / -11) ----
     /// Encoded BLS MinPk private key the harness registered as the L2 network key.
@@ -349,6 +355,9 @@ impl Default for FixtureState {
             ocomp_held_late_vote_hash: None,
             ocomp_late_vote_reverted: None,
             ocomp_late_vote_inclusion_height: None,
+            metadosis_inactive_lysis_vote_hash: None,
+            metadosis_inactive_lysis_vote_block: None,
+            metadosis_inactive_lysis_reject_code: None,
             ocomp_capacity_observation: None,
             ocomp_historical_replay_observation: None,
             metadosis_fresh_lifecycle_observation: None,

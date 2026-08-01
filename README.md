@@ -304,6 +304,22 @@ admission forfeiture are typed terminal outcomes that route only the exact
 formed day limit to Promis once. Desis oversize supply is the sole committed
 brief rejection; technical errors revert.
 
+The OCOMP terminal-record budget (`max_terminal_job_records`, 365) is scoped
+**per WorldwideDay**: each day owns an independent append-only terminal-evidence
+index (Expired / Conflicted / Completed IntentIds) that is deleted together
+with the day on retirement. Exhausting the budget is a day-level terminal
+outcome — the day fails with `AttemptsExhausted` and its retained Lysis budget
+routes to Promis carry-over — never a chain-level condition; other days'
+lifecycles are unaffected.
+
+`submitLysisResult(bytes)` is a public selector. While the OCOMP lifecycle is
+inactive (before the fork-install activation height) a call reverts with the
+machine-readable rejection `OcompResultVoteRejected(5)` as an ordinary failed
+transaction; it never fails block production. With the lifecycle active the
+EVM dispatcher routes the selector to the verified result-vote command path,
+which uses the same rejection ABI (codes 1–4) for call-mode, encoding, size,
+and protocol-vote failures.
+
 ## RPC
 
 The `outbe_*` namespace exposes read-only views over committed chain state:

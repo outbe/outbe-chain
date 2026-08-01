@@ -2920,3 +2920,77 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
         forbidden_calculation_entries: 0,
     });
 }
+
+/// The `submitLysisResult` selector is publicly callable on any chain. While
+/// the OCOMP lifecycle is inactive it must behave as an ordinary reverting
+/// call — included with a failed receipt, never aborting payload building
+/// (the 2026-05-15 proposer-stall incident class).
+#[when("an operator submits a Lysis result vote before OCOMP activation")]
+fn operator_submits_lysis_vote_before_activation(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let tx_hash = world
+        .rpc
+        .submit_ocomp_result_vote_bytes(primary, &world.validators.get(0), vec![0_u8; 8])
+        .expect("a pre-activation Lysis vote must be includable, not stall the proposer");
+    let receipt = world
+        .rpc
+        .transaction_receipt(&tx_hash, primary)
+        .expect("pre-activation Lysis vote receipt");
+    assert_eq!(
+        receipt.get("status").and_then(serde_json::Value::as_str),
+        Some("0x0"),
+        "a pre-activation Lysis vote must revert, not succeed"
+    );
+    let inclusion_block = world
+        .rpc
+        .receipt_block_number(&tx_hash, primary)
+        .expect("pre-activation Lysis vote inclusion block");
+    world.state.metadosis_inactive_lysis_vote_hash = Some(tx_hash);
+    world.state.metadosis_inactive_lysis_vote_block = Some(inclusion_block);
+}
+
+#[then("the vote transaction reverts with the lifecycle-inactive code and finalization continues")]
+fn lysis_vote_reverts_with_lifecycle_inactive_code(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let inclusion_block = world
+        .state
+        .metadosis_inactive_lysis_vote_block
+        .expect("pre-activation Lysis vote inclusion block");
+
+    // Receipts omit revert data; replay the identical calldata through
+    // `eth_call` to observe the machine-readable rejection bytes.
+    let calldata = {
+        use alloy_sol_types::SolCall as _;
+        crate::internal::eth::IMetadosis::submitLysisResultCall {
+            resultVoteV1: alloy_primitives::Bytes::from(vec![0_u8; 8]),
+        }
+        .abi_encode()
+    };
+    let revert_data = eth::call_revert_data(
+        &world.rpc.url(primary),
+        crate::internal::addresses::WWD_ADDR,
+        calldata,
+    )
+    .expect("pre-activation Lysis vote must revert with rejection data");
+    let mut expected = Vec::with_capacity(36);
+    expected.extend_from_slice(
+        outbe_ocomp_protocol::abi::OCOMP_RESULT_VOTE_REJECTED_SELECTOR.as_slice(),
+    );
+    expected.extend_from_slice(&alloy_primitives::U256::from(5_u64).to_be_bytes::<32>());
+    assert_eq!(
+        revert_data, expected,
+        "pre-activation rejection must be OcompResultVoteRejected(5)"
+    );
+    world.state.metadosis_inactive_lysis_reject_code = Some(5);
+
+    // The chain must keep finalizing past the reverting transaction on every
+    // validator: the selector must never poison block production.
+    for port in world.validators.committee_ports() {
+        assert!(
+            world
+                .rpc
+                .wait_finalized_at_least(port, inclusion_block + 2, 60),
+            "finalization stalled after a pre-activation Lysis vote on port {port}"
+        );
+    }
+}
