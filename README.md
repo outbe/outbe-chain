@@ -431,7 +431,7 @@ and current scope limits are documented in [Reproducible builds](docs/reproducib
 ```bash
 # 4-validator localnet
 mise run build-release
-mise run localnet-bootstrap     # BLS keys + genesis.json
+mise run localnet-bootstrap     # BLS keys + genesis.json armed with the Measurement OCOMP install (ARM_OCOMP=0 skips arming)
 docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
 docker exec outbe-local-mongodb mongosh --quiet --eval \
   'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'

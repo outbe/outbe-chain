@@ -33,9 +33,19 @@ export OUT_DIR OUTBE_CHAIN_BINARY
 
 if [[ ! -x "$OUTBE_CHAIN_BINARY" ]]; then
   echo "smoke: node binary not found/executable: $OUTBE_CHAIN_BINARY" >&2
-  echo "smoke: build it first (cargo build --release --bin outbe-chain)" >&2
+  echo "smoke: build it first (cargo build --release -p outbe-chain -p outbe-ocomp)" >&2
   exit 1
 fi
+
+# Genesis arming (bootstrap Step 2d) needs the outbe-ocomp binary next to the
+# node binary unless the caller overrides OUTBE_OCOMP_BINARY explicitly.
+OUTBE_OCOMP_BINARY="${OUTBE_OCOMP_BINARY:-$(dirname "$OUTBE_CHAIN_BINARY")/outbe-ocomp}"
+if [[ ! -x "$OUTBE_OCOMP_BINARY" ]]; then
+  echo "smoke: outbe-ocomp binary not found/executable: $OUTBE_OCOMP_BINARY" >&2
+  echo "smoke: build it first (cargo build --release -p outbe-chain -p outbe-ocomp)" >&2
+  exit 1
+fi
+export OUTBE_OCOMP_BINARY
 
 cleanup() { ./scripts/run-testnet.sh stop "$OUT_DIR" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
