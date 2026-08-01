@@ -28,6 +28,11 @@ use outbe_primitives::{
 };
 use tracing::info;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 /// Selector for `inc(int256)` on the target Counter contract.
 const INC_SELECTOR: [u8; 4] = [0x62, 0x38, 0x45, 0xd8];
 

@@ -1558,3 +1558,92 @@ fn begin_block_drain_isolates_failing_series() {
         assert_eq!(s.balance(contrib(2)).unwrap(), U256::ZERO);
     });
 }
+
+/// IntexFactory is a payable route, so the boundary credits value to its
+/// address. Its dispatch must refuse value for every selector outside
+/// `PAYABLE_SELECTORS`, or a funded call to a non-payable selector would strand
+/// native value at an address with no accounting entry for it.
+///
+/// Characterization: the per-arm checks this replaced already covered these two
+/// selectors with the same message, so the test pins current behavior rather
+/// than proving a fix. Its value is catching a future removal of the guard.
+#[test]
+fn unpublished_selectors_refuse_native_value() {
+    use crate::precompile::{dispatch, IIntexFactory};
+
+    let calls = [
+        IIntexFactory::settleCall {
+            seriesId: 0u32,
+            intexHolder: Address::ZERO,
+            amount: U256::ZERO,
+        }
+        .abi_encode(),
+        IIntexFactory::setAuthorizedSettlerCall {
+            seriesId: 0u32,
+            settler: Address::ZERO,
+        }
+        .abi_encode(),
+    ];
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        for data in &calls {
+            let funded = dispatch(storage.clone(), data, Address::ZERO, U256::from(1u64));
+            assert!(
+                matches!(
+                    funded,
+                    Err(outbe_primitives::error::PrecompileError::Revert(ref message))
+                        if message == "non-payable function called with value"
+                ),
+                "unpublished selector must refuse value, got {funded:?}"
+            );
+        }
+    });
+}
+
+/// `distribute` is the one published payable selector here, and it credits
+/// auction proceeds straight from `msg.value`. The route table only decides that
+/// this *address* may be credited; nothing in it proves the dispatch actually
+/// hands the value to the handler. This does: the handler rejects a zero amount,
+/// so the two outcomes separate exactly on whether the value arrived.
+#[test]
+fn distribute_receives_the_call_value() {
+    use alloy_sol_types::SolCall;
+
+    use crate::constants::ORIGIN_ROUTER_ADDRESS;
+    use crate::precompile::{dispatch, IIntexFactory};
+
+    let data = IIntexFactory::distributeCall {
+        worldwideDay: 7u32,
+        srcChainId: 10u32,
+    }
+    .abi_encode();
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let unfunded = dispatch(storage.clone(), &data, ORIGIN_ROUTER_ADDRESS, U256::ZERO);
+        assert!(
+            matches!(
+                unfunded,
+                Err(outbe_primitives::error::PrecompileError::Revert(ref message))
+                    if message == "amount must be positive"
+            ),
+            "a zero-value distribute must reach the handler with nothing, got {unfunded:?}"
+        );
+
+        let funded = dispatch(
+            storage.clone(),
+            &data,
+            ORIGIN_ROUTER_ADDRESS,
+            U256::from(1_000u64),
+        );
+        assert!(
+            !matches!(
+                funded,
+                Err(outbe_primitives::error::PrecompileError::Revert(ref message))
+                    if message == "amount must be positive"
+            ),
+            "a funded distribute must reach the handler with the value, got {funded:?}"
+        );
+    });
+}

@@ -1116,3 +1116,36 @@ fn test_self_staker_can_unstake_and_claim() {
         );
     });
 }
+
+/// `STAKING_ADDRESS` is allow-listed at the precompile boundary because
+/// `stake` is payable, so value reaches every selector on the address. The
+/// read-only selectors must reject it themselves or a value-carrying view call
+/// would strand funds in the balance that backs `claimUnbonded`.
+#[test]
+fn read_only_selectors_reject_native_value() {
+    use alloy_sol_types::SolCall;
+
+    use crate::precompile::{dispatch, IStaking};
+
+    let validator = address!("0x0000000000000000000000000000000000000001");
+    let calls = [
+        IStaking::getStakeCall { validator }.abi_encode(),
+        IStaking::getTotalStakedCall {}.abi_encode(),
+    ];
+
+    with_staking(|storage, _| {
+        for data in &calls {
+            let rejected = dispatch(storage.clone(), data, validator, U256::from(1u64));
+            assert!(
+                matches!(
+                    rejected,
+                    Err(outbe_primitives::error::PrecompileError::Revert(ref message))
+                        if message == "non-payable function called with value"
+                ),
+                "value-carrying read call must revert, got {rejected:?}"
+            );
+            dispatch(storage.clone(), data, validator, U256::ZERO)
+                .expect("zero-value read call must still succeed");
+        }
+    });
+}

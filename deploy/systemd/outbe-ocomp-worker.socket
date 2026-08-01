@@ -3,7 +3,7 @@ Description=Outbe OCOMP one-unit worker activation socket
 PartOf=outbe-ocomp.target
 
 [Socket]
-ListenStream=/run/outbe-ocomp/worker.sock
+ListenStream=/opt/outbe-chain/ocomp/run/worker.sock
 Accept=yes
 MaxConnections=4
 MaxConnectionsPerSource=4

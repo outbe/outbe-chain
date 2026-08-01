@@ -44,8 +44,9 @@ The accepted correction is:
   zero-value, bounded-envelope ZeroFee hook modelled on Oracle authorizes only
   the eligible validator EVM signer; OCOMP alone validates finality, window,
   job, digest, signature and slot rules;
-- the node retains both OCOMP and EVM private keys behind restricted signing
-  seams; the Supervisor owns prepare/submit/inclusion/finality/reorg workflow;
+- the node retains only the OCOMP attestation key; the Supervisor retains a
+  separate role-delegated OCOMP EVM key and owns
+  prepare/submit/inclusion/finality/reorg workflow;
 - consensus records request finality, waits four additional blocks, then
   atomically installs `VOTING_OPEN(open_height, deadline_height)` where
   `open_height = finality_recorded_height + 4`;
@@ -1302,7 +1303,7 @@ Supervisor RPC submission, inclusion tracking and reorg rebroadcast are
 integrated and proven later by `OCM-25`, after the public harness exists.
 The PoC submitter uses canonical `latest` account nonce plus the frozen bounded
 gas envelope; it never invokes `eth_estimateGas` or pending-block execution.
-Its single-writer journal persists exact node-signed raw bytes for retry and
+Its single-writer journal persists exact locally signed raw bytes for retry and
 reorg rebroadcast.
 
 **Files/symbols:**
@@ -1824,7 +1825,7 @@ capacity generation.
 **Files/symbols:**
 
 - `bin/outbe-ocomp/src/{supervisor_job,vote_submitter}.rs`;
-- `crates/blockchain/node/src/ocomp/control.rs` restricted outer EVM signing seam;
+- `crates/blockchain/node/src/ocomp/control.rs` restricted inner attestation seam;
 - `xtask/src/ocomp/task.rs` public-path task runner and exact PUB-ID gate;
 - `crates/testing/e2e-harness/features/ocomp_public_path.feature`;
 - OCOMP step definitions and exact block/state proof collectors;
@@ -1833,7 +1834,7 @@ capacity generation.
 
 **Changes:** replace the superseded `run_to_relay/publish_candidate` edge with
 Supervisor-owned prepare/submit/inclusion/finality/reorg-rebroadcast state and
-the node-owned outer EVM signing seam without exporting the key. Add
+a dedicated role-delegated OCOMP EVM key kept outside the node. Add
 pre-fork/fork/post-fork phase scenarios; result/job/order/voter mutations; vote
 at finality+3/finality+4, before/at/after the response deadline; Supervisor
 direct zero-fee submit/reorg replay and validator balance equality;

@@ -49,6 +49,9 @@ sol! {
         function deactivateValidator(address v) external;
         function registerValidator(address v, bytes pubkey, bytes sig) external;
         function setP2pAddress(address v, uint8 kind, bytes addr) external;
+        function setDelegate(uint8 role, address delegate) external;
+        function getDelegate(address validator, uint8 role) external view returns (address);
+        function resolveValidator(uint8 role, address signer) external view returns (address);
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IUpdate {

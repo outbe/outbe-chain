@@ -1,5 +1,5 @@
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::sync::{Arc, Barrier};
 use std::thread;
 
@@ -192,4 +192,38 @@ fn symlinked_cas_root_is_rejected_before_creating_any_layout() {
             .is_none(),
         "root validation must precede CAS layout creation"
     );
+}
+
+#[test]
+fn opening_preprovisioned_shared_layout_preserves_directory_permissions() {
+    let directory = tempdir().expect("CAS parent");
+    let root = directory.path().join("cas-v1");
+    let objects = root.join("objects");
+    let staging = root.join("staging").join("exporter");
+    fs::create_dir_all(&objects).expect("preprovision objects");
+    fs::create_dir_all(&staging).expect("preprovision exporter staging");
+
+    for path in [&root, &objects, &staging] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o750))
+            .expect("set preprovisioned permissions");
+    }
+
+    FilesystemCas::open(
+        &root,
+        CasWriterRole::SnapshotExporter,
+        CasLimits {
+            max_object_bytes: 1024,
+            max_total_bytes: 4096,
+        },
+    )
+    .expect("open preprovisioned shared CAS");
+
+    for path in [&root, &objects, &staging] {
+        let mode = fs::metadata(path)
+            .expect("preprovisioned directory metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o750, "opening must not chmod {}", path.display());
+    }
 }

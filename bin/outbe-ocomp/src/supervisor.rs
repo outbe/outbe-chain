@@ -12,16 +12,15 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::local_control::{
     ClientPolicy, ControlClientSession, ControlError, EndpointIdentity,
 };
 use outbe_ocomp_protocol::{
     common::BoundedBytes, result::LysisResultV1, vote::ResultVoteV1, AttestationResponseV1,
     FinalizedJobSpecV1, FinalizedJobSummaryV1, GetJobSpecV1, ListFinalizedJobsResponseV1,
-    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1,
-    PrepareVoteTransactionV1, PreparedVoteTransactionV1, ProtocolError, RequestAttestationV1,
-    SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    ListFinalizedJobsV1, LocalErrorV1, NodeMessageKind, OpenSnapshotLeaseV1, ProtocolError,
+    RequestAttestationV1, SchemaLimits, SnapshotHandoffV1, MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
 use thiserror::Error;
 
@@ -212,37 +211,6 @@ impl SupervisorDiscovery {
             return Err(SupervisorDiscoveryError::AttestationResultChanged);
         }
         Ok(vote)
-    }
-
-    pub fn prepare_vote_transaction(
-        &self,
-        canonical_result: &[u8],
-        nonce: u64,
-        max_fee_per_gas: u128,
-        gas_limit: u64,
-    ) -> Result<PreparedVoteTransactionV1, SupervisorDiscoveryError> {
-        if canonical_result.is_empty() {
-            return Err(ProtocolError::InvalidInvariant("vote transaction result is empty").into());
-        }
-        let request = PrepareVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result.to_vec()),
-            nonce,
-            max_fee_per_gas: U256::from(max_fee_per_gas),
-            gas_limit,
-        };
-        let mut session = self.connect()?;
-        session.send_request(
-            NodeMessageKind::PrepareVoteTransaction as u16,
-            request.encode_body(&self.config.limits)?,
-        )?;
-        let frame = session.receive_response()?;
-        let body = response_body(
-            frame.message_kind,
-            frame.body,
-            NodeMessageKind::PrepareVoteTransaction,
-            &self.config.limits,
-        )?;
-        PreparedVoteTransactionV1::decode_body(&body, &self.config.limits).map_err(Into::into)
     }
 
     fn connect(&self) -> Result<ControlClientSession, SupervisorDiscoveryError> {

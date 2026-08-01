@@ -38,6 +38,9 @@ pub enum TransportError {
     #[error("promis-op attestation signature invalid: {0}")]
     PromisOpAttestation(String),
 
+    #[error("fidelity attestation signature invalid: {0}")]
+    FidelityAttestation(String),
+
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
 

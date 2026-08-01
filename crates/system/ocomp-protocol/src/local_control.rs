@@ -39,7 +39,6 @@ impl ControlRole {
                     | method_bit(NodeMessageKind::GetJobSpec as u16)
                     | method_bit(NodeMessageKind::OpenSnapshotLease as u16)
                     | method_bit(NodeMessageKind::RequestAttestation as u16)
-                    | method_bit(NodeMessageKind::PrepareVoteTransaction as u16)
                     | method_bit(NodeMessageKind::GetOcompHealth as u16)
             }
             (Self::SnapshotExporter, ControlMagic::Node) => {
@@ -682,11 +681,7 @@ pub fn poc_schema_limits() -> SchemaLimits {
 
 #[allow(unsafe_code)]
 pub fn effective_uid() -> Result<u32, ControlError> {
-    // SAFETY: `geteuid` has no preconditions and only reads the credentials of
-    // the current process. Unlike `/proc/self/status`, it is available on both
-    // Unix targets supported by local peer credentials (Linux and macOS).
-    // `uid_t` is `u32` on both supported targets, so no conversion is needed.
-    Ok(unsafe { libc::geteuid() })
+    Ok(rustix::process::geteuid().as_raw())
 }
 
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
@@ -739,6 +734,7 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
 
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
+#[cfg(target_os = "linux")]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
     let mut credentials = libc::ucred {
         pid: 0,

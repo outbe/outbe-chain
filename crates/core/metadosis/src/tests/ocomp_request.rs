@@ -37,6 +37,7 @@ mod p5_models;
 #[test]
 fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let scope = ExecutionScope::new();
     let parent = TestParent::empty();
     let wwd = outbe_common::WorldwideDay::new(2026_0708);
@@ -409,6 +410,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
 #[test]
 fn ineligible_request_defers_only_the_ready_key_without_effects() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, false);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -449,6 +451,7 @@ fn ineligible_request_defers_only_the_ready_key_without_effects() {
 #[test]
 fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     // Oracle starts un-armed so the first ready day defers (OracleProfileNotReady);
     // it is armed mid-test so the later day becomes eligible.
     let fixture = prepare_two_ready_days_fixture(&mut provider, false);
@@ -546,6 +549,7 @@ fn deferred_day_does_not_starve_a_later_eligible_job_intent() {
 #[test]
 fn two_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_two_ready_days_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -668,6 +672,7 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
 #[test]
 fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -811,6 +816,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
 #[test]
 fn request_storage_failure_rolls_back_every_observable_effect() {
     let mut calibration = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let calibration_fixture = prepare_request_fixture(&mut calibration, true);
     calibration.set_block_number(calibration_fixture.block_number);
     calibration.set_timestamp(U256::from(calibration_fixture.block_time));
@@ -834,6 +840,7 @@ fn request_storage_failure_rolls_back_every_observable_effect() {
     );
 
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
+    outbe_fidelity::enclave_client::test_enclave::install();
     let fixture = prepare_request_fixture(&mut provider, true);
     let before = StorageHandle::enter(&mut provider, |storage| {
         request_observables(storage, fixture.wwd)
@@ -927,6 +934,7 @@ fn prepare_request_fixture_with_day_type(
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
 
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
@@ -1028,6 +1036,7 @@ fn prepare_two_ready_days_fixture(
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
 
+    outbe_fidelity::enclave_client::test_enclave::install();
     StorageHandle::enter(provider, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();

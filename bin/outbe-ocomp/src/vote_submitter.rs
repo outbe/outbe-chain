@@ -1,10 +1,10 @@
 //! Restart-safe public submission of one validator-domain OCOMP result vote.
 //!
-//! The Supervisor owns transaction delivery but never owns either signing key.
-//! The node returns one fully signed, fixed-shape EIP-1559 transaction through
-//! the restricted local control method. This module durably records every
-//! delivery transition and only treats a receipt as final after checking the
-//! canonical block at its height and the public finalized head.
+//! The node owns only the OCOMP attestation key and returns the canonical
+//! sign-once vote. The Supervisor owns a separate role-delegated EVM key and
+//! locally builds the fixed-shape EIP-1559 transaction. This module durably
+//! records every delivery transition and only treats a receipt as final after
+//! checking the canonical block at its height and the public finalized head.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -20,15 +20,16 @@ use std::{
 };
 
 use alloy_consensus::{
-    transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip4844,
+    transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip1559, TxEip4844,
 };
-use alloy_eips::eip2718::Decodable2718 as _;
-use alloy_primitives::{keccak256, Address, TxKind, B256, U256};
+use alloy_eips::eip2718::{Decodable2718 as _, Encodable2718 as _};
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata, vote::ResultVoteV1, PreparedVoteTransactionV1,
-    ProtocolError, SchemaLimits,
+    abi::encode_submit_lysis_result_calldata, common::BoundedBytes, vote::ResultVoteV1,
+    PreparedVoteTransactionV1, ProtocolError, SchemaLimits,
 };
 use outbe_primitives::addresses::METADOSIS_ADDRESS;
+use outbe_primitives::signer::{OutbeEvmSigner, SignerError};
 use thiserror::Error;
 
 use crate::supervisor::{SupervisorDiscovery, SupervisorDiscoveryError};
@@ -40,12 +41,17 @@ const MAX_RAW_TRANSACTION_BYTES: usize = 4 * 1024;
 const JOURNAL_FIXED_BYTES_WITHOUT_RAW: usize =
     8 + 2 + 8 + 1 + 32 + 32 + 20 + 8 + 16 + 32 + 4 + 1 + 8 + 32 + 1 + 32;
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
+/// Operational ceiling for the outer OCOMP transaction's fee cap.
+///
+/// ZeroFee waives the canonical execution debit, but a compromised RPC must
+/// still be unable to induce the supervisor to sign an unbounded fee promise.
+pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = 1_000_000_000_000;
 
 #[derive(Clone, Debug)]
 pub struct VoteSubmissionConfigV1 {
     pub journal_root: PathBuf,
     pub expected_chain_id: u64,
-    pub validator_address: Address,
+    pub sender_address: Address,
     pub limits: SchemaLimits,
 }
 
@@ -83,7 +89,7 @@ pub struct VoteSubmissionRecordV1 {
     pub stage: VoteSubmissionStageV1,
     pub job_id: B256,
     pub result_digest: B256,
-    pub validator_address: Address,
+    pub sender_address: Address,
     pub nonce: u64,
     pub max_fee_per_gas: u128,
     pub transaction_hash: B256,
@@ -125,8 +131,52 @@ pub trait VoteTransactionPreparerV1 {
     ) -> Result<PreparedVoteTransactionV1, Self::Error>;
 }
 
-impl VoteTransactionPreparerV1 for SupervisorDiscovery {
+pub trait ResultVoteAttesterV1 {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn attest_result_vote(&self, canonical_result: &[u8]) -> Result<ResultVoteV1, Self::Error>;
+}
+
+impl ResultVoteAttesterV1 for SupervisorDiscovery {
     type Error = SupervisorDiscoveryError;
+
+    fn attest_result_vote(&self, canonical_result: &[u8]) -> Result<ResultVoteV1, Self::Error> {
+        self.request_attestation(canonical_result)
+    }
+}
+
+pub struct LocalVoteTransactionPreparerV1<'a, A> {
+    attester: &'a A,
+    signer: OutbeEvmSigner,
+    chain_id: u64,
+    limits: SchemaLimits,
+}
+
+impl<'a, A> LocalVoteTransactionPreparerV1<'a, A> {
+    pub fn new(
+        attester: &'a A,
+        signer: OutbeEvmSigner,
+        chain_id: u64,
+        limits: SchemaLimits,
+    ) -> Result<Self, LocalVotePreparationErrorV1> {
+        if chain_id == 0 {
+            return Err(LocalVotePreparationErrorV1::InvalidChainId);
+        }
+        Ok(Self {
+            attester,
+            signer,
+            chain_id,
+            limits,
+        })
+    }
+
+    pub const fn sender_address(&self) -> Address {
+        self.signer.address()
+    }
+}
+
+impl<A: ResultVoteAttesterV1> VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1<'_, A> {
+    type Error = LocalVotePreparationErrorV1;
 
     fn prepare_vote_transaction(
         &self,
@@ -135,8 +185,70 @@ impl VoteTransactionPreparerV1 for SupervisorDiscovery {
         max_fee_per_gas: u128,
         gas_limit: u64,
     ) -> Result<PreparedVoteTransactionV1, Self::Error> {
-        Self::prepare_vote_transaction(self, canonical_result, nonce, max_fee_per_gas, gas_limit)
+        if canonical_result.is_empty() {
+            return Err(LocalVotePreparationErrorV1::EmptyCanonicalResult);
+        }
+        if gas_limit != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+            || !(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
+                ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
+                .contains(&max_fee_per_gas)
+        {
+            return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
+        }
+
+        let vote = self
+            .attester
+            .attest_result_vote(canonical_result)
+            .map_err(|error| LocalVotePreparationErrorV1::Attestation(error.to_string()))?;
+        let canonical_vote = vote.encode_canonical(&self.limits)?;
+        let calldata = encode_submit_lysis_result_calldata(&vote, &self.limits)?;
+        if calldata.len() > outbe_zerofee::MAX_ZERO_FEE_OCOMP_CALLDATA_BYTES {
+            return Err(LocalVotePreparationErrorV1::CalldataTooLarge);
+        }
+
+        let signed = self.signer.sign_eip1559(TxEip1559 {
+            chain_id: self.chain_id,
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: Bytes::from(calldata),
+            access_list: Default::default(),
+        })?;
+        let transaction_hash = *signed.hash();
+        let mut raw_transaction = Vec::new();
+        raw_transaction
+            .try_reserve_exact(signed.encode_2718_len())
+            .map_err(|_| LocalVotePreparationErrorV1::Allocation)?;
+        signed.encode_2718(&mut raw_transaction);
+        Ok(PreparedVoteTransactionV1 {
+            canonical_vote: BoundedBytes(canonical_vote),
+            raw_transaction: BoundedBytes(raw_transaction),
+            transaction_hash,
+        })
     }
+}
+
+#[derive(Debug, Error)]
+pub enum LocalVotePreparationErrorV1 {
+    #[error("OCOMP vote transaction chain id must not be zero")]
+    InvalidChainId,
+    #[error("OCOMP vote transaction result is empty")]
+    EmptyCanonicalResult,
+    #[error("OCOMP vote transaction fee envelope is invalid")]
+    InvalidFeeEnvelope,
+    #[error("OCOMP result attestation failed: {0}")]
+    Attestation(String),
+    #[error("OCOMP vote transaction calldata exceeds the protocol cap")]
+    CalldataTooLarge,
+    #[error("OCOMP vote transaction allocation failed")]
+    Allocation,
+    #[error(transparent)]
+    Protocol(#[from] ProtocolError),
+    #[error(transparent)]
+    Signer(#[from] SignerError),
 }
 
 pub trait VoteSubmissionRpcV1 {
@@ -218,7 +330,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         }
         let nonce = self
             .rpc
-            .canonical_nonce(self.config.validator_address)
+            .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
         let max_fee_per_gas = self
             .rpc
@@ -239,7 +351,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             stage: VoteSubmissionStageV1::Prepared,
             job_id,
             result_digest,
-            validator_address: self.config.validator_address,
+            sender_address: self.config.sender_address,
             nonce,
             max_fee_per_gas,
             transaction_hash: prepared.transaction_hash,
@@ -376,7 +488,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         result_digest: B256,
     ) -> Result<(), VoteSubmissionErrorV1> {
         if record.result_digest != result_digest
-            || record.validator_address != self.config.validator_address
+            || record.sender_address != self.config.sender_address
         {
             return Err(VoteSubmissionErrorV1::DifferentResultForJournaledJob);
         }
@@ -412,7 +524,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         let recovered = transaction.recover_signer().map_err(|error| {
             VoteSubmissionErrorV1::InvalidPreparedTransaction(error.to_string())
         })?;
-        if recovered != self.config.validator_address
+        if recovered != self.config.sender_address
             || transaction.chain_id() != Some(self.config.expected_chain_id)
             || transaction.nonce() != nonce
             || transaction.gas_limit() != outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
@@ -841,7 +953,7 @@ fn encode_record(record: &VoteSubmissionRecordV1) -> Result<Vec<u8>, VoteSubmiss
     bytes.push(record.stage as u8);
     bytes.extend_from_slice(record.job_id.as_slice());
     bytes.extend_from_slice(record.result_digest.as_slice());
-    bytes.extend_from_slice(record.validator_address.as_slice());
+    bytes.extend_from_slice(record.sender_address.as_slice());
     bytes.extend_from_slice(&record.nonce.to_be_bytes());
     bytes.extend_from_slice(&record.max_fee_per_gas.to_be_bytes());
     bytes.extend_from_slice(record.transaction_hash.as_slice());
@@ -878,7 +990,7 @@ fn decode_record(bytes: &[u8]) -> Result<VoteSubmissionRecordV1, VoteSubmissionE
     let stage = VoteSubmissionStageV1::decode(read_u8(bytes, 18)?)?;
     let job_id = read_b256(bytes, 19)?;
     let result_digest = read_b256(bytes, 51)?;
-    let validator_address = Address::from_slice(read_slice(bytes, 83, 20)?);
+    let sender_address = Address::from_slice(read_slice(bytes, 83, 20)?);
     let nonce = read_u64(bytes, 103)?;
     let max_fee_per_gas = read_u128(bytes, 111)?;
     let transaction_hash = read_b256(bytes, 127)?;
@@ -922,7 +1034,7 @@ fn decode_record(bytes: &[u8]) -> Result<VoteSubmissionRecordV1, VoteSubmissionE
         stage,
         job_id,
         result_digest,
-        validator_address,
+        sender_address,
         nonce,
         max_fee_per_gas,
         transaction_hash,
@@ -1226,6 +1338,79 @@ mod tests {
         test_result(&limits).result_digest(&limits).unwrap()
     }
 
+    struct FakeAttester {
+        vote: ResultVoteV1,
+    }
+
+    impl ResultVoteAttesterV1 for FakeAttester {
+        type Error = std::io::Error;
+
+        fn attest_result_vote(
+            &self,
+            _canonical_result: &[u8],
+        ) -> Result<ResultVoteV1, Self::Error> {
+            Ok(self.vote.clone())
+        }
+    }
+
+    #[test]
+    fn local_preparer_builds_and_signs_the_restricted_vote_transaction() {
+        let limits = poc_schema_limits();
+        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).unwrap();
+        let sender = signer.address();
+        let attester = FakeAttester {
+            vote: ResultVoteV1 {
+                protocol_bundle_hash: B256::repeat_byte(0x20),
+                job_id: JOB_ID,
+                attempt: 0,
+                result_committee_snapshot_hash: B256::repeat_byte(0x23),
+                validator_index: 0,
+                key_epoch: 1,
+                result: test_result(&limits),
+                signature_rs: [0x24; 64],
+            },
+        };
+        let preparer = LocalVoteTransactionPreparerV1::new(&attester, signer, 42, limits).unwrap();
+
+        let prepared = preparer
+            .prepare_vote_transaction(
+                &canonical_result(),
+                7,
+                outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
+                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+            )
+            .unwrap();
+        let mut raw = prepared.raw_transaction.0.as_slice();
+        let envelope = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw).unwrap();
+
+        assert!(raw.is_empty());
+        assert_eq!(envelope.recover_signer().unwrap(), sender);
+        assert_eq!(envelope.chain_id(), Some(42));
+        assert_eq!(envelope.nonce(), 7);
+        assert_eq!(envelope.kind(), TxKind::Call(METADOSIS_ADDRESS));
+        assert_eq!(
+            envelope.gas_limit(),
+            outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
+        );
+        assert_eq!(
+            envelope.max_fee_per_gas(),
+            outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS
+        );
+        assert_eq!(envelope.max_priority_fee_per_gas(), Some(0));
+        assert_eq!(envelope.value(), U256::ZERO);
+        assert_eq!(prepared.transaction_hash, *envelope.tx_hash());
+
+        assert!(matches!(
+            preparer.prepare_vote_transaction(
+                &canonical_result(),
+                7,
+                MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS + 1,
+                outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
+            ),
+            Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope)
+        ));
+    }
+
     struct FakePreparer {
         signer: OutbeEvmSigner,
         target: Address,
@@ -1383,7 +1568,7 @@ mod tests {
         Arc<AtomicU64>,
     ) {
         let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM test signer");
-        let validator_address = signer.address();
+        let sender_address = signer.address();
         let rpc = FakeRpc::new();
         let calls = Arc::new(AtomicU64::new(0));
         let preparer = FakePreparer {
@@ -1396,7 +1581,7 @@ mod tests {
             VoteSubmissionConfigV1 {
                 journal_root: root.to_path_buf(),
                 expected_chain_id: 42,
-                validator_address,
+                sender_address,
                 limits: poc_schema_limits(),
             },
             rpc.clone(),
@@ -1476,7 +1661,7 @@ mod tests {
             VoteSubmissionConfigV1 {
                 journal_root: directory.path().to_path_buf(),
                 expected_chain_id: 42,
-                validator_address: signer.address(),
+                sender_address: signer.address(),
                 limits: poc_schema_limits(),
             },
             rpc,
@@ -1565,7 +1750,7 @@ mod tests {
     }
 
     #[test]
-    fn ocm_pub_001_rejects_a_node_signed_transaction_with_any_other_target() {
+    fn ocm_pub_001_rejects_a_locally_signed_transaction_with_any_other_target() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let wrong_target = Address::repeat_byte(0x44);
         let (mut submitter, rpc, preparer, _) = fixture(directory.path(), wrong_target);
@@ -1595,7 +1780,7 @@ mod tests {
             VoteSubmissionConfigV1 {
                 journal_root: directory.path().to_path_buf(),
                 expected_chain_id: 42,
-                validator_address: signer.address(),
+                sender_address: signer.address(),
                 limits: poc_schema_limits(),
             },
             rpc,

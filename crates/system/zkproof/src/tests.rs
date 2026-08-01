@@ -247,6 +247,43 @@ fn zk_verify_truncated_payload_errors() {
     ));
 }
 
+/// An offset word of `u64::MAX` used to wrap `offset + 32` to `31` in a
+/// release build, defeat the `input.len() < offset + 32` guard, and panic on
+/// the out-of-range slice index — a permissionless halt of every validator
+/// executing the `0xEE08` call.
+#[test]
+fn zk_verify_max_offset_is_rejected_not_panicking() {
+    let mut input = [0u8; 96];
+    input[56..64].copy_from_slice(&u64::MAX.to_be_bytes());
+    assert!(matches!(
+        zk_verify(&input),
+        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+    ));
+}
+
+#[test]
+fn zk_verify_offset_just_past_canonical_is_rejected() {
+    let mut buf = abi_encode(&[0xAB; 32], &[0xCD; 32]);
+    buf[56..64].copy_from_slice(&65u64.to_be_bytes());
+    assert!(matches!(
+        zk_verify(&buf),
+        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+    ));
+}
+
+/// The in-bounds-but-non-canonical offset that decoded before the gate: it
+/// points one word past the length slot, so the input used to decode to a
+/// different proof slice than the one the encoder wrote.
+#[test]
+fn zk_verify_shifted_offset_is_rejected() {
+    let mut buf = abi_encode(&[0xAB; 32], &[0xCD; 32]);
+    buf[56..64].copy_from_slice(&96u64.to_be_bytes());
+    assert!(matches!(
+        zk_verify(&buf),
+        Err(ZkProofError::MalformedAbi("non-canonical offset"))
+    ));
+}
+
 #[test]
 fn groth16_base_gas_is_flat() {
     assert_eq!(groth16_base_gas(&[]), ZK_VERIFY_GAS);

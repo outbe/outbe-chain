@@ -77,15 +77,15 @@ impl ZeroFeeHook for OcompSubmitResultVoteHook {
         candidate: ZeroFeeCandidate,
     ) -> Result<ZeroFeeAuthorization, ZeroFeePolicyError> {
         let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let Some(record) = validators.get_validator(candidate.signer)? else {
-            return Err(ZeroFeePolicyError::UnauthorizedSigner);
-        };
-        if record.status != outbe_validatorset::logic::status::ACTIVE || !record.has_bls_share {
-            return Err(ZeroFeePolicyError::UnauthorizedSigner);
-        }
+        let validator = validators
+            .resolve_validator_for_role(
+                candidate.signer,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+            )?
+            .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
         Ok(ZeroFeeAuthorization {
             hook: self.id(),
-            subject: candidate.signer,
+            subject: validator,
         })
     }
 }
@@ -131,6 +131,7 @@ mod tests {
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
+    const DELEGATE: Address = address!("0x2222222222222222222222222222222222222222");
 
     fn calldata(payload_len: usize) -> Vec<u8> {
         let padded_len = (payload_len + 31) & !31;
@@ -141,9 +142,9 @@ mod tests {
         input
     }
 
-    fn tx(input: &[u8]) -> ZeroFeeTransaction<'_> {
+    fn tx_from(signer: Address, input: &[u8]) -> ZeroFeeTransaction<'_> {
         ZeroFeeTransaction {
-            signer: VALIDATOR,
+            signer,
             to: Some(METADOSIS_ADDRESS),
             value: U256::ZERO,
             input,
@@ -151,6 +152,10 @@ mod tests {
             max_fee_per_gas: MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,
             max_priority_fee_per_gas: Some(0),
         }
+    }
+
+    fn tx(input: &[u8]) -> ZeroFeeTransaction<'_> {
+        tx_from(VALIDATOR, input)
     }
 
     #[test]
@@ -188,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    fn only_active_consensus_validator_receives_fee_waiver() {
+    fn active_validator_or_its_ocomp_delegate_receives_fee_waiver() {
         let input = calldata(1);
         let candidate = crate::registry().classify(&tx(&input)).unwrap().unwrap();
         let mut provider = HashMapStorageProvider::new(1);
@@ -200,7 +205,7 @@ mod tests {
                 ZeroFeePolicyError::UnauthorizedSigner
             );
 
-            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             validators.validator_count.write(1).unwrap();
             validators.address_to_index.write(&VALIDATOR, 1).unwrap();
             validators.index_to_address.write(&1, VALIDATOR).unwrap();
@@ -214,9 +219,32 @@ mod tests {
                 .unwrap();
 
             let authorization = crate::registry()
-                .authorize_fee_waiver(storage, candidate)
+                .authorize_fee_waiver(storage.clone(), candidate)
                 .unwrap();
             assert_eq!(authorization.subject, VALIDATOR);
+
+            validators
+                .set_delegate(
+                    VALIDATOR,
+                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                    DELEGATE,
+                )
+                .unwrap();
+            let delegated = crate::registry()
+                .classify(&tx_from(DELEGATE, &input))
+                .unwrap()
+                .unwrap();
+            let authorization = crate::registry()
+                .authorize_fee_waiver(storage.clone(), delegated)
+                .unwrap();
+            assert_eq!(authorization.subject, VALIDATOR);
+
+            assert_eq!(
+                crate::registry()
+                    .authorize_fee_waiver(storage, candidate)
+                    .unwrap_err(),
+                ZeroFeePolicyError::UnauthorizedSigner
+            );
         });
     }
 }

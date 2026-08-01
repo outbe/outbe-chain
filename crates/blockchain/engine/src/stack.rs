@@ -3590,19 +3590,6 @@ where
                 install.request_profile.protocol_bundle_hash
             ));
         }
-        let vote_evm_key_path = args.effective_validator_evm_key()?.ok_or_else(|| {
-            eyre::eyre!("OCOMP node control requires the validated validator EVM key")
-        })?;
-        let vote_evm_signer = Arc::new(
-            outbe_primitives::signer::OutbeEvmSigner::from_file(&vote_evm_key_path).wrap_err_with(
-                || {
-                    format!(
-                        "failed to load OCOMP result-vote EVM signer from {}",
-                        vote_evm_key_path.display()
-                    )
-                },
-            )?,
-        );
         let identity = EndpointIdentity {
             chain_id,
             genesis_hash,
@@ -3639,7 +3626,6 @@ where
             },
             Arc::new(ProviderHeightSource::new(node.provider.clone())),
         )?
-        .with_vote_transaction_signer(vote_evm_signer)
         .with_snapshot_export_authority(
             snapshot_export_authority.clone(),
             config.snapshot_exporter_uid,

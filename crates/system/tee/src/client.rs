@@ -585,6 +585,60 @@ pub fn verify_promis_op_attestation(
         .map_err(|e| TransportError::PromisOpAttestation(format!("signature invalid: {e}")))
 }
 
+fn verify_fidelity_tag(
+    attestation_pub: &[u8; 32],
+    preimage: &[u8],
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+
+    let vk = VerifyingKey::from_bytes(attestation_pub)
+        .map_err(|e| TransportError::FidelityAttestation(format!("bad attestation key: {e}")))?;
+    let sig_bytes: [u8; 64] = tag.try_into().map_err(|_| {
+        TransportError::FidelityAttestation(format!("bad tag length {}", tag.len()))
+    })?;
+    let sig = Signature::from_bytes(&sig_bytes);
+    vk.verify_strict(preimage, &sig)
+        .map_err(|e| TransportError::FidelityAttestation(format!("signature invalid: {e}")))
+}
+
+/// Verify a standalone Fidelity cohort-op attestation tag. Same
+/// verify-then-discard semantics as [`verify_gratis_op_attestation`].
+pub fn verify_fidelity_cohort_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::FidelityCohortResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    let preimage =
+        crate::protocol::fidelity_cohort_attestation_preimage(inputs_canonical_hash, result);
+    verify_fidelity_tag(attestation_pub, &preimage, tag)
+}
+
+/// Verify a Fidelity league-snapshot attestation tag.
+pub fn verify_fidelity_snapshot_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    leagues: &[crate::protocol::FidelityLeagueEntry],
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    let preimage =
+        crate::protocol::fidelity_snapshot_attestation_preimage(inputs_canonical_hash, leagues);
+    verify_fidelity_tag(attestation_pub, &preimage, tag)
+}
+
+/// Verify a Fidelity index-query attestation tag.
+pub fn verify_fidelity_query_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::FidelityQueryResult,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    let preimage =
+        crate::protocol::fidelity_query_attestation_preimage(inputs_canonical_hash, result);
+    verify_fidelity_tag(attestation_pub, &preimage, tag)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

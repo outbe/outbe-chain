@@ -7716,9 +7716,21 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-tee",
+ "outbe-tee-enclave",
  "serde_json",
+]
+
+[[package]]
+name = "outbe-fidelity-math"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "outbe-primitives",
 ]
 
 [[package]]
@@ -7903,6 +7915,9 @@ dependencies = [
 name = "outbe-macros"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-primitives",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -8107,6 +8122,7 @@ dependencies = [
  "reth-storage-api",
  "reth-trie",
  "revm",
+ "rustix",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -8439,6 +8455,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "k256 0.13.4",
+ "outbe-fidelity-math",
  "outbe-poseidon",
  "outbe-primitives",
  "outbe-protocol",

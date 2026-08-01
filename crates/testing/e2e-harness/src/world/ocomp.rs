@@ -13,7 +13,11 @@ use eyre::Result;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_consensus::TxEip1559;
+#[cfg(feature = "ocomp-integration")]
+use alloy_eips::eip2718::Encodable2718 as _;
+#[cfg(feature = "ocomp-integration")]
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 #[cfg(feature = "ocomp-integration")]
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
@@ -40,11 +44,13 @@ use outbe_ocomp_protocol::{
     registry::{
         HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
     },
-    NodeMessageKind, PrepareVoteTransactionV1, PreparedVoteTransactionV1,
+    vote::ResultVoteV1,
+    AttestationResponseV1, NodeMessageKind, PreparedVoteTransactionV1, RequestAttestationV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, UPDATE_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     OutbeHeader,
 };
@@ -485,10 +491,8 @@ impl OcompTopology {
             .ocomp_snapshot_exporter_socket(usize::from(validator_index)))
     }
 
-    /// Ask the production node-owned signing seam to prepare one exact vote
-    /// transaction without broadcasting it. The harness receives only the
-    /// already signed public transaction; the validator key never leaves the
-    /// node.
+    /// Ask the node for only the inner OCOMP attestation, then build and sign
+    /// the exact public transaction with this domain's dedicated OCOMP EVM key.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_held_vote_transaction(
         &self,
@@ -515,14 +519,11 @@ impl OcompTopology {
             ClientPolicy::supervisor_to_node(uid, endpoint_identity, limits),
         )?;
         session.handshake()?;
-        let request = PrepareVoteTransactionV1 {
+        let request = RequestAttestationV1 {
             canonical_result: BoundedBytes(canonical_result),
-            nonce,
-            max_fee_per_gas: U256::from(max_fee_per_gas),
-            gas_limit,
         };
         session.send_request(
-            NodeMessageKind::PrepareVoteTransaction as u16,
+            NodeMessageKind::RequestAttestation as u16,
             request.encode_body(&limits)?,
         )?;
         let response = session.receive_response()?;
@@ -532,7 +533,32 @@ impl OcompTopology {
                 response.message_kind
             );
         }
-        PreparedVoteTransactionV1::decode_body(&response.body, &limits).map_err(Into::into)
+        let attestation = AttestationResponseV1::decode_body(&response.body, &limits)?;
+        let vote = ResultVoteV1::decode_canonical(&attestation.canonical_vote.0, &limits)?;
+        let calldata =
+            outbe_ocomp_protocol::abi::encode_submit_lysis_result_calldata(&vote, &limits)?;
+        let signer = OutbeEvmSigner::from_file(
+            self.domain_root(validator_index)?.join("ocomp-evm-key.hex"),
+        )?;
+        let signed = signer.sign_eip1559(TxEip1559 {
+            chain_id: identity.chain_id,
+            nonce,
+            gas_limit,
+            max_fee_per_gas,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(METADOSIS_ADDRESS),
+            value: U256::ZERO,
+            input: Bytes::from(calldata),
+            access_list: Default::default(),
+        })?;
+        let transaction_hash = *signed.hash();
+        let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
+        signed.encode_2718(&mut raw_transaction);
+        Ok(PreparedVoteTransactionV1 {
+            canonical_vote: attestation.canonical_vote,
+            raw_transaction: BoundedBytes(raw_transaction),
+            transaction_hash,
+        })
     }
 
     /// Generate and publish the complete immutable measurement fork before any
@@ -660,6 +686,143 @@ impl OcompTopology {
                 key_bytes.as_bytes(),
                 0o600,
             )?;
+            let evm_key = ocomp_evm_private_key(u8::try_from(validator_index)?);
+            publish_exact_file(
+                &domain.root.join("ocomp-evm-key.hex"),
+                format!("{evm_key}\n").as_bytes(),
+                0o600,
+            )?;
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn install_ocomp_delegate_bindings(&self) -> Result<()> {
+        const OCOMP_ROLE: u8 = 2;
+        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+            let index = usize::from(validator_index);
+            let validator_key =
+                crate::internal::proc::read_evm_key(&self.cfg.validator_dir(index))?;
+            let delegate = self.ocomp_delegate_address(validator_index)?;
+            let url = self.cfg.rpc_url(index);
+            let tx_hash = crate::internal::eth::send_call(
+                &url,
+                VALIDATOR_SET_ADDRESS,
+                &validator_key,
+                &crate::internal::eth::IValidatorSet::setDelegateCall {
+                    role: OCOMP_ROLE,
+                    delegate,
+                },
+                None,
+            )?;
+            eyre::ensure!(
+                crate::internal::eth::receipt_success(&url, &tx_hash) == Some(true),
+                "validator-{validator_index} OCOMP delegation transaction failed"
+            );
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let complete = (0..OCOMP_VALIDATOR_DOMAINS).all(|validator_index| {
+                let delegate = self
+                    .ocomp_delegate_address(validator_index)
+                    .unwrap_or(Address::ZERO);
+                let expected_validator = crate::internal::proc::read_evm_key(
+                    &self.cfg.validator_dir(usize::from(validator_index)),
+                )
+                .ok()
+                .and_then(|key| crate::internal::eth::address_of(&key))
+                .unwrap_or(Address::ZERO);
+                (0..usize::from(OCOMP_VALIDATOR_DOMAINS)).all(|rpc_index| {
+                    crate::internal::eth::read_call(
+                        &self.cfg.rpc_url(rpc_index),
+                        VALIDATOR_SET_ADDRESS,
+                        &crate::internal::eth::IValidatorSet::resolveValidatorCall {
+                            role: OCOMP_ROLE,
+                            signer: delegate,
+                        },
+                    ) == Some(expected_validator)
+                })
+            });
+            if complete {
+                return Ok(());
+            }
+            eyre::ensure!(
+                Instant::now() < deadline,
+                "OCOMP delegate bindings did not converge on every validator"
+            );
+            sleep(Duration::from_millis(250));
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_delegate_address(&self, validator_index: u8) -> Result<Address> {
+        if validator_index >= OCOMP_VALIDATOR_DOMAINS {
+            eyre::bail!("OCOMP delegate validator index is outside the committee");
+        }
+        crate::internal::eth::address_of(&ocomp_evm_private_key(validator_index))
+            .ok_or_else(|| eyre::eyre!("invalid deterministic OCOMP EVM key"))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn verify_ocomp_delegate_bindings(&self) -> Result<()> {
+        const ORACLE_ROLE: u8 = 1;
+        const OCOMP_ROLE: u8 = 2;
+
+        let mut observed_delegates = Vec::with_capacity(usize::from(OCOMP_VALIDATOR_DOMAINS));
+        for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
+            let index = usize::from(validator_index);
+            let validator_key =
+                crate::internal::proc::read_evm_key(&self.cfg.validator_dir(index))?;
+            let validator = crate::internal::eth::address_of(&validator_key)
+                .ok_or_else(|| eyre::eyre!("invalid validator-{validator_index} EVM key"))?;
+            let delegate = self.ocomp_delegate_address(validator_index)?;
+            eyre::ensure!(
+                delegate != validator,
+                "validator-{validator_index} reused its validator EVM key for OCOMP"
+            );
+            eyre::ensure!(
+                !observed_delegates.contains(&delegate),
+                "two validator domains share the same OCOMP delegate"
+            );
+            observed_delegates.push(delegate);
+
+            for rpc_index in 0..usize::from(OCOMP_VALIDATOR_DOMAINS) {
+                let rpc_url = self.cfg.rpc_url(rpc_index);
+                eyre::ensure!(
+                    crate::internal::eth::read_call(
+                        &rpc_url,
+                        VALIDATOR_SET_ADDRESS,
+                        &crate::internal::eth::IValidatorSet::getDelegateCall {
+                            validator,
+                            role: OCOMP_ROLE,
+                        },
+                    ) == Some(delegate),
+                    "validator-{validator_index} OCOMP delegate is inconsistent on RPC {rpc_index}"
+                );
+                eyre::ensure!(
+                    crate::internal::eth::read_call(
+                        &rpc_url,
+                        VALIDATOR_SET_ADDRESS,
+                        &crate::internal::eth::IValidatorSet::resolveValidatorCall {
+                            role: OCOMP_ROLE,
+                            signer: delegate,
+                        },
+                    ) == Some(validator),
+                    "validator-{validator_index} OCOMP delegate does not resolve on RPC {rpc_index}"
+                );
+                eyre::ensure!(
+                    crate::internal::eth::read_call(
+                        &rpc_url,
+                        VALIDATOR_SET_ADDRESS,
+                        &crate::internal::eth::IValidatorSet::resolveValidatorCall {
+                            role: ORACLE_ROLE,
+                            signer: delegate,
+                        },
+                    ) == Some(Address::ZERO),
+                    "validator-{validator_index} OCOMP delegate also has the ORACLE role on RPC {rpc_index}"
+                );
+            }
         }
         Ok(())
     }
@@ -1051,10 +1214,6 @@ impl OcompTopology {
         match role {
             OcompProcessRole::Supervisor => {
                 let validator_index = usize::from(validator_index);
-                let validator_key =
-                    crate::internal::proc::read_evm_key(&self.cfg.validator_dir(validator_index))?;
-                let validator_address = crate::internal::eth::address_of(&validator_key)
-                    .ok_or_else(|| eyre::eyre!("invalid validator EVM key"))?;
                 command
                     .arg("--development-node-supervisor-socket")
                     .arg(
@@ -1062,10 +1221,6 @@ impl OcompTopology {
                             u8::try_from(validator_index)
                                 .map_err(|_| eyre::eyre!("validator index does not fit u8"))?,
                         )?,
-                    )
-                    .env(
-                        "OUTBE_OCOMP_VALIDATOR_EVM_ADDRESS",
-                        format!("{validator_address:#x}"),
                     )
                     .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index));
             }
@@ -2147,6 +2302,14 @@ fn measurement_committee(
 fn measurement_signing_key(validator_index: u8) -> SigningKey {
     SigningKey::from_bytes((&[validator_index.saturating_add(1); 32]).into())
         .expect("indices 0..3 produce valid deterministic measurement scalars")
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn ocomp_evm_private_key(validator_index: u8) -> String {
+    format!(
+        "0x{}",
+        hex::encode([validator_index.saturating_add(0x71); 32])
+    )
 }
 
 #[cfg(feature = "ocomp-integration")]

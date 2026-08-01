@@ -7,6 +7,11 @@ use outbe_primitives::error::Result;
 
 use crate::schema::CredisContract;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol!("../../../contracts/precompiles/src/ICredis.sol");
 
 pub fn dispatch(

@@ -72,7 +72,8 @@ One validator domain contains:
   authority and q-forming result verification/apply;
 - a separate OCOMP supervisor process, which discovers work, plans,
   schedules and journals, then hosts the closed program's pure finalizer after
-  complete verified admission, but owns no chain writer or signing key;
+  complete verified admission, and owns only the role-delegated EVM key used to
+  submit the public result-vote transaction;
 - a separate read-only snapshot exporter;
 - retryable one-unit worker child processes launched by the Supervisor's fixed
   PoC adapter; and
@@ -125,7 +126,7 @@ are bounded.
 | Lysis semantics and result meaning | ADR-C-LYS-001 and the pinned Lysis bundle |
 | result construction | pure `LysisProgramV1` finalizer; supervisor is only its host |
 | result signature | node-owned `OcompAttestationGate`; never the finalizer host |
-| public vote construction/submission/reorg retry | validator-domain `OffchainLysis Supervisor` using restricted node-owned signing seams |
+| public vote construction/submission/reorg retry | validator-domain `OffchainLysis Supervisor` using its role-delegated EVM key after node attestation |
 | result-vote fee waiver | exact-selector validator-only ZeroFee hook; no protocol authority |
 | vote-slot/quorum/accountability state | OCOMP kernel inside block execution |
 | immutable terminal vs late accountability | separate `LysisTerminalV1` and bounded `OcompVoteAccountabilityV1` |

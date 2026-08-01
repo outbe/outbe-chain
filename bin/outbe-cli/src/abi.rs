@@ -52,6 +52,10 @@ sol! {
         function getEpochNumber() external view returns (uint256);
         function getEpochStartTimestamp() external view returns (uint64);
         function getEpochStartBlock() external view returns (uint64);
+        function setDelegate(uint8 role, address delegate) external;
+        function revokeDelegate(uint8 role) external;
+        function getDelegate(address validator, uint8 role) external view returns (address);
+        function resolveValidator(uint8 role, address signer) external view returns (address);
         function registerValidator(address validatorAddress, bytes calldata consensusPubkey, bytes calldata blsSignature) external;
         function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
         function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);

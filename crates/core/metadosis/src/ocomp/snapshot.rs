@@ -3,7 +3,6 @@
 use alloy_primitives::Address;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_fidelity::schema::FidelityContract;
 use outbe_ocomp_protocol::league_snapshot::{fidelity_league_snapshot_root, league_snapshot_key};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tribute::TributeContract;
@@ -35,19 +34,19 @@ impl MetadosisContract<'_> {
         }
         let tributes =
             TributeContract::new(self.storage.clone()).get_all_day_tributes(scope, parent, wwd)?;
-        let fidelity = FidelityContract::new(self.storage.clone());
-        let mut entries: Vec<(Address, u16)> = Vec::with_capacity(tributes.len());
-        for tribute in &tributes {
-            entries.push((tribute.owner, fidelity.league_at(tribute.owner, timestamp)?));
-        }
-        entries.sort_by_key(|(owner, _)| *owner);
         // One canonical Tribute per owner per day -> the owner set must be
-        // unique; this is also the canonical OCOMP subject order.
-        if entries.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
+        // unique; sorting also yields the canonical OCOMP subject order.
+        let mut owners: Vec<Address> = tributes.iter().map(|t| t.owner).collect();
+        owners.sort_unstable();
+        if owners.windows(2).any(|pair| pair[0] >= pair[1]) {
             return Err(PrecompileError::Fatal(
                 "OCOMP day owner set is not strictly ordered and unique".into(),
             ));
         }
+        // Snapshot the whole day's leagues in ONE enclave round-trip (was one
+        // per owner); results come back in `owners` (sorted) order.
+        let entries =
+            outbe_fidelity::api::snapshot_leagues(self.storage.clone(), timestamp, &owners)?;
         for (owner, league) in &entries {
             self.ocomp_fidelity_league_snapshot
                 .write(&league_snapshot_key(wwd.value(), *owner), *league)?;

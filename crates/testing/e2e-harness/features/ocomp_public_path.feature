@@ -24,6 +24,19 @@ Feature: Off-chain computation public path
     When the completed full-result vote is retried and then mutated through public RPC
     Then the completed job and Nod generation are unchanged by both transactions
 
+  @ocomp-delegated-signing @pfs-011-01
+  # OCOMP-TEST-ID: PFS-011-01
+  Scenario: Dedicated OCOMP keys submit a finalized vote without validator-key signing
+    Given the canonical four-validator OCOMP Final devnet
+    Then every OCOMP transaction signer is distinct and scoped only to the OCOMP role
+    When an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    And all four OCOMP domains run their node-facing production roles
+
   @ocomp-capacity
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet

@@ -23,6 +23,9 @@ use crate::errors::ZkProofError;
 /// This is the upstream-pinned preinit size (see `outbe-zk-backend`'s
 /// `PINNED_G1_SHA256`).
 const SRS_POINTS: u32 = (1 << 20) + 1;
+/// The only payload offset a well-formed `abi.encode(bytes32, bytes)` carries:
+/// one static word for `circuit_hash` plus the offset word itself.
+const CANONICAL_ABI_OFFSET: u64 = 64;
 const FULL_PROOF_PUBLIC_INPUT_COUNT: usize = 4;
 const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
 pub const FULL_PROOF_COMBINED_LEN: usize =
@@ -177,16 +180,26 @@ fn decode_input(input: &[u8]) -> Result<([u8; 32], &[u8]), ZkProofError> {
 
     let offset =
         read_u64_be_padded(&input[32..64]).ok_or(ZkProofError::MalformedAbi("offset too large"))?;
+    // Reject a non-canonical offset before it reaches any arithmetic: an
+    // offset near `u64::MAX` wraps `offset + 32` in a release build
+    // (overflow-checks off by default) and slips past the bounds guard below
+    // into an out-of-range slice index.
+    if offset != CANONICAL_ABI_OFFSET {
+        return Err(ZkProofError::MalformedAbi("non-canonical offset"));
+    }
     let offset = offset as usize;
-    if input.len() < offset + 32 {
+    let header_end = offset
+        .checked_add(32)
+        .ok_or(ZkProofError::MalformedAbi("offset overflow"))?;
+    if input.len() < header_end {
         return Err(ZkProofError::MalformedAbi("offset past end"));
     }
 
-    let length = read_u64_be_padded(&input[offset..offset + 32])
+    let length = read_u64_be_padded(&input[offset..header_end])
         .ok_or(ZkProofError::MalformedAbi("length too large"))?;
     let length = length as usize;
 
-    let data_start = offset + 32;
+    let data_start = header_end;
     let data_end = data_start
         .checked_add(length)
         .ok_or(ZkProofError::MalformedAbi("length overflow"))?;

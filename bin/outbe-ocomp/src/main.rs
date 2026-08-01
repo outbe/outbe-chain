@@ -1,8 +1,9 @@
 use std::env;
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::B256;
 use clap::{Args, Parser, Subcommand};
 use outbe_compressed_entities::{
     CeTopologyV1, EnvironmentIdentity, ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -25,12 +26,13 @@ use outbe_ocomp::supervisor_job::{
     SupervisorJobRunnerV1,
 };
 use outbe_ocomp::vote_submitter::{
-    PublicVoteRpcClientV1, SupervisorVoteSubmitterV1, VoteSubmissionConfigV1,
-    VoteSubmissionOutcomeV1,
+    LocalVoteTransactionPreparerV1, PublicVoteRpcClientV1, SupervisorVoteSubmitterV1,
+    VoteSubmissionConfigV1, VoteSubmissionOutcomeV1,
 };
 use outbe_ocomp::worker::{run_one_from_inherited_fd, WorkerConfig};
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
+use outbe_primitives::signer::OutbeEvmSigner;
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -45,6 +47,8 @@ enum Role {
     Supervisor(RuntimeArgs),
     SnapshotExporter(RuntimeArgs),
     Worker(WorkerArgs),
+    /// Print the address of the role-delegated OCOMP transaction signer.
+    SignerAddress(RuntimeArgs),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -85,33 +89,101 @@ struct RuntimeArgs {
 const SUPERVISOR_USER: &str = "outbe-ocomp-supervisor";
 const SNAPSHOT_EXPORTER_USER: &str = "outbe-ocomp-export";
 const WORKER_USER: &str = "outbe-ocomp-worker";
-const CAS_ROOT: &str = "/var/lib/outbe-ocomp/cas-v1";
+const BASE_PATH: &str = "/opt/outbe-chain";
+const BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
+const NODE_USER_ENV: &str = "OUTBE_OCOMP_NODE_USER";
 const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const CAS_MAX_TOTAL_BYTES: u64 = OCOMP_POC_CAS_QUOTA_BYTES;
-const WORKER_INBOX_ROOT: &str = "/var/lib/outbe-ocomp/worker-inbox-v1";
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
 const SOCKET_ACTIVATION_FD: i32 = 0;
-const NODE_USER: &str = "outbe";
-const NODE_SUPERVISOR_SOCKET: &str = "/run/outbe-ocomp/node-supervisor.sock";
-const NODE_SNAPSHOT_EXPORTER_SOCKET: &str = "/run/outbe-ocomp/node-snapshot-exporter.sock";
-const WORKER_SOCKET: &str = "/run/outbe-ocomp/worker.sock";
-const SUPERVISOR_JOURNAL_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/discovery";
-const SUPERVISOR_EXPORT_BINDING_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/export-bindings";
-const SUPERVISOR_JOB_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/jobs";
-const SUPERVISOR_VOTE_SUBMISSION_ROOT: &str = "/var/lib/outbe-ocomp/supervisor-v1/vote-submissions";
 const SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES: usize = 1_048_576;
 const SUPERVISOR_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const SNAPSHOT_EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
-const SNAPSHOT_EXPORTER_CE_DATADIR: &str = "/var/lib/outbe/ce";
-const SNAPSHOT_EXPORTER_INPUT_REF_ROOT: &str = "/var/lib/outbe-ocomp/exporter-v1/input-refs";
-const SNAPSHOT_EXPORTER_RECEIPT_ROOT: &str = "/var/lib/outbe-ocomp/exporter-v1/receipts";
 const SNAPSHOT_EXPORTER_TRIBUTE_PAGE_LIMIT: usize = 256;
 const SNAPSHOT_EXPORTER_MAX_RECOVERABLE_PREPARED_JOBS: usize = 8;
 const PROJECTION_START_BLOCK: u64 = 1;
 const CE_TREE_FORMAT: &str = "ckb-smt-v0.6.1-poseidon-catalog-v3";
 const CE_VENDOR_REVISION: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
-const PROTOCOL_BUNDLE_PATH: &str = "/etc/outbe/ocomp/protocol-bundle-v1.ocb1";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProductionConfig {
+    base_path: PathBuf,
+    node_user: String,
+}
+
+impl ProductionConfig {
+    fn from_environment() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_lookup(|name| env::var_os(name))
+    }
+
+    fn from_lookup(
+        mut lookup: impl FnMut(&str) -> Option<OsString>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let base_path = lookup(BASE_PATH_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(BASE_PATH));
+        let node_user = lookup(NODE_USER_ENV)
+            .ok_or_else(|| format!("required environment variable {NODE_USER_ENV} is missing"))?
+            .into_string()
+            .map_err(|_| format!("{NODE_USER_ENV} must be valid UTF-8"))?;
+        if node_user.is_empty() {
+            return Err(format!("{NODE_USER_ENV} must not be empty").into());
+        }
+        Ok(Self {
+            base_path,
+            node_user,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ProductionLayout {
+    node_supervisor_socket: PathBuf,
+    node_snapshot_exporter_socket: PathBuf,
+    worker_socket: PathBuf,
+    cas_root: PathBuf,
+    worker_inbox_root: PathBuf,
+    supervisor_journal_root: PathBuf,
+    supervisor_export_binding_root: PathBuf,
+    supervisor_job_root: PathBuf,
+    supervisor_vote_submission_root: PathBuf,
+    snapshot_exporter_ce_datadir: PathBuf,
+    snapshot_exporter_input_ref_root: PathBuf,
+    snapshot_exporter_receipt_root: PathBuf,
+    ocomp_evm_key_path: PathBuf,
+    protocol_bundle_path: PathBuf,
+}
+
+impl ProductionLayout {
+    fn from_base(base_path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        if !base_path.is_absolute() || base_path.parent().is_none() || base_path == Path::new("/") {
+            return Err("OCOMP base path must be a non-root absolute path".into());
+        }
+
+        let ocomp_root = base_path.join("ocomp");
+        let runtime_root = ocomp_root.join("run");
+        let data_root = ocomp_root.join("data");
+        let supervisor_root = data_root.join("supervisor-v1");
+        let exporter_root = data_root.join("exporter-v1");
+        Ok(Self {
+            node_supervisor_socket: runtime_root.join("node-supervisor.sock"),
+            node_snapshot_exporter_socket: runtime_root.join("node-snapshot-exporter.sock"),
+            worker_socket: runtime_root.join("worker.sock"),
+            cas_root: data_root.join("cas-v1"),
+            worker_inbox_root: data_root.join("worker-inbox-v1"),
+            supervisor_journal_root: supervisor_root.join("discovery"),
+            supervisor_export_binding_root: supervisor_root.join("export-bindings"),
+            supervisor_job_root: supervisor_root.join("jobs"),
+            supervisor_vote_submission_root: supervisor_root.join("vote-submissions"),
+            snapshot_exporter_ce_datadir: ocomp_root.join("ce"),
+            snapshot_exporter_input_ref_root: exporter_root.join("input-refs"),
+            snapshot_exporter_receipt_root: exporter_root.join("receipts"),
+            ocomp_evm_key_path: data_root.join("keys").join("ocomp-evm-key.hex"),
+            protocol_bundle_path: base_path.join("protocol-bundle-v1.ocb1"),
+        })
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ProcessRole {
@@ -148,6 +220,7 @@ struct RuntimeProfile {
     snapshot_exporter_ce_datadir: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
+    ocomp_evm_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
 }
 
@@ -160,24 +233,27 @@ impl RuntimeProfile {
             {
                 return Err("development path overrides require --development-root".into());
             }
+            let production = ProductionConfig::from_environment()?;
+            let layout = ProductionLayout::from_base(&production.base_path)?;
             return Ok(Self {
                 effective_role_uid: uid_for_user(role.production_user())?,
                 supervisor_uid: uid_for_user(SUPERVISOR_USER)?,
                 worker_uid: uid_for_user(WORKER_USER)?,
-                node_uid: uid_for_user(NODE_USER)?,
-                node_supervisor_socket: PathBuf::from(NODE_SUPERVISOR_SOCKET),
-                node_snapshot_exporter_socket: PathBuf::from(NODE_SNAPSHOT_EXPORTER_SOCKET),
-                worker_socket: PathBuf::from(WORKER_SOCKET),
-                cas_root: PathBuf::from(CAS_ROOT),
-                worker_inbox_root: PathBuf::from(WORKER_INBOX_ROOT),
-                supervisor_journal_root: PathBuf::from(SUPERVISOR_JOURNAL_ROOT),
-                supervisor_export_binding_root: PathBuf::from(SUPERVISOR_EXPORT_BINDING_ROOT),
-                supervisor_job_root: PathBuf::from(SUPERVISOR_JOB_ROOT),
-                supervisor_vote_submission_root: PathBuf::from(SUPERVISOR_VOTE_SUBMISSION_ROOT),
-                snapshot_exporter_ce_datadir: PathBuf::from(SNAPSHOT_EXPORTER_CE_DATADIR),
-                snapshot_exporter_input_ref_root: PathBuf::from(SNAPSHOT_EXPORTER_INPUT_REF_ROOT),
-                snapshot_exporter_receipt_root: PathBuf::from(SNAPSHOT_EXPORTER_RECEIPT_ROOT),
-                protocol_bundle_path: PathBuf::from(PROTOCOL_BUNDLE_PATH),
+                node_uid: uid_for_user(&production.node_user)?,
+                node_supervisor_socket: layout.node_supervisor_socket,
+                node_snapshot_exporter_socket: layout.node_snapshot_exporter_socket,
+                worker_socket: layout.worker_socket,
+                cas_root: layout.cas_root,
+                worker_inbox_root: layout.worker_inbox_root,
+                supervisor_journal_root: layout.supervisor_journal_root,
+                supervisor_export_binding_root: layout.supervisor_export_binding_root,
+                supervisor_job_root: layout.supervisor_job_root,
+                supervisor_vote_submission_root: layout.supervisor_vote_submission_root,
+                snapshot_exporter_ce_datadir: layout.snapshot_exporter_ce_datadir,
+                snapshot_exporter_input_ref_root: layout.snapshot_exporter_input_ref_root,
+                snapshot_exporter_receipt_root: layout.snapshot_exporter_receipt_root,
+                ocomp_evm_key_path: layout.ocomp_evm_key_path,
+                protocol_bundle_path: layout.protocol_bundle_path,
             });
         };
 
@@ -250,6 +326,7 @@ impl RuntimeProfile {
             snapshot_exporter_ce_datadir,
             snapshot_exporter_input_ref_root: root.join("exporter-v1").join("input-refs"),
             snapshot_exporter_receipt_root: root.join("exporter-v1").join("receipts"),
+            ocomp_evm_key_path: root.join("ocomp-evm-key.hex"),
             protocol_bundle_path: root.join("protocol-bundle-v1.ocb1"),
         })
     }
@@ -294,7 +371,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Role::Supervisor(args) => run_supervisor(&args),
         Role::SnapshotExporter(args) => run_snapshot_exporter(&args),
+        Role::SignerAddress(args) => print_signer_address(&args),
     }
+}
+
+fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = RuntimeProfile::resolve(args, ProcessRole::Supervisor)?;
+    require_effective_uid(runtime.effective_role_uid)?;
+    let signer =
+        OutbeEvmSigner::from_strict_file(runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
+    println!("{}", signer.address());
+    Ok(())
 }
 
 fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -361,7 +448,11 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
             })
             .transpose()?,
     })?;
-    let validator_address: Address = required_env("OUTBE_OCOMP_VALIDATOR_EVM_ADDRESS")?.parse()?;
+    let evm_signer =
+        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.effective_role_uid)?;
+    let vote_preparer =
+        LocalVoteTransactionPreparerV1::new(&discovery, evm_signer, identity.chain_id, limits)?;
+    let sender_address = vote_preparer.sender_address();
     let vote_rpc = PublicVoteRpcClientV1::new(
         required_env("OUTBE_OCOMP_RPC_URL")?,
         SUPERVISOR_VOTE_RPC_MAX_RESPONSE_BYTES,
@@ -370,7 +461,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
         VoteSubmissionConfigV1 {
             journal_root: runtime.supervisor_vote_submission_root,
             expected_chain_id: identity.chain_id,
-            validator_address,
+            sender_address,
             limits,
         },
         vote_rpc,
@@ -412,7 +503,7 @@ fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> 
                         }
                         if let Some(completed) = completed_result.as_ref() {
                             match vote_submitter.reconcile(
-                                &discovery,
+                                &vote_preparer,
                                 completed.job_id,
                                 completed.result_digest,
                                 &completed.canonical_result,
@@ -609,6 +700,42 @@ mod tests {
             development_node_snapshot_exporter_socket: None,
         };
         assert!(RuntimeProfile::resolve(&relative, ProcessRole::Supervisor).is_err());
+    }
+
+    #[test]
+    fn production_layout_derives_every_path_from_one_base_path() {
+        let config = ProductionConfig::from_lookup(|name| match name {
+            "OUTBE_OCOMP_BASE_PATH" => Some("/srv/outbe".into()),
+            "OUTBE_OCOMP_NODE_USER" => Some("validator-node".into()),
+            _ => None,
+        })
+        .unwrap();
+        let layout = ProductionLayout::from_base(&config.base_path).unwrap();
+
+        assert_eq!(config.node_user, "validator-node");
+        assert_eq!(
+            layout.node_supervisor_socket,
+            PathBuf::from("/srv/outbe/ocomp/run/node-supervisor.sock")
+        );
+        assert_eq!(
+            layout.supervisor_vote_submission_root,
+            PathBuf::from("/srv/outbe/ocomp/data/supervisor-v1/vote-submissions")
+        );
+        assert_eq!(
+            layout.protocol_bundle_path,
+            PathBuf::from("/srv/outbe/protocol-bundle-v1.ocb1")
+        );
+        assert_eq!(
+            layout.ocomp_evm_key_path,
+            PathBuf::from("/srv/outbe/ocomp/data/keys/ocomp-evm-key.hex")
+        );
+    }
+
+    #[test]
+    fn production_config_requires_node_user_and_rejects_unsafe_base_paths() {
+        assert!(ProductionConfig::from_lookup(|_| None).is_err());
+        assert!(ProductionLayout::from_base(std::path::Path::new("/")).is_err());
+        assert!(ProductionLayout::from_base(std::path::Path::new("relative")).is_err());
     }
 
     #[test]

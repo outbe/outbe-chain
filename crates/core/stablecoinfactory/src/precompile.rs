@@ -8,6 +8,11 @@ pub use crate::abi::IStablecoinFactory;
 use crate::errors::StablecoinFactoryError;
 use crate::schema::StablecoinFactoryContract;
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],

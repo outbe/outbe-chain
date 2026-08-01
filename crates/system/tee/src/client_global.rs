@@ -36,6 +36,14 @@ pub fn install_enclave_client(client: EnclaveClient) -> Result<(), &'static str>
 /// Run `f` against the process-global enclave client. Returns `None` if no client
 /// is configured or the mutex is poisoned (the caller maps that to a typed
 /// `tee_sidecar_unavailable` error).
+///
+/// TODO(tee-perf): every enclave call — consensus-path ops (gratis/promis,
+/// begin-block sweeps, per-WWD snapshot batches) and read-only queries (e.g.
+/// eth_call fidelity index with signed auth) — serializes on this single
+/// Mutex-guarded blocking connection. A query storm on an RPC node can stall
+/// block execution behind it. Future optimization: split read-only traffic onto
+/// a separate enclave connection (or a small pool), and/or rate-limit
+/// query-path calls so consensus-path requests never queue behind them.
 pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveClient) -> R) -> Option<R> {
     let mutex = ENCLAVE_CLIENT.get()?;
     let mut client = mutex.lock().ok()?;

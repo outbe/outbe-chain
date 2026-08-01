@@ -387,6 +387,7 @@ impl ValidatorSet<'_> {
                 "unauthorized: caller must be owner or validator itself".into(),
             ));
         }
+        self.ensure_not_operational_delegate(validator_addr)?;
 
         // BLS proof-of-key-ownership is mandatory for self-registration.
         // Owner registrations (caller == owner && caller != validator_addr) may

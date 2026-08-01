@@ -148,16 +148,56 @@ pub fn mutate_void<T: SolCall>(
 /// Mutate-void payable helper: calls a state-changing function that accepts msg.value.
 ///
 /// Similar to [`mutate_void`] but also passes `value` (msg.value) to the handler.
-/// Usage: `mutate_void_payable(decoded_call, caller, value, |sender, c, val| contract.stake(sender, c.validator, val))`
+///
+/// `payable_selectors` is the calling module's `PAYABLE_SELECTORS`. Funded calls
+/// to a selector missing from that list are refused rather than handed the
+/// value: the route table binds the list to the address's value policy, so such
+/// a selector would consume value the boundary never authorized for this
+/// address. A zero-value call still dispatches, matching
+/// [`reject_value_unless_payable`] — an undeclared selector is refused its
+/// value, not disabled outright.
 #[inline]
 pub fn mutate_void_payable<T: SolCall>(
     call: T,
+    payable_selectors: &[[u8; 4]],
     sender: Address,
     value: U256,
     f: impl FnOnce(Address, T, U256) -> Result<()>,
 ) -> Result<Bytes> {
+    if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+        return Err(PrecompileError::Revert(
+            "payable selector is not declared in PAYABLE_SELECTORS".into(),
+        ));
+    }
     f(sender, call, value)?;
     Ok(Bytes::new())
+}
+
+/// Refuses native value for any selector the module has not published as
+/// payable.
+///
+/// A module reaches this only because its address's route declares
+/// `ValuePolicy::Payable`, which the route table binds to `payable_selectors` at
+/// compile time. Checking the raw selector against that same list makes value
+/// default-denied for the whole module: a selector added later takes no value
+/// until it is published, rather than each non-payable arm having to remember a
+/// [`reject_value`] call of its own.
+#[inline]
+pub fn reject_value_unless_payable(
+    calldata: &[u8],
+    payable_selectors: &[[u8; 4]],
+    value: &U256,
+) -> Result<()> {
+    if value.is_zero() {
+        return Ok(());
+    }
+    let published = calldata
+        .get(..4)
+        .is_some_and(|selector| payable_selectors.iter().any(|entry| entry == selector));
+    if published {
+        return Ok(());
+    }
+    reject_value(value)
 }
 
 /// Rejects calls with non-zero msg.value for non-payable functions.
@@ -204,5 +244,85 @@ mod tests {
 
         let unrelated = one_bytes_arg(35);
         assert!(preflight_dynamic_bytes_len(&unrelated, [0, 0, 0, 0], 0, 1, 36).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod payable_witness_tests {
+    use alloy_primitives::{Address, U256};
+    use alloy_sol_types::{sol, SolCall};
+
+    use super::mutate_void_payable;
+    use crate::error::PrecompileError;
+
+    sol! {
+        interface IWitness {
+            function fund(uint256 amount) external payable;
+            function note() external;
+        }
+    }
+
+    /// The route table binds a module's `PAYABLE_SELECTORS` to its address's
+    /// value policy at compile time. A selector that forwards value without
+    /// appearing in that list would take value the boundary never authorized
+    /// for the address, so it is refused at its own call site.
+    #[test]
+    fn undeclared_payable_selector_is_refused() {
+        let call = IWitness::fundCall {
+            amount: U256::from(1u64),
+        };
+        let refused = mutate_void_payable(call, &[], Address::ZERO, U256::from(1u64), |_, _, _| {
+            panic!("handler must not run for an undeclared selector")
+        });
+        assert!(matches!(refused, Err(PrecompileError::Revert(_))));
+    }
+
+    /// The module-wide default-deny: on a payable address every selector the
+    /// module has not published refuses value, so a new value-consuming arm
+    /// takes nothing until it is declared — no per-arm check to forget.
+    #[test]
+    fn unpublished_selector_refuses_value_on_a_payable_module() {
+        use super::reject_value_unless_payable;
+
+        let published = &[IWitness::fundCall::SELECTOR];
+        let other = IWitness::noteCall {}.abi_encode();
+
+        assert!(matches!(
+            reject_value_unless_payable(&other, published, &U256::from(1u64)),
+            Err(PrecompileError::Revert(_))
+        ));
+        assert!(reject_value_unless_payable(&other, published, &U256::ZERO).is_ok());
+
+        let funded = IWitness::fundCall {
+            amount: U256::from(1u64),
+        }
+        .abi_encode();
+        assert!(reject_value_unless_payable(&funded, published, &U256::from(1u64)).is_ok());
+
+        // Calldata too short to carry a selector is not published either.
+        assert!(matches!(
+            reject_value_unless_payable(&[0u8; 3], published, &U256::from(1u64)),
+            Err(PrecompileError::Revert(_))
+        ));
+    }
+
+    #[test]
+    fn declared_payable_selector_reaches_the_handler() {
+        let call = IWitness::fundCall {
+            amount: U256::from(1u64),
+        };
+        let mut seen = U256::ZERO;
+        mutate_void_payable(
+            call,
+            &[IWitness::fundCall::SELECTOR],
+            Address::ZERO,
+            U256::from(7u64),
+            |_, _, value| {
+                seen = value;
+                Ok(())
+            },
+        )
+        .expect("declared selector must dispatch");
+        assert_eq!(seen, U256::from(7u64));
     }
 }

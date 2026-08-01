@@ -202,18 +202,20 @@ slot follow.
 ### Full-result vote verification
 
 `submitLysisResult` is a normal signed bounded EVM transaction carried
-through RPC, txpool, gossip, proposal, import and replay. The validator does not
-pay its native fee: a dedicated exact-selector ZeroFee hook, constrained like
-Oracle's hook, authorizes only the eligible validator EVM signer, zero value and
-bounded envelope. That hook does not decide protocol validity.
+through RPC, txpool, gossip, proposal, import and replay. The represented
+validator does not pay its native fee: a dedicated exact-selector ZeroFee hook,
+constrained like Oracle's hook, authorizes only an eligible validator or its
+role-delegated OCOMP signer, zero value and bounded envelope. That hook does not
+decide protocol validity.
 
-The `OffchainLysis Supervisor` owns transaction construction, submission,
-inclusion/finality tracking and reorg rebroadcast. It requests both inner OCOMP
-attestation and outer EVM signing through restricted node-owned seams and never
-receives private keys. The PoC submission path uses the canonical `latest`
-account nonce and the frozen gas limit; it does not use `eth_estimateGas` or a
-`pending` block build. The durable single-writer journal reuses the exact
-node-signed raw transaction for retry/reorg. Before recording a vote, the OCOMP
+The `OffchainLysis Supervisor` owns transaction construction, local outer EVM
+signing with its role-delegated key, submission, inclusion/finality tracking and
+reorg rebroadcast. It requests only the inner OCOMP attestation through the
+restricted node-owned seam and never receives the node attestation key. The PoC
+submission path uses the canonical `latest` account nonce and the frozen gas
+limit; it does not use `eth_estimateGas` or a `pending` block build. The durable
+single-writer journal reuses the exact locally signed raw transaction for
+retry/reorg. Before recording a vote, the OCOMP
 executor:
 
 1. loads the exact `VOTING_OPEN`, `COMPLETED` or `CONFLICTED` job and its pinned

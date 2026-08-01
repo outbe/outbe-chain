@@ -3,6 +3,11 @@ use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
+/// Selectors on this precompile that accept native value. The route table binds
+/// this to the address's `ValuePolicy` at compile time, so a selector added here
+/// without flipping the route fails the build.
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
+
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/IValidatorSet.sol"
@@ -124,6 +129,24 @@ pub fn dispatch(
                 }
                 getEpochStartBlock(_) => metadata::<IValidatorSet::getEpochStartBlockCall>(|| {
                     vs.epoch_start_block.read()
+                }),
+                setDelegate(c) => mutate_void(c, caller, |sender, c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.set_delegate(sender, role, c.delegate)
+                }),
+                revokeDelegate(c) => mutate_void(c, caller, |sender, c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.revoke_delegate(sender, role)
+                }),
+                getDelegate(c) => view(c, |c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    vs.get_delegate(c.validator, role)
+                }),
+                resolveValidator(c) => view(c, |c| {
+                    let role = crate::delegation::ValidatorDelegateRole::try_from(c.role)?;
+                    Ok(vs
+                        .resolve_validator_for_role(c.signer, role)?
+                        .unwrap_or(Address::ZERO))
                 }),
                 registerValidator(c) => mutate_void(c, caller, |sender, c| {
                     if c.consensusPubkey.len() != 48 {

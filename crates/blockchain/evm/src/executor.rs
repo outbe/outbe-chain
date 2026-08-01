@@ -9638,8 +9638,16 @@ mod tests {
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_registered_active_validator(storage.clone(), validator, &pk);
 
-            let oracle = outbe_oracle::contract::OracleContract::new(storage.clone());
-            oracle.feeder_delegation.write(&validator, feeder)?;
+            // Feeder resolution moved to the role-scoped ValidatorSet
+            // delegation registry; the legacy oracle-side mapping is no longer
+            // consulted by `resolve_validator_for_feeder`.
+            let mut validator_set =
+                outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            validator_set.set_delegate(
+                validator,
+                outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+                feeder,
+            )?;
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
         .expect("test genesis state must be seeded");

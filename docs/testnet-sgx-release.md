@@ -82,17 +82,26 @@ job to start.
 
 ## Cut and run a release
 
-The workflow is manual and must be dispatched from `main`. The input tag must be an
-annotated signed tag, already exist, match `vX.Y.Z-testnet.N`, point to the same `main`
-commit and remain immutable:
+Pushing the tag is the trigger: the `dispatch-testnet-release` job in `release.yml` runs on
+every `vX.Y.Z-testnet.N` tag and dispatches this workflow with `--ref main`. goreleaser
+deliberately skips those tags so this workflow alone creates the GitHub release. The
+workflow ref must stay `main` because the Sigstore certificate identity is pinned to
+`refs/heads/main` in `xtask/src/release/sgx.rs` and `release/release-manifest-v1.schema.json`.
+
+The tag must be an annotated signed tag, already exist, match `vX.Y.Z-testnet.N`, point to
+the same `main` commit and remain immutable:
 
 ```bash
 git switch main
 git pull --ff-only
 git status --short                    # must be empty
 git tag -s v0.2.0-testnet.1 -m 'testnet v0.2.0-testnet.1'
-git push origin v0.2.0-testnet.1
+git push origin v0.2.0-testnet.1      # this starts the protected SGX release
+```
 
+Dispatching by hand stays available for a re-run of an existing tag:
+
+```bash
 gh workflow run testnet-release.yml \
   --repo outbe/outbe-chain \
   --ref main \
@@ -120,6 +129,12 @@ only after another tag-object check. Publication fails if a GitHub
 Release or failed draft already exists for the tag: reruns cannot replace assets, and
 changed output requires a new tag.
 There is no successful release asset if the SGX runner does not pass.
+
+Besides the SGX evidence, the asset matrix carries the deployable payload:
+`outbe-linux-x86_64.tar` (every artifact of `release/reproducible-elf-build-v1.json` —
+`outbe-chain`, `outbe-cli`, `outbe-keygen`, `outbe-feeder`, `outbe-tee-enclave`,
+`outbe-ocomp` — plus their `SHA256SUMS` and `release-manifest.json`) and
+`outbe-deploy-assets.tar` (`ocomp.sh`, `ocomp.env.example`, `deploy/systemd/`).
 
 If publication stops after draft creation, leave that draft as evidence and cut a new
 testnet tag after diagnosing the failed run. Do not delete assets and reuse the same release

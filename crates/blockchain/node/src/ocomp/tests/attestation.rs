@@ -9,14 +9,11 @@ use std::{
     thread,
 };
 
-use alloy_consensus::{EthereumTxEnvelope, Transaction as _};
-use alloy_eips::eip2718::Decodable2718 as _;
-use alloy_primitives::{TxKind, B256, U256};
+use alloy_primitives::{B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::block::ConsensusBlock;
 use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
-    abi::encode_submit_lysis_result_calldata,
     committee::{
         OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
         OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
@@ -38,12 +35,9 @@ use outbe_ocomp_protocol::{
     },
     vote::ResultVoteV1,
     AttestationResponseV1, ListFinalizedJobsResponseV1, ListFinalizedJobsV1, LocalErrorCode,
-    LocalErrorV1, NodeMessageKind, PrepareVoteTransactionV1, PreparedVoteTransactionV1,
-    ProtocolError, RequestAttestationV1, SchemaLimits, MAX_FINALIZED_JOBS_PER_RESPONSE,
+    LocalErrorV1, NodeMessageKind, ProtocolError, RequestAttestationV1, SchemaLimits,
+    MAX_FINALIZED_JOBS_PER_RESPONSE,
 };
-use outbe_primitives::{addresses::METADOSIS_ADDRESS, signer::OutbeEvmSigner};
-use reth_ethereum::TransactionSigned;
-use reth_primitives_traits::SignedTransaction as _;
 
 use crate::ocomp::{
     attestation::{
@@ -51,7 +45,7 @@ use crate::ocomp::{
         ExportedAttestationAuthorityV1, FinalizedAttestationAuthority, OcompAttestationConfig,
         OcompAttestationGate,
     },
-    control::{NodeControlError, OcompControlServer},
+    control::OcompControlServer,
     retention::{
         CandidateFinalityV1, CandidatePinV1, FinalizedInputProofSource, OcompRetentionCoordinator,
         RetentionError,
@@ -629,212 +623,6 @@ fn ocm_sig_001_real_control_socket_attests_and_returns_typed_conflict_without_dr
         .join()
         .expect("control server did not panic")
         .expect("control server stopped cleanly");
-}
-
-#[test]
-fn ocm_vot_001_node_builds_only_the_exact_validator_vote_transaction() {
-    let limits = protocol_limits();
-    let (committee, exported, result) = fixture();
-    let authority = Arc::new(StaticAuthority {
-        value: Mutex::new(exported.clone()),
-        reloads: AtomicUsize::new(0),
-    });
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let gate = attestation_gate(
-        &directory,
-        authority,
-        Arc::new(AtomicHeightSource::new(105)),
-        committee.clone(),
-    );
-    let evm_signer =
-        Arc::new(OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM signer"));
-    let expected_signer = evm_signer.address();
-    let server = base_control_server(&directory)
-        .with_attestation(Arc::new(gate))
-        .with_vote_transaction_signer(evm_signer);
-    let canonical_result = result.encode_canonical(&limits).expect("canonical result");
-    let nonce = 17;
-    let max_fee_per_gas = outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS + 7;
-
-    let prepared = server
-        .prepare_vote_transaction(&PrepareVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result),
-            nonce,
-            max_fee_per_gas: U256::from(max_fee_per_gas),
-            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-        })
-        .expect("restricted result-vote transaction");
-
-    let vote = ResultVoteV1::decode_canonical(&prepared.canonical_vote.0, &limits)
-        .expect("canonical result vote");
-    vote.verify(
-        &exported.finalized_intent,
-        exported.job_id,
-        &committee,
-        105,
-        exported.open_height,
-        exported.deadline_height,
-        &limits,
-    )
-    .expect("node-attested vote");
-    let expected_calldata =
-        encode_submit_lysis_result_calldata(&vote, &limits).expect("vote calldata");
-
-    let mut raw = prepared.raw_transaction.0.as_slice();
-    let transaction =
-        TransactionSigned::decode_2718(&mut raw).expect("signed EIP-2718 transaction");
-    assert!(
-        raw.is_empty(),
-        "transaction must not contain trailing bytes"
-    );
-    assert!(matches!(&transaction, EthereumTxEnvelope::Eip1559(_)));
-    assert_eq!(transaction.chain_id(), Some(42));
-    assert_eq!(transaction.nonce(), nonce);
-    assert_eq!(
-        transaction.gas_limit(),
-        outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT
-    );
-    assert_eq!(transaction.max_fee_per_gas(), max_fee_per_gas);
-    assert_eq!(transaction.max_priority_fee_per_gas(), Some(0));
-    assert_eq!(transaction.kind(), TxKind::Call(METADOSIS_ADDRESS));
-    assert_eq!(transaction.value(), U256::ZERO);
-    assert_eq!(transaction.input().as_ref(), expected_calldata.as_slice());
-    assert_eq!(*transaction.hash(), prepared.transaction_hash);
-    assert_eq!(
-        transaction.try_recover().expect("recover validator signer"),
-        expected_signer
-    );
-}
-
-#[test]
-fn ocm_vot_001_supervisor_prepares_vote_transaction_over_the_real_control_socket() {
-    let limits = protocol_limits();
-    let (committee, exported, result) = fixture();
-    let authority = Arc::new(StaticAuthority {
-        value: Mutex::new(exported),
-        reloads: AtomicUsize::new(0),
-    });
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let gate = attestation_gate(
-        &directory,
-        authority,
-        Arc::new(AtomicHeightSource::new(105)),
-        committee,
-    );
-    let server = base_control_server(&directory)
-        .with_attestation(Arc::new(gate))
-        .with_vote_transaction_signer(Arc::new(
-            OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM signer"),
-        ));
-    let (node_stream, supervisor_stream) =
-        UnixStream::pair().expect("real local control socket pair");
-    let server_thread = thread::spawn(move || server.serve_connection(node_stream));
-
-    let identity = EndpointIdentity {
-        chain_id: 42,
-        genesis_hash: hash(40),
-        boot_nonce: hash(99),
-        protocol_bundle_hash: hash(41),
-    };
-    let mut client = ControlClientSession::connect(
-        supervisor_stream,
-        ClientPolicy::supervisor_to_node(effective_uid().expect("effective uid"), identity, limits),
-    )
-    .expect("connect supervisor control session");
-    client.handshake().expect("control handshake");
-
-    let request = PrepareVoteTransactionV1 {
-        canonical_result: BoundedBytes(result.encode_canonical(&limits).expect("canonical result")),
-        nonce: 17,
-        max_fee_per_gas: U256::from(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS + 7),
-        gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-    };
-    client
-        .send_request(
-            NodeMessageKind::PrepareVoteTransaction as u16,
-            request.encode_body(&limits).expect("prepare-vote request"),
-        )
-        .expect("send prepare-vote request");
-    let frame = client.receive_response().expect("prepare-vote response");
-    assert_eq!(frame.message_kind, NodeMessageKind::Response as u16);
-    let prepared = PreparedVoteTransactionV1::decode_body(&frame.body, &limits)
-        .expect("typed prepared vote transaction");
-    assert!(!prepared.canonical_vote.0.is_empty());
-    assert!(!prepared.raw_transaction.0.is_empty());
-    assert_ne!(prepared.transaction_hash, B256::ZERO);
-
-    drop(client);
-    server_thread
-        .join()
-        .expect("control server did not panic")
-        .expect("control server stopped cleanly");
-}
-
-#[test]
-fn ocm_vot_001_unavailable_or_invalid_vote_envelope_never_consumes_the_inner_vote_slot() {
-    let limits = protocol_limits();
-    let (committee, exported, result) = fixture();
-    let canonical_result = result.encode_canonical(&limits).expect("canonical result");
-
-    for request in [
-        PrepareVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result.clone()),
-            nonce: 1,
-            max_fee_per_gas: U256::from(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS - 1),
-            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-        },
-        PrepareVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result.clone()),
-            nonce: 1,
-            max_fee_per_gas: U256::from(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS),
-            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT - 1,
-        },
-    ] {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let authority = Arc::new(StaticAuthority {
-            value: Mutex::new(exported.clone()),
-            reloads: AtomicUsize::new(0),
-        });
-        let gate = attestation_gate(
-            &directory,
-            authority,
-            Arc::new(AtomicHeightSource::new(105)),
-            committee.clone(),
-        );
-        let server = base_control_server(&directory)
-            .with_attestation(Arc::new(gate))
-            .with_vote_transaction_signer(Arc::new(
-                OutbeEvmSigner::from_secret_bytes([9; 32]).expect("validator EVM signer"),
-            ));
-        assert!(matches!(
-            server.prepare_vote_transaction(&request),
-            Err(NodeControlError::Protocol(_))
-        ));
-        assert_no_sign_once_record(&directory);
-    }
-
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let authority = Arc::new(StaticAuthority {
-        value: Mutex::new(exported),
-        reloads: AtomicUsize::new(0),
-    });
-    let gate = attestation_gate(
-        &directory,
-        authority,
-        Arc::new(AtomicHeightSource::new(105)),
-        committee,
-    );
-    let server = base_control_server(&directory).with_attestation(Arc::new(gate));
-    assert!(matches!(
-        server.prepare_vote_transaction(&PrepareVoteTransactionV1 {
-            canonical_result: BoundedBytes(canonical_result),
-            nonce: 1,
-            max_fee_per_gas: U256::from(outbe_zerofee::MIN_ZERO_FEE_OCOMP_MAX_FEE_PER_GAS,),
-            gas_limit: outbe_zerofee::MAX_ZERO_FEE_OCOMP_GAS_LIMIT,
-        }),
-        Err(NodeControlError::VoteTransactionSignerUnavailable)
-    ));
-    assert_no_sign_once_record(&directory);
 }
 
 #[test]
