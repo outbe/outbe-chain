@@ -13,6 +13,13 @@ questions #17 and #18, the later native Intel amendment, and the accepted
 Gramine-native verifier boundary. It is engineering evidence, not a substitute
 for the x86_64 real-hardware release gates listed below.
 
+Lifecycle amendment (2026-08-01): a successor enclave policy is part of the
+existing governed protocol Update and is promoted inside its atomic
+activation-height begin-block checkpoint. There is no separate
+attestation-policy relay or V1 PPID/platform-controller allowlist. This changes
+policy lifecycle ownership, not the QVL boundary or the hardware evidence gates
+in this note.
+
 ## Selected production verifier boundary
 
 V1 runs Intel native QVL inside the existing Outbe Gramine enclave because

@@ -30,7 +30,7 @@ I0 manifest/context
        ├─> I3 validator registration ─┐
        └─> I4 full-node registration ├─> I5 renewal/expiry ─> I6 sessions
 I1 ──────────────────────────────────┘
-I3/I4 ─> I7 governance policy
+I3/I4 ─> I7 update-bound enclave policy
 I1/I3 ─> I8 genesis bootstrap
 I0..I8 ─> I9 production activation
 ```
@@ -362,26 +362,46 @@ responder key of an active, unexpired registration.
 - no continuous light client is added inside the enclave for session admission;
 - secret-bearing commands keep their separate on-demand finalized proof checks.
 
-## I7 — Activate measurement and platform policy through governance
+## I7 — Activate a successor enclave policy through protocol update
 
-**Outcome:** anyone can propose, and any relay can execute, a complete
-governance-approved policy activation with rolling measurement overlap.
+**Outcome:** an approved existing Update proposal stages one exact successor
+enclave policy, existing validator and full-node bindings can roll to that
+measurement before the update height, and consensus atomically promotes it at
+the update height. There is no separate attestation-policy proposal, relay or
+activation state machine.
 
 **Includes:**
 
-- canonical proposal body, predecessor hash, activation height and full rules;
+- a typed canonical successor `TeePolicyV1` in the existing Update proposal,
+  bound to the same protocol version and activation height;
+- exact current-policy predecessor hash and one bounded `current`/`next` pair;
 - exact `MRENCLAVE` plus signer/product/min-SVN matching;
-- chain-scoped platform commitment derived from authenticated PPID and the
-  agreed controller;
-- old/new rolling overlap and finite old-code cutoff.
+- the existing measurement-transition operation as the only pre-activation
+  path from an existing binding to the staged next policy;
+- deterministic begin-block promotion inside the existing atomic Update
+  activation checkpoint;
+- old/new rolling overlap and a finite old-code admission cutoff at the update
+  height.
 
 **Acceptance:**
 
 - bare measurement, local override and signer-only admission are impossible;
-- ambiguous/multiple rule matches reject;
-- old leases remain valid until expiry but cannot renew after cutoff;
-- raw PPID is absent from separate calldata/state/event/API fields and
-  linkability limitations are documented.
+- a proposal whose policy is non-canonical, has the wrong chain/genesis,
+  predecessor, version or activation height rejects before it can be staged;
+- at most one successor policy is staged; approval, staging, transition and
+  activation are deterministic and replay-safe;
+- ambiguous or multiple measurement-rule matches reject;
+- before activation, ordinary registration/renewal/replacement uses the
+  current policy and only an existing binding may use the staged policy through
+  measurement transition;
+- from the activation height the successor is the current policy; old leases
+  remain valid until expiry but cannot renew or receive a new binding under the
+  old policy;
+- validator and full-node rolling transitions are covered through public
+  registry behavior, including activation rollback on handler failure;
+- V1 adds no PPID/platform-controller allowlist or separate raw PPID
+  calldata/state/event/API field; public-evidence linkability remains
+  documented.
 
 ## I8 — Bootstrap 32 validator enclaves with full block-1 attestation
 

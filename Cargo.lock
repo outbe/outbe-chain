@@ -8575,8 +8575,10 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "hex",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-teeregistry",
  "outbe-validatorset",
  "outbe-vote",
  "serde",

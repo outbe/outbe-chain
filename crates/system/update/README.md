@@ -39,13 +39,45 @@ The accepted payload is:
 {"version":"1.2","activationHeight":12345,"info":"release notes or operator note"}
 ```
 
+When the same software release changes an enclave measurement or attestation
+policy, the proposal also carries the exact canonical `TeePolicyV1` as bounded
+lowercase hex:
+
+```json
+{"version":"1.2","activationHeight":12345,"info":"TEE release","teePolicy":"<canonical TeePolicyV1 hex>"}
+```
+
 Rules:
 
+- Only the documented JSON fields are accepted; `teePolicy` is optional for a
+  version-only update.
 - New scheduled version must be non-zero.
 - New scheduled version must be strictly greater than current `active_version`.
 - `activationHeight` must be at least `MIN_ACTIVATION_BUFFER` blocks in the future
   (the buffer is `0` on the localnet chain id so e2e updates activate promptly).
 - At most one scheduled update may target a given activation height.
+- A supplied policy must be canonical, bounded, match the chain identity and
+  use the update's activation height. Approval additionally requires exact
+  current-policy predecessor hash, version `current + 1`, and an empty `next`
+  slot.
+
+## Enclave Policy Rollout
+
+The Update vote is the only authority for a successor enclave policy. Approval
+atomically schedules the software update and stages one `next` policy in
+`TeeRegistry`; there is no separate attestation-policy proposal or relay.
+
+Before the activation height, normal admission remains on `current`. An
+existing validator or full-node binding may move to `next` through
+`transitionEnclaveMeasurement`, reusing the durable replacement-candidate
+workflow. At the activation height, begin-block processing promotes `next` to
+`current` inside the same checkpoint as the protocol version and upgrade
+handlers. A handler or invariant failure rolls the whole activation back.
+
+Existing old-policy leases remain usable until their committed expiry, but the
+old policy cannot renew or create a new binding after activation. V1 does not
+add a PPID/platform-controller allowlist or a raw PPID field; physical-machine
+admission, if ever needed, is a separate feature.
 
 ## Upgrade Handlers
 

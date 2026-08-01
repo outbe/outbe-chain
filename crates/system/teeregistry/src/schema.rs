@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 
@@ -6,7 +6,7 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 ///
 /// Global scalars (slots 0..=8) hold the legacy bootstrap result that clients
 /// and verifiers read. Legacy per-validator maps occupy slots 9..=18. Inactive
-/// V1 policy and leased-binding state is appended at slots 19..=47. The layout
+/// V1 policy and leased-binding state is appended at slots 19..=53. The layout
 /// is append-only; new fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
@@ -211,4 +211,28 @@ pub struct TeeRegistry {
     /// slot 47: persistent single-NodeHost authorization committed by the quote.
     #[attribute(order = 47)]
     pub v1_node_host_authorization_hash: outbe_primitives::storage::dsl::Map<B256, B256>,
+
+    /// slot 48: canonical byte length of the one staged successor V1 policy.
+    #[attribute(order = 48)]
+    pub staged_v1_policy_len: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// slot 49: canonical staged successor policy bytes as 32-byte chunks.
+    #[attribute(order = 49)]
+    pub staged_v1_policy_chunk: outbe_primitives::storage::dsl::Map<u32, B256>,
+
+    /// slot 50: hash of the staged canonical successor policy.
+    #[attribute(order = 50)]
+    pub staged_v1_policy_hash: outbe_primitives::storage::dsl::Value<B256>,
+
+    /// slot 51: Update vote proposal that exclusively owns the staged policy.
+    #[attribute(order = 51)]
+    pub staged_v1_policy_proposal_id: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// slot 52: redundant activation anchor authenticated against policy bytes.
+    #[attribute(order = 52)]
+    pub staged_v1_policy_activation_height: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// slot 53: Update proposal that most recently promoted the active policy.
+    #[attribute(order = 53)]
+    pub active_v1_policy_proposal_id: outbe_primitives::storage::dsl::Value<U256>,
 }

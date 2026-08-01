@@ -67,6 +67,12 @@ sol! {
             bytes calldata enclaveSignature
         ) external returns (bool);
 
+        function transitionEnclaveMeasurement(
+            bytes calldata evidence,
+            bytes calldata nodeSignature,
+            bytes calldata enclaveSignature
+        ) external returns (bool);
+
         function validatorEnclaveBinding(address validator)
             external
             view
@@ -107,6 +113,11 @@ pub fn dispatch(
         Some(selector) if selector == ITeeRegistryV1::replaceEnclaveBindingCall::SELECTOR => {
             Some(RegistryMutatorV1::ReplaceEnclaveBinding)
         }
+        Some(selector)
+            if selector == ITeeRegistryV1::transitionEnclaveMeasurementCall::SELECTOR =>
+        {
+            Some(RegistryMutatorV1::TransitionEnclaveMeasurement)
+        }
         _ => None,
     };
     let mutation_preflight = if mutator.is_some() {
@@ -120,7 +131,14 @@ pub fn dispatch(
 
     let active_policy = if let (Some(kind), Some(preflight)) = (mutator, mutation_preflight) {
         let registry = TeeRegistry::new(storage.clone());
-        let policy = registry.active_policy_v1()?;
+        let policy = if kind == RegistryMutatorV1::TransitionEnclaveMeasurement {
+            registry
+                .staged_successor_policy_v1()?
+                .map(|(_, policy)| policy)
+                .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))?
+        } else {
+            registry.active_policy_v1()?
+        };
         deduct_mutator_protocol_gas(
             &storage,
             kind,
@@ -222,6 +240,31 @@ pub fn dispatch(
                             outcome,
                             V1RegistrationOutcome::Created
                         )),
+                    ))
+                }
+                transitionEnclaveMeasurement(_) => {
+                    let preflight = mutation_preflight.ok_or_else(|| {
+                        PrecompileError::Fatal(
+                            "V1 measurement-transition preflight was bypassed".into(),
+                        )
+                    })?;
+                    let node_signature: [u8; 65] =
+                        preflight.node_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight node signature mismatch".into())
+                        })?;
+                    let enclave_signature: [u8; 64] =
+                        preflight.enclave_signature.try_into().map_err(|_| {
+                            PrecompileError::Fatal("preflight enclave signature mismatch".into())
+                        })?;
+                    let outcome = registry.transition_enclave_measurement_with_staged_policy_v1(
+                        preflight.evidence,
+                        &node_signature,
+                        &enclave_signature,
+                    )?;
+                    Ok(Bytes::from(
+                        ITeeRegistryV1::transitionEnclaveMeasurementCall::abi_encode_returns(
+                            &matches!(outcome, V1RegistrationOutcome::Created),
+                        ),
                     ))
                 }
                 validatorEnclaveBinding(call) => view(call, |call| {
@@ -415,6 +458,22 @@ pub(crate) fn dispatch_replace_after_verifier_for_test(
 }
 
 #[cfg(test)]
+pub(crate) fn dispatch_transition_after_verifier_for_test(
+    storage: StorageHandle<'_>,
+    data: &[u8],
+    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
+    capability: crate::v1::PostVerifierDcapCapabilityV1,
+) -> Result<V1RegistrationOutcome> {
+    dispatch_mutator_after_verifier_for_test(
+        storage,
+        data,
+        intent,
+        RegistryMutatorV1::TransitionEnclaveMeasurement,
+        capability,
+    )
+}
+
+#[cfg(test)]
 fn dispatch_mutator_after_verifier_for_test(
     storage: StorageHandle<'_>,
     data: &[u8],
@@ -423,7 +482,14 @@ fn dispatch_mutator_after_verifier_for_test(
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
     let preflight = preflight_evidence_mutator_call(data)?;
-    let policy = TeeRegistry::new(storage.clone()).active_policy_v1()?;
+    let policy = if kind == RegistryMutatorV1::TransitionEnclaveMeasurement {
+        TeeRegistry::new(storage.clone())
+            .staged_successor_policy_v1()?
+            .map(|(_, policy)| policy)
+            .ok_or_else(|| PrecompileError::Revert("no successor V1 policy is staged".into()))?
+    } else {
+        TeeRegistry::new(storage.clone()).active_policy_v1()?
+    };
     deduct_mutator_protocol_gas(
         &storage,
         kind,
@@ -465,9 +531,13 @@ fn dispatch_mutator_after_verifier_for_test(
                 &policy,
                 capability,
             ),
-        RegistryMutatorV1::TransitionEnclaveMeasurement => Err(PrecompileError::Fatal(
-            "I8 measurement transition cannot enter the I5 test dispatcher".into(),
-        )),
+        RegistryMutatorV1::TransitionEnclaveMeasurement => registry
+            .transition_enclave_measurement_after_verifier_for_test(
+                intent,
+                &node_signature,
+                &enclave_signature,
+                capability,
+            ),
     }
 }
 
@@ -673,7 +743,12 @@ mod tests {
             }
             .abi_encode(),
             RegistryMutatorV1::TransitionEnclaveMeasurement => {
-                panic!("I8 mutator is not exposed by the I5 ABI")
+                ITeeRegistryV1::transitionEnclaveMeasurementCall {
+                    evidence: Bytes::from(evidence),
+                    nodeSignature: node_signature,
+                    enclaveSignature: enclave_signature,
+                }
+                .abi_encode()
             }
         }
     }

@@ -1077,6 +1077,32 @@ pub struct TeePolicyV1 {
 }
 
 impl TeePolicyV1 {
+    /// Counts rules that admit one authenticated enclave measurement at a
+    /// height. Consensus admission requires the result to equal exactly one;
+    /// zero and overlapping matches are both fail-closed.
+    pub fn measurement_rule_match_count(
+        &self,
+        enclave_profile: EnclaveProfile,
+        mrenclave: B256,
+        mrsigner: B256,
+        isv_prod_id: u16,
+        isv_svn: u16,
+        height: u64,
+    ) -> usize {
+        self.measurement_rules
+            .iter()
+            .filter(|rule| {
+                rule.enclave_profile == enclave_profile
+                    && rule.mrenclave == mrenclave
+                    && rule.mrsigner == mrsigner
+                    && rule.isv_prod_id == isv_prod_id
+                    && isv_svn >= rule.minimum_isv_svn
+                    && height >= rule.admit_from_height
+                    && height < rule.admit_until_height_exclusive
+            })
+            .count()
+    }
+
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         self.validate()?;
         let mut out = Vec::new();

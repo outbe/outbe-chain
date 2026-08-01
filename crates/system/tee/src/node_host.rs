@@ -441,13 +441,14 @@ pub fn persist_replacement_candidate_submission(
     let evidence_bytes = evidence.encode_canonical().map_err(codec_error)?;
     let intent = match evidence {
         AttestationEvidenceV1::Dcap(value)
-            if value.intent.operation == AttestationOperationV1::ReplaceEnclaveBinding =>
+            if is_candidate_successor_operation(value.intent.operation) =>
         {
             &value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
-                "replacement submission must contain DCAP replacement evidence".into(),
+                "candidate submission must contain DCAP replacement or measurement-transition evidence"
+                    .into(),
             ))
         }
     };
@@ -1002,13 +1003,14 @@ fn validate_durable_replacement_submission(
         AttestationEvidenceV1::decode_canonical(&submission.evidence).map_err(codec_error)?;
     let intent = match evidence {
         AttestationEvidenceV1::Dcap(value)
-            if value.intent.operation == AttestationOperationV1::ReplaceEnclaveBinding =>
+            if is_candidate_successor_operation(value.intent.operation) =>
         {
             value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
-                "durable submission is not DCAP replacement evidence".into(),
+                "durable submission is not DCAP replacement or measurement-transition evidence"
+                    .into(),
             ))
         }
     };
@@ -1023,6 +1025,14 @@ fn validate_durable_replacement_submission(
         ));
     }
     Ok(intent)
+}
+
+fn is_candidate_successor_operation(operation: AttestationOperationV1) -> bool {
+    matches!(
+        operation,
+        AttestationOperationV1::ReplaceEnclaveBinding
+            | AttestationOperationV1::TransitionEnclaveMeasurement
+    )
 }
 
 fn validate_finalized_replacement_binding(
@@ -1583,6 +1593,10 @@ mod tests {
     }
 
     fn replacement_fixture() -> ReplacementFixture {
+        replacement_fixture_for_operation(AttestationOperationV1::ReplaceEnclaveBinding)
+    }
+
+    fn replacement_fixture_for_operation(operation: AttestationOperationV1) -> ReplacementFixture {
         let root = tempfile::tempdir().unwrap();
         let node_data_dir = root.path().join("node-data");
         std::fs::create_dir(&node_data_dir).unwrap();
@@ -1633,7 +1647,7 @@ mod tests {
         let intent = RegistrationIntentV1 {
             chain_id: candidate.chain_id,
             genesis_hash: candidate.genesis_hash,
-            operation: AttestationOperationV1::ReplaceEnclaveBinding,
+            operation,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x21),
             enclave_profile: candidate.enclave_profile,
@@ -1643,7 +1657,9 @@ mod tests {
             binding_version: 2,
             registration_version: 1,
             renewal_nonce: 0,
-            transition_nonce: 0,
+            transition_nonce: u64::from(
+                operation == AttestationOperationV1::TransitionEnclaveMeasurement,
+            ),
             requested_valid_until: 20_000,
             recipient_x25519: candidate.recipient_x25519,
             attestation_ed25519: candidate.attestation_ed25519,
@@ -1686,6 +1702,28 @@ mod tests {
             candidate,
             authorization,
         }
+    }
+
+    #[test]
+    fn measurement_transition_reuses_the_finalized_candidate_workflow() {
+        let fixture =
+            replacement_fixture_for_operation(AttestationOperationV1::TransitionEnclaveMeasurement);
+        let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
+        let AttestationEvidenceV1::Dcap(evidence) = evidence else {
+            panic!("expected DCAP transition evidence")
+        };
+        assert_eq!(
+            evidence.intent.operation,
+            AttestationOperationV1::TransitionEnclaveMeasurement
+        );
+        assert_eq!(evidence.intent.transition_nonce, 1);
+        assert_eq!(
+            promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
+            fixture.candidate
+        );
     }
 
     #[test]

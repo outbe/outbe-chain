@@ -193,45 +193,66 @@ Which code identity and Intel TCB results are acceptable in production?
 
 The initial policy follows Secret Network's practical acceptance of
 `SWHardeningNeeded`, but makes the accepted Platform set explicit and keeps QE
-strict. Governance may later activate a complete policy that tightens Platform
-admission to `UpToDate` only; existing leases remain valid only until their
-bounded expiry and cannot renew under a policy they no longer satisfy.
+strict. A later protocol software update may carry one exact successor policy
+that tightens Platform admission to `UpToDate` only. The successor is staged
+and activated through the existing Update lifecycle; existing leases remain
+valid only until their bounded expiry and cannot renew under a policy they no
+longer satisfy.
 
 Do not copy Secret Network's undifferentiated warning-only handling of other
 non-OK QVL outcomes:
 `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/execute/src/registration/onchain.rs:50`.
 
-## #6: Who changes attestation policy and hardware admission?
+## #6: Who changes enclave attestation policy, and is hardware admission V1 scope?
 
 Blocked by: #5
 Type: Discuss
 
 ### Question
 
-How does the network admit a new measurement or platform without a central
-operator?
+How does the network admit a new enclave measurement without a central
+operator, and does that require a separate per-platform governance allowlist?
 
 ### Answer
 
-`RESOLVED` and `ADOPTED` in strengthened form.
+`RESOLVED` and `ADOPTED`, amended 2026-08-01 to reuse protocol updates rather
+than create a second governance lifecycle.
 
-- Anyone may submit a governance proposal.
-- Governance approves a complete canonical policy hash and activation data,
-  not a privileged local override.
-- Any relay may execute the accepted activation.
-- Measurement updates include exact new rules and rolling overlap/cutoff.
-- Platform admission binds chain-scoped `H(PPID)` and the previously agreed
-  controller commitment; it is governance state, not a hard-coded list or
-  vendor JWT service.
+- A new enclave measurement is a software-release property. The existing
+  Update proposal carries the protocol version, activation height and exact
+  canonical successor `TeePolicyV1` (including `MRENCLAVE`, `MRSIGNER`,
+  `ISVPRODID` and minimum `ISVSVN`).
+- The successor names the exact current-policy hash as predecessor and uses the
+  same activation height as the software update.
+- Approval stages at most one `next` policy. Existing validator and full-node
+  bindings may use it only through the bounded measurement-transition path;
+  ordinary admission continues under `current` until activation.
+- At the update height all consensus nodes atomically promote `next` to
+  `current` inside the existing Update begin-block activation checkpoint.
+  There is no permissionless relay, privileged executor or separate
+  attestation-policy proposal/state machine.
+- From the cutoff, old code cannot register, renew or replace a binding. An
+  already admitted old lease still ends only at its previously committed
+  expiry; this is not key deletion or revocation.
+- V1 does not add a governance-managed PPID/platform-controller allowlist.
+  Intel DCAP authenticates the SGX platform and the existing node/enclave PoPs
+  authenticate the binding. If the threat model later requires governance to
+  approve physical machines individually, that is a separate hardware-
+  admission feature, not part of the DCAP/enclave-update slice.
 
-Secret Network establishes the useful governance precedent for a new
-`MRENCLAVE`, but its bare 32-byte measurement proposal and built-in PPID/JWT
-allowlist are not copied:
+Secret Network establishes the useful `current`/`next MRENCLAVE` software-
+upgrade precedent. Its relay exists because enclave-local state learns the
+accepted governance result through a verified block; Outbe already has the
+deterministic Update lifecycle in consensus state, so copying that relay would
+add no authority or liveness benefit. Secret Network's bare 32-byte
+measurement relay and built-in PPID/JWT allowlist are not copied:
 
 - `/home/ubuntu/SecretNetwork/x/compute/internal/keeper/ante.go:157`
 - `/home/ubuntu/SecretNetwork/cosmwasm/enclaves/execute/src/registration/attestation.rs:891`
 
-The hard-fork-only wording in the source remediation plan is stale.
+The hard-fork-only wording in the source remediation plan remains stale: the
+existing governed Update path is the authority, without a second policy-
+governance mechanism.
 
 ## #7: What does `REPORT_DATA` bind?
 
@@ -554,8 +575,8 @@ immediately stop accepting outputs and sessions from an active lease?
 - An offer key already delivered to an enclave cannot be remotely deleted,
   revoked, or proven erased. V1 exposes no API or governance action claiming
   otherwise.
-- A governance policy change stops new admission, key delivery, and renewal
-  under the rejected policy. It does not retroactively shorten an already
+- A protocol-update policy cutoff stops new admission, key delivery, and
+  renewal under the replaced policy. It does not retroactively shorten an already
   active lease.
 - Until that lease expires, honest participants continue to accept the
   registered identity. At expiry they reject its new sessions and protocol
@@ -583,32 +604,31 @@ Type: Discuss
 
 ### Question
 
-Does publishing complete quote/collateral evidence and governance-approved
-`H(PPID)` create acceptable hardware linkability?
+Does publishing complete quote/collateral evidence create acceptable hardware
+linkability even without a separate V1 PPID registry field?
 
 ### Answer
 
 `RESOLVED`.
 
-Public self-contained quote/PCK/collateral evidence and governance-approved
-hardware admission make cross-registration platform correlation possible.
-Hashing a PPID into
-`H(domain || chain_id || genesis_hash || PPID)` prevents publishing it as a
-convenient raw registry field but does not make the public PCK evidence
-unlinkable.
+Public self-contained quote/PCK/collateral evidence can make cross-registration
+platform correlation possible. Omitting a convenient raw PPID or derived
+platform registry field does not make the public PCK evidence unlinkable.
 
 V1 accepts and documents this limitation:
 
-- use a full 32-byte, chain-scoped platform commitment derived only from
-  authenticated evidence;
-- never copy raw PPID into separate calldata, state, event, log, or API fields;
+- do not add a separate PPID or derived platform commitment to V1 calldata,
+  state, events, logs or APIs;
+- authenticate the platform only through the canonical Intel quote/PCK/
+  collateral evidence consumed by QVL;
 - make no anonymity or cross-registration unlinkability claim;
 - treat privacy-preserving hardware admission as a separate V2 redesign, not a
   codec adjustment.
 
-Secret Network makes the same tradeoff: it stores the registration certificate,
-derives a PPID/CPU-certificate-based machine ID, and operates a machine
-allowlist. It demonstrates the correlation cost rather than solving it.
+Secret Network makes the same underlying evidence-linkability tradeoff and also
+derives a PPID/CPU-certificate-based machine ID for its separate allowlist.
+Outbe does not copy that allowlist in V1; Secret Network demonstrates the
+correlation cost rather than solving it.
 
 ## #17: Which QVL implementation is consensus-safe?
 

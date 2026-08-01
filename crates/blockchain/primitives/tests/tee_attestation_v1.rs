@@ -810,3 +810,25 @@ fn policy_schedule_rejects_duplicate_rules_and_broken_predecessor_chain() {
         CodecError::NonCanonical("policy predecessor hash mismatch")
     );
 }
+
+#[test]
+fn measurement_admission_counts_overlapping_matches_instead_of_accepting_any() {
+    let mut candidate = policy(1, 1, B256::ZERO);
+    let original = candidate.measurement_rules[0].clone();
+    let mut overlapping = original.clone();
+    overlapping.minimum_isv_svn = 1;
+    candidate.measurement_rules.insert(0, overlapping);
+    candidate.encode_canonical().unwrap();
+
+    assert_eq!(
+        candidate.measurement_rule_match_count(
+            original.enclave_profile,
+            original.mrenclave,
+            original.mrsigner,
+            original.isv_prod_id,
+            3,
+            10,
+        ),
+        2
+    );
+}

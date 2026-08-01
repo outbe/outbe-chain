@@ -7,11 +7,13 @@ publish.workspace = true
 
 [dependencies]
 outbe-macros.workspace = true
-outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-primitives = { workspace = true, features = ["test-utils", "tee-attestation-v1"] }
+outbe-teeregistry.workspace = true
 outbe-vote.workspace = true
 outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
