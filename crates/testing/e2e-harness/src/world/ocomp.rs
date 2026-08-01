@@ -19,53 +19,45 @@ use alloy_eips::eip2718::Encodable2718 as _;
 #[cfg(feature = "ocomp-integration")]
 use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 #[cfg(feature = "ocomp-integration")]
-use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
+use k256::ecdsa::SigningKey;
 #[cfg(feature = "ocomp-integration")]
 use outbe_common::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::config::{
-    OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
-    OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
+    OcompForkInstallClassification, OcompForkInstallV1, OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::genesis::FreshDevnetGenesisBuilder;
 #[cfg(feature = "ocomp-integration")]
 use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 #[cfg(feature = "ocomp-integration")]
+#[cfg(feature = "ocomp-integration")]
+use outbe_node::ocomp::measurement::{
+    genesis_chain_id, measurement_fork_install, ocomp_evm_private_key, parse_outbe_chain_spec,
+    replace_json_atomically, schedule_protocol_v1_update,
+    validator_identities as measurement_validator_identities, write_validator_domain_material,
+};
+#[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
-    committee::{
-        OcompCommitteeSnapshotV1, OcompKeyRegistrationCoreV1, OcompKeyRegistrationV1,
-        OcompMemberV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
-    },
     common::BoundedBytes,
-    hash::hash_framed,
     local_control::{effective_uid, ClientPolicy, ControlClientSession, EndpointIdentity},
-    profile::{CapacityProfileV1, ProtocolBundleV1},
-    registry::{
-        HashDomain, FIDELITY_OPENING_CODEC_ID, ORACLE_OPENING_CODEC_ID, TRIBUTE_BODY_CODEC_ID,
-    },
     vote::ResultVoteV1,
     AttestationResponseV1, NodeMessageKind, PreparedVoteTransactionV1, RequestAttestationV1,
 };
 #[cfg(feature = "ocomp-integration")]
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, UPDATE_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{METADOSIS_ADDRESS, VALIDATOR_SET_ADDRESS},
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    OutbeHeader,
 };
-#[cfg(feature = "ocomp-integration")]
-use outbe_update::{schema::Update, ProtocolVersion};
 #[cfg(feature = "ocomp-integration")]
 use std::fs::{self, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
-use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+use std::io::{Read as _, Seek as _, SeekFrom};
 #[cfg(feature = "ocomp-integration")]
 use std::os::fd::OwnedFd;
 #[cfg(feature = "ocomp-integration")]
-use std::os::unix::fs::{
-    FileTypeExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
-};
+use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 #[cfg(feature = "ocomp-integration")]
 use std::os::unix::net::UnixStream;
 #[cfg(feature = "ocomp-integration")]
@@ -73,7 +65,6 @@ use std::process::{Command, Stdio};
 #[cfg(feature = "ocomp-integration")]
 use std::str::FromStr as _;
 #[cfg(feature = "ocomp-integration")]
-use std::sync::Arc;
 #[cfg(feature = "ocomp-integration")]
 use std::thread::sleep;
 #[cfg(feature = "ocomp-integration")]
@@ -670,30 +661,12 @@ impl OcompTopology {
 
     #[cfg(feature = "ocomp-integration")]
     fn publish_validator_domain_material(&self, install: &OcompForkInstallV1) -> Result<()> {
-        let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
-        let canonical_bundle = install.protocol_bundle.encode_canonical(&limits)?;
-        for (validator_index, domain) in self.domains.iter().enumerate() {
-            fs::create_dir_all(&domain.root)?;
-            publish_exact_file(
-                &domain.root.join("protocol-bundle-v1.ocb1"),
-                &canonical_bundle,
-                0o640,
-            )?;
-            let key = measurement_signing_key(u8::try_from(validator_index)?);
-            let key_bytes = format!("{}\n", hex::encode(key.to_bytes()));
-            publish_exact_file(
-                &domain.root.join("ocomp-key-v1.hex"),
-                key_bytes.as_bytes(),
-                0o600,
-            )?;
-            let evm_key = ocomp_evm_private_key(u8::try_from(validator_index)?);
-            publish_exact_file(
-                &domain.root.join("ocomp-evm-key.hex"),
-                format!("{evm_key}\n").as_bytes(),
-                0o600,
-            )?;
-        }
-        Ok(())
+        let domain_roots: Vec<PathBuf> = self
+            .domains
+            .iter()
+            .map(|domain| domain.root.clone())
+            .collect();
+        write_validator_domain_material(&domain_roots, install)
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1808,36 +1781,6 @@ fn tail_file(path: &Path, max_lines: usize) -> String {
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn parse_outbe_chain_spec(path: &Path) -> Result<Arc<reth_chainspec::ChainSpec<OutbeHeader>>> {
-    let path = path
-        .to_str()
-        .ok_or_else(|| eyre::eyre!("genesis path is not valid UTF-8"))?;
-    Ok(reth_ethereum::cli::chainspec::chain_value_parser(path)?
-        .as_ref()
-        .clone()
-        .map_header(OutbeHeader::new)
-        .into())
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn genesis_chain_id(genesis: &serde_json::Value) -> Result<u64> {
-    let value = genesis
-        .get("config")
-        .and_then(|config| config.get("chainId"))
-        .ok_or_else(|| eyre::eyre!("generated genesis has no config.chainId"))?;
-    match value {
-        serde_json::Value::Number(number) => number
-            .as_u64()
-            .ok_or_else(|| eyre::eyre!("genesis chainId is outside u64")),
-        serde_json::Value::String(encoded) => {
-            let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
-            u64::from_str_radix(encoded, 16).map_err(Into::into)
-        }
-        _ => eyre::bail!("genesis chainId is neither a number nor a hex string"),
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn schedule_public_measurement_day(
     genesis: &mut serde_json::Value,
     chain_id: u64,
@@ -1987,80 +1930,6 @@ fn apply_measurement_gas_envelope(genesis: &mut serde_json::Value) -> Result<boo
 }
 
 #[cfg(feature = "ocomp-integration")]
-fn schedule_protocol_v1_update(
-    genesis: &mut serde_json::Value,
-    chain_id: u64,
-    activation_height: u64,
-) -> Result<bool> {
-    let mut provider = HashMapStorageProvider::new(chain_id);
-    StorageHandle::enter(&mut provider, |storage| {
-        Update::new(storage).write_scheduled_update(
-            measurement_update_proposal_id(),
-            ProtocolVersion::from_raw(1),
-            activation_height,
-            "OCOMP PoC measurement profile",
-        )
-    })?;
-
-    let alloc = genesis
-        .get_mut("alloc")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let mut changed = false;
-    let update_key = match find_alloc_address_key(alloc, UPDATE_ADDRESS)? {
-        Some(key) => key,
-        None => {
-            // Native precompiles do not need bytecode accounts. A fresh seeded
-            // genesis may therefore omit Update until its first non-zero
-            // storage word; create only that canonical alloc container.
-            let key = hex::encode(UPDATE_ADDRESS.as_slice());
-            alloc.insert(
-                key.clone(),
-                serde_json::json!({
-                    "balance": "0x0",
-                    "storage": {},
-                }),
-            );
-            changed = true;
-            key
-        }
-    };
-    let update_account = alloc
-        .get_mut(&update_key)
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre::eyre!("Update genesis account is not an object"))?;
-    let storage = update_account
-        .entry("storage")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .ok_or_else(|| eyre::eyre!("Update genesis storage is not an object"))?;
-
-    for ((address, slot), value) in &provider.storage {
-        if *address != UPDATE_ADDRESS || value.is_zero() {
-            continue;
-        }
-        let slot = format!("0x{slot:064x}");
-        let value = format!("0x{value:064x}");
-        match storage.get(&slot) {
-            Some(existing) if parse_storage_word(existing)? == parse_hex_word(&value)? => {}
-            Some(_) => eyre::bail!("Update genesis slot {slot} conflicts with OCOMP schedule"),
-            None => {
-                storage.insert(slot, serde_json::Value::String(value));
-                changed = true;
-            }
-        }
-    }
-    Ok(changed)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_update_proposal_id() -> U256 {
-    U256::from_be_bytes(
-        alloy_primitives::keccak256(b"OUTBE_OCOMP_MEASUREMENT_UPDATE_PROPOSAL_V1").0,
-    )
-}
-
-#[cfg(feature = "ocomp-integration")]
 fn find_alloc_address_key(
     alloc: &serde_json::Map<String, serde_json::Value>,
     expected: Address,
@@ -2160,292 +2029,6 @@ fn fund_capacity_tribute_accounts(
     Ok(changed)
 }
 
-#[cfg(feature = "ocomp-integration")]
-fn measurement_validator_identities(path: &Path) -> Result<[B256; 4]> {
-    let validators: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
-    let validators = validators
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("validators.json is not an array"))?;
-    if validators.len() != 4 {
-        eyre::bail!(
-            "OCOMP measurement requires exactly four validators, got {}",
-            validators.len()
-        );
-    }
-
-    let mut identities = [B256::ZERO; 4];
-    for (index, validator) in validators.iter().enumerate() {
-        let address = validator
-            .get("address")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no address"))
-            .and_then(|address| Address::from_str(address).map_err(Into::into))?;
-        let public_key = validator
-            .get("public_key")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| eyre::eyre!("validator-{index} has no public_key"))?;
-        let public_key = hex::decode(public_key.strip_prefix("0x").unwrap_or(public_key))?;
-        if public_key.len() != 48 {
-            eyre::bail!(
-                "validator-{index} consensus public key is {} bytes, expected 48",
-                public_key.len()
-            );
-        }
-        let mut payload = Vec::with_capacity(1 + 20 + 4 + public_key.len());
-        payload.push(u8::try_from(index)?);
-        payload.extend_from_slice(address.as_slice());
-        payload.extend_from_slice(&u32::try_from(public_key.len())?.to_be_bytes());
-        payload.extend_from_slice(&public_key);
-        identities[index] = hash_framed(HashDomain::ValidatorIdentity, &payload)?;
-    }
-    Ok(identities)
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_fork_install(
-    chain_id: u64,
-    genesis_hash: B256,
-    activation_height: u64,
-    validator_identities: [B256; 4],
-    limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<OcompForkInstallV1> {
-    let protocol_bundle = provisional_measurement_bundle();
-    let protocol_bundle_hash = protocol_bundle.protocol_bundle_hash(limits)?;
-    let result_committee = measurement_committee(
-        chain_id,
-        genesis_hash,
-        protocol_bundle.fork_id,
-        protocol_bundle_hash,
-        activation_height,
-        validator_identities,
-        limits,
-    )?;
-    let result_committee_snapshot_hash = result_committee.snapshot_hash(limits)?;
-    Ok(OcompForkInstallV1 {
-        classification: OcompForkInstallClassification::Measurement,
-        activation_height,
-        request_profile: OcompRequestProfile {
-            chain_id,
-            genesis_hash,
-            fork_id: protocol_bundle.fork_id,
-            protocol_bundle_hash,
-            correctness_profile_id: protocol_bundle.correctness_profile_id,
-            capacity_profile: provisional_measurement_capacity_profile(),
-            source_availability_policy_id: B256::repeat_byte(44),
-            result_committee_snapshot_hash,
-        },
-        protocol_bundle,
-        result_committee,
-    })
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_committee(
-    chain_id: u64,
-    genesis_hash: B256,
-    fork_id: B256,
-    protocol_bundle_hash: B256,
-    activation_height: u64,
-    validator_identities: [B256; 4],
-    limits: &outbe_ocomp_protocol::SchemaLimits,
-) -> Result<OcompCommitteeSnapshotV1> {
-    let mut ordered_members = Vec::with_capacity(4);
-    for (validator_index, validator_identity_hash) in validator_identities.into_iter().enumerate() {
-        let validator_index = u8::try_from(validator_index)?;
-        let key = measurement_signing_key(validator_index);
-        let public_key: [u8; 33] = key
-            .verifying_key()
-            .to_encoded_point(true)
-            .as_bytes()
-            .try_into()?;
-        let mut registration = OcompKeyRegistrationV1 {
-            core: OcompKeyRegistrationCoreV1 {
-                chain_id,
-                genesis_hash,
-                fork_id,
-                protocol_bundle_hash,
-                validator_index,
-                validator_identity_hash,
-                ocomp_public_key_sec1: public_key,
-                key_epoch: 1,
-                allowed_purpose_bitmap: RESULT_SIGNATURE_PURPOSE_BITMAP,
-                valid_from_height: activation_height,
-                valid_until_height_exclusive: activation_height.saturating_add(1_000_000),
-            },
-            proof_of_possession: [0; 64],
-        };
-        registration.proof_of_possession =
-            sign_measurement_digest(&key, registration.proof_of_possession_digest(limits)?)?;
-        ordered_members.push(OcompMemberV1 {
-            validator_index,
-            validator_identity_hash,
-            ocomp_public_key_sec1: public_key,
-            key_epoch: registration.core.key_epoch,
-            allowed_purpose_bitmap: registration.core.allowed_purpose_bitmap,
-            valid_from_height: registration.core.valid_from_height,
-            valid_until_height_exclusive: registration.core.valid_until_height_exclusive,
-            proof_of_possession: registration.proof_of_possession,
-        });
-    }
-    Ok(OcompCommitteeSnapshotV1 {
-        chain_id,
-        genesis_hash,
-        fork_id,
-        protocol_bundle_hash,
-        snapshot_epoch: 1,
-        threshold: 3,
-        ordered_members,
-    })
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn measurement_signing_key(validator_index: u8) -> SigningKey {
-    SigningKey::from_bytes((&[validator_index.saturating_add(1); 32]).into())
-        .expect("indices 0..3 produce valid deterministic measurement scalars")
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn ocomp_evm_private_key(validator_index: u8) -> String {
-    format!(
-        "0x{}",
-        hex::encode([validator_index.saturating_add(0x71); 32])
-    )
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn sign_measurement_digest(key: &SigningKey, digest: B256) -> Result<[u8; 64]> {
-    let signature: Signature = key.sign_prehash(digest.as_slice())?;
-    Ok(signature
-        .normalize_s()
-        .unwrap_or(signature)
-        .to_bytes()
-        .into())
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn provisional_measurement_capacity_profile() -> CapacityProfileV1 {
-    CapacityProfileV1 {
-        profile_id: B256::repeat_byte(13),
-        max_tributes_per_work_shard: 256,
-        max_workers_per_domain: 4,
-        max_pending_jobs: 2,
-        max_intents_per_block: 1,
-        max_activations_per_block: 1,
-        max_ready_inspections_per_block: 1,
-        max_expirations_per_block: 1,
-        retry_backoff_blocks: 1,
-        max_terminal_job_records: 365,
-        max_reference_currencies: 256,
-        max_oracle_wwd_pair_entries: 256,
-        max_active_scurve_entries: 256,
-        result_deadline_blocks: 64,
-        source_retention_after_terminal_blocks: 64,
-        generated_limits_manifest_hash: B256::repeat_byte(23),
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn publish_exact_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
-    match fs::read(path) {
-        Ok(existing) if existing == bytes => {
-            let metadata = fs::symlink_metadata(path)?;
-            if !metadata.file_type().is_file() || metadata.permissions().mode() & 0o777 != mode {
-                eyre::bail!(
-                    "existing OCOMP artifact has unsafe metadata: {}",
-                    path.display()
-                );
-            }
-            Ok(())
-        }
-        Ok(_) => eyre::bail!(
-            "refusing to replace a different OCOMP artifact at {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(mode)
-                .open(path)?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            Ok(())
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn replace_json_atomically(path: &Path, value: &serde_json::Value) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| eyre::eyre!("generated genesis has no parent directory"))?;
-    let temporary = parent.join(format!(".genesis.ocomp.{}.tmp", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(value)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o640)
-        .open(&temporary)?;
-    if let Err(error) = (|| -> Result<()> {
-        file.write_all(&bytes)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        std::fs::File::open(parent)?.sync_all()?;
-        Ok(())
-    })() {
-        let _ = fs::remove_file(&temporary);
-        return Err(error);
-    }
-    Ok(())
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn provisional_measurement_bundle() -> ProtocolBundleV1 {
-    let hash = |byte| B256::repeat_byte(byte);
-    ProtocolBundleV1 {
-        protocol_version: 1,
-        fork_id: hash(1),
-        intent_codec_id: hash(2),
-        finalized_intent_proof_codec_id: hash(3),
-        tribute_body_codec_id: TRIBUTE_BODY_CODEC_ID,
-        fidelity_opening_codec_id: FIDELITY_OPENING_CODEC_ID,
-        oracle_opening_codec_id: ORACLE_OPENING_CODEC_ID,
-        result_codec_id: hash(4),
-        action_codec_id: hash(5),
-        activation_codec_id: hash(6),
-        evidence_codec_id: hash(7),
-        request_semantics_version: 1,
-        lysis_program_semantics_hash: hash(8),
-        planner_spec_version: 1,
-        reducer_spec_version: 1,
-        activation_apply_semantics_hash: hash(9),
-        effect_contract_registry_hash: hash(10),
-        object_codec_registry_hash: hash(11),
-        correctness_profile_id: hash(12),
-        capacity_profile_id: hash(13),
-        result_signature_profile_id: hash(14),
-        finality_verifier_and_vote_domain_id: hash(15),
-        consensus_committee_history_schema_version: 1,
-        ocomp_committee_schema_version: 1,
-        proof_system_and_verifier_key_id: None,
-        da_codec_and_binding_verifier_id: None,
-        anti_equivocation_journal_schema_hash: hash(16),
-        mode_pause_revocation_semantics_hash: hash(17),
-        upgrade_fsm_semantics_hash: hash(18),
-        release_requirement_catalog_sequence: 1,
-        release_requirement_catalog_hash: hash(19),
-        release_requirement_catalog_parent_hash: hash(20),
-        release_gate_authority_envelope_hash: hash(21),
-        release_approval_policy_hash: hash(22),
-        release_validator_command_artifact_hash: hash(23),
-        consensus_state_schema_version: 1,
-        migration_manifest_hash: hash(24),
-        required_upgrade_handler_set_hash: hash(25),
-    }
-}
-
 fn unix_time_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2513,6 +2096,12 @@ mod tests {
     use alloy_primitives::B256;
     #[cfg(feature = "ocomp-integration")]
     use outbe_metadosis::{genesis::GenesisWorldwideDay, WwdDayType, WwdStatus};
+    #[cfg(feature = "ocomp-integration")]
+    use outbe_node::ocomp::measurement::measurement_update_proposal_id;
+    #[cfg(feature = "ocomp-integration")]
+    use outbe_primitives::{addresses::UPDATE_ADDRESS, OutbeHeader};
+    #[cfg(feature = "ocomp-integration")]
+    use outbe_update::{schema::Update, ProtocolVersion};
 
     use super::*;
 
