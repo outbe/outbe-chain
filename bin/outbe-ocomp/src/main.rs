@@ -49,6 +49,28 @@ enum Role {
     Worker(WorkerArgs),
     /// Print the address of the role-delegated OCOMP transaction signer.
     SignerAddress(RuntimeArgs),
+    /// Arm a devnet genesis with the Measurement OCOMP fork install and the
+    /// Metadosis storage-layout manifest required by node startup.
+    ArmGenesis(ArmGenesisArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+struct ArmGenesisArgs {
+    /// Genesis document to arm in place.
+    #[arg(long, value_name = "PATH")]
+    genesis: PathBuf,
+    /// `validators.json` produced by `outbe-chain dkg bootstrap` (exactly 4
+    /// entries).
+    #[arg(long, value_name = "PATH")]
+    validators: PathBuf,
+    /// Localnet root; when set, per-validator OCOMP supervisor domain material
+    /// is published into `<root>/validator-{i}/ocomp/domain-v1/`. Only needed
+    /// when `outbe-ocomp` supervisors will run.
+    #[arg(long, value_name = "PATH")]
+    publish_domain_material: Option<PathBuf>,
+    /// Measurement activation height (fresh devnets require 1).
+    #[arg(long, hide = true, default_value_t = outbe_node::ocomp::fork::GENESIS_ACTIVE_OCOMP_HEIGHT)]
+    activation_height: u64,
 }
 
 #[derive(Clone, Debug, Args)]
@@ -332,8 +354,37 @@ impl RuntimeProfile {
     }
 }
 
+fn arm_genesis(args: &ArmGenesisArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let domain_material_roots = args.publish_domain_material.as_ref().map(|root| {
+        (0..4)
+            .map(|index| {
+                root.join(format!("validator-{index}"))
+                    .join("ocomp")
+                    .join("domain-v1")
+            })
+            .collect()
+    });
+    let options = outbe_node::ocomp::measurement::ArmOptions {
+        activation_height: args.activation_height,
+        domain_material_roots,
+    };
+    let armed =
+        outbe_node::ocomp::measurement::arm_genesis(&args.genesis, &args.validators, &options)
+            .map_err(|error| format!("{error:#}"))?;
+    println!(
+        "armed {} for chain {}: classification Measurement@{}, install_hash {}, genesis_hash {}",
+        args.genesis.display(),
+        armed.chain_id,
+        armed.install.activation_height,
+        armed.install_hash,
+        armed.genesis_hash,
+    );
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().role {
+        Role::ArmGenesis(args) => arm_genesis(&args),
         Role::Worker(args) => {
             install_consensus_domain(args.chain_id)?;
             let runtime = RuntimeProfile::resolve(&args.runtime, ProcessRole::Worker)?;

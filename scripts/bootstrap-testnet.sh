@@ -254,6 +254,45 @@ PY
 echo "  Dev felony thresholds set to $DEV_FELONY_THRESHOLD blocks (< epoch $TESTNET_EPOCH_LENGTH_BLOCKS) for observable localnet slashing"
 echo
 
+# Step 2d: Arm the genesis with the Measurement OCOMP fork install.
+#
+# Node startup hard-requires `config.ocompForkInstallV1` and
+# `config.metadosisStorageLayoutV1` in the selected genesis; `arm-genesis`
+# writes both plus the protocol-v1 update schedule, bound to the final genesis
+# hash. It therefore MUST run after every alloc/storage mutation above.
+# ARM_OCOMP=0 skips the step for flows that arm the genesis themselves
+# (e.g. the e2e harness scenarios).
+if [ "${ARM_OCOMP:-1}" != "0" ]; then
+    echo "--- Step 2d: Arm OCOMP Genesis ---"
+    if [ -n "${OUTBE_OCOMP_BINARY:-}" ]; then
+        if [ ! -x "$OUTBE_OCOMP_BINARY" ]; then
+            echo "Error: OUTBE_OCOMP_BINARY is set but not executable: $OUTBE_OCOMP_BINARY"
+            exit 1
+        fi
+    else
+        OUTBE_OCOMP_BINARY=""
+        for candidate in ./target/debug/outbe-ocomp ./target/release/outbe-ocomp; do
+            if [ -x "$candidate" ]; then
+                OUTBE_OCOMP_BINARY="$candidate"
+                break
+            fi
+        done
+        if [ -z "$OUTBE_OCOMP_BINARY" ]; then
+            echo "Error: outbe-ocomp binary not found. Run 'cargo build --bin outbe-ocomp' or set OUTBE_OCOMP_BINARY."
+            exit 1
+        fi
+    fi
+    "$OUTBE_OCOMP_BINARY" arm-genesis \
+        --genesis "$OUTPUT_DIR/genesis.json" \
+        --validators "$OUTPUT_DIR/validators.json"
+    echo
+else
+    echo "--- Step 2d: Arm OCOMP Genesis (SKIPPED: ARM_OCOMP=0) ---"
+    echo "  WARNING: outbe-chain refuses a genesis without ocompForkInstallV1;"
+    echo "  this output is only usable by flows that arm the genesis themselves."
+    echo
+fi
+
 # Step 3: Print startup commands
 echo "--- Startup Commands ---"
 echo

@@ -8003,6 +8003,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tribute",
  "outbe-txpool",
+ "outbe-update",
  "outbe-validatorset",
  "outbe-zerofee",
  "reth-basic-payload-builder",

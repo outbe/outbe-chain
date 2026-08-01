@@ -33,9 +33,44 @@ export OUT_DIR OUTBE_CHAIN_BINARY
 
 if [[ ! -x "$OUTBE_CHAIN_BINARY" ]]; then
   echo "smoke: node binary not found/executable: $OUTBE_CHAIN_BINARY" >&2
-  echo "smoke: build it first (cargo build --release --bin outbe-chain)" >&2
+  echo "smoke: build it first (cargo build --release -p outbe-chain -p outbe-ocomp)" >&2
   exit 1
 fi
+
+# Genesis arming (bootstrap Step 2d) needs the outbe-ocomp binary next to the
+# node binary unless the caller overrides OUTBE_OCOMP_BINARY explicitly.
+OUTBE_OCOMP_BINARY="${OUTBE_OCOMP_BINARY:-$(dirname "$OUTBE_CHAIN_BINARY")/outbe-ocomp}"
+if [[ ! -x "$OUTBE_OCOMP_BINARY" ]]; then
+  echo "smoke: outbe-ocomp binary not found/executable: $OUTBE_OCOMP_BINARY" >&2
+  echo "smoke: build it first (cargo build --release -p outbe-chain -p outbe-ocomp)" >&2
+  exit 1
+fi
+export OUTBE_OCOMP_BINARY
+
+# Every validator opens its MongoDB projection store during startup and dies
+# after an eight-second recovery deadline when the database is unreachable —
+# which used to surface here as four minutes of silent zero heights. Fail
+# fast with the setup recipe instead. Reachability is a plain TCP probe of
+# the first host:port in the URI; replica-set health stays the node's problem.
+if [[ -z "${OUTBE_PROJECTION_MONGODB_URI:-}" ]]; then
+  echo "smoke: OUTBE_PROJECTION_MONGODB_URI is not set (run-testnet.sh requires it)" >&2
+  exit 1
+fi
+mongo_host_port="$(printf '%s' "$OUTBE_PROJECTION_MONGODB_URI" \
+  | sed -n 's|^mongodb://\([^/,?]*\).*|\1|p')"
+mongo_host="${mongo_host_port%%:*}"
+mongo_port="${mongo_host_port##*:}"
+[[ "$mongo_port" == "$mongo_host" || -z "$mongo_port" ]] && mongo_port=27017
+if [[ -z "$mongo_host" ]] \
+  || ! (exec 3<>"/dev/tcp/$mongo_host/$mongo_port") 2>/dev/null; then
+  echo "smoke: MongoDB is not reachable at $mongo_host:$mongo_port" >&2
+  echo "smoke: (from OUTBE_PROJECTION_MONGODB_URI=$OUTBE_PROJECTION_MONGODB_URI)" >&2
+  echo "smoke: start it first, e.g.:" >&2
+  echo "  docker run -d --name outbe-local-mongodb -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all" >&2
+  echo "  docker exec outbe-local-mongodb mongosh --quiet --eval 'rs.initiate({_id:\"rs0\",members:[{_id:0,host:\"localhost:27017\"}]})'" >&2
+  exit 1
+fi
+exec 3>&- 3<&- 2>/dev/null || true
 
 cleanup() { ./scripts/run-testnet.sh stop "$OUT_DIR" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
