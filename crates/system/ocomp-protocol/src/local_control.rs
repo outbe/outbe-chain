@@ -236,7 +236,7 @@ pub enum ControlError {
     ZeroSessionGeneration,
     #[error("local control limit does not fit its wire field")]
     LimitOverflow,
-    #[error("cannot determine effective uid from /proc/self/status")]
+    #[error("cannot determine local control process credentials")]
     EffectiveUidUnavailable,
     #[error("local service user {0} does not exist in /etc/passwd")]
     UnknownUser(String),
@@ -680,18 +680,13 @@ pub fn poc_schema_limits() -> SchemaLimits {
     crate::profile::poc_schema_limits()
 }
 
+#[allow(unsafe_code)]
 pub fn effective_uid() -> Result<u32, ControlError> {
-    let status = fs::read_to_string("/proc/self/status")?;
-    let uid_line = status
-        .lines()
-        .find(|line| line.starts_with("Uid:"))
-        .ok_or(ControlError::EffectiveUidUnavailable)?;
-    uid_line
-        .split_ascii_whitespace()
-        .nth(2)
-        .ok_or(ControlError::EffectiveUidUnavailable)?
-        .parse()
-        .map_err(|_| ControlError::EffectiveUidUnavailable)
+    // SAFETY: `geteuid` has no preconditions and only reads the credentials of
+    // the current process. Unlike `/proc/self/status`, it is available on both
+    // Unix targets supported by local peer credentials (Linux and macOS).
+    let uid = unsafe { libc::geteuid() };
+    u32::try_from(uid).map_err(|_| ControlError::EffectiveUidUnavailable)
 }
 
 pub fn uid_for_user(user: &str) -> Result<u32, ControlError> {
@@ -742,6 +737,7 @@ fn parse_passwd_entry(line: &str) -> Option<(&str, u32)> {
     Some((name, uid))
 }
 
+#[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
     let mut credentials = libc::ucred {
@@ -773,4 +769,87 @@ fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError
         uid: credentials.uid,
         gid: credentials.gid,
     })
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn peer_credentials(stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
+    let file_descriptor = stream.as_raw_fd();
+    let mut uid = 0;
+    let mut gid = 0;
+    // SAFETY: `uid` and `gid` are valid writable objects and `file_descriptor`
+    // remains owned and open for the duration of this non-owning call.
+    let peer_id_result = unsafe { libc::getpeereid(file_descriptor, &raw mut uid, &raw mut gid) };
+    if peer_id_result != 0 {
+        return Err(ControlError::Io(std::io::Error::last_os_error()));
+    }
+
+    let mut pid: libc::pid_t = 0;
+    let mut length = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+    // SAFETY: `pid` and `length` are valid writable objects for the exact
+    // sizes supplied, and `file_descriptor` remains owned and open for this
+    // non-owning `getsockopt` call.
+    let peer_pid_result = unsafe {
+        libc::getsockopt(
+            file_descriptor,
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERPID,
+            (&raw mut pid).cast(),
+            &raw mut length,
+        )
+    };
+    if peer_pid_result != 0 {
+        return Err(ControlError::Io(std::io::Error::last_os_error()));
+    }
+    if usize::try_from(length).ok() != Some(std::mem::size_of::<libc::pid_t>()) {
+        return Err(ControlError::EffectiveUidUnavailable);
+    }
+
+    Ok(PeerCredentials {
+        pid: u32::try_from(pid).map_err(|_| ControlError::EffectiveUidUnavailable)?,
+        uid,
+        gid,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn peer_credentials(_stream: &UnixStream) -> Result<PeerCredentials, ControlError> {
+    Err(ControlError::Io(std::io::Error::new(
+        ErrorKind::Unsupported,
+        "local peer credentials are supported only on Linux and macOS",
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn effective_uid_reports_the_current_process_identity() {
+        // SAFETY: `geteuid` has no preconditions and only reads current process
+        // credentials.
+        let expected = unsafe { libc::geteuid() };
+        assert_eq!(effective_uid().unwrap(), expected);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn peer_credentials_report_the_connected_process_identity() {
+        let (left, right) = UnixStream::pair().expect("create connected local-control sockets");
+
+        let left_peer = peer_credentials(&left).expect("read left peer credentials");
+        let right_peer = peer_credentials(&right).expect("read right peer credentials");
+        // SAFETY: these libc calls have no preconditions and only read the
+        // current process credentials.
+        let (effective_uid, effective_gid) = unsafe { (libc::geteuid(), libc::getegid()) };
+        let expected = PeerCredentials {
+            pid: std::process::id(),
+            uid: effective_uid,
+            gid: effective_gid,
+        };
+
+        assert_eq!(left_peer, expected);
+        assert_eq!(right_peer, expected);
+    }
 }

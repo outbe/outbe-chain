@@ -15,6 +15,5 @@
 
 pub mod ctx_provider;
 
-pub use ctx_provider::{
-    CtxStorageProvider, CtxStorageProviderConfig, ReentrancyGuard, ReentrancyStack,
-};
+pub(crate) use ctx_provider::CtxStorageProviderConfig;
+pub use ctx_provider::{CtxStorageProvider, ReentrancyGuard, ReentrancyStack};

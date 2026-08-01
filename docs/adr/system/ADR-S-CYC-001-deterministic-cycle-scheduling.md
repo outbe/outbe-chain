@@ -1,7 +1,7 @@
 # ADR-S-CYC-001: Deterministic Cycle scheduling
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-22
+- **Date:** 2026-07-30
 - **Decision owners:** Execution and protocol-scheduling maintainers
 - **Scope:** `crates/system/cycle`, `CycleLifecycle`, and the Cycle system transaction
 - **Depends on:** ADR-B-CNS-002, ADR-B-CNS-003, ADR-B-EVM-004
@@ -61,6 +61,18 @@ At each block Cycle:
 A failed handler leaves its cursor unchanged, so the same scheduled slot is
 eligible for retry. Cycle never fabricates a handler-specific completion marker.
 
+For Metadosis, one due trigger invokes one canonical command and one tick
+settles/advances at most one protocol-oldest WWD. The command identity binds
+`(trigger_id, scheduled_at, worldwide_day, command_kind,
+canonical_params_hash)` to the purpose-bound Metadosis mutation lease. Cycle
+does not select READY order or own any WWD economic branch.
+
+The emission-limit daily handler has two coordinated facts: Cycle's
+`daily_settled[previous_day]` schedule marker and Metadosis'
+`DayLimitFormationReceipt`. Both are written in the same outer checkpoint.
+`true/receipt` replays without effects; `false/no receipt` proceeds;
+`true/no receipt` or `false/receipt` is fatal before mutation.
+
 ### Time and catch-up semantics
 
 Cycle schedules against UTC. Domain calendars such as WorldwideDay UTC+14 are
@@ -109,6 +121,10 @@ itself atomic and replay-safe; that proof belongs to the handler ADR.
 Cycle's replay key is `(trigger_id, scheduled_at)`. A node restart reconstructs no
 schedule from wall time; it resumes from canonical storage. Reorg behavior follows
 normal EVM state rollback.
+
+Metadosis extends that schedule identity only inside its owner receipt; it does
+not create a second Cycle cursor. Handler storage/events/CE work, the semantic
+receipt, cursor and success event commit or roll back as one execution scope.
 
 ## Security and compatibility
 

@@ -1,7 +1,6 @@
 # PFS-002: Off-chain PoC transforms sealed Tributes into Nods
 
-- **Status:** Implemented on `feat/ocomp-poc`; exact public/E2E
-  closure evidence pending
+- **Status:** Draft
 - **Actors:** Cycle, Metadosis, OCOMP kernel, four validator domains, node
   attestation gates, snapshot exporters, supervisors, workers, CAS stores,
   validator-only result-vote ZeroFee hook, public transaction path, Tribute/CE,
@@ -51,8 +50,21 @@ budget, no repeated auction and no Nod. There is no synchronous fallback.
 - **Environment:** Four independently configured validator domains with
   finalizing consensus, separate OCOMP processes/artifacts, valid Oracle and
   Fidelity state, retained CE/Mongo inputs and generated PoC caps. Final
-  closure starts from the checked-in four-validator `Final` fixture; only
-  loopback ports and a process-local logical clock offset vary per run.
+  closure starts from the checked-in four-validator `Final` fixture at its
+  protocol-pinned activation height `32`; only loopback ports and a
+  process-local logical clock offset vary per run. A separate fresh-devnet
+  Metadosis profile uses a chain-bound `Measurement` install at height `1`.
+  That profile requires no active Metadosis day before launch (and removes the
+  legacy fixture's single seeded OFFERING day when present); production Cycle
+  creates the measured WWD in finalized block 1. Two whole-committee
+  stop/restart barriers advance the existing testnet
+  logical clock past the canonical phase boundaries without shortening the
+  production `50h/0h/48h/12h` durations, changing storage after launch, or
+  mixing validators that use different offsets.
+  Startup also requires the canonical `metadosisStorageLayoutV1.layoutHash`
+  and rejects a missing, malformed, mismatched or misclassified install/layout
+  before process launch; it never reinterprets the existing `Final/32` fixture
+  as genesis-active.
 - **Canonical inputs:** Finalized `JobIntentV1`, request block/state root,
   sealed CE/WWD roots, exact count/nominal, frozen Metadosis values,
   budget split, apply preconditions, authenticated Tribute bodies,
@@ -228,7 +240,7 @@ formation. Residue arriving after formation waits for the next unformed day.
 | 8 | supervisor-hosted typed finalizer, then node attestation gate | after durable complete admission and `VOTING_OPEN`, stream exact plan/manifest-entry/chunk catalogs through pure `LysisProgramV1` finalization; derive completion fields from finalized intent and the LYSIS_V1 zero-count/canonical-empty pre-result semantic-event commitment; node independently reloads finalized job/export authority, verifies the constant-size candidate and durably signs one exact digest | one `LysisResultV1`, sign-once journal plus one signature/domain | missing/duplicate/reordered/substituted artifact, entry or chunk causes no vote; descriptor and semantic roots must close over the same bytes; completion-field or semantic-event count/root mutation rejects; no caller-provided root is accepted; pre-open signing rejects; exact retry returns the same signature and a second digest refuses after restart | POC-08, POC-12 |
 | 9 | each validator-domain Supervisor | wrap its node-attested full `LysisResultV1` in `ResultVoteV1`, read the canonical `latest` account nonce, use the frozen gas envelope, submit the exact-selector validator ZeroFee EVM transaction through RPC/txpool/P2P/proposer/import/replay and track inclusion/finality/reorg | Supervisor single-writer submission journal plus exact signed transaction bytes and one canonical digest/signature/height slot per domain | no validator native-fee debit, `eth_estimateGas` or pending-block execution; OCOMP—not ZeroFee—decodes the result and rejects pre-open/wrong/late/invalid votes; orphaned inclusion rebroadcasts the same bytes without double-counting; conflicting signed result records equivocation without replacing the first | POC-10, POC-13, POC-18, POC-19 |
 | 10 | q-forming result-vote handler | when the current full-result submission creates three matching slots, store quorum and one canonical result and verify finalized job/bundle/result/preconditions without executing Lysis | immutable q=3 evidence and private `CertifiedLysisActivation` in the current execution frame | first/second vote has no owner effects; third matching vote enters apply; result-vote cap-1/cap succeeds and cap+1 rejects consistently; one-byte/JobId/root/count/completion mutation rejects before a slot or owner write | POC-03, POC-14, POC-18, POC-20, POC-21 |
-| 11 | certified domain owners | in the same q-forming checkpoint, install certified Nod/contributor/output roots, retire the sealed Tribute generation, apply carry-over/Metadosis scalars and verify constant-size receipts; APPLIED hashes four owner events in fixed order, conflict hashes an empty apply-event payload | `COMPLETED` or defined `CONFLICTED`, active generation and terminal/effect receipts | no `N`-action on-chain loop; owner failure or receipt mutation rolls back the q-forming slot, quorum and every owner effect; expected conflict commits quorum plus zero owner effects; Desis is untouched | POC-15, POC-16, POC-17, POC-25 |
+| 11 | certified domain owners | in the same q-forming outer command checkpoint, install certified Nod/contributor/output roots, retire the sealed Tribute generation, apply carry-over/Metadosis scalars and verify constant-size receipts; APPLIED hashes four owner events in fixed order, conflict hashes an empty apply-event payload | `COMPLETED` or defined `CONFLICTED`, active generation and terminal/effect receipts | no `N`-action on-chain loop; owner failure or receipt mutation rolls back the q-forming slot, quorum and every owner effect; expected conflict commits quorum plus zero owner effects; Desis is untouched | POC-15, POC-16, POC-17, POC-25 |
 | 12 | remaining validator/consensus | accept the fourth full-result vote until the exclusive deadline and then close accountability | matching/minority/missing/equivocation summary separate from terminal result | healthy run records 4/4; one-domain-unavailable run retains completed q=3 plus one missing bit; fourth vote cannot change terminal state | POC-10, POC-18, POC-19 |
 | 13 | consensus/client | finalize the q-forming block and verify outputs through public interfaces | finalized state, receipts, CE roots/proofs | every expected effect and conservation equation verifies; old Tribute partition is logically retired; no supervisor/CAS read is used as outcome authority | POC-22 |
 
@@ -237,35 +249,41 @@ formation. Residue arriving after formation waits for the next unformed day.
 The PoC is complete only when this exact story passes from public Tribute
 issuance through public Nod reads on a four-validator devnet:
 
-1. issue a bounded WWD with at least `max_tributes_per_work_shard + 1` Tribute, different
+1. on the separately initialized `Measurement@1` profile, start without an
+   active Metadosis WWD and retain finalized block-1 `WorldwideDayStarted`
+   evidence for the runtime-created day; advance that same chain through
+   `FORMING → LOOKBACK_DELAY → OFFERING` with the first whole-committee
+   logical-time restart barrier and unchanged phase durations;
+2. issue a bounded WWD with at least `max_tributes_per_work_shard + 1` Tribute, different
    Fidelity leagues, currencies and at least one
    `exclude_from_intex_issuance` Tribute;
-2. seal the WWD and reach terminal Metadosis;
-3. inspect the finalized split and `JobIntent`; prove the request-phase effect
+3. seal that same WWD and cross `WAITING → READY` with the second
+   whole-committee logical-time restart barrier;
+4. inspect the finalized split and `JobIntent`; prove the request-phase effect
    happened once and there are zero new Nod/contributor/Tribute-consume effects;
-4. in the healthy workflow run all four domains, include all four full-result
+5. in the healthy workflow run all four domains, include all four full-result
    votes, prove that the third matching vote atomically completed the job and
    that the fourth changed only accountability, finalize and verify the public
    result;
-5. start a separately initialized workflow with a fresh WWD and `JobIntent`,
-   repeat the request-only checks from steps 1–3, then stop one validator’s
+6. start a separately initialized workflow with a fresh WWD and `JobIntent`,
+   repeat the request-only checks from steps 2–4, then stop one validator’s
    supervisor before execution; show the other three domains independently
    rebuild that workflow's input root, derive the same multi-shard plan and
    include three matching `ResultVoteV1` transactions;
-6. observe the third matching `ResultVoteV1` atomically record q=3 and complete
+7. observe the third matching `ResultVoteV1` atomically record q=3 and complete
    the typed apply; keep the fourth vote slot open until the response deadline
    and close its missing bit;
-7. finalize the degraded workflow's q-forming block and query every expected Nod,
+8. finalize the degraded workflow's q-forming block and query every expected Nod,
    contributor total, Metadosis state, request-phase Desis brief, carry-over
    credit and retired Tribute partition;
-8. compare the result with an offline reference/golden corpus, never an on-chain
+9. compare the result with an offline reference/golden corpus, never an on-chain
    Lysis execution;
-9. repeat with 1, 2 and 4 workers and randomized completion order;
-10. request a second digest signature for the same job and observe sign-once
+10. repeat with 1, 2 and 4 workers and randomized completion order;
+11. request a second digest signature for the same job and observe sign-once
     refusal; exercise exact vote retry, wrong signer/key epoch, late vote and a
     conflicting signed vote; prove first-vote immutability and canonical
     equivocation evidence;
-11. delay otherwise identical q-forming votes by different block counts and prove
+12. delay otherwise identical q-forming votes by different block counts and prove
     byte-identical Nod/contributor/Tribute/carry-over results with no repeated
     request effect;
 12. run another job with two validators unavailable and observe response-window expiry,
@@ -331,19 +349,25 @@ product behavior.
 
 ## Transaction, checkpoint and finality boundaries
 
+Every checkpoint label below denotes the sole outer command boundary:
+`commit_transition` owns provider state and ordered EVM events, while a private
+command-level CE checkpoint is added only when that command mutates CE work.
+The request, voting-open, q-forming and response-close helpers do not create
+nested production savepoints.
+
 ```text
-request block execution checkpoint
+request block outer command checkpoint
   budget split + early effect + JobIntent + AWAITING_FINALITY | none
         |
         v finality recorded + four additional blocks
-voting-open checkpoint
+voting-open outer command checkpoint
   finalized JobId + open/deadline heights + deadline index | none
         |
 local export/compute/sign/submit journals
   never canonical state; no domain writes; Supervisor submits vote tx
         |
         v four public full-result vote transactions
-vote/apply checkpoints
+vote/apply outer command checkpoints
   first two slots: bounded accountability only
   q-forming slot: immutable q=3 + one stored LysisResultV1
     + typed verification + every owner receipt

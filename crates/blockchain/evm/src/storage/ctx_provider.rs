@@ -29,7 +29,10 @@ use core::fmt::Debug;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_primitives::{
     error::{PrecompileError, Result},
-    storage::{PrecompileStorageProvider, SubCallError, SubCallInput, SubCallOutput},
+    storage::{
+        MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
+        SubCallError, SubCallInput, SubCallOutput,
+    },
 };
 use revm::{
     context::journaled_state::JournalCheckpoint,
@@ -44,7 +47,7 @@ use revm::{
 use std::{cell::RefCell, sync::Arc};
 
 use crate::{gas::SubcallGasMeter, precompiles::OcompActivationBlockMeter, sub_call};
-use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
+use outbe_metadosis::api::OcompFinalizedIntentAuthority;
 use outbe_offchain_data::RuntimeBodyReaders;
 
 thread_local! {
@@ -144,19 +147,22 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub ocomp_lifecycle_active: bool,
     /// One-shot runtime lease state for the exact public Lysis activation call.
     lysis_activation_lease: LysisActivationLease,
+    /// Purpose-bound Metadosis mutation authority for this exact dispatch.
+    metadosis_mutation_frame: MetadosisMutationFrameState,
 }
 
-pub struct CtxStorageProviderConfig {
-    pub is_static: bool,
-    pub self_address: Address,
-    pub reentrancy_stack: ReentrancyStack,
-    pub spec: SpecId,
-    pub runtime_body_readers: Option<RuntimeBodyReaders>,
-    pub execution_scope: Arc<ExecutionScope>,
-    pub ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
-    pub ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
-    pub ocomp_lifecycle_active: bool,
-    pub lysis_activation_entitled: bool,
+pub(crate) struct CtxStorageProviderConfig {
+    pub(crate) is_static: bool,
+    pub(crate) self_address: Address,
+    pub(crate) reentrancy_stack: ReentrancyStack,
+    pub(crate) spec: SpecId,
+    pub(crate) runtime_body_readers: Option<RuntimeBodyReaders>,
+    pub(crate) execution_scope: Arc<ExecutionScope>,
+    pub(crate) ocomp_finality_authority: Option<Arc<dyn OcompFinalizedIntentAuthority>>,
+    pub(crate) ocomp_activation_block_meter: Arc<OcompActivationBlockMeter>,
+    pub(crate) ocomp_lifecycle_active: bool,
+    pub(crate) lysis_activation_entitled: bool,
+    pub(crate) metadosis_mutation_entitlements: MetadosisMutationEntitlements,
 }
 
 #[derive(Debug)]
@@ -164,6 +170,58 @@ struct LysisActivationLease {
     entitled: bool,
     attempted: bool,
     active_call_id: Option<B256>,
+}
+
+#[derive(Debug)]
+struct MetadosisMutationFrameState {
+    entitlements: MetadosisMutationEntitlements,
+    active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
+}
+
+impl MetadosisMutationFrameState {
+    const fn new(entitlements: MetadosisMutationEntitlements) -> Self {
+        Self {
+            entitlements,
+            active: None,
+        }
+    }
+
+    fn begin(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> outbe_primitives::error::Result<()> {
+        if self.active.is_some() || !self.entitlements.consume(purpose, binding) {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Metadosis mutation purpose is not entitled for this EVM call: \
+                     purpose={purpose:?} binding={binding:#x} remaining={:?}",
+                self.entitlements
+            )));
+        }
+        self.active = Some((purpose, binding, chain_id, block_number));
+        Ok(())
+    }
+
+    fn finish(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+    ) -> outbe_primitives::error::Result<()> {
+        let Some((active_purpose, active_binding, _, _)) = self.active.as_ref().copied() else {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Metadosis mutation frame is not active".into(),
+            ));
+        };
+        if active_purpose != purpose || active_binding != binding {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Metadosis mutation frame identity mismatch".into(),
+            ));
+        }
+        self.active = None;
+        Ok(())
+    }
 }
 
 impl LysisActivationLease {
@@ -203,7 +261,7 @@ impl LysisActivationLease {
 
 impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     /// Constructor.
-    pub fn new(
+    pub(crate) fn new(
         ctx: &'a mut EthEvmContext<DB>,
         gas: SubcallGasMeter,
         config: CtxStorageProviderConfig,
@@ -221,6 +279,9 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             ocomp_activation_block_meter: config.ocomp_activation_block_meter,
             ocomp_lifecycle_active: config.ocomp_lifecycle_active,
             lysis_activation_lease: LysisActivationLease::new(config.lysis_activation_entitled),
+            metadosis_mutation_frame: MetadosisMutationFrameState::new(
+                config.metadosis_mutation_entitlements,
+            ),
         }
     }
 
@@ -234,6 +295,33 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
 }
 
 impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<'a, DB> {
+    fn begin_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> outbe_primitives::error::Result<()> {
+        if ContextTr::cfg(self.ctx).chain_id() != chain_id
+            || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
+        {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Metadosis mutation frame execution scope mismatch".into(),
+            ));
+        }
+        self.metadosis_mutation_frame
+            .begin(purpose, binding, chain_id, block_number)
+    }
+
+    fn finish_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        _completed: bool,
+    ) -> outbe_primitives::error::Result<()> {
+        self.metadosis_mutation_frame.finish(purpose, binding)
+    }
+
     fn begin_lysis_activation_frame(
         &mut self,
         activation_call_id: B256,
@@ -459,5 +547,109 @@ mod lysis_activation_lease_tests {
         assert!(lease.finish(B256::repeat_byte(4), false).is_err());
         lease.finish(call_id, false).unwrap();
         assert!(lease.begin(call_id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod metadosis_mutation_frame_tests {
+    use super::MetadosisMutationFrameState;
+    use alloy_primitives::B256;
+    use outbe_primitives::storage::{
+        MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements,
+        MetadosisMutationPurposeTag as Purpose,
+    };
+
+    #[test]
+    fn denied_or_wrong_purpose_cannot_open_frame() {
+        let mut denied = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::NONE);
+        assert!(denied
+            .begin(Purpose::CycleLifecycle, B256::repeat_byte(1), 1, 2)
+            .is_err());
+
+        let mut wrong = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(
+            Purpose::CertifiedFinality,
+        ));
+        assert!(wrong
+            .begin(Purpose::CycleLifecycle, B256::repeat_byte(1), 1, 2)
+            .is_err());
+        wrong
+            .begin(Purpose::CertifiedFinality, B256::repeat_byte(2), 1, 2)
+            .unwrap();
+    }
+
+    #[test]
+    fn nesting_and_wrong_close_preserve_the_active_frame() {
+        let purpose = Purpose::CycleLifecycle;
+        let binding = B256::repeat_byte(3);
+        let mut frame =
+            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(purpose).union(
+                MetadosisMutationEntitlements::only(Purpose::CertifiedFinality),
+            ));
+        frame.begin(purpose, binding, 7, 11).unwrap();
+
+        assert!(frame
+            .begin(Purpose::CertifiedFinality, B256::repeat_byte(4), 7, 11,)
+            .is_err());
+        assert!(frame.finish(purpose, B256::repeat_byte(5)).is_err());
+        frame.finish(purpose, binding).unwrap();
+
+        // A rejected nested attempt did not consume the other entitlement.
+        frame
+            .begin(Purpose::CertifiedFinality, B256::repeat_byte(6), 7, 11)
+            .unwrap();
+    }
+
+    #[test]
+    fn one_route_entitlement_cannot_be_reused() {
+        let purpose = Purpose::VerifiedResultVote;
+        let binding = B256::repeat_byte(7);
+        let mut frame =
+            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::only(purpose));
+        frame.begin(purpose, binding, 7, 11).unwrap();
+        frame.finish(purpose, binding).unwrap();
+
+        assert!(frame.begin(purpose, binding, 7, 11).is_err());
+    }
+
+    #[test]
+    fn exact_bounded_route_budget_is_consumed_one_lease_at_a_time() {
+        let purpose = Purpose::CycleLifecycle;
+        let mut frame =
+            MetadosisMutationFrameState::new(MetadosisMutationEntitlements::repeated(purpose, 2));
+        for binding in [B256::repeat_byte(8), B256::repeat_byte(9)] {
+            frame.begin(purpose, binding, 7, 11).unwrap();
+            frame.finish(purpose, binding).unwrap();
+        }
+        assert!(frame.begin(purpose, B256::repeat_byte(10), 7, 11).is_err());
+    }
+
+    #[test]
+    fn exact_authority_binding_rejects_mismatch_without_consuming_grant() {
+        let purpose = Purpose::CertifiedFinality;
+        let finalized_hash = B256::repeat_byte(11);
+        let expected = MetadosisCertifiedFinalityBinding::new(
+            7,
+            11,
+            10,
+            finalized_hash,
+            B256::repeat_byte(12),
+        );
+        let wrong_root = MetadosisCertifiedFinalityBinding::new(
+            7,
+            11,
+            10,
+            finalized_hash,
+            B256::repeat_byte(13),
+        );
+        assert_ne!(expected.binding(), wrong_root.binding());
+        let mut frame = MetadosisMutationFrameState::new(MetadosisMutationEntitlements::exact(
+            purpose,
+            expected.binding(),
+        ));
+
+        assert!(frame.begin(purpose, wrong_root.binding(), 7, 11).is_err());
+        frame.begin(purpose, expected.binding(), 7, 11).unwrap();
+        frame.finish(purpose, expected.binding()).unwrap();
+        assert!(frame.begin(purpose, expected.binding(), 7, 11).is_err());
     }
 }

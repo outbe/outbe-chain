@@ -52,17 +52,33 @@ pub fn run_emission_limit_daily(
     // a forward timestamp advance — bounded but not eliminated by the C-01 drift
     // band). Gate the WHOLE settlement on `daily_settled[prev_day]` so each day
     // settles exactly once regardless of how many times the handler fires.
-    if outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
+    let settled = outbe_rewards::api::is_day_settled(ctx, prev_day).map_err(|e| {
         tracing::error!(target: "outbe::cycle", step = "is_day_settled", prev_day, error = ?e, "emission_limit_daily step failed");
         e
-    })? {
-        tracing::debug!(
-            target: "outbe::cycle",
-            prev_day,
-            block_number = ctx.block.block_number,
-            "emission_limit_daily: prev_day already settled — skipping (idempotent)"
-        );
-        return Ok(());
+    })?;
+    let existing_formation =
+        outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?;
+    match (settled, existing_formation) {
+        (true, None) => {
+            return Err(PrecompileError::Fatal(
+                "Cycle daily_settled marker has no Metadosis day-limit semantic receipt".into(),
+            ));
+        }
+        (false, Some(_)) => {
+            return Err(PrecompileError::Fatal(
+                "Metadosis day-limit semantic receipt has no Cycle daily_settled marker".into(),
+            ));
+        }
+        (true, Some(_)) => {
+            tracing::debug!(
+                target: "outbe::cycle",
+                prev_day,
+                block_number = ctx.block.block_number,
+                "emission_limit_daily: prev_day already settled — skipping (idempotent)"
+            );
+            return Ok(());
+        }
+        (false, None) => {}
     }
 
     let genesis = outbe_rewards::runtime::genesis_utc_day(ctx).unwrap_or(0);
@@ -172,13 +188,30 @@ pub fn run_emission_limit_daily(
         "dispatch_terminal_remainder_at",
         dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),
     )?;
+    let formation =
+        outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), prev_day.into())?
+            .ok_or_else(|| {
+                PrecompileError::Fatal(
+                    "Cycle allocation committed without a Metadosis day-limit receipt".into(),
+                )
+            })?;
+    match formation {
+        outbe_metadosis::DayLimitFormationReceipt::Formed(formed)
+            if formed.worldwide_day.value() == prev_day && formed.base_limit == metadosis_total => {
+        }
+        outbe_metadosis::DayLimitFormationReceipt::Formed(_) => {
+            return Err(PrecompileError::Fatal(
+                "Cycle allocation disagrees with the Metadosis day-limit receipt".into(),
+            ));
+        }
+    }
 
     let g4 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = g4 - g3, cumulative = g4, "after terminal dispatch");
 
     wrap(
         "start_metadosis",
-        outbe_metadosis::runtime::start_metadosis(ctx, scope, parent),
+        outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
     )?;
 
     let g5 = gas(ctx);

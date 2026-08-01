@@ -17,12 +17,16 @@
 
 pub mod env;
 pub mod features;
+pub mod metadosis_evidence;
+pub mod metadosis_p0;
+pub mod metadosis_process;
 pub mod mongo_fixture;
 pub mod ocomp_capacity;
 pub mod ocomp_evidence;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp_finality_fixture;
 pub mod release_sgx;
+pub mod verification_ledger;
 pub mod world;
 
 mod evidence;

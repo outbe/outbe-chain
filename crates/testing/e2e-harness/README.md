@@ -28,7 +28,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | PFS examples | Feature coverage |
 |---|---|
 | `PFS-001-01`, `-02`, `-03`, `-05` | Tribute creation/projection/proof, two absence scopes and duplicate logical offer rejection |
-| `PFS-002-01` through `-24` | Gap: the off-chain request/export/q/activation scenarios are specified; `-07`/`-08` are deferred and no OCOMP scenario is implemented |
+| `PFS-002-01` through `-24` | OCOMP implementation and focused production-adapter tests exist; `-07`/`-08` remain deferred and exact-revision Linux four-domain closure evidence is pending |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
 | `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
@@ -45,6 +45,9 @@ coverage of assertions that the row explicitly marks as a gap.
   `tribute_projection.feature` covers encrypted-offer projection plus compressed
   entity presence and absence proofs; `stablecoin_factory_v1.feature` covers the
   fresh-genesis Factory product flow and full-committee restart.
+  `ocomp_public_path.feature` includes the Linux-only fresh Metadosis path:
+  finalized runtime block-1 `Create`, two whole-committee logical-time restart
+  barriers with canonical phase durations, and terminal OCOMP on the same WWD.
 - `release-features/` — the separate exact-artifact hardware-SGX acceptance scenario.
   It does not bootstrap a localnet or MongoDB and never rebuilds the release image.
 - `src/env.rs` — `TeeMode`, the `EnvCli` clap flags, `Environment`, and the
@@ -76,6 +79,10 @@ the harness reads no configuration from the environment.** Flags:
 - `--evidence-dir <PATH>` — persistent per-scenario JSON evidence. By default it
   is written under `<data-dir>/evidence/<run-id>` and is not removed when a
   successful run cleans its node data.
+- `--metadosis-p0-case <debug-unset|debug-named|debug-arbitrary|release-unset|release-named|release-arbitrary>`
+  — test-only binding used by the Metadosis P0 parity runner. It validates and
+  retains the removed process input inherited by every node child; ordinary
+  harness runs leave it unset.
 - `--upgraded-chain-bin <PATH>` — optional prebuilt replacement node binary for
   the protocol-update recovery scenario. When omitted, that scenario creates a
   temporary detached worktree at the revision under test, changes only its
@@ -107,6 +114,75 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
 cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all
 ```
+
+The Metadosis P0 env-independence closure is a separate Ubuntu 24.04 x86_64
+lane. It requires a clean checkout and a new output path outside the repository:
+
+```sh
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-metadosis-evidence -- \
+  p0-parity --output /path/to/new-evidence-directory
+```
+
+The runner builds normal debug and release node artifacts without
+`outbe-metadosis/test-utils`, executes the existing canonical 257-owner Final
+scenario for all six env/profile cases, and publishes a fail-closed comparison
+of receipt, state-root, CE-root, and four-validator import commitments. Use the
+same Docker/Gramine prerequisites as the harness's existing OCOMP public-path
+scenarios.
+
+The fresh-devnet lifecycle lane is also owned by the same Rust harness binary:
+
+```sh
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-metadosis-evidence -- \
+  fresh-devnet --output /path/to/new-fresh-devnet-evidence
+```
+
+The complete Metadosis pack is owned by `outbe-metadosis-evidence`. Its portable
+host command runs on macOS or Linux, requires the pinned Linux/amd64 image to be
+present locally, and writes to a new bundle path outside the repository:
+
+```sh
+cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+  --bin outbe-metadosis-evidence -- \
+  --repo . container-run \
+  --output /tmp/metadosis-run \
+  --image 'registry.example/outbe-evidence@sha256:<64-hex-digest>'
+```
+
+The host side only creates and inspects Docker containers. It never substitutes
+a native result for the Linux lane. The current Docker context must expose a
+local Unix socket; TCP/SSH contexts are rejected. The pinned image must include
+the Docker client, and the selected macOS/Linux container runtime must support
+host networking (when using Docker Desktop, enable that feature explicitly).
+The launcher mounts that exact socket plus repository,
+evidence and temporary target paths at the same absolute paths, runs as the
+numeric host UID/GID, sets the inner daemon endpoint explicitly, and records
+the topology in provenance. The first pinned container independently
+lists normal and ignored Cargo tests, executes every fixed command once, and
+invokes the harness-owned six-case P0 and fresh-devnet process subcommands. The
+launcher retains raw image/container inspection documents and binds their exact
+image ID, container ID, command, digest, and one-time nonce to the runner
+receipt. A second container from the same digest performs `assemble` and
+`verify`: status is derived from discovery and exit facts, the manifest is
+reconstructed, and all retained receipts, logs, binaries, scenarios, and Docker
+facts are rehashed. The lower-level `run`, `assemble`, `verify`, and `finalize`
+subcommands are internal lane stages, not alternative host evidence contracts.
+
+Repository evidence catalogs are indexed by
+`outbe-plan/verification-ledger.yaml`. The generic verifier keeps OCOMP and
+Metadosis domain policies separate, rejects duplicate/cross-pack references and
+requires one exact source/toolchain/artifact profile. Before accepting a
+Metadosis manifest, the domain-neutral CLI invokes the Metadosis adapter to
+reconstruct it from `runner-receipt.json`; a caller-authored PASS cannot bypass
+that derivation. Run
+`outbe-verification-ledger validate-index` to load both packs strictly. Its
+`verify` command takes paired `--evidence` and `--bundle-root` arguments and
+binds the current checkout, immutable Linux image digest, exact test
+target/name/lane/substitutions and every referenced member byte. The checked-in
+Metadosis pack declares required production-interface tests; it is not a claim
+that the external Linux lane has already run.
 
 The same full run is available as `mise run e2e`. The harness owns an isolated
 MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.

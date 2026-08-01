@@ -13,8 +13,7 @@ use alloy_evm::{
 use alloy_primitives::{Address, Bytes, TxKind};
 use core::ops::{Deref, DerefMut};
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
-use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::system_tx::OcompLifecycleActivation;
 use reth_ethereum::evm::{

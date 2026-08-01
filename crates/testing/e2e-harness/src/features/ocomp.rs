@@ -12,6 +12,7 @@ use std::{
 
 use alloy_primitives::B256;
 use cucumber::{given, then, when};
+use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     profile::poc_schema_limits,
     state::{OcompJobStatus, OcompTerminalOutcome},
@@ -26,9 +27,12 @@ use crate::world::localnet::StartOpts;
 use crate::world::ocomp::OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS;
 use crate::world::ocomp::{
     OcompForkMismatchEvidenceV1, OcompForkRestartEvidenceV1, OcompMeasurementForkV1,
-    OcompProcessFault, OcompProcessRole, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+    OcompProcessFault, OcompProcessRole,
 };
-use crate::world::state::OcompExecutionTraceObservationV1;
+use crate::world::state::{
+    MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
+    OcompExecutionTraceObservationV1,
+};
 use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
@@ -39,6 +43,11 @@ const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // 257-Tribute capacity scenario, so its bounded wait must include the remaining
 // offering interval plus finalization/request publication slack.
 const OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
+// A WWD begins at 10:00 UTC on the previous civil date (UTC+14 midnight), while
+// the block-1 bootstrap derives its first key from the raw UTC civil date.
+// Starting 15 hours into the WWD places block 1 at 01:00 UTC on that same key:
+// both date conventions select the fixture WWD and it remains inside FORMING.
+const METADOSIS_INITIAL_WWD_ELAPSED_SECS: u64 = 15 * 3_600;
 
 #[given("a fresh four-validator OCOMP measurement localnet")]
 fn fresh_ocomp_measurement_localnet(world: &mut World) {
@@ -53,6 +62,54 @@ fn fresh_ocomp_public_measurement_localnet(world: &mut World) {
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT));
+}
+
+#[given("a fresh four-validator Metadosis capacity localnet at FORMING")]
+fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
+    bootstrap_localnet(world, 6, &[]);
+    let wwd = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("fresh Metadosis WorldwideDay")
+        .parse::<WorldwideDay>()
+        .expect("valid fresh Metadosis WorldwideDay");
+    let now_secs = unix_time_secs();
+    let initial_timestamp = wwd
+        .start_timestamp()
+        .checked_add(METADOSIS_INITIAL_WWD_ELAPSED_SECS)
+        .expect("fresh Metadosis initial logical time");
+    assert_eq!(
+        WorldwideDay::from_timestamp(initial_timestamp),
+        wwd,
+        "UTC+14 timestamp mapping must select the fixture WWD"
+    );
+    assert_eq!(
+        WorldwideDay::from_timestamp(initial_timestamp.saturating_sub(14 * 3_600)),
+        wwd,
+        "block-1 UTC date mapping must select the fixture WWD"
+    );
+    let initial_offset = logical_time_offset(initial_timestamp, now_secs);
+    world
+        .localnet
+        .shift_genesis_timestamp(initial_offset)
+        .expect("shift fresh Metadosis genesis before deriving fork identity");
+    world.state.metadosis_fresh_initial_timestamp = Some(initial_timestamp);
+    world.state.metadosis_fresh_initial_unix_time_offset_secs = Some(initial_offset);
+
+    let (prepared, private_keys) = world
+        .ocomp
+        .prepare_fresh_metadosis_capacity_fork_install(OCOMP_CAPACITY_TRIBUTE_COUNT)
+        .expect("prepare runtime-created fresh Metadosis capacity fork");
+    world.state.ocomp_capacity_tribute_private_keys = private_keys;
+    let mut start_opts = StartOpts {
+        voting_window: Some(6),
+        unix_time_offset_secs: Some(initial_offset),
+        genesis_timestamp_pre_shifted: true,
+        ocomp_protocol_bundle_hash: None,
+    };
+    launch_prepared_ocomp(world, &mut start_opts, &prepared, true);
+    wait_for_finalized_ocomp_activation(world);
 }
 
 #[given("the canonical four-validator OCOMP Final devnet")]
@@ -165,6 +222,11 @@ fn launch_prepared_ocomp(
     activate_workers: bool,
 ) {
     let expected_identity = prepared.launch_identity();
+    assert!(
+        world.state.ocomp_activation_height.is_none(),
+        "scenario already selected an immutable OCOMP activation height"
+    );
+    world.state.ocomp_activation_height = Some(prepared.install.activation_height);
     start_opts.ocomp_protocol_bundle_hash =
         Some(format!("{:#x}", expected_identity.protocol_bundle_hash));
     start_bootstrapped_localnet(world, start_opts);
@@ -199,6 +261,10 @@ fn launch_prepared_ocomp(
 }
 
 fn wait_for_finalized_ocomp_activation(world: &mut World) {
+    let activation_height = world
+        .state
+        .ocomp_activation_height
+        .expect("prepared OCOMP activation height");
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
         let finalized = world
@@ -207,9 +273,10 @@ fn wait_for_finalized_ocomp_activation(world: &mut World) {
             .into_iter()
             .map(|port| world.rpc.finalized(port))
             .collect::<Vec<_>>();
-        if finalized.iter().all(|height| {
-            height.is_some_and(|height| height >= OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
-        }) {
+        if finalized
+            .iter()
+            .all(|height| height.is_some_and(|height| height >= activation_height))
+        {
             return;
         }
         world
@@ -219,10 +286,514 @@ fn wait_for_finalized_ocomp_activation(world: &mut World) {
         assert!(
             Instant::now() < deadline,
             "OCOMP fork did not finalize on every validator before public Tribute submission: \
-             expected height {OCOMP_MEASUREMENT_ACTIVATION_HEIGHT}, observed {finalized:?}"
+             expected height {activation_height}, observed {finalized:?}"
         );
         sleep(Duration::from_millis(250));
     }
+}
+
+#[then("the fresh capacity day is created in FORMING by finalized block 1")]
+fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
+    let worldwide_day = fresh_metadosis_wwd(world);
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let (started, state, finalized_points) = loop {
+        let points = finalized_points_at_common_height(world, 1);
+        let common_height = points[0].block_number;
+        let started = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_metadosis_wwd_started_on(port, worldwide_day)
+            })
+            .collect::<Vec<_>>();
+        let states = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_wwd_state_at(port, worldwide_day, common_height)
+            })
+            .collect::<Vec<_>>();
+        if started.iter().all(Option::is_some)
+            && states.iter().all(Option::is_some)
+            && states
+                .iter()
+                .all(|candidate| candidate.as_ref() == states[0].as_ref())
+            && states[0].as_ref().is_some_and(|state| state.status == 0)
+        {
+            let first_started = started[0].clone().expect("finalized WWD started event");
+            assert!(
+                started
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(&first_started)),
+                "validators expose different finalized WorldwideDayStarted events"
+            );
+            break (
+                first_started,
+                states[0].clone().expect("finalized FORMING state"),
+                points,
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fresh Metadosis day was not created in finalized FORMING state"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    assert_eq!(
+        started.block_number, 1,
+        "fresh WWD must be created at block 1"
+    );
+    assert_eq!(started.worldwide_day, worldwide_day);
+    assert_eq!(started.forming_start, state.forming_start);
+    assert_eq!(started.forming_end, state.forming_end);
+    assert_eq!(started.lookback_end, state.lookback_end);
+    assert_eq!(started.offering_end, state.offering_end);
+    assert_eq!(started.scheduled_process_time, state.scheduled_process_time);
+    assert_eq!(
+        state.forming_end - state.forming_start,
+        50 * 3_600,
+        "fresh process evidence must retain the canonical 50-hour FORMING duration"
+    );
+    assert_eq!(state.lookback_end, state.forming_end);
+    assert_eq!(
+        state.offering_end - state.lookback_end,
+        48 * 3_600,
+        "fresh process evidence must retain the canonical 48-hour OFFERING duration"
+    );
+    assert_eq!(
+        state.scheduled_process_time - state.offering_end,
+        12 * 3_600,
+        "fresh process evidence must retain the canonical 12-hour WAITING duration"
+    );
+    let requested_initial_timestamp = world
+        .state
+        .metadosis_fresh_initial_timestamp
+        .expect("fresh Metadosis initial logical timestamp");
+    let initial_timestamps = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            world
+                .rpc
+                .block_timestamp(port, started.block_number)
+                .expect("canonical block-1 timestamp")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        initial_timestamps
+            .iter()
+            .all(|timestamp| *timestamp == initial_timestamps[0]),
+        "validators expose different block-1 timestamps"
+    );
+    let initial_timestamp = initial_timestamps[0];
+    assert!(
+        initial_timestamp >= state.forming_start && initial_timestamp < state.forming_end,
+        "initial logical time must place the runtime-created WWD inside FORMING"
+    );
+    assert!(
+        initial_timestamp >= requested_initial_timestamp,
+        "block-1 timestamp preceded the requested fresh logical time"
+    );
+    assert_eq!(
+        WorldwideDay::from_timestamp(initial_timestamp),
+        WorldwideDay::new(worldwide_day),
+        "runtime block-1 UTC+14 mapping selected a different WWD"
+    );
+    assert_eq!(
+        WorldwideDay::from_timestamp(initial_timestamp.saturating_sub(14 * 3_600)),
+        WorldwideDay::new(worldwide_day),
+        "runtime block-1 UTC date mapping selected a different WWD"
+    );
+    let genesis_hash = common_block_hash(world, 0);
+    assert_eq!(
+        common_block_hash(world, started.block_number),
+        started.block_hash,
+        "WorldwideDayStarted is not bound to canonical block 1"
+    );
+    assert!(
+        finalized_points
+            .iter()
+            .all(|point| point.block_number >= started.block_number),
+        "all validators must finalize the block-1 WWD creation"
+    );
+    let unknown_status_revert_validator_count = u8::try_from(
+        world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .filter(|port| {
+                world
+                    .rpc
+                    .metadosis_unknown_status_reverts_at(*port, u8::MAX, started.block_number)
+                    == Some(true)
+            })
+            .count(),
+    )
+    .expect("validator count fits u8");
+    assert_eq!(
+        unknown_status_revert_validator_count, 4,
+        "unknown WwdStatus must revert on all validators at canonical block 1"
+    );
+    world.state.metadosis_fresh_lifecycle_observation =
+        Some(MetadosisFreshLifecycleObservationV1 {
+            worldwide_day,
+            genesis_hash,
+            initial_timestamp,
+            initial_unix_time_offset_secs: world
+                .state
+                .metadosis_fresh_initial_unix_time_offset_secs
+                .expect("fresh Metadosis initial logical offset"),
+            forming_start: state.forming_start,
+            forming_end: state.forming_end,
+            lookback_end: state.lookback_end,
+            offering_end: state.offering_end,
+            scheduled_process_time: state.scheduled_process_time,
+            started,
+            status_changes: Vec::new(),
+            time_control_epochs: Vec::new(),
+            created_validator_count: 4,
+            unknown_status_revert_validator_count,
+            offering_validator_count: 0,
+            ready_validator_count: 0,
+            completed_validator_count: 0,
+        });
+}
+
+#[when("the committee logical clock reaches the fresh capacity OFFERING window")]
+fn committee_clock_reaches_fresh_capacity_offering(world: &mut World) {
+    let target = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_ref()
+        .expect("fresh Metadosis creation evidence")
+        .forming_end
+        .saturating_add(1);
+    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2)], 2);
+}
+
+#[then("the same fresh capacity day advances through LOOKBACK to OFFERING")]
+fn fresh_capacity_day_advances_to_offering(world: &mut World) {
+    let lifecycle = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_ref()
+        .expect("fresh Metadosis lifecycle evidence");
+    assert_eq!(lifecycle.offering_validator_count, 4);
+    assert_eq!(
+        lifecycle
+            .status_changes
+            .iter()
+            .map(|edge| (edge.old_status, edge.new_status))
+            .collect::<Vec<_>>(),
+        vec![(0, 1), (1, 2)]
+    );
+}
+
+#[when("the committee logical clock reaches the fresh capacity processing time")]
+fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
+    let target = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_ref()
+        .expect("fresh Metadosis creation evidence")
+        .scheduled_process_time
+        .saturating_add(1);
+    advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
+}
+
+#[then("the same fresh capacity day advances through WAITING and READY")]
+fn fresh_capacity_day_advances_through_ready(world: &mut World) {
+    let lifecycle = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_ref()
+        .expect("fresh Metadosis lifecycle evidence");
+    assert_eq!(lifecycle.ready_validator_count, 4);
+    assert_eq!(
+        lifecycle
+            .status_changes
+            .iter()
+            .map(|edge| (edge.old_status, edge.new_status))
+            .collect::<Vec<_>>(),
+        vec![(0, 1), (1, 2), (2, 3), (3, 4)]
+    );
+}
+
+#[then("the fresh OCOMP domains retain their authenticated workers across the time changes")]
+fn fresh_domains_retain_authenticated_workers(world: &mut World) {
+    for validator_index in 0..4_u8 {
+        world
+            .ocomp
+            .ensure_worker_alive(validator_index, 0)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "validator-{validator_index} worker did not survive the committee time changes: {error:#}"
+                )
+            });
+    }
+    let records = world.ocomp.process_records();
+    for validator_index in 0..4_u8 {
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| {
+                    record.validator_index == Some(validator_index)
+                        && record.role == OcompProcessRole::Worker
+                        && record.worker_ordinal == Some(0)
+                        && record.stopped_at_millis.is_none()
+                })
+                .count(),
+            1,
+            "validator-{validator_index} must retain one live authenticated worker"
+        );
+    }
+}
+
+fn advance_fresh_metadosis_time(
+    world: &mut World,
+    requested_timestamp: u64,
+    expected_edges: &[(u8, u8)],
+    expected_persisted_status: u8,
+) {
+    let before_restart = finalized_points_at_common_height(world, 1);
+    let before_height = before_restart[0].block_number;
+    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .unwrap_or_else(|error| {
+            panic!(
+                "restart the complete committee at logical timestamp {requested_timestamp}: {error:#}"
+            )
+        });
+    restart_ocomp_roles_after_committee_time_change(world);
+
+    let worldwide_day = fresh_metadosis_wwd(world);
+    let deadline = Instant::now() + Duration::from_secs(240);
+    let (after_restart, changes) = loop {
+        let points = finalized_points_at_common_height(world, before_height.saturating_add(1));
+        let common_height = points[0].block_number;
+        let states = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_wwd_state_at(port, worldwide_day, common_height)
+            })
+            .collect::<Vec<_>>();
+        let changes = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_metadosis_wwd_status_changes_on(port, worldwide_day)
+            })
+            .collect::<Vec<_>>();
+        if states.iter().all(|state| {
+            state
+                .as_ref()
+                .is_some_and(|state| state.status == expected_persisted_status)
+        }) && changes.iter().all(Option::is_some)
+        {
+            let first = changes[0]
+                .clone()
+                .expect("finalized Metadosis status changes");
+            if first
+                .iter()
+                .map(|edge| (edge.old_status, edge.new_status))
+                .eq(expected_edges.iter().copied())
+                && changes
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(&first))
+            {
+                break (points, first);
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
+             {expected_edges:?}; the production one-hour timestamp drift ratchet may be stalled"
+        );
+        sleep(Duration::from_millis(250));
+    };
+    let transition = changes
+        .last()
+        .expect("expected at least one Metadosis status change");
+    let transition_timestamp = world
+        .rpc
+        .block_timestamp(world.validators.primary_port(), transition.block_number)
+        .expect("canonical Metadosis transition block timestamp");
+    assert!(
+        transition_timestamp >= requested_timestamp.saturating_sub(1),
+        "Metadosis transition occurred before its canonical phase boundary"
+    );
+
+    let current_genesis_hash = common_block_hash(world, 0);
+    let lifecycle = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_mut()
+        .expect("fresh Metadosis lifecycle evidence");
+    assert_eq!(lifecycle.genesis_hash, current_genesis_hash);
+    lifecycle.status_changes = changes;
+    lifecycle
+        .time_control_epochs
+        .push(MetadosisTimeControlEpochV1 {
+            requested_timestamp,
+            unix_time_offset_secs: offset,
+            before_restart,
+            after_restart,
+        });
+    if expected_persisted_status == 2 {
+        lifecycle.offering_validator_count = 4;
+    } else {
+        lifecycle.ready_validator_count = 4;
+    }
+}
+
+fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
+    for validator_index in 0..4_u8 {
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index })
+            .unwrap_or_else(|error| {
+                panic!("stop validator-{validator_index} Supervisor after node restart: {error}")
+            });
+        world
+            .ocomp
+            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
+            .unwrap_or_else(|error| {
+                panic!(
+                    "stop validator-{validator_index} SnapshotExporter after node restart: {error}"
+                )
+            });
+        world
+            .ocomp
+            .restart_snapshot_exporter(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} SnapshotExporter: {error}")
+            });
+        world
+            .ocomp
+            .restart_supervisor(validator_index)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} Supervisor: {error}")
+            });
+    }
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("all OCOMP node-facing roles reconnect after logical-time restart");
+}
+
+fn finalized_points_at_common_height(
+    world: &World,
+    minimum_height: u64,
+) -> Vec<MetadosisFinalizedPointV1> {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let ports = world.validators.committee_ports();
+        let finalized = ports
+            .iter()
+            .map(|port| world.rpc.finalized(*port))
+            .collect::<Vec<_>>();
+        if finalized.iter().all(Option::is_some) {
+            let common_height = finalized
+                .iter()
+                .flatten()
+                .copied()
+                .min()
+                .expect("four finalized heights");
+            if common_height >= minimum_height {
+                let points = ports
+                    .iter()
+                    .enumerate()
+                    .map(|(validator_index, port)| MetadosisFinalizedPointV1 {
+                        validator_index: u8::try_from(validator_index)
+                            .expect("validator index fits u8"),
+                        block_number: common_height,
+                        block_hash: world
+                            .rpc
+                            .block_hash(*port, common_height)
+                            .and_then(|hash| B256::from_str(&hash).ok())
+                            .expect("canonical finalized block hash"),
+                        block_timestamp: world
+                            .rpc
+                            .block_timestamp(*port, common_height)
+                            .expect("canonical finalized block timestamp"),
+                    })
+                    .collect::<Vec<_>>();
+                if points
+                    .iter()
+                    .all(|point| point.block_hash == points[0].block_hash)
+                    && points
+                        .iter()
+                        .all(|point| point.block_timestamp == points[0].block_timestamp)
+                {
+                    return points;
+                }
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "four validators did not converge on one finalized block at or above {minimum_height}"
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+fn common_block_hash(world: &World, height: u64) -> B256 {
+    let hashes = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| {
+            world
+                .rpc
+                .block_hash(port, height)
+                .and_then(|hash| B256::from_str(&hash).ok())
+                .expect("canonical block hash")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        hashes.iter().all(|hash| *hash == hashes[0]),
+        "validators expose different canonical block {height} hashes"
+    );
+    hashes[0]
+}
+
+fn fresh_metadosis_wwd(world: &World) -> u32 {
+    world
+        .state
+        .wwd
+        .as_deref()
+        .expect("fresh Metadosis WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric fresh Metadosis WorldwideDay")
+}
+
+fn unix_time_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_secs()
+}
+
+fn logical_time_offset(target_timestamp: u64, now_timestamp: u64) -> i64 {
+    i64::try_from(i128::from(target_timestamp) - i128::from(now_timestamp))
+        .expect("testnet logical time offset fits i64")
 }
 
 #[when("all 257 capacity owners submit one encrypted Tribute each")]
@@ -365,6 +936,10 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
         .parse::<u32>()
         .expect("numeric measurement WorldwideDay");
     let deadline = Instant::now() + Duration::from_secs(OCOMP_FINAL_JOB_REQUEST_TIMEOUT_SECS);
+    let activation_height = world
+        .state
+        .ocomp_activation_height
+        .expect("prepared OCOMP activation height");
     let request = loop {
         let observed = world
             .validators
@@ -373,7 +948,7 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
             .map(|port| {
                 world
                     .rpc
-                    .finalized_ocomp_job_request_on(port, OCOMP_MEASUREMENT_ACTIVATION_HEIGHT)
+                    .finalized_ocomp_job_request_on(port, activation_height)
             })
             .collect::<Vec<_>>();
         if observed.iter().all(Option::is_some) {
@@ -892,6 +1467,71 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
                     .copied()
                     .max()
                     .expect("four validator block-processing timings");
+                let block_commitments = ports
+                    .iter()
+                    .copied()
+                    .map(|port| {
+                        world
+                            .rpc
+                            .block_commitment(port, q_forming.block_number)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "validator on port {port} has no canonical q-forming \
+                                     block/state/CE commitment"
+                                )
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let canonical_commitment = block_commitments
+                    .first()
+                    .expect("four validator block commitments");
+                assert_eq!(
+                    canonical_commitment.block_hash, q_forming.block_hash,
+                    "receipt block hash differs from the canonical imported block"
+                );
+                assert!(
+                    block_commitments
+                        .iter()
+                        .all(|observed| observed == canonical_commitment),
+                    "validators imported different q-forming block/state/CE commitments: \
+                     {block_commitments:?}"
+                );
+                let receipt_hash = format!("{:#x}", q_forming.transaction_hash);
+                let receipts = ports
+                    .iter()
+                    .copied()
+                    .map(|port| {
+                        world
+                            .rpc
+                            .transaction_receipt(&receipt_hash, port)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "validator on port {port} has no canonical q-forming receipt"
+                                )
+                            })
+                    })
+                    .collect::<Vec<_>>();
+                let canonical_receipt =
+                    receipts.first().expect("four validator q-forming receipts");
+                assert!(
+                    receipts
+                        .iter()
+                        .all(|observed| observed == canonical_receipt),
+                    "validators retained different q-forming receipts"
+                );
+                let q_forming_validator_receipt_sha256 = receipts
+                    .iter()
+                    .map(|receipt| {
+                        crate::ocomp_evidence::sha256_hex(
+                            &serde_json::to_vec(receipt)
+                                .expect("canonical q-forming receipt is JSON-serializable"),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let q_forming_receipt_sha256 = q_forming_validator_receipt_sha256
+                    .first()
+                    .expect("four validator q-forming receipt digests")
+                    .clone();
                 world.state.ocomp_capacity_observation =
                     Some(crate::world::state::OcompPublicCapacityObservationV1 {
                         job_id: activation.job_id,
@@ -899,6 +1539,17 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
                         q_forming_transaction_hash: q_forming.transaction_hash,
                         q_forming_block_number: q_forming.block_number,
                         q_forming_block_hash: q_forming.block_hash,
+                        q_forming_receipt_success: q_forming.success,
+                        q_forming_receipt_sha256,
+                        q_forming_validator_receipt_sha256,
+                        q_forming_state_root: canonical_commitment.state_root,
+                        q_forming_ce_root: canonical_commitment.ce_root,
+                        q_forming_validator_commitments: block_commitments.clone(),
+                        canonical_import_validator_count: u8::try_from(
+                            block_commitments.len(),
+                        )
+                        .expect("validator count fits u8"),
+                        canonical_import_verified: true,
                         finalized_block_number: finalized_height,
                         finalized_block_hash,
                         tribute_count: u64::from(generation.tribute_count),
@@ -975,6 +1626,38 @@ fn certified_generation_contains_257_records(world: &mut World) {
         2,
         "the public S+1 population must be covered by two worker shards"
     );
+    let fresh_worldwide_day = world
+        .state
+        .metadosis_fresh_lifecycle_observation
+        .as_ref()
+        .map(|_| fresh_metadosis_wwd(world));
+    if let Some(worldwide_day) = fresh_worldwide_day {
+        let finalized_height = world
+            .state
+            .ocomp_capacity_observation
+            .as_ref()
+            .expect("fresh capacity public-path observation")
+            .finalized_block_number;
+        let completed = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_wwd_state_at(port, worldwide_day, finalized_height)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            completed
+                .iter()
+                .all(|state| state.as_ref().is_some_and(|state| state.status == 6)),
+            "the runtime-created fresh WWD is not COMPLETED on every validator"
+        );
+        if let Some(lifecycle) = world.state.metadosis_fresh_lifecycle_observation.as_mut() {
+            lifecycle.completed_validator_count = 4;
+        }
+    }
 }
 
 #[then("validator 0 reconstructs that certified generation from canonical history")]
@@ -1619,7 +2302,10 @@ fn validator_zero_restarts_across_fork(world: &mut World) {
     const VALIDATOR_INDEX: usize = 0;
     const ACTIVE_PROTOCOL_VERSION: u64 = 1;
 
-    let activation = OCOMP_MEASUREMENT_ACTIVATION_HEIGHT;
+    let activation = world
+        .state
+        .ocomp_activation_height
+        .expect("prepared Final OCOMP activation height");
     let primary = world.validators.http_port(VALIDATOR_INDEX);
     let witness = world.validators.http_port(1);
     let pre_fork_restart_from_height = world.rpc.head(primary).expect("validator-0 head");
@@ -1747,9 +2433,13 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
 
     let primary = world.validators.http_port(VALIDATOR_INDEX);
     let witness = world.validators.http_port(1);
+    let activation = world
+        .state
+        .ocomp_activation_height
+        .expect("prepared Final OCOMP activation height");
     let canonical_head_before_restart = world.rpc.head(primary).expect("validator-0 head");
     assert!(
-        canonical_head_before_restart < OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+        canonical_head_before_restart < activation,
         "fork mismatch must be installed before H"
     );
 
@@ -1763,11 +2453,9 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
         .expect("restart validator-0 with its mismatched immutable fork install");
 
     assert!(
-        world.rpc.wait_finalized_at_least(
-            witness,
-            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT.saturating_add(1),
-            60,
-        ),
+        world
+            .rpc
+            .wait_finalized_at_least(witness, activation.saturating_add(1), 60,),
         "the three canonical validators did not finalize through H"
     );
     let canonical_finalized_after_fork = world
@@ -1776,7 +2464,7 @@ fn validator_zero_restarts_with_mismatched_fork_install(world: &mut World) {
         .expect("canonical finality after H");
     let mismatched_head_after_fork = world.rpc.head(primary).expect("mismatched validator head");
     assert!(
-        mismatched_head_after_fork < OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
+        mismatched_head_after_fork < activation,
         "mismatched validator imported the canonical activation block"
     );
     let canonical_active_protocol_version = world

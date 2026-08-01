@@ -79,6 +79,16 @@ fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxContext> {
     PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| *slot.borrow())
 }
 
+/// Exact finalized state root carried by the executor-owned Phase 1 context.
+///
+/// This is visible only to the sibling provider-route classifier. Calldata
+/// cannot set it, and the guard clears it after the one system transaction.
+pub(super) fn preloaded_certified_parent_state_root() -> Option<B256> {
+    current_preloaded_system_tx_context()
+        .and_then(|context| context.finalized_summary)
+        .and_then(|summary| summary.state_root)
+}
+
 /// Dispatch entrypoint registered at [`OUTBE_SYSTEM_TX_ADDRESS`].
 pub fn dispatch(
     storage: StorageHandle,
@@ -107,7 +117,7 @@ pub fn dispatch_with_readers_and_ocomp_install(
     storage: StorageHandle,
     scope: &outbe_compressed_entities::ExecutionScope,
     parent: &outbe_offchain_data::RuntimeBodyReaders,
-    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+    ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
     data: &[u8],
     caller: Address,
     value: U256,
@@ -131,7 +141,7 @@ fn dispatch_inner(
         &outbe_compressed_entities::ExecutionScope,
         &outbe_offchain_data::RuntimeBodyReaders,
     )>,
-    ocomp_fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+    ocomp_fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<Bytes> {
     if caller != SYSTEM_ADDRESS {
         return Err(PrecompileError::Revert(
@@ -162,11 +172,21 @@ fn dispatch_inner(
         }
         SystemTxInputV2::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
+            let metadosis_genesis_activation_height = ocomp_fork_install
+                .map(|install| install.activation_height)
+                .unwrap_or(1);
             match body_readers {
                 Some((scope, parent)) => {
-                    run_cycle_tick_with_readers(&ctx, scope, parent)?;
+                    run_cycle_tick_with_readers_at_activation(
+                        &ctx,
+                        scope,
+                        parent,
+                        metadosis_genesis_activation_height,
+                    )?;
                 }
-                None => run_cycle_tick(&ctx)?,
+                None => {
+                    run_cycle_tick_at_activation(&ctx, metadosis_genesis_activation_height)?;
+                }
             }
         }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
@@ -475,12 +495,19 @@ pub(crate) fn run_finalization_and_slashing(
     if metadata.proof_kind
         == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization
     {
-        outbe_metadosis::ocomp::expiry::record_certified_parent_finality(
-            ctx,
+        let finalized_state_root = finalized.state_root.ok_or_else(|| {
+            PrecompileError::Fatal(
+                "certified Metadosis finality requires the verified parent state root".into(),
+            )
+        })?;
+        let certified = outbe_primitives::storage::MetadosisCertifiedFinalityBinding::new(
+            ctx.block.chain_id,
+            ctx.block.block_number,
             metadata.finalized_block_number,
             metadata.finalized_block_hash,
-            finalized.state_root.unwrap_or(B256::ZERO),
-        )?;
+            finalized_state_root,
+        );
+        outbe_metadosis::commands::record_certified_parent_finality(ctx, &certified)?;
     }
 
     // the V3 Rewards fingerprint binds the canonical VRF proof
@@ -578,8 +605,10 @@ pub(crate) fn run_finalization_and_slashing(
     Ok(())
 }
 
-/// CycleTick system tx: record the proposer identity and run the Cycle begin-block tick.
-pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
+fn run_cycle_tick_at_activation(
+    ctx: &BlockRuntimeContext,
+    _metadosis_genesis_activation_height: u64,
+) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
 
     #[cfg(test)]
@@ -596,7 +625,8 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
             &compressed,
         )?;
         let lifecycle =
-            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent);
+            outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), &scope, &parent)
+                .with_metadosis_genesis_activation_height(_metadosis_genesis_activation_height);
         <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
         <outbe_compressed_entities::CompressedEntitiesLifecycle as BlockLifecycle>::end_block(
             &compressed,
@@ -610,11 +640,11 @@ pub(crate) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> Result<()> {
     ))
 }
 
-/// Production CycleTick path with explicit read-only body authority.
-pub(crate) fn run_cycle_tick_with_readers(
+fn run_cycle_tick_with_readers_at_activation(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,
     parent: &outbe_offchain_data::RuntimeBodyReaders,
+    metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     // This body mutation must consume system-transaction gas and appear in its
@@ -623,7 +653,8 @@ pub(crate) fn run_cycle_tick_with_readers(
     let nod_lifecycle = outbe_nod::hooks::NodLifecycleContext::new(ctx.clone(), scope, parent);
     <outbe_nod::hooks::NodLifecycle as BlockLifecycle>::begin_block(&nod_lifecycle)?;
     let cycle_lifecycle =
-        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent);
+        outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
+            .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
     <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
 }
 
@@ -1013,19 +1044,14 @@ pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
 /// lifecycle handler into this already receipt-visible phase.
 pub(crate) fn run_ocomp_lifecycle_begin(
     ctx: &BlockRuntimeContext,
-    fork_install: Option<&outbe_metadosis::ocomp::fork::OcompForkInstallV1>,
+    fork_install: Option<&outbe_metadosis::config::OcompForkInstallV1>,
 ) -> Result<()> {
     if let Some(install) = fork_install {
         if ctx.block.block_number == install.activation_height {
-            outbe_metadosis::schema::MetadosisContract::new(ctx.storage.clone())
-                .initialize_ocomp_fork_install(
-                    install,
-                    ctx.block.block_number,
-                    &outbe_metadosis::ocomp::schema::poc_schema_limits(),
-                )?;
+            outbe_metadosis::commands::install_fork_profile(ctx, install)?;
         }
     }
-    outbe_metadosis::ocomp::expiry::run_lifecycle_begin(ctx)
+    outbe_metadosis::commands::run_ocomp_lifecycle_begin(ctx)
 }
 
 /// Reserved post-CE-seal request slot. OCM-08 wires bounded terminal request
@@ -1034,7 +1060,7 @@ pub(crate) fn run_ocomp_terminal_request(
     ctx: &BlockRuntimeContext,
     scope: &outbe_compressed_entities::ExecutionScope,
 ) -> Result<()> {
-    outbe_metadosis::ocomp::request::run_terminal_request(ctx, scope)
+    outbe_metadosis::commands::run_ocomp_terminal_request(ctx, scope)
 }
 
 fn block_runtime_context_from_storage(
@@ -1173,6 +1199,13 @@ mod tests {
         provider.set_block_number(block_number);
         provider.set_timestamp(U256::from(timestamp));
         provider.set_beneficiary(VALIDATOR);
+        let install = outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
+            1,
+            CHAIN_ID,
+            B256::repeat_byte(0x11),
+        )
+        .unwrap()
+        .into_install();
         provider.enter(|storage| {
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
@@ -1200,6 +1233,18 @@ mod tests {
                 .write(active_set_hash(&[VALIDATOR]))
                 .unwrap();
         });
+        provider.set_block_number(1);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::ForkProfile,
+        );
+        provider.enter(|storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
+        provider.set_block_number(block_number);
         provider
     }
 
@@ -1247,6 +1292,9 @@ mod tests {
         provider: &mut HashMapStorageProvider,
         metadata: CertifiedParentAccountingMetadata,
     ) -> Result<Bytes> {
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+        );
         provider.enter(|storage| {
             let input = SystemTxInputV2::CertifiedParentAccounting { metadata }
                 .encode()
@@ -1259,7 +1307,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
-                        state_root: None,
+                        state_root: Some(B256::repeat_byte(0x91)),
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::repeat_byte(0xEF),
@@ -1322,7 +1370,10 @@ mod tests {
 
     #[test]
     fn dispatch_cycle_tick_records_preloaded_proposer() {
-        let mut provider = configured_storage(1, 1);
+        let mut provider = configured_storage(1, 1_700_000_000);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+        );
         provider.enter(|storage| {
             let input = SystemTxInputV2::CycleTick.encode().unwrap();
             with_preloaded_system_tx_context(
@@ -1440,6 +1491,9 @@ mod tests {
     #[test]
     fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         let mut provider = configured_storage(2, 1_700_000_000);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+        );
         provider.enter(|storage| {
             let input = SystemTxInputV2::CertifiedParentAccounting {
                 metadata: metadata(),
@@ -1454,7 +1508,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
-                        state_root: None,
+                        state_root: Some(B256::repeat_byte(0x92)),
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,
@@ -1509,6 +1563,9 @@ mod tests {
     #[test]
     fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
         let mut provider = configured_storage(2, 1_700_000_000);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+        );
         provider.enter(|storage| {
             let mut metadata = metadata();
             metadata.missed_proposers = vec![
@@ -1532,7 +1589,7 @@ mod tests {
                             validator_fee_sum: U256::ZERO,
                         },
                         timestamp: 1_699_999_990,
-                        state_root: None,
+                        state_root: Some(B256::repeat_byte(0x93)),
                     }),
                     allow_boundary_proposer: false,
                     canonical_vrf_proof_hash: B256::ZERO,
@@ -2012,7 +2069,7 @@ mod tests {
 
     /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
     /// matured window — pays the escrowed voters, marks `fee_settled`, and routes
-    /// the unpaid residue to terminal Metadosis emission headroom.
+    /// the unpaid residue through the active-profile carry-over sink.
     /// Uses an empty credit artifact so the assertion isolates the
     /// `settle_matured` + residue-recycle wiring (the BLS batch path is covered
     /// by the verifier and `late_settlement` unit tests).
@@ -2029,6 +2086,9 @@ mod tests {
 
         // Block N+K = 13 settles block N = 10 (K = LATE_FINALIZE_WINDOW_K = 3).
         let mut provider = configured_storage(13, timestamp);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+        );
         provider.enter(|storage| {
             let ctx = runtime_ctx(storage);
 
@@ -2077,21 +2137,13 @@ mod tests {
                 "window marked settled"
             );
 
-            // Residue recycled into terminal Metadosis emission headroom. The
-            // terminal sink now keys the credit on the WorldwideDay record
-            // (UTC+14) for the block timestamp, i.e. date_key(timestamp + UTC+14).
-            use outbe_metadosis::schema::WorldwideDayEntryExt;
-            let wwd = outbe_metadosis::runtime::timestamp_to_date_key(
-                timestamp + outbe_metadosis::constants::UTC_PLUS_14_OFFSET,
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+                    .get_total_unallocated()
+                    .unwrap(),
+                each,
+                "late-settlement residue is credited exactly once to carry-over"
             );
-            let recorded = ctx
-                .contract::<outbe_metadosis::schema::MetadosisContract>()
-                .worldwide_days
-                .entry(wwd.into())
-                .metadosis_limit_amount()
-                .read()
-                .unwrap();
-            assert_eq!(recorded, each, "residue routed to terminal Metadosis");
         });
     }
 
@@ -2111,6 +2163,10 @@ mod tests {
 
         // Block N+K = 13 closes block N = 10 (K = LATE_FINALIZE_WINDOW_K = 3).
         let mut provider = configured_storage(13, timestamp);
+        provider.enable_metadosis_mutation_frames(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+            2,
+        );
         provider.enter(|storage| {
             // Register both committee members so the strict registered-validator
             // contract of `record_finalized_participation` accepts them.
@@ -2213,6 +2269,9 @@ mod tests {
 
         let run = || -> Vec<(u64, u64)> {
             let mut provider = configured_storage(13, 1_700_000_000);
+            provider.enable_metadosis_mutation_frame(
+                outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+            );
             let mut out = Vec::new();
             provider.enter(|storage| {
                 {
@@ -2309,6 +2368,9 @@ mod tests {
         // Block 13 is an epoch boundary: configured_storage sets epoch_length=10,
         // epoch_start=0, so `is_epoch_boundary(13)` is true (13 >= 0 + 10).
         let mut provider = configured_storage(13, 1_700_000_000);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
+        );
         provider.enter(|storage| {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());

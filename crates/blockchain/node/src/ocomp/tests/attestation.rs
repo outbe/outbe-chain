@@ -14,7 +14,7 @@ use alloy_eips::eip2718::Decodable2718 as _;
 use alloy_primitives::{TxKind, B256, U256};
 use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 use outbe_consensus::block::ConsensusBlock;
-use outbe_metadosis::ocomp::schema::poc_schema_limits;
+use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
     committee::{

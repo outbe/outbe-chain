@@ -185,6 +185,15 @@ contract, not ad-hoc per-module APIs:
   (`storage.contract::<T>()` / `ctx.contract::<T>()`), never implicit context or
   process globals; facades are short-lived and never escape the execution scope.
 
+Metadosis narrows this contract further: raw schema/state/reducer mutation is
+crate-private, and Cycle/EVM/fork/finality callers enter a private
+`with_metadosis_mutation` frame tied to the current execution checkpoint. The
+frame guard creates and retains the single-use lease; its callback never
+receives or constructs that authority. Its
+validated WWD aggregate, typed effect receipts and one commit seam keep
+record/status/active/closed/OCOMP/replay facts atomic. A `StorageHandle` or
+`BlockRuntimeContext` alone is not mutation authority.
+
 ## Governance (canon, meta-canon, OIP, GIP)
 
 The **Governance** precompile at `0x0000000000000000000000000000000000001018`
@@ -278,6 +287,22 @@ WorldwideDay lifecycle statuses (FORMING → LOOKBACK_DELAY → OFFERING → WAI
 and 12:00 UTC (`wwd_advance_noon`, status advancement only). The 12:00 tick
 exists because the forming/offering window edges land at 12:00 UTC; without it
 every offering window opened ~12 hours late.
+
+The fresh-devnet profile requires a hash-bound, genesis-active
+`Measurement@1` OCOMP install and the exact
+`metadosisStorageLayoutV1.layoutHash` before Cycle block 1. Both bindings are
+validated before process launch. Its retained Linux scenario starts without a
+pre-seeded active Metadosis day, observes runtime `Create` in finalized block
+1, and then advances the whole four-validator committee's existing testnet
+logical clock at two restart barriers. It preserves the canonical
+`50h/0h/48h/12h` phase durations and proves one continuous
+`FORMING → OFFERING → READY → OCOMP → COMPLETED` chain history. READY work is ordered by
+`(scheduled_process_time, worldwide_day)` and processes one day per tick.
+Populated positive-gratis days have only the verified OCOMP path; there is no
+synchronous Lysis fallback. A completely missed OFFERING and a retained-cap
+admission forfeiture are typed terminal outcomes that route only the exact
+formed day limit to Promis once. Desis oversize supply is the sole committed
+brief rejection; technical errors revert.
 
 ## RPC
 

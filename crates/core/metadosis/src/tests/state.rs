@@ -1,5 +1,200 @@
 use super::*;
+use crate::{runtime::effective_hours, WwdDayType, WwdStatus};
 use outbe_common::WorldwideDay as WwdKey;
+use outbe_primitives::error::PrecompileError;
+
+fn as_big(value: U256) -> num_bigint::BigUint {
+    num_bigint::BigUint::from_bytes_be(&value.to_be_bytes::<32>())
+}
+
+#[test]
+fn closed_wwd_tags_cover_every_byte_and_reject_unknown_storage() {
+    for byte in 0_u8..=u8::MAX {
+        let decoded_status = WwdStatus::try_from(byte);
+        let known_status = matches!(
+            byte,
+            status::FORMING
+                | status::LOOKBACK_DELAY
+                | status::OFFERING
+                | status::WAITING
+                | status::READY
+                | status::COMPLETED
+                | status::FAILED
+                | status::OFFCHAIN_PENDING
+        );
+        assert_eq!(decoded_status.is_ok(), known_status, "status byte {byte}");
+        if let Ok(status) = decoded_status {
+            assert_eq!(status.as_u8(), byte);
+        }
+
+        let decoded_day_type = WwdDayType::try_from(byte);
+        let known_day_type = matches!(byte, day_type::UNKNOWN | day_type::GREEN | day_type::RED);
+        assert_eq!(
+            decoded_day_type.is_ok(),
+            known_day_type,
+            "day-type byte {byte}"
+        );
+        if let Ok(day_type) = decoded_day_type {
+            assert_eq!(day_type.as_u8(), byte);
+        }
+    }
+
+    with_contract(|metadosis| {
+        let status_wwd = WwdKey::new(20270101);
+        metadosis
+            .corrupt_wwd_status_tag(status_wwd, u8::MAX)
+            .unwrap();
+        assert!(matches!(
+            metadosis.get_wwd_status(status_wwd),
+            Err(PrecompileError::Fatal(_))
+        ));
+
+        let day_type_wwd = WwdKey::new(20270102);
+        metadosis
+            .corrupt_wwd_day_type_tag(day_type_wwd, u8::MAX)
+            .unwrap();
+        assert!(matches!(
+            metadosis.get_wwd_day_type(day_type_wwd),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn fresh_devnet_sentinel_probe_is_test_only_and_checks_per_day_residue() {
+    with_storage(|storage| {
+        let sentinel = WwdKey::new(2099_1231);
+        assert!(
+            crate::test_support::fresh_devnet_sentinel_is_pristine(storage.clone(), sentinel,)
+                .unwrap()
+        );
+
+        MetadosisContract::new(storage.clone())
+            .ocomp_fsm_states
+            .get_bytes(&sentinel)
+            .write(&[1])
+            .unwrap();
+
+        assert!(
+            !crate::test_support::fresh_devnet_sentinel_is_pristine(storage, sentinel,).unwrap()
+        );
+    });
+}
+
+#[test]
+fn unknown_abi_status_reverts_and_corrupt_get_day_is_fatal() {
+    with_storage(|storage| {
+        let reserved_status = IMetadosis::getWorldwideDaysByStatusCall {
+            status: status::RESERVED_IN_PROGRESS,
+        };
+        assert!(matches!(
+            metadosis_dispatch(
+                storage.clone(),
+                &reserved_status.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+
+        let unknown_status = IMetadosis::getWorldwideDaysByStatusCall { status: u8::MAX };
+        assert!(matches!(
+            metadosis_dispatch(
+                storage.clone(),
+                &unknown_status.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+
+        let wwd = WwdKey::new(20270103);
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(wwd, 1_000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+            .unwrap();
+        metadosis.corrupt_wwd_status_tag(wwd, u8::MAX).unwrap();
+        let get_day = IMetadosis::getWorldwideDayCall { wwd: wwd.value() };
+        assert!(matches!(
+            metadosis_dispatch(storage, &get_day.abi_encode(), Address::ZERO, U256::ZERO,),
+            Err(PrecompileError::Fatal(_))
+        ));
+    });
+}
+
+#[test]
+fn full_domain_allocation_matches_independent_big_integer_model_and_conserves() {
+    with_contract(|metadosis| {
+        let wwd = WwdKey::new(20270104);
+        metadosis.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
+
+        for total in [
+            U256::ZERO,
+            U256::from(1_u8),
+            U256::MAX.checked_sub(U256::from(1_u8)).unwrap(),
+            U256::MAX,
+        ] {
+            let calculation = metadosis
+                .calculate_metadosis(wwd, total, U256::MAX)
+                .unwrap();
+            let expected = (as_big(total) * 32_u8) / 100_u8;
+            assert_eq!(as_big(calculation.gratis_demand), expected);
+            assert_eq!(
+                calculation
+                    .gratis_allocation
+                    .checked_add(calculation.metadosis_limit_remainder),
+                Some(U256::MAX)
+            );
+            assert!(calculation.gratis_allocation <= calculation.gratis_supply);
+        }
+    });
+}
+
+#[test]
+fn worldwide_day_window_accepts_exact_u64_boundary_and_rejects_the_next_value() {
+    with_contract(|metadosis| {
+        let duration = FORMING_PERIOD_HOURS
+            .checked_add(LOOKBACK_DELAY_HOURS)
+            .and_then(|hours| hours.checked_add(OFFERING_PERIOD_HOURS))
+            .and_then(|hours| hours.checked_add(WAITING_PERIOD_HOURS))
+            .and_then(|hours| hours.checked_mul(SECONDS_PER_HOUR))
+            .unwrap();
+        let exact = u64::MAX.checked_sub(duration).unwrap();
+        let accepted = WwdKey::new(20270105);
+        metadosis
+            .create_worldwide_day(accepted, exact, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
+            .unwrap();
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(accepted)
+                .scheduled_process_time()
+                .read()
+                .unwrap(),
+            u64::MAX
+        );
+
+        let rejected = WwdKey::new(20270106);
+        assert!(matches!(
+            metadosis.create_worldwide_day(
+                rejected,
+                exact.checked_add(1).unwrap(),
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            ),
+            Err(PrecompileError::Revert(_))
+        ));
+        assert_eq!(
+            metadosis
+                .worldwide_days
+                .entry(rejected)
+                .forming_start()
+                .read()
+                .unwrap(),
+            0
+        );
+    });
+}
 
 #[test]
 fn test_create_worldwide_day() {
@@ -44,45 +239,6 @@ fn test_create_worldwide_day() {
 
         assert_eq!(m.get_wwd_status(wwd).unwrap(), status::FORMING);
         assert_eq!(m.get_wwd_day_type(wwd).unwrap(), day_type::UNKNOWN);
-    });
-}
-
-#[test]
-fn test_wwd_status_transitions() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20241220);
-        let start = 1000u64;
-        m.create_worldwide_day(wwd, start, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-            .unwrap();
-
-        let forming_end = start + FORMING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let lookback_end = forming_end + LOOKBACK_DELAY_HOURS * SECONDS_PER_HOUR;
-        let offering_end = lookback_end + OFFERING_PERIOD_HOURS * SECONDS_PER_HOUR;
-        let scheduled = offering_end + WAITING_PERIOD_HOURS * SECONDS_PER_HOUR;
-
-        assert_eq!(
-            m.update_wwd_status(wwd, start + 100).unwrap(),
-            status::FORMING
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, forming_end).unwrap(),
-            status::LOOKBACK_DELAY
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, lookback_end).unwrap(),
-            status::OFFERING
-        );
-        assert_eq!(
-            m.update_wwd_status(wwd, offering_end).unwrap(),
-            status::WAITING
-        );
-        assert_eq!(m.update_wwd_status(wwd, scheduled).unwrap(), status::READY);
-
-        m.mark_wwd_completed(wwd).unwrap();
-        assert_eq!(
-            m.update_wwd_status(wwd, scheduled + 999999).unwrap(),
-            status::COMPLETED
-        );
     });
 }
 
@@ -159,16 +315,8 @@ fn test_active_wwd_add_remove() {
 fn test_calculate_metadosis_green_day() {
     with_contract(|m| {
         let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type::GREEN)
-            .unwrap();
+        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
+        m.set_wwd_day_type(wwd, WwdDayType::Green).unwrap();
 
         let tribute_total = U256::from(10_000u64);
         let day_limit = U256::from(5_000u64);
@@ -191,16 +339,8 @@ fn test_calculate_metadosis_green_day() {
 fn test_calculate_metadosis_red_day() {
     with_contract(|m| {
         let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd)
-            .day_type()
-            .write(day_type::RED)
-            .unwrap();
+        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
+        m.set_wwd_day_type(wwd, WwdDayType::Red).unwrap();
 
         let tribute_total = U256::from(10_000u64);
         let day_limit = U256::from(5_000u64);
@@ -224,11 +364,7 @@ fn test_calculate_metadosis_red_day() {
 fn test_calculate_metadosis_unknown_day_type_errors() {
     with_contract(|m| {
         let wwd = WwdKey::new(20241220);
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
+        m.fixture_set_wwd_status(wwd, WwdStatus::Ready).unwrap();
         assert_eq!(
             m.worldwide_days.entry(wwd).day_type().read().unwrap(),
             day_type::UNKNOWN
@@ -237,9 +373,10 @@ fn test_calculate_metadosis_unknown_day_type_errors() {
         let tribute_total = U256::from(10_000u64);
         let day_limit = U256::from(5_000u64);
 
-        assert!(m
-            .calculate_metadosis(wwd, tribute_total, day_limit)
-            .is_err());
+        assert!(matches!(
+            m.calculate_metadosis(wwd, tribute_total, day_limit),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
     });
 }
 
@@ -249,19 +386,15 @@ fn test_bootstrap_effective_hours_depend_on_chain_identity() {
         let bootstrap_end = 100_000u64;
         m.set_bootstrap_end_time(bootstrap_end).unwrap();
 
-        let (lookback, offering) = m
-            .effective_hours(outbe_primitives::chain::CHAIN_ID)
-            .unwrap();
+        let (lookback, offering) = effective_hours(outbe_primitives::chain::CHAIN_ID);
         assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
 
-        let (lookback, offering) = m
-            .effective_hours(outbe_primitives::chain::TESTNET_CHAIN_ID)
-            .unwrap();
+        let (lookback, offering) = effective_hours(outbe_primitives::chain::TESTNET_CHAIN_ID);
         assert_eq!(lookback, BOOTSTRAP_LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, BOOTSTRAP_OFFERING_PERIOD_HOURS);
 
-        let (lookback, offering) = m.effective_hours(CHAIN_ID).unwrap();
+        let (lookback, offering) = effective_hours(CHAIN_ID);
         assert_eq!(lookback, LOOKBACK_DELAY_HOURS);
         assert_eq!(offering, OFFERING_PERIOD_HOURS);
     });
@@ -277,10 +410,7 @@ fn test_query_worldwide_days_by_status_via_precompile() {
             (WwdKey::new(20260322), status::FORMING),
         ] {
             metadosis
-                .worldwide_days
-                .entry(wwd)
-                .status()
-                .write(st)
+                .fixture_set_wwd_status(wwd, WwdStatus::try_from(st).unwrap())
                 .unwrap();
             metadosis.add_active_wwd(wwd).unwrap();
         }
@@ -299,80 +429,6 @@ fn test_query_worldwide_days_by_status_via_precompile() {
     });
 }
 
-// status transition guards
-// ---------------------------------------------------------------------------
-
-fn setup_wwd_at_status(m: &mut MetadosisContract, wwd: WwdKey, target: u8) {
-    m.create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-        .unwrap();
-    m.worldwide_days.entry(wwd).status().write(target).unwrap();
-}
-
-#[test]
-fn test_mark_completed_rejects_non_ready_status() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20260101);
-        setup_wwd_at_status(m, wwd, status::FORMING);
-        let err = m.mark_wwd_completed(wwd).unwrap_err();
-        assert!(err.to_string().contains("COMPLETED"));
-        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::FORMING);
-    });
-}
-
-#[test]
-fn test_mark_completed_rejects_already_failed_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20260102);
-        setup_wwd_at_status(m, wwd, status::FAILED);
-        assert!(m.mark_wwd_completed(wwd).is_err());
-        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::FAILED);
-    });
-}
-
-#[test]
-fn test_mark_completed_allows_ready() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20260103);
-        setup_wwd_at_status(m, wwd, status::READY);
-        m.mark_wwd_completed(wwd).unwrap();
-        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-    });
-}
-
-#[test]
-fn test_mark_failed_rejects_completed_day() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20260104);
-        setup_wwd_at_status(m, wwd, status::COMPLETED);
-        let err = m.mark_wwd_failed(wwd).unwrap_err();
-        assert!(err.to_string().contains("COMPLETED"));
-        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-    });
-}
-
-#[test]
-fn test_mark_failed_allows_any_non_completed_status() {
-    with_contract(|m| {
-        for (i, source) in [
-            status::FORMING,
-            status::LOOKBACK_DELAY,
-            status::OFFERING,
-            status::WAITING,
-            status::READY,
-            status::IN_PROGRESS,
-            status::FAILED, // idempotent re-fail
-        ]
-        .iter()
-        .enumerate()
-        {
-            let wwd = WwdKey::new(20260200u32 + i as u32);
-            setup_wwd_at_status(m, wwd, *source);
-            m.mark_wwd_failed(wwd).unwrap();
-            assert_eq!(m.get_wwd_status(wwd).unwrap(), status::FAILED);
-        }
-    });
-}
-
 #[test]
 fn test_storage_dsl_layout_slots() {
     with_contract(|m| {
@@ -386,104 +442,33 @@ fn test_storage_dsl_layout_slots() {
         // next schema field lands at 14 — this pins the Set's position too.
         // `closed_wwd` is a Deque (2 slots: 14 = begin, 15 = end).
         assert_eq!(m.closed_wwd.base_slot(), U256::from(14u64));
-    });
-}
-
-#[test]
-fn test_mark_terminal_retires_and_is_idempotent() {
-    with_contract(|m| {
-        let wwd = WwdKey::new(20240101);
-        m.create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd)
-            .status()
-            .write(status::READY)
-            .unwrap();
-        m.mark_wwd_completed(wwd).unwrap();
-
-        // Terminal day leaves the active set, enters the delete-queue, and the
-        // record stays readable (under the cap, not yet evicted).
-        assert!(!m.active_wwd.read_all().unwrap().contains(&wwd));
-        assert_eq!(m.closed_wwd.len().unwrap(), 1);
-        assert_eq!(m.get_wwd_status(wwd).unwrap(), status::COMPLETED);
-        assert!(m
-            .get_active_wwd_by_status(status::COMPLETED)
-            .unwrap()
-            .contains(&wwd));
-
-        // Idempotent re-fail of an already-terminal day must not re-enqueue.
-        let wwd2 = WwdKey::new(20240102);
-        m.create_worldwide_day(wwd2, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-            .unwrap();
-        m.worldwide_days
-            .entry(wwd2)
-            .status()
-            .write(status::OFFERING)
-            .unwrap();
-        m.mark_wwd_failed(wwd2).unwrap();
-        assert_eq!(m.closed_wwd.len().unwrap(), 2);
-        m.mark_wwd_failed(wwd2).unwrap(); // already FAILED
-        assert_eq!(m.closed_wwd.len().unwrap(), 2);
-    });
-}
-
-#[test]
-fn test_terminal_records_capped_oldest_evicted() {
-    use alloy_sol_types::SolEvent;
-
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    let n = MAX_RECORDS_KEPT as u32 + 2;
-    StorageHandle::enter(&mut storage, |handle| {
-        let mut m = MetadosisContract::new(handle.clone());
-        for i in 0..n {
-            let wwd = WwdKey::new(20240101 + i);
-            m.create_worldwide_day(wwd, 1000, LOOKBACK_DELAY_HOURS, OFFERING_PERIOD_HOURS)
-                .unwrap();
-            m.worldwide_days
-                .entry(wwd)
-                .status()
-                .write(status::READY)
-                .unwrap();
-            m.mark_wwd_completed(wwd).unwrap();
-        }
-
-        // Every day retired out of the active set.
-        assert!(m.active_wwd.read_all().unwrap().is_empty());
-        // Delete-queue capped at MAX_RECORDS_KEPT.
-        assert_eq!(m.closed_wwd.len().unwrap(), MAX_RECORDS_KEPT as u64);
-        // The two oldest records were evicted and deleted.
-        for i in 0..2u32 {
-            let wwd = WwdKey::new(20240101 + i);
-            assert_eq!(
-                m.worldwide_days.entry(wwd).forming_start().read().unwrap(),
-                0
-            );
-        }
-        // The newest record is retained.
-        let newest = WwdKey::new(20240101 + n - 1);
-        assert_ne!(
-            m.worldwide_days
-                .entry(newest)
-                .forming_start()
-                .read()
-                .unwrap(),
-            0
-        );
-        // Status query over terminal days resolves the kept cap.
         assert_eq!(
-            m.get_active_wwd_by_status(status::COMPLETED).unwrap().len(),
-            MAX_RECORDS_KEPT
+            <crate::schema::WorldwideDayTerminalReceiptState as StorageRecord>::SLOTS,
+            6
+        );
+        assert_eq!(
+            m.worldwide_day_terminal_receipts.base_slot(),
+            U256::from(36u64)
+        );
+        assert_eq!(
+            <crate::schema::CapacityForfeitureReceiptState as StorageRecord>::SLOTS,
+            13
+        );
+        assert_eq!(
+            m.capacity_forfeiture_receipts.base_slot(),
+            U256::from(42u64)
+        );
+        assert_eq!(
+            <crate::schema::DayLimitFormationReceiptState as StorageRecord>::SLOTS,
+            7
+        );
+        assert_eq!(
+            m.day_limit_formation_receipts.base_slot(),
+            U256::from(55u64)
+        );
+        assert_eq!(
+            alloy_primitives::keccak256(crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_CANONICAL),
+            crate::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH
         );
     });
-
-    // Exactly two records evicted ⇒ two WorldwideDayCleanedUp events.
-    let cleaned = storage
-        .get_events(outbe_primitives::addresses::METADOSIS_ADDRESS)
-        .iter()
-        .filter(|log| {
-            log.topics().first() == Some(&IMetadosis::WorldwideDayCleanedUp::SIGNATURE_HASH)
-        })
-        .count();
-    assert_eq!(cleaned, 2);
 }

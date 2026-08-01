@@ -19,12 +19,14 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, Signature, SigningKey};
 #[cfg(feature = "ocomp-integration")]
 use outbe_common::WorldwideDay;
 #[cfg(feature = "ocomp-integration")]
-use outbe_metadosis::ocomp::{
-    fork::{OcompForkInstallClassification, OcompForkInstallV1},
-    schema::OcompRequestProfile,
+use outbe_metadosis::config::{
+    OcompForkInstallClassification, OcompForkInstallV1, OcompRequestProfile,
+    OCOMP_POC_FINAL_ACTIVATION_HEIGHT,
 };
 #[cfg(feature = "ocomp-integration")]
-use outbe_metadosis::schema::{status, MetadosisContract, WorldwideDayEntryExt};
+use outbe_metadosis::genesis::FreshDevnetGenesisBuilder;
+#[cfg(feature = "ocomp-integration")]
+use outbe_metadosis::proof_layout::METADOSIS_STORAGE_LAYOUT_V1_HASH;
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
     committee::{
@@ -84,8 +86,13 @@ const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
 #[cfg(any(feature = "ocomp-integration", test))]
 const OCOMP_MAX_PROCESS_RECORDS: usize = 64;
 const OCOMP_MAX_FAULT_RECORDS: usize = 32;
+pub const METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX: &str =
+    "0x06de88157b2c94c36b929a65c9db8d0f6a7ca10fad6d40be14098019f5749187";
 #[cfg(feature = "ocomp-integration")]
-pub const OCOMP_MEASUREMENT_ACTIVATION_HEIGHT: u64 = 32;
+pub const OCOMP_MEASUREMENT_ACTIVATION_HEIGHT: u64 =
+    outbe_node::ocomp::fork::GENESIS_ACTIVE_OCOMP_HEIGHT;
+#[cfg(feature = "ocomp-integration")]
+pub const OCOMP_FINAL_ACTIVATION_HEIGHT: u64 = OCOMP_POC_FINAL_ACTIVATION_HEIGHT;
 /// Provisional block envelope used by the disposable OCM-25 measurement chain.
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_MEASUREMENT_BLOCK_GAS_LIMIT: u64 = 40_000_000;
@@ -133,6 +140,9 @@ pub struct OcompLaunchIdentityEvidenceV1 {
     pub genesis_hash: String,
     pub protocol_bundle_hash: String,
     pub fork_install_hash: String,
+    pub classification: String,
+    pub activation_height: u64,
+    pub metadosis_storage_layout_hash: String,
 }
 
 /// Exact validator restart observations around the measurement fork height.
@@ -243,6 +253,14 @@ pub struct OcompScenarioTopologyV1 {
 
 impl OcompScenarioTopologyV1 {
     pub fn validate(&self) -> Result<()> {
+        if let Some(identity) = &self.launch_identity {
+            if !matches!(identity.classification.as_str(), "measurement" | "final")
+                || identity.activation_height == 0
+                || identity.metadosis_storage_layout_hash != METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
+            {
+                eyre::bail!("OCOMP launch identity has an invalid genesis profile binding");
+            }
+        }
         if let Some(restart) = &self.fork_restart {
             restart.validate()?;
         }
@@ -273,6 +291,9 @@ pub struct OcompLaunchIdentityV1 {
     pub genesis_hash: B256,
     pub protocol_bundle_hash: B256,
     pub fork_install_hash: B256,
+    pub classification: OcompForkInstallClassification,
+    pub activation_height: u64,
+    pub metadosis_storage_layout_hash: B256,
 }
 
 /// Exact measurement manifest generated before any node process starts.
@@ -292,6 +313,9 @@ impl OcompMeasurementForkV1 {
             genesis_hash: self.install.request_profile.genesis_hash,
             protocol_bundle_hash: self.install.request_profile.protocol_bundle_hash,
             fork_install_hash: self.install_hash,
+            classification: self.install.classification,
+            activation_height: self.install.activation_height,
+            metadosis_storage_layout_hash: METADOSIS_STORAGE_LAYOUT_V1_HASH,
         }
     }
 }
@@ -520,7 +544,7 @@ impl OcompTopology {
     /// `genesis.config` does not alter that header hash.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_measurement_fork_install(&self) -> Result<OcompMeasurementForkV1> {
-        self.prepare_measurement_fork_install_inner(None, &[])
+        self.prepare_measurement_fork_install_inner(None, &[], false)
     }
 
     /// Prepare the same immutable measurement fork plus a short, pre-start
@@ -532,6 +556,7 @@ impl OcompTopology {
         self.prepare_measurement_fork_install_inner(
             Some(OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS),
             &[],
+            false,
         )
     }
 
@@ -552,7 +577,25 @@ impl OcompTopology {
         let prepared = self.prepare_measurement_fork_install_inner(
             Some(OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS),
             &private_keys,
+            false,
         )?;
+        Ok((prepared, private_keys))
+    }
+
+    /// Prepare the dedicated fresh Metadosis closure chain. Unlike the legacy
+    /// OCOMP capacity measurement, this removes the Python-seeded active WWD and
+    /// does not shorten any phase timestamp. Block 1 must therefore create the
+    /// scenario WWD through the production lifecycle command.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn prepare_fresh_metadosis_capacity_fork_install(
+        &self,
+        tribute_count: usize,
+    ) -> Result<(OcompMeasurementForkV1, Vec<String>)> {
+        if tribute_count == 0 {
+            eyre::bail!("fresh Metadosis fixture requires at least one Tribute owner");
+        }
+        let private_keys = capacity_tribute_private_keys(tribute_count)?;
+        let prepared = self.prepare_measurement_fork_install_inner(None, &private_keys, true)?;
         Ok((prepared, private_keys))
     }
 
@@ -567,8 +610,7 @@ impl OcompTopology {
         let spec = parse_outbe_chain_spec(&genesis_path)?;
         let chain_id = spec.chain().id();
         let genesis_hash = spec.genesis_hash();
-        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&spec)?
-            .ok_or_else(|| eyre::eyre!("canonical Final genesis omitted its OCOMP install"))?;
+        let loaded = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&spec)?;
         let install = loaded.as_ref().clone();
         if install.classification != OcompForkInstallClassification::Final {
             eyre::bail!(
@@ -576,11 +618,11 @@ impl OcompTopology {
                 install.classification
             );
         }
-        if install.activation_height != OCOMP_MEASUREMENT_ACTIVATION_HEIGHT {
+        if install.activation_height != OCOMP_FINAL_ACTIVATION_HEIGHT {
             eyre::bail!(
                 "canonical OCOMP fixture activates at {}, expected {}",
                 install.activation_height,
-                OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
+                OCOMP_FINAL_ACTIVATION_HEIGHT
             );
         }
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
@@ -627,6 +669,7 @@ impl OcompTopology {
         &self,
         public_offering_after_genesis_secs: Option<u64>,
         capacity_tribute_private_keys: &[String],
+        clear_seeded_metadosis: bool,
     ) -> Result<OcompMeasurementForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
@@ -640,13 +683,22 @@ impl OcompTopology {
         } else {
             false
         };
+        let seeded_metadosis_changed = if clear_seeded_metadosis {
+            clear_seeded_metadosis_days(&mut genesis, chain_id)?
+        } else {
+            false
+        };
         let update_changed = schedule_protocol_v1_update(
             &mut genesis,
             chain_id,
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT,
         )?;
         let gas_envelope_changed = apply_measurement_gas_envelope(&mut genesis)?;
-        if capacity_accounts_changed || public_day_changed || update_changed || gas_envelope_changed
+        if capacity_accounts_changed
+            || public_day_changed
+            || seeded_metadosis_changed
+            || update_changed
+            || gas_envelope_changed
         {
             replace_json_atomically(&genesis_path, &genesis)?;
         }
@@ -676,6 +728,7 @@ impl OcompTopology {
             "canonicalBytes": format!("0x{}", hex::encode(&canonical_install)),
             "installHash": install_hash,
         });
+        let mut manifest_changed = false;
         match config.get(outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY) {
             Some(existing) if existing == &manifest => {}
             Some(_) => eyre::bail!("refusing to replace a different OCOMP fork install"),
@@ -684,16 +737,32 @@ impl OcompTopology {
                     outbe_node::ocomp::fork::OCOMP_FORK_INSTALL_GENESIS_KEY.to_owned(),
                     manifest,
                 );
-                replace_json_atomically(&genesis_path, &genesis)?;
+                manifest_changed = true;
             }
+        }
+        let layout_manifest = serde_json::json!({
+            "layoutHash": METADOSIS_STORAGE_LAYOUT_V1_HASH,
+        });
+        match config.get(outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY) {
+            Some(existing) if existing == &layout_manifest => {}
+            Some(_) => eyre::bail!("refusing to replace a different Metadosis storage layout"),
+            None => {
+                config.insert(
+                    outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY.to_owned(),
+                    layout_manifest,
+                );
+                manifest_changed = true;
+            }
+        }
+        if manifest_changed {
+            replace_json_atomically(&genesis_path, &genesis)?;
         }
 
         let armed_spec = parse_outbe_chain_spec(&genesis_path)?;
         if armed_spec.genesis_hash() != base_genesis_hash {
             eyre::bail!("OCOMP genesis config extension changed the base genesis hash");
         }
-        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&armed_spec)?
-            .ok_or_else(|| eyre::eyre!("generated genesis omitted its OCOMP fork install"))?;
+        let loaded = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&armed_spec)?;
         if loaded.as_ref() != &install {
             eyre::bail!("node loader returned a different OCOMP fork install");
         }
@@ -720,8 +789,8 @@ impl OcompTopology {
         let canonical_path = self.cfg.dir.join("genesis.json");
         let canonical_spec = parse_outbe_chain_spec(&canonical_path)?;
         let canonical_genesis_hash = canonical_spec.genesis_hash();
-        let canonical = outbe_node::ocomp::fork::load_ocomp_fork_install(&canonical_spec)?
-            .ok_or_else(|| eyre::eyre!("canonical chain manifest has no OCOMP install"))?;
+        let canonical =
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&canonical_spec)?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let canonical_install_hash = canonical.install_hash(&limits)?;
         let mut mismatched = canonical.as_ref().clone();
@@ -765,8 +834,7 @@ impl OcompTopology {
         if mismatched_spec.genesis_hash() != canonical_genesis_hash {
             eyre::bail!("mismatched OCOMP manifest changed the canonical genesis header");
         }
-        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&mismatched_spec)?
-            .ok_or_else(|| eyre::eyre!("mismatched manifest omitted its OCOMP install"))?;
+        let loaded = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&mismatched_spec)?;
         if loaded.as_ref() != &mismatched {
             eyre::bail!("node loader did not preserve the mismatched OCOMP install");
         }
@@ -799,6 +867,13 @@ impl OcompTopology {
             genesis_hash: format!("{:#x}", identity.genesis_hash),
             protocol_bundle_hash: format!("{:#x}", identity.protocol_bundle_hash),
             fork_install_hash: format!("{:#x}", identity.fork_install_hash),
+            classification: match identity.classification {
+                OcompForkInstallClassification::Measurement => "measurement",
+                OcompForkInstallClassification::Final => "final",
+            }
+            .to_owned(),
+            activation_height: identity.activation_height,
+            metadosis_storage_layout_hash: format!("{:#x}", identity.metadosis_storage_layout_hash),
         });
         for validator_index in 0..OCOMP_VALIDATOR_DOMAINS {
             let supervisor_socket = self.node_supervisor_socket(validator_index)?;
@@ -1090,6 +1165,32 @@ impl OcompTopology {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Require one exact harness-owned worker to still be running. A retained
+    /// process record is not sufficient evidence after committee restarts: the
+    /// child guard itself must report that the authenticated worker is live.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ensure_worker_alive(&mut self, validator_index: u8, worker_ordinal: u32) -> Result<()> {
+        let (record_index, exited) = {
+            let domain = self.domain_mut(validator_index)?;
+            let process = domain.workers.get_mut(&worker_ordinal).ok_or_else(|| {
+                eyre::eyre!("validator-{validator_index} worker-{worker_ordinal} is not registered")
+            })?;
+            (process.record_index, process.guard.exited())
+        };
+        if exited {
+            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+            let log_path = self
+                .domain(validator_index)?
+                .root
+                .join(format!("worker-{worker_ordinal}.log"));
+            eyre::bail!(
+                "validator-{validator_index} worker-{worker_ordinal} exited unexpectedly:\n{}",
+                tail_file(&log_path, 20)
+            );
         }
         Ok(())
     }
@@ -1623,30 +1724,74 @@ fn schedule_public_measurement_day(
         }
     }
 
-    let changed = StorageHandle::enter(&mut provider, |storage| -> Result<bool> {
-        let metadosis = MetadosisContract::new(storage);
-        let day = metadosis.worldwide_days.entry(worldwide_day);
-        let current_status = day.status().read()?;
-        if current_status != status::OFFERING {
-            eyre::bail!(
-                "OCOMP public measurement requires the seeded day in OFFERING, found {current_status}"
-            );
-        }
-        let forming_end = day.forming_end().read()?;
-        let lookback_end = day.lookback_end().read()?;
-        if forming_end > offering_end || lookback_end > offering_end {
-            eyre::bail!("seeded Metadosis phases end after the measurement offering deadline");
-        }
-        let previous_offering_end = day.offering_end().read()?;
-        let previous_scheduled = day.scheduled_process_time().read()?;
-        day.offering_end().write(offering_end)?;
-        day.scheduled_process_time().write(offering_end)?;
-        Ok(previous_offering_end != offering_end || previous_scheduled != offering_end)
+    let changed = StorageHandle::enter(&mut provider, |storage| {
+        FreshDevnetGenesisBuilder::new()
+            .retime_offering_day(worldwide_day, offering_end)
+            .apply(storage)
+            .map(|report| report.changed)
     })?;
 
     if !changed {
         return Ok(false);
     }
+    let alloc = genesis
+        .get_mut("alloc")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+    let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
+        .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
+    let words = alloc
+        .get_mut(&metadosis_key)
+        .and_then(serde_json::Value::as_object_mut)
+        .and_then(|account| account.get_mut("storage"))
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
+    for ((address, slot), value) in &provider.storage {
+        if *address != METADOSIS_ADDRESS {
+            continue;
+        }
+        let slot = format!("0x{slot:064x}");
+        if value.is_zero() {
+            words.remove(&slot);
+        } else {
+            words.insert(slot, serde_json::Value::String(format!("0x{value:064x}")));
+        }
+    }
+    Ok(true)
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn clear_seeded_metadosis_days(genesis: &mut serde_json::Value, chain_id: u64) -> Result<bool> {
+    let mut provider = HashMapStorageProvider::new(chain_id);
+    {
+        let alloc = genesis
+            .get("alloc")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
+            .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
+        let words = alloc
+            .get(&metadosis_key)
+            .and_then(|account| account.get("storage"))
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
+        for (slot, value) in words {
+            provider.storage.insert(
+                (METADOSIS_ADDRESS, parse_hex_word(slot)?),
+                parse_storage_word(value)?,
+            );
+        }
+    }
+
+    let seeded = crate::world::localnet::worldwide_day()
+        .parse::<WorldwideDay>()
+        .map_err(|error| eyre::eyre!("invalid fixture WorldwideDay: {error}"))?;
+    StorageHandle::enter(&mut provider, |storage| {
+        FreshDevnetGenesisBuilder::new()
+            .clear_single_offering_day(seeded)
+            .apply(storage)
+    })?;
+
     let alloc = genesis
         .get_mut("alloc")
         .and_then(serde_json::Value::as_object_mut)
@@ -2200,12 +2345,11 @@ fn fingerprint_regular_directory(
 mod tests {
     use std::process::Command;
 
-    use alloy_primitives::B256;
-    #[cfg(feature = "ocomp-integration")]
-    use outbe_metadosis::schema::WorldwideDay as MetadosisWorldwideDay;
-
     use crate::env::Environment;
     use crate::internal::proc::ChildGuard;
+    use alloy_primitives::B256;
+    #[cfg(feature = "ocomp-integration")]
+    use outbe_metadosis::{genesis::GenesisWorldwideDay, WwdDayType, WwdStatus};
 
     use super::*;
 
@@ -2482,11 +2626,14 @@ mod tests {
             prepared.install.activation_height,
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
         );
+        assert_eq!(
+            format!("{METADOSIS_STORAGE_LAYOUT_V1_HASH:#x}"),
+            METADOSIS_STORAGE_LAYOUT_V1_HASH_HEX
+        );
 
         let chain_spec = parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json")).unwrap();
-        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&chain_spec)
-            .unwrap()
-            .unwrap();
+        let loaded =
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&chain_spec).unwrap();
         assert_eq!(loaded.as_ref(), &prepared.install);
         assert_eq!(
             loaded
@@ -2564,6 +2711,25 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn measurement_fork_install_rejects_layout_mismatch_before_node_start() {
+        let topology = topology();
+        prepare_measurement_genesis_fixture(&topology);
+        topology.prepare_measurement_fork_install().unwrap();
+        let genesis_path = topology.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
+        genesis["config"][outbe_node::ocomp::fork::METADOSIS_STORAGE_LAYOUT_GENESIS_KEY]
+            ["layoutHash"] = serde_json::json!(alloy_primitives::B256::repeat_byte(0x44));
+        replace_json_atomically(&genesis_path, &genesis).unwrap();
+
+        let mismatched = parse_outbe_chain_spec(&genesis_path).unwrap();
+        let error =
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&mismatched).unwrap_err();
+        assert!(error.to_string().contains("layout hash mismatch"));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn public_measurement_schedule_keeps_the_seeded_day_offering_then_reaches_ready() {
         let topology = topology();
         prepare_public_measurement_genesis_fixture(&topology);
@@ -2588,15 +2754,16 @@ mod tests {
             );
         }
         StorageHandle::enter(&mut provider, |storage| {
-            let metadosis = MetadosisContract::new(storage);
-            let day = metadosis.worldwide_days.entry(worldwide_day);
-            assert_eq!(day.status().read().unwrap(), status::OFFERING);
+            let day = outbe_metadosis::api::worldwide_day(storage, worldwide_day)
+                .unwrap()
+                .unwrap();
+            assert_eq!(day.status, WwdStatus::Offering);
             assert_eq!(
-                day.offering_end().read().unwrap(),
+                day.offering_end,
                 genesis_timestamp + OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
             );
             assert_eq!(
-                day.scheduled_process_time().read().unwrap(),
+                day.scheduled_process_time,
                 genesis_timestamp + OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
             );
         });
@@ -2658,18 +2825,61 @@ mod tests {
             );
         }
         StorageHandle::enter(&mut provider, |storage| {
-            let metadosis = MetadosisContract::new(storage);
-            let day = metadosis.worldwide_days.entry(worldwide_day);
-            assert_eq!(day.status().read().unwrap(), status::OFFERING);
+            let day = outbe_metadosis::api::worldwide_day(storage, worldwide_day)
+                .unwrap()
+                .unwrap();
+            assert_eq!(day.status, WwdStatus::Offering);
             assert_eq!(
-                day.offering_end().read().unwrap(),
+                day.offering_end,
                 genesis_timestamp + OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
             );
             assert_eq!(
-                day.scheduled_process_time().read().unwrap(),
+                day.scheduled_process_time,
                 genesis_timestamp + OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
             );
         });
+        assert_eq!(
+            prepared.install.request_profile.genesis_hash,
+            parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json"))
+                .unwrap()
+                .genesis_hash()
+        );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn fresh_metadosis_capacity_fixture_starts_without_active_day_or_shortened_phases() {
+        let topology = topology();
+        prepare_public_measurement_genesis_fixture(&topology);
+        let (prepared, private_keys) = topology
+            .prepare_fresh_metadosis_capacity_fork_install(3)
+            .unwrap();
+        assert_eq!(private_keys.len(), 3);
+
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(topology.cfg.dir.join("genesis.json")).unwrap())
+                .unwrap();
+        let alloc = genesis["alloc"].as_object().unwrap();
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
+            .unwrap()
+            .unwrap();
+        let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
+        for (slot, value) in alloc[&metadosis_key]["storage"].as_object().unwrap() {
+            provider.storage.insert(
+                (METADOSIS_ADDRESS, parse_hex_word(slot).unwrap()),
+                parse_storage_word(value).unwrap(),
+            );
+        }
+        let seeded = crate::world::localnet::worldwide_day()
+            .parse::<WorldwideDay>()
+            .unwrap();
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(outbe_metadosis::api::is_fresh_ocomp_state_empty(storage, seeded).unwrap());
+        });
+        assert_eq!(
+            prepared.install.activation_height,
+            OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
+        );
         assert_eq!(
             prepared.install.request_profile.genesis_hash,
             parse_outbe_chain_spec(&topology.cfg.dir.join("genesis.json"))
@@ -2695,9 +2905,8 @@ mod tests {
             canonical_spec.genesis_hash(),
             mismatched_spec.genesis_hash()
         );
-        let loaded = outbe_node::ocomp::fork::load_ocomp_fork_install(&mismatched_spec)
-            .unwrap()
-            .unwrap();
+        let loaded =
+            outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&mismatched_spec).unwrap();
         assert_eq!(
             loaded.activation_height,
             OCOMP_MEASUREMENT_ACTIVATION_HEIGHT
@@ -2753,13 +2962,11 @@ mod tests {
             .unwrap();
         let mut provider = HashMapStorageProvider::new(chain_id);
         StorageHandle::enter(&mut provider, |storage| {
-            let metadosis = MetadosisContract::new(storage);
-            metadosis
-                .worldwide_days
-                .create(&MetadosisWorldwideDay {
-                    wwd: worldwide_day,
-                    status: status::OFFERING,
-                    day_type: 2,
+            FreshDevnetGenesisBuilder::new()
+                .seed_active_worldwide_day(GenesisWorldwideDay {
+                    worldwide_day,
+                    status: WwdStatus::Offering,
+                    day_type: WwdDayType::Green,
                     forming_start: now.saturating_sub(30),
                     forming_end: now.saturating_sub(20),
                     lookback_end: now.saturating_sub(10),
@@ -2769,6 +2976,7 @@ mod tests {
                     previous_vwap: U256::ZERO,
                     current_vwap: U256::from(1),
                 })
+                .apply(storage)
                 .unwrap();
         });
         let storage = provider

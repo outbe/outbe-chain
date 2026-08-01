@@ -1,0 +1,11 @@
+error[E0603]: module `kernel` is private
+ --> tests/ui/metadosis_semantic_kernel.rs:1:36
+  |
+1 | use outbe_metadosis::test_support::kernel::EmergencyFailKernel;
+  |                                    ^^^^^^ private module
+  |
+note: the module `kernel` is defined here
+ --> src/test_support.rs
+  |
+  | mod kernel {
+  | ^^^^^^^^^^

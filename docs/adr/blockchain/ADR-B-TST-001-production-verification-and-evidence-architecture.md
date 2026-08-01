@@ -175,6 +175,69 @@ CI produces a signed evidence manifest listing every requirement result, skipped
 ignored/quarantined test and artifact digest. `Implemented` status and release gates
 consume this manifest rather than assuming a workflow name succeeded.
 
+### Versioned VerificationLedger
+
+`outbe-plan/verification-ledger.yaml` is a path/version index, not a third
+domain policy. It admits exactly two packs in this change:
+
+- the existing OCOMP pack at
+  `outbe-plan/off-chain-poc-evidence-ledger.yaml`; and
+- the Metadosis CITADEL-001..008 pack at
+  `outbe-plan/metadosis-evidence-ledger.yaml`.
+
+The reusable parser/verifier in
+`crates/testing/e2e-harness/src/verification_ledger` owns duplicate-key
+rejection, namespace/schema/path binding, global duplicate-ID rejection,
+fail-closed local references, source/toolchain identity, member digests,
+discovery, assertion status, exact revision/profile and executed Linux lane.
+It rejects unknown namespaces, cross-pack references, renamed/missing/skipped
+required tests, wrong production-interface class and mixed
+revision/toolchain/profile evidence.
+
+Production closure is available through the domain-neutral
+`outbe-verification-ledger verify` command. Each test result must bind the
+pack's exact target, name, lane, production-interface class and declared
+substitutions to at least one content-addressed member; empty or unreferenced
+member sets fail. The command recomputes every member digest, compares the
+manifest source/toolchain identity with its current checkout, and requires one
+canonical `sha256:<64 lowercase hex>` Linux image identity across a multi-pack
+closure. A syntactically valid manifest without the referenced bytes is not a
+closure verdict.
+
+Metadosis adds a narrow policy adapter at
+`crates/testing/e2e-harness/src/metadosis_evidence` and the
+`outbe-metadosis-evidence` CLI. Its runner owns the fixed command plan, records
+one attempt with exact argv/timestamps/exit output digests, and independently
+lists normal and ignored Cargo tests. Its assembler accepts no assertion
+status: it derives PASS/FAIL/MISSING/SKIPPED from those retained facts. The P0
+row executes the `outbe-metadosis-evidence p0-parity` Rust subcommand, retains
+six raw scenario records and run logs, and is reverified by reconstructing
+`metadosis-p0-parity.json` byte-for-byte before generic closure. A separate
+required process row executes the `outbe-metadosis-evidence fresh-devnet` Rust
+subcommand. Both process lanes are implemented inside `outbe-e2e-harness`; no
+parallel shell orchestration contract exists. The retained fresh-devnet scenario
+must prove `Measurement@1`, the exact Metadosis layout hash, four live validator
+process domains, runtime block-1 WWD creation, finalized canonical `Advance`
+edges, public quorum apply and the terminal 257-record result on one genesis.
+Its only time control is the existing testnet
+`unix-time-offset-secs`, applied through two whole-committee restart barriers;
+the verifier requires continuous finalized heights and unchanged
+`50h/0h/48h/12h` phase durations. The generic-ledger regression tests are themselves required
+runner rows, so exact revision/profile/lane and cross-pack fail-closed behavior
+cannot be bypassed by presenting only the policy adapter test. The final
+`verify` command reconstructs the complete `DomainEvidenceV1` from
+`runner-receipt.json`, so a hand-authored PASS manifest is not Metadosis
+evidence. The domain-neutral `outbe-verification-ledger verify` CLI dispatches
+this Metadosis policy adapter before applying cross-pack generic closure; the
+generic schema library itself remains free of domain semantics.
+
+Each pack continues to own its requirement taxonomy, tasks, substitutions,
+allowed deferrals, lanes and closure policy. OCOMP's current collectors,
+PoC modes, task graph, retired rows, CLI and verdict remain in
+`ocomp_evidence`; the generic core contains no `OCM-*` or PoC-only semantics.
+The Metadosis pack can close independently and contains no placeholder rows for
+other modules.
+
 ## Authoritative interfaces
 
 | Responsibility                       | Authority                              |
@@ -227,9 +290,12 @@ Cucumber harness/features, `crates/core/e2e`, Commonware deterministic harness,
 EVM/CE/Mongo integration and conformance suites, ignored tests and Forge lanes.
 There is strong real evidence for multi-validator bootstrap/restart and encrypted
 Tribute-to-Mongo/CE proof flow, plus extensive component-level parity/property tests.
-However, no machine-checkable ADR requirement ledger exists, several real-backend
-tests are ignored/environment-gated, and some “e2e” tests explicitly substitute
-storage and settlement. Status remains Proposed.
+A machine-checkable generic index and separate OCOMP/Metadosis packs now exist,
+and extraction tests preserve the prior OCOMP catalog/verdict. The Metadosis
+pack declares exact test targets/names, interface classes, substitutions and
+the required Linux artifact profile. Exact-revision Linux execution remains
+external evidence; checked-in metadata does not claim it ran. Broader project
+requirements remain outside these two packs, so status remains Proposed.
 
 ## Consequences
 
@@ -251,9 +317,11 @@ fast unit/model suites.
 
 ## Open questions and technical debt
 
-1. **Critical:** no machine-checkable mapping exists from every ADR/PFS invariant,
-   transition and debt claim to exact tests, production interfaces and CI lanes.
-   Build the `VerificationLedger` before claiming complete project coverage.
+1. **Critical:** the versioned `VerificationLedger` now machine-checks the OCOMP
+   and Metadosis domain packs only. Project-wide mapping from every other
+   ADR/PFS invariant, transition and debt claim to exact tests, production
+   interfaces and CI lanes remains deliberately incomplete; do not infer
+   whole-project coverage from these two closed packs.
 2. **Critical:** `crates/core/e2e` uses `HashMapStorageProvider`, `MemoryStorage` and
    explicit noop settlement in important flows. Reclassify it as execution/module
    integration and add process-level production tests for the undisproved seams.

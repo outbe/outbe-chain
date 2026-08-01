@@ -10,7 +10,7 @@ use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_trie::{proof::ProofRetainer, HashBuilder, Nibbles, TrieAccount, KECCAK_EMPTY};
 use outbe_common::WorldwideDay;
-use outbe_metadosis::ocomp::schema::poc_schema_limits;
+use outbe_metadosis::config::poc_schema_limits;
 use outbe_ocomp_protocol::{
     league_snapshot::{league_snapshot_slot, ordered_league_snapshot_slots},
     opening::OpeningSubjectsV1,

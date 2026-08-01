@@ -129,7 +129,7 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
         .expect("Final genesis contains an OCOMP install");
     assert_eq!(
         install.classification,
-        outbe_metadosis::ocomp::fork::OcompForkInstallClassification::Final
+        outbe_metadosis::config::OcompForkInstallClassification::Final
     );
     assert_eq!(install.activation_height, 32);
     assert_eq!(

@@ -26,6 +26,9 @@ interface ITribute {
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
 
+    /// @notice Canonical projection event for certified Lysis retirement and
+    /// the two closed Metadosis terminal authorities (empty missed OFFERING or
+    /// exact-aggregate capacity forfeiture). No arbitrary FAILED day may emit it.
     event TributePartitionRetired(uint32 indexed worldwideDay);
 
     event CertifiedTributePartitionRetired(

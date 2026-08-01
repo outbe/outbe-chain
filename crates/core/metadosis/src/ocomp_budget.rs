@@ -12,7 +12,6 @@ use outbe_promislimit::PromisLimitContract;
 use crate::errors::MetadosisError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code, reason = "constructed by the OCM-08 request handler")]
 pub(crate) struct RequestBudgetEffect {
     pub protocol_bundle_hash: B256,
     pub wwd: u32,
@@ -25,14 +24,12 @@ pub(crate) struct RequestBudgetEffect {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[allow(dead_code, reason = "derived by the OCM-08 request handler")]
 pub(crate) struct RequestBudgetSplit {
     pub day_limit: U256,
     pub lysis_budget: U256,
     pub auction_base: U256,
 }
 
-#[allow(dead_code, reason = "called by the OCM-08 request handler")]
 impl RequestBudgetSplit {
     pub(crate) fn derive(day_limit: U256, lysis_budget: U256) -> Result<Self> {
         let auction_base =
@@ -69,47 +66,43 @@ impl RequestBudgetSplit {
 /// This function intentionally does not perform receipt lookup. OCM-08 owns
 /// that lookup and must call [`validate_replayed_request_budget_effect`] when
 /// the effect receipt already exists.
-#[allow(dead_code, reason = "wired to the lifecycle by OCM-08")]
 pub(crate) fn apply_fresh_request_budget_effect(
     storage: StorageHandle<'_>,
     request: RequestBudgetEffect,
 ) -> Result<RequestBudgetSplitReceiptV1> {
     let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
     let receipt = expected_receipt(request, split, request.pending_nonce)?;
-    storage.with_checkpoint(|| {
-        match request.day_type {
-            DayType::Green => {
-                let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
-                    storage.clone(),
-                    request.protocol_bundle_hash,
-                    request.wwd,
-                    split.auction_base,
-                    request.auction_entry_price,
-                    request.logical_anchor,
-                )?;
-                if receipt.desis_brief_hash != Some(actual) {
-                    return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
-                }
-            }
-            DayType::Red => {
-                let delta = PromisLimitContract::new(storage.clone())
-                    .checked_add_carry_over(split.auction_base)?;
-                if delta.credited != receipt.carry_over_credit {
-                    return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
-                }
+    match request.day_type {
+        DayType::Green => {
+            let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
+                storage.clone(),
+                request.protocol_bundle_hash,
+                request.wwd,
+                split.auction_base,
+                request.auction_entry_price,
+                request.logical_anchor,
+            )?;
+            if receipt.desis_brief_hash != Some(actual) {
+                return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
             }
         }
-        receipt
-            .validate_semantics()
-            .map_err(protocol_error_to_revert)?;
-        Ok(receipt.clone())
-    })
+        DayType::Red => {
+            let delta = PromisLimitContract::new(storage.clone())
+                .checked_add_carry_over(split.auction_base)?;
+            if delta.credited != receipt.carry_over_credit {
+                return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
+            }
+        }
+    }
+    receipt
+        .validate_semantics()
+        .map_err(protocol_error_to_revert)?;
+    Ok(receipt)
 }
 
 /// Validate an authoritative receipt for a replay without touching owner
 /// storage. OCM-08 decides between fresh apply and replay from persisted job
 /// state; callers cannot accidentally select the replay path with `None`.
-#[allow(dead_code, reason = "wired to the lifecycle by OCM-08")]
 pub(crate) fn validate_replayed_request_budget_effect(
     request: RequestBudgetEffect,
     existing: &RequestBudgetSplitReceiptV1,
@@ -129,7 +122,6 @@ pub(crate) fn validate_replayed_request_budget_effect(
     Ok(existing.clone())
 }
 
-#[allow(dead_code, reason = "used by the staged OCM-05 request entrypoints")]
 fn expected_receipt(
     request: RequestBudgetEffect,
     split: RequestBudgetSplit,
@@ -172,7 +164,6 @@ fn expected_receipt(
     Ok(receipt)
 }
 
-#[allow(dead_code, reason = "used by the staged OCM-05 request entrypoints")]
 fn protocol_error_to_revert(error: outbe_ocomp_protocol::ProtocolError) -> PrecompileError {
     PrecompileError::Revert(format!("invalid OCOMP request budget receipt: {error}"))
 }

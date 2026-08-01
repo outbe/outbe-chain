@@ -5,10 +5,14 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
 };
 
-use crate::{precompile::IMetadosis, schema::MetadosisContract};
+use crate::{
+    aggregate::ValidatedWwdAggregate,
+    precompile::IMetadosis,
+    reducer::{reduce_outer_wwd, OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
+    schema::MetadosisContract,
+};
 
 use super::{
-    request::fsm_limits,
     schema::{poc_schema_limits, OcompExpiryDisposition},
     state::{DayPhase, JobFsmProjection},
     vote::ResponseWindowCloseV1,
@@ -28,7 +32,7 @@ pub fn record_certified_parent_finality(
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(false);
     };
-    let limits = fsm_limits(&profile);
+    let limits = profile.fsm_limits();
     let mut matched = None;
     for state in metadosis.live_ocomp_fsm_states(&schema_limits, limits)? {
         let intent_id = state
@@ -75,29 +79,40 @@ pub fn run_lifecycle_begin(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let Some(profile) = metadosis.read_ocomp_request_profile(&schema_limits)? else {
         return Ok(());
     };
-    let limits = fsm_limits(&profile);
+    let limits = profile.fsm_limits();
     metadosis.open_due_ocomp_voting(ctx.block.block_number, &schema_limits, limits)?;
-    let storage = ctx.storage.clone();
-    storage.with_checkpoint(|| {
-        match metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)? {
-            ResponseWindowCloseV1::NotDue | ResponseWindowCloseV1::QuorumPreserved { .. } => Ok(()),
-            ResponseWindowCloseV1::NoQuorum { intent_id } => {
-                let state = metadosis
-                    .live_ocomp_fsm_state_by_intent(intent_id, &schema_limits, limits)?
-                    .ok_or_else(|| fatal("no-quorum OCOMP close has no live job"))?;
-                let before = state.projection();
-                if before.phase != DayPhase::OffchainPending
-                    || before.live_intent_id != Some(intent_id)
-                    || before
-                        .deadline_height
-                        .is_none_or(|deadline| deadline > ctx.block.block_number)
-                {
-                    return Err(fatal("no-quorum OCOMP close/live state mismatch"));
-                }
-                expire_exact(&mut metadosis, ctx, before, limits)
+    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
+    (|| match metadosis.close_due_ocomp_response_window(ctx.block.block_number, &schema_limits)? {
+        ResponseWindowCloseV1::NotDue | ResponseWindowCloseV1::QuorumPreserved { .. } => Ok(()),
+        ResponseWindowCloseV1::NoQuorum { intent_id } => {
+            let state = metadosis
+                .live_ocomp_fsm_state_by_intent(intent_id, &schema_limits, limits)?
+                .ok_or_else(|| fatal("no-quorum OCOMP close has no live job"))?;
+            let before = state.projection();
+            if before.phase != DayPhase::OffchainPending
+                || before.live_intent_id != Some(intent_id)
+                || before
+                    .deadline_height
+                    .is_none_or(|deadline| deadline > ctx.block.block_number)
+            {
+                return Err(fatal("no-quorum OCOMP close/live state mismatch"));
             }
+            let current = aggregate.record(before.worldwide_day).ok_or_else(|| {
+                fatal("no-quorum OCOMP close has no persisted outer WorldwideDay")
+            })?;
+            let event = if before
+                .terminal_records
+                .checked_add(1)
+                .is_some_and(|count| count == limits.max_terminal_records)
+            {
+                OuterWwdEvent::OcompAttemptsExhausted
+            } else {
+                OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired)
+            };
+            let outer_transition = reduce_outer_wwd(Some(current), event)?;
+            expire_exact(&mut metadosis, ctx, before, limits, &outer_transition)
         }
-    })
+    })()
 }
 
 fn expire_exact(
@@ -105,12 +120,14 @@ fn expire_exact(
     ctx: &BlockRuntimeContext<'_>,
     before: JobFsmProjection,
     limits: super::state::JobFsmLimits,
+    outer_transition: &OuterWwdTransition,
 ) -> Result<()> {
     let intent_id = before
         .live_intent_id
         .ok_or_else(|| fatal("pending OCOMP state has no live IntentId"))?;
     let old_pending_nonce = before.pending_nonce;
     let disposition = metadosis.expire_ocomp_job(
+        outer_transition,
         intent_id,
         ctx.block.block_number,
         ctx.block.timestamp,
@@ -148,7 +165,8 @@ fn expire_exact(
                         .before
                         .checked_add(expected_budget)
                         .ok_or_else(|| fatal("terminal OCOMP carry-over proof overflow"))?
-                || metadosis.get_wwd_status(before.worldwide_day)? != crate::schema::status::FAILED
+                || metadosis.get_wwd_status(before.worldwide_day)?
+                    != crate::aggregate::WwdStatus::Failed
                 || metadosis
                     .live_ocomp_fsm_state_by_intent(intent_id, &poc_schema_limits(), limits)?
                     .is_some()

@@ -2,7 +2,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_metadosis::ocomp::state::{
+use outbe_metadosis::model::{
     transition_rules, DayPhase, JobFsmCommand, JobFsmLimits, JobFsmState, JobFsmTransitionKind,
     ReadyAttemptSnapshot, RequestEffectMode,
 };

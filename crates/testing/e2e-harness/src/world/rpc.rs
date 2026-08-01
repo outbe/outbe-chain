@@ -29,7 +29,7 @@ use outbe_ocomp_protocol::{
     vote::OcompVoteAccountabilityV1,
 };
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
 use crate::internal::eth::{IDesis, IMetadosis};
@@ -64,6 +64,46 @@ pub struct TributeZkOffer<'a> {
 pub struct CompressedEntityAtHeader {
     pub result: PointReadResultV1,
     pub header: SelectedHeaderV1,
+}
+
+/// Consensus commitments observed for one canonical block on one validator.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BlockCommitmentV1 {
+    pub block_hash: B256,
+    pub state_root: B256,
+    pub ce_root: B256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayStateV1 {
+    pub status: u8,
+    pub day_type: u8,
+    pub forming_start: u64,
+    pub forming_end: u64,
+    pub lookback_end: u64,
+    pub offering_end: u64,
+    pub scheduled_process_time: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayStartedV1 {
+    pub worldwide_day: u32,
+    pub forming_start: u64,
+    pub forming_end: u64,
+    pub lookback_end: u64,
+    pub offering_end: u64,
+    pub scheduled_process_time: u64,
+    pub block_number: u64,
+    pub block_hash: B256,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct MetadosisWorldwideDayStatusChangeV1 {
+    pub worldwide_day: u32,
+    pub old_status: u8,
+    pub new_status: u8,
+    pub block_number: u64,
+    pub block_hash: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -242,6 +282,18 @@ impl Rpc {
     /// `stateRoot` of block `height` on the node at `port`.
     pub fn state_root(&self, port: u16, height: u64) -> Option<String> {
         eth::state_root(&self.url(port), height)
+    }
+
+    /// Canonical block/state/CE roots imported by one validator at `height`.
+    pub fn block_commitment(&self, port: u16, height: u64) -> Option<BlockCommitmentV1> {
+        let (block_hash, state_root, extra_data) = eth::block_commitment(&self.url(port), height)?;
+        let artifacts = decode_outbe_block_artifacts(&extra_data).ok()?;
+        let ce_root = artifacts.compressed_entities_root?.r_sealed;
+        Some(BlockCommitmentV1 {
+            block_hash,
+            state_root,
+            ce_root,
+        })
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -934,6 +986,149 @@ impl Rpc {
             &IWorldwideDay::getWorldwideDayCall { day },
         )?;
         Some(r.f0.to_string())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_wwd_state_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<MetadosisWorldwideDayStateV1> {
+        let r = eth::read_call(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDayCall { day },
+        )?;
+        Some(MetadosisWorldwideDayStateV1 {
+            status: r.f0,
+            day_type: r.f1,
+            forming_start: r.f2,
+            forming_end: r.f3,
+            lookback_end: r.f4,
+            offering_end: r.f5,
+            scheduled_process_time: r.f6,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_wwd_state_at(
+        &self,
+        port: u16,
+        day: u32,
+        block_number: u64,
+    ) -> Option<MetadosisWorldwideDayStateV1> {
+        let r = eth::read_call_at(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDayCall { day },
+            block_number,
+        )?;
+        Some(MetadosisWorldwideDayStateV1 {
+            status: r.f0,
+            day_type: r.f1,
+            forming_start: r.f2,
+            forming_end: r.f3,
+            lookback_end: r.f4,
+            offering_end: r.f5,
+            scheduled_process_time: r.f6,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn metadosis_unknown_status_reverts_at(
+        &self,
+        port: u16,
+        status: u8,
+        block_number: u64,
+    ) -> Option<bool> {
+        eth::read_call_reverts_at(
+            &self.url(port),
+            addresses::WWD_ADDR,
+            &IWorldwideDay::getWorldwideDaysByStatusCall { status },
+            block_number,
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_metadosis_wwd_started_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<MetadosisWorldwideDayStartedV1> {
+        const SIGNATURE: &str = "WorldwideDayStarted(uint32,uint64,uint64,uint64,uint64,uint64)";
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        let topic0 = keccak256(SIGNATURE.as_bytes());
+        let indexed_day = format!("0x{day:064x}");
+        let logs = eth::raw_json_with_params(
+            &rpc_url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": "0x1",
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [format!("{topic0:#x}"), indexed_day]
+            }]),
+        )?;
+        let logs = logs.as_array()?;
+        if logs.len() != 1 {
+            return None;
+        }
+        let log = &logs[0];
+        let data = decode_rpc_data_words(log, 5)?;
+        let block_number = rpc_log_block_number(log)?;
+        let block_hash = canonical_rpc_log_block_hash(&rpc_url, log, block_number)?;
+        Some(MetadosisWorldwideDayStartedV1 {
+            worldwide_day: day,
+            forming_start: u64::try_from(data[0]).ok()?,
+            forming_end: u64::try_from(data[1]).ok()?,
+            lookback_end: u64::try_from(data[2]).ok()?,
+            offering_end: u64::try_from(data[3]).ok()?,
+            scheduled_process_time: u64::try_from(data[4]).ok()?,
+            block_number,
+            block_hash,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn finalized_metadosis_wwd_status_changes_on(
+        &self,
+        port: u16,
+        day: u32,
+    ) -> Option<Vec<MetadosisWorldwideDayStatusChangeV1>> {
+        const SIGNATURE: &str = "WorldwideDayStatusChange(uint32,uint8,uint8,uint64)";
+        let rpc_url = self.url(port);
+        let finalized_height = eth::finalized_number(&rpc_url)?;
+        let topic0 = keccak256(SIGNATURE.as_bytes());
+        let indexed_day = format!("0x{day:064x}");
+        let logs = eth::raw_json_with_params(
+            &rpc_url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::WWD_ADDR),
+                "fromBlock": "0x1",
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [format!("{topic0:#x}"), indexed_day]
+            }]),
+        )?;
+        logs.as_array()?
+            .iter()
+            .map(|log| {
+                let data = decode_rpc_data_words(log, 3)?;
+                let block_number = rpc_log_block_number(log)?;
+                if u64::try_from(data[2]).ok()? != block_number {
+                    return None;
+                }
+                let block_hash = canonical_rpc_log_block_hash(&rpc_url, log, block_number)?;
+                Some(MetadosisWorldwideDayStatusChangeV1 {
+                    worldwide_day: day,
+                    old_status: u8::try_from(data[0]).ok()?,
+                    new_status: u8::try_from(data[1]).ok()?,
+                    block_number,
+                    block_hash,
+                })
+            })
+            .collect()
     }
 
     /// A JSON field from `outbe_consensusStatus` on the node at `port`.
@@ -2379,6 +2574,42 @@ fn parse_rpc_u256(value: &str) -> Option<U256> {
 #[cfg(feature = "ocomp-integration")]
 fn parse_rpc_word(encoded: &str) -> Option<U256> {
     U256::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn decode_rpc_data_words(log: &serde_json::Value, expected: usize) -> Option<Vec<U256>> {
+    let bytes = hex::decode(log.get("data")?.as_str()?.trim_start_matches("0x")).ok()?;
+    if bytes.len() != expected.checked_mul(32)? {
+        return None;
+    }
+    Some(
+        bytes
+            .chunks_exact(32)
+            .map(U256::from_be_slice)
+            .collect::<Vec<_>>(),
+    )
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn rpc_log_block_number(log: &serde_json::Value) -> Option<u64> {
+    u64::from_str_radix(
+        log.get("blockNumber")?.as_str()?.trim_start_matches("0x"),
+        16,
+    )
+    .ok()
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn canonical_rpc_log_block_hash(
+    rpc_url: &str,
+    log: &serde_json::Value,
+    block_number: u64,
+) -> Option<B256> {
+    let observed = log.get("blockHash")?.as_str()?.parse::<B256>().ok()?;
+    let canonical = eth::block_hash(rpc_url, block_number)?
+        .parse::<B256>()
+        .ok()?;
+    (observed == canonical).then_some(observed)
 }
 
 fn receipt_has_log(receipt: &serde_json::Value, address: Address, topic0: Option<&str>) -> bool {

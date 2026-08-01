@@ -4224,6 +4224,37 @@ mod tests {
         MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
     }
 
+    fn test_ocomp_fork_install(
+        chain_spec: &ChainSpec<OutbeHeader>,
+    ) -> Arc<outbe_metadosis::config::OcompForkInstallV1> {
+        Arc::new(
+            outbe_metadosis::test_support::ForkInstallScenario::measurement_at(
+                1,
+                chain_spec.chain().id(),
+                chain_spec.genesis_hash(),
+            )
+            .unwrap()
+            .into_install(),
+        )
+    }
+
+    fn seed_test_ocomp_profile(provider: &mut HashMapStorageProvider, restore_block_number: u64) {
+        let chain_spec = test_chain_spec();
+        let install = test_ocomp_fork_install(&chain_spec);
+        provider.set_block_number(1);
+        provider.enable_metadosis_mutation_frame(
+            outbe_primitives::storage::MetadosisMutationPurposeTag::ForkProfile,
+        );
+        StorageHandle::enter(provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, 1_700_000_001, CHAIN_ID),
+                storage,
+            );
+            outbe_metadosis::commands::install_fork_profile(&ctx, &install).unwrap();
+        });
+        provider.set_block_number(restore_block_number);
+    }
+
     fn test_evm_signer() -> Arc<OutbeEvmSigner> {
         Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).unwrap())
     }
@@ -4238,7 +4269,7 @@ mod tests {
                 gas_limit: 30_000_000,
                 basefee: 1_000_000_000,
                 beneficiary,
-                timestamp: U256::from(block_number),
+                timestamp: U256::from(1_700_000_000u64.saturating_add(block_number)),
                 ..Default::default()
             },
         }
@@ -4247,7 +4278,23 @@ mod tests {
     fn state_with_active_proposer(
         proposer: Address,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
+        state_with_active_proposer_fixture(proposer, true)
+    }
+
+    fn state_with_active_proposer_without_ocomp(
+        proposer: Address,
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        state_with_active_proposer_fixture(proposer, false)
+    }
+
+    fn state_with_active_proposer_fixture(
+        proposer: Address,
+        seed_ocomp: bool,
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0);
+        }
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
@@ -4273,6 +4320,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::METADOSIS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -4289,7 +4344,25 @@ mod tests {
         proposer: Address,
         funded: Address,
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
+        state_with_active_proposer_and_funded_account_fixture(proposer, funded, true)
+    }
+
+    fn state_with_active_proposer_and_funded_account_without_ocomp(
+        proposer: Address,
+        funded: Address,
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        state_with_active_proposer_and_funded_account_fixture(proposer, funded, false)
+    }
+
+    fn state_with_active_proposer_and_funded_account_fixture(
+        proposer: Address,
+        funded: Address,
+        seed_ocomp: bool,
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
+        if seed_ocomp {
+            seed_test_ocomp_profile(&mut seed_storage, 0);
+        }
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
@@ -4315,6 +4388,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::METADOSIS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -4347,8 +4428,29 @@ mod tests {
         block_number: u64,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
+        state_with_active_validators_seeded_at_block_with_cycle_frames(
+            validators,
+            block_number,
+            0,
+            seed_extra,
+        )
+    }
+
+    fn state_with_active_validators_seeded_at_block_with_cycle_frames(
+        validators: &[(Address, [u8; 48])],
+        block_number: u64,
+        cycle_frames: u8,
+        seed_extra: impl FnOnce(StorageHandle),
+    ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
         seed_storage.set_block_number(block_number);
+        seed_test_ocomp_profile(&mut seed_storage, block_number);
+        if cycle_frames != 0 {
+            seed_storage.enable_metadosis_mutation_frames(
+                outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+                cycle_frames,
+            );
+        }
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -4392,6 +4494,7 @@ mod tests {
             outbe_primitives::addresses::REWARDS_ADDRESS,
             outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            outbe_primitives::addresses::TRIBUTE_ADDRESS,
             NOD_ADDRESS,
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
             // marker allowlist: the accounting-progress marker account
@@ -4440,7 +4543,8 @@ mod tests {
         candidate: Address,
         seed_extra: impl FnOnce(StorageHandle),
     ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut seed_storage = HashMapStorageProvider::new(outbe_primitives::chain::CHAIN_ID);
+        let mut seed_storage = HashMapStorageProvider::new(CHAIN_ID);
+        seed_test_ocomp_profile(&mut seed_storage, 0);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -4492,6 +4596,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::METADOSIS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -5111,13 +5223,7 @@ mod tests {
         ));
         drop(executor);
 
-        let read_ctx = BlockContext::new(
-            1,
-            1,
-            outbe_primitives::chain::CHAIN_ID,
-            proposer,
-            vec![proposer],
-        );
+        let read_ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
         let mut provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
@@ -5470,14 +5576,16 @@ mod tests {
 
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let mut state = state_with_active_proposer(proposer);
+        let mut state = state_with_active_proposer_without_ocomp(proposer);
         let chain_spec = test_chain_spec();
+        let install = test_ocomp_fork_install(&chain_spec);
         let config = OutbeEvmConfig::new_with_runtime_body_readers(
             chain_spec,
             RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
         )
         .with_evm_signer(signer)
-        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+        .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
+        .with_ocomp_fork_install(install);
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
         let evm = config.evm_with_env(&mut state, evm_env);
@@ -5624,20 +5732,26 @@ mod tests {
                 .try_into_recovered()
                 .expect("regular tx signer recovers");
             let user_sender = Address(*user.signer());
-            let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
+            let mut state =
+                state_with_active_proposer_and_funded_account_without_ocomp(proposer, user_sender);
+            let chain_spec = test_chain_spec();
+            let install = test_ocomp_fork_install(&chain_spec);
             let config = OutbeEvmConfig::new_with_runtime_body_readers(
-                test_chain_spec(),
+                chain_spec.clone(),
                 RuntimeBodyReaders::new(Arc::new(MemoryStorage::new())),
             )
             .with_evm_signer(signer)
-            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1));
+            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(1))
+            .with_ocomp_fork_install(install.clone());
             let begin =
                 begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
             let end = config
                 .build_end_system_txs(1, MAINNET.chain().id(), begin.len(), Some(proposer))
                 .expect("terminal system tx builds");
 
-            let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+            let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+            evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
+            let evm = config.evm_with_env(&mut state, evm_env);
             let mut ctx = execution_ctx(Some(begin.len() + 1 + end.len()), Bytes::new());
             ctx.proposer_evm_address = Some(proposer);
             if replay {
@@ -5672,6 +5786,18 @@ mod tests {
             let (evm, result) = executor.finish().expect("active block finishes");
             drop(evm);
             let state_root = post_state_root(&state.bundle_state);
+            {
+                let mut provider = super::DirectStorageProvider::new(
+                    &mut state,
+                    BlockContext::empty_for_tests(1, 1, chain_spec.chain().id()),
+                );
+                let storage = StorageHandle::new(&mut provider);
+                assert!(
+                    outbe_metadosis::api::is_active_ocomp_fork_install(storage, &install)
+                        .expect("read persisted block-1 fork installation"),
+                    "block-1 lifecycle must persist the exact fork installation"
+                );
+            }
 
             (
                 result.receipts,
@@ -5793,6 +5919,340 @@ mod tests {
             visible_gas < 30_000_000,
             "CycleTick visible gas {visible_gas} must fit within the block gas limit"
         );
+    }
+
+    #[test]
+    fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
+        use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+        const BLOCK_GAS_LIMIT: u64 = 30_000_000;
+        const REQUIRED_HEADROOM_BPS: u64 = 2_000;
+        const BPS_DENOMINATOR: u64 = 10_000;
+        const SECONDS_PER_DAY: u64 = 86_400;
+
+        fn post_state_root(state: &revm::database::BundleState) -> B256 {
+            let sorted =
+                HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+            let storages = sorted.storages;
+            let accounts = sorted
+                .accounts
+                .into_iter()
+                .filter_map(|(address, account)| {
+                    account.map(|account| {
+                        let storage = storages
+                            .get(&address)
+                            .map(|storage| storage.storage_slots.clone())
+                            .unwrap_or_default();
+                        (address, (account, storage))
+                    })
+                });
+            state_root_prehashed(accounts)
+        }
+
+        let run = || {
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let victim = WorldwideDay::new(2023_1101);
+            let day_limit = U256::from(100);
+            let mut fire_at = 0_u64;
+            let (tree_directory, tree_service) = persistent_test_tree(B256::ZERO);
+            let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
+            let parent_tree = tree_service
+                .open_parent(ExactParentIdentity {
+                    commitment_scheme_version: ACTIVE_COMMITMENT_SCHEME,
+                    block_number: 0,
+                    block_hash: B256::ZERO,
+                    root: empty_root,
+                })
+                .expect("open exact empty CE parent");
+            let seed_scope =
+                ExecutionScope::with_parent_tree(parent_tree, CeWorkConfig::new(0, 0, u64::MAX));
+            let body_storage = Arc::new(MemoryStorage::new());
+            let body_reader: StorageReaderHandle = body_storage;
+            let tribute_parent = TributeRepositoryReader::new(body_reader.clone());
+            let mut staged_tree_batch = None;
+            let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
+                &[(proposer, dummy_pubkey(0xA3))],
+                1,
+                14,
+                |storage| {
+                    outbe_compressed_entities::begin_block(storage.clone(), &seed_scope)
+                        .expect("open CE seed block");
+                    let genesis_ctx = BlockRuntimeContext::new(
+                        BlockContext::new(0, 1_704_067_200, CHAIN_ID, proposer, vec![proposer]),
+                        storage.clone(),
+                    );
+                    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
+                    let mut tribute = TributeContract::new(storage.clone());
+                    tribute.initialize_fresh_ocomp_profile().unwrap();
+                    for day in [WorldwideDay::new(2023_0901), WorldwideDay::new(2023_1001)] {
+                        let ctx = BlockRuntimeContext::new(
+                            BlockContext::new(
+                                1,
+                                day.start_timestamp() + 2 * 3_600,
+                                CHAIN_ID,
+                                proposer,
+                                vec![proposer],
+                            ),
+                            storage.clone(),
+                        );
+                        outbe_metadosis::commands::apply_cycle_day_limit(&ctx, day_limit).unwrap();
+                        let projection = outbe_metadosis::api::worldwide_day(storage.clone(), day)
+                            .unwrap()
+                            .unwrap();
+                        for boundary in [
+                            projection.forming_end,
+                            projection.lookback_end,
+                            projection.offering_end,
+                            projection.scheduled_process_time,
+                        ] {
+                            let ctx = BlockRuntimeContext::new(
+                                BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
+                                storage.clone(),
+                            );
+                            outbe_metadosis::commands::advance_active_worldwide_days(
+                                &ctx,
+                                &seed_scope,
+                            )
+                            .unwrap();
+                        }
+                        assert_eq!(
+                            outbe_metadosis::api::worldwide_day(storage.clone(), day)
+                                .unwrap()
+                                .unwrap()
+                                .status,
+                            outbe_metadosis::api::WorldwideDayStatus::Ready
+                        );
+                    }
+                    let victim_ctx = BlockRuntimeContext::new(
+                        BlockContext::new(
+                            1,
+                            victim.start_timestamp() + 2 * 3_600,
+                            CHAIN_ID,
+                            proposer,
+                            vec![proposer],
+                        ),
+                        storage.clone(),
+                    );
+                    outbe_metadosis::commands::apply_cycle_day_limit(&victim_ctx, day_limit)
+                        .unwrap();
+                    let victim_projection =
+                        outbe_metadosis::api::worldwide_day(storage.clone(), victim)
+                            .unwrap()
+                            .unwrap();
+                    tribute.unseal_day(victim).unwrap();
+                    tribute
+                        .issue(
+                            &seed_scope,
+                            &tribute_parent,
+                            &TributeData {
+                                tribute_id: outbe_compressed_entities::derive_poseidon_entity_id(
+                                    proposer, victim,
+                                )
+                                .unwrap(),
+                                owner: proposer,
+                                worldwide_day: victim,
+                                issuance_amount_minor: U256::from(1),
+                                issuance_currency: 840,
+                                nominal_amount_minor: U256::from(1),
+                                reference_currency: 840,
+                                tribute_price_minor: U256::from(1),
+                                exclude_from_intex_issuance: false,
+                            },
+                        )
+                        .unwrap();
+                    for boundary in [
+                        victim_projection.forming_end,
+                        victim_projection.lookback_end,
+                        victim_projection.offering_end,
+                    ] {
+                        let ctx = BlockRuntimeContext::new(
+                            BlockContext::new(1, boundary, CHAIN_ID, proposer, vec![proposer]),
+                            storage.clone(),
+                        );
+                        outbe_metadosis::commands::advance_active_worldwide_days(&ctx, &seed_scope)
+                            .unwrap();
+                    }
+                    assert_eq!(
+                        outbe_metadosis::api::worldwide_day(storage.clone(), victim)
+                            .unwrap()
+                            .unwrap()
+                            .status,
+                        outbe_metadosis::api::WorldwideDayStatus::Waiting
+                    );
+                    tribute
+                        .day_totals
+                        .update(&outbe_tribute::DayTotals {
+                            worldwide_day: victim,
+                            initialized: true,
+                            tribute_count: u32::MAX,
+                            tribute_nominal_amount: U256::MAX,
+                            is_sealed: true,
+                        })
+                        .unwrap();
+                    tribute.total_supply.write(u64::from(u32::MAX)).unwrap();
+                    let scheduled = victim_projection.scheduled_process_time;
+                    let noon_offset = 43_200;
+                    fire_at = if scheduled <= noon_offset {
+                        noon_offset
+                    } else {
+                        noon_offset
+                            + (scheduled - noon_offset).div_ceil(SECONDS_PER_DAY) * SECONDS_PER_DAY
+                    };
+                    let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                    for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+                        cycle
+                            .last_executed_at
+                            .write(
+                                &spec.id,
+                                if spec.id
+                                    == outbe_cycle::triggers::TriggerId::WwdAdvanceNoon.as_u32()
+                                {
+                                    fire_at - SECONDS_PER_DAY
+                                } else {
+                                    fire_at
+                                },
+                            )
+                            .unwrap();
+                    }
+                    staged_tree_batch = Some(
+                        outbe_compressed_entities::end_block(storage, &seed_scope)
+                            .expect("seal populated Tribute seed block")
+                            .staged_tree_batch,
+                    );
+                },
+            );
+            let staged_tree_batch = staged_tree_batch.expect("seed block must stage CE work");
+            let seed_hash = B256::repeat_byte(0xA5);
+            let seed_root = staged_tree_batch.new_root();
+            tree_service
+                .publish_candidate(seed_hash, staged_tree_batch)
+                .expect("publish populated Tribute seed");
+            tree_service
+                .apply_finalized(1, seed_hash, seed_root)
+                .expect("finalize populated Tribute seed");
+
+            let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
+            evm_env.block_env.timestamp = U256::from(fire_at);
+            let config = OutbeEvmConfig::new_with_runtime_body_readers(
+                test_chain_spec(),
+                RuntimeBodyReaders::new(body_reader),
+            )
+            .with_evm_signer(signer.clone())
+            .with_compressed_tree_service(tree_service);
+            let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+            parent_metadata.finalized_block_number = 1;
+            parent_metadata.finalized_block_hash = seed_hash;
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut execution = execution_ctx(Some(0), Bytes::new());
+            execution.inner.parent_hash = seed_hash;
+            execution.parent_consensus_metadata = Some(parent_metadata.clone());
+            execution.parent_artifact_hint = Some(AccountedParentArtifact {
+                summary: ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                timestamp: 0,
+                state_root: Some(B256::repeat_byte(0x91)),
+            });
+            execution.proposer_evm_address = Some(proposer);
+            let mut executor = config.create_executor(evm, execution);
+            super::with_phase1_verify_disabled(|| {
+                executor
+                    .apply_pre_execution_changes()
+                    .expect("pre-execution changes should apply");
+            });
+            let system_txs = begin_system_txs_for_test(
+                &config,
+                2,
+                seed_hash,
+                &Bytes::new(),
+                Some(parent_metadata),
+                proposer,
+            );
+            let mut visible_gas = None;
+            let mut cycle_receipt_index = None;
+            for tx in system_txs {
+                let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
+                    .expect("valid begin-zone system tx")
+                    .kind();
+                let output = executor
+                    .execute_transaction(tx)
+                    .expect("begin-zone prefix through CapacityForfeiture CycleTick must execute");
+                if kind == SystemTxKind::CycleTick {
+                    visible_gas = Some(output.tx_gas_used());
+                    cycle_receipt_index = Some(executor.receipts().len() - 1);
+                    break;
+                }
+            }
+            let visible_gas = visible_gas.expect("CycleTick visible gas");
+            let cycle_receipt_index = cycle_receipt_index.expect("CycleTick receipt index");
+            let maximum_used =
+                BLOCK_GAS_LIMIT * (BPS_DENOMINATOR - REQUIRED_HEADROOM_BPS) / BPS_DENOMINATOR;
+            eprintln!(
+                "CapacityForfeiture CycleTick visible gas: used={visible_gas}, max_for_20pct_headroom={maximum_used}"
+            );
+            assert!(executor.receipts()[cycle_receipt_index].success);
+            assert!(
+                visible_gas <= maximum_used,
+                "CapacityForfeiture CycleTick visible gas {visible_gas} leaves less than 20% headroom"
+            );
+            let capacity_event = keccak256(
+                "WorldwideDayCapacityForfeited(uint32,uint32,uint32,uint256,uint256,uint256,bytes32,uint32,uint256,uint64,uint64,uint8,uint64)",
+            );
+            assert!(executor.receipts()[cycle_receipt_index]
+                .logs
+                .iter()
+                .any(|log| {
+                    log.address == outbe_primitives::addresses::METADOSIS_ADDRESS
+                        && log.data.topics().first() == Some(&capacity_event)
+                }));
+            let retirement_event = keccak256("TributePartitionRetired(uint32)");
+            assert!(executor.receipts()[cycle_receipt_index]
+                .logs
+                .iter()
+                .any(|log| {
+                    log.address == outbe_primitives::addresses::TRIBUTE_ADDRESS
+                        && log.data.topics().first() == Some(&retirement_event)
+                }));
+            let capacity_log = executor.receipts()[cycle_receipt_index]
+                .logs
+                .iter()
+                .find_map(|log| {
+                    outbe_metadosis::precompile::IMetadosis::WorldwideDayCapacityForfeited::decode_log(
+                        log,
+                    )
+                    .ok()
+                })
+                .expect("typed capacity-forfeiture event");
+            assert_eq!(capacity_log.forfeitedTributeCount, u32::MAX);
+            assert_eq!(capacity_log.forfeitedTributeNominal, U256::MAX);
+            assert_eq!(capacity_log.retirementOutcome, 2);
+            let receipt = executor.receipts()[cycle_receipt_index].clone();
+            drop(executor);
+            (
+                visible_gas,
+                receipt,
+                post_state_root(&state.bundle_state),
+                seed_root,
+                tree_directory,
+            )
+        };
+
+        let proposer = run();
+        let replay = run();
+        assert_eq!(
+            proposer.0, replay.0,
+            "same-parent replay must reproduce visible gas"
+        );
+        assert_eq!(
+            proposer.1, replay.1,
+            "same-parent replay must reproduce the exact receipt and events"
+        );
+        assert_eq!(
+            proposer.2, replay.2,
+            "re-executing the same CapacityForfeiture CycleTick from the same parent must reproduce gas, receipt/events, and state root"
+        );
+        assert_eq!(proposer.3, replay.3, "seeded parent roots must match");
     }
 
     #[test]
@@ -6737,13 +7197,14 @@ mod tests {
             }];
 
         let bridge = ConsensusExecutionBridge::new();
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent_hash,
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             1,
+            B256::repeat_byte(0x91),
         );
         let config = OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
             .with_evm_signer(signer.clone());
@@ -7087,13 +7548,14 @@ mod tests {
                     .expect("seed accounting progress");
             });
             let bridge = ConsensusExecutionBridge::new();
-            bridge.record_execution_summary(
+            bridge.record_execution_summary_with_state_root(
                 fb_number,
                 parent_hash,
                 ExecutionSummaryArtifact {
                     validator_fee_sum: U256::ZERO,
                 },
                 1,
+                B256::repeat_byte(0x91),
             );
             let config = OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge)
                 .with_evm_signer(signer.clone());
@@ -7281,13 +7743,14 @@ mod tests {
         metadata.signer_bitmap = vec![1];
 
         let bridge = ConsensusExecutionBridge::new();
-        bridge.record_execution_summary(
+        bridge.record_execution_summary_with_state_root(
             1,
             parent_hash,
             ExecutionSummaryArtifact {
                 validator_fee_sum: U256::ZERO,
             },
             1,
+            B256::repeat_byte(0x91),
         );
         let boundary = boundary_with(
             true,
@@ -7562,7 +8025,7 @@ mod tests {
         let block_context = BlockContext::new(
             finalization_block,
             1_700_000_000,
-            outbe_primitives::chain::CHAIN_ID,
+            CHAIN_ID,
             issuer,
             validators.iter().map(|(address, _)| *address).collect(),
         );
@@ -7750,7 +8213,7 @@ mod tests {
         let block_context = BlockContext::new(
             finalization_block,
             1_700_000_000,
-            outbe_primitives::chain::CHAIN_ID,
+            CHAIN_ID,
             issuer,
             validators.iter().map(|(address, _)| *address).collect(),
         );
@@ -7997,13 +8460,14 @@ mod tests {
             metadata.signer_bitmap = vec![1; validators.len()];
 
             let bridge = ConsensusExecutionBridge::new();
-            bridge.record_execution_summary(
+            bridge.record_execution_summary_with_state_root(
                 metadata.finalized_block_number,
                 parent_hash,
                 ExecutionSummaryArtifact {
                     validator_fee_sum: U256::ZERO,
                 },
                 1_700_000_000,
+                B256::repeat_byte(0x91),
             );
             let config =
                 OutbeEvmConfig::new_with_bridge(test_chain_spec(), bridge).with_evm_signer(signer);
@@ -8397,7 +8861,7 @@ mod tests {
                     validator_fee_sum: U256::ZERO,
                 },
                 timestamp: 0,
-                state_root: None,
+                state_root: Some(B256::repeat_byte(0x91)),
             });
             execution.proposer_evm_address = Some(proposer);
             if expected_validator_body {
@@ -8970,7 +9434,7 @@ mod tests {
             SystemTxKind::CycleTick,
             0,
             2,
-            outbe_primitives::chain::CHAIN_ID,
+            CHAIN_ID,
             SystemTxInputV2::CycleTick.encode().unwrap(),
         )
         .unwrap();

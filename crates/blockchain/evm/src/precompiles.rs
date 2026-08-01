@@ -15,14 +15,20 @@ use alloy_sol_types::{Revert, SolError};
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use outbe_compressed_entities::ExecutionScope;
-use outbe_metadosis::ocomp::activation::OcompFinalizedIntentAuthority;
-use outbe_metadosis::ocomp::fork::OcompForkInstallV1;
+use outbe_metadosis::{api::OcompFinalizedIntentAuthority, config::OcompForkInstallV1};
 use outbe_offchain_data::RuntimeBodyReaders;
 use outbe_primitives::addresses::{
-    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
+    FIDELITY_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS,
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{
+    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+    metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
+    metadosis_process_ready_binding, metadosis_verified_vote_binding,
+    MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+    StorageHandle,
+};
 use revm::{
     handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
     interpreter::{CallInputs, InterpreterResult},
@@ -103,6 +109,133 @@ fn is_lysis_result_vote_call(address: Address, data: &[u8], is_static: bool, val
         })
         && !is_static
         && value.is_zero()
+}
+
+struct MetadosisMutationCall<'a> {
+    address: Address,
+    data: &'a [u8],
+    caller: Address,
+    is_static: bool,
+    value: U256,
+    ocomp_lifecycle_active: bool,
+    chain_id: u64,
+    block_number: u64,
+    timestamp: u64,
+    preloaded_certified_state_root: Option<alloy_primitives::B256>,
+    ocomp_fork_install: Option<&'a OcompForkInstallV1>,
+}
+
+fn metadosis_mutation_entitlements(
+    call: MetadosisMutationCall<'_>,
+) -> MetadosisMutationEntitlements {
+    let MetadosisMutationCall {
+        address,
+        data,
+        caller,
+        is_static,
+        value,
+        ocomp_lifecycle_active,
+        chain_id,
+        block_number,
+        timestamp,
+        preloaded_certified_state_root,
+        ocomp_fork_install,
+    } = call;
+    use MetadosisMutationPurposeTag as Purpose;
+
+    if is_static || !value.is_zero() {
+        return MetadosisMutationEntitlements::NONE;
+    }
+    if is_lysis_result_vote_call(address, data, is_static, value) && ocomp_lifecycle_active {
+        return MetadosisMutationEntitlements::exact(
+            Purpose::VerifiedResultVote,
+            metadosis_verified_vote_binding(data),
+        );
+    }
+    if address != OUTBE_SYSTEM_TX_ADDRESS || caller != SYSTEM_ADDRESS {
+        return MetadosisMutationEntitlements::NONE;
+    }
+    let Ok(input) = crate::system_tx::SystemTxInputV2::decode(data) else {
+        return MetadosisMutationEntitlements::NONE;
+    };
+    match input {
+        crate::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata }
+            if metadata.proof_kind
+                == outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization =>
+        {
+            let Some(finalized_state_root) = preloaded_certified_state_root else {
+                return MetadosisMutationEntitlements::NONE;
+            };
+            let certified = MetadosisCertifiedFinalityBinding::new(
+                chain_id,
+                block_number,
+                metadata.finalized_block_number,
+                metadata.finalized_block_hash,
+                finalized_state_root,
+            );
+            MetadosisMutationEntitlements::exact(Purpose::CertifiedFinality, certified.binding())
+        }
+        crate::system_tx::SystemTxInputV2::LateFinalizeCredits { .. } => {
+            MetadosisMutationEntitlements::exact(
+                Purpose::CertifiedFinality,
+                metadosis_late_settlement_binding(chain_id, block_number, timestamp),
+            )
+        }
+        // Exact fixed command identities cover genesis plus every statically
+        // registered trigger. A particular block may consume any due subset,
+        // but no identity can be consumed twice. Daily terminal allocation is
+        // intentionally keyed to the previous UTC day rather than the physical
+        // dispatch timestamp; derive the same fixed timestamp here.
+        crate::system_tx::SystemTxInputV2::CycleTick => {
+            let current_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let previous_day = outbe_primitives::time::previous_date_key(current_day);
+            let allocation_timestamp =
+                outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
+            MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_init_genesis_binding(chain_id, block_number, timestamp),
+            )
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_cycle_allocation_binding(chain_id, block_number, allocation_timestamp),
+            ))
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_process_ready_binding(chain_id, block_number, timestamp),
+            ))
+            .union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_advance_due_binding(chain_id, block_number, timestamp),
+            ))
+        }
+        crate::system_tx::SystemTxInputV2::OcompLifecycleBegin if ocomp_lifecycle_active => {
+            let lifecycle = MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_lifecycle_begin_binding(chain_id, block_number, timestamp),
+            );
+            let Some(install) =
+                ocomp_fork_install.filter(|install| install.activation_height == block_number)
+            else {
+                return lifecycle;
+            };
+            let Ok(install_hash) =
+                install.install_hash(&outbe_metadosis::config::poc_schema_limits())
+            else {
+                return lifecycle;
+            };
+            lifecycle.union(MetadosisMutationEntitlements::exact(
+                Purpose::ForkProfile,
+                install_hash,
+            ))
+        }
+        crate::system_tx::SystemTxInputV2::OcompTerminalRequest if ocomp_lifecycle_active => {
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_terminal_request_binding(chain_id, block_number, timestamp),
+            )
+        }
+        _ => MetadosisMutationEntitlements::NONE,
+    }
 }
 
 /// Returns the list of outbe precompile addresses registered by
@@ -208,6 +341,8 @@ where
         return Ok(None);
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
+    let chain_id = ctx.cfg().chain_id;
+    let timestamp = ctx.block().timestamp().saturating_to::<u64>();
 
     // Materialize the exact calldata before choosing the consensus gas charge.
     // Contract -> precompile calls arrive as SharedBuffer and must pay the same
@@ -290,11 +425,27 @@ where
                 is_static,
                 value,
             ) && ocomp_lifecycle_active,
+            metadosis_mutation_entitlements: metadosis_mutation_entitlements(
+                MetadosisMutationCall {
+                    address,
+                    data: data.as_ref(),
+                    caller,
+                    is_static,
+                    value,
+                    ocomp_lifecycle_active,
+                    chain_id,
+                    block_number,
+                    timestamp,
+                    preloaded_certified_state_root:
+                        crate::begin_block_precompile::preloaded_certified_parent_state_root(),
+                    ocomp_fork_install: ocomp_fork_install.as_deref(),
+                },
+            ),
         },
     );
     let storage = StorageHandle::new(&mut provider);
     let result = if is_active_result_vote_selector {
-        outbe_metadosis::ocomp::vote::dispatch_public_result_vote(
+        outbe_metadosis::commands::submit_verified_result_vote(
             storage,
             execution_scope.as_ref(),
             data.as_ref(),
@@ -344,7 +495,6 @@ where
             "OCOMP_TRACE_V1 kind=result_vote_committed block={block_number} caller={caller:#x}"
         );
     }
-
     if let Some(readers) = runtime_body_readers {
         if let Err(error) = &result {
             readers.report_precompile_error(error);
@@ -479,11 +629,110 @@ where
 
 #[cfg(test)]
 mod lysis_activation_entitlement_tests {
-    use super::is_lysis_result_vote_call;
-    use alloy_primitives::{Address, U256};
+    use super::{
+        is_lysis_result_vote_call, metadosis_mutation_entitlements, MetadosisMutationCall,
+    };
+    use alloy_primitives::{Address, Bytes, B256, U256};
     use outbe_ocomp_protocol::abi::{
         GET_OFFCHAIN_JOB_SELECTOR, METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
     };
+    use outbe_primitives::{
+        addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS},
+        consensus::{DkgBoundaryArtifact, ReshareResult},
+        consensus_metadata::CertifiedParentAccountingMetadata,
+        reshare_artifact::LateFinalizeCreditsArtifact,
+        storage::{
+            metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+            metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+            metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
+            metadosis_process_ready_binding, metadosis_verified_vote_binding,
+            MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements,
+            MetadosisMutationPurposeTag as Purpose,
+        },
+        system_tx::SystemTxInputV2,
+    };
+
+    const TEST_CHAIN_ID: u64 = 42;
+    const TEST_BLOCK_NUMBER: u64 = 9;
+    const TEST_TIMESTAMP: u64 = 1_000;
+
+    fn certified_root() -> B256 {
+        B256::repeat_byte(0xa1)
+    }
+
+    fn encoded(input: SystemTxInputV2) -> Bytes {
+        input.encode().expect("valid system-tx fixture")
+    }
+
+    fn boundary() -> DkgBoundaryArtifact {
+        DkgBoundaryArtifact {
+            epoch: 8,
+            dkg_cycle: 2,
+            freeze_height: 40,
+            planned_activation_height: 42,
+            target_set_hash: B256::repeat_byte(0x33),
+            vrf_material_version: 3,
+            vrf_group_public_key: B256::repeat_byte(0x44),
+            vrf_group_public_key_bytes: Bytes::from(vec![0x44; 96]),
+            committee_set_hash: B256::repeat_byte(0x66),
+            is_validator_set_change: true,
+            outcome: Bytes::from_static(b"boundary"),
+            is_full_dkg: false,
+            reshare: ReshareResult {
+                new_active_set: vec![Address::repeat_byte(0x33)],
+                active_set_hash: B256::repeat_byte(0x55),
+            },
+            tee_recipient_pubkeys: Vec::new(),
+            tee_reshare_registrations: Vec::new(),
+            endorsement_signature: Bytes::new(),
+        }
+    }
+
+    fn system_entitlements(
+        input: SystemTxInputV2,
+        lifecycle_active: bool,
+    ) -> MetadosisMutationEntitlements {
+        let data = encoded(input);
+        metadosis_mutation_entitlements(MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            ocomp_lifecycle_active: lifecycle_active,
+            chain_id: TEST_CHAIN_ID,
+            block_number: TEST_BLOCK_NUMBER,
+            timestamp: TEST_TIMESTAMP,
+            preloaded_certified_state_root: Some(certified_root()),
+            ocomp_fork_install: None,
+        })
+    }
+
+    fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
+        let current_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
+        let previous_day = outbe_primitives::time::previous_date_key(current_day);
+        let allocation_timestamp = outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
+        MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_init_genesis_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        )
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_cycle_allocation_binding(
+                TEST_CHAIN_ID,
+                TEST_BLOCK_NUMBER,
+                allocation_timestamp,
+            ),
+        ))
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ))
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ))
+    }
 
     #[test]
     fn only_exact_non_static_value_free_metadosis_result_vote_is_entitled() {
@@ -517,5 +766,189 @@ mod lysis_activation_entitlement_tests {
             false,
             U256::from(1),
         ));
+    }
+
+    #[test]
+    fn exact_production_causes_receive_only_their_purpose() {
+        let metadata = CertifiedParentAccountingMetadata::default();
+        let certified = MetadosisCertifiedFinalityBinding::new(
+            TEST_CHAIN_ID,
+            TEST_BLOCK_NUMBER,
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+            certified_root(),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::CertifiedParentAccounting { metadata },
+                false,
+            ),
+            MetadosisMutationEntitlements::exact(Purpose::CertifiedFinality, certified.binding(),),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::CycleTick, false),
+            expected_cycle_entitlements(),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::LateFinalizeCredits {
+                    artifact: LateFinalizeCreditsArtifact::default(),
+                },
+                false,
+            ),
+            MetadosisMutationEntitlements::exact(
+                Purpose::CertifiedFinality,
+                metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP,),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompLifecycleBegin, true),
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_lifecycle_begin_binding(
+                    TEST_CHAIN_ID,
+                    TEST_BLOCK_NUMBER,
+                    TEST_TIMESTAMP,
+                ),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompTerminalRequest, true),
+            MetadosisMutationEntitlements::exact(
+                Purpose::OcompLifecycle,
+                metadosis_ocomp_terminal_request_binding(
+                    TEST_CHAIN_ID,
+                    TEST_BLOCK_NUMBER,
+                    TEST_TIMESTAMP,
+                ),
+            ),
+        );
+        assert_eq!(
+            system_entitlements(
+                SystemTxInputV2::BoundaryOutcome {
+                    artifact: boundary(),
+                },
+                false,
+            ),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &SUBMIT_LYSIS_RESULT_SELECTOR,
+                caller: Address::repeat_byte(0x99),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: true,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::exact(
+                Purpose::VerifiedResultVote,
+                metadosis_verified_vote_binding(&SUBMIT_LYSIS_RESULT_SELECTOR),
+            ),
+        );
+    }
+
+    #[test]
+    fn route_or_envelope_mismatch_grants_no_mutation_authority() {
+        let cycle = encoded(SystemTxInputV2::CycleTick);
+        for (address, caller, is_static, value) in [
+            (Address::repeat_byte(1), SYSTEM_ADDRESS, false, U256::ZERO),
+            (
+                OUTBE_SYSTEM_TX_ADDRESS,
+                Address::repeat_byte(2),
+                false,
+                U256::ZERO,
+            ),
+            (OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS, true, U256::ZERO),
+            (
+                OUTBE_SYSTEM_TX_ADDRESS,
+                SYSTEM_ADDRESS,
+                false,
+                U256::from(1),
+            ),
+        ] {
+            assert_eq!(
+                metadosis_mutation_entitlements(MetadosisMutationCall {
+                    address,
+                    data: cycle.as_ref(),
+                    caller,
+                    is_static,
+                    value,
+                    ocomp_lifecycle_active: false,
+                    chain_id: TEST_CHAIN_ID,
+                    block_number: TEST_BLOCK_NUMBER,
+                    timestamp: TEST_TIMESTAMP,
+                    preloaded_certified_state_root: None,
+                    ocomp_fork_install: None,
+                }),
+                MetadosisMutationEntitlements::NONE,
+            );
+        }
+
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: OUTBE_SYSTEM_TX_ADDRESS,
+                data: b"malformed",
+                caller: SYSTEM_ADDRESS,
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: false,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OracleSlashWindow, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompLifecycleBegin, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            system_entitlements(SystemTxInputV2::OcompTerminalRequest, false),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &SUBMIT_LYSIS_RESULT_SELECTOR,
+                caller: Address::repeat_byte(3),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: false,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
+        assert_eq!(
+            metadosis_mutation_entitlements(MetadosisMutationCall {
+                address: METADOSIS_ADDRESS,
+                data: &GET_OFFCHAIN_JOB_SELECTOR,
+                caller: Address::repeat_byte(3),
+                is_static: false,
+                value: U256::ZERO,
+                ocomp_lifecycle_active: true,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                preloaded_certified_state_root: None,
+                ocomp_fork_install: None,
+            }),
+            MetadosisMutationEntitlements::NONE,
+        );
     }
 }

@@ -68,8 +68,72 @@ pub enum MetadosisError {
 
 impl From<MetadosisError> for PrecompileError {
     fn from(value: MetadosisError) -> Self {
-        PrecompileError::Revert(value.to_string())
+        let message = value.to_string();
+        match value {
+            // No current variant has a production caller-controlled ingress.
+            // They all describe persisted-state, cross-module, fixture, or
+            // private transition invariant failures.
+            MetadosisError::UnknownWorldwideDayType
+            | MetadosisError::VwapMustBeNonZero
+            | MetadosisError::InvalidOcompBudgetSplit { .. }
+            | MetadosisError::OcompBudgetEffectFromFuture { .. }
+            | MetadosisError::OcompBudgetReceiptMismatch
+            | MetadosisError::OcompDesisBriefHashMismatch
+            | MetadosisError::OcompPreAdmissionNotInitialized { .. }
+            | MetadosisError::OcompPreAdmissionAlreadySealed { .. }
+            | MetadosisError::OcompPreAdmissionWwdMismatch { .. }
+            | MetadosisError::InvalidOcompPreAdmissionEnvelope { .. }
+            | MetadosisError::InvalidOcompPreAdmissionEnvelopeHash
+            | MetadosisError::OcompStateVersionOverflow { .. }
+            | MetadosisError::CorruptOcompPreAdmissionState { .. }
+            | MetadosisError::InvalidTransitionToCompleted { .. }
+            | MetadosisError::InvalidTransitionToFailed { .. } => PrecompileError::Fatal(message),
+        }
     }
 }
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn future_budget_effect_is_fatal() {
+        let error: PrecompileError = MetadosisError::OcompBudgetEffectFromFuture {
+            effect_nonce: 2,
+            current_nonce: 1,
+        }
+        .into();
+
+        assert!(matches!(error, PrecompileError::Fatal(_)));
+    }
+
+    #[test]
+    fn durable_and_cross_module_invariant_errors_are_fatal() {
+        let wwd = WorldwideDay::new(2026_0731);
+        let errors = [
+            MetadosisError::OcompBudgetReceiptMismatch,
+            MetadosisError::OcompDesisBriefHashMismatch,
+            MetadosisError::OcompStateVersionOverflow { wwd },
+            MetadosisError::CorruptOcompPreAdmissionState {
+                wwd,
+                initialized: true,
+                state_version: 0,
+                envelope_hash: B256::ZERO,
+            },
+        ];
+
+        for error in errors {
+            let error: PrecompileError = error.into();
+            assert!(matches!(error, PrecompileError::Fatal(_)));
+        }
+    }
+
+    #[test]
+    fn fixture_only_vwap_error_is_fatal() {
+        let error: PrecompileError = MetadosisError::VwapMustBeNonZero.into();
+
+        assert!(matches!(error, PrecompileError::Fatal(_)));
+    }
+}

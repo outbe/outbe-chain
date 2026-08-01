@@ -7,8 +7,8 @@ use crate::error::PrecompileError;
 
 use crate::error::Result;
 use crate::storage::{
-    PrecompileStorageProvider, StorageHandle, SubCallError, SubCallInput, SubCallOutput,
-    SubCallStatus,
+    MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
+    StorageHandle, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
 };
 
 /// In-memory storage provider for unit testing.
@@ -51,6 +51,8 @@ pub struct HashMapStorageProvider {
     lysis_activation_entitled: bool,
     lysis_activation_attempted: bool,
     lysis_activation_call_id: Option<B256>,
+    metadosis_mutation_entitlements: MetadosisMutationEntitlements,
+    metadosis_mutation_active: Option<(MetadosisMutationPurposeTag, B256, u64, u64)>,
 }
 
 struct Snapshot {
@@ -88,7 +90,33 @@ impl HashMapStorageProvider {
             lysis_activation_entitled: false,
             lysis_activation_attempted: false,
             lysis_activation_call_id: None,
+            metadosis_mutation_entitlements: MetadosisMutationEntitlements::NONE,
+            metadosis_mutation_active: None,
         }
+    }
+
+    /// Test-only provider entitlement for production-shaped Metadosis command
+    /// entrypoints. It grants one purpose and still rejects nested or mismatched
+    /// leases before the command callback runs.
+    #[doc(hidden)]
+    pub fn enable_metadosis_mutation_frame(&mut self, purpose: MetadosisMutationPurposeTag) {
+        self.enable_metadosis_mutation_frames(purpose, 1);
+    }
+
+    /// Test-only fixed route budget for commands which execute a statically
+    /// bounded sequence inside one simulated EVM dispatch.
+    #[doc(hidden)]
+    pub fn enable_metadosis_mutation_frames(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        count: u8,
+    ) {
+        assert!(
+            self.metadosis_mutation_active.is_none(),
+            "cannot replace an active Metadosis mutation lease"
+        );
+        self.metadosis_mutation_entitlements =
+            MetadosisMutationEntitlements::repeated(purpose, count);
     }
 
     /// Grants one production-shaped certified Lysis activation lease.
@@ -282,6 +310,50 @@ impl HashMapStorageProvider {
 }
 
 impl PrecompileStorageProvider for HashMapStorageProvider {
+    fn begin_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Result<()> {
+        if self.metadosis_mutation_active.is_some()
+            || self.chain_id != chain_id
+            || self.block_number != block_number
+            || !self
+                .metadosis_mutation_entitlements
+                .consume(purpose, binding)
+        {
+            return Err(PrecompileError::Fatal(
+                "test provider has no matching Metadosis mutation lease".into(),
+            ));
+        }
+        self.metadosis_mutation_active = Some((purpose, binding, chain_id, block_number));
+        Ok(())
+    }
+
+    fn finish_metadosis_mutation_frame(
+        &mut self,
+        purpose: MetadosisMutationPurposeTag,
+        binding: B256,
+        _completed: bool,
+    ) -> Result<()> {
+        let Some((active_purpose, active_binding, _, _)) =
+            self.metadosis_mutation_active.as_ref().copied()
+        else {
+            return Err(PrecompileError::Fatal(
+                "test provider has no active Metadosis mutation lease".into(),
+            ));
+        };
+        if active_purpose != purpose || active_binding != binding {
+            return Err(PrecompileError::Fatal(
+                "test provider Metadosis mutation lease identity mismatch".into(),
+            ));
+        }
+        self.metadosis_mutation_active = None;
+        Ok(())
+    }
+
     fn begin_lysis_activation_frame(&mut self, activation_call_id: B256) -> Result<()> {
         if !self.lysis_activation_entitled
             || self.lysis_activation_attempted
@@ -514,5 +586,34 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
         entry.balance -= amount;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod metadosis_mutation_frame_tests {
+    use super::HashMapStorageProvider;
+    use crate::storage::{MetadosisMutationPurposeTag as Purpose, PrecompileStorageProvider};
+    use alloy_primitives::B256;
+
+    #[test]
+    fn wrong_finish_does_not_destroy_the_test_provider_frame() {
+        let purpose = Purpose::CycleLifecycle;
+        let binding = B256::repeat_byte(1);
+        let mut provider = HashMapStorageProvider::new(7);
+        provider.set_block_number(11);
+        provider.enable_metadosis_mutation_frame(purpose);
+        provider
+            .begin_metadosis_mutation_frame(purpose, binding, 7, 11)
+            .unwrap();
+
+        assert!(provider
+            .finish_metadosis_mutation_frame(purpose, B256::repeat_byte(2), false)
+            .is_err());
+        provider
+            .finish_metadosis_mutation_frame(purpose, binding, false)
+            .unwrap();
+        assert!(provider
+            .begin_metadosis_mutation_frame(purpose, binding, 7, 11)
+            .is_err());
     }
 }

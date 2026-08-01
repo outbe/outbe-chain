@@ -903,7 +903,6 @@ pub mod vote {
 }
 
 pub mod update {
-    use outbe_common::WorldwideDay;
     use outbe_primitives::block::BlockRuntimeContext;
     use outbe_primitives::error::Result;
     use outbe_update::handlers::{UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers};
@@ -935,9 +934,6 @@ pub mod update {
                 tribute.initialize_fresh_ocomp_profile()?;
 
                 outbe_oracle::api::initialize_fresh_ocomp_profile(ctx.storage.clone())?;
-
-                let wwd = WorldwideDay::from_timestamp(ctx.block.timestamp);
-                outbe_metadosis::initialize_fresh_ocomp_profile(ctx.storage.clone(), wwd)?;
                 Ok(())
             })
         }
@@ -997,7 +993,7 @@ pub mod update {
         }
 
         #[test]
-        fn registered_ocomp_handler_initializes_all_owner_profiles_atomically() {
+        fn registered_ocomp_handler_initializes_external_admission_profiles_atomically() {
             let handlers = registry()
                 .lookup(OCOMP_POC_PROTOCOL_VERSION)
                 .collect::<Vec<_>>();
@@ -1032,12 +1028,13 @@ pub mod update {
                     .profile_ready
                 );
                 assert!(
-                    outbe_metadosis::schema::MetadosisContract::new(storage)
-                        .ocomp_pre_admission_projection(outbe_common::WorldwideDay::from_timestamp(
-                            ACTIVATION_TIMESTAMP
-                        ),)
-                        .unwrap()
-                        .initialized
+                    !outbe_metadosis::api::pre_admission_projection(
+                        storage,
+                        outbe_common::WorldwideDay::from_timestamp(ACTIVATION_TIMESTAMP),
+                    )
+                    .unwrap()
+                    .initialized,
+                    "Metadosis profile is owned by the receipt-visible fork-install system route"
                 );
             });
         }
@@ -1058,8 +1055,7 @@ pub mod update {
                         .profile_ready
                 );
                 assert!(
-                    !outbe_metadosis::schema::MetadosisContract::new(storage)
-                        .ocomp_pre_admission_projection(wwd)
+                    !outbe_metadosis::api::pre_admission_projection(storage, wwd)
                         .unwrap()
                         .initialized
                 );

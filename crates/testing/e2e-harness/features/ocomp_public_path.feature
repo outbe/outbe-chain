@@ -36,6 +36,24 @@ Feature: Off-chain computation public path
     And validator 0 reconstructs that certified generation from canonical history
     And all four OCOMP domains run their node-facing production roles
 
+  @metadosis-fresh-devnet
+  Scenario: A fresh Metadosis day runs from Create through terminal OCOMP
+    Given a fresh four-validator Metadosis capacity localnet at FORMING
+    Then the fresh capacity day is created in FORMING by finalized block 1
+    When the committee logical clock reaches the fresh capacity OFFERING window
+    Then the same fresh capacity day advances through LOOKBACK to OFFERING
+    When all 257 capacity owners submit one encrypted Tribute each
+    Then all validators observe exactly 257 public Tributes for the capacity day
+    When the committee logical clock reaches the fresh capacity processing time
+    Then the same fresh capacity day advances through WAITING and READY
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the validator supervisors submit results directly for that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    And the certified generation contains exactly 257 Tribute and Nod records
+    And validator 0 reconstructs that certified generation from canonical history
+    And all four OCOMP domains run their node-facing production roles
+    And the fresh OCOMP domains retain their authenticated workers across the time changes
+
   @ocomp-final-capacity
   Scenario: The canonical Final devnet processes a shard-cap-plus-one population
     Given the canonical four-validator OCOMP Final devnet

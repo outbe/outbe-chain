@@ -84,7 +84,7 @@ impl<'storage> StorageHandle<'storage> {
         C::at(self.clone(), address)
     }
 
-    fn with_provider<R>(
+    pub(super) fn with_provider<R>(
         &self,
         f: impl FnOnce(&mut dyn PrecompileStorageProvider) -> Result<R>,
     ) -> Result<R> {

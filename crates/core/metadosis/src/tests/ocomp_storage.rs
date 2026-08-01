@@ -27,14 +27,13 @@ use outbe_promislimit::schema::PromisLimitContract;
 
 use crate::precompile::IMetadosis;
 use crate::{
+    fixture_kernel::FixtureKernelExt,
     ocomp::{
         schema::{poc_schema_limits, OcompRequestProfile},
         state::{DayPhase, JobFsmLimits},
     },
-    schema::{
-        day_type, status, MetadosisContract, WorldwideDay as WorldwideDayRecord,
-        WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT,
-    },
+    reducer::{OcompRetryCause, OuterWwdEvent, OuterWwdTransition},
+    schema::{status, MetadosisContract, WorldwideDayEntryExt, OCOMP_JOB_RECORDS_BASE_SLOT},
 };
 
 use super::with_storage;
@@ -114,21 +113,12 @@ fn request_profile_initialization_is_exact_idempotent_and_chain_bound() {
 
 fn create_ready_day(contract: &mut MetadosisContract<'_>, wwd: WorldwideDay) {
     contract
-        .worldwide_days
-        .create(&WorldwideDayRecord {
-            wwd,
-            status: status::READY,
-            day_type: day_type::GREEN,
-            forming_start: 1,
-            forming_end: 2,
-            lookback_end: 3,
-            offering_end: 4,
-            scheduled_process_time: 5,
-            metadosis_limit_amount: DAY_LIMIT,
-            previous_vwap: U256::from(50),
-            current_vwap: U256::from(55),
-        })
+        .fixture_create_ready_day(wwd, DAY_LIMIT, U256::from(50), U256::from(55))
         .unwrap();
+}
+
+fn outer_transition(contract: &MetadosisContract<'_>, event: OuterWwdEvent) -> OuterWwdTransition {
+    crate::commit::plan_outer_transition_for_test_fixture(contract, WWD, event).unwrap()
 }
 
 fn receipt() -> RequestBudgetSplitReceiptV1 {
@@ -272,8 +262,15 @@ fn certified_parent_finality_records_only_the_exact_live_request_and_fails_close
         contract
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         let finality_height = REQUEST_HEIGHT + 1;
@@ -369,8 +366,15 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&first_intent, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &first_intent,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(
@@ -393,8 +397,13 @@ fn persisted_request_and_expiry_keep_job_indexes_status_and_budget_equivalent() 
         assert_eq!(live_record.intent, first_intent);
 
         open_job(&mut contract, first_intent_id, &limits, fsm_limits);
+        let retry_transition = outer_transition(
+            &contract,
+            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Expired),
+        );
         contract
             .expire_ocomp_job(
+                &retry_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
@@ -447,8 +456,15 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
         let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
         let requested = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, request_receipt_hash);
         let intent_id = requested.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &request_receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &request_receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
@@ -501,9 +517,14 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
             terminal_receipt,
         };
 
+        let conflict_transition = outer_transition(
+            &contract,
+            OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
+        );
         assert_eq!(
             contract
                 .commit_ocomp_conflict(
+                    &conflict_transition,
                     intent_id,
                     completed_binding.clone(),
                     &quorum,
@@ -584,8 +605,15 @@ fn job_record_is_physically_bound_to_the_protocol_intent_slot_key() {
         contract
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         assert_eq!(
@@ -643,13 +671,18 @@ fn duplicate_request_cannot_replace_a_record_at_the_protocol_intent_slot_key() {
             .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
             .unwrap();
         contract
-            .ocomp_job_records
-            .get_bytes(&protocol_key)
-            .write(&original_bytes)
+            .corrupt_ocomp_job_record(intent_id, &original_bytes)
             .unwrap();
 
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         assert!(contract
-            .commit_ocomp_request(&requested, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .is_err());
         assert_eq!(
             contract
@@ -689,13 +722,23 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
         let receipt_hash = receipt.receipt_hash(&limits).unwrap();
         let first_intent = intent(0, REQUEST_HEIGHT, DEADLINE_HEIGHT, receipt_hash);
         let first_intent_id = first_intent.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
         contract
-            .commit_ocomp_request(&first_intent, &receipt, &limits, fsm_limits)
+            .commit_ocomp_request(
+                &request_transition,
+                &first_intent,
+                &receipt,
+                &limits,
+                fsm_limits,
+            )
             .unwrap();
 
         open_job(&mut contract, first_intent_id, &limits, fsm_limits);
+        let exhausted_transition =
+            outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
         contract
             .expire_ocomp_job(
+                &exhausted_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT,
                 REQUEST_TIME + 64,
@@ -727,6 +770,7 @@ fn final_allowed_expiry_credits_full_lysis_budget_once_and_does_not_requeue() {
 
         assert!(contract
             .expire_ocomp_job(
+                &exhausted_transition,
                 first_intent_id,
                 DEADLINE_HEIGHT + 1,
                 REQUEST_TIME + 65,

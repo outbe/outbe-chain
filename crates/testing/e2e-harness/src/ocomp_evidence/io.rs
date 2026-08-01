@@ -3,10 +3,9 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use eyre::{bail, ensure, Result, WrapErr};
+use eyre::{ensure, Result, WrapErr};
 use sha2::{Digest, Sha256};
 
 use super::schema::{
@@ -17,26 +16,7 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Capture clean/dirty state and exact Rust dependency inputs.
 pub fn capture_source_identity(repo: &Path) -> Result<SourceIdentityV1> {
-    let sha = command_stdout(repo, "git", &["rev-parse", "HEAD"])?;
-    let tracked = command_output(
-        repo,
-        "git",
-        &["status", "--porcelain", "--untracked-files=no"],
-    )?;
-    let untracked = command_output(repo, "git", &["ls-files", "--others", "--exclude-standard"])?;
-    let metadata = command_output(
-        repo,
-        "cargo",
-        &["metadata", "--locked", "--no-deps", "--format-version", "1"],
-    )?;
-    Ok(SourceIdentityV1 {
-        sha,
-        tracked_dirty: !tracked.is_empty(),
-        untracked_dirty: !untracked.is_empty(),
-        cargo_lock_sha256: hash_file(&repo.join("Cargo.lock"))?.sha256,
-        rust_toolchain_sha256: hash_file(&repo.join("rust-toolchain.toml"))?.sha256,
-        dependency_metadata_sha256: sha256_hex(&metadata),
-    })
+    crate::verification_ledger::capture_source_identity(repo)
 }
 
 /// Publish one immutable bundle member and return its exact identity.
@@ -190,31 +170,6 @@ fn sync_directory(path: &Path) -> Result<()> {
             .wrap_err_with(|| format!("fsync directory {}", path.display()))?;
     }
     Ok(())
-}
-
-fn command_stdout(repo: &Path, program: &str, args: &[&str]) -> Result<String> {
-    let bytes = command_output(repo, program, args)?;
-    let output =
-        String::from_utf8(bytes).wrap_err_with(|| format!("{program} output is not UTF-8"))?;
-    let output = output.trim();
-    ensure!(!output.is_empty(), "{program} produced empty output");
-    Ok(output.to_owned())
-}
-
-fn command_output(repo: &Path, program: &str, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new(program)
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .wrap_err_with(|| format!("run {program} {}", args.join(" ")))?;
-    if !output.status.success() {
-        bail!(
-            "{program} {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(output.stdout)
 }
 
 fn render_markdown(report: &ClosureReportV1) -> String {

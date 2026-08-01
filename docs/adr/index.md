@@ -145,7 +145,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-B-MCP-001](blockchain/ADR-B-MCP-001-local-agent-tool-transaction-safety.md) | Local agent tool transaction safety | `mcp` package | Proposed |
 | [ADR-B-DEP-001](blockchain/ADR-B-DEP-001-deterministic-contract-deployment-wiring-and-upgrades.md) | Deterministic deployment/wiring/upgrades | Solidity deploy surfaces | Proposed |
 | [ADR-B-OPS-001](blockchain/ADR-B-OPS-001-node-deployment-configuration-and-data-operations.md) | Node deployment, configuration and data operations | systemd/localnet/Mongo/monitoring | Proposed |
-| [ADR-B-RLS-001](blockchain/ADR-B-RLS-001-reproducible-build-supply-chain-and-release-provenance.md) | Reproducible build, supply-chain and release provenance | locks/CI/packages/images/SBOM | Proposed |
+| [ADR-B-RLS-001](blockchain/ADR-B-RLS-001-reproducible-build-supply-chain-and-release-provenance.md) | Reproducible build, supply-chain and release provenance | locks/CI/packages/images/SBOM | Accepted |
 | [ADR-B-OCD-001](blockchain/ADR-B-OCD-001-offchain-storage-facade.md) | Off-chain storage capability facade | offchain-storage | Proposed |
 | [ADR-B-OCD-002](blockchain/ADR-B-OCD-002-tribute-nod-body-boundary.md) | Tribute/Nod body and repository boundary | compressed entities/domain repositories | Proposed |
 | [ADR-B-OCD-003](blockchain/ADR-B-OCD-003-full-body-receipt-events.md) | Complete projection records in receipts | EVM events/ABI | Proposed |
@@ -193,7 +193,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-S-OCM-001](system/ADR-S-OCM-001-ocomp-kernel-and-typed-program-boundary.md) | OCOMP kernel and typed-program boundary | OCOMP lifecycle/process authority | Proposed |
 | [ADR-S-OCM-002](system/ADR-S-OCM-002-finalized-input-export-and-content-addressed-artifacts.md) | Finalized authenticated input export | checkpoint/export/CAS trust boundary | Proposed |
 | [ADR-S-OCM-003](system/ADR-S-OCM-003-deterministic-execution-and-quorum-evidence.md) | Deterministic execution and quorum evidence | planner/workers/attestation/full-result votes | Proposed |
-| [ADR-S-OCM-004](system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md) | Quorum atomic apply, job FSM and versioning | consensus OCOMP state/apply | Proposed |
+| [ADR-S-OCM-004](system/ADR-S-OCM-004-certified-activation-job-fsm-and-protocol-versioning.md) | Quorum atomic apply, job FSM and versioning | consensus OCOMP state/apply | Accepted |
 
 ## Core Space
 

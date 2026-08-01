@@ -27,7 +27,10 @@ k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
 k256.workspace = true
+num-bigint.workspace = true
 outbe-offchain-storage.workspace = true
+proptest.workspace = true
+trybuild = "1"
 
 [features]
 default = []

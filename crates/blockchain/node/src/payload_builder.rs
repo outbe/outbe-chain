@@ -720,16 +720,18 @@ mod tests {
         },
         OutbeEvmSigner,
     };
+    use outbe_metadosis::test_support::ForkInstallScenario;
     use outbe_offchain_data::RuntimeBodyReaders;
     use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
     use outbe_primitives::{
         addresses::{COMPRESSED_ENTITIES_ADDRESS, REWARDS_ADDRESS},
+        block::{BlockContext, BlockRuntimeContext},
         consensus::{DkgBoundaryArtifact, ReshareResult},
         projection::ExecutionReadBudget,
         reshare_artifact::{
             encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
         },
-        storage::{hashmap::HashMapStorageProvider, StorageHandle},
+        storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
     };
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_evm::execute::Executor as _;
@@ -842,12 +844,29 @@ mod tests {
         chain_spec: &Arc<ChainSpec<OutbeHeader>>,
         proposer: alloy_primitives::Address,
         funded_user: alloy_primitives::Address,
+        genesis_hash: B256,
     ) -> TestProvider {
         const OWNER: alloy_primitives::Address =
             address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
         let mut seed = HashMapStorageProvider::new(chain_spec.chain().id());
+        seed.set_block_number(1);
+        seed.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::ForkProfile);
         StorageHandle::enter(&mut seed, |storage| {
+            let install =
+                ForkInstallScenario::measurement_at(1, chain_spec.chain().id(), genesis_hash)
+                    .expect("fresh-devnet OCOMP install fixture is canonical");
+            let install_ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(
+                    1,
+                    ACTIVE_PAYLOAD_BLOCK_TIMESTAMP,
+                    chain_spec.chain().id(),
+                ),
+                storage.clone(),
+            );
+            outbe_metadosis::commands::install_fork_profile(&install_ctx, install.install())
+                .expect("fresh-devnet OCOMP profile installs through the production command");
+
             let root = outbe_compressed_entities::sealed_root(B256::ZERO)
                 .expect("CE genesis root is deterministic");
             storage
@@ -1028,7 +1047,7 @@ mod tests {
             authority_ids: None,
         });
 
-        let provider = active_ocomp_provider(&chain_spec, proposer, user_sender);
+        let provider = active_ocomp_provider(&chain_spec, proposer, user_sender, parent.hash());
         let payload_builder = OutbePayloadBuilder::new(
             provider.clone(),
             TestPool::new(),

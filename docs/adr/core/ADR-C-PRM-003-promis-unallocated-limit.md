@@ -1,7 +1,7 @@
 # ADR-C-PRM-003: PromisLimit owns the global unallocated Promis accumulator
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-30
 - **Decision owners:** Metadosis/auction economics maintainers
 - **Scope:** `crates/core/promislimit`
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004
@@ -24,9 +24,17 @@ Privileged internal operations are:
 - `set(total)`: replace the whole accumulator only when the caller has atomically
   consumed/cleared the previous complete pool and provides its exact remainder.
 
-Metadosis may add terminal day amounts and replace the pool with a Desis clearing
-remainder. Desis may return unused clearing capacity through its defined command.
-Every caller and reason code must be enumerable; raw `set` is not a generic setter.
+The Metadosis Citadel path admits exactly three new typed contribution sources:
+
+1. `MissedOffering`: the full immutable formed Metadosis limit;
+2. `CapacityForfeiture`: only the victim WWD's full formed Metadosis limit;
+3. `SupplyExceedsAuctionDomain`: the full `U256` supply returned by the Desis
+   rejection receipt.
+
+Normal RED-day auction-base routing, certified OCOMP unused-Lysis routing and
+Desis unused-clearing returns retain their existing semantics. Tribute nominal
+or issuance value is never converted into this accumulator. Every source is
+enumerable; raw `set` is not a generic setter.
 
 ## Invariants and authority
 
@@ -52,6 +60,12 @@ Limit mutation commits in the same checkpoint as the Metadosis terminal branch o
 Desis clearing it represents. A failed auction, Lysis, Promis mint or day transition
 rolls it back. Replay guards belong to those commands; the scalar alone cannot
 distinguish a repeated contribution.
+
+Missed offering, capacity forfeiture and day-limit formation record durable
+Metadosis receipts. Cycle's `(trigger_id, scheduled_at)` marker and the
+Metadosis semantic receipt must agree: both absent proceeds, both present
+replays without effects, and either one present alone is fatal. Thus each
+listed contribution is credited at most once.
 
 Overflow and an excessive remainder revert. A raw unexplained overwrite is an
 authority/invariant violation, not recovery.
